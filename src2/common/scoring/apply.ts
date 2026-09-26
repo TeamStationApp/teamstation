@@ -14,7 +14,7 @@ import {
   type RunnerMovementAction,
   type ScoringAction
 } from './actions'
-import { errorCredit, fieldedCredit, outCredits } from './credits'
+import { errorCredit, fieldedCredit, outCredits, positionOf } from './credits'
 import {
   addErrorlessOut,
   type ChargeBook,
@@ -53,7 +53,8 @@ import {
   moreEligibility,
   nextDecision,
   runnerDecisionError,
-  trajectoryLabel
+  trajectoryLabel,
+  trajectoryOf
 } from './rules'
 import {
   BASE_KEYS,
@@ -67,7 +68,8 @@ import {
   type Resolution,
   type ResolutionOutcome,
   type RunnerCredit,
-  setupOf
+  setupOf,
+  withoutUndefined
 } from './state'
 import type { Transition } from './transitions'
 
@@ -944,23 +946,30 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
       refuse('unknownPlayer', 'That player is not in the field')
     ctx.out.push({ type: 'ballFielded', fielder: action.fielder })
   }
-  if (angle != null && action.location != null)
-    play.hitData = {
+  if (angle != null || action.location != null || action.fielder != null) {
+    play.hitData = withoutUndefined({
       launchAngle: angle,
-      trajectory: trajectoryLabel(angle),
-      coordinates: { ...action.location },
+      trajectory: angle == null ? undefined : trajectoryLabel(angle),
+      coordinates: action.location == null ? undefined : { ...action.location },
       fielder:
         action.fielder == null
           ? undefined
-          : playerRef(ctx.state, action.fielder)
+          : playerRef(ctx.state, action.fielder),
+      position:
+        action.fielder == null
+          ? undefined
+          : positionOf(ctx.state, action.fielder)
+    })
+    // The scorer's own pick, which the label and MLB's list both lose.
+    const detail = play.source.gamestation
+    if (angle == null) {
+      delete detail.trajectory
+      delete detail.launchAngle
+    } else {
+      detail.trajectory = action.trajectory ?? trajectoryOf(angle)
+      detail.launchAngle = angle
     }
-  else if (action.fielder != null)
-    play.hitData = {
-      launchAngle: angle ?? 0,
-      trajectory: angle == null ? '' : trajectoryLabel(angle),
-      coordinates: { x: 0, z: 0 },
-      fielder: playerRef(ctx.state, action.fielder)
-    }
+  }
   const kind =
     action.homeRunKind ??
     (action.location == null ? undefined : homeRunKind(action.location))

@@ -144,13 +144,33 @@ export function lineScore(
         play.about.halfInning === 'top' || play.about.halfInning === 'bottom'
           ? play.about.halfInning
           : null,
-      eventType: play.result.eventType
+      eventType: play.result.eventType,
+      errorCredits: errorCredits(play)
     }))
   )
   return {
     away: side('top', halves, awayScore ?? 0, counted, 'away'),
     home: side('bottom', halves, homeScore ?? 0, counted, 'home')
   }
+}
+
+const ERROR_CREDITS = new Set(['f_fielding_error', 'f_throwing_error'])
+
+/** The fielding and throwing errors credited on a play's runners. */
+export function errorCredits(play: GumboPlay): number {
+  let count = 0
+  for (const runner of play.runners ?? []) {
+    const credits = (runner as { credits?: unknown }).credits
+    if (!Array.isArray(credits)) continue
+    for (const credit of credits as unknown[])
+      if (
+        credit != null &&
+        typeof credit === 'object' &&
+        ERROR_CREDITS.has(String((credit as { credit?: unknown }).credit))
+      )
+        count += 1
+  }
+  return count
 }
 
 function side(

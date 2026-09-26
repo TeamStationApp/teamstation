@@ -14,19 +14,25 @@ import {
   walk
 } from '../../test/scoringGames'
 import {
+  HIT_TRAJECTORIES,
   mlbEventName,
   MOVEMENT_REASONS,
+  POSITION_CODES,
   STORED_EVENT_TYPES
 } from '../gumbo/reference'
 import type { GumboPlay } from '../gumboPlay'
-import type { ScoringAction } from './actions'
+import { type ScoringAction, TRAJECTORIES } from './actions'
 import {
   currentDocumentOf,
   documentOf,
   finalDocumentOf,
+  SPRAY_HOME,
+  SPRAY_WALL,
+  sprayCoordinates,
   storedEventType
 } from './document'
 import { newSetup } from './lineup'
+import { PARK } from './park'
 import { type GamePlay, type GameState, setupOf } from './state'
 
 type RunnerTo = 'batter' | '1B' | '2B' | '3B' | 'home'
@@ -1323,5 +1329,219 @@ describe('action events (U12)', function () {
       actionIndex: [],
       runnerIndex: []
     })
+  })
+})
+
+describe('hit data (U17)', function () {
+  type BallInPlay = Extract<ScoringAction, { type: 'ballInPlay' }>
+  const batted = (
+    ballInPlay: Omit<BallInPlay, 'type' | 'contact'> & {
+      contact?: BallInPlay['contact']
+    },
+    eventType: 'single' | 'field_out' | 'home_run' = 'single'
+  ): GumboPlay =>
+    stored(
+      after(
+        game(),
+        ball,
+        { type: 'ballInPlay', contact: 'swing', ...ballInPlay },
+        {
+          type: 'result',
+          eventType,
+          ...(eventType === 'field_out' ? { outBy: 'catch' as const } : {})
+        },
+        close
+      ),
+      true
+    )
+  const hitDataOf = (play: GumboPlay): Record<string, unknown> | undefined =>
+    (
+      eventsOf(play).find(event => event.details.isInPlay === true) as
+        { hitData?: Record<string, unknown> } | undefined
+    )?.hitData
+  const detailOf = (play: GumboPlay): Record<string, unknown> =>
+    (play.gameStation as { detail: Record<string, unknown> }).detail
+  /** Every key anywhere in the stored play outside its record. */
+  const keysOf = (value: unknown): string[] =>
+    value == null || typeof value !== 'object'
+      ? []
+      : Object.entries(value).flatMap(([key, item]) =>
+          key === 'gameStation' ? [] : [key, ...keysOf(item)]
+        )
+
+  it('sits on the in-play pitch, not on the play', function () {
+    const play = batted({
+      trajectory: 'line_drive',
+      location: { x: 10, z: -60 },
+      fielder: F.CF
+    })
+    expect(play).not.have.property('hitData')
+    const [pitch, inPlay] = eventsOf(play) as Array<
+      StoredEvent & { hitData?: unknown }
+    >
+    expect(pitch).not.have.property('hitData')
+    expect(inPlay.details.isInPlay).equals(true)
+    expect(inPlay.hitData).deep.equals({
+      trajectory: 'line_drive',
+      location: '8',
+      coordinates: sprayCoordinates({ x: 10, z: -60 })
+    })
+    // The pitch keeps its own keys, with the hit data after its count.
+    expect(Object.keys(inPlay)).deep.equals([
+      'index',
+      'pitchNumber',
+      'isPitch',
+      'type',
+      'details',
+      'count',
+      'hitData',
+      'player',
+      'startTime',
+      'endTime'
+    ])
+    // The ball in play of the at-bat still being decided carries it too.
+    const pending = stored(
+      after(game(), {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'fly_ball',
+        fielder: F.LF
+      })
+    )
+    expect(hitDataOf(pending)).deep.equals({
+      trajectory: 'fly_ball',
+      location: '7'
+    })
+  })
+
+  it('has the keys of the feed hit data we can know, with the same value types', function () {
+    const feed = JSON.parse(
+      readFileSync('src2/common/gumbo/reference/feed776258.json', 'utf8')
+    ) as {
+      liveData: {
+        plays: {
+          allPlays: Array<{ playEvents: Array<{ hitData?: object }> }>
+        }
+      }
+    }
+    const feedHits = feed.liveData.plays.allPlays.flatMap(play =>
+      play.playEvents.flatMap(event =>
+        event.hitData == null ? [] : [event.hitData]
+      )
+    ) as Array<Record<string, unknown>>
+    expect(feedHits.length).greaterThan(0)
+    const ours = hitDataOf(
+      batted({
+        trajectory: 'ground_ball',
+        location: { x: -12, z: -30 },
+        fielder: F.SS
+      })
+    )!
+    // What a scorer cannot know: the speed off the bat, how far the ball went
+    // and how hard it was hit, and the measured launch angle.
+    const unknown = ['hardness', 'launchAngle', 'launchSpeed', 'totalDistance']
+    const typeOf = (value: unknown): string =>
+      value == null || typeof value !== 'object'
+        ? typeof value
+        : JSON.stringify(
+            Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [key, typeof item])
+            )
+          )
+    for (const hit of feedHits) {
+      expect(Object.keys(hit).sort()).deep.equals(
+        [...Object.keys(ours), ...unknown].sort()
+      )
+      for (const key of Object.keys(ours))
+        expect(typeOf(ours[key]), key).equals(typeOf(hit[key]))
+    }
+    expect(HIT_TRAJECTORIES.has(String(ours.trajectory))).equals(true)
+    expect(POSITION_CODES.has(String(ours.location))).equals(true)
+  })
+
+  it("maps each of the scorer's trajectories to MLB's, bunts to their own", function () {
+    const expected = {
+      ground_ball: ['ground_ball', 'bunt_grounder'],
+      line_drive: ['line_drive', 'bunt_line_drive'],
+      fly_ball: ['fly_ball', 'bunt_popup'],
+      popup: ['popup', 'bunt_popup'],
+      chopper: ['ground_ball', 'bunt_grounder']
+    }
+    expect(Object.keys(expected)).deep.equals([...TRAJECTORIES])
+    for (const trajectory of TRAJECTORIES)
+      for (const [i, contact] of (['swing', 'bunt'] as const).entries()) {
+        const play = batted({ contact, trajectory, fielder: F['3B'] })
+        expect(hitDataOf(play), `${contact} ${trajectory}`).deep.equals({
+          trajectory: expected[trajectory][i],
+          location: '5'
+        })
+        expect(HIT_TRAJECTORIES.has(expected[trajectory][i])).equals(true)
+        // The scorer's own pick stays in the record, chopper and all.
+        expect(detailOf(play)).includes({ trajectory, contactKind: contact })
+        expect(detailOf(play).launchAngle).a('number')
+      }
+    // The screen gives an angle, not a trajectory: the band it falls in.
+    const dragged = batted({ launchAngle: -40, location: { x: 3, z: -20 } })
+    expect(hitDataOf(dragged)).deep.equals({
+      trajectory: 'ground_ball',
+      coordinates: sprayCoordinates({ x: 3, z: -20 })
+    })
+    expect(detailOf(dragged)).includes({
+      trajectory: 'chopper',
+      launchAngle: -40
+    })
+  })
+
+  it('puts home plate and the fence at their places on the spray chart', function () {
+    expect(sprayCoordinates({ x: 0, z: 0 })).deep.equals(SPRAY_HOME)
+    expect(SPRAY_HOME).deep.equals({ coordX: 125, coordY: 204 })
+    // The fence, 118 m out, is 387 feet: 161.3 units at 2.4 feet a unit.
+    expect(PARK.outfieldRadius).equals(118)
+    expect(SPRAY_WALL).closeTo(161.31, 0.01)
+    expect(sprayCoordinates({ x: 0, z: -118 })).deep.equals({
+      coordX: 125,
+      coordY: 42.69
+    })
+    const pole = 118 * Math.SQRT1_2
+    expect(sprayCoordinates({ x: pole, z: -pole })).deep.equals({
+      coordX: 239.06,
+      coordY: 89.94
+    })
+    expect(sprayCoordinates({ x: -pole, z: -pole })).deep.equals({
+      coordX: 10.94,
+      coordY: 89.94
+    })
+    // Second base, 127.28 feet from home, is 53 units up the middle.
+    expect(sprayCoordinates({ x: 0, z: -38.795 }).coordY).closeTo(151, 0.1)
+    // A home run over the fence in straightaway centre, stored.
+    const homeRun = batted(
+      { launchAngle: 30, location: { x: 0, z: -118 } },
+      'home_run'
+    )
+    expect(hitDataOf(homeRun)).deep.equals({
+      trajectory: 'line_drive',
+      coordinates: { coordX: 125, coordY: 42.69 }
+    })
+  })
+
+  it('writes no coordinates when only a fielder was picked, and never a launch angle', function () {
+    const fielded = batted({ fielder: F.SS }, 'field_out')
+    expect(hitDataOf(fielded)).deep.equals({ location: '6' })
+    expect(detailOf(fielded)).not.have.property('trajectory')
+    expect(detailOf(fielded)).not.have.property('launchAngle')
+    // No ball in play said anything: no hit data at all.
+    expect(hitDataOf(batted({}))).equals(undefined)
+    const plays = [
+      fielded,
+      batted({ trajectory: 'popup', fielder: F.C }, 'field_out'),
+      batted({ launchAngle: 22, location: { x: 30, z: -70 }, fielder: F.RF }),
+      batted({ contact: 'bunt', trajectory: 'chopper', fielder: F.P })
+    ]
+    for (const play of plays) {
+      expect(keysOf(play)).not.include('launchAngle')
+      expect(keysOf(play)).not.include('launchSpeed')
+      expect(detailOf(play)).not.have.property('launchSpeed')
+    }
+    expect(detailOf(plays[2]).launchAngle).equals(22)
   })
 })

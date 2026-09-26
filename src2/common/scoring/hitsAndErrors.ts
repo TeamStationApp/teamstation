@@ -11,7 +11,8 @@ import {
  * nothing, and neither does a runner moving on his own. `stat` is the column
  * the play adds one to, for the side it belongs to. An `error` is charged to
  * the side fielding: a batter who reached on one, a runner who took a base on
- * one, or a pickoff throw that got away.
+ * one, or a pickoff throw that got away. A play that names its errors in its
+ * runners' credits is counted by those instead (`hitsAndErrors`).
  *
  * Every event type has an entry, so a new type cannot be counted by accident.
  */
@@ -117,9 +118,20 @@ function classOf(
  * it**, which is the side fielding — the opposite team from the batter. That
  * is the one that gets written backwards, which is why it is a named function
  * with a test rather than four lines inside a longer one.
+ *
+ * `errorCredits` is the number of fielding and throwing errors credited on
+ * the play's runners: one for each, whichever runner it let on or along, so a
+ * throw that got away on a single counts. A play with none that is an error
+ * by its type (a batter who reached on one with nobody charged, as an import
+ * sends it) counts one. Each error is counted once, from
+ * its credit when there is one and from the type only when there is not.
  */
 export function hitsAndErrors(
-  events: Array<{ halfInning: 'top' | 'bottom' | null; eventType: string }>
+  events: Array<{
+    halfInning: 'top' | 'bottom' | null
+    eventType: string
+    errorCredits?: number
+  }>
 ): {
   hits: { home: number; away: number }
   errors: { home: number; away: number }
@@ -180,10 +192,10 @@ export function hitsAndErrors(
       if (battingIsHome) strikeouts.home += 1
       else strikeouts.away += 1
     }
-    if (kind?.stat === 'error') {
-      if (battingIsHome) errors.away += 1
-      else errors.home += 1
-    }
+    const credited = event.errorCredits ?? 0
+    const charged = credited > 0 ? credited : kind?.stat === 'error' ? 1 : 0
+    if (battingIsHome) errors.away += charged
+    else errors.home += charged
   }
   return { hits, errors, walks, strikeouts, homeRuns, hitByPitch, known }
 }

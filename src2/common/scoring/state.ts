@@ -165,12 +165,19 @@ export const asGamePlay = asObject({
     })
   ),
   playEvents: asArray(asPlayEvent),
+  /**
+   * The ball in play as the scoring screen draws it: the launch angle and its
+   * label, where the scorer put the ball on the field, and the fielder who
+   * played it with his position then. Each is present only when the scorer
+   * gave it. The stored play writes MLB's `hitData` from it (`document.ts`).
+   */
   hitData: asOptional(
     asObject({
-      launchAngle: asNumber,
-      trajectory: asString,
-      coordinates: asPoint,
-      fielder: asOptional(asPlayerRef)
+      launchAngle: asOptional(asNumber),
+      trajectory: asOptional(asString),
+      coordinates: asOptional(asPoint),
+      fielder: asOptional(asPlayerRef),
+      position: asOptional(asString)
     })
   ),
   source: asObject({
@@ -185,6 +192,13 @@ export const asGamePlay = asObject({
         asValue('out-of-park' as const, 'in-park' as const)
       ),
       landingHeight: asOptional(asNumber),
+      /**
+       * The trajectory the scorer chose, in the action's own terms
+       * (`chopper` included), or the one his launch angle falls in.
+       */
+      trajectory: asOptional(asString),
+      /** The launch angle: the scorer's, or estimated from his trajectory. */
+      launchAngle: asOptional(asNumber),
       /** The lineup changed during this at-bat, so the at-bat is open. */
       lineupChanged: asOptional(asBoolean),
       errorCredit: asOptional(
