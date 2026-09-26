@@ -267,4 +267,16 @@ struct ZoomMappingTests {
     #expect(atMaximum.softwareZoomStartDeviceZoom == nil)
     #expect(atMaximum.presetDisplayedZooms == [ 1, 8 ])
   }
+
+  @Test("The white pills are the lenses, and the two past the longest lens are digital")
+  func digitalPills() {
+    #expect(softwareZoom.opticalDisplayedZooms == [ 0.5, 1, 3 ])
+    #expect(softwareZoom.presetDisplayedZooms.map { softwareZoom.isDigitalZoom(displayed: $0) }
+      == [ false, false, false, true, true ])
+    #expect(!softwareZoom.isDigitalSegment(1))
+    #expect(softwareZoom.isDigitalSegment(2))
+    #expect(softwareZoom.isDigitalSegment(3))
+    #expect(!softwareZoom.isDigitalZoom(displayed: 2))
+    #expect(softwareZoom.isDigitalZoom(displayed: 5))
+  }
 }
