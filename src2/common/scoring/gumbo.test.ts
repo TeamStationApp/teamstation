@@ -5,6 +5,7 @@ import { after, F, game, TEAMS } from '../../test/scoringGames'
 import { asCurrentPlay, asGumboPlay, type GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
+import { comparablePlay } from './comparable'
 import {
   FINAL_INDEX,
   foldCurrentPlay,
@@ -18,7 +19,6 @@ import {
 import { halfOutcomes, lineScore, withHalfOuts } from './linescore'
 import { newSetup } from './lineup'
 import { copyState, type GameState, setupOf } from './state'
-import { comparablePlay } from './testing'
 
 /**
  * Scores a list of actions the way a session does: each completed play is
@@ -195,7 +195,12 @@ describe('folding a play for the server', function () {
     expect(runner.credits).deep.equals([
       {
         player: { id: 6004, fullName: 'Home 5' },
-        position: { abbreviation: 'SS' },
+        position: {
+          code: '6',
+          name: 'Shortstop',
+          type: 'Infielder',
+          abbreviation: 'SS'
+        },
         credit: 'f_fielded_ball'
       }
     ])
@@ -402,62 +407,69 @@ describe('reading a game back', function () {
         shortName: `H${i}`
       }))
     })
-    const imported = (
-      atBatIndex: number,
-      halfInning: 'top' | 'bottom',
-      batter: number,
-      eventType: string,
-      outs: number,
-      runners: Array<{ id: number; end: number; isOut?: boolean }>,
-      away = 0,
-      home = 0
-    ): GumboPlay =>
-      asGumboPlay({
-        about: { atBatIndex, inning: 1, halfInning },
-        result: { eventType, awayScore: away, homeScore: home },
-        count: { outs },
-        matchup: { batter: { id: batter } },
-        runners: runners.map(runner => ({
-          details: { runner: { id: runner.id } },
-          movement: { end: runner.end, isOut: runner.isOut ?? false }
-        }))
-      })
-    const plays = [
-      imported(0, 'top', 7000, 'single', 0, [{ id: 7000, end: 1 }]),
-      imported(1, 'top', 7001, 'double', 0, [
-        { id: 7000, end: 3 },
-        { id: 7001, end: 2 }
-      ]),
-      imported(
-        3,
-        'top',
-        7002,
-        'field_out',
-        1,
-        [{ id: 7002, end: 1, isOut: true }],
-        1
-      )
-    ]
-    const replayed = replayPlays(
-      { plays, currentPlay: null },
-      { gamePk: 'g1', teams: TEAMS, setup }
-    )
+    // A GameStation document whose record cannot be replayed still lists
+    // every runner, with Gumbo's bases or the numbers older ones stored.
+    const documents = (gameStation: boolean): GumboPlay[] => {
+      const doc = (
+        atBatIndex: number,
+        batter: number,
+        eventType: string,
+        outs: number,
+        runners: Array<{ id: number; end: string | number; isOut?: boolean }>,
+        away = 0
+      ): GumboPlay =>
+        asGumboPlay({
+          about: { atBatIndex, inning: 1, halfInning: 'top' },
+          result: { eventType, awayScore: away, homeScore: 0 },
+          count: { outs },
+          matchup: { batter: { id: batter } },
+          runners: runners.map(runner => ({
+            details: { runner: { id: runner.id } },
+            movement: { end: runner.end, isOut: runner.isOut ?? false }
+          })),
+          ...(gameStation ? { gameStation: { version: 1 } } : {})
+        })
+      return [
+        doc(0, 7000, 'single', 0, [{ id: 7000, end: '1B' }]),
+        doc(1, 7001, 'double', 0, [
+          { id: 7000, end: '3B' },
+          { id: 7001, end: 2 }
+        ]),
+        doc(3, 7002, 'field_out', 1, [{ id: 7002, end: '1B', isOut: true }], 1)
+      ]
+    }
+    const context = { gamePk: 'g1', teams: TEAMS, setup }
+    const plays = documents(true)
+    const replayed = replayPlays({ plays, currentPlay: null }, context)
     const state = replayed.state
     expect(replayed.derived).equals(3)
     expect(state.meta.derived).equals(true)
     expect(state.liveData.linescore.outs).equals(1)
     expect(state.liveData.linescore.teams.away.runs).equals(1)
+    expect(state.liveData.linescore.offense.first).equals(null)
     expect(state.liveData.linescore.offense.second!.id).equals(2)
     expect(state.liveData.linescore.offense.third!.id).equals(1)
     expect(state.liveData.linescore.offense.batter!.id).equals(4)
     expect(state.liveData.plays.currentPlay!.about.atBatIndex).equals(4)
 
+    // An imported game gives the score, the outs and the next batter, and
+    // leaves the bases for the scorer to set.
+    const imported = replayPlays(
+      { plays: documents(false), currentPlay: null },
+      context
+    ).state.liveData.linescore
+    expect([imported.outs, imported.teams.away.runs]).deep.equals([1, 1])
+    const offense = imported.offense
+    expect([offense.first, offense.second, offense.third]).deep.equals([
+      null,
+      null,
+      null
+    ])
+    expect(imported.offense.batter!.id).equals(4)
+
     // Scoring carries on from there with the lineup the first scored play kept.
     const next = score(state, [{ type: 'pitch', call: 'B' }])
-    const carried = replayPlays(
-      { plays, currentPlay: next.current },
-      { gamePk: 'g1', teams: TEAMS, setup }
-    )
+    const carried = replayPlays({ plays, currentPlay: next.current }, context)
     expect(carried.derived).equals(3)
     expect(carried.state.liveData.linescore.balls).equals(1)
   })

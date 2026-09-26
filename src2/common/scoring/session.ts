@@ -174,8 +174,10 @@ export class ScoringSession {
       if (session.stored.has(index))
         session.posted.set(index, JSON.stringify(play))
     session.postedCurrent = JSON.stringify(picture.current)
+    // A game read back only in part is shown and never written: saving it
+    // would remove the plays that could not be read.
     if (replayed.problems.length > 0)
-      session.failure = `Some saved plays could not be read back: ${replayed.problems[0].message}`
+      session.refusal = `Some saved plays could not be read back: ${replayed.problems[0].message}`
     return session
   }
 
@@ -309,6 +311,7 @@ export class ScoringSession {
    * this after every change to it.
    */
   sync(target: readonly ScoringAction[]): Problem[] {
+    if (this.refusal != null) return [{ code: 'notNow', message: this.refusal }]
     let same = 0
     while (
       same < this.log.length &&
@@ -349,6 +352,7 @@ export class ScoringSession {
     )
     if (!idle()) return false
     if (
+      fresh.refusal === this.refusal &&
       JSON.stringify(fresh.log) === JSON.stringify(this.log) &&
       JSON.stringify(fresh.game) === JSON.stringify(this.game)
     )
@@ -361,6 +365,8 @@ export class ScoringSession {
     this.segment = fresh.segment
     this.postedCurrent = fresh.postedCurrent
     this.failure = fresh.failure
+    // A game somebody else left unreadable is shown, never written to.
+    this.refusal = fresh.refusal
     for (const [target, source] of [
       [this.times, fresh.times],
       [this.posted, fresh.posted]
@@ -445,7 +451,11 @@ export class ScoringSession {
 
   // ---- What the server should hold, and what it does not yet ----
 
-  private picture(): {
+  /**
+   * What the server should hold: each play this session scored, folded with
+   * its times, and the at-bat in progress, or null once the game is over.
+   */
+  picture(): {
     plays: Map<number, GumboPlay>
     current: CurrentPlay | null
   } {
@@ -483,6 +493,8 @@ export class ScoringSession {
   }
 
   private change(): SaveChange {
+    // A session refused, or read back only in part, writes nothing.
+    if (this.refusal != null) return { plays: [], remove: [] }
     const picture = this.picture()
     const plays = [...picture.plays]
       .filter(

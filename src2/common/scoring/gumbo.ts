@@ -1,14 +1,16 @@
 import { asArray, asObject, asUnknown, asValue, type Cleaner } from 'cleaners'
 
 import { eventTypeName } from '../gumboEventTypes'
-import {
-  asCurrentPlay,
-  asGumboPlay,
-  type CurrentPlay,
-  type GumboPlay
-} from '../gumboPlay'
+import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import { cleanAction, type Problem, type ScoringAction } from './actions'
 import { type Applied, applyAction } from './apply'
+import {
+  currentDocumentOf,
+  documentOf,
+  FINAL_INDEX,
+  finalDocumentOf,
+  type PlayStamp
+} from './document'
 import {
   freshGame,
   ordinal,
@@ -24,10 +26,8 @@ import {
   type GameSetup,
   type GameState,
   type GameTeam,
-  type PlayerRef,
   setupOf,
-  type Side,
-  withoutUndefined
+  type Side
 } from './state'
 
 /**
@@ -73,206 +73,7 @@ export function recordOf(play: unknown): GameStationRecord | null {
   }
 }
 
-export interface PlayStamp {
-  setupBefore: GameSetup
-  actions: ScoringAction[]
-  startTime?: string | null
-  endTime?: string | null
-}
-
-interface Person {
-  id?: number
-  fullName: string
-}
-
-function playerOf(
-  state: GameState,
-  setup: GameSetup,
-  id: number
-): { userId: number | null; fullName: string; teamId: string } | null {
-  const player = state.gameData.players[id] ?? setup.players[id]
-  return player == null
-    ? null
-    : {
-        userId: player.userId,
-        fullName: player.fullName,
-        teamId: player.teamId
-      }
-}
-
-/** A player as a stored play names him: his user id, or only his name. */
-function person(state: GameState, setup: GameSetup, ref: PlayerRef): Person {
-  const player = playerOf(state, setup, ref.id)
-  const fullName = player?.fullName ?? ref.fullName
-  return player?.userId == null ? { fullName } : { id: player.userId, fullName }
-}
-
-function sideOf(state: GameState, teamId: string | undefined): Side {
-  return teamId === state.gameData.teams.home.id ? 'home' : 'away'
-}
-
-interface HighlightCredit {
-  eventType: string
-  label: string
-  teamId: Side
-  creditUserId: number | null
-  credit: { name: string; role: string; position: string | null }
-}
-
-const BATTER_CREDITED = new Set([
-  'single',
-  'double',
-  'triple',
-  'home_run',
-  'walk',
-  'intent_walk',
-  'hit_by_pitch',
-  'catcher_interference',
-  'manual_placement',
-  'sac_fly',
-  'sac_fly_double_play',
-  'sac_bunt'
-])
-const PITCHER_CREDITED = new Set(['strikeout', 'strikeout_double_play'])
-const FIELDER_CREDITED = new Set([
-  'field_out',
-  'other_out',
-  'grounded_into_double_play',
-  'triple_play',
-  'caught_stealing',
-  'pickoff_1b',
-  'pickoff_2b',
-  'pickoff_3b'
-])
-
-/**
- * The credits a highlight shows for a completed play: the batter who reached,
- * the pitcher who struck him out, the fielders who made the outs, and each
- * runner who scored or stole. A play nobody did anything worth watching on
- * carries an empty list.
- */
-function highlightCredits(
-  state: GameState,
-  setup: GameSetup,
-  play: GamePlay
-): HighlightCredit[] {
-  const type = play.result.eventType
-  const credits: HighlightCredit[] = []
-  const add = (
-    ref: PlayerRef,
-    eventType: string,
-    head: string,
-    role: string,
-    position: string | null = null,
-    detail = ''
-  ): void => {
-    const player = playerOf(state, setup, ref.id)
-    const name = player?.fullName ?? ref.fullName
-    credits.push({
-      eventType,
-      label: `${head}: ${name}${position == null ? '' : ` (${position})`}${detail}`,
-      teamId: sideOf(state, player?.teamId),
-      creditUserId: player?.userId ?? null,
-      credit: { name, role, position }
-    })
-  }
-  if (BATTER_CREDITED.has(type))
-    add(play.matchup.batter, type, eventTypeName(type), 'batter')
-  if (PITCHER_CREDITED.has(type))
-    add(play.matchup.pitcher, type, eventTypeName(type), 'pitcher')
-  if (FIELDER_CREDITED.has(type))
-    for (const runner of play.runners)
-      if (runner.movement.isOut) {
-        const putout = runner.credits.find(c => c.credit === 'f_putout')
-        if (putout == null) continue
-        const assists = runner.credits
-          .filter(c => c.credit === 'f_assist')
-          .map(c => `${c.player.fullName} (${c.position})`)
-        add(
-          putout.player,
-          type,
-          runner.movement.end === 0
-            ? 'Out'
-            : `Out at ${runner.movement.end === 4 ? 'home' : ordinal(runner.movement.end)}`,
-          'fielder',
-          putout.position,
-          assists.length === 0 ? '' : ` from ${assists.join(', ')}`
-        )
-      }
-  for (const runner of play.runners) {
-    if (runner.movement.runScored === true && !runner.movement.isOut)
-      add(runner.details.runner, 'run', 'Run', 'runner')
-    if (runner.details.movementReason === 'Steal' && !runner.movement.isOut)
-      add(runner.details.runner, 'stolen_base', 'Stolen base', 'runner')
-  }
-  return credits
-}
-
-function documentBody(
-  state: GameState,
-  play: GamePlay,
-  stamp: PlayStamp
-): Record<string, unknown> {
-  const setup = stamp.setupBefore
-  const who = (ref: PlayerRef): Person => person(state, setup, ref)
-  return {
-    about: {
-      atBatIndex: play.about.atBatIndex,
-      inning: play.about.inning,
-      halfInning: play.about.halfInning,
-      isComplete: play.about.isComplete,
-      isScoringPlay: play.runners.some(
-        runner => runner.movement.runScored === true && !runner.movement.isOut
-      ),
-      startTime: stamp.startTime ?? null,
-      endTime: stamp.endTime ?? null
-    },
-    count: { ...play.count },
-    matchup: {
-      batter: who(play.matchup.batter),
-      pitcher: who(play.matchup.pitcher),
-      batSide: { code: play.matchup.batSide.code }
-    },
-    runners: play.runners.map(runner => ({
-      movement: { ...runner.movement },
-      details: {
-        runner: who(runner.details.runner),
-        movementReason: runner.details.movementReason
-      },
-      credits: runner.credits.map(credit => ({
-        player: who(credit.player),
-        position: { abbreviation: credit.position },
-        credit: credit.credit
-      }))
-    })),
-    playEvents: play.playEvents.map(event => ({
-      index: event.index,
-      isPitch: event.isPitch,
-      type: event.type,
-      details: { ...event.details },
-      count: { ...event.count },
-      player: who(event.player)
-    })),
-    ...(play.hitData == null
-      ? {}
-      : {
-          hitData: {
-            launchAngle: play.hitData.launchAngle,
-            trajectory: play.hitData.trajectory,
-            coordinates: { ...play.hitData.coordinates },
-            ...(play.hitData.fielder == null
-              ? {}
-              : { fielder: who(play.hitData.fielder) })
-          }
-        }),
-    gameStation: {
-      version: 1,
-      setupBefore: stamp.setupBefore,
-      actions: stamp.actions,
-      detail: play.source.gamestation
-    }
-  }
-}
+export type { PlayStamp }
 
 /** A completed play, ready to store. */
 export function foldPlay(
@@ -280,87 +81,22 @@ export function foldPlay(
   play: GamePlay,
   stamp: PlayStamp
 ): GumboPlay {
-  return asGumboPlay(
-    withoutUndefined({
-      ...documentBody(state, play, stamp),
-      result: {
-        type: 'atBat',
-        event: play.result.event,
-        eventType: play.result.eventType,
-        description: play.result.description,
-        rbi: play.result.rbi,
-        awayScore: play.result.awayScore,
-        homeScore: play.result.homeScore
-      },
-      credits: highlightCredits(state, stamp.setupBefore, play)
-    })
-  )
+  return documentOf(state, play, stamp)
 }
 
-/**
- * The at-bat in progress: no outcome and no score, because it has none yet.
- * When the batter due is on base there is no play, and the record rides on a
- * play that names only its place in the game.
- */
+/** The at-bat in progress, or the place of one whose batter is on base. */
 export function foldCurrentPlay(
   state: GameState,
   play: GamePlay | null,
   stamp: PlayStamp
 ): CurrentPlay {
-  if (play == null) {
-    const line = state.liveData.linescore
-    return asCurrentPlay({
-      about: {
-        atBatIndex: state.liveData.plays.allPlays.length,
-        inning: line.currentInning,
-        halfInning: line.isTopInning ? 'top' : 'bottom',
-        isComplete: false
-      },
-      gameStation: {
-        version: 1,
-        setupBefore: stamp.setupBefore,
-        actions: stamp.actions
-      }
-    })
-  }
-  const body = documentBody(state, play, stamp)
-  return asCurrentPlay(
-    withoutUndefined({
-      ...body,
-      about: { ...(body.about as object), isComplete: false }
-    })
-  )
+  return currentDocumentOf(state, play, stamp)
 }
 
 /** The last play of a game, at index 9999: its final score. */
-export const FINAL_INDEX = 9999
+export { FINAL_INDEX }
 export function foldFinal(state: GameState, stamp: PlayStamp): GumboPlay {
-  const line = state.liveData.linescore
-  return asGumboPlay({
-    about: {
-      atBatIndex: FINAL_INDEX,
-      inning: line.currentInning,
-      halfInning: line.isTopInning ? 'top' : 'bottom',
-      isComplete: true,
-      startTime: stamp.startTime ?? null,
-      endTime: stamp.endTime ?? null
-    },
-    result: {
-      type: 'atBat',
-      event: 'Game over',
-      eventType: 'final_score',
-      description: 'Game over',
-      awayScore: line.teams.away.runs,
-      homeScore: line.teams.home.runs,
-      rbi: 0
-    },
-    credits: [],
-    gameStation: {
-      version: 1,
-      setupBefore: stamp.setupBefore,
-      actions: stamp.actions
-    }
-  })
+  return finalDocumentOf(state, stamp)
 }
 
 /** One play's share of the log: the setup it started from and its actions. */
@@ -484,6 +220,12 @@ function sessionId(state: GameState, raw: unknown): number | null {
   return state.meta.identities.sourceToSession[`number:${id}`] ?? null
 }
 
+/** A base as a document names it: a number, or `'1B'` to `'3B'`. */
+function baseNumber(raw: unknown): number {
+  if (typeof raw === 'number') return raw
+  return raw === '1B' ? 1 : raw === '2B' ? 2 : raw === '3B' ? 3 : 0
+}
+
 /**
  * The state a run of plays GameStation did not score leaves behind: the half,
  * the outs, the score, who is on base and who bats next. Each play stands in
@@ -543,14 +285,17 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
       outs = 0
       bases = [null, null, null]
     }
-    for (const runner of doc.runners ?? []) {
+    // Only GameStation's documents list every runner; an imported play's
+    // runners are left for the scorer to place by hand.
+    const runners = 'gameStation' in doc ? (doc.runners ?? []) : []
+    for (const runner of runners) {
       const id = sessionId(state, runner.details?.runner)
       if (id == null) continue
       bases = bases.map(base => (base === id ? null : base))
       const movement = (
         runner as { movement?: { isOut?: unknown; end?: unknown } }
       ).movement
-      const end = typeof movement?.end === 'number' ? movement.end : 0
+      const end = baseNumber(movement?.end)
       if (movement?.isOut !== true && end >= 1 && end <= 3) bases[end - 1] = id
     }
     outs = doc.about.halfOuts ?? doc.count?.outs ?? outs

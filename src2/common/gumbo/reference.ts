@@ -48,3 +48,29 @@ export const POSITION_CODES: ReadonlySet<string> = new Set(
 export const MOVEMENT_REASONS: ReadonlySet<string> = new Set(
   runnerDetailTypes.map(entry => entry.statName)
 )
+
+/** A position as a Gumbo credit names it. */
+export interface GumboPosition {
+  code: string
+  name: string
+  type: string
+  abbreviation: string
+}
+
+/**
+ * The positions a player can take in a game (`P` to `RF`, `DH`, `PH`, …), by
+ * abbreviation, in the shape a credit's `position` has in the live feed.
+ */
+export const GAME_POSITIONS: ReadonlyMap<string, GumboPosition> = new Map(
+  positions
+    .filter(entry => entry.gamePosition)
+    .map(entry => [
+      entry.abbrev,
+      {
+        code: entry.code,
+        name: entry.fullName,
+        type: entry.type,
+        abbreviation: entry.abbrev
+      }
+    ])
+)

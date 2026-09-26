@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { GUMBO_EVENT_TYPES, normalizeEventType } from '../gumboEventTypes'
+import { GUMBO_EVENT_TYPES } from '../gumboEventTypes'
 import {
   ACTION_TYPES,
   BASE_RUNNING_KINDS,
@@ -26,6 +26,7 @@ import {
   toolSchema,
   TRAJECTORIES
 } from './actions'
+import { storedEventType } from './document'
 import {
   asGameSetup,
   asGameState,
@@ -289,10 +290,18 @@ describe('scoring actions', function () {
   })
 
   it('folds nothing the stored vocabulary does not accept', function () {
-    // A legacy code the engine still folds is stored as its listed one.
+    // The document writes each type the engine produces as a listed code.
     const stored: readonly string[] = GUMBO_EVENT_TYPES
     for (const type of PRODUCED_EVENT_TYPES)
-      expect(stored, type).to.include(normalizeEventType(type))
+      expect(stored, type).to.include(storedEventType(type))
+    expect(storedEventType('catcher_interference')).equals('catcher_interf')
+    expect(storedEventType('manual_placement')).equals('gs_manual_placement')
+    expect(storedEventType('placed_runner')).equals('runner_placed')
+    // Other out is a runner's between pitches, and the batter's own is ours.
+    expect(storedEventType('other_out')).equals('other_out')
+    expect(storedEventType('other_out', 'Batter Out — Other')).equals(
+      'gs_batter_out'
+    )
   })
 })
 

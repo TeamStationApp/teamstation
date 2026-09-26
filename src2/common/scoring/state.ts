@@ -91,6 +91,8 @@ export const asGamePlay = asObject({
         isOut: asBoolean,
         outNumber: asOptional(asNumber),
         forceOut: asBoolean,
+        /** A runner safe on a base he was forced to. */
+        forced: asOptional(asBoolean),
         runScored: asOptional(asBoolean)
       }),
       details: asObject({
@@ -103,7 +105,14 @@ export const asGamePlay = asObject({
         /** A run that is unearned to the team, reconstructed over the whole half. */
         teamUnearned: asOptional(asBoolean),
         /** A run the batter drove in. */
-        rbi: asOptional(asBoolean)
+        rbi: asOptional(asBoolean),
+        /** The play event that made this movement. */
+        playIndex: asOptional(asNumber),
+        /**
+         * Made by an action between pitches — a steal, a wild pitch, a runner
+         * sent on — rather than on a play the plate appearance's result made.
+         */
+        byAction: asOptional(asBoolean)
       }),
       credits: asArray(asCredit)
     })
@@ -288,6 +297,8 @@ export interface Resolution {
   originalRuns: number
   originalOuts: number
   movements: Movement[]
+  /** The play event the result came with: the in-play pitch, ball four, … */
+  eventIndex?: number
   /** What each runner on base when the play began is charged with. */
   charges?: Record<number, RunnerCharge>
   /** The batter reached on an error, catcher's interference, or a dropped third strike that needed one. */
@@ -535,6 +546,7 @@ export const asGameState: Cleaner<GameState> = exactly(
         originalRuns: asNumber,
         originalOuts: asNumber,
         movements: asArray(asMovement),
+        eventIndex: asOptional(asNumber),
         charges: asOptional(asObject(asCharge)),
         batterReachedOnError: asOptional(asBoolean)
       })

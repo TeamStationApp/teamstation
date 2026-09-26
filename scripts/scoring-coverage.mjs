@@ -154,7 +154,8 @@ if (changedBase != null) {
       'src2/app',
       'src2/common',
       'src2/server/stats',
-      'src2/server/statsBuilder'
+      'src2/server/statsBuilder',
+      'src2/server/dev/refoldScoredGames.ts'
     ],
     // The checked-in MLB reference files alone pass spawnSync's 1 MB default.
     { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }

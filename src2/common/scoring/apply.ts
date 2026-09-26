@@ -141,6 +141,8 @@ interface Recorded {
   reason: string
   /** A run this movement scores is batted in. */
   rbi?: boolean
+  /** The play event that made it, when that event is already written. */
+  playIndex?: number
   credits?: RunnerCredit[]
   route?: Array<{ id: number; point: Point }>
   thrower?: Point
@@ -154,6 +156,15 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
   const credits = record.credits ?? []
   const scored = !out && movement.to === 4
   const charge = chargeOf(state, ctx.charges, movement.playerId)
+  // A movement made on a play points at the event the play came with. One an
+  // action made between pitches points at that action's event, written next.
+  const pending = state.pending
+  const byAction = pending == null
+  const playIndex =
+    record.playIndex ??
+    (pending == null
+      ? play.playEvents.length
+      : (pending.eventIndex ?? play.playEvents.length - 1))
   const run = scored
     ? runDecision(
         state,
@@ -168,6 +179,7 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
       end: movement.to,
       isOut: out,
       forceOut: out && movement.force,
+      forced: !out && movement.force,
       runScored: !out && movement.to === 4,
       outNumber: out ? line(ctx).outs : undefined
     },
@@ -176,7 +188,9 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
       movementReason: record.reason,
       responsiblePitcher: charge.pitcher,
       ...run,
-      rbi: scored && record.rbi === true
+      rbi: scored && record.rbi === true,
+      playIndex,
+      byAction
     },
     credits
   })
@@ -265,6 +279,7 @@ function newResolution(
   const play = current(ctx)
   return {
     outcome,
+    eventIndex: play.playEvents.length - 1,
     originalRunnerRecordCount: play.runners.length,
     originalBases: baseIds(ctx.state),
     originalRuns: line(ctx).teams[battingSide(ctx.state)].runs,
@@ -513,6 +528,11 @@ function prepareHit(ctx: Ctx): void {
     line(ctx).teams[battingSide(ctx.state)].hits++
 }
 
+/**
+ * Puts each runner of an award where it sends him. Only the batter and the
+ * runners he forced move; a runner the award did not force stays on his base
+ * and, as in the feed, has no entry on the play.
+ */
 function applyAwardMovements(ctx: Ctx, reason: string): void {
   const pending = ctx.state.pending!
   rebuildQueue(ctx)
@@ -520,7 +540,7 @@ function applyAwardMovements(ctx: Ctx, reason: string): void {
   for (const movement of pending.movements) {
     if (movement.to < 4) {
       setBase(ctx, movement.playerId, movement.to)
-      recordRunner(ctx, movement, { reason })
+      if (movement.to !== movement.from) recordRunner(ctx, movement, { reason })
     }
     moved(ctx, movement)
   }
@@ -1461,7 +1481,10 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
       force: false,
       decision: 'safe'
     }
-    recordRunner(ctx, movement, { reason: 'Place a Runner (Tiebreaker)' })
+    recordRunner(ctx, movement, {
+      reason: 'Place a Runner (Tiebreaker)',
+      playIndex: play.playEvents.length - 1
+    })
     moved(ctx, movement)
     return
   }
