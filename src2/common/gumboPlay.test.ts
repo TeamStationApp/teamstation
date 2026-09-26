@@ -6,6 +6,7 @@ import {
   eventTypeName,
   GUMBO_EVENT_TYPES,
   GUMBO_EXTENSION_EVENT_TYPES,
+  isGumboEventType,
   LEGACY_EVENT_TYPES,
   normalizeEventType
 } from './gumboEventTypes'
@@ -240,9 +241,18 @@ describe("MLB's event types", function () {
     expect(LEGACY_EVENT_TYPES).deep.equals({
       catcher_interference: 'catcher_interf',
       placed_runner: 'runner_placed',
-      manual_placement: 'gs_manual_placement'
+      manual_placement: 'gs_manual_placement',
+      // An earlier import's own names, from a retired server-side parser (U26).
+      runner_out: 'other_out',
+      batter_out: 'field_out',
+      catcher_s_interference: 'catcher_interf',
+      fc_double_play: 'double_play',
+      offensive_interference: 'batter_interference',
+      batter_put_on_base: 'gs_manual_placement',
+      inning_changed_by_scorekeeper: 'final_score'
     })
     const legacy = Object.keys(LEGACY_EVENT_TYPES)
+    const listed = Object.values(LEGACY_EVENT_TYPES)
     const body = asPostEventsBody({
       mode: 'live',
       plays: [...legacy, 'single'].map((code, index) => ({
@@ -262,11 +272,10 @@ describe("MLB's event types", function () {
       }
     })
     expect(body.plays.map(item => item.result.eventType)).deep.equals([
-      'catcher_interf',
-      'runner_placed',
-      'gs_manual_placement',
+      ...listed,
       'single'
     ])
+    for (const code of listed) expect(isGumboEventType(code), code).equals(true)
     // So is each runner's, and nothing else about him.
     expect(
       body.plays.map(item =>
@@ -276,9 +285,7 @@ describe("MLB's event types", function () {
         )
       )
     ).deep.equals(
-      ['catcher_interf', 'runner_placed', 'gs_manual_placement', 'single'].map(
-        code => [code, 'single', undefined]
-      )
+      [...listed, 'single'].map(code => [code, 'single', undefined])
     )
     expect(body.plays[0].runners?.[0].details?.runner).deep.equals({ id: null })
     // The action log keeps its own words.

@@ -108,7 +108,13 @@ const gumboEventType = {
     'code for) and `gs_batting_order` (a change of batting order). A post ' +
     'may still send `catcher_interference`, `placed_runner` or ' +
     '`manual_placement`; they are stored as `catcher_interf`, ' +
-    '`runner_placed` and `gs_manual_placement`.'
+    '`runner_placed` and `gs_manual_placement`. It may also send the ' +
+    "names older imports used, each stored as MLB's or " +
+    "GameStation's code: `runner_out` as `other_out`, `batter_out` as " +
+    '`field_out`, `catcher_s_interference` as `catcher_interf`, ' +
+    '`fc_double_play` as `double_play`, `offensive_interference` as ' +
+    '`batter_interference`, `batter_put_on_base` as `gs_manual_placement` ' +
+    'and `inning_changed_by_scorekeeper` as `final_score`.'
 }
 const gumboPosition = {
   type: 'object',

@@ -107,13 +107,22 @@ export const GUMBO_EXTENSION_EVENT_TYPES: readonly GumboEventType[] = [
 
 /**
  * Codes that are not on the list but are still accepted as input, and the
- * code each is stored as. The scoring engine and older imports write them;
- * migration 039 renamed the ones already stored.
+ * code each is stored as. The scoring engine and older imports write the
+ * first three, and migration 039 renamed the ones already stored. The rest are
+ * an earlier import source's own names, which a retired server-side parser
+ * stored as results; migration 040 renamed those.
  */
 export const LEGACY_EVENT_TYPES = {
   catcher_interference: 'catcher_interf',
   placed_runner: 'runner_placed',
-  manual_placement: 'gs_manual_placement'
+  manual_placement: 'gs_manual_placement',
+  runner_out: 'other_out',
+  batter_out: 'field_out',
+  catcher_s_interference: 'catcher_interf',
+  fc_double_play: 'double_play',
+  offensive_interference: 'batter_interference',
+  batter_put_on_base: 'gs_manual_placement',
+  inning_changed_by_scorekeeper: 'final_score'
 } as const satisfies Record<string, GumboEventType>
 
 export type LegacyEventType = keyof typeof LEGACY_EVENT_TYPES
