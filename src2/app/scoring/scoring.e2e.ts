@@ -17,6 +17,7 @@ import { asGameDetail } from '../../common/api'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const game = asGameDetail({
   id: 'g1',
@@ -4454,10 +4455,10 @@ describe('scoring browser', function () {
       const third = '[data-roster-target="roster"] [data-roster-player="3"]'
       const a = await rect(source)
       const following = await rect(third)
-      expect(following.y - a.bottom).closeTo(4, 0.5)
+      expect(following.y - a.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
       const destination = await rect('[data-roster-target="lineup-1"]')
       const next = await rect('[data-roster-target="lineup-2"]')
-      expect(next.y - destination.bottom).closeTo(4, 0.5)
+      expect(next.y - destination.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
       await page.touchscreen.touchStart(a.x + 17, a.y + 13)
       await new Promise(resolve => setTimeout(resolve, 750))
       const ghost = '[data-testid="Roster dragged card"]'
@@ -4469,6 +4470,12 @@ describe('scoring browser', function () {
       )
       expect((await rect(source)).height).lessThan(1)
       expect((await rect(third)).y).lessThan(following.y - 40)
+      // The lifted card's place closes to one gap between its neighbours.
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const above = await rect(
+        '[data-roster-target="roster"] [data-roster-player="1"]'
+      )
+      expect((await rect(third)).y - above.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
       await page.touchscreen.touchMove(destination.x + 17, destination.y + 10)
       await new Promise(resolve => setTimeout(resolve, 250))
       const floating = await rect(ghost)

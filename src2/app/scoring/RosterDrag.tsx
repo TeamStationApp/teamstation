@@ -8,14 +8,16 @@ import React, {
 } from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
-import { RosterCardSlot } from './RosterCardSlot'
+import { RosterCardSlot, useRosterLifted } from './RosterCardSlot'
 import { RosterClipContext, useRosterGesture } from './RosterDragContext'
 import type { RosterDragProps } from './rosterDragProps'
 import { RosterHold } from './rosterHold'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
   const source = useId()
+  const lifted = useRosterLifted(source)
   const clip = useContext(RosterClipContext)
   const theme = useTheme()
   const node = useRef<HTMLDivElement>(null)
@@ -196,7 +198,8 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
             ? 'flex'
             : undefined,
         flexDirection: 'column',
-        gap: 4,
+        gap: ROSTER_CARD_GAP,
+        marginBottom: lifted ? -ROSTER_CARD_GAP : undefined,
         touchAction: 'auto',
         WebkitTouchCallout: 'none',
         userSelect: 'none',

@@ -2,9 +2,14 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import type { GestureResponderEvent } from 'react-native'
 
-import { rosterAccessibilityAction, rosterResponder } from './RosterDrag.native'
+import {
+  rosterAccessibilityAction,
+  rosterItemLayout,
+  rosterResponder
+} from './RosterDrag.native'
 import { measureRosterView } from './RosterDragContext'
 import { RosterGesture } from './rosterGesture'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 import { rosterSegmentAt } from './RosterSelector'
 
 const event = (x: number, y: number): GestureResponderEvent =>
@@ -98,5 +103,18 @@ describe('native roster responder', function () {
     expect(rosterSegmentAt(179, 20, 320)).equals(0)
     expect(rosterSegmentAt(180, 20, 320)).equals(1)
     expect(rosterSegmentAt(500, 20, 320)).equals(1)
+  })
+
+  it('lays a native item out as just its card, one gap from the next, and closes a lifted card to one gap', function () {
+    const resting = rosterItemLayout(false, false)
+    // No border or padding: the item is exactly as tall as its card.
+    expect(Object.keys(resting).sort()).deep.equals([
+      'borderRadius',
+      'gap',
+      'opacity'
+    ])
+    expect(resting).includes({ gap: ROSTER_CARD_GAP, opacity: 1 })
+    expect(rosterItemLayout(true, false).marginBottom).equals(-ROSTER_CARD_GAP)
+    expect(rosterItemLayout(false, true).opacity).equals(0.4)
   })
 })
