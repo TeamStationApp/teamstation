@@ -6,6 +6,7 @@ import {
   MLB_EVENT_TYPES,
   STORED_EVENT_TYPES
 } from '../../common/gumbo/reference'
+import { gumboViolations } from '../../common/gumbo/validate'
 import {
   eventTypeName,
   GUMBO_EXTENSION_EVENT_TYPES
@@ -681,6 +682,8 @@ describe('when each lineup change is announced', function () {
           substitutions.map(({ event }) => event.details.description),
           row
         ).deep.equals(said)
+      for (const play of [...plays, ...open])
+        expect(gumboViolations(play), row).deep.equals([])
       const result = gameStatLines(
         plays,
         teams,
@@ -1724,6 +1727,7 @@ describe('when each lineup change is announced', function () {
       responsiblePitcher: { id: 210 },
       earned: true
     })
+    for (const play of plays) expect(gumboViolations(play)).deep.equals([])
     const result = gameStatLines(
       plays,
       teams,

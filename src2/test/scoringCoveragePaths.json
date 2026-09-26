@@ -23,6 +23,7 @@
   "src2/server/statsBuilder/**/*.ts",
   "src2/server/dev/postStatsFixture.ts",
   "src2/server/dev/refoldScoredGames.ts",
+  "src2/server/dev/validateGumbo.ts",
   "src2/server/events/eventWrite.ts",
   "src2/server/admin/mergeTeams.ts",
   "src2/server/routes/teams.ts",

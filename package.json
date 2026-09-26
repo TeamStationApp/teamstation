@@ -48,7 +48,8 @@
     "stats-request": "node -r sucrase/register src2/server/statsBuilder/cli.ts",
     "test": "node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha -r sucrase/register -r ./src2/test/scoringDomSetup.cjs --extension ts --spec 'src2/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
-    "typecheck.native": "tsc -p tsconfig.native.json"
+    "typecheck.native": "tsc -p tsconfig.native.json",
+    "validate-gumbo": "node -r sucrase/register src2/server/dev/validateGumbo.ts"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
