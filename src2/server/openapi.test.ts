@@ -2,6 +2,12 @@ import { expect } from 'chai'
 import type { Kysely } from 'kysely'
 import { describe, it } from 'mocha'
 
+import {
+  HIT_TRAJECTORIES,
+  MOVEMENT_REASONS,
+  PITCH_CODES,
+  STORED_EVENT_TYPES
+} from '../common/gumbo/reference'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { openApiDocument } from './openapi'
@@ -176,5 +182,84 @@ describe('the API document', function () {
     expect(eventsDescription).includes('matchup.pitcher')
     expect(eventsDescription).includes('incomplete')
     expect(eventsDescription).includes('game_player_stats')
+  })
+
+  it('describes the stored play as Gumbo, with its codes and extensions', function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    const play = schemas.GumboPlay
+    const runner = schemas.GumboRunner.properties
+    const pitch = schemas.GumboPitchEvent.properties
+    const action = schemas.GumboActionEvent.properties
+
+    const sorted = (codes: ReadonlySet<string>): string[] => [...codes].sort()
+    expect(play.properties.result.properties.eventType.enum).deep.equals(
+      sorted(STORED_EVENT_TYPES)
+    )
+    expect(play.properties.result.properties.eventType.enum).includes.members([
+      'final_score',
+      'score_correction',
+      'gs_manual_placement',
+      'gs_batter_out',
+      'gs_batting_order'
+    ])
+    expect(runner.details.properties.eventType.enum).deep.equals(
+      sorted(STORED_EVENT_TYPES)
+    )
+    expect(action.details.properties.eventType.enum).deep.equals(
+      sorted(STORED_EVENT_TYPES)
+    )
+    expect(runner.details.properties.movementReason.enum).deep.equals([
+      null,
+      ...sorted(MOVEMENT_REASONS)
+    ])
+    expect(Object.keys(runner.movement.properties)).deep.equals([
+      'originBase',
+      'start',
+      'end',
+      'outBase',
+      'isOut',
+      'outNumber'
+    ])
+    expect(runner.movement.properties.end.enum).deep.equals([
+      null,
+      '1B',
+      '2B',
+      '3B',
+      'score'
+    ])
+    expect(pitch.details.properties.code.enum).deep.equals(sorted(PITCH_CODES))
+    expect(pitch.hitData.properties.trajectory.enum).deep.equals(
+      sorted(HIT_TRAJECTORIES)
+    )
+    expect(play.properties.about.properties.halfOuts.description).includes(
+      'GameStation extension'
+    )
+    expect(play.properties.gameStation.$ref).equals(
+      '#/components/schemas/GameStationRecord'
+    )
+
+    const paths = document.paths as Record<string, any>
+    const post = paths['/games/{gameId}/events'].post
+    const body = post.requestBody.content['application/json'].schema
+    expect(body.properties.plays.items.$ref).equals(
+      '#/components/schemas/GumboPlay'
+    )
+    expect(body.properties.currentPlay.oneOf[0].$ref).equals(
+      '#/components/schemas/GumboCurrentPlay'
+    )
+    const read =
+      paths['/games/{gameId}/events'].get.responses[200].content[
+        'application/json'
+      ].schema
+    expect(read.properties.plays.items.properties.gumbo.$ref).equals(
+      '#/components/schemas/GumboPlay'
+    )
+
+    // Every reference names a schema the document has.
+    const refs = JSON.stringify(document).match(/#\/components\/schemas\/\w+/g)
+    for (const ref of refs ?? [])
+      expect(schemas, ref).to.have.property(ref.split('/').at(-1)!)
   })
 })

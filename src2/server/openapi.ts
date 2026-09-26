@@ -1,3 +1,11 @@
+import {
+  HIT_TRAJECTORIES,
+  MOVEMENT_REASONS,
+  PITCH_CODES,
+  POSITION_CODES,
+  STORED_EVENT_TYPES
+} from '../common/gumbo/reference'
+
 /**
  * The API's own description, served at `/api/v1/openapi.json`.
  *
@@ -78,6 +86,431 @@ const namedThing = {
   properties: { id: { type: 'string' }, name: { type: 'string' } }
 }
 
+const sorted = (codes: ReadonlySet<string>): string[] => [...codes].sort()
+
+/** A player a play names: his GameStation user id, or only a name. */
+const gumboPerson = {
+  type: 'object',
+  properties: {
+    id: { type: ['integer', 'null'] },
+    fullName: { type: 'string' }
+  }
+}
+const gumboBase = { type: ['string', 'null'], enum: [null, '1B', '2B', '3B'] }
+const gumboEventType = {
+  type: 'string',
+  enum: sorted(STORED_EVENT_TYPES),
+  description:
+    "MLB's event types (`statsapi.mlb.com/api/v1/eventTypes`) and " +
+    "GameStation's extensions: `final_score` and `score_correction` (an " +
+    'import), `gs_manual_placement` (a batter the scorer put ' +
+    'on base by hand), `gs_batter_out` (a batter out on a play MLB has no ' +
+    'code for) and `gs_batting_order` (a change of batting order). A post ' +
+    'may still send `catcher_interference`, `placed_runner` or ' +
+    '`manual_placement`; they are stored as `catcher_interf`, ' +
+    '`runner_placed` and `gs_manual_placement`.'
+}
+const gumboPosition = {
+  type: 'object',
+  required: ['code', 'name', 'type', 'abbreviation'],
+  properties: {
+    code: { type: 'string', enum: sorted(POSITION_CODES) },
+    name: { type: 'string' },
+    type: { type: 'string' },
+    abbreviation: { type: 'string' }
+  }
+}
+const gumboCount = {
+  type: 'object',
+  properties: {
+    balls: { type: 'integer' },
+    strikes: { type: 'integer' },
+    outs: { type: 'integer' }
+  }
+}
+
+/**
+ * The stored play: a standard MLB Gumbo play, in the shape of the live feed
+ * (`statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live`, `liveData.plays`).
+ */
+const gumboSchemas = {
+  GumboPlay: {
+    type: 'object',
+    description:
+      'One play as MLB’s live feed writes it (`liveData.plays.allPlays[]`), ' +
+      'with its codes on the MLB lists checked in under ' +
+      '`src2/common/gumbo/reference/`. `npm run validate-gumbo` checks every ' +
+      'stored play against them. GameStation adds only the `gameStation` ' +
+      'record, the `gs_` event types and `about.halfOuts`. A play another ' +
+      'service posted carries what that service knew; the stats builder ' +
+      'needs the fields the events route lists.',
+    required: ['about', 'result'],
+    properties: {
+      about: {
+        type: 'object',
+        required: ['atBatIndex'],
+        properties: {
+          atBatIndex: { type: 'integer' },
+          inning: { type: ['integer', 'null'] },
+          halfInning: {
+            type: ['string', 'null'],
+            enum: ['top', 'bottom', null]
+          },
+          isTopInning: { type: 'boolean' },
+          isComplete: { type: 'boolean' },
+          isScoringPlay: { type: 'boolean' },
+          hasOut: { type: 'boolean' },
+          hasReview: { type: 'boolean' },
+          startTime: { type: ['string', 'null'], format: 'date-time' },
+          endTime: { type: ['string', 'null'], format: 'date-time' },
+          halfOuts: {
+            type: 'integer',
+            description:
+              'GameStation extension, written by the server on the last ' +
+              'play of each half: the outs the half ended with. An imported ' +
+              "half's can come from an Inning Ended marker and differ from " +
+              "the play's `count.outs`."
+          }
+        }
+      },
+      result: {
+        type: 'object',
+        required: ['eventType'],
+        properties: {
+          type: { type: 'string', enum: ['atBat'] },
+          event: {
+            type: 'string',
+            description:
+              "MLB's name for the event type (`Forceout`, `Sac Bunt`); a " +
+              '`field_out` is `Groundout`, `Flyout`, `Lineout`, `Pop Out` or a ' +
+              'bunt out.'
+          },
+          eventType: gumboEventType,
+          description: { type: 'string' },
+          rbi: { type: ['integer', 'null'] },
+          awayScore: { type: ['integer', 'null'] },
+          homeScore: { type: ['integer', 'null'] },
+          isOut: { type: 'boolean' }
+        }
+      },
+      count: gumboCount,
+      matchup: {
+        type: 'object',
+        properties: {
+          batter: gumboPerson,
+          batSide: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', enum: ['L', 'R', 'S'] },
+              description: { type: 'string' }
+            }
+          },
+          pitcher: gumboPerson,
+          pitchHand: {
+            type: 'object',
+            description:
+              'Written when the roster knows how the pitcher throws.',
+            properties: {
+              code: { type: 'string', enum: ['L', 'R'] },
+              description: { type: 'string' }
+            }
+          }
+        }
+      },
+      runners: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/GumboRunner' }
+      },
+      playEvents: {
+        type: 'array',
+        items: {
+          oneOf: [
+            { $ref: '#/components/schemas/GumboPitchEvent' },
+            { $ref: '#/components/schemas/GumboActionEvent' }
+          ]
+        }
+      },
+      pitchIndex: { type: 'array', items: { type: 'integer' } },
+      actionIndex: { type: 'array', items: { type: 'integer' } },
+      runnerIndex: { type: 'array', items: { type: 'integer' } },
+      credits: {
+        type: 'array',
+        description:
+          'Who a highlight of this play credits, by `creditUserId`: the ' +
+          'batter, the pitcher or the fielders, and every runner who scored ' +
+          '(`run`) or stole (`stolen_base`). Not a Gumbo field; the credits ' +
+          'are what highlights and a player’s plays are read from.',
+        items: { type: 'object' }
+      },
+      gameStation: { $ref: '#/components/schemas/GameStationRecord' }
+    }
+  },
+  GumboRunner: {
+    type: 'object',
+    description:
+      'One movement of one runner, in the order they happened. A play ' +
+      'GameStation scored carries every key; one another service posted, ' +
+      'those it knew.',
+    properties: {
+      movement: {
+        type: 'object',
+        properties: {
+          originBase: {
+            ...gumboBase,
+            description:
+              'Where he stood when the plate appearance began; null for the ' +
+              'batter.'
+          },
+          start: { ...gumboBase, description: 'Null for the batter.' },
+          end: {
+            type: ['string', 'null'],
+            enum: [null, '1B', '2B', '3B', 'score'],
+            description:
+              'Null when he is out. A run a third-out force took back holds ' +
+              'his base.'
+          },
+          outBase: {
+            type: ['string', 'null'],
+            enum: [null, '1B', '2B', '3B', '4B']
+          },
+          isOut: { type: 'boolean' },
+          outNumber: { type: ['integer', 'null'] }
+        }
+      },
+      details: {
+        type: 'object',
+        properties: {
+          event: { type: 'string' },
+          eventType: {
+            ...gumboEventType,
+            description:
+              "The play's event type, or the action's that moved him " +
+              '(`wild_pitch`, `stolen_base_2b`, `runner_placed`, …).'
+          },
+          movementReason: {
+            type: ['string', 'null'],
+            enum: [null, ...sorted(MOVEMENT_REASONS)],
+            description:
+              "MLB's runner detail types (`api/v1/runnerDetailTypes`) and " +
+              "the feed's `r_adv_play`; null for the batter."
+          },
+          runner: gumboPerson,
+          responsiblePitcher: {
+            type: ['object', 'null'],
+            description:
+              'The pitcher charged with him, `{id}`, on every scoring runner ' +
+              "and on a walked batter's own entry.",
+            properties: { id: { type: ['integer', 'null'] } }
+          },
+          isScoringEvent: { type: 'boolean' },
+          rbi: { type: 'boolean' },
+          earned: { type: 'boolean' },
+          teamUnearned: { type: 'boolean' },
+          playIndex: {
+            type: 'integer',
+            description: 'The index of the play event that moved him.'
+          }
+        }
+      },
+      credits: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['player', 'credit'],
+          properties: {
+            player: gumboPerson,
+            position: {
+              ...gumboPosition,
+              description: 'Left out for a fielder not on defence.'
+            },
+            credit: {
+              type: 'string',
+              description:
+                '`f_putout`, `f_assist`, `f_fielded_ball`, ' +
+                '`f_fielding_error`, `f_throwing_error`, …'
+            }
+          }
+        }
+      }
+    }
+  },
+  GumboPitchEvent: {
+    type: 'object',
+    required: ['index', 'isPitch', 'type', 'details'],
+    properties: {
+      index: { type: 'integer' },
+      pitchNumber: { type: 'integer' },
+      isPitch: { type: 'boolean', enum: [true] },
+      type: { type: 'string', enum: ['pitch'] },
+      details: {
+        type: 'object',
+        properties: {
+          call: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', enum: sorted(PITCH_CODES) },
+              description: { type: 'string' }
+            }
+          },
+          code: {
+            type: 'string',
+            enum: sorted(PITCH_CODES),
+            description:
+              "MLB's pitch codes (`api/v1/pitchCodes`). GameStation writes " +
+              '`B`, `C`, `S`, `F`, `T`, `L` and `H` from the call, and for the ' +
+              'ball in play `E` when it scored a run, else `X` when it made an ' +
+              'out, else `D`. A dropped third strike is an `S`.'
+          },
+          description: { type: 'string' },
+          isInPlay: { type: 'boolean' },
+          isStrike: { type: 'boolean' },
+          isBall: { type: 'boolean' },
+          isOut: { type: 'boolean' },
+          hasReview: { type: 'boolean' }
+        }
+      },
+      count: { ...gumboCount, description: 'The count after the pitch.' },
+      hitData: {
+        type: 'object',
+        description:
+          'On the pitch put in play only, and only what the scorer gave. ' +
+          'GameStation writes no launch angle, speed or distance: it only ' +
+          'estimates them, and keeps them in the `gameStation` record.',
+        properties: {
+          trajectory: { type: 'string', enum: sorted(HIT_TRAJECTORIES) },
+          location: {
+            type: 'string',
+            description: "The fielder's position code, e.g. `8`."
+          },
+          coordinates: {
+            type: 'object',
+            description:
+              "MLB's 250 by 250 spray chart, home plate at (125, 204).",
+            properties: {
+              coordX: { type: 'number' },
+              coordY: { type: 'number' }
+            }
+          }
+        }
+      },
+      player: gumboPerson,
+      startTime: { type: ['string', 'null'] },
+      endTime: { type: ['string', 'null'] }
+    }
+  },
+  GumboActionEvent: {
+    type: 'object',
+    required: ['index', 'isPitch', 'type', 'details'],
+    properties: {
+      index: { type: 'integer' },
+      isPitch: { type: 'boolean', enum: [false] },
+      isBaseRunningPlay: {
+        type: 'boolean',
+        description: 'Present, and true, only on a base-running action.'
+      },
+      isSubstitution: {
+        type: 'boolean',
+        description:
+          'Present, and true, on a lineup change: `offensive_substitution`, ' +
+          '`defensive_substitution`, `defensive_switch`, ' +
+          "`pitching_substitution` or `gs_batting_order`. As in MLB's feed, " +
+          "a side's changes to its fielders from when it leaves the field " +
+          'to its first pitch back in it are written as their net change at ' +
+          'the start of the first play it fields. A pinch hitter is written ' +
+          'at the start of the first play he bats in, and a pinch runner ' +
+          'where he takes the base. A `gs_batting_order` names only players ' +
+          'who have appeared in play.'
+      },
+      type: { type: 'string', enum: ['action'] },
+      details: {
+        type: 'object',
+        properties: {
+          description: { type: 'string' },
+          event: { type: 'string' },
+          eventType: gumboEventType,
+          awayScore: { type: 'integer', description: 'After the action.' },
+          homeScore: { type: 'integer', description: 'After the action.' },
+          isScoringPlay: { type: 'boolean' },
+          isOut: { type: 'boolean' },
+          hasReview: { type: 'boolean' }
+        }
+      },
+      count: gumboCount,
+      player: gumboPerson,
+      position: gumboPosition,
+      battingOrder: {
+        type: 'string',
+        description:
+          'On an offensive substitution and a defensive switch: the slot ' +
+          'times 100 plus how many have come in at it, e.g. `601`.'
+      },
+      replacedPlayer: gumboPerson,
+      startTime: { type: ['string', 'null'] },
+      endTime: { type: ['string', 'null'] }
+    }
+  },
+  GumboCurrentPlay: {
+    type: 'object',
+    description:
+      'The at-bat in progress, kept on the game rather than as a play: a ' +
+      '`GumboPlay` with `about.isComplete` false and no `result`, since it ' +
+      'has no outcome yet. When the batter due is already on base (the ' +
+      'inning ended on a runner) it carries only its place in the game and ' +
+      'the `gameStation` record.',
+    required: ['about'],
+    properties: {
+      about: {
+        type: 'object',
+        required: ['atBatIndex', 'isComplete'],
+        properties: {
+          atBatIndex: { type: 'integer' },
+          inning: { type: ['integer', 'null'] },
+          halfInning: {
+            type: ['string', 'null'],
+            enum: ['top', 'bottom', null]
+          },
+          isComplete: { type: 'boolean', enum: [false] }
+        }
+      },
+      count: gumboCount,
+      matchup: { type: 'object' },
+      runners: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/GumboRunner' }
+      },
+      playEvents: {
+        type: 'array',
+        items: {
+          oneOf: [
+            { $ref: '#/components/schemas/GumboPitchEvent' },
+            { $ref: '#/components/schemas/GumboActionEvent' }
+          ]
+        }
+      },
+      gameStation: { $ref: '#/components/schemas/GameStationRecord' }
+    }
+  },
+  GameStationRecord: {
+    type: 'object',
+    description:
+      'GameStation extension, on every play it scored and on the at-bat in ' +
+      "progress: the scorer's action log the play is rebuilt from. " +
+      '`setupBefore` is the lineups before it, `actions` the actions in the ' +
+      "engine's own vocabulary, and `detail` the scorer's own picks and " +
+      'estimates (trajectory, launch angle). Replay and undo read it; ' +
+      '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
+      ' `version` is 1; a post whose record has any other version is ' +
+      'refused with 400.',
+    required: ['version', 'setupBefore', 'actions'],
+    properties: {
+      version: { type: 'integer', enum: [1] },
+      setupBefore: { type: 'object' },
+      actions: { type: 'array', items: { type: 'object' } },
+      detail: { type: 'object' }
+    }
+  }
+}
+
 export function openApiDocument(version: string): OpenApiDocument {
   return {
     openapi: '3.1.0',
@@ -95,6 +528,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         bearer: { type: 'http', scheme: 'bearer' }
       },
       schemas: {
+        ...gumboSchemas,
         ApiError: {
           type: 'object',
           required: ['code', 'message'],
@@ -578,7 +1012,10 @@ export function openApiDocument(version: string): OpenApiDocument {
                   type: 'object',
                   required: ['plays'],
                   properties: {
-                    plays: { type: 'array', items: { type: 'object' } },
+                    plays: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/GumboPlay' }
+                    },
                     source: {
                       type: 'object',
                       properties: {
@@ -587,6 +1024,29 @@ export function openApiDocument(version: string): OpenApiDocument {
                           pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
                         }
                       }
+                    },
+                    mode: {
+                      type: 'string',
+                      enum: ['replace', 'live'],
+                      description:
+                        '`replace`, the default, is a finished game arriving ' +
+                        'whole. `live` is a game being scored: the plays sent ' +
+                        'are written in place and only the indexes in ' +
+                        '`remove` are deleted.'
+                    },
+                    remove: {
+                      type: 'array',
+                      items: { type: 'integer' },
+                      description: 'On a live post: the indexes to delete'
+                    },
+                    currentPlay: {
+                      oneOf: [
+                        { $ref: '#/components/schemas/GumboCurrentPlay' },
+                        { type: 'null' }
+                      ],
+                      description:
+                        'On a live post: the at-bat in progress, or null ' +
+                        'when there is none. Left out, the stored one stays.'
                     }
                   }
                 }
@@ -610,7 +1070,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                           properties: {
                             id: { type: 'string' },
                             gameId: { type: 'string' },
-                            gumbo: { type: 'object' }
+                            gumbo: { $ref: '#/components/schemas/GumboPlay' }
                           }
                         }
                       }
@@ -632,7 +1092,39 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
-            200: { description: '{ plays: [{ id, gameId, gumbo }] }' },
+            200: {
+              description:
+                '{ plays: [{ id, gameId, gumbo }], currentPlay }: `gumbo` is ' +
+                'a `GumboPlay`, `currentPlay` a `GumboCurrentPlay` or null',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['plays', 'currentPlay'],
+                    properties: {
+                      plays: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['id', 'gameId', 'gumbo'],
+                          properties: {
+                            id: { type: 'string' },
+                            gameId: { type: 'string' },
+                            gumbo: { $ref: '#/components/schemas/GumboPlay' }
+                          }
+                        }
+                      },
+                      currentPlay: {
+                        oneOf: [
+                          { $ref: '#/components/schemas/GumboCurrentPlay' },
+                          { type: 'null' }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
             401: errorResponse,
             404: errorResponse
           }
