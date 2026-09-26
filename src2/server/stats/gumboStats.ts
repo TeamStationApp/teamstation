@@ -249,6 +249,36 @@ function resolveId(
   return { id: player.id }
 }
 
+/**
+ * The pitching changes a play records, in order: the event's index and the
+ * pitcher it brought in, null when he is not a known user. Every one is the
+ * side in the field's: a side's changes while it bats are written, as their
+ * net change, in the first play it fields, as MLB writes them.
+ */
+function pitchingChanges(
+  play: GumboPlay,
+  knownUsers: ReadonlySet<number>
+): Array<{ index: number; pitcherId: number | null }> {
+  const events: unknown = (play as Record<string, unknown>).playEvents
+  if (!Array.isArray(events)) return []
+  return events.flatMap((event: unknown) => {
+    if (
+      !isRecord(event) ||
+      typeof event.index !== 'number' ||
+      !isRecord(event.details) ||
+      event.details.eventType !== 'pitching_substitution'
+    )
+      return []
+    const id = isRecord(event.player) ? event.player.id : null
+    return [
+      {
+        index: event.index,
+        pitcherId: isSafeUserId(id) && knownUsers.has(id) ? id : null
+      }
+    ]
+  })
+}
+
 function addFigure(
   lines: Map<number, PlayerGameLine>,
   userId: number | null,
@@ -275,6 +305,8 @@ export function gameStatLines(
   let homeRuns = 0
   let outsHalfKey: string | null = null
   let outsBefore = 0
+  /** The pitcher each half's last play ended with: who begins the next. */
+  const lastPitcher = new Map<string, number | null>()
 
   for (const play of plays) {
     const about = play.about
@@ -363,6 +395,21 @@ export function gameStatLines(
     const outsDelta = outsAfter - outsBefore
     outsBefore = outsAfter
 
+    // An out made before a pitching change in the middle of a plate
+    // appearance is the pitcher's who was on the mound at its event: the one
+    // the last change before it brought in, or the one who began the play.
+    const changes = pitchingChanges(play, knownUsers)
+    const began = lastPitcher.has(halfInning)
+      ? (lastPitcher.get(halfInning) ?? null)
+      : matchupPitcherId
+    lastPitcher.set(halfInning, matchupPitcherId)
+    const moundAt = (index: number): number | null =>
+      changes.reduce(
+        (pitcherId, change) =>
+          change.index < index ? change.pitcherId : pitcherId,
+        began
+      )
+
     // Validate runner entries and collect out-entry pitcher overrides.
     const outPitcherOverrides: Array<number | null> = []
     let walkOwnerId: number | null = matchupPitcherId
@@ -406,6 +453,13 @@ export function gameStatLines(
           if (outPitcher.id != null && outPitcher.id !== matchupPitcherId) {
             outPitcherOverrides.push(outPitcher.id)
           }
+        } else if (
+          typeof details.playIndex === 'number' &&
+          changes.length > 0
+        ) {
+          const pitcherId = moundAt(details.playIndex)
+          if (pitcherId !== matchupPitcherId)
+            outPitcherOverrides.push(pitcherId)
         }
       }
 

@@ -6,6 +6,7 @@ import { HttpError } from '../errors'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
+import { PlayFolder } from './document'
 import { recordOf } from './gumbo'
 import {
   type EventStore,
@@ -13,7 +14,7 @@ import {
   ScoringSession,
   type StoredGame
 } from './session'
-import { setupOf } from './state'
+import { setupOf, type Side } from './state'
 
 /** A server in memory that records every post and can be made to fail. */
 class FakeStore implements EventStore {
@@ -514,6 +515,338 @@ describe('a scoring session', function () {
     expect(store.current).not.equals(null)
   })
 
+  const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+  const out = [strike, strike, strike, close]
+  const applyAll = (
+    session: ScoringSession,
+    actions: ScoringAction[]
+  ): void => {
+    for (const action of actions)
+      expect(session.apply(action).problems, action.type).deep.equals([])
+  }
+  /** Each stored play's lineup changes, by index: `0 pitching_substitution`. */
+  const changes = (store: FakeStore): Record<number, string[]> =>
+    Object.fromEntries(
+      [
+        ...[...store.plays.values()].map(row => row.play),
+        ...(store.current == null ? [] : [store.current])
+      ].map(play => [
+        play.about.atBatIndex,
+        (
+          (play.playEvents ?? []) as Array<{
+            index: number
+            isSubstitution?: boolean
+            details: Record<string, unknown>
+          }>
+        )
+          .filter(event => event.isSubstitution === true)
+          .map(event => `${event.index} ${String(event.details.eventType)}`)
+      ])
+    )
+
+  describe('a change the side at bat makes to its fielders', function () {
+    const swap = (session: ScoringSession, side: Side): ScoringAction => {
+      const setup = setupOf(session.state)
+      const defense = setup.sides[side].defense
+      ;[defense.P, defense.SS] = [defense.SS, defense.P]
+      return { type: 'lineup', kind: 'roster', setup }
+    }
+
+    it('is written first in the play that side next fields, through undo and a reopened game', async function () {
+      const { session, store } = await open()
+      session.apply(ball)
+      const swapped = swap(session, 'away')
+      const log = [ball, swapped, ...out, ...out, ...out, ball]
+      applyAll(session, log.slice(1))
+      await session.flush()
+      const carried = {
+        0: [],
+        1: [],
+        2: [],
+        3: ['0 pitching_substitution', '1 defensive_switch']
+      }
+      expect(changes(store)).deep.equals(carried)
+      const written = await store.load()
+      // Opened again in the middle of that play, it writes the same.
+      const again = await open(store)
+      expect(again.session.actions).deep.equals(log)
+      applyAll(again.session, [strike])
+      await again.session.flush()
+      expect(again.store.posts.at(-1)!.plays).deep.equals([])
+      expect(changes(store)).deep.equals(carried)
+      // Undone back past the change and played again without it, nothing
+      // is carried; played with it again, the stored plays are as before.
+      expect(
+        again.session.sync(log.filter(action => action !== swapped))
+      ).deep.equals([])
+      await again.session.flush()
+      expect(changes(store)).deep.equals({ 0: [], 1: [], 2: [], 3: [] })
+      expect(again.session.sync(log)).deep.equals([])
+      await again.session.flush()
+      const replayed = await store.load()
+      expect(replayed.plays.map(comparablePlay)).deep.equals(
+        written.plays.map(comparablePlay)
+      )
+      expect(comparablePlay(replayed.currentPlay)).deep.equals(
+        comparablePlay(written.currentPlay)
+      )
+    })
+
+    it('is written nowhere when the game ends before that side fields again', async function () {
+      const { session, store } = await open()
+      applyAll(session, [...out, ...out, ...out, ball])
+      const swapped = swap(session, 'home')
+      applyAll(session, [
+        swapped,
+        ...out,
+        { type: 'gameFlow', kind: 'endGame' }
+      ])
+      await session.flush()
+      expect(store.current).equals(null)
+      expect(changes(store)).deep.equals({
+        0: [],
+        1: [],
+        2: [],
+        3: [],
+        9999: []
+      })
+      // The lineup changed all the same.
+      expect(session.state.liveData.boxscore.teams.home.defense.P).equals(F.SS)
+    })
+
+    it('is written as its net change, the same through undo and a reopened game', async function () {
+      const { session, store } = await open()
+      session.apply(ball)
+      const swapped = swap(session, 'away')
+      applyAll(session, [swapped, ...out, ...out, ...out])
+      // Swapped back at the break, before the first pitch: nothing changed.
+      const back = swap(session, 'away')
+      applyAll(session, [back, ball])
+      await session.flush()
+      expect(changes(store)).deep.equals({ 0: [], 1: [], 2: [], 3: [] })
+      // Opened again, it writes the same.
+      const again = await open(store)
+      applyAll(again.session, [strike])
+      await again.session.flush()
+      expect(changes(store)).deep.equals({ 0: [], 1: [], 2: [], 3: [] })
+      // Undone to before the swap back, the swap is announced again.
+      again.session.undo()
+      again.session.undo()
+      again.session.undo()
+      await again.session.flush()
+      expect(changes(store)).deep.equals({
+        0: [],
+        1: [],
+        2: [],
+        3: ['0 pitching_substitution', '1 defensive_switch']
+      })
+    })
+  })
+
+  describe('a pinch hitter sent in before his turn', function () {
+    // Away Bench and Away Two come off the bench as 19 and 20.
+    const bench = (name: string, side: Side = 'away'): ScoringAction => ({
+      type: 'lineup',
+      kind: 'addPlayer',
+      side,
+      name
+    })
+    const sub = (
+      player: number,
+      replaces: number,
+      side: Side = 'away'
+    ): ScoringAction => ({
+      type: 'lineup',
+      kind: 'substitute',
+      side,
+      player,
+      replaces
+    })
+    const K = [strike, strike, strike, close]
+    const outs = (times: number): ScoringAction[] =>
+      Array.from({ length: times }, () => K).flat()
+    const logs = {
+      // For Away 2 on deck, while Away 1 bats: he bats next, then fields.
+      onDeck: [bench('Away Bench'), ball, sub(19, 2), ...K, ...outs(5)],
+      // For Away 3, and replaced by Away Two before his turn.
+      replaced: [
+        bench('Away Bench'),
+        bench('Away Two'),
+        ball,
+        sub(19, 3),
+        ...K,
+        ball,
+        sub(20, 19),
+        ...K,
+        ...outs(4)
+      ],
+      // For Away 4 on deck, when Away 3 makes the third out.
+      fieldsFirst: [
+        bench('Away Bench'),
+        ...outs(2),
+        ball,
+        sub(19, 4),
+        ...K,
+        ...outs(4)
+      ],
+      // For Away 2 on deck, and Away 2 put back before his turn.
+      putBack: [
+        bench('Away Bench'),
+        ball,
+        sub(19, 2),
+        sub(2, 19),
+        ...K,
+        ...outs(5)
+      ]
+    }
+    // Top 2: for Away 3, who made the last out, then placed on second.
+    const placed = [
+      bench('Away Bench'),
+      ...outs(6),
+      sub(19, 3),
+      {
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 19,
+        base: '2B'
+      } satisfies ScoringAction,
+      ...outs(4)
+    ]
+    const straight = async (log: ScoringAction[]): Promise<FakeStore> => {
+      const { session, store } = await open()
+      applyAll(session, log)
+      await session.flush()
+      return store
+    }
+    const written = (store: FakeStore): unknown => ({
+      plays: [...store.plays.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([, row]) => comparablePlay(row.play)),
+      current: comparablePlay(store.current)
+    })
+
+    it('is announced when he bats or is placed on base, as a fielder when his side fields first, and not when put back', async function () {
+      expect(changes(await straight(logs.onDeck))).deep.equals({
+        0: [],
+        1: ['0 offensive_substitution'],
+        2: [],
+        3: ['0 defensive_switch'],
+        4: [],
+        5: [],
+        6: []
+      })
+      expect(changes(await straight(logs.replaced))).deep.equals({
+        0: [],
+        1: [],
+        2: ['0 offensive_substitution'],
+        3: ['0 defensive_switch'],
+        4: [],
+        5: [],
+        6: []
+      })
+      expect(changes(await straight(logs.fieldsFirst))).deep.equals({
+        0: [],
+        1: [],
+        2: [],
+        3: ['0 defensive_substitution'],
+        4: [],
+        5: [],
+        6: [],
+        7: []
+      })
+      expect(
+        Object.values(changes(await straight(logs.putBack))).flat()
+      ).deep.equals([])
+      const extra = changes(await straight(placed))
+      expect(extra[6]).deep.equals(['1 offensive_substitution'])
+      expect(extra[9]).deep.equals(['0 defensive_switch'])
+      expect(Object.values(extra).flat()).has.length(2)
+    })
+
+    it('writes the same after any undo, redo or reopening', async function () {
+      this.timeout(60000)
+      for (const [name, log] of Object.entries(logs)) {
+        const prefixes: unknown[] = []
+        for (let at = 0; at <= log.length; at++)
+          prefixes.push(written(await straight(log.slice(0, at))))
+        const full = prefixes[log.length]
+        for (let undone = 1; undone < log.length; undone++) {
+          const { session, store } = await open()
+          applyAll(session, log)
+          for (let i = 0; i < undone; i++) session.undo()
+          await session.flush()
+          expect(written(store), `${name} undo ${undone}`).deep.equals(
+            prefixes[log.length - undone]
+          )
+          applyAll(session, log.slice(log.length - undone))
+          await session.flush()
+          expect(written(store), `${name} redo ${undone}`).deep.equals(full)
+        }
+        for (let at = 0; at <= log.length; at++) {
+          const again = await open(await straight(log.slice(0, at)))
+          applyAll(again.session, log.slice(at))
+          await again.session.flush()
+          expect(written(again.store), `${name} reopened at ${at}`).deep.equals(
+            full
+          )
+        }
+      }
+    })
+
+    it('is written nowhere, nor is a pitching change, once undone', async function () {
+      const undone = async (
+        before: ScoringAction[],
+        change: ScoringAction,
+        rest: ScoringAction[]
+      ): Promise<void> => {
+        const { session, store } = await open()
+        applyAll(session, [...before, change])
+        session.undo()
+        applyAll(session, rest)
+        await session.flush()
+        expect(written(store)).deep.equals(
+          written(await straight([...before, ...rest]))
+        )
+        expect(Object.values(changes(store)).flat()).deep.equals([])
+      }
+      // For the batter, for the man on deck, and a pitcher in the field.
+      await undone([bench('Away Bench'), ...K, ball], sub(19, 2), [
+        ...K,
+        ...outs(4)
+      ])
+      await undone([bench('Away Bench'), ...K, ball], sub(19, 3), [
+        ...K,
+        ...outs(4)
+      ])
+      await undone(
+        [bench('Home Bench', 'home'), ...K, ball],
+        sub(19, F.P, 'home'),
+        [...K, ...outs(4)]
+      )
+    })
+  })
+
+  it('folds every play of a game in one pass, however long the game', async function () {
+    // Each save folds the whole game (`picture`); who has been announced is
+    // carried from play to play, not rebuilt from the first play for each.
+    const folded = async (
+      halves: number
+    ): Promise<{ steps: number; plays: number }> => {
+      const { session } = await open()
+      applyAll(session, Array.from({ length: halves * 3 }, () => out).flat())
+      const before = PlayFolder.steps
+      const picture = session.picture()
+      return { steps: PlayFolder.steps - before, plays: picture.plays.size }
+    }
+    const nine = await folded(18)
+    const eighteen = await folded(36)
+    expect(nine.plays).equals(54)
+    expect(eighteen.plays).equals(108)
+    // Each completed play once, and the at-bat in progress.
+    expect(nine.steps).equals(55)
+    expect(eighteen.steps).equals(109)
+  })
+
   it('posts an undo and a redo made while offline as one net change', async function () {
     const { session, store } = await open()
     session.apply({ type: 'result', eventType: 'single' })
@@ -607,6 +940,7 @@ describe('a scoring session', function () {
     expect(message).match(/^Some saved plays could not be read back: /)
     expect(shown.readOnly).equals(true)
     expect(shown.pending).equals(0)
+    expect(shown.removals).deep.equals([])
     const refused = [{ code: 'notNow', message }]
     expect(shown.apply(ball).problems).deep.equals(refused)
     expect(shown.undo().problems).deep.equals(refused)

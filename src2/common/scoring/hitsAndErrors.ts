@@ -100,7 +100,8 @@ export const EVENT_CLASS: Record<
   final_score: { countable: false },
   score_correction: { countable: false },
   gs_manual_placement: { countable: true },
-  gs_batter_out: { countable: true }
+  gs_batter_out: { countable: true },
+  gs_batting_order: { countable: false }
 }
 
 function classOf(

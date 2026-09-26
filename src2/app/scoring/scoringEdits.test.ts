@@ -46,9 +46,18 @@ describe('atomic scoring edits', function () {
     defense.P = catcher
     const next = scoringReducer(state, { type: 'ROSTER', draft })
     expect(next.session.liveData.boxscore.teams.away.battingIndex).equals(8)
-    expect(next.session.liveData.plays.currentPlay?.playEvents).deep.equals(
+    // The pitch stays; the changes follow it as the play's lineup events.
+    const events = next.session.liveData.plays.currentPlay!.playEvents
+    expect(events.slice(0, 1)).deep.equals(
       state.session.liveData.plays.currentPlay?.playEvents
     )
+    expect(
+      events.slice(1).map(event => [event.isSubstitution, event.details.code])
+    ).deep.equals([
+      [true, 'pitching_substitution'],
+      [true, 'gs_batting_order'],
+      [true, 'defensive_switch']
+    ])
     expect(next.session.liveData.linescore.balls).equals(1)
     expect(next.session.liveData.plays.currentPlay?.matchup.pitcher.id).equals(
       catcher
@@ -95,12 +104,15 @@ describe('atomic scoring edits', function () {
       expect(validateRoster(bad)).is.a('string')
       expect(applyRosterDraft(state, bad).error).is.a('string')
     }
-    const newDraft = copyState(state.session)
+    // With nobody on base, so the new man bats rather than running for a
+    // runner the new order leaves out.
+    const empty = initial()
+    const newDraft = copyState(empty.session)
     const replacement = addDevelopmentPlayer(newDraft, 'away', 'New player')
     newDraft.liveData.boxscore.teams.away.battingOrder = [replacement]
     newDraft.gameData.players[replacement].bats = 'left'
     expect(
-      applyRosterDraft(state, newDraft).session?.liveData.plays.currentPlay
+      applyRosterDraft(empty, newDraft).session?.liveData.plays.currentPlay
         ?.matchup.batSide.code
     ).equals('L')
   })

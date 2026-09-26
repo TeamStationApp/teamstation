@@ -241,6 +241,7 @@ describe('scoring actions', function () {
     expect(props('batteryEvent').kind.enum).deep.equals(BATTERY_KINDS)
     expect(props('lineup').kind.enum).deep.equals(LINEUP_KINDS)
     expect(props('lineup').position.enum).deep.equals(POSITIONS)
+    expect(props('lineup').base.enum).deep.equals(BASES)
     expect(props('gameFlow').kind.enum).deep.equals(GAME_FLOW_KINDS)
     for (const tool of tools) {
       expect(tool.description).not.equals('')

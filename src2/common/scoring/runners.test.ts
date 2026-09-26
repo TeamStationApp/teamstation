@@ -495,6 +495,39 @@ describe('runners between pitches', function () {
     ).equals('unknownPlayer')
   })
 
+  it('refuses a steal, or any advance, to the base the runner is on (QA 32)', function () {
+    const state = after(walk(walk(game())), ball)
+    const refused = (action: ScoringAction): string | undefined =>
+      applyAction(state, action).problems[0]?.message
+    for (const kind of [
+      'steal',
+      'caught_stealing',
+      'defensive_indifference'
+    ] as const)
+      expect(
+        refused({ type: 'baseRunning', kind, runner: 1, to: '2B' }),
+        kind
+      ).equals('That runner is already on 2B')
+    for (const reason of ['Advance', 'Steal', 'Wild Pitch', 'Other'] as const)
+      expect(refused(move(2, '1B', { reason })), reason).equals(
+        'That runner is already on 1B'
+      )
+    expect(
+      refused({
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: 1, to: '2B' }]
+      })
+    ).equals('That runner is already on 2B')
+    // Staying put is being safe on a pickoff, said or not.
+    for (const action of [
+      move(1, '2B'),
+      move(1, '2B', { reason: 'Safe from Pickoff' }),
+      { type: 'baseRunning', kind: 'pickoff_safe', runner: 1 } as const
+    ])
+      expect(refused(action), JSON.stringify(action)).equals(undefined)
+  })
+
   it('advances runners on a wild pitch charged to the last pitch', function () {
     let state = after(single(game()), close, ball)
     state = after(state, {

@@ -16,11 +16,12 @@ import {
   walk
 } from '../../test/scoringGames'
 import type { GumboPlay } from '../gumboPlay'
-import type { ScoringAction } from './actions'
+import { type ScoringAction, toolSchema } from './actions'
 import { applyAction } from './apply'
 import { earnsRbi } from './earnedRuns'
 import { foldPlay, replayPlays } from './gumbo'
 import { playerRef } from './lineup'
+import { rosterError } from './rules'
 import { type EventStore, ScoringSession, type StoredGame } from './session'
 import {
   asGameState,
@@ -671,5 +672,448 @@ describe('runs batted in (U7)', function () {
     expect(checked).equals(9)
     expect(scored(games[0], 1)).includes({ rbi: true, earned: true })
     expect(scored(games[1], 1)).includes({ rbi: true, earned: false })
+  })
+})
+
+describe('a pinch runner (U23)', function () {
+  type Base = '1B' | '2B' | '3B'
+  /** Away 1 on third, reached on an error off the starter; Away 2 on second and Away 3 on first, walked by the reliever; three on the bench. */
+  const loaded = (): GameState => {
+    let state = after(game(), ...reachOnError(), close, relief)
+    state = walk(walk(state))
+    for (const name of ['Runner A', 'Runner B', 'Runner C'])
+      state = after(state, {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'away',
+        name
+      })
+    return state
+  }
+  const bench = (state: GameState): number[] =>
+    state.liveData.boxscore.teams.away.players.slice(-3)
+  const pinch = (
+    base: Base,
+    player: number,
+    side: 'away' | 'home' = 'away'
+  ): ScoringAction => ({
+    type: 'lineup',
+    kind: 'pinchRunner',
+    side,
+    base,
+    player
+  })
+  const errors = (state: GameState): boolean[] => {
+    const flags = state.liveData.linescore.offense.reachedOnError
+    return (['first', 'second', 'third'] as const).map(
+      key => flags?.[key] ?? false
+    )
+  }
+
+  it("puts him on the base of the man he runs for, with that man's charges", function () {
+    const state = loaded()
+    expect(bases(state)).deep.equals([3, 2, 1])
+    expect(charged(state)).deep.equals([RELIEVER, RELIEVER, STARTER])
+    expect(errors(state)).deep.equals([false, false, true])
+    const [a, b, c] = bench(state)
+    const ran = after(state, pinch('3B', a), pinch('2B', b), pinch('1B', c))
+    expect(bases(ran)).deep.equals([c, b, a])
+    expect(charged(ran)).deep.equals([RELIEVER, RELIEVER, STARTER])
+    expect(errors(ran)).deep.equals([false, false, true])
+    expect(
+      ran.liveData.boxscore.teams.away.battingOrder.slice(0, 4)
+    ).deep.equals([a, b, c, 4])
+    // The batter stays at the plate, and the runner's run is his.
+    expect(ran.liveData.linescore.offense.batter!.id).equals(4)
+    const homer = after(ran, ...hit('home_run'))
+    expect(scored(homer, a)).includes({ earned: false, teamUnearned: true })
+    expect(scored(homer, a).responsiblePitcher!.id).equals(STARTER)
+    expect(scored(homer, b).responsiblePitcher!.id).equals(RELIEVER)
+    expect(
+      entries(homer).some(
+        r =>
+          [1, 2, 3].includes(r.details.runner.id) &&
+          r.movement.runScored === true
+      )
+    ).equals(false)
+  })
+
+  it('does the same for a substitute or a roster saved from the sheet', function () {
+    const state = loaded()
+    const [a, b] = bench(state)
+    const substituted = after(state, {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'away',
+      player: a,
+      replaces: 1
+    })
+    const setup = setupOf(substituted)
+    setup.sides.away.battingOrder[1] = b
+    const saved = after(substituted, { type: 'lineup', kind: 'roster', setup })
+    expect(bases(saved)).deep.equals([3, b, a])
+    expect(charged(saved)).deep.equals([RELIEVER, RELIEVER, STARTER])
+    expect(errors(saved)).deep.equals([false, false, true])
+    expect(
+      saved.liveData.plays
+        .currentPlay!.playEvents.filter(event => event.isSubstitution === true)
+        .map(
+          event =>
+            `${event.position} ${event.player.id} for ${event.replacedPlayer?.id}`
+        )
+    ).deep.equals([`PR ${a} for 1`, `PR ${b} for 2`])
+  })
+
+  it('runs the one man a sheet save brings in for a runner it takes out, in his place in the order', function () {
+    // "Add to Lineup" puts the new man last; the scorer then takes out the
+    // runner on first without dragging him into that place.
+    const state = loaded()
+    const [a] = bench(state)
+    const setup = setupOf(state)
+    const order = setup.sides.away.battingOrder
+    order.push(a)
+    order.splice(order.indexOf(3), 1)
+    expect(rosterError(state, setup)).equals(undefined)
+    const saved = after(state, { type: 'lineup', kind: 'roster', setup })
+    expect(bases(saved)).deep.equals([a, 2, 1])
+    expect(charged(saved)).deep.equals([RELIEVER, RELIEVER, STARTER])
+    expect(errors(saved)).deep.equals([false, false, true])
+    expect(saved.liveData.boxscore.teams.away.battingOrder).deep.equals([
+      1,
+      2,
+      a,
+      ...[4, 5, 6, 7, 8, 9]
+    ])
+    expect(saved.liveData.linescore.offense.batter!.id).equals(4)
+    expect(
+      saved.liveData.plays
+        .currentPlay!.playEvents.filter(event => event.isSubstitution === true)
+        .map(
+          event =>
+            `${event.details.code} ${event.position} ${event.player.id} ${event.battingOrder} for ${event.replacedPlayer?.id}`
+        )
+    ).deep.equals([`offensive_substitution PR ${a} 301 for 3`])
+    const homer = after(saved, ...hit('home_run'))
+    expect(scored(homer, a).responsiblePitcher!.id).equals(RELIEVER)
+    expect(
+      entries(homer).some(
+        r => r.details.runner.id === 3 && r.movement.runScored === true
+      )
+    ).equals(false)
+  })
+
+  it('refuses a save that takes a runner out with nobody, or more than one man, to run for him', function () {
+    const state = loaded()
+    const [a, b] = bench(state)
+    const first = `Choose who runs for ${playerRef(state, 3).fullName} on 1B.`
+    const third = `Choose who runs for ${playerRef(state, 1).fullName} on 3B.`
+    const refused = (change: (order: number[]) => void): string => {
+      const setup = setupOf(state)
+      change(setup.sides.away.battingOrder)
+      const error = rosterError(state, setup)
+      const applied = applyAction(state, {
+        type: 'lineup',
+        kind: 'roster',
+        setup
+      })
+      expect(applied.problems).deep.equals([
+        { code: 'illegal', message: error }
+      ])
+      expect(applied.state).equals(state)
+      return error!
+    }
+    // Nobody new: the runner is dropped, or a starter moves into his place.
+    expect(refused(order => order.splice(2, 1))).equals(first)
+    expect(
+      refused(order => {
+        order[2] = order[8]
+        order.splice(8, 1)
+      })
+    ).equals(first)
+    expect(
+      refused(order => {
+        order[0] = order[8]
+        order.splice(8, 1)
+      })
+    ).equals(third)
+    // Two new men, and neither in his place.
+    expect(
+      refused(order => {
+        order.push(a, b)
+        order.splice(2, 1)
+      })
+    ).equals(first)
+    // Two runners out, one new man.
+    expect(
+      refused(order => {
+        order.push(a)
+        order.splice(0, 1)
+        order.splice(order.indexOf(3), 1)
+      })
+    ).equals(first)
+  })
+
+  it('refuses him for an empty base, for the side in the field, or without a base', function () {
+    const state = walk(
+      after(game(), {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'away',
+        name: 'Runner'
+      })
+    )
+    const [runner] = bench(state).slice(-1)
+    const empty = applyAction(state, pinch('2B', runner))
+    expect(empty.problems[0]).deep.equals({
+      code: 'illegal',
+      message: 'Nobody is on 2B'
+    })
+    expect(empty.state).equals(state)
+    expect(applyAction(state, pinch('1B', 19, 'home')).problems[0]).deep.equals(
+      { code: 'illegal', message: 'A pinch runner runs for the side at bat' }
+    )
+    expect(
+      applyAction(state, {
+        type: 'lineup',
+        kind: 'pinchRunner',
+        side: 'away',
+        player: runner
+      }).problems[0].code
+    ).equals('malformed')
+  })
+
+  it('puts the man he ran for back on the base when undone', function () {
+    const store: EventStore = {
+      load: async (): Promise<StoredGame> => ({ plays: [], currentPlay: null }),
+      save: async (): Promise<StoredGame> => ({ plays: [], currentPlay: null })
+    }
+    const session = ScoringSession.start(store, 'g1', loaded(), {
+      setTimer: () => null,
+      clearTimer: () => undefined
+    })
+    const [a] = bench(session.state)
+    session.apply(pinch('3B', a))
+    expect(bases(session.state)).deep.equals([3, 2, a])
+    session.undo()
+    expect(bases(session.state)).deep.equals([3, 2, 1])
+    expect(charged(session.state)).deep.equals([RELIEVER, RELIEVER, STARTER])
+    expect(errors(session.state)).deep.equals([false, false, true])
+    expect(session.state.liveData.boxscore.teams.away.battingOrder[0]).equals(1)
+  })
+
+  it('refuses an action naming the man the pinch runner ran for', function () {
+    // The man he ran for is on no base: an action names whoever is on base.
+    const substitute: ScoringAction = {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'away',
+      player: bench(loaded())[0],
+      replaces: 1
+    }
+    const wildPitch: ScoringAction = {
+      type: 'batteryEvent',
+      kind: 'wild_pitch',
+      advances: [{ runner: 1, to: 'home' }]
+    }
+    expect(
+      applyAction(after(loaded(), substitute), wildPitch).problems
+    ).deep.equals([
+      { code: 'unknownPlayer', message: 'That runner is not on the play' }
+    ])
+  })
+
+  it('is offered to a dictation model with the base he takes', function () {
+    const lineup = toolSchema().find(tool => tool.name === 'lineup')!
+    const properties = lineup.input_schema.properties!
+    expect(properties.kind.enum).includes('pinchRunner')
+    expect(properties.base.enum).deep.equals(['1B', '2B', '3B'])
+    expect(properties.base.description).includes('pinchRunner')
+    expect(lineup.description).includes('pinchRunner')
+  })
+})
+
+describe('a roster save, read by the men it keeps (QA 25)', function () {
+  /**
+   * Away 1 on first after a single, and with `twoOn` Away 2 on first and
+   * Away 1 on second; the next man due. Three on the bench, a, b and c.
+   */
+  const started = (twoOn = false): GameState => {
+    let state = closed(single(game()))
+    if (twoOn) state = closed(single(state))
+    for (const name of ['Bench A', 'Bench B', 'Bench C'])
+      state = after(state, {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'away',
+        name
+      })
+    return state
+  }
+  const bench = (state: GameState): number[] =>
+    state.liveData.boxscore.teams.away.players.slice(-3)
+  /** Saves `order` as the away order from the sheet: the game, or why not. */
+  const save = (
+    state: GameState,
+    order: number[]
+  ): { state: GameState; error?: string } => {
+    const setup = setupOf(state)
+    setup.sides.away.battingOrder = order
+    const error = rosterError(state, setup)
+    const applied = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(applied.problems.map(problem => problem.message)).deep.equals(
+      error == null ? [] : [error]
+    )
+    if (error != null) expect(applied.state).equals(state)
+    return { state: applied.state, error }
+  }
+  const order = (state: GameState): number[] =>
+    state.liveData.boxscore.teams.away.battingOrder
+  const said = (state: GameState): string[] =>
+    state.liveData.plays
+      .currentPlay!.playEvents.filter(event => event.isSubstitution === true)
+      .map(
+        event =>
+          `${event.details.code} ${event.position ?? ''} ${event.player.id} ${event.battingOrder ?? ''} for ${event.replacedPlayer?.id}`
+      )
+  const batter = (state: GameState): number =>
+    state.liveData.linescore.offense.batter!.id
+  const runsFor = (state: GameState, id: number): string =>
+    `Choose who runs for ${playerRef(state, id).fullName} on 1B.`
+
+  it('reads a pinch hitter put where the batter due shows, once the runner is out, as his (T3)', function () {
+    // Away 1 is taken out, so Away 2 shows first: the pinch hitter is put
+    // there and Away 2 taken out, and a pinch runner is added at the end.
+    const state = started()
+    const [a, b] = bench(state)
+    const saved = save(state, [b, 3, 4, 5, 6, 7, 8, 9, a]).state
+    expect(bases(saved)).deep.equals([a, null, null])
+    expect(batter(saved)).equals(b)
+    expect(order(saved)).deep.equals([a, b, 3, 4, 5, 6, 7, 8, 9])
+    expect(said(saved)).deep.equals([
+      `offensive_substitution PR ${a} 101 for 1`,
+      `offensive_substitution PH ${b} 201 for 2`
+    ])
+    // The same list with the two new men the other way round reads the same
+    // way: the man in the gap hits, the man added at the end runs.
+    const other = save(state, [a, 3, 4, 5, 6, 7, 8, 9, b]).state
+    expect(bases(other)).deep.equals([b, null, null])
+    expect(batter(other)).equals(a)
+    expect(order(other)).deep.equals([b, a, 3, 4, 5, 6, 7, 8, 9])
+  })
+
+  it('refuses the pinch hitter alone, rather than send him to run (T3b)', function () {
+    const state = started()
+    const [, b] = bench(state)
+    expect(save(state, [b, 3, 4, 5, 6, 7, 8, 9]).error).equals(
+      runsFor(state, 1)
+    )
+  })
+
+  it("keeps a man sent in for another in that man's place when a runner is taken out (T18)", function () {
+    const state = started()
+    const [a, b] = bench(state)
+    // Nobody runs for Away 1: refused, not an eight-man order.
+    expect(save(state, [2, 3, 4, b, 6, 7, 8, 9]).error).equals(
+      runsFor(state, 1)
+    )
+    const saved = save(state, [2, 3, 4, b, 6, 7, 8, 9, a]).state
+    expect(bases(saved)).deep.equals([a, null, null])
+    expect(batter(saved)).equals(2)
+    expect(order(saved)).deep.equals([a, 2, 3, 4, b, 6, 7, 8, 9])
+    expect(said(saved)).deep.equals([
+      `offensive_substitution PR ${a} 101 for 1`,
+      `offensive_substitution PH ${b} 501 for 5`
+    ])
+  })
+
+  it('runs the man in the gap for the first runner and the man at the end for the other (T8)', function () {
+    const state = started(true)
+    expect(bases(state)).deep.equals([2, 1, null])
+    const [a, b] = bench(state)
+    const saved = save(state, [a, 3, 4, 5, 6, 7, 8, 9, b]).state
+    expect(bases(saved)).deep.equals([b, a, null])
+    expect(batter(saved)).equals(3)
+    expect(order(saved)).deep.equals([a, b, 3, 4, 5, 6, 7, 8, 9])
+    // Both taken out and both new men added at the end: which runs for
+    // whom is not said (T1, T9), and one new man for two is too few (T7).
+    expect(save(state, [3, 4, 5, 6, 7, 8, 9, a, b]).error).equals(
+      runsFor(state, 2)
+    )
+    expect(save(state, [3, 4, 5, 6, 7, 8, 9, a]).error).equals(
+      runsFor(state, 2)
+    )
+  })
+
+  it('refuses two new men for one runner, even at the end (T1)', function () {
+    const state = started()
+    const [a, b] = bench(state)
+    expect(save(state, [3, 4, 5, 6, 7, 8, 9, a, b]).error).equals(
+      runsFor(state, 1)
+    )
+  })
+
+  it('refuses a save that does not say whose place a new man takes', function () {
+    const state = started()
+    const [a, b, c] = bench(state)
+    const name = (id: number): string => playerRef(state, id).fullName
+    // Two new men where one left.
+    expect(save(state, [1, 2, 3, 4, a, b, 6, 7, 8, 9]).error).equals(
+      `Put only one man in ${name(5)}'s place.`
+    )
+    expect(save(state, [1, 2, 3, a, b, c, 6, 7, 8, 9]).error).equals(
+      `Put only one man in ${name(4)}'s and ${name(5)}'s places.`
+    )
+    // One new man at the end while two leave elsewhere, and the reverse.
+    expect(save(state, [1, 2, 3, 4, 7, 8, 9, a]).error).equals(
+      `Put ${name(a)} in the place of the man he replaces.`
+    )
+    expect(save(state, [1, 2, 3, 4, 6, 7, 8, 9, a, b]).error).equals(
+      `Put ${name(a)} in the place of the man he replaces.`
+    )
+  })
+
+  it('keeps an order that only adds, only takes out, or swaps one man for one elsewhere as saved', function () {
+    const state = started()
+    const [a, b] = bench(state)
+    const added = save(state, [1, 2, 3, 4, 5, 6, 7, 8, 9, a]).state
+    expect(order(added)).deep.equals([1, 2, 3, 4, 5, 6, 7, 8, 9, a])
+    expect(said(added)).deep.equals([
+      `offensive_substitution PH ${a} 1001 for undefined`
+    ])
+    const dropped = save(state, [1, 2, 3, 4, 6, 7, 8, 9]).state
+    expect(order(dropped)).deep.equals([1, 2, 3, 4, 6, 7, 8, 9])
+    expect(said(dropped)).deep.equals([])
+    const swapped = save(state, [1, 2, 3, 4, 6, 7, 8, 9, a]).state
+    expect(order(swapped)).deep.equals([1, 2, 3, 4, 6, 7, 8, 9, a])
+    expect(batter(swapped)).equals(2)
+    // Two replaced in place, in the order they stand.
+    const two = save(state, [1, 2, 3, a, b, 6, 7, 8, 9]).state
+    expect(said(two)).deep.equals([
+      `offensive_substitution PH ${a} 401 for 4`,
+      `offensive_substitution PH ${b} 501 for 5`
+    ])
+  })
+
+  it('reads a replacement beside kept men who moved, and announces the move', function () {
+    const state = started()
+    const [a, b] = bench(state)
+    // Away 3 moved up to first, and the pinch runner put first too.
+    const saved = save(state, [a, 3, 2, 4, 5, 6, 7, 8, 9]).state
+    expect(bases(saved)).deep.equals([a, null, null])
+    expect(batter(saved)).equals(2)
+    expect(said(saved)).deep.equals([
+      `offensive_substitution PR ${a} 101 for 1`,
+      `gs_batting_order  3  for undefined`
+    ])
+    // Away 6 moved up to lead off, and b in Away 5's place beside him.
+    const moved = save(state, [6, 1, 2, 3, 4, b, 7, 8, 9]).state
+    expect(said(moved)).deep.equals([
+      `offensive_substitution PH ${b} 601 for 5`,
+      `gs_batting_order  6  for undefined`
+    ])
   })
 })

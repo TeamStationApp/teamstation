@@ -46,7 +46,8 @@ const EXTENSION_NAMES: Record<string, string> = {
   final_score: 'Final Score',
   score_correction: 'Score Correction',
   gs_manual_placement: 'Batter Placed On Base',
-  gs_batter_out: 'Batter Out'
+  gs_batter_out: 'Batter Out',
+  gs_batting_order: 'Batting Order Change'
 }
 
 /**
