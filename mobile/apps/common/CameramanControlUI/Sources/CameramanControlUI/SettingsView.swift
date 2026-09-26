@@ -274,10 +274,12 @@ struct SettingsView<Model: CameraControlling>: View {
     }
   }
 
-  /// One row per detected lens. Millimetre labels come from field of view, so a 15 Pro and a 13
-  /// Pro each list the cameras they actually have.
+  /// One row per physical lens. Millimetre labels come from field of view, so a 15 Pro and a 13
+  /// Pro each list the cameras they actually have. Native crops such as the 2x are not listed: they
+  /// are zoom stops on their lens, reached with the on-screen zoom.
   private var lensesSection: some View {
-    let lenses = model.availableLenses
+    let catalog = model.availableLenses
+    let lenses = LensSelection.physical(in: catalog)
     return Group {
       if !lenses.isEmpty {
         settingsCard(
@@ -287,7 +289,7 @@ struct SettingsView<Model: CameraControlling>: View {
           ForEach(Array(lenses.enumerated()), id: \.element.id) { index, lens in
             if index > 0 { Divider().padding(.leading, 16) }
             cardRow {
-              lensRow(lens, in: lenses)
+              lensRow(lens, in: catalog)
             }
           }
         }
@@ -296,7 +298,9 @@ struct SettingsView<Model: CameraControlling>: View {
   }
 
   private func lensRow(_ lens: CameraLens, in catalog: [CameraLens]) -> some View {
-    let enabled = !draftSettings.disabledLensIDs.contains(lens.id)
+    let enabled = LensSelection(disabledIDs: draftSettings.disabledLensIDs)
+      .normalized(in: catalog)
+      .isEnabled(lens)
     let interactive = canToggle(lens, in: catalog) || !enabled
     return Toggle(isOn: Binding(
       get: { enabled },
@@ -437,7 +441,7 @@ struct SettingsView<Model: CameraControlling>: View {
   }
 
   private func canToggle(_ lens: CameraLens, in catalog: [CameraLens]) -> Bool {
-    let selection = LensSelection(disabledIDs: draftSettings.disabledLensIDs)
+    let selection = LensSelection(disabledIDs: draftSettings.disabledLensIDs).normalized(in: catalog)
     return selection.isEnabled(lens) ? selection.canDisable(lens, in: catalog) : true
   }
 
