@@ -27,7 +27,8 @@ class ZoomMapping(
     minimumDeviceZoom: Double = 1.0,
     maximumDeviceZoom: Double,
     displayMultiplier: Double = 1.0,
-    switchOverDeviceZooms: List<Double> = emptyList()
+    switchOverDeviceZooms: List<Double> = emptyList(),
+    softwareZoomStartDeviceZoom: Double? = null
 ) {
     val minimumDeviceZoom: Double
     val maximumDeviceZoom: Double
@@ -43,6 +44,13 @@ class ZoomMapping(
      */
     val switchOverDeviceZooms: List<Double>
 
+    /**
+     * Device zoom where the camera's own range ends and Cameraman's software zoom begins: above it
+     * the camera stays at this ratio and the renderer crops the rest. Everything past it is drawn in
+     * yellow. Null when there is no software range.
+     */
+    val softwareZoomStartDeviceZoom: Double?
+
     init {
         val minimum = if (minimumDeviceZoom > 0) minimumDeviceZoom else 1.0
         val maximum = max(maximumDeviceZoom, minimum)
@@ -54,6 +62,53 @@ class ZoomMapping(
         this.switchOverDeviceZooms = switchOverDeviceZooms
             .filter { it > minimum && it <= maximum }
             .sorted()
+        // At the minimum is allowed: a camera with no zoom of its own is software from end to end.
+        this.softwareZoomStartDeviceZoom = softwareZoomStartDeviceZoom
+            ?.takeIf { it >= minimum && it < maximum }
+    }
+
+    /** The camera's ceiling in displayed units, where the software range starts. */
+    val softwareZoomStartDisplayedZoom: Double?
+        get() = softwareZoomStartDeviceZoom?.let { displayedZoom(it) }
+
+    /**
+     * This mapping with a software range of [softwareZoomExtension] on top of its ceiling, or itself
+     * when it already has one: 20x becomes 40x on a Pixel, and a range clamped below a lens that is
+     * switched off still zooms past it, in software, on the lens that is on.
+     */
+    fun extendedBySoftwareZoom(): ZoomMapping {
+        if (softwareZoomStartDeviceZoom != null) return this
+        return ZoomMapping(
+            minimumDeviceZoom = minimumDeviceZoom,
+            maximumDeviceZoom = maximumDeviceZoom * softwareZoomExtension,
+            displayMultiplier = displayMultiplier,
+            switchOverDeviceZooms = switchOverDeviceZooms,
+            softwareZoomStartDeviceZoom = maximumDeviceZoom
+        )
+    }
+
+    /** True above the camera's own ceiling, where only Cameraman's software zoom reaches. */
+    fun isSoftwareZoom(displayedZoom: Double): Boolean {
+        val start = softwareZoomStartDisplayedZoom ?: return false
+        return label(displayedZoom) != label(start) && displayedZoom > start
+    }
+
+    /** True for the scale segment that runs from the camera's ceiling to the software maximum. */
+    fun isSoftwareSegment(segment: Int): Boolean {
+        val presets = presetDisplayedZooms
+        if (softwareZoomStartDeviceZoom == null || segment < 0 || segment + 1 >= presets.size) return false
+        return isSoftwareZoom(presets[segment + 1]) && !isSoftwareZoom(presets[segment])
+    }
+
+    /**
+     * How a device zoom is reached: the ratio the camera is asked for, and the crop the renderer
+     * applies on top (1 inside the camera's own range).
+     */
+    fun cameraAndSoftwareZoom(deviceZoom: Double): Pair<Double, Double> {
+        val clamped = clampDeviceZoom(deviceZoom)
+        val start = softwareZoomStartDeviceZoom
+        if (start == null || clamped <= start) return clamped to 1.0
+        return start to clamped / start
     }
 
     fun displayedZoom(deviceZoom: Double): Double = deviceZoom * displayMultiplier
@@ -76,19 +131,19 @@ class ZoomMapping(
      *
      * The far-right mark is the zoom ceiling even when that value is digital rather than a
      * constituent lens. A literal `0.5 / 1 / 2 / 5` is wrong on most handsets and wrong on the
-     * front camera of all of them.
+     * front camera of all of them. With a software range, the camera's ceiling is a pill of its own
+     * and the software maximum sits above it, so the last segment is exactly the software zoom.
      */
     val presetDisplayedZooms: List<Double>
         get() {
             val marks = (listOf(minimumDeviceZoom) + switchOverDeviceZooms)
                 .map { displayedZoom(it) }
                 .toMutableList()
-            val maximum = displayedZoom(maximumDeviceZoom)
-            val last = marks.lastOrNull()
-            if (last == null) {
-                marks.add(maximum)
-            } else if (label(maximum) != label(last)) {
-                marks.add(maximum)
+            for (ceiling in listOfNotNull(softwareZoomStartDeviceZoom, maximumDeviceZoom)) {
+                val value = displayedZoom(ceiling)
+                val last = marks.lastOrNull()
+                if (last != null && label(value) == label(last)) continue
+                marks.add(value)
             }
             return marks
         }
@@ -196,13 +251,15 @@ class ZoomMapping(
             other.minimumDeviceZoom == minimumDeviceZoom &&
             other.maximumDeviceZoom == maximumDeviceZoom &&
             other.displayMultiplier == displayMultiplier &&
-            other.switchOverDeviceZooms == switchOverDeviceZooms
+            other.switchOverDeviceZooms == switchOverDeviceZooms &&
+            other.softwareZoomStartDeviceZoom == softwareZoomStartDeviceZoom
 
     override fun hashCode(): Int {
         var result = minimumDeviceZoom.hashCode()
         result = result * 31 + maximumDeviceZoom.hashCode()
         result = result * 31 + displayMultiplier.hashCode()
-        return result * 31 + switchOverDeviceZooms.hashCode()
+        result = result * 31 + switchOverDeviceZooms.hashCode()
+        return result * 31 + softwareZoomStartDeviceZoom.hashCode()
     }
 
     /**
@@ -241,6 +298,12 @@ class ZoomMapping(
         }
 
         const val singleLensZoomFallback: Double = 5.0
+
+        /**
+         * How far past the camera's ceiling Cameraman's software zoom reaches, the same 2x the iOS
+         * build gives.
+         */
+        const val softwareZoomExtension: Double = 2.0
 
         /**
          * The most digital zoom worth putting on the control for a multi-lens camera, as a multiple
