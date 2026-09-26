@@ -1,7 +1,15 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { asGumboPlay, asPostEventsBody } from './gumboPlay'
+import { MLB_EVENT_TYPES, STORED_EVENT_TYPES } from './gumbo/reference'
+import {
+  eventTypeName,
+  GUMBO_EVENT_TYPES,
+  GUMBO_EXTENSION_EVENT_TYPES,
+  LEGACY_EVENT_TYPES,
+  normalizeEventType
+} from './gumboEventTypes'
+import { asCurrentPlay, asGumboPlay, asPostEventsBody } from './gumboPlay'
 
 const correction = {
   about: { atBatIndex: 142, isScoringPlay: false },
@@ -187,5 +195,125 @@ describe('a Gumbo play', function () {
         asPostEventsBody({ plays: [], source: { system } })
       ).to.throw()
     }
+  })
+})
+
+describe("MLB's event types", function () {
+  const play = (eventType: string, atBatIndex = 0): unknown => ({
+    about: { atBatIndex, isComplete: false },
+    result: { eventType }
+  })
+
+  it("lists MLB's codes and the extensions, and nothing else", function () {
+    expect([...GUMBO_EVENT_TYPES].sort()).deep.equals(
+      [...STORED_EVENT_TYPES].sort()
+    )
+    for (const code of GUMBO_EXTENSION_EVENT_TYPES)
+      expect(MLB_EVENT_TYPES.has(code), code).equals(false)
+    expect([...GUMBO_EXTENSION_EVENT_TYPES].sort()).deep.equals([
+      'final_score',
+      'gs_batter_out',
+      'gs_manual_placement',
+      'score_correction'
+    ])
+  })
+
+  it('accepts every code MLB lists and refuses one it does not', function () {
+    for (const code of MLB_EVENT_TYPES)
+      expect(asGumboPlay(play(code)).result.eventType, code).equals(code)
+    expect(() => asGumboPlay(play('nonsense_type', 3))).to.throw(
+      'play 3: Expected a known event type, got nonsense_type at .result.eventType'
+    )
+    expect(() =>
+      asPostEventsBody({ plays: [play('nonsense_type', 3)] })
+    ).to.throw('Expected a known event type, got nonsense_type')
+    expect(() => asGumboPlay(play(7 as unknown as string, 2))).to.throw(
+      'play 2: Expected an event type, got 7 at .result.eventType'
+    )
+    expect(() => asCurrentPlay({ about: { atBatIndex: 1 } })).to.throw(
+      /^the current play: .* at \.about\.isComplete$/
+    )
+  })
+
+  it('stores the legacy codes as the listed ones', function () {
+    expect(LEGACY_EVENT_TYPES).deep.equals({
+      catcher_interference: 'catcher_interf',
+      placed_runner: 'runner_placed',
+      manual_placement: 'gs_manual_placement'
+    })
+    const legacy = Object.keys(LEGACY_EVENT_TYPES)
+    const body = asPostEventsBody({
+      mode: 'live',
+      plays: [...legacy, 'single'].map((code, index) => ({
+        about: { atBatIndex: index },
+        result: { eventType: code, rbi: 0 },
+        runners: [
+          { details: { eventType: code, runner: { id: null } } },
+          { details: { eventType: 'single' } },
+          { movement: { end: '1B' } }
+        ],
+        gameStation: { actions: [{ type: 'result', eventType: code }] }
+      })),
+      currentPlay: {
+        about: { atBatIndex: 9, isComplete: false },
+        result: { eventType: 'catcher_interference' },
+        runners: [{ details: { eventType: 'placed_runner' } }]
+      }
+    })
+    expect(body.plays.map(item => item.result.eventType)).deep.equals([
+      'catcher_interf',
+      'runner_placed',
+      'gs_manual_placement',
+      'single'
+    ])
+    // So is each runner's, and nothing else about him.
+    expect(
+      body.plays.map(item =>
+        item.runners?.map(
+          runner =>
+            (runner.details as { eventType?: string } | undefined)?.eventType
+        )
+      )
+    ).deep.equals(
+      ['catcher_interf', 'runner_placed', 'gs_manual_placement', 'single'].map(
+        code => [code, 'single', undefined]
+      )
+    )
+    expect(body.plays[0].runners?.[0].details?.runner).deep.equals({ id: null })
+    // The action log keeps its own words.
+    expect(body.plays[0].gameStation).deep.equals({
+      actions: [{ type: 'result', eventType: 'catcher_interference' }]
+    })
+    expect(body.plays[0].result.rbi).equals(0)
+    expect(
+      (body.currentPlay?.result as { eventType: string }).eventType
+    ).equals('catcher_interf')
+    expect(body.currentPlay?.runners).deep.equals([
+      { details: { eventType: 'runner_placed' } }
+    ])
+
+    // A current play without a result, and none at all, pass unchanged.
+    const opening = { about: { atBatIndex: 0, isComplete: false } }
+    expect(
+      asPostEventsBody({ mode: 'live', plays: [], currentPlay: opening })
+        .currentPlay
+    ).deep.equals(asCurrentPlay(opening))
+    expect(
+      asPostEventsBody({ mode: 'live', plays: [], currentPlay: null })
+        .currentPlay
+    ).equals(null)
+    expect(asPostEventsBody({ plays: [] }).currentPlay).equals(undefined)
+  })
+
+  it('reads a legacy code as the listed one', function () {
+    expect(normalizeEventType('catcher_interference')).equals('catcher_interf')
+    expect(normalizeEventType('single')).equals('single')
+    expect(normalizeEventType('toString')).equals('toString')
+    expect(eventTypeName('catcher_interference')).equals(
+      eventTypeName('catcher_interf')
+    )
+    expect(eventTypeName('manual_placement')).equals('Batter placed on base')
+    expect(eventTypeName('nonsense_type')).equals('Play')
+    expect(eventTypeName(null)).equals('Play')
   })
 })

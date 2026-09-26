@@ -90,42 +90,84 @@ describe('the line score', function () {
 describe('event classes', function () {
   it('classifies every stored event type', function () {
     const expected: Record<string, [boolean, string | undefined]> = {
+      pickoff_1b: [false, undefined],
+      pickoff_2b: [false, undefined],
+      pickoff_3b: [false, undefined],
+      pitcher_step_off: [false, undefined],
+      pickoff_error_1b: [false, 'error'],
+      pickoff_error_2b: [false, 'error'],
+      pickoff_error_3b: [false, 'error'],
+      batter_timeout: [false, undefined],
+      mound_visit: [false, undefined],
+      no_pitch: [false, undefined],
       single: [true, 'hit'],
       double: [true, 'hit'],
       triple: [true, 'hit'],
       home_run: [true, 'hit'],
+      double_play: [true, undefined],
+      field_error: [true, 'error'],
+      error: [false, 'error'],
+      field_out: [true, undefined],
+      fielders_choice: [true, undefined],
+      fielders_choice_out: [true, undefined],
+      force_out: [true, undefined],
+      grounded_into_double_play: [true, undefined],
+      grounded_into_triple_play: [true, undefined],
       strikeout: [true, 'strikeout'],
+      strike_out: [true, 'strikeout'],
       strikeout_double_play: [true, 'strikeout'],
+      strikeout_triple_play: [true, 'strikeout'],
+      triple_play: [false, undefined],
+      sac_fly: [true, undefined],
+      catcher_interf: [false, undefined],
+      batter_interference: [true, undefined],
+      fielder_interference: [false, undefined],
+      runner_interference: [false, undefined],
+      fan_interference: [true, undefined],
+      batter_turn: [false, undefined],
+      ejection: [false, undefined],
+      cs_double_play: [false, undefined],
+      defensive_indiff: [false, undefined],
+      sac_fly_double_play: [true, undefined],
+      sac_bunt: [true, undefined],
+      sac_bunt_double_play: [true, undefined],
       walk: [true, 'walk'],
       intent_walk: [false, undefined],
       hit_by_pitch: [true, 'hitByPitch'],
-      field_out: [true, undefined],
-      other_out: [true, undefined],
-      grounded_into_double_play: [true, undefined],
-      triple_play: [false, undefined],
-      field_error: [true, 'reachedOnError'],
-      fielders_choice: [true, undefined],
-      catcher_interference: [false, undefined],
-      manual_placement: [true, undefined],
-      sac_fly: [true, undefined],
-      sac_fly_double_play: [true, undefined],
-      sac_bunt: [true, undefined],
+      injury: [false, undefined],
+      os_ruling_pending_prior: [false, undefined],
+      os_ruling_pending_primary: [false, undefined],
+      at_bat_start: [false, undefined],
+      passed_ball: [false, undefined],
+      other_advance: [false, undefined],
+      runner_double_play: [false, undefined],
+      runner_placed: [false, undefined],
+      pitching_substitution: [false, undefined],
+      offensive_substitution: [false, undefined],
+      defensive_switch: [false, undefined],
+      umpire_substitution: [false, undefined],
+      pitcher_switch: [false, undefined],
+      game_advisory: [false, undefined],
       stolen_base: [false, undefined],
+      stolen_base_2b: [false, undefined],
+      stolen_base_3b: [false, undefined],
+      stolen_base_home: [false, undefined],
       caught_stealing: [false, undefined],
-      pickoff_1b: [false, undefined],
-      pickoff_2b: [false, undefined],
-      pickoff_3b: [false, undefined],
+      caught_stealing_2b: [false, undefined],
+      caught_stealing_3b: [false, undefined],
+      caught_stealing_home: [false, undefined],
+      defensive_substitution: [false, undefined],
       pickoff_caught_stealing_2b: [false, undefined],
       pickoff_caught_stealing_3b: [false, undefined],
       pickoff_caught_stealing_home: [false, undefined],
-      defensive_indiff: [false, undefined],
-      placed_runner: [false, undefined],
-      wild_pitch: [false, undefined],
-      passed_ball: [false, undefined],
       balk: [false, undefined],
-      game_advisory: [false, undefined],
+      forced_balk: [false, undefined],
+      wild_pitch: [false, undefined],
+      other_out: [true, undefined],
+      final_score: [false, undefined],
       score_correction: [false, undefined],
-      final_score: [false, undefined]
+      gs_manual_placement: [true, undefined],
+      gs_batter_out: [true, undefined]
     }
     expect(Object.keys(expected).sort()).deep.equals(
       [...GUMBO_EVENT_TYPES].sort()
@@ -147,5 +189,23 @@ describe('event classes', function () {
     ])
     expect(counted.strikeouts).deep.equals({ away: 0, home: 1 })
     expect(counted.known).equals(true)
+  })
+
+  it('reads legacy codes as the listed ones, and charges a runner error to the fielders', function () {
+    expect(
+      hitsAndErrors([{ halfInning: 'top', eventType: 'manual_placement' }])
+        .known
+    ).equals(true)
+    expect(
+      hitsAndErrors([{ halfInning: 'top', eventType: 'catcher_interference' }])
+        .known
+    ).equals(false)
+    const counted = hitsAndErrors([
+      { halfInning: 'bottom', eventType: 'error' },
+      { halfInning: 'top', eventType: 'pickoff_error_1b' },
+      { halfInning: 'top', eventType: 'strikeout_triple_play' }
+    ])
+    expect(counted.errors).deep.equals({ away: 1, home: 1 })
+    expect(counted.strikeouts).deep.equals({ away: 1, home: 0 })
   })
 })

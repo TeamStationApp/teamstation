@@ -179,4 +179,63 @@ describe('api client', function () {
     })
     expect(JSON.parse(calls[1].body!)).to.have.property('currentPlay', null)
   })
+
+  it('reads sacrifice bunts on a batting line, and none from an older server', async function () {
+    const batting = {
+      userId: '7',
+      teamId: 'tem_1',
+      pa: 3,
+      ab: 1,
+      h: 1,
+      singles: 1,
+      doubles: 0,
+      triples: 0,
+      hr: 0,
+      bb: 0,
+      k: 0,
+      hbp: 0,
+      rbi: 0,
+      sf: 1,
+      rates: { avg: 1 }
+    }
+    const { fetch, calls } = stubFetch(200, {
+      batting: [{ ...batting, sh: 1 }],
+      pitching: []
+    })
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const box = await client.boxScore('gam 1')
+    expect(calls[0].url).equals('http://x/api/v1/games/gam%201/box-score')
+    expect([box.batting[0].sf, box.batting[0].sh]).deep.equals([1, 1])
+
+    const older = stubFetch(200, [batting])
+    const team = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: older.fetch
+    })
+    expect((await team.teamStats('tem 1'))[0].sh).equals(0)
+    await team.teamStats('tem_1', 'sea 1')
+    expect(older.calls.map(call => call.url)).deep.equals([
+      'http://x/api/v1/teams/tem%201/stats',
+      'http://x/api/v1/teams/tem_1/stats?seasonId=sea%201'
+    ])
+  })
+
+  it("asks for a season's standings by its escaped id", async function () {
+    const row = {
+      teamId: 'tem_1',
+      teamName: 'Hosts',
+      w: 2,
+      l: 1,
+      t: 0,
+      runsFor: 12,
+      runsAgainst: 9,
+      played: 3,
+      winningPct: 0.667,
+      runDifferential: 3
+    }
+    const { fetch, calls } = stubFetch(200, [row])
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect(await client.standings('sea 1')).deep.equals([row])
+    expect(calls[0].url).equals('http://x/api/v1/seasons/sea%201/standings')
+  })
 })

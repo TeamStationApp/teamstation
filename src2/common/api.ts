@@ -237,6 +237,8 @@ export const asBattingRow = asObject({
   sb: asOptional(asNumber, 0),
   cs: asOptional(asNumber, 0),
   sf: asOptional(asNumber, 0),
+  /** Sacrifice bunts. */
+  sh: asOptional(asNumber, 0),
   rates: asRates,
   /**
    * This player's average for the season so far, up to and including this

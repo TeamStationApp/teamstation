@@ -8,7 +8,13 @@ import {
   type Cleaner
 } from 'cleaners'
 
-import { type GumboEventType, isGumboEventType } from './gumboEventTypes'
+import {
+  type GumboEventType,
+  isGumboEventType,
+  isLegacyEventType,
+  LEGACY_EVENT_TYPES,
+  type LegacyEventType
+} from './gumboEventTypes'
 import { asUserIdNumber } from './userIdNumber'
 
 /** The largest `integer` Postgres stores. */
@@ -50,11 +56,15 @@ function asIsoTime(raw: unknown): string {
   return match[0]
 }
 
-function asEventType(raw: unknown): GumboEventType {
+/**
+ * A listed event type, or a legacy code the scoring engine and older imports
+ * still send. `asPostEventsBody` stores a legacy code as the listed one.
+ */
+function asEventType(raw: unknown): GumboEventType | LegacyEventType {
   if (typeof raw !== 'string') {
     throw new TypeError(`Expected an event type, got ${JSON.stringify(raw)}`)
   }
-  if (!isGumboEventType(raw)) {
+  if (!isGumboEventType(raw) && !isLegacyEventType(raw)) {
     throw new TypeError(`Expected a known event type, got ${raw}`)
   }
   return raw
@@ -104,7 +114,8 @@ function asSourceSystem(raw: unknown): string {
 
 /**
  * One Gumbo play. Extra keys stay, at every level, because the document is
- * stored whole. `score_correction` and `final_score` are accepted event types.
+ * stored whole. The event type is one on the list in `gumboEventTypes.ts`, or
+ * a legacy code that list names.
  *
  * Every field the `events` table casts in a generated column, or its trigger
  * copies into a typed column, is checked here. A value Postgres cannot cast
@@ -228,8 +239,49 @@ const asPostEventsShape = asObject({
 
 export type PostEventsBody = ReturnType<typeof asPostEventsShape>
 
+/**
+ * `holder` with a legacy `eventType` renamed to its listed code, or `holder`
+ * itself when there is nothing to rename.
+ */
+function listedIn(holder: Record<string, unknown>): Record<string, unknown> {
+  const eventType = holder.eventType
+  return typeof eventType === 'string' && isLegacyEventType(eventType)
+    ? { ...holder, eventType: LEGACY_EVENT_TYPES[eventType] }
+    : holder
+}
+
+/**
+ * The document with a legacy event type renamed to its listed code in its
+ * result and in each runner's details, or the document itself when there is
+ * nothing to rename. Only those fields change: the `gameStation` record keeps
+ * the engine's own vocabulary, and the credits keep theirs.
+ */
+function withListedEventType<T extends Record<string, unknown>>(play: T): T {
+  let renamed = play
+  const result = play.result
+  if (isRecord(result) && listedIn(result) !== result)
+    renamed = { ...renamed, result: listedIn(result) }
+  const runners = play.runners
+  if (Array.isArray(runners)) {
+    const listed = runners.map((runner: unknown) =>
+      isRecord(runner) &&
+      isRecord(runner.details) &&
+      listedIn(runner.details) !== runner.details
+        ? { ...runner, details: listedIn(runner.details) }
+        : runner
+    )
+    if (listed.some((runner, i) => runner !== runners[i]))
+      renamed = { ...renamed, runners: listed }
+  }
+  return renamed
+}
+
+/**
+ * Checks a post, and renames the legacy event types in it, so every play and
+ * current play stored carries a listed code.
+ */
 export function asPostEventsBody(raw: unknown): PostEventsBody {
-  const body = asPostEventsShape(raw)
+  const body = withListedEventTypes(asPostEventsShape(raw))
   if (body.mode === 'replace') {
     if (body.remove !== undefined)
       throw new TypeError('remove is for a live post')
@@ -240,4 +292,14 @@ export function asPostEventsBody(raw: unknown): PostEventsBody {
   if ((body.remove ?? []).some(index => posted.has(index)))
     throw new TypeError('A play is both posted and removed')
   return body
+}
+
+function withListedEventTypes(body: PostEventsBody): PostEventsBody {
+  return {
+    ...body,
+    plays: body.plays.map(withListedEventType),
+    ...(body.currentPlay == null
+      ? {}
+      : { currentPlay: withListedEventType(body.currentPlay) })
+  }
 }

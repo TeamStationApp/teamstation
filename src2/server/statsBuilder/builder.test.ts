@@ -12,6 +12,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
+import { statRows } from '../stats/rows'
 import { type AfterReadHook, buildNext, drain } from './builder'
 import { requestGameStats } from './request'
 import { gameStatsStatus } from './status'
@@ -32,7 +33,7 @@ function paPlay(
   } = {}
 ): GumboPlay {
   const eventType = opts.eventType ?? 'single'
-  const end = eventType === 'field_out' ? null : '1B'
+  const end = ['field_out', 'sac_bunt'].includes(eventType) ? null : '1B'
   const isOut = end == null
   return {
     about: {
@@ -180,6 +181,17 @@ describe('statsBuilder drain', function () {
     expect(pit.team_id).equals(home)
   })
 
+  it('stores a sacrifice bunt as sh, read back through statRows', async function () {
+    const gameId = await seedGame([
+      paPlay(batter, pitcher, { eventType: 'sac_bunt' })
+    ])
+    await drain(db, clock)
+    const rows = await statRows(db, { gameId })
+    const bat = rows.find(row => row.userId === batter)!
+    expect([bat.pa, bat.ab, bat.sf, bat.sh]).deep.equals([1, 0, 0, 1])
+    expect(rows.find(row => row.userId === pitcher)!.sh).equals(0)
+  })
+
   it('rebuilds after a second post and drops vanished players', async function () {
     const gameId = await seedGame([
       paPlay(batter, pitcher),
@@ -274,7 +286,7 @@ describe('statsBuilder drain', function () {
   it('stays owed when a post lands during the build', async function () {
     const gameId = await seedGame([paPlay(batter, pitcher)])
     const midPost: AfterReadHook = async ({ db: trx }) => {
-      await replaceGameEvents(trx as Kysely<Database>, {
+      await replaceGameEvents(trx, {
         gameId,
         homeTeamId: home,
         awayTeamId: away,
