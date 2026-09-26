@@ -19,7 +19,7 @@ import {
   type ScoringAction
 } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
-import { battingCounts } from '../../common/scoring/credits'
+import { battingCounts, statLines } from '../../common/scoring/credits'
 import {
   HIGHLIGHT_CREDITED,
   storedEventType
@@ -1741,6 +1741,202 @@ describe('when each lineup change is announced', function () {
     expect(line(102)).includes({ r: 1, rbi: 2, hr: 1 })
     expect(line(201)).includes({ pitch_r: 1, pitch_er: 0 })
     expect(line(210)).includes({ pitch_r: 1, pitch_er: 1 })
+  })
+
+  it('charges a strikeout completed by a pinch hitter sent in at two strikes to the batter he replaced (U25, 9.15(b))', function () {
+    const batting = (steps: Step[]): Record<number, string> => {
+      let state = begin()
+      const actions: ScoringAction[] = []
+      for (const step of steps)
+        for (const action of step(state)) {
+          actions.push(action)
+          state = after(state, action)
+        }
+      const stamp = { setupBefore: setupOf(state), actions }
+      const result = gameStatLines(
+        state.liveData.plays.allPlays.map(play => foldPlay(state, play, stamp)),
+        teams,
+        new Set([...PLAYERS.away, ...PLAYERS.home])
+      )
+      if (result.kind !== 'lines') throw new Error(result.detail)
+      return Object.fromEntries(
+        result.lines
+          .filter(line => line.pa > 0)
+          .map(line => [
+            line.userId,
+            `pa ${line.pa} ab ${line.ab} k ${line.k} bb ${line.bb}`
+          ])
+      )
+    }
+    const K = 'pa 1 ab 1 k 1 bb 0'
+    // 101 leaves at 0-2; 111 strikes out: 101's strikeout.
+    expect(
+      batting([pitches('C', 'C'), sub(111, 101), pitches('C'), settle])
+    ).deep.equals({ 101: K })
+    // At 1-1 the strikeout is the pinch hitter's.
+    expect(
+      batting([pitches('B', 'C'), sub(111, 101), pitches('C', 'C'), settle])
+    ).deep.equals({ 111: K })
+    // At 0-2, a walk is the pinch hitter's.
+    expect(batting([pitches('C', 'C'), sub(111, 101), ...walked])).deep.equals({
+      111: 'pa 1 ab 0 k 0 bb 1'
+    })
+    // Two pinch hitters: the man the first sent in at two strikes replaced.
+    expect(
+      batting([
+        pitches('C'),
+        sub(111, 101),
+        pitches('C'),
+        sub(110, 111),
+        pitches('C'),
+        settle
+      ])
+    ).deep.equals({ 111: K })
+    expect(
+      batting([
+        pitches('C', 'C'),
+        sub(111, 101),
+        pitches('F'),
+        sub(110, 111),
+        pitches('C'),
+        settle
+      ])
+    ).deep.equals({ 101: K })
+    // The batter charged must be a user, like every player the lines name.
+    let state = begin()
+    const actions: ScoringAction[] = []
+    for (const step of [pitches('C', 'C'), sub(111, 101), pitches('C'), settle])
+      for (const action of step(state)) {
+        actions.push(action)
+        state = after(state, action)
+      }
+    const stamp = { setupBefore: setupOf(state), actions }
+    const plays = state.liveData.plays.allPlays.map(play =>
+      foldPlay(state, play, stamp)
+    )
+    const known = new Set([...PLAYERS.away, ...PLAYERS.home])
+    known.delete(101)
+    expect(gameStatLines(plays, teams, known)).deep.equals({
+      kind: 'incomplete',
+      detail: 'play 0: playEvents[2].replacedPlayer.id 101 is not a user'
+    })
+  })
+
+  it("charges 9.15(b) alike in the engine's lines and the stats builder's, whether or not a pinch hitter has a user id (U25)", function () {
+    // A pinch hitter made in the roster sheet has no user id: his stored
+    // player is a name. Each case, with the pinch hitters it sends in by
+    // name ('new' is the sheet's man), gives the same PA/AB/K to the same
+    // users in credits.ts `statLines` and in `gameStatLines`.
+    const made: Step = () => [
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Pinch Hitter' }
+    ]
+    const madeId = (state: GameState): number =>
+      state.liveData.boxscore.teams.away.players.at(-1)!
+    const subMade =
+      (replaces: number): Step =>
+      state => [
+        {
+          type: 'lineup',
+          kind: 'substitute',
+          side: 'away',
+          player: madeId(state),
+          replaces: sessionId(replaces)
+        }
+      ]
+    const subForMade =
+      (user: number): Step =>
+      state => [
+        {
+          type: 'lineup',
+          kind: 'substitute',
+          side: 'away',
+          player: sessionId(user),
+          replaces: madeId(state)
+        }
+      ]
+    const both = (
+      steps: Step[]
+    ): { engine: Record<number, string>; builder: Record<number, string> } => {
+      let state = begin()
+      const actions: ScoringAction[] = []
+      for (const step of [made, ...steps])
+        for (const action of step(state)) {
+          actions.push(action)
+          state = after(state, action)
+        }
+      const said = (line: { pa: number; ab: number; k: number }): string =>
+        `pa ${line.pa} ab ${line.ab} k ${line.k}`
+      const engine: Record<number, string> = {}
+      for (const [id, line] of Object.entries(
+        statLines(state.liveData.plays.allPlays).batting
+      )) {
+        const userId = state.gameData.players[Number(id)].userId
+        if (userId != null && line.pa > 0) engine[userId] = said(line)
+      }
+      const stamp = { setupBefore: setupOf(state), actions }
+      const result = gameStatLines(
+        state.liveData.plays.allPlays.map(play => foldPlay(state, play, stamp)),
+        teams,
+        new Set([...PLAYERS.away, ...PLAYERS.home])
+      )
+      if (result.kind !== 'lines') throw new Error(result.detail)
+      const builder = Object.fromEntries(
+        result.lines
+          .filter(line => line.pa > 0)
+          .map(line => [line.userId, said(line)])
+      )
+      return { engine, builder }
+    }
+    const K = 'pa 1 ab 1 k 1'
+    const cases: Array<[Step[], Record<number, string>]> = [
+      // The sheet's man at 0-2 strikes out: 101's strikeout.
+      [[pitches('C', 'C'), subMade(101), pitches('C'), settle], { 101: K }],
+      // At 1-1 it is his, and he has no line.
+      [[pitches('B', 'C'), subMade(101), pitches('C', 'C'), settle], {}],
+      // 111 at 0-1, the sheet's man for him at 0-2: 111's.
+      [
+        [
+          pitches('C'),
+          sub(111, 101),
+          pitches('C'),
+          subMade(111),
+          pitches('C'),
+          settle
+        ],
+        { 111: K }
+      ],
+      // The sheet's man at 0-2, then 110 for him: 101's.
+      [
+        [
+          pitches('C', 'C'),
+          subMade(101),
+          pitches('F'),
+          subForMade(110),
+          pitches('C'),
+          settle
+        ],
+        { 101: K }
+      ],
+      // The sheet's man at 0-1, then 110 for him at 0-2: the sheet's man's.
+      [
+        [
+          pitches('C'),
+          subMade(101),
+          pitches('C'),
+          subForMade(110),
+          pitches('C'),
+          settle
+        ],
+        {}
+      ],
+      // 111 at 0-2, as before.
+      [[pitches('C', 'C'), sub(111, 101), pitches('C'), settle], { 101: K }]
+    ]
+    for (const [steps, expected] of cases) {
+      const { engine, builder } = both(steps)
+      expect(engine).deep.equals(expected)
+      expect(builder).deep.equals(expected)
+    }
   })
 })
 

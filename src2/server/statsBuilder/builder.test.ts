@@ -6,9 +6,15 @@ import { Pool } from 'pg'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
+import type { PitchCall, ScoringAction } from '../../common/scoring/actions'
+import { foldPlay } from '../../common/scoring/gumbo'
+import { freshGame, newSetup } from '../../common/scoring/lineup'
+import { nextDecision } from '../../common/scoring/rules'
+import { type GameState, setupOf } from '../../common/scoring/state'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { after as played, TEAMS } from '../../test/scoringGames'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -365,6 +371,170 @@ describe('statsBuilder drain', function () {
       .executeTakeFirstOrThrow()
     expect(state.status).equals('incomplete')
     expect(state.detail).includes('is not a user')
+  })
+
+  it('knows every man a play charges, though a batter pinch-hit for at two strikes appears nowhere else (E8)', async function () {
+    // Twelve visitors, three of them on the bench, and ten home players,
+    // every one a user. Session ids: visitors 1-12, home 13-22.
+    const visitors = Array.from({ length: 12 }, () => mint())
+    const hosts = Array.from({ length: 10 }, () => mint())
+    const now = new Date()
+    for (const id of [...visitors, ...hosts])
+      await db
+        .insertInto('users')
+        .values({
+          id,
+          legacyId: legacies.get(id)!,
+          display_name: String(id),
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+    const [v01, v02, v03, , , , , , , v10, v11, v12] = visitors
+    const [starter] = hosts
+    const relief = hosts[9]
+    const setup = newSetup(TEAMS, {
+      away: visitors.map(userId => ({ userId, shortName: String(userId) })),
+      home: hosts.map(userId => ({ userId, shortName: String(userId) }))
+    })
+    for (const side of ['away', 'home'] as const)
+      setup.sides[side].battingOrder = setup.sides[side].battingOrder.slice(
+        0,
+        9
+      )
+    const fielder = (state: GameState, position: 'SS' | 'CF' | 'P'): number =>
+      setupOf(state).sides.home.defense[position]!
+    const pitches = (calls: PitchCall[]): ScoringAction[] =>
+      calls.map((call): ScoringAction => ({ type: 'pitch', call }))
+    const sub = (player: number, replaces: number): ScoringAction => ({
+      type: 'lineup',
+      kind: 'substitute',
+      side: player > 12 ? 'home' : 'away',
+      player,
+      replaces
+    })
+    type Step = (state: GameState) => ScoringAction[]
+    const settle: Step = state =>
+      nextDecision(state) === 'close'
+        ? [{ type: 'gameFlow', kind: 'closePlay' }]
+        : []
+    const steps = (sheetPinchHitter: boolean): Step[] =>
+      sheetPinchHitter
+        ? [
+            // Visitor 1 goes to 0-2; a man made in the sheet, with no user
+            // id, strikes out for him.
+            () => [
+              ...pitches(['C', 'C']),
+              { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'PH' }
+            ],
+            state => [
+              sub(state.liveData.boxscore.teams.away.players.at(-1)!, 1),
+              ...pitches(['C'])
+            ],
+            settle
+          ]
+        : [
+            // Visitor 1 reaches on an error off the starter; relief; Visitor
+            // 2 goes to 0-2 and Visitor 10 strikes out for him; Visitor 11
+            // runs for Visitor 1, steals and scores on Visitor 3's single;
+            // Visitor 12 walks for Visitor 4 at 1-2.
+            state => [
+              ...pitches(['F']),
+              {
+                type: 'ballInPlay',
+                contact: 'swing',
+                fielder: fielder(state, 'SS'),
+                trajectory: 'ground_ball'
+              },
+              { type: 'result', eventType: 'field_error' },
+              {
+                type: 'fieldingPlay',
+                fielders: [fielder(state, 'SS')],
+                error: fielder(state, 'SS')
+              }
+            ],
+            settle,
+            state => [
+              sub(22, fielder(state, 'P')),
+              ...pitches(['C', 'C']),
+              sub(10, 2)
+            ],
+            () => pitches(['C']),
+            settle,
+            () => [
+              {
+                type: 'lineup',
+                kind: 'pinchRunner',
+                side: 'away',
+                base: '1B',
+                player: 11
+              },
+              { type: 'baseRunning', kind: 'steal', runner: 11, to: '2B' }
+            ],
+            state => [
+              ...pitches(['F']),
+              {
+                type: 'ballInPlay',
+                contact: 'swing',
+                fielder: fielder(state, 'CF'),
+                trajectory: 'line_drive'
+              },
+              { type: 'result', eventType: 'single' },
+              { type: 'runnerMovement', runner: 11, to: 'home' }
+            ],
+            settle,
+            () => [
+              ...pitches(['B', 'C', 'C']),
+              sub(12, 4),
+              ...pitches(['B', 'B', 'B'])
+            ],
+            settle
+          ]
+    const build = async (
+      sheetPinchHitter: boolean
+    ): Promise<Map<number, Record<string, number>>> => {
+      let state = freshGame('g1', TEAMS, setup)
+      const actions: ScoringAction[] = []
+      for (const step of steps(sheetPinchHitter))
+        for (const action of step(state)) {
+          actions.push(action)
+          state = played(state, action)
+        }
+      const stamp = { setupBefore: setupOf(state), actions }
+      const gameId = await seedGame(
+        state.liveData.plays.allPlays.map(play => foldPlay(state, play, stamp))
+      )
+      await drain(db, clock)
+      const built = await db
+        .selectFrom('game_stats_state')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      expect([built.status, built.detail]).deep.equals(['built', null])
+      const rows = await db
+        .selectFrom('game_player_stats')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .execute()
+      return new Map(
+        rows.map(row => [Number(row.user_id), row as Record<string, number>])
+      )
+    }
+
+    const e8 = await build(false)
+    expect(e8.get(v02)).includes({ pa: 1, ab: 1, k: 1 })
+    expect(e8.has(v10)).equals(false)
+    expect(e8.get(v01)).includes({ pa: 1, ab: 1, r: 0, sb: 0 })
+    expect(e8.get(v11)).includes({ pa: 0, r: 1, sb: 1 })
+    expect(e8.get(v03)).includes({ pa: 1, h: 1, rbi: 1 })
+    expect(e8.get(v12)).includes({ pa: 1, ab: 0, bb: 1 })
+    expect(e8.get(starter)).includes({ pitch_bf: 1, pitch_r: 1, pitch_er: 0 })
+    expect(e8.get(relief)).includes({ pitch_bf: 3, pitch_k: 1, pitch_r: 0 })
+
+    const sheet = await build(true)
+    expect(sheet.get(v01)).includes({ pa: 1, ab: 1, k: 1 })
+    expect(sheet.get(starter)).includes({ pitch_bf: 1, pitch_k: 1 })
+    expect(new Set(sheet.keys())).deep.equals(new Set([v01, starter]))
   })
 
   it('marks failed with retry_at, skips until the clock passes', async function () {

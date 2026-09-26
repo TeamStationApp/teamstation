@@ -279,6 +279,55 @@ function pitchingChanges(
   })
 }
 
+/**
+ * Whether two stored player objects are the same man: equal ids, or, for men
+ * with no id (a player made in the roster sheet), equal names.
+ */
+function sameMan(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): boolean {
+  if (a.id != null || b.id != null) return a.id != null && a.id === b.id
+  return typeof a.fullName === 'string' && a.fullName === b.fullName
+}
+
+/**
+ * Whom a strikeout is charged to (9.15(b)): a batter who left with two
+ * strikes, when the pinch hitter who replaced him struck out. With more than
+ * one pinch hitter, the man the first sent in at two strikes replaced. Read
+ * from the play's offensive substitutions for its batter, each with its
+ * `count` as he came in and its `replacedPlayer`, whether or not the pinch
+ * hitter has an id; null when nobody left at two strikes.
+ */
+function strikeoutReplaced(
+  play: GumboPlay,
+  batter: Record<string, unknown>
+): { player: Record<string, unknown>; path: string } | null {
+  const events: unknown = (play as Record<string, unknown>).playEvents
+  if (!Array.isArray(events)) return null
+  let up = batter
+  let charged: { player: Record<string, unknown>; path: string } | null = null
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event: unknown = events[i]
+    if (
+      !isRecord(event) ||
+      !isRecord(event.details) ||
+      event.details.eventType !== 'offensive_substitution' ||
+      !isRecord(event.player) ||
+      !sameMan(event.player, up) ||
+      !isRecord(event.replacedPlayer)
+    )
+      continue
+    if (isRecord(event.count) && event.count.strikes === 2)
+      charged = {
+        player: event.replacedPlayer,
+        path: `playEvents[${i}].replacedPlayer`
+      }
+    up = event.replacedPlayer
+  }
+  return charged
+}
+
 function addFigure(
   lines: Map<number, PlayerGameLine>,
   userId: number | null,
@@ -381,6 +430,23 @@ export function gameStatLines(
       })
       if (batterEntry == null) {
         return missing(atBatIndex, 'runners batter entry')
+      }
+    }
+
+    // A strikeout completed by a pinch hitter sent in at two strikes is the
+    // batter's he replaced: its plate appearance, at-bat and strikeout.
+    let strikeoutId = batterId
+    if (isPa && STRIKEOUTS.has(eventType) && matchup.batter != null) {
+      const replaced = strikeoutReplaced(play, matchup.batter)
+      if (replaced != null) {
+        const resolved = resolveId(
+          replaced.player,
+          replaced.path,
+          atBatIndex,
+          knownUsers
+        )
+        if ('incomplete' in resolved) return resolved.incomplete
+        strikeoutId = resolved.id
       }
     }
 
@@ -513,9 +579,9 @@ export function gameStatLines(
     }
 
     if (isPa) {
-      addFigure(lines, batterId, battingTeam, 'pa', 1)
+      addFigure(lines, strikeoutId, battingTeam, 'pa', 1)
       if (counts.ab) {
-        addFigure(lines, batterId, battingTeam, 'ab', 1)
+        addFigure(lines, strikeoutId, battingTeam, 'ab', 1)
       }
       // A walk charged to the pitcher before (9.16(h)) is his batter faced,
       // not the reliever's; every other batter is the matchup pitcher's.
@@ -538,7 +604,7 @@ export function gameStatLines(
         addFigure(lines, batterId, battingTeam, 'bb', 1)
         addFigure(lines, walkOwnerId, pitchingTeam, 'pitch_bb', 1)
       } else if (STRIKEOUTS.has(eventType)) {
-        addFigure(lines, batterId, battingTeam, 'k', 1)
+        addFigure(lines, strikeoutId, battingTeam, 'k', 1)
         addFigure(lines, matchupPitcherId, pitchingTeam, 'pitch_k', 1)
       } else if (eventType === 'hit_by_pitch') {
         addFigure(lines, batterId, battingTeam, 'hbp', 1)
