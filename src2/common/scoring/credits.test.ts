@@ -152,7 +152,7 @@ describe('runs batted in', function () {
     expect(last(state).result.eventType).equals('sac_fly_double_play')
   })
 
-  it('names a strikeout that also retires a runner, and a triple play', function () {
+  it('names a strikeout that also retires a runner, and triple plays', function () {
     const k = after(
       walk(game()),
       strike,
@@ -170,7 +170,17 @@ describe('runs batted in', function () {
       out(2, '2B', [F['3B'], F['2B']]),
       close
     )
-    expect(last(tp).result.eventType).equals('triple_play')
+    expect(last(tp).result.eventType).equals('grounded_into_triple_play')
+    // Caught on the fly, with both runners doubled off: not a ground ball.
+    const liner = after(
+      walk(walk(game())),
+      { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' },
+      out(2, '1B', [F.SS, F['1B']]),
+      out(1, '2B', [F.SS]),
+      close
+    )
+    expect(last(liner).result.eventType).equals('triple_play')
   })
 })
 

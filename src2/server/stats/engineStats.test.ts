@@ -1,13 +1,36 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { DID_BY_TYPE } from '../../common/describePlay'
+import {
+  MLB_EVENT_TYPES,
+  STORED_EVENT_TYPES
+} from '../../common/gumbo/reference'
+import {
+  eventTypeName,
+  GUMBO_EXTENSION_EVENT_TYPES
+} from '../../common/gumboEventTypes'
 import type { GumboPlay } from '../../common/gumboPlay'
-import type { ScoringAction } from '../../common/scoring/actions'
+import { OUTCOME_BY_TYPE } from '../../common/outcomes'
+import {
+  PRODUCED_EVENT_TYPES,
+  type ScoringAction
+} from '../../common/scoring/actions'
+import { battingCounts } from '../../common/scoring/credits'
+import {
+  HIGHLIGHT_CREDITED,
+  storedEventType
+} from '../../common/scoring/document'
 import { foldPlay } from '../../common/scoring/gumbo'
+import { EVENT_CLASS } from '../../common/scoring/hitsAndErrors'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { type GameState, setupOf } from '../../common/scoring/state'
 import { after, F, TEAMS } from '../../test/scoringGames'
-import { gameStatLines, type PlayerGameLine } from './gumboStats'
+import {
+  eventTypeCounts,
+  gameStatLines,
+  type PlayerGameLine
+} from './gumboStats'
 
 /**
  * A game scored in GameStation builds stat lines: the engine's plays, folded
@@ -130,5 +153,57 @@ describe('a game scored in GameStation builds stats (U10)', function () {
       pitch_r: 1,
       pitch_er: 1
     })
+  })
+})
+
+describe('every set keyed by event type covers what the engine produces (U15)', function () {
+  it('names, classifies and counts each produced type, after translation', function () {
+    // The engine's own names, then what each is stored as; a batter's own
+    // "Batter Out — Other" is stored apart from a runner's out.
+    const produced = [
+      ...new Set([
+        ...PRODUCED_EVENT_TYPES.map(type => storedEventType(type)),
+        storedEventType('other_out', 'Batter Out — Other')
+      ])
+    ]
+    const extensions: readonly string[] = GUMBO_EXTENSION_EVENT_TYPES
+    // Neither a plate appearance nor a runner's play: the stats builder skips it.
+    const skipped = new Set(['runner_placed', 'final_score'])
+    for (const type of produced) {
+      expect(STORED_EVENT_TYPES.has(type), type).equals(true)
+      expect(
+        MLB_EVENT_TYPES.has(type) || extensions.includes(type),
+        type
+      ).equals(true)
+      expect(eventTypeName(type), type).not.equals('Play')
+      expect(Object.hasOwn(DID_BY_TYPE, type), type).equals(true)
+      expect(Object.hasOwn(OUTCOME_BY_TYPE, type), type).equals(true)
+      expect(Object.hasOwn(EVENT_CLASS, type), type).equals(true)
+      const roles = Object.entries(HIGHLIGHT_CREDITED)
+        .filter(([, types]) => types.has(type))
+        .map(([role]) => role)
+      expect(roles, type).length(1)
+      const counts = eventTypeCounts(type)
+      if (skipped.has(type)) expect(counts, type).equals(null)
+      else expect(counts, type).not.equals(null)
+      // The engine's own lines count a play as the stats builder does.
+      expect(battingCounts(type), type).deep.equals(
+        counts ?? { pa: false, ab: false, k: false }
+      )
+    }
+    expect(produced).to.include.members([
+      'force_out',
+      'fielders_choice_out',
+      'fielders_choice',
+      'sac_bunt',
+      'sac_bunt_double_play',
+      'double_play',
+      'caught_stealing_2b',
+      'stolen_base_home',
+      'catcher_interf',
+      'gs_batter_out',
+      'runner_placed'
+    ])
+    expect(eventTypeName('catcher_interf')).equals("Catcher's interference")
   })
 })

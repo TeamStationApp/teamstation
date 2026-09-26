@@ -386,52 +386,106 @@ function closePlay(ctx: Ctx): void {
 }
 
 /**
- * The event type a closed play carries, from what the play came to: a
- * strikeout or a fly out that also retired a runner, a sacrifice fly that
- * scored one, or a ground ball into a double or triple play.
+ * The event type a closed play carries, from what the play came to, as MLB
+ * types it. Only the outs and runs the play itself made count: a runner
+ * caught stealing earlier in the plate appearance does not make its ground
+ * ball a double play.
+ *
+ * - A strikeout that also retired a runner is a strikeout double play.
+ * - With the batter safe and one runner put out, the play is a `force_out`
+ *   when that runner was forced, and a `fielders_choice_out` when he was
+ *   not. A fielder's choice that put nobody out stays `fielders_choice`.
+ * - A fly ball caught with fewer than two out that scored a run is a
+ *   sacrifice fly.
+ * - A bunt that put the batter out and moved a runner up, with fewer than two
+ *   out, is a sacrifice bunt.
+ * - Two or three outs on a ground ball are a ground-ball double or triple
+ *   play; on anything else, a double or triple play.
  */
 function refineEventType(play: GamePlay, pending: Resolution | null): void {
-  const outs = play.runners.filter(runner => runner.movement.isOut).length
-  const scored = play.runners.some(
-    runner => runner.movement.runScored === true && !runner.movement.isOut
-  )
+  const made = play.runners.filter(runner => runner.details.byAction !== true)
+  const outs = made.filter(runner => runner.movement.isOut).length
   const type = play.result.eventType
   if (type === 'strikeout' && outs >= 2)
-    play.result.eventType = 'strikeout_double_play'
-  if (type !== 'field_out' || pending == null) return
-  const batterOut = play.runners.some(
-    runner =>
-      runner.movement.isOut &&
-      runner.details.runner.id === play.matchup.batter.id
+    play.result.eventType =
+      outs >= 3 ? 'strikeout_triple_play' : 'strikeout_double_play'
+  if ((type !== 'field_out' && type !== 'fielders_choice') || pending == null)
+    return
+  const batter = play.matchup.batter.id
+  const batterOut = made.some(
+    runner => runner.movement.isOut && runner.details.runner.id === batter
   )
-  // A runner forced out for the third out, with the batter never put out:
-  // the batter is scored as reaching on a fielder's choice, not as out.
-  if (pending.outcome === 'Throw Out' && !batterOut && outs === 1)
-    play.result.eventType = 'fielders_choice'
+  const scored = made.some(
+    runner => runner.movement.runScored === true && !runner.movement.isOut
+  )
+  const advanced = made.some(
+    runner =>
+      runner.details.runner.id !== batter &&
+      !runner.movement.isOut &&
+      runner.movement.end > runner.movement.start
+  )
+  const grounder =
+    pending.outcome === 'Throw Out' || pending.outcome === "Fielder's Choice"
+  const forced = made.some(
+    runner => runner.movement.isOut && runner.movement.forceOut
+  )
+  if (outs === 0) return
+  if (!batterOut && outs === 1 && grounder)
+    play.result.eventType = forced ? 'force_out' : 'fielders_choice_out'
   else if (
     pending.outcome === 'Ball Caught' &&
     pending.originalOuts < 2 &&
     scored
   )
     play.result.eventType = outs >= 2 ? 'sac_fly_double_play' : 'sac_fly'
-  else if (pending.outcome === 'Throw Out' && outs === 2)
-    play.result.eventType = 'grounded_into_double_play'
-  else if (outs >= 3) play.result.eventType = 'triple_play'
+  else if (
+    pending.contactKind === 'bunt' &&
+    pending.outcome === 'Throw Out' &&
+    batterOut &&
+    advanced &&
+    pending.originalOuts < 2
+  )
+    play.result.eventType = outs >= 2 ? 'sac_bunt_double_play' : 'sac_bunt'
+  else if (outs >= 3)
+    play.result.eventType = grounder
+      ? 'grounded_into_triple_play'
+      : 'triple_play'
+  else if (outs === 2)
+    play.result.eventType = grounder
+      ? 'grounded_into_double_play'
+      : 'double_play'
+}
+
+/**
+ * The event type of a play a runner's third out ended between pitches: a
+ * caught stealing or a pickoff names the base, anything else is a runner out.
+ */
+function betweenEventType(reason: string, from: number, to: number): string {
+  if (reason === 'Caught Stealing') return `caught_stealing_${stealTarget(to)}`
+  if (reason === 'Picked Off' && from >= 1 && from <= 3)
+    return to > from
+      ? `pickoff_caught_stealing_${stealTarget(to)}`
+      : `pickoff_${from}b`
+  return 'other_out'
+}
+/** The base a steal was headed for, as MLB's event types name it. */
+function stealTarget(base: number): string {
+  return base >= 4 ? 'home' : `${Math.max(2, base)}b`
 }
 
 /** Three outs between pitches: the play ends as the runner's out, and so does the half. */
-function finishBetween(ctx: Ctx, reason: string, from: number): void {
+function finishBetween(
+  ctx: Ctx,
+  reason: string,
+  from: number,
+  to: number
+): void {
   if (line(ctx).outs < 3) return
   const play = current(ctx)
   play.about.isComplete = true
   play.result.description = reason
   play.result.event = 'Runner out'
-  play.result.eventType =
-    reason === 'Caught Stealing'
-      ? 'caught_stealing'
-      : reason === 'Picked Off' && from >= 1 && from <= 3
-        ? `pickoff_${from}b`
-        : 'other_out'
+  play.result.eventType = betweenEventType(reason, from, to)
   play.result.awayScore = line(ctx).teams.away.runs
   play.result.homeScore = line(ctx).teams.home.runs
   ctx.state.liveData.plays.allPlays.push(copyState(play))
@@ -520,7 +574,7 @@ function settle(ctx: Ctx): void {
   resolveAutomaticHomes(ctx)
   if (pending.sameAppearance === true && nextDecision(ctx.state) === 'close') {
     ctx.state.pending = null
-    finishBetween(ctx, pending.outcome, 0)
+    finishBetween(ctx, pending.outcome, 0, 0)
   }
 }
 
@@ -1181,7 +1235,7 @@ function runnerMovement(
       locations: action.locations,
       runnerLocation: action.runnerLocation
     })
-    if (pending == null) finishBetween(ctx, action.reason ?? 'Out', where)
+    if (pending == null) finishBetween(ctx, action.reason ?? 'Out', where, to)
     settle(ctx)
     return
   }
