@@ -456,6 +456,45 @@ describe('refolding the stored plays (U11)', function () {
     expect(again!.skipped.map(game => game.gameId)).deep.equals([broken])
   })
 
+  it('removes a play an undo took back that the old code left stored, and says so first on a preview', async function () {
+    // The walk was undone back to the close of the single before it, but its
+    // row stayed: the at-bat in progress is the walk's index again, holding
+    // only that close.
+    const undone = await newGame()
+    await score(undone, [...single, close])
+    const reopened = (await store.load(undone)).currentPlay
+    await score(undone, [ball, ball, ball, ball, close])
+    await db
+      .updateTable('games')
+      .set({ currentPlay: JSON.stringify(reopened) })
+      .where('id', '=', undone)
+      .execute()
+    const before = await snapshot(undone)
+    const lines: string[] = []
+    const print = (line: string): void => {
+      lines.push(line)
+    }
+    expect(await runRefold(db, ['--game', undone, '--preview'], print)).equals(
+      0
+    )
+    expect(await snapshot(undone)).deep.equals(before)
+    expect(await runRefold(db, ['--game', undone], print)).equals(0)
+    expect(lines).deep.equals([
+      `changed ${undone}: would write 0 plays, would remove the play at 1`,
+      '1 changed, 0 unchanged, 0 skipped (preview)',
+      `changed ${undone}: wrote 0 plays, removed the play at 1`,
+      '1 changed, 0 unchanged, 0 skipped'
+    ])
+    const rows = (await readPlays(db, undone)).map(row => row.atBatIndex)
+    expect(rows).deep.equals([0])
+    expect((await store.load(undone)).currentPlay).deep.equals(reopened)
+    expect(await refoldScoredGames(db, { gameId: undone })).deep.equals({
+      changed: [],
+      unchanged: [undone],
+      skipped: []
+    })
+  })
+
   it('opens a refolded game where it was left, and undoes from there', async function () {
     const session = await ScoringSession.open(store, midPlay, context(midPlay))
     expect(session.pending).equals(0)

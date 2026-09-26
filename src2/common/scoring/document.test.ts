@@ -14,6 +14,7 @@ import {
   walk
 } from '../../test/scoringGames'
 import { MOVEMENT_REASONS, STORED_EVENT_TYPES } from '../gumbo/reference'
+import { eventTypeName } from '../gumboEventTypes'
 import type { GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import {
@@ -632,5 +633,692 @@ describe('the stored runner matches the live feed (U9)', function () {
     }
     expect(ours.some(r => r.movement.end === 'score')).equals(true)
     expect(ours.some(r => r.credits.length > 0)).equals(true)
+  })
+})
+
+interface StoredEvent {
+  index: number
+  pitchNumber?: number
+  isPitch: boolean
+  isBaseRunningPlay?: boolean
+  details: Record<string, unknown>
+  count: { balls: number; strikes: number; outs: number }
+  player?: { id?: number; fullName: string }
+}
+function eventsOf(play: GumboPlay): StoredEvent[] {
+  return (play.playEvents ?? []) as unknown as StoredEvent[]
+}
+const pitchCall = (call: 'B' | 'C' | 'S' | 'F' | 'T' | 'L'): ScoringAction => ({
+  type: 'pitch',
+  call
+})
+const counts = (play: GumboPlay): string[] =>
+  eventsOf(play)
+    .filter(event => event.isPitch)
+    .map(event => `${event.count.balls}-${event.count.strikes}`)
+const codes = (play: GumboPlay): string[] =>
+  eventsOf(play)
+    .filter(event => event.isPitch)
+    .map(event => String(event.details.code))
+/** The keys of a pitch's details the plan writes, from any pitch event. */
+const PITCH_DETAILS = [
+  'call',
+  'code',
+  'description',
+  'isInPlay',
+  'isStrike',
+  'isBall',
+  'isOut',
+  'hasReview'
+]
+function pitchDetails(
+  details: Record<string, unknown>
+): Record<string, unknown> {
+  return Object.fromEntries(PITCH_DETAILS.map(key => [key, details[key]]))
+}
+
+describe('pitch events (U12)', function () {
+  it("writes the feed's first plate appearance: each call's details and the count it left", function () {
+    const feed = JSON.parse(
+      readFileSync('src2/common/gumbo/reference/feed776258.json', 'utf8')
+    ) as {
+      liveData: {
+        plays: {
+          allPlays: Array<{
+            playEvents: Array<{
+              isPitch: boolean
+              details: Record<string, unknown>
+              count: unknown
+            }>
+          }>
+        }
+      }
+    }
+    const feedPitches = feed.liveData.plays.allPlays[0].playEvents.filter(
+      event => event.isPitch
+    )
+    // Ball, ball, ball, called strike, swinging strike, popped out.
+    const state = after(
+      game(),
+      ball,
+      ball,
+      ball,
+      strike,
+      pitchCall('S'),
+      { type: 'ballInPlay', contact: 'swing', fielder: F['3B'] },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' },
+      close
+    )
+    const play = stored(state, true)
+    const pitches = eventsOf(play).filter(event => event.isPitch)
+    expect(counts(play)).deep.equals(['1-0', '2-0', '3-0', '3-1', '3-2', '3-2'])
+    expect(pitches.map(event => event.count)).deep.equals(
+      feedPitches.map(event => event.count)
+    )
+    expect(pitches.map(event => pitchDetails(event.details))).deep.equals(
+      feedPitches.map(event => pitchDetails(event.details))
+    )
+    expect(pitches.map(event => event.pitchNumber)).deep.equals([
+      1, 2, 3, 4, 5, 6
+    ])
+    expect(Object.keys(pitches[0]).sort()).deep.equals([
+      'count',
+      'details',
+      'endTime',
+      'index',
+      'isPitch',
+      'pitchNumber',
+      'player',
+      'startTime',
+      'type'
+    ])
+    // As in the feed, the play is its pitches alone: the batter's out is on
+    // the in-play pitch, with no action of its own.
+    expect(play).deep.include({
+      pitchIndex: [0, 1, 2, 3, 4, 5],
+      actionIndex: [],
+      runnerIndex: [0]
+    })
+    expect(runnersOf(play)[0].details.playIndex).equals(5)
+    expect(play.count).deep.equals({ balls: 3, strikes: 2, outs: 1 })
+  })
+
+  it('codes each call, a hit batsman as H and a dropped third strike as a strike', function () {
+    const struckOut = stored(
+      after(
+        game(),
+        ball,
+        pitchCall('F'),
+        pitchCall('L'),
+        pitchCall('F'),
+        ball,
+        pitchCall('T')
+      )
+    )
+    expect(codes(struckOut)).deep.equals(['B', 'F', 'L', 'F', 'B', 'T'])
+    expect(counts(struckOut)).deep.equals([
+      '1-0',
+      '1-1',
+      '1-2',
+      '1-2',
+      '2-2',
+      '2-3'
+    ])
+    const details = eventsOf(struckOut).map(event => event.details)
+    expect(details.map(d => d.isStrike)).deep.equals([
+      false,
+      true,
+      true,
+      true,
+      false,
+      true
+    ])
+    expect(details.map(d => d.isBall)).deep.equals([
+      true,
+      false,
+      false,
+      false,
+      true,
+      false
+    ])
+    // Strike three is the pitch that made the out; the outs are the ones
+    // before the play.
+    expect(details.map(d => d.isOut)).deep.equals([
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ])
+    expect(eventsOf(struckOut).at(-1)!.count.outs).equals(0)
+    expect(
+      details.map(d => (d.call as { description: string }).description)
+    ).deep.equals(['Ball', 'Foul', 'Foul Bunt', 'Foul', 'Ball', 'Foul Tip'])
+
+    const hit = stored(
+      after(game(), strike, pitchCall('S'), {
+        type: 'result',
+        eventType: 'hit_by_pitch'
+      })
+    )
+    expect(codes(hit)).deep.equals(['C', 'S', 'H'])
+    // A hit batsman leaves the count where it was.
+    expect(counts(hit)).deep.equals(['0-1', '0-2', '0-2'])
+    expect(pitchDetails(eventsOf(hit)[2].details)).deep.equals({
+      call: { code: 'H', description: 'Hit By Pitch' },
+      code: 'H',
+      description: 'Hit By Pitch',
+      isInPlay: false,
+      isStrike: false,
+      isBall: true,
+      isOut: false,
+      hasReview: false
+    })
+
+    const dropped = stored(
+      after(
+        game(),
+        strike,
+        strike,
+        { type: 'result', eventType: 'strikeout' },
+        move(1, '1B'),
+        close
+      ),
+      true
+    )
+    expect(dropped.result.eventType).equals('strikeout')
+    expect(codes(dropped)).deep.equals(['C', 'C', 'S'])
+    expect(counts(dropped)).deep.equals(['0-1', '0-2', '0-3'])
+    expect(eventsOf(dropped)[2].details).deep.include({
+      isInPlay: false,
+      isStrike: true,
+      isOut: false
+    })
+    expect(runnersOf(dropped)[0].movement).deep.include({
+      start: null,
+      end: '1B',
+      isOut: false
+    })
+  })
+
+  it('codes the in-play pitch E on a sacrifice fly, X on a ground-ball double play and D on a single', function () {
+    const onThird = after(game(), ...hit('triple'), close)
+    const sacFly = stored(
+      after(onThird, ...flyBall, move(1, 'home'), close),
+      true
+    )
+    expect(sacFly.result.eventType).equals('sac_fly')
+    expect(eventsOf(sacFly)[0].details).deep.include({
+      call: { code: 'E', description: 'In play, run(s)' },
+      code: 'E',
+      isInPlay: true,
+      isOut: true
+    })
+    const gidp = stored(
+      after(
+        single(game()),
+        close,
+        ...groundBall,
+        out(1, '2B', [F.SS, F['2B']]),
+        out(2, '1B', [F['2B'], F['1B']]),
+        close
+      ),
+      true
+    )
+    expect(gidp.result.eventType).equals('grounded_into_double_play')
+    expect(eventsOf(gidp)[0].details).deep.include({
+      code: 'X',
+      description: 'In play, out(s)',
+      isOut: true
+    })
+    const hitSafely = stored(single(game()))
+    expect(eventsOf(hitSafely)[0].details).deep.include({
+      code: 'D',
+      description: 'In play, no out',
+      isOut: false,
+      isStrike: false,
+      isBall: false
+    })
+    // The in-play pitch keeps the count it was thrown in.
+    expect(
+      counts(stored(after(game(), ball, strike, ...hit('single'))))
+    ).deep.equals(['1-0', '1-1', '1-1'])
+  })
+})
+
+describe('action events (U12)', function () {
+  interface ActionCase {
+    name: string
+    state: GameState
+    eventType: string
+    description: string
+    isBaseRunningPlay: boolean
+    isScoringPlay?: boolean
+    isOut?: boolean
+    /** The visitors' score after it; the home side never scores here. */
+    awayScore?: number
+    /** The player it names, when the case checks it. */
+    player?: { id: number; fullName: string }
+  }
+
+  it('writes each action with its event type and a sentence', function () {
+    const onFirst = after(rostered(), ...hit('single'), close)
+    const onThird = after(onFirst, running('steal'), running('steal'))
+    const batteryEvent = (
+      kind: 'wild_pitch' | 'passed_ball'
+    ): ScoringAction => ({
+      type: 'batteryEvent',
+      kind,
+      advances: [{ runner: 1, to: '2B' }]
+    })
+    const cases: ActionCase[] = [
+      {
+        name: 'balk',
+        state: after(onThird, { type: 'batteryEvent', kind: 'balk' }),
+        eventType: 'balk',
+        description: 'Balk by Home 1. Away 1 scores.',
+        isBaseRunningPlay: true,
+        isScoringPlay: true,
+        awayScore: 1
+      },
+      {
+        name: 'wild pitch',
+        state: after(onFirst, ball, batteryEvent('wild_pitch')),
+        eventType: 'wild_pitch',
+        description: 'Wild pitch by Home 1. Away 1 to 2nd.',
+        isBaseRunningPlay: true
+      },
+      {
+        name: 'passed ball',
+        state: after(onFirst, ball, batteryEvent('passed_ball')),
+        eventType: 'passed_ball',
+        description: 'Passed ball. Away 1 to 2nd.',
+        isBaseRunningPlay: true
+      },
+      {
+        name: 'steal',
+        state: after(onFirst, running('steal')),
+        eventType: 'stolen_base_2b',
+        description: 'Away 1 steals second.',
+        isBaseRunningPlay: true
+      },
+      {
+        name: 'caught stealing',
+        state: after(onFirst, running('caught_stealing')),
+        eventType: 'caught_stealing_2b',
+        description: 'Caught stealing second, Away 1.',
+        isBaseRunningPlay: true,
+        isOut: true
+      },
+      {
+        name: 'pickoff',
+        state: after(onFirst, running('pickoff')),
+        eventType: 'pickoff_1b',
+        description: 'Pickoff at first, Away 1.',
+        isBaseRunningPlay: true,
+        isOut: true
+      },
+      {
+        name: 'defensive indifference',
+        state: after(onFirst, running('defensive_indifference')),
+        eventType: 'defensive_indiff',
+        description: 'Defensive indifference, Away 1 to 2nd.',
+        isBaseRunningPlay: true
+      },
+      {
+        name: 'runner sent on',
+        state: after(onFirst, move(1, '2B')),
+        eventType: 'other_advance',
+        description: 'Runner advance, Away 1 to 2nd.',
+        isBaseRunningPlay: true
+      },
+      {
+        name: 'intentional walk',
+        state: after(onFirst, { type: 'result', eventType: 'intent_walk' }),
+        eventType: 'intent_walk',
+        description: 'Away 2 is walked intentionally. Away 1 to 2nd.',
+        isBaseRunningPlay: false
+      },
+      {
+        name: 'intentional walk with nobody forced',
+        state: after(onFirst, running('steal'), {
+          type: 'result',
+          eventType: 'intent_walk'
+        }),
+        eventType: 'intent_walk',
+        description: 'Away 2 is walked intentionally.',
+        isBaseRunningPlay: false
+      },
+      {
+        name: 'pickoff attempt',
+        state: after(onFirst, running('pickoff_safe')),
+        eventType: 'pickoff_1b',
+        description: 'Pickoff at first, Away 1 stays at 1st.',
+        isBaseRunningPlay: true
+      },
+      {
+        name: "catcher's interference",
+        state: after(rostered(), {
+          type: 'result',
+          eventType: 'catcher_interference'
+        }),
+        eventType: 'catcher_interf',
+        description: "Away 1 reaches on catcher's interference.",
+        isBaseRunningPlay: false
+      },
+      {
+        name: 'manual placement',
+        state: after(rostered(), {
+          type: 'result',
+          eventType: 'manual_placement',
+          base: '2B'
+        }),
+        eventType: 'gs_manual_placement',
+        description: 'Away 1 is placed on base.',
+        isBaseRunningPlay: false
+      },
+      {
+        name: 'batter out, other',
+        state: after(
+          rostered(),
+          { type: 'result', eventType: 'other_out' },
+          out(1, 'batter', [F.C])
+        ),
+        eventType: 'gs_batter_out',
+        description: 'Out, Away 1.',
+        isBaseRunningPlay: false,
+        isOut: true
+      },
+      {
+        name: 'placed runner',
+        state: after(rostered(), {
+          type: 'gameFlow',
+          kind: 'placeRunner',
+          runner: 9,
+          base: '2B'
+        }),
+        eventType: 'runner_placed',
+        description: 'Away 9 is placed on base.',
+        isBaseRunningPlay: false,
+        // The runner placed, not the pitcher.
+        player: { id: 109, fullName: 'Away 9' }
+      }
+    ]
+    for (const expected of cases) {
+      const actions = eventsOf(stored(expected.state)).filter(
+        event => !event.isPitch
+      )
+      const event = actions.at(-1)!
+      expect(event, expected.name).deep.include({
+        isPitch: false,
+        type: 'action',
+        startTime: null,
+        endTime: null
+      })
+      // As the feed writes it: on the event, and only when true.
+      expect(event.isBaseRunningPlay, expected.name).equals(
+        expected.isBaseRunningPlay ? true : undefined
+      )
+      expect(event.details, expected.name).deep.equals({
+        description: expected.description,
+        event: eventTypeName(expected.eventType),
+        eventType: expected.eventType,
+        awayScore: expected.awayScore ?? 0,
+        homeScore: 0,
+        isScoringPlay: expected.isScoringPlay ?? false,
+        isOut: expected.isOut ?? false,
+        hasReview: false
+      })
+      expect(STORED_EVENT_TYPES.has(expected.eventType), expected.name).equals(
+        true
+      )
+      if (expected.player != null)
+        expect(event.player, expected.name).deep.equals(expected.player)
+    }
+  })
+
+  it('writes a wild pitch or passed ball that moves two runners as one event, with both runners on it', function () {
+    // Away 1 on second and Away 2 on first.
+    const twoOn = walk(walk(rostered()))
+    for (const kind of ['wild_pitch', 'passed_ball'] as const) {
+      const play = stored(
+        after(twoOn, ball, {
+          type: 'batteryEvent',
+          kind,
+          advances: [
+            { runner: 1, to: '3B' },
+            { runner: 2, to: '2B' }
+          ]
+        })
+      )
+      const lead =
+        kind === 'wild_pitch' ? 'Wild pitch by Home 1.' : 'Passed ball.'
+      expect(
+        eventsOf(play)
+          .filter(event => !event.isPitch)
+          .map(event => [event.index, event.details.eventType])
+      ).deep.equals([[1, kind]])
+      expect(eventsOf(play)[1].details.description).equals(
+        `${lead} Away 1 to 3rd. Away 2 to 2nd.`
+      )
+      expect(
+        runnersOf(play).map(runner => [
+          runner.details.runner.fullName,
+          runner.details.eventType,
+          runner.details.playIndex
+        ])
+      ).deep.equals([
+        ['Away 1', kind, 1],
+        ['Away 2', kind, 1]
+      ])
+      expect(play).deep.include({ actionIndex: [1], runnerIndex: [0, 1] })
+    }
+  })
+
+  it('names the pitcher who threw the wild pitch or balked, not one who relieved him later in the plate appearance', function () {
+    const relieved = after(
+      walk(rostered()),
+      ball,
+      {
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: 1, to: '2B' }]
+      },
+      ball,
+      { type: 'batteryEvent', kind: 'balk' },
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'P',
+        player: F.SS
+      },
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'SS',
+        player: F.P
+      },
+      strike
+    )
+    const play = stored(relieved)
+    expect(
+      eventsOf(play)
+        .filter(
+          event =>
+            event.details.eventType === 'wild_pitch' ||
+            event.details.eventType === 'balk'
+        )
+        .map(event => event.details.description)
+    ).deep.equals([
+      'Wild pitch by Home 1. Away 1 to 2nd.',
+      'Balk by Home 1. Away 1 to 3rd.'
+    ])
+    expect(play.matchup).not.deep.include({
+      pitcher: { id: 201, fullName: 'Home 1' }
+    })
+  })
+
+  it('writes no action for a runner the ball in play moved: his entry is on the in-play pitch', function () {
+    const onFirst = after(rostered(), ball, ...hit('single'), close)
+    const plays = [
+      after(onFirst, ball, ...hit('double'), move(1, 'home'), close),
+      after(
+        onFirst,
+        ball,
+        ...groundBall,
+        out(1, '2B', [F.SS, F['2B']]),
+        out(2, 'batter', [F['2B'], F['1B']]),
+        close
+      ),
+      after(onFirst, ball, ...flyBall, close),
+      // An action between pitches keeps its event, and the ones after it
+      // keep their places.
+      after(
+        onFirst,
+        running('steal'),
+        ball,
+        ...hit('single'),
+        move(1, 'home'),
+        close
+      )
+    ].map(state => stored(state, true))
+    expect(
+      plays.map(play => [
+        eventsOf(play).map(event =>
+          event.isPitch
+            ? String((event.details.call as { code: string }).code)
+            : String(event.details.eventType)
+        ),
+        runnersOf(play).map(runner => runner.details.playIndex)
+      ])
+    ).deep.equals([
+      [
+        ['B', 'E'],
+        [1, 1, 1]
+      ],
+      [
+        ['B', 'X'],
+        [1, 1]
+      ],
+      [['B', 'X'], [1]],
+      [
+        ['stolen_base_2b', 'B', 'E'],
+        [0, 2, 2, 2]
+      ]
+    ])
+    for (const play of plays) {
+      expect(eventsOf(play).map(event => event.index)).deep.equals(
+        eventsOf(play).map((event, i) => i)
+      )
+    }
+    expect(plays[3]).deep.include({ pitchIndex: [1, 2], actionIndex: [0] })
+  })
+
+  it("has the feed's action keys and value types", function () {
+    const feed = JSON.parse(
+      readFileSync('src2/common/gumbo/reference/feed776258.json', 'utf8')
+    ) as {
+      liveData: {
+        plays: { allPlays: Array<{ playEvents: StoredEvent[] }> }
+      }
+    }
+    // The feed's wild pitch, at-bat 6: a base-running action.
+    const want = feed.liveData.plays.allPlays[6].playEvents.find(
+      event => event.details.eventType === 'wild_pitch'
+    )!
+    const onFirst = after(rostered(), ...hit('single'), close)
+    const got = eventsOf(
+      stored(
+        after(onFirst, ball, {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 1, to: '2B' }]
+        })
+      )
+    ).at(-1)!
+    // actionPlayId is MLB's own id for the action, which GameStation has none of.
+    const { actionPlayId, ...feedEvent } = want as StoredEvent & {
+      actionPlayId?: string
+    }
+    expect(actionPlayId).a('string')
+    expect(Object.keys(got).sort()).deep.equals(Object.keys(feedEvent).sort())
+    expect(Object.keys(got.details)).deep.equals(Object.keys(want.details))
+    for (const key of Object.keys(want.details))
+      expect(typeOf(got.details[key]), key).equals(typeOf(want.details[key]))
+    expect(got.isBaseRunningPlay).equals(true)
+  })
+
+  it('writes the score after each action, run by run', function () {
+    // Away 1 on third and Away 2 on first; Away 3 bats.
+    const cornered = after(
+      rostered(),
+      ...hit('single'),
+      close,
+      ...hit('single'),
+      move(1, '3B'),
+      close
+    )
+    const state = after(
+      cornered,
+      ball,
+      {
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: 1, to: 'home' }]
+      },
+      running('steal', 2),
+      ...hit('single'),
+      move(2, 'home'),
+      close
+    )
+    const play = stored(state, true)
+    expect(play.result).deep.include({ awayScore: 2, homeScore: 0 })
+    const scores = eventsOf(play)
+      .filter(event => !event.isPitch)
+      .map(event => [
+        String(event.details.eventType),
+        event.details.awayScore,
+        event.details.homeScore,
+        event.details.isScoringPlay
+      ])
+    // The run on the single is on its in-play pitch, which has no score.
+    expect(scores).deep.equals([
+      ['wild_pitch', 1, 0, true],
+      ['stolen_base_2b', 1, 0, false]
+    ])
+  })
+
+  it('carries pitchIndex, actionIndex and runnerIndex on every play', function () {
+    const state = after(
+      single(game()),
+      close,
+      ball,
+      running('steal'),
+      strike,
+      ...hit('single'),
+      close,
+      { type: 'gameFlow', kind: 'endGame' }
+    )
+    const stamp = { setupBefore: setupOf(state), actions: [] }
+    const second = documentOf(state, state.liveData.plays.allPlays[1], stamp)
+    expect(second).deep.include({
+      pitchIndex: [0, 2, 3],
+      actionIndex: [1],
+      runnerIndex: [0, 1, 2]
+    })
+    expect(finalDocumentOf(state, stamp)).deep.include({
+      pitchIndex: [],
+      actionIndex: [],
+      runnerIndex: []
+    })
+    const open = stored(after(game(), ball))
+    expect(open).deep.include({
+      pitchIndex: [0],
+      actionIndex: [],
+      runnerIndex: []
+    })
   })
 })

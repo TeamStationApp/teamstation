@@ -5,6 +5,7 @@ import { F, game, TEAMS } from '../../test/scoringGames'
 import { HttpError } from '../errors'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
+import { comparablePlay } from './comparable'
 import { recordOf } from './gumbo'
 import {
   type EventStore,
@@ -406,6 +407,34 @@ describe('a scoring session', function () {
     expect(session.undo().problems[0].message).equals('Nothing to undo')
   })
 
+  it('removes a reopened play undone back to the close of the play before it', async function () {
+    const { session, store } = await open()
+    session.apply({ type: 'result', eventType: 'single' })
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await session.flush()
+    const before = await store.load()
+    session.apply({ type: 'batteryEvent', kind: 'balk' })
+    session.apply({ type: 'result', eventType: 'intent_walk' })
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await session.flush()
+    expect([...store.plays.keys()]).deep.equals([0, 1])
+    // Undone, the walk's play is open again with the balk, and keeps its row.
+    session.undo()
+    session.undo()
+    await session.flush()
+    expect([...store.plays.keys()]).deep.equals([0, 1])
+    // With the balk undone too it holds only the close of the single.
+    session.undo()
+    await session.flush()
+    expect(store.posts.at(-1)!.remove).deep.equals([1])
+    const now = await store.load()
+    expect(now.plays).deep.equals(before.plays)
+    // Only the times the at-bat was open differ.
+    expect(comparablePlay(now.currentPlay)).deep.equals(
+      comparablePlay(before.currentPlay)
+    )
+  })
+
   it('counts an at-bat open from its first action, not from the close before it', async function () {
     const { session } = await open()
     expect(session.atBatOpen).equals(false)
@@ -461,6 +490,7 @@ describe('a scoring session', function () {
     expect(mine.readOnly).equals(true)
     expect(mine.problem).match(/^Some saved plays could not be read back: /)
     expect(mine.pending).equals(0)
+    expect(mine.removals).deep.equals([])
     expect(mine.apply(ball).problems).deep.equals([
       { code: 'notNow', message: mine.problem }
     ])

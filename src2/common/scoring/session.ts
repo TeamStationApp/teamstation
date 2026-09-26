@@ -218,6 +218,14 @@ export class ScoringSession {
   }
 
   /**
+   * The stored plays this session does not produce, which its next save
+   * removes: a play undone, or a row its log does not make at all.
+   */
+  get removals(): number[] {
+    return this.change().remove
+  }
+
+  /**
    * The current play holds an action — a pitch, a runner, a lineup change —
    * so the game cannot end until it is finished or undone. The close that
    * finished the last play is logged with this one but is not part of it.
@@ -501,10 +509,11 @@ export class ScoringSession {
         ([index, play]) => this.posted.get(index) !== JSON.stringify(play)
       )
       .map(([, play]) => play)
-    const reopened =
-      !this.game.final && this.segment.actions.length > 0
-        ? this.game.liveData.plays.allPlays.length
-        : null
+    // A play reopened by an undo keeps its row while it has an action of its
+    // own; the close of the play before it is not one.
+    const reopened = this.atBatOpen
+      ? this.game.liveData.plays.allPlays.length
+      : null
     const remove = [...this.stored]
       .filter(index => !picture.plays.has(index) && index !== reopened)
       .sort((a, b) => a - b)
