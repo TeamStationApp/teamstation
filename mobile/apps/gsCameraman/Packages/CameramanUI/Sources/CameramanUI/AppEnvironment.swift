@@ -740,13 +740,15 @@ public final class AppEnvironment {
       zoomPresets: cameraState.mapping.presetDisplayedZooms,
       disabledLensIDs: settings.disabledLensIDs.sorted(),
       lenses: cameraState.availableLenses.map { lens in
-        LensDump(
+        let selection = LensSelection(disabledIDs: settings.disabledLensIDs)
+          .normalized(in: cameraState.availableLenses)
+        return LensDump(
           id: lens.id,
           title: lens.title,
           position: lens.position.rawValue,
           displayedZoom: lens.displayedZoom,
           focalLengthMM: lens.focalLengthMM,
-          enabled: !settings.disabledLensIDs.contains(lens.id)
+          enabled: selection.isEnabled(lens)
         )
       },
       isRunning: cameraState.isRunning,

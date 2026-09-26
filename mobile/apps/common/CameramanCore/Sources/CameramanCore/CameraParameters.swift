@@ -641,7 +641,7 @@ public enum CameraParameters {
         if let unknown = ids.sorted().first(where: { !known.contains($0) }), !known.isEmpty {
           return .failure(bad("unknown lens id \(unknown)"))
         }
-        let selection = LensSelection(disabledIDs: ids)
+        let selection = LensSelection(disabledIDs: ids).normalized(in: snapshot.lenses)
         for position in CameraPosition.allCases
         where snapshot.lenses.contains(where: { $0.position == position })
           && !selection.hasEnabledLens(at: position, in: snapshot.lenses) {

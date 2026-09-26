@@ -93,24 +93,41 @@ struct LensSelectionTests {
     #expect(thirteenPro.filter { $0.position == .back }.count == 3)
   }
 
-  @Test("Locking to the telephoto opens that physical camera, not the triple")
+  @Test("Only physical lenses are offered; the 48 mm crop is a zoom stop on the wide")
+  func physicalLensesOnly() {
+    #expect(LensSelection.physical(in: fifteenPro).map(\.id) == [ "uw", "wide", "tele", "front" ])
+    #expect(LensSelection.crops(of: fifteenPro[1], in: fifteenPro).map(\.id) == [ "wide#native:2x" ])
+  }
+
+  @Test("Choosing only the telephoto opens that physical camera, not the triple")
   func telephotoOnly() {
     var selection = LensSelection()
-    for lens in fifteenPro where lens.id != "tele" {
+    for lens in LensSelection.physical(in: fifteenPro) where lens.id != "tele" {
       selection = selection.toggling(lens, to: false, in: fifteenPro)
     }
     #expect(selection.preferredDeviceTypes(for: .back, in: fifteenPro) == [ CameraDeviceTypeName.telephoto ])
-    #expect(selection.lockedDisplayedZoom(for: .back, in: fifteenPro) == nil)
   }
 
-  @Test("Locking to the 48 mm crop opens the wide camera and pins zoom at 2x")
-  func nativeCropOnly() {
-    var selection = LensSelection()
-    for lens in fifteenPro where lens.id != "wide#native:2x" {
-      selection = selection.toggling(lens, to: false, in: fifteenPro)
-    }
+  @Test("Turning the wide off takes its 2x crop with it, and turning it on brings the crop back")
+  func cropFollowsItsLens() {
+    let off = LensSelection().toggling(fifteenPro[1], to: false, in: fifteenPro)
+    #expect(off.disabledIDs == [ "wide", "wide#native:2x" ])
+    let on = off.toggling(fifteenPro[1], to: true, in: fifteenPro)
+    #expect(on.disabledIDs.isEmpty)
+  }
+
+  @Test("Saved settings with only the 48 mm crop on read as the wide lens")
+  func legacyCropOnly() {
+    let saved = LensSelection(disabledIDs: [ "uw", "wide", "tele" ])
+    let selection = saved.normalized(in: fifteenPro)
+    #expect(selection.disabledIDs == [ "uw", "tele" ])
     #expect(selection.preferredDeviceTypes(for: .back, in: fifteenPro) == [ CameraDeviceTypeName.wideAngle ])
-    #expect(selection.lockedDisplayedZoom(for: .back, in: fifteenPro) == 2)
+  }
+
+  @Test("A crop turned off by itself comes back on with its lens")
+  func legacyCropOff() {
+    let saved = LensSelection(disabledIDs: [ "wide#native:2x" ])
+    #expect(saved.normalized(in: fifteenPro).disabledIDs.isEmpty)
   }
 
   @Test("Wide plus telephoto prefers Dual Camera")
@@ -125,7 +142,7 @@ struct LensSelectionTests {
   @Test("The last remaining lens cannot be turned off")
   func lastLensStaysOn() {
     var selection = LensSelection()
-    for lens in fifteenPro.dropLast() {
+    for lens in LensSelection.physical(in: fifteenPro).dropLast() {
       selection = selection.toggling(lens, to: false, in: fifteenPro)
     }
     let last = fifteenPro[4]
