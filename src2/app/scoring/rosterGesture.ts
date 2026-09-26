@@ -1,3 +1,5 @@
+import { ROSTER_CARD_GAP } from './rosterLayout'
+
 export interface RosterPoint {
   x: number
   y: number
@@ -178,7 +180,7 @@ export class RosterGesture {
           source?.clip === target.clip &&
           frozen.rect.y > drag.rect.y
         )
-          rect.y -= drag.rect.height + 4
+          rect.y -= drag.rect.height + ROSTER_CARD_GAP
         if (
           frozen != null &&
           drag?.rect != null &&

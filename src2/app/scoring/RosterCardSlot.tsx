@@ -10,6 +10,29 @@ import Animated, {
 import { useMotionPreference } from '../components/useMotionPreference'
 import { useRosterGesture } from './RosterDragContext'
 import type { RosterPreview } from './rosterGesture'
+import { ROSTER_CARD_GAP } from './rosterLayout'
+
+/**
+ * Whether the card for `source` is lifted out of its list by a drag. The list
+ * item itself takes back the card gap then: a margin inside the item cannot
+ * leave it, so only the item can close its place to one gap.
+ */
+export function useRosterLifted(source: string): boolean {
+  const engine = useRosterGesture()
+  const [lifted, setLifted] = useState(
+    engine.preview?.source === source && engine.preview.cardRect != null
+  )
+  useEffect(() => {
+    const listen = (preview: RosterPreview | null): void => {
+      setLifted(preview?.source === source && preview.cardRect != null)
+    }
+    engine.listeners.add(listen)
+    return () => {
+      engine.listeners.delete(listen)
+    }
+  }, [engine, source])
+  return lifted
+}
 
 /** Animate layout slots while the source responder and target registrations stay mounted. */
 export function RosterCardSlot({
@@ -35,7 +58,7 @@ export function RosterCardSlot({
     !collapsed
   const before = gap && preview?.edge !== 'after'
   const after = gap && preview?.edge === 'after'
-  const extent = (preview?.cardRect?.height ?? 48) + 4
+  const extent = (preview?.cardRect?.height ?? 48) + ROSTER_CARD_GAP
   const slotHeight = useSharedValue(height)
   const top = useSharedValue(0)
   const bottom = useSharedValue(0)
@@ -67,7 +90,7 @@ export function RosterCardSlot({
   const style = useAnimatedStyle(() => ({
     height: slotHeight.value,
     marginTop: top.value,
-    marginBottom: bottom.value - (collapsed ? 4 : 0)
+    marginBottom: bottom.value
   }))
   return (
     <Animated.View

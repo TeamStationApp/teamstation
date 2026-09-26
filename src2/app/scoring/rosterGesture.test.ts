@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { RosterGesture, type RosterPreview } from './rosterGesture'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const box = { x: 100, y: 100, width: 100, height: 200 }
 describe('shared roster dragging', function () {
@@ -198,6 +199,37 @@ describe('shared roster dragging', function () {
     engine.cancel()
     expect(engine.preview).equals(null)
   })
+  it('closes the gap a dragged card leaves by its height plus the card gap', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const clip = async (): Promise<typeof box> => ({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 500
+    })
+    engine.sources.set('source', {
+      measure: async () => ({ x: 100, y: 40, width: 120, height: 48 }),
+      clip,
+      content: 'full card'
+    })
+    // The next card down, one card and one gap below the dragged one.
+    const below = 40 + 48 + ROSTER_CARD_GAP
+    engine.targets.set('lineup-1', {
+      measure: async () => ({ x: 100, y: below, width: 120, height: 48 }),
+      clip,
+      insertion: 'row',
+      drop: () => undefined
+    })
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    // With the dragged card lifted out, the next card moves up into its place:
+    // its top is exactly where the dragged card's top was.
+    await engine.move({ x: 120, y: 40 })
+    expect(engine.preview?.target).equals('lineup-1')
+    await engine.move({ x: 120, y: 39 })
+    expect(engine.preview?.target).equals(undefined)
+    engine.cancel()
+  })
+
   it('ignores stale source measurements and cancels failed measurements', async function () {
     const engine = new RosterGesture(() => undefined)
     let finish!: (value: typeof box) => void

@@ -12,6 +12,7 @@ import {
   type RosterPreview,
   type RosterRect
 } from './rosterGesture'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 export const RosterContext = createContext<RosterGesture | null>(null)
 export const RosterClipContext = createContext<
   (() => Promise<RosterRect>) | undefined
@@ -172,7 +173,7 @@ export function RosterScrollArea({
           contentContainerStyle={{
             paddingHorizontal: 8,
             paddingVertical: 8,
-            gap: 4
+            gap: ROSTER_CARD_GAP
           }}
         >
           {children}

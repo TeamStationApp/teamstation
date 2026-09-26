@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useId, useRef, useState } from 'react'
 import { type GestureResponderEvent, View, type ViewProps } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
-import { RosterCardSlot } from './RosterCardSlot'
+import { RosterCardSlot, useRosterLifted } from './RosterCardSlot'
 import {
   measureRosterView,
   RosterClipContext,
@@ -11,6 +11,7 @@ import {
 import type { RosterDragProps } from './rosterDragProps'
 import type { RosterGesture } from './rosterGesture'
 import { RosterHold } from './rosterHold'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
 /** Extracted responder adapter also exercised with native page coordinates in unit tests. */
 export function rosterResponder(
@@ -84,9 +85,32 @@ export function rosterAccessibilityAction(
   else if (action === 'increment' || action === 'decrement')
     props.onReorder?.(action === 'increment' ? 1 : -1)
 }
+/**
+ * A roster list item's own layout: nothing but its card, so neighbouring cards
+ * stand ROSTER_CARD_GAP apart, as on the web. While its card is lifted by a
+ * drag, the item takes one gap back so the card's place closes to one gap.
+ */
+export function rosterItemLayout(
+  lifted: boolean,
+  disabled: boolean
+): {
+  gap: number
+  marginBottom?: number
+  opacity: number
+  borderRadius: number
+} {
+  return {
+    gap: ROSTER_CARD_GAP,
+    ...(lifted ? { marginBottom: -ROSTER_CARD_GAP } : {}),
+    opacity: disabled ? 0.4 : 1,
+    borderRadius: 6
+  }
+}
+
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
   const source = useId()
+  const lifted = useRosterLifted(source)
   const clip = useContext(RosterClipContext)
   const theme = useTheme()
   const ref = useRef<React.ComponentRef<typeof View>>(null)
@@ -147,16 +171,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       onAccessibilityAction={event => {
         rosterAccessibilityAction(props, event.nativeEvent.actionName)
       }}
-      style={{
-        gap: 4,
-        opacity: props.disabled === true ? 0.4 : 1,
-        borderWidth: 2,
-        borderColor:
-          hover === 'row'
-            ? theme.scoringMenuActiveBackground
-            : theme.backgroundColor,
-        borderRadius: 6
-      }}
+      style={rosterItemLayout(lifted, props.disabled === true)}
     >
       {props.targetId === 'roster' ? (
         props.children
@@ -168,6 +183,23 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         >
           {props.children}
         </RosterCardSlot>
+      )}
+      {hover === 'row' && (
+        // Drawn over the card, so like the web outline it takes no layout
+        // space and cards stay ROSTER_CARD_GAP apart.
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            borderWidth: 2,
+            borderRadius: 6,
+            borderColor: theme.scoringMenuActiveBackground
+          }}
+        />
       )}
       {(hover === 'before' || hover === 'after') && (
         <View
