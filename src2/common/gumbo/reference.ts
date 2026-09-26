@@ -1,4 +1,8 @@
-import { GUMBO_EXTENSION_EVENT_TYPES } from '../gumboEventTypes'
+import {
+  eventTypeName,
+  GUMBO_EXTENSION_EVENT_TYPES,
+  normalizeEventType
+} from '../gumboEventTypes'
 import eventTypes from './reference/eventTypes.json'
 import hitTrajectories from './reference/hitTrajectories.json'
 import pitchCodes from './reference/pitchCodes.json'
@@ -28,6 +32,46 @@ export const STORED_EVENT_TYPES: ReadonlySet<string> = new Set([
   ...MLB_EVENT_TYPES,
   ...GUMBO_EXTENSION_EVENT_TYPES
 ])
+
+/**
+ * MLB's name for each event type: the list's own description, which is the
+ * name the live feed writes as `result.event` and as a runner's or an
+ * action's `details.event` (`Forceout`, `Sac Bunt`, `Stolen Base 2B`).
+ */
+const MLB_EVENT_NAMES: ReadonlyMap<string, string> = new Map(
+  eventTypes.map(entry => [entry.code, entry.description])
+)
+/** GameStation's extensions, named in MLB's style. */
+const EXTENSION_NAMES: Record<string, string> = {
+  final_score: 'Final Score',
+  score_correction: 'Score Correction',
+  gs_manual_placement: 'Batter Placed On Base',
+  gs_batter_out: 'Batter Out'
+}
+
+/**
+ * What the live feed names an out on a ball in play, a `field_out`, by how it
+ * was made, in place of the list's plain `Field Out`.
+ */
+export const FIELD_OUT_NAMES: ReadonlySet<string> = new Set([
+  'Groundout',
+  'Flyout',
+  'Lineout',
+  'Pop Out',
+  'Bunt Groundout',
+  'Bunt Pop Out',
+  'Bunt Lineout'
+])
+
+/** MLB's name for an event type, and a legacy code's listed one. */
+export function mlbEventName(eventType: string): string {
+  const listed = normalizeEventType(eventType)
+  return (
+    MLB_EVENT_NAMES.get(listed) ??
+    EXTENSION_NAMES[listed] ??
+    eventTypeName(listed)
+  )
+}
 
 /** Pitch codes: `B`, `C`, `S`, `X`, … */
 export const PITCH_CODES: ReadonlySet<string> = new Set(

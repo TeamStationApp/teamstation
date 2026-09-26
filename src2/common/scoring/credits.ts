@@ -1,4 +1,5 @@
 import type { ErrorKind } from './actions'
+import { storedEventType } from './document'
 import { playerRef } from './lineup'
 import {
   type GamePlay,
@@ -67,6 +68,9 @@ export function errorCredit(
   )
 }
 
+// Keyed by the event type a play is stored with (`storedEventType`), so a
+// batter's own "Batter Out — Other" is a plate appearance and a runner's third
+// out between pitches is not.
 const PLATE_APPEARANCE = new Set([
   'single',
   'double',
@@ -74,34 +78,45 @@ const PLATE_APPEARANCE = new Set([
   'home_run',
   'field_error',
   'fielders_choice',
+  'fielders_choice_out',
+  'force_out',
   'field_out',
-  'other_out',
+  'gs_batter_out',
+  'double_play',
   'grounded_into_double_play',
+  'grounded_into_triple_play',
   'triple_play',
   'strikeout',
   'strikeout_double_play',
+  'strikeout_triple_play',
   'walk',
   'intent_walk',
   'hit_by_pitch',
-  'catcher_interference',
-  'manual_placement',
+  'catcher_interf',
+  'gs_manual_placement',
   'sac_fly',
   'sac_fly_double_play',
-  'sac_bunt'
+  'sac_bunt',
+  'sac_bunt_double_play'
 ])
 /** A plate appearance that does not count as an at-bat. */
 const NOT_AT_BAT = new Set([
   'walk',
   'intent_walk',
   'hit_by_pitch',
-  'catcher_interference',
-  'manual_placement',
+  'catcher_interf',
+  'gs_manual_placement',
   'sac_fly',
   'sac_fly_double_play',
-  'sac_bunt'
+  'sac_bunt',
+  'sac_bunt_double_play'
 ])
 const HITS = new Set(['single', 'double', 'triple', 'home_run'])
-const STRIKEOUTS = new Set(['strikeout', 'strikeout_double_play'])
+const STRIKEOUTS = new Set([
+  'strikeout',
+  'strikeout_double_play',
+  'strikeout_triple_play'
+])
 const WALKS = new Set(['walk', 'intent_walk'])
 
 export interface BattingLine {
@@ -130,6 +145,19 @@ function blankPitching(): PitchingLine {
   return { pitches: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0 }
 }
 
+/**
+ * What a play of a stored event type counts on the batter's line: a plate
+ * appearance, an at-bat, a strikeout.
+ */
+export function battingCounts(type: string): {
+  pa: boolean
+  ab: boolean
+  k: boolean
+} {
+  const pa = PLATE_APPEARANCE.has(type)
+  return { pa, ab: pa && !NOT_AT_BAT.has(type), k: STRIKEOUTS.has(type) }
+}
+
 /** Each batter's line and each pitcher's line, worked out from the plays. */
 export function statLines(plays: readonly GamePlay[]): {
   batting: Record<number, BattingLine>
@@ -140,7 +168,10 @@ export function statLines(plays: readonly GamePlay[]): {
   const bat = (id: number): BattingLine => (batting[id] ??= blankBatting())
   const pitch = (id: number): PitchingLine => (pitching[id] ??= blankPitching())
   for (const play of plays) {
-    const type = play.result.eventType
+    const type = storedEventType(
+      play.result.eventType,
+      play.source.gamestation.outcome
+    )
     const batter = play.matchup.batter.id
     const pitcher = pitch(play.matchup.pitcher.id)
     pitcher.pitches += play.playEvents.filter(event => event.isPitch).length
@@ -151,15 +182,16 @@ export function statLines(plays: readonly GamePlay[]): {
         pitcher.r++
       }
     }
-    if (!play.about.isComplete || !PLATE_APPEARANCE.has(type)) continue
+    const counts = battingCounts(type)
+    if (!play.about.isComplete || !counts.pa) continue
     const line = bat(batter)
     line.pa++
-    if (!NOT_AT_BAT.has(type)) line.ab++
+    if (counts.ab) line.ab++
     if (HITS.has(type)) {
       line.h++
       pitcher.h++
     }
-    if (STRIKEOUTS.has(type)) {
+    if (counts.k) {
       line.k++
       pitcher.k++
     }

@@ -137,7 +137,7 @@ describe('outs and the third out', function () {
     const last = state.liveData.plays.allPlays.at(-1)!
     expect(last.result).includes({
       event: 'Runner out',
-      eventType: 'caught_stealing'
+      eventType: 'caught_stealing_3b'
     })
   })
 

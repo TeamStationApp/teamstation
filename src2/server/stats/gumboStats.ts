@@ -98,6 +98,26 @@ const SAC_FLIES = new Set(['sac_fly', 'sac_fly_double_play'])
 
 const SAC_BUNTS = new Set(['sac_bunt', 'sac_bunt_double_play'])
 
+/**
+ * How a play of an event type counts on the batter's line: a plate
+ * appearance, an at-bat and a strikeout; `pa: false` for a play only its
+ * runners count on; null for a type that is skipped.
+ */
+export function eventTypeCounts(
+  value: string
+): { pa: boolean; ab: boolean; k: boolean } | null {
+  const eventType = normalizeEventType(value)
+  if (PLATE_APPEARANCE.has(eventType))
+    return {
+      pa: true,
+      ab: !NON_AB.has(eventType),
+      k: STRIKEOUTS.has(eventType)
+    }
+  return COUNTED_NON_PA.has(eventType)
+    ? { pa: false, ab: false, k: false }
+    : null
+}
+
 export interface PlayerGameLine {
   userId: number
   teamId: string | null
@@ -266,11 +286,9 @@ export function gameStatLines(
         : ''
     )
 
-    if (!PLATE_APPEARANCE.has(eventType) && !COUNTED_NON_PA.has(eventType)) {
-      continue
-    }
-
-    const isPa = PLATE_APPEARANCE.has(eventType)
+    const counts = eventTypeCounts(eventType)
+    if (counts == null) continue
+    const isPa = counts.pa
 
     if (about.inning == null) return missing(atBatIndex, 'about.inning')
     if (about.halfInning == null) return missing(atBatIndex, 'about.halfInning')
@@ -442,7 +460,7 @@ export function gameStatLines(
 
     if (isPa) {
       addFigure(lines, batterId, battingTeam, 'pa', 1)
-      if (!NON_AB.has(eventType)) {
+      if (counts.ab) {
         addFigure(lines, batterId, battingTeam, 'ab', 1)
       }
       // A walk charged to the pitcher before (9.16(h)) is his batter faced,

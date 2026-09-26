@@ -264,7 +264,10 @@ describe('folding a play for the server', function () {
       atBatIndex: 0,
       inning: 1,
       halfInning: 'top',
-      isComplete: false
+      isTopInning: true,
+      isComplete: false,
+      hasOut: false,
+      hasReview: false
     })
   })
 })

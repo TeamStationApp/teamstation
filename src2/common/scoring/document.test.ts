@@ -13,8 +13,11 @@ import {
   strike,
   walk
 } from '../../test/scoringGames'
-import { MOVEMENT_REASONS, STORED_EVENT_TYPES } from '../gumbo/reference'
-import { eventTypeName } from '../gumboEventTypes'
+import {
+  mlbEventName,
+  MOVEMENT_REASONS,
+  STORED_EVENT_TYPES
+} from '../gumbo/reference'
 import type { GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import {
@@ -1062,7 +1065,7 @@ describe('action events (U12)', function () {
       )
       expect(event.details, expected.name).deep.equals({
         description: expected.description,
-        event: eventTypeName(expected.eventType),
+        event: mlbEventName(expected.eventType),
         eventType: expected.eventType,
         awayScore: expected.awayScore ?? 0,
         homeScore: 0,

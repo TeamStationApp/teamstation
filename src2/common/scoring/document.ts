@@ -1,5 +1,5 @@
 import { type DescribedCredit, describePlay } from '../describePlay'
-import { GAME_POSITIONS } from '../gumbo/reference'
+import { GAME_POSITIONS, mlbEventName } from '../gumbo/reference'
 import { eventTypeName } from '../gumboEventTypes'
 import {
   asCurrentPlay,
@@ -57,6 +57,29 @@ export function storedEventType(type: string, outcome?: string): string {
 
 function playEventType(play: GamePlay): string {
   return storedEventType(play.result.eventType, play.source.gamestation.outcome)
+}
+
+/**
+ * What MLB calls an event of this play: the list's name for its type, except
+ * that an out on a ball in play is named by how it was made, from the out the
+ * scorer chose and the ball's trajectory.
+ */
+function eventName(type: string, play: GamePlay): string {
+  if (type !== 'field_out') return mlbEventName(type)
+  const detail = play.source.gamestation
+  const bunt = detail.contactKind === 'bunt' ? 'Bunt ' : ''
+  if (detail.outSubtype === 'Throw Out') return `${bunt}Groundout`
+  if (detail.outSubtype !== 'Ball Caught') return mlbEventName(type)
+  switch (play.hitData?.trajectory) {
+    case 'Pop Fly':
+      return `${bunt}Pop Out`
+    case 'Line Drive':
+    case 'Ground Ball':
+    case 'Chopper':
+      return `${bunt}Lineout`
+    default:
+      return bunt === '' ? 'Flyout' : 'Bunt Pop Out'
+  }
 }
 
 // ---- Runners ----
@@ -244,7 +267,7 @@ function runnersOf(
         outNumber: movement.isOut ? (movement.outNumber ?? null) : null
       },
       details: {
-        event: eventTypeName(eventType),
+        event: eventName(eventType, play),
         eventType,
         movementReason: batter ? null : movementReason(runner, onThrow),
         runner: who(details.runner),
@@ -501,7 +524,7 @@ function actionDocument(
         eventType,
         made
       ),
-      event: eventTypeName(eventType),
+      event: eventName(eventType, play),
       eventType,
       awayScore: score.away,
       homeScore: score.home,
@@ -614,32 +637,69 @@ interface HighlightCredit {
   credit: { name: string; role: string; position: string | null }
 }
 
-const BATTER_CREDITED = new Set([
-  'single',
-  'double',
-  'triple',
-  'home_run',
-  'walk',
-  'intent_walk',
-  'hit_by_pitch',
-  'catcher_interf',
-  'gs_manual_placement',
-  'sac_fly',
-  'sac_fly_double_play',
-  'sac_bunt'
-])
-const PITCHER_CREDITED = new Set(['strikeout', 'strikeout_double_play'])
-const FIELDER_CREDITED = new Set([
-  'field_out',
-  'other_out',
-  'gs_batter_out',
-  'grounded_into_double_play',
-  'triple_play',
-  'caught_stealing',
-  'pickoff_1b',
-  'pickoff_2b',
-  'pickoff_3b'
-])
+/**
+ * Whom a highlight credits for each type of play the engine stores: the
+ * batter who reached or sacrificed, the pitcher who struck him out, or the
+ * fielders who made the outs. A play of a type in `nobody` credits only the
+ * runners who scored or stole on it.
+ */
+export const HIGHLIGHT_CREDITED = {
+  batter: new Set([
+    'single',
+    'double',
+    'triple',
+    'home_run',
+    'walk',
+    'intent_walk',
+    'hit_by_pitch',
+    'catcher_interf',
+    'gs_manual_placement',
+    'sac_fly',
+    'sac_fly_double_play',
+    'sac_bunt',
+    'sac_bunt_double_play'
+  ]),
+  pitcher: new Set([
+    'strikeout',
+    'strikeout_double_play',
+    'strikeout_triple_play'
+  ]),
+  fielder: new Set([
+    'field_out',
+    'force_out',
+    'fielders_choice_out',
+    'other_out',
+    'gs_batter_out',
+    'double_play',
+    'grounded_into_double_play',
+    'grounded_into_triple_play',
+    'triple_play',
+    'caught_stealing_2b',
+    'caught_stealing_3b',
+    'caught_stealing_home',
+    'pickoff_1b',
+    'pickoff_2b',
+    'pickoff_3b',
+    'pickoff_caught_stealing_2b',
+    'pickoff_caught_stealing_3b',
+    'pickoff_caught_stealing_home'
+  ]),
+  nobody: new Set([
+    'fielders_choice',
+    'field_error',
+    'error',
+    'wild_pitch',
+    'passed_ball',
+    'balk',
+    'stolen_base_2b',
+    'stolen_base_3b',
+    'stolen_base_home',
+    'defensive_indiff',
+    'other_advance',
+    'runner_placed',
+    'final_score'
+  ])
+} as const satisfies Record<string, ReadonlySet<string>>
 
 /**
  * The credits a highlight shows for a completed play: the batter who reached,
@@ -673,11 +733,11 @@ function highlightCredits(
       credit: { name, role, position }
     })
   }
-  if (BATTER_CREDITED.has(type))
+  if (HIGHLIGHT_CREDITED.batter.has(type))
     add(play.matchup.batter, type, eventTypeName(type), 'batter')
-  if (PITCHER_CREDITED.has(type))
+  if (HIGHLIGHT_CREDITED.pitcher.has(type))
     add(play.matchup.pitcher, type, eventTypeName(type), 'pitcher')
-  if (FIELDER_CREDITED.has(type))
+  if (HIGHLIGHT_CREDITED.fielder.has(type))
     for (const runner of play.runners)
       if (runner.movement.isOut) {
         const putout = runner.credits.find(c => c.credit === 'f_putout')
@@ -721,10 +781,11 @@ function documentBody(
       atBatIndex: play.about.atBatIndex,
       inning: play.about.inning,
       halfInning: play.about.halfInning,
+      isTopInning: play.about.halfInning === 'top',
       isComplete: play.about.isComplete,
-      isScoringPlay: play.runners.some(
-        runner => runner.movement.runScored === true && !runner.movement.isOut
-      ),
+      isScoringPlay: play.runners.some(scoredRunner),
+      hasOut: play.runners.some(runner => runner.movement.isOut),
+      hasReview: false,
       startTime: stamp.startTime ?? null,
       endTime: stamp.endTime ?? null
     },
@@ -764,6 +825,22 @@ function documentBody(
   }
 }
 
+/**
+ * The play's result put somebody out: an out made on the play itself, or the
+ * runner's third out between pitches that ended it. A runner caught stealing
+ * earlier in the plate appearance is the play's out (`hasOut`), not its
+ * result's.
+ */
+function resultIsOut(play: GamePlay): boolean {
+  const last = play.runners.at(-1)
+  return (
+    play.runners.some(
+      runner => runner.movement.isOut && runner.details.byAction !== true
+    ) ||
+    (last?.details.byAction === true && last.movement.isOut)
+  )
+}
+
 /** A completed play, ready to store. */
 export function documentOf(
   state: GameState,
@@ -775,12 +852,13 @@ export function documentOf(
       ...documentBody(state, play, stamp),
       result: {
         type: 'atBat',
-        event: play.result.event,
+        event: eventName(playEventType(play), play),
         eventType: playEventType(play),
         description: play.result.description,
         rbi: play.result.rbi,
         awayScore: play.result.awayScore,
-        homeScore: play.result.homeScore
+        homeScore: play.result.homeScore,
+        isOut: resultIsOut(play)
       },
       credits: highlightCredits(state, stamp.setupBefore, play)
     })
@@ -804,7 +882,10 @@ export function currentDocumentOf(
         atBatIndex: state.liveData.plays.allPlays.length,
         inning: line.currentInning,
         halfInning: line.isTopInning ? 'top' : 'bottom',
-        isComplete: false
+        isTopInning: line.isTopInning,
+        isComplete: false,
+        hasOut: false,
+        hasReview: false
       },
       gameStation: {
         version: 1,
