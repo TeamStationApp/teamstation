@@ -87,6 +87,14 @@ internal class CaptureRenderer(
     var blankEncoder: Boolean = false
 
     /**
+     * Cameraman's software zoom past the camera's own ceiling, 1 for none. The quad is drawn this
+     * much larger and the overflow falls off the edges, so the encoder and the preview both get the
+     * centre of the picture, and the preview still shows exactly what is sent.
+     */
+    @Volatile
+    var digitalZoom: Float = 1f
+
+    /**
      * Fired on the render thread the moment blanking turns on or off.
      *
      * Black P-frames still reference the last live keyframe, so a decoder goes on showing the last
@@ -337,8 +345,9 @@ internal class CaptureRenderer(
         Matrix.setIdentityM(mvpMatrix, 0)
         // The mirror rides on the destination-space scale, so it is applied after the rotation and
         // flips the picture the operator sees rather than the axis it is rotated about.
+        val zoom = digitalZoom.takeIf { it.isFinite() && it > 1f } ?: 1f
         val mirroredX = if (mirrorHorizontally) -scaleX else scaleX
-        Matrix.scaleM(mvpMatrix, 0, mirroredX, scaleY, 1f)
+        Matrix.scaleM(mvpMatrix, 0, mirroredX * zoom, scaleY * zoom, 1f)
         if (rotationDegrees != 0) {
             Matrix.rotateM(mvpMatrix, 0, rotationDegrees.toFloat(), 0f, 0f, 1f)
         }
