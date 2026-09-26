@@ -12,7 +12,7 @@ import {
   walk
 } from '../../test/scoringGames'
 import type { ScoringAction } from './actions'
-import { advanceEarnsRbi, earnsRbi, statLines } from './credits'
+import { statLines } from './credits'
 import type { GamePlay, GameState } from './state'
 
 const out = (
@@ -171,15 +171,6 @@ describe('runs batted in', function () {
       close
     )
     expect(last(tp).result.eventType).equals('triple_play')
-  })
-
-  it('says which plays and advances earn one', function () {
-    expect(earnsRbi('Single')).equals(true)
-    expect(earnsRbi('Error')).equals(false)
-    expect(earnsRbi('Balk')).equals(false)
-    expect(advanceEarnsRbi('Ball Caught', 'Advance')).equals(true)
-    expect(advanceEarnsRbi('Ball Caught', 'Wild Pitch')).equals(false)
-    expect(advanceEarnsRbi(undefined, 'Advance')).equals(false)
   })
 })
 

@@ -67,40 +67,6 @@ export function errorCredit(
   )
 }
 
-/**
- * Whether a run on this play is batted in. Nobody drives in a run that scored
- * on a balk, on an error, or on a play the defence could have ended with a
- * force for the third out; those are taken back when the out is made.
- */
-export function earnsRbi(outcome: string | undefined): boolean {
-  return (
-    outcome !== 'Balk' &&
-    outcome !== 'Error' &&
-    outcome !== 'Dropped Third Strike'
-  )
-}
-
-/** Reasons a runner scores that nobody batted in, whatever the play. */
-const UNEARNED_ADVANCE = new Set([
-  'Wild Pitch',
-  'Passed Ball',
-  'Throwing Error',
-  'Fielding Error',
-  'Balk'
-])
-
-/**
- * A runner the scorer moves home while the play is still open — tagging up on
- * a caught fly, taking an extra base on the hit — was batted in, unless the
- * play itself earns none or he scored on the defence's mistake.
- */
-export function advanceEarnsRbi(
-  outcome: string | undefined,
-  reason: string
-): boolean {
-  return outcome != null && earnsRbi(outcome) && !UNEARNED_ADVANCE.has(reason)
-}
-
 const PLATE_APPEARANCE = new Set([
   'single',
   'double',
