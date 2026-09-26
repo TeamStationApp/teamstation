@@ -5,6 +5,7 @@ import { join } from 'path'
 
 import { eventTypeName, isGumboEventType } from '../../common/gumboEventTypes'
 import type { GumboPlay } from '../../common/gumboPlay'
+import { namedPlayerIds } from '../statsBuilder/builder'
 import { gameStatLines, type PlayerGameLine } from './gumboStats'
 
 const teams = { homeTeamId: 'home', awayTeamId: 'away' }
@@ -36,6 +37,7 @@ function emptyFigures(): Omit<PlayerGameLine, 'userId' | 'teamId'> {
     hbp: 0,
     ci: 0,
     sf: 0,
+    sh: 0,
     sb: 0,
     cs: 0,
     pitch_bf: 0,
@@ -282,9 +284,59 @@ describe('gameStatLines', function () {
       },
       {
         eventType: 'sac_bunt',
-        batter: { pa: 1, sf: 1 },
+        batter: { pa: 1, sh: 1 },
         pitcher: { pitch_bf: 1, pitch_outs: 1 },
         play: paPlay('sac_bunt', { isOut: true, outs: 1 })
+      },
+      ...(
+        [
+          'force_out',
+          'fielders_choice_out',
+          'double_play',
+          'grounded_into_triple_play',
+          'batter_interference',
+          'fan_interference',
+          'gs_batter_out'
+        ] as const
+      ).map(eventType => ({
+        eventType,
+        batter: { pa: 1, ab: 1 },
+        pitcher: { pitch_bf: 1, pitch_outs: 1 },
+        play: paPlay(eventType, { isOut: true, outs: 1 })
+      })),
+      ...(
+        [
+          'strike_out',
+          'strikeout_double_play',
+          'strikeout_triple_play'
+        ] as const
+      ).map(eventType => ({
+        eventType,
+        batter: { pa: 1, ab: 1, k: 1 },
+        pitcher: { pitch_bf: 1, pitch_k: 1, pitch_outs: 1 },
+        play: paPlay(eventType, { isOut: true, outs: 1 })
+      })),
+      {
+        eventType: 'catcher_interf',
+        batter: { pa: 1, ci: 1 },
+        pitcher: { pitch_bf: 1 }
+      },
+      {
+        eventType: 'sac_fly_double_play',
+        batter: { pa: 1, sf: 1 },
+        pitcher: { pitch_bf: 1, pitch_outs: 2 },
+        play: paPlay('sac_fly_double_play', { isOut: true, outs: 2 })
+      },
+      {
+        eventType: 'sac_bunt_double_play',
+        batter: { pa: 1, sh: 1 },
+        pitcher: { pitch_bf: 1, pitch_outs: 2 },
+        play: paPlay('sac_bunt_double_play', { isOut: true, outs: 2 })
+      },
+      {
+        eventType: 'gs_manual_placement',
+        batter: { pa: 1 },
+        pitcher: { pitch_bf: 1 }
       }
     ]
 
@@ -500,14 +552,13 @@ describe('gameStatLines', function () {
     })
   })
 
-  it('charges a walk to responsiblePitcher and gives both pitch_bf', function () {
+  it('charges a walk and its batter faced to responsiblePitcher alone', function () {
     const withOwner = paPlay('walk', { walkOwner: 11, pitcher: 16 })
     expect(gameStatLines([withOwner], teams, known)).deep.equals({
       kind: 'lines',
       lines: [
         line(1, 'away', { pa: 1, bb: 1 }),
-        line(11, 'home', { pitch_bf: 1, pitch_bb: 1 }),
-        line(16, 'home', { pitch_bf: 1 })
+        line(11, 'home', { pitch_bf: 1, pitch_bb: 1 })
       ]
     })
     const without = paPlay('walk', { pitcher: 16 })
@@ -927,5 +978,269 @@ describe('gameStatLines', function () {
     expect(isGumboEventType('game_advisory')).equals(true)
     expect(eventTypeName('other_out')).equals('Out')
     expect(eventTypeName('game_advisory')).equals('Scorekeeper note')
+  })
+
+  it('reads catcher_interf and the legacy catcher_interference alike', function () {
+    expect(gameStatLines([paPlay('catcher_interf')], teams, known)).deep.equals(
+      gameStatLines([paPlay('catcher_interference')], teams, known)
+    )
+  })
+
+  it('counts every base-running type for its runners and outs, never as a PA', function () {
+    const types = [
+      'stolen_base',
+      'stolen_base_2b',
+      'stolen_base_3b',
+      'stolen_base_home',
+      'caught_stealing',
+      'caught_stealing_2b',
+      'caught_stealing_3b',
+      'caught_stealing_home',
+      'pickoff_1b',
+      'pickoff_2b',
+      'pickoff_3b',
+      'pickoff_error_1b',
+      'pickoff_error_2b',
+      'pickoff_error_3b',
+      'pickoff_caught_stealing_2b',
+      'pickoff_caught_stealing_3b',
+      'pickoff_caught_stealing_home',
+      'wild_pitch',
+      'passed_ball',
+      'balk',
+      'forced_balk',
+      'other_out',
+      'defensive_indiff',
+      'other_advance',
+      'runner_double_play',
+      'cs_double_play',
+      'error'
+    ]
+    for (const eventType of types) {
+      const play: GumboPlay = {
+        about: { atBatIndex: 0, inning: 1, halfInning: 'top' as const },
+        result: { eventType, awayScore: 1, homeScore: 0 },
+        count: { outs: 1 },
+        matchup: { batter: { id: 1 }, pitcher: { id: 11 } },
+        runners: [
+          {
+            movement: { start: '1B', end: null, isOut: true },
+            details: { eventType, runner: { id: 2 } }
+          },
+          {
+            movement: { start: '3B', end: 'score', isOut: false },
+            details: {
+              eventType,
+              runner: { id: 3 },
+              responsiblePitcher: { id: 11 },
+              earned: false,
+              rbi: false
+            }
+          }
+        ]
+      }
+      // Each runner's own entry names the steal or the caught stealing.
+      const running = eventType.startsWith('caught_stealing')
+        ? { cs: 1 }
+        : eventType.startsWith('stolen_base')
+          ? { sb: 1 }
+          : null
+      expect(gameStatLines([play], teams, known), eventType).deep.equals({
+        kind: 'lines',
+        lines: [
+          ...(running == null ? [] : [line(2, 'away', running)]),
+          line(3, 'away', { r: 1, ...running }),
+          line(11, 'home', { pitch_outs: 1, pitch_r: 1 })
+        ]
+      })
+    }
+  })
+
+  it('skips substitutions, placed runners, timeouts and the score entries', function () {
+    for (const eventType of [
+      'runner_placed',
+      'placed_runner',
+      'pitching_substitution',
+      'offensive_substitution',
+      'defensive_substitution',
+      'defensive_switch',
+      'mound_visit',
+      'batter_timeout',
+      'game_advisory',
+      'final_score',
+      'score_correction'
+    ]) {
+      const play = paPlay(eventType, { end: 'score' })
+      expect(gameStatLines([play], teams, known), eventType).deep.equals({
+        kind: 'lines',
+        lines: []
+      })
+    }
+  })
+
+  it('credits a steal made inside a plate appearance', function () {
+    const play = paPlay('single', {
+      runners: [
+        {
+          movement: { start: '1B', end: '2B', isOut: false },
+          details: { eventType: 'stolen_base_2b', runner: { id: 2 } }
+        },
+        {
+          movement: { start: null, end: '1B', isOut: false },
+          details: { eventType: 'single', runner: { id: 1 } }
+        }
+      ]
+    })
+    const result = gameStatLines([play], teams, known)
+    expect(result.kind).equals('lines')
+    if (result.kind !== 'lines') return
+    expect(result.lines.find(l => l.userId === 2)).deep.equals(
+      line(2, 'away', { sb: 1 })
+    )
+  })
+
+  it('counts a batter placed by hand who forces in a run: a PA, no AB, and the run', function () {
+    const run = (
+      runner: number,
+      start: string,
+      end: string
+    ): NonNullable<GumboPlay['runners']>[number] => ({
+      movement: { start, end, isOut: false },
+      details: {
+        eventType: 'gs_manual_placement',
+        runner: { id: runner },
+        ...(end === 'score'
+          ? { responsiblePitcher: { id: 11 }, earned: true, rbi: true }
+          : {})
+      }
+    })
+    const play = paPlay('gs_manual_placement', {
+      awayScore: 1,
+      homeScore: 0,
+      runners: [
+        run(4, '3B', 'score'),
+        run(3, '2B', '3B'),
+        run(2, '1B', '2B'),
+        {
+          movement: { start: null, end: '1B', isOut: false },
+          details: { eventType: 'gs_manual_placement', runner: { id: 1 } }
+        }
+      ]
+    })
+    expect(gameStatLines([play], teams, known)).deep.equals({
+      kind: 'lines',
+      lines: [
+        line(1, 'away', { pa: 1, rbi: 1 }),
+        line(4, 'away', { r: 1 }),
+        line(11, 'home', { pitch_bf: 1, pitch_r: 1, pitch_er: 1 })
+      ]
+    })
+  })
+
+  it('gives gs_batter_out a PA and an AB, and a between-pitch other_out neither', function () {
+    const batterOut = gameStatLines(
+      [paPlay('gs_batter_out', { isOut: true, outs: 1 })],
+      teams,
+      known
+    )
+    expect(batterOut).deep.equals({
+      kind: 'lines',
+      lines: [
+        line(1, 'away', { pa: 1, ab: 1 }),
+        line(11, 'home', { pitch_bf: 1, pitch_outs: 1 })
+      ]
+    })
+    const runnerOut: GumboPlay = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' as const },
+      result: { eventType: 'other_out' },
+      count: { outs: 1 },
+      matchup: { batter: { id: 1 }, pitcher: { id: 11 } },
+      runners: [
+        {
+          movement: { start: '2B', end: null, isOut: true },
+          details: { eventType: 'other_out', runner: { id: 2 } }
+        }
+      ]
+    }
+    expect(gameStatLines([runnerOut], teams, known)).deep.equals({
+      kind: 'lines',
+      lines: [line(11, 'home', { pitch_outs: 1 })]
+    })
+  })
+})
+
+/**
+ * The imported-game regression. Three imported games, anonymized, with the
+ * lines the base code (02650517b) built for them: each builds the same lines
+ * now, except that a sacrifice bunt moves from `sf` to `sh`. None of the
+ * imports has a sacrifice bunt, so a hand-built one shows the move.
+ */
+describe('imported games build the lines they always did', function () {
+  interface Fixture {
+    plays: GumboPlay[]
+    expected: Array<Omit<PlayerGameLine, 'sh'>>
+    finalScore: { away: number; home: number }
+  }
+  const load = (name: string): Fixture =>
+    JSON.parse(
+      readFileSync(join(__dirname, `fixtures/${name}.json`), 'utf8')
+    ) as Fixture
+
+  /** The base code's lines, with each sac bunt batter's `sf` moved to `sh`. */
+  function movedToSh(
+    plays: GumboPlay[],
+    expected: Fixture['expected']
+  ): PlayerGameLine[] {
+    const bunts = new Map<number, number>()
+    for (const play of plays) {
+      const id = play.matchup?.batter?.id
+      if (
+        typeof id === 'number' &&
+        ['sac_bunt', 'sac_bunt_double_play'].includes(play.result.eventType)
+      )
+        bunts.set(id, (bunts.get(id) ?? 0) + 1)
+    }
+    return expected.map(held => {
+      const moved = bunts.get(held.userId) ?? 0
+      return { ...held, sf: held.sf - moved, sh: moved }
+    })
+  }
+
+  for (const name of ['imported1', 'imported2', 'imported3']) {
+    it(`builds ${name}'s base-code lines`, function () {
+      const { plays, expected } = load(name)
+      const result = gameStatLines(plays, teams, new Set(namedPlayerIds(plays)))
+      expect(result).deep.equals({
+        kind: 'lines',
+        lines: movedToSh(plays, expected)
+      })
+    })
+  }
+
+  it('moves a sacrifice bunt from sf to sh', function () {
+    const { plays, expected } = load('imported3')
+    // A batter's out, turned into a bunt. The base code counted a sac_bunt
+    // like a sac fly: a PA, no AB, and an sf. It skipped a
+    // sac_bunt_double_play, which now counts as a sac_bunt does.
+    const index = plays.findIndex(play => play.result.eventType === 'field_out')
+    expect(index).to.be.greaterThan(-1)
+    const batter = plays[index].matchup!.batter!.id!
+    for (const eventType of ['sac_bunt', 'sac_bunt_double_play']) {
+      const bunted = plays.map((play, at) =>
+        at === index ? { ...play, result: { ...play.result, eventType } } : play
+      ) as GumboPlay[]
+      const baseLines = expected.map(held =>
+        held.userId === batter
+          ? { ...held, ab: held.ab - 1, sf: held.sf + 1 }
+          : held
+      )
+      const lines = movedToSh(bunted, baseLines)
+      const mine = lines.find(held => held.userId === batter)!
+      expect(mine.sh, eventType).equals(1)
+      expect(
+        gameStatLines(bunted, teams, new Set(namedPlayerIds(bunted))),
+        eventType
+      ).deep.equals({ kind: 'lines', lines })
+    }
   })
 })

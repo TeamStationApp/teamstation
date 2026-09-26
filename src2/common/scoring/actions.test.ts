@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { GUMBO_EVENT_TYPES } from '../gumboEventTypes'
+import { GUMBO_EVENT_TYPES, normalizeEventType } from '../gumboEventTypes'
 import {
   ACTION_TYPES,
   BASE_RUNNING_KINDS,
@@ -289,9 +289,10 @@ describe('scoring actions', function () {
   })
 
   it('folds nothing the stored vocabulary does not accept', function () {
+    // A legacy code the engine still folds is stored as its listed one.
     const stored: readonly string[] = GUMBO_EVENT_TYPES
     for (const type of PRODUCED_EVENT_TYPES)
-      expect(stored, type).to.include(type)
+      expect(stored, type).to.include(normalizeEventType(type))
   })
 })
 

@@ -6,6 +6,7 @@ import { mintUserId } from '../common/mintUserId'
 import { migrations } from './migrations'
 import { migration037GameStatsState } from './migrations/037gameStatsState'
 import { migration038CurrentPlay } from './migrations/038currentPlay'
+import { migration039GumboEventTypes } from './migrations/039gumboEventTypes'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -582,9 +583,7 @@ describe('migration 037gameStatsState', function () {
       pa: number
       ab: number
       h: number
-    }>(
-      `select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`
-    )
+    }>(`select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`)
 
     await pool.query(`update events set gumbo = gumbo where id = 'evt_037'`)
 
@@ -604,9 +603,7 @@ describe('migration 037gameStatsState', function () {
       pa: number
       ab: number
       h: number
-    }>(
-      `select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`
-    )
+    }>(`select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`)
     expect(after.rows).deep.equals(before.rows)
   })
 
@@ -717,3 +714,166 @@ async function seedPost031(pool: Pool): Promise<void> {
     [JSON.stringify(gumbo)]
   )
 }
+
+const through038 = migrations.filter(migration => migration.name < '039')
+const through039 = migrations.filter(migration => migration.name < '040')
+
+/**
+ * Migration 039 renames the three legacy event types in each stored play's
+ * result and in the at-bat in progress, and nowhere else, and adds `sh`.
+ */
+describe('migration 039gumboEventTypes', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_039_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+  const legacy = ['catcher_interference', 'placed_runner', 'manual_placement']
+  const listed = ['catcher_interf', 'runner_placed', 'gs_manual_placement']
+
+  let admin: Pool
+  let pool: Pool
+
+  const eventTypes = async (): Promise<string[]> =>
+    (
+      await pool.query<{ eventType: string }>(
+        `select "eventType" from events where "gameId" = 'gam_039'
+         order by "atBatIndex"`
+      )
+    ).rows.map(row => row.eventType)
+  const logs = async (): Promise<unknown[]> =>
+    (
+      await pool.query<{ log: unknown }>(
+        `select jsonb_build_array(gumbo->'gameStation', gumbo->'credits') as log
+         from events where "gameId" = 'gam_039' order by "atBatIndex"`
+      )
+    ).rows.map(row => row.log)
+  /** Each play's runners' event types, then the at-bat in progress's. */
+  const runnerTypes = async (): Promise<unknown> =>
+    (
+      await pool.query<{ types: unknown }>(
+        `select jsonb_path_query_array(gumbo, '$.runners[*].details.eventType')
+           as types
+         from events where "gameId" = 'gam_039'
+         union all
+         select jsonb_path_query_array(
+           "currentPlay", '$.runners[*].details.eventType')
+         from games where id = 'gam_039'`
+      )
+    ).rows.map(row => row.types)
+  const current = async (): Promise<unknown> =>
+    (
+      await pool.query<{ type: unknown }>(
+        `select "currentPlay" #> '{result,eventType}' as type
+         from games where id = 'gam_039'`
+      )
+    ).rows[0].type
+  const hasSh = async (): Promise<boolean> =>
+    (
+      await pool.query(
+        `select 1 from information_schema.columns
+         where table_name = 'game_player_stats' and column_name = 'sh'`
+      )
+    ).rows.length === 1
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through038)
+    await pool.query(
+      `insert into teams (id, name) values
+         ('tem_home039', 'Home'), ('tem_away039', 'Away')`
+    )
+    await pool.query(
+      `insert into games (id, home_team_id, away_team_id, start_at, "currentPlay")
+       values ('gam_039', 'tem_home039', 'tem_away039', $1, $2::jsonb)`,
+      [
+        PLAYED,
+        JSON.stringify({
+          about: { atBatIndex: 4, isComplete: false },
+          result: { eventType: 'catcher_interference' },
+          runners: [{ details: { eventType: 'placed_runner' } }]
+        })
+      ]
+    )
+    for (const [index, eventType] of [...legacy, 'single'].entries()) {
+      const gumbo = {
+        about: { atBatIndex: index, inning: 1, halfInning: 'top' },
+        result: { eventType, awayScore: 0, homeScore: 0 },
+        runners: [
+          { movement: { start: null, end: '1B' }, details: { eventType } },
+          { movement: { start: '1B', end: '2B' }, details: {} }
+        ],
+        credits: [{ eventType, label: `${eventType}: Ada`, credit: {} }],
+        gameStation: { actions: [{ type: 'result', eventType }] }
+      }
+      await pool.query(
+        `insert into events (id, "gameId", "battingTeamId", gumbo)
+         values ($1, 'gam_039', 'tem_away039', $2::jsonb)`,
+        [`evt_039_${index}`, JSON.stringify(gumbo)]
+      )
+    }
+    await pool.query(
+      `insert into users (id, "legacyId", display_name) values ($1, $2, 'Ada')`,
+      [batter.userId, batter.legacyId]
+    )
+    await pool.query(
+      `insert into game_player_stats (id, game_id, user_id, team_id, pa, sf)
+       values ('gps_039', 'gam_039', $1, 'tem_away039', 1, 1)`,
+      [batter.userId]
+    )
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('renames the legacy codes in results and runners only, and adds sh', async function () {
+    const before = await logs()
+    const applied = await migrateUp(pool, through039)
+    expect(applied.applied).deep.equals([migration039GumboEventTypes.name])
+
+    expect(await eventTypes()).deep.equals([...listed, 'single'])
+    expect(await current()).equals('catcher_interf')
+    expect(await runnerTypes()).deep.equals([
+      ...[...listed, 'single'].map(type => [type]),
+      ['runner_placed']
+    ])
+    // The action log and the credits keep the engine's own words.
+    expect(await logs()).deep.equals(before)
+    const credits = await pool.query<{ eventType: string }>(
+      `select "eventType" from "eventCredits" order by "eventType"`
+    )
+    expect(credits.rows.map(row => row.eventType)).deep.equals(
+      [...legacy, 'single'].sort()
+    )
+
+    expect(await hasSh()).equals(true)
+    const stats = await pool.query(
+      `select sf, sh from game_player_stats where id = 'gps_039'`
+    )
+    expect(stats.rows).deep.equals([{ sf: 1, sh: 0 }])
+  })
+
+  it('puts the legacy codes back and drops sh when rolled back', async function () {
+    const before = await logs()
+    const rolled = await migrateDown(pool, through039, 1)
+    expect(rolled).deep.equals([migration039GumboEventTypes.name])
+    expect(await eventTypes()).deep.equals([...legacy, 'single'])
+    expect(await current()).equals('catcher_interference')
+    expect(await runnerTypes()).deep.equals([
+      ...[...legacy, 'single'].map(type => [type]),
+      ['placed_runner']
+    ])
+    expect(await logs()).deep.equals(before)
+    expect(await hasSh()).equals(false)
+
+    await migrateUp(pool, through039)
+    expect(await eventTypes()).deep.equals([...listed, 'single'])
+    expect(await hasSh()).equals(true)
+  })
+})

@@ -141,12 +141,11 @@ describe('clauses by event type', function () {
         credits: [credit(eventType, 'Head: detail', 'Kai L')]
       })
       const did = DID_BY_TYPE[eventType]
-      const expected =
-        eventType === 'strikeout' || eventType === 'strikeout_double_play'
-          ? 'Kai L picks up a dropped third strike.'
-          : did != null
-            ? `Kai L ${did}.`
-            : 'Head, detail.'
+      const expected = eventType.startsWith('strike')
+        ? 'Kai L picks up a dropped third strike.'
+        : did != null
+          ? `Kai L ${did}.`
+          : 'Head, detail.'
       expect(text, eventType).equals(expected)
     }
   })
@@ -161,5 +160,23 @@ describe('clauses by event type', function () {
         ]
       })
     ).equals('Ace P strikes out the batter. Tom scores.')
+  })
+
+  it("reads a legacy code as the one it is stored as, and names every strikeout's pitcher", function () {
+    expect(
+      describePlay({
+        eventType: 'catcher_interference',
+        credits: [credit('catcher_interference', 'CI: Kai L', 'Kai L')]
+      })
+    ).equals("Kai L reaches on catcher's interference.")
+    expect(describePlay({ eventType: 'placed_runner', credits: [] })).equals(
+      'Runner placed.'
+    )
+    expect(
+      describePlay({
+        eventType: 'strike_out',
+        credits: [credit('strike_out', '', 'Ace P', 'pitcher')]
+      })
+    ).equals('Ace P strikes out the batter.')
   })
 })

@@ -121,7 +121,7 @@ export async function buildNext(
           hashtext(${'game_stats:' + gameId})
         ) as locked
       `.execute(trx)
-      if (lock.rows[0]?.locked !== true) {
+      if (!lock.rows[0]?.locked) {
         return { kind: 'skipped' as const, gameId }
       }
 
@@ -218,6 +218,7 @@ export async function buildNext(
             hbp: line.hbp,
             ci: line.ci,
             sf: line.sf,
+            sh: line.sh,
             sb: line.sb,
             cs: line.cs,
             pitch_bf: line.pitch_bf,

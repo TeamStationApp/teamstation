@@ -1,7 +1,10 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { GUMBO_EVENT_TYPES } from '../../common/gumboEventTypes'
+import {
+  GUMBO_EVENT_TYPES,
+  normalizeEventType
+} from '../../common/gumboEventTypes'
 import { moreEvents, outcomeEvents } from './scoringContract'
 
 describe('the scoring screen vocabulary', function () {
@@ -11,6 +14,6 @@ describe('the scoring screen vocabulary', function () {
       ...Object.entries(outcomeEvents),
       ...Object.entries(moreEvents)
     ])
-      expect(stored, label).to.include(type)
+      expect(stored, label).to.include(normalizeEventType(type))
   })
 })

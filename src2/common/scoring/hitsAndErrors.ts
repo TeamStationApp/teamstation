@@ -1,4 +1,7 @@
-import type { GumboEventType } from '../../common/gumboEventTypes'
+import {
+  type GumboEventType,
+  normalizeEventType
+} from '../../common/gumboEventTypes'
 
 /**
  * What each event type counts toward in a line score.
@@ -6,7 +9,9 @@ import type { GumboEventType } from '../../common/gumboEventTypes'
  * `countable` is whether a play of the type proves somebody was keeping a
  * sheet a hit could appear on. A game with only a score correction on it proves
  * nothing, and neither does a runner moving on his own. `stat` is the column
- * the play adds one to, for the side it belongs to.
+ * the play adds one to, for the side it belongs to. An `error` is charged to
+ * the side fielding: a batter who reached on one, a runner who took a base on
+ * one, or a pickoff throw that got away.
  *
  * Every event type has an entry, so a new type cannot be counted by accident.
  */
@@ -14,52 +19,94 @@ export const EVENT_CLASS: Record<
   GumboEventType,
   {
     countable: boolean
-    stat?: 'hit' | 'walk' | 'hitByPitch' | 'strikeout' | 'reachedOnError'
+    stat?: 'hit' | 'walk' | 'hitByPitch' | 'strikeout' | 'error'
   }
 > = {
+  pickoff_1b: { countable: false },
+  pickoff_2b: { countable: false },
+  pickoff_3b: { countable: false },
+  pitcher_step_off: { countable: false },
+  pickoff_error_1b: { countable: false, stat: 'error' },
+  pickoff_error_2b: { countable: false, stat: 'error' },
+  pickoff_error_3b: { countable: false, stat: 'error' },
+  batter_timeout: { countable: false },
+  mound_visit: { countable: false },
+  no_pitch: { countable: false },
   single: { countable: true, stat: 'hit' },
   double: { countable: true, stat: 'hit' },
   triple: { countable: true, stat: 'hit' },
   home_run: { countable: true, stat: 'hit' },
+  double_play: { countable: true },
+  field_error: { countable: true, stat: 'error' },
+  error: { countable: false, stat: 'error' },
+  field_out: { countable: true },
+  fielders_choice: { countable: true },
+  fielders_choice_out: { countable: true },
+  force_out: { countable: true },
+  grounded_into_double_play: { countable: true },
+  grounded_into_triple_play: { countable: true },
   strikeout: { countable: true, stat: 'strikeout' },
+  strike_out: { countable: true, stat: 'strikeout' },
   strikeout_double_play: { countable: true, stat: 'strikeout' },
+  strikeout_triple_play: { countable: true, stat: 'strikeout' },
+  triple_play: { countable: false },
+  sac_fly: { countable: true },
+  catcher_interf: { countable: false },
+  batter_interference: { countable: true },
+  fielder_interference: { countable: false },
+  runner_interference: { countable: false },
+  fan_interference: { countable: true },
+  batter_turn: { countable: false },
+  ejection: { countable: false },
+  cs_double_play: { countable: false },
+  defensive_indiff: { countable: false },
+  sac_fly_double_play: { countable: true },
+  sac_bunt: { countable: true },
+  sac_bunt_double_play: { countable: true },
   walk: { countable: true, stat: 'walk' },
   intent_walk: { countable: false },
   hit_by_pitch: { countable: true, stat: 'hitByPitch' },
-  field_out: { countable: true },
-  other_out: { countable: true },
-  grounded_into_double_play: { countable: true },
-  triple_play: { countable: false },
-  field_error: { countable: true, stat: 'reachedOnError' },
-  fielders_choice: { countable: true },
-  catcher_interference: { countable: false },
-  manual_placement: { countable: true },
-  sac_fly: { countable: true },
-  sac_fly_double_play: { countable: true },
-  sac_bunt: { countable: true },
+  injury: { countable: false },
+  os_ruling_pending_prior: { countable: false },
+  os_ruling_pending_primary: { countable: false },
+  at_bat_start: { countable: false },
+  passed_ball: { countable: false },
+  other_advance: { countable: false },
+  runner_double_play: { countable: false },
+  runner_placed: { countable: false },
+  pitching_substitution: { countable: false },
+  offensive_substitution: { countable: false },
+  defensive_switch: { countable: false },
+  umpire_substitution: { countable: false },
+  pitcher_switch: { countable: false },
+  game_advisory: { countable: false },
   stolen_base: { countable: false },
+  stolen_base_2b: { countable: false },
+  stolen_base_3b: { countable: false },
+  stolen_base_home: { countable: false },
   caught_stealing: { countable: false },
-  pickoff_1b: { countable: false },
-  pickoff_2b: { countable: false },
-  pickoff_3b: { countable: false },
+  caught_stealing_2b: { countable: false },
+  caught_stealing_3b: { countable: false },
+  caught_stealing_home: { countable: false },
+  defensive_substitution: { countable: false },
   pickoff_caught_stealing_2b: { countable: false },
   pickoff_caught_stealing_3b: { countable: false },
   pickoff_caught_stealing_home: { countable: false },
-  defensive_indiff: { countable: false },
-  placed_runner: { countable: false },
-  wild_pitch: { countable: false },
-  passed_ball: { countable: false },
   balk: { countable: false },
-  game_advisory: { countable: false },
+  forced_balk: { countable: false },
+  wild_pitch: { countable: false },
+  other_out: { countable: true },
+  final_score: { countable: false },
   score_correction: { countable: false },
-  final_score: { countable: false }
+  gs_manual_placement: { countable: true },
+  gs_batter_out: { countable: true }
 }
 
 function classOf(
   eventType: string
 ): (typeof EVENT_CLASS)[GumboEventType] | undefined {
   return (EVENT_CLASS as Record<string, (typeof EVENT_CLASS)[GumboEventType]>)[
-    eventType
+    normalizeEventType(eventType)
   ]
 }
 
@@ -133,7 +180,7 @@ export function hitsAndErrors(
       if (battingIsHome) strikeouts.home += 1
       else strikeouts.away += 1
     }
-    if (kind?.stat === 'reachedOnError') {
+    if (kind?.stat === 'error') {
       if (battingIsHome) errors.away += 1
       else errors.home += 1
     }
