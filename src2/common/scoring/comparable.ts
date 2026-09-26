@@ -5,9 +5,11 @@ import { copyState } from './state'
  * it was scored at, the half's outs the server writes onto its last play, the
  * team a credit is filed under, which the server rewrites from `home` or
  * `away` to a team id, and the `source` the server does not keep. Nothing
- * else changes.
+ * else changes. Server code compares with it too, so it lives beside the
+ * library rather than in a test.
  */
 export function comparablePlay<T>(play: T): T {
+  if (play == null) return play
   const copy = copyState(play) as Record<string, unknown>
   delete copy.source
   const about = copy.about as Record<string, unknown> | undefined

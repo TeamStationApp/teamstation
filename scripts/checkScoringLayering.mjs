@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
  * Holds the scoring library to its layering. Nothing under src2/common/scoring
  * imports the app or the server, and the app imports only the parts of the
  * library that describe a game and ask about it — never the parts that change
- * one or store one.
+ * one or store one: `apply`, `gumbo`, and `document`, which alone writes a
+ * stored play.
  */
 export const APP_MAY_IMPORT = [
   'state',

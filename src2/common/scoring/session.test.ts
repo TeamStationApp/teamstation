@@ -325,6 +325,45 @@ describe('a scoring session', function () {
     expect(again.session.state.liveData.linescore.balls).equals(1)
   })
 
+  it('opens a game stored before the runners were Gumbo without posting it again, and undoes', async function () {
+    const { session, store } = await open()
+    session.apply({ type: 'result', eventType: 'single' })
+    session.apply(strike)
+    await session.flush()
+    // The play as it was stored before: numeric bases, the engine's labels.
+    const old = store.plays.get(0)!.play as unknown as {
+      runners: Array<{ movement: unknown; details: unknown }>
+    }
+    old.runners = [
+      {
+        movement: { originBase: 0, start: 0, end: 1, isOut: false },
+        details: { runner: { fullName: 'Player 1' }, movementReason: 'Single' }
+      }
+    ]
+    const again = await open(store)
+    expect(again.session.pending).equals(0)
+    await again.session.flush()
+    expect(store.posts).length(1)
+    // Undoing the strike reopens the single, stored in Gumbo's shape.
+    again.session.undo()
+    await again.session.flush()
+    const current = store.current as unknown as {
+      about: { atBatIndex: number }
+      runners: Array<{ movement: { start: unknown; end: unknown } }>
+    }
+    expect(current.about.atBatIndex).equals(0)
+    expect(current.runners.map(r => r.movement)).deep.equals([
+      {
+        originBase: null,
+        start: null,
+        end: '1B',
+        outBase: null,
+        isOut: false,
+        outNumber: null
+      }
+    ])
+  })
+
   it('undoes the action that ended a play and keeps its row until it ends again', async function () {
     const { session, store } = await open()
     session.apply(ball)
@@ -400,6 +439,34 @@ describe('a scoring session', function () {
     theirs.apply(ball)
     expect(await mine.reload()).equals(false)
     expect(mine.actions).deep.equals([ball, ball, strike])
+  })
+
+  it('goes read-only when another scorer’s saved plays cannot be read back', async function () {
+    const store = new FakeStore()
+    const mine = (await open(store)).session
+    const theirs = (await open(store)).session
+    for (const action of [strike, strike, strike, ball]) theirs.apply(action)
+    await theirs.flush()
+    const first = store.plays.get(0)!.play as unknown as {
+      gameStation: { actions: unknown[] }
+    }
+    first.gameStation.actions.unshift({
+      type: 'fieldingPlay',
+      fielders: [F.SS],
+      error: F.SS
+    })
+    const stored = JSON.stringify(await store.load())
+    const posts = store.posts.length
+    expect(await mine.reload()).equals(true)
+    expect(mine.readOnly).equals(true)
+    expect(mine.problem).match(/^Some saved plays could not be read back: /)
+    expect(mine.pending).equals(0)
+    expect(mine.apply(ball).problems).deep.equals([
+      { code: 'notNow', message: mine.problem }
+    ])
+    await mine.flush()
+    expect(store.posts.length).equals(posts)
+    expect(JSON.stringify(await store.load())).equals(stored)
   })
 
   it('ends the game at 9999 and takes it back on undo', async function () {
@@ -484,6 +551,39 @@ describe('a scoring session', function () {
     const again = await open(store)
     expect(again.session.problem).includes('could not be read back')
     expect(again.session.actions).length(1)
+  })
+
+  it('shows a game it could not read back in full and never writes to it', async function () {
+    const store = new FakeStore()
+    const { session } = await open(store)
+    for (const action of [strike, strike, strike, ball, ball])
+      session.apply(action)
+    await session.flush()
+    expect([...store.plays.keys()]).deep.equals([0])
+    // The first play's log now holds an action that no longer applies, so
+    // neither it nor anything after it can be read back.
+    const first = store.plays.get(0)!.play as unknown as {
+      gameStation: { actions: unknown[] }
+    }
+    first.gameStation.actions.unshift({
+      type: 'fieldingPlay',
+      fielders: [F.SS],
+      error: F.SS
+    })
+    const stored = JSON.stringify(await store.load())
+    const posts = store.posts.length
+    const { session: shown } = await open(store)
+    const message = shown.problem!
+    expect(message).match(/^Some saved plays could not be read back: /)
+    expect(shown.readOnly).equals(true)
+    expect(shown.pending).equals(0)
+    const refused = [{ code: 'notNow', message }]
+    expect(shown.apply(ball).problems).deep.equals(refused)
+    expect(shown.undo().problems).deep.equals(refused)
+    expect(shown.sync([ball])).deep.equals(refused)
+    await shown.flush()
+    expect(store.posts).length(posts)
+    expect(JSON.stringify(await store.load())).equals(stored)
   })
 
   it('never writes or removes a play it did not score', async function () {

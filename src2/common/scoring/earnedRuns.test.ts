@@ -312,19 +312,24 @@ describe('the responsible pitcher (U5)', function () {
     expect(runs(onward.state)).equals(1)
   })
 
-  it('keeps the new facts out of the stored play until the document says them', function () {
+  it("writes the runners' charges, earned runs and RBIs into the stored play", function () {
     const state = after(game(), ...reachOnError(), close, ...hit('home_run'))
     const play = state.liveData.plays.currentPlay!
-    expect(play.runners.some(r => r.details.earned === true)).equals(true)
     const stored = foldPlay(state, play, {
       setupBefore: setupOf(game()),
       actions: []
     })
-    for (const runner of stored.runners ?? [])
-      expect(Object.keys(runner.details ?? {}).sort()).deep.equals([
-        'movementReason',
-        'runner'
-      ])
+    const details = (stored.runners ?? []).map(
+      runner => runner.details as Record<string, unknown>
+    )
+    // The runner who reached on the error scores unearned, the batter earned
+    // and batted in; the made-up pitcher they are charged to has no user id.
+    expect(
+      details.map(d => [d.earned, d.teamUnearned, d.rbi, d.responsiblePitcher])
+    ).deep.equals([
+      [false, true, true, { id: null }],
+      [true, false, true, { id: null }]
+    ])
     expect(JSON.stringify(stored.gameStation)).not.contains('errorlessOuts')
   })
 })

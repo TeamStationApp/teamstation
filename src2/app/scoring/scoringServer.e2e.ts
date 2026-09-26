@@ -279,6 +279,45 @@ async function dropRunnerWithKeyboard(
   await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
   await page.keyboard.press('Enter')
 }
+/** The runner headed home is safe, when the screen asks. */
+async function decideHome(page: Page): Promise<void> {
+  await page.waitForSelector('[aria-label^="Home plate decision"]', {
+    timeout: 30000
+  })
+  await click(page, 'Safe')
+}
+/** A ground ball the shortstop boots, charged to him. */
+async function reachOnError(page: Page): Promise<void> {
+  await waitReady(page)
+  await click(page, 'Swing in Play')
+  await click(page, 'Error')
+  await page.waitForSelector('canvas[data-field-ready="true"]')
+  await page.waitForSelector(
+    '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+  )
+  await page.focus('[role="application"]')
+  for (let i = 0; i <= 4; i++) await page.keyboard.press(']')
+  await frame(page)
+  await page.keyboard.press('Space')
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('Enter')
+  await page.waitForSelector(
+    '[aria-label^="Drag up and down for ball trajectory."]'
+  )
+  for (let value = 45; value > -10; value--)
+    await page.keyboard.press('ArrowDown')
+  await frame(page)
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('[aria-label^="Tap or drag another defender"]', {
+    timeout: 30000
+  })
+  await click(page, 'Finish defensive play')
+  await page.waitForSelector('[aria-label^="Error by "]')
+  const credits = await page.$$eval('[aria-label^="Error by "]', nodes =>
+    nodes.map(node => String(node.getAttribute('aria-label')))
+  )
+  await click(page, credits.at(-1)!)
+}
 async function openScoring(
   page: Page,
   entry: 'Score Game' | 'Continue Scoring'
@@ -379,8 +418,8 @@ describe('scoring into the server', function () {
         result: { eventType: string }
         matchup: { batter: { id?: number }; pitcher: { id?: number } }
         runners: Array<{
-          movement: { isOut: boolean; outNumber?: number; forceOut: boolean }
-          details: { runner: { id: number } }
+          movement: { isOut: boolean; outNumber?: number; outBase: string }
+          details: { runner: { id: number }; movementReason: string | null }
           credits: Array<{ player: { id: number }; credit: string }>
         }>
       }>
@@ -405,11 +444,12 @@ describe('scoring into the server', function () {
           .map(runner => [
             runner.details.runner.id,
             runner.movement.outNumber,
-            runner.movement.forceOut
+            runner.movement.outBase,
+            runner.details.movementReason
           ])
       ).deep.equals([
-        [fixture.away[0], 1, true],
-        [fixture.away[1], 2, true]
+        [fixture.away[0], 1, '2B', 'r_force_out'],
+        [fixture.away[1], 2, '1B', null]
       ])
       expect(walk.result.eventType).equals('walk')
       expect(dp.result.eventType).equals('grounded_into_double_play')
@@ -857,7 +897,7 @@ describe('scoring into the server', function () {
       const corrected = sql(
         `select gumbo->'runners'->-1->'movement'->>'end' from events where id='${singleId}'`
       )
-      expect(Number(corrected)).greaterThan(1)
+      expect(['2B', '3B', 'score']).includes(corrected)
       expect(
         sql(
           `select count(*) from events where "gameId"='${gameId}' and "atBatIndex"=9999`
@@ -867,5 +907,120 @@ describe('scoring into the server', function () {
       await page.close()
       await context.close()
     }
+  })
+
+  it('scenario 6: a half scored in the browser builds stat lines from Gumbo runners', async function () {
+    const fixture = scoringGame()
+    const gameId = fixture.games[0]
+    const [b1, b2, b3, b4, b5] = fixture.away
+    const pitcher = fixture.home[0]
+    const page = await openAs(scorer, `/games/${gameId}`)
+    try {
+      await openScoring(page, 'Score Game')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Save Rosters')
+      // A single.
+      await pitch(page, 'Ball')
+      await hitTo(page, 'Single', 7, 15)
+      await finishAtBat(page)
+      // A steal of second, then a double that scores him.
+      await pitch(page, 'Ball')
+      await waitReady(page)
+      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await click(page, 'Steal')
+      await waitReady(page)
+      await hitTo(page, 'Double', 8, 20)
+      await decideHome(page)
+      await finishAtBat(page)
+      // A wild pitch takes the runner to third, and a strikeout.
+      await pitch(page, 'Ball')
+      await waitReady(page)
+      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await click(page, 'Wild Pitch')
+      await waitReady(page)
+      await pitch(page, 'Called Strike')
+      await pitch(page, 'Swing and Miss')
+      await pitch(page, 'Swing and Miss')
+      await finishAtBat(page)
+      // The shortstop's error, and the runner from third scores on it.
+      await reachOnError(page)
+      await decideHome(page)
+      await finishAtBat(page)
+      // A ground-out, and the half ends there.
+      await hitTo(page, 'Throw Out', 4, -10)
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]'
+      )
+      await placeWithKeyboard(page, 3)
+      await click(page, 'Finish defensive play')
+      await finishAtBat(page)
+      await waitReady(page)
+      await click(page, 'Open scoring menu')
+      await click(page, 'End Half Inning')
+      await click(page, 'Confirm End Half Inning')
+      await waitReady(page)
+      await waitSaved(page)
+      expect(await summary(page)).includes('Bottom')
+    } finally {
+      await page.close()
+    }
+
+    // The stored runners are Gumbo's: named bases and MLB's reasons.
+    const runners = JSON.parse(
+      sql(
+        `select json_agg(r order by e."atBatIndex") from events e, jsonb_array_elements(e.gumbo->'runners') r where e."gameId"='${gameId}'`
+      )
+    ) as Array<{
+      movement: { start: string | null; end: string | null }
+      details: {
+        runner: { id: number }
+        eventType: string
+        movementReason: string | null
+        earned: boolean
+        rbi: boolean
+      }
+    }>
+    const line = (runner: (typeof runners)[number]): string =>
+      [
+        runner.details.runner.id,
+        runner.movement.start,
+        runner.movement.end,
+        runner.details.eventType,
+        runner.details.movementReason
+      ].join(' ')
+    expect(runners.map(line)).includes.members([
+      `${b1} 1B 2B stolen_base_2b r_stolen_base_2b`,
+      `${b1} 2B score double r_adv_play`,
+      `${b2} 2B 3B wild_pitch r_adv_play`,
+      `${b2} 3B score field_error r_adv_play`
+    ])
+    for (const runner of runners) {
+      expect([null, '1B', '2B', '3B']).includes(runner.movement.start)
+      expect([null, '1B', '2B', '3B', 'score']).includes(runner.movement.end)
+    }
+
+    // The stats builder builds the game, and every figure is the scorer's.
+    let status = ''
+    for (let i = 0; i < 60 && status !== 'built'; i++) {
+      status = sql(
+        `select status from game_stats_state where game_id='${gameId}'`
+      )
+      if (status !== 'built')
+        await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    expect(status).equals('built')
+    const figures = (userId: number): string =>
+      sql(
+        `select concat_ws(' ', pa, ab, h, doubles, r, rbi, sb, k, pitch_bf, pitch_outs, pitch_k, pitch_r, pitch_er) from game_player_stats where game_id='${gameId}' and user_id=${userId}`
+      )
+    // pa ab h 2b r rbi sb k | bf outs k r er
+    expect(figures(b1)).equals('1 1 1 0 1 0 1 0 0 0 0 0 0')
+    expect(figures(b2)).equals('1 1 1 1 1 1 0 0 0 0 0 0 0')
+    expect(figures(b3)).equals('1 1 0 0 0 0 0 1 0 0 0 0 0')
+    expect(figures(b4)).equals('1 1 0 0 0 0 0 0 0 0 0 0 0')
+    expect(figures(b5)).equals('1 1 0 0 0 0 0 0 0 0 0 0 0')
+    // Two runs off the starter: the error's unearned.
+    expect(figures(pitcher)).equals('0 0 0 0 0 0 0 0 5 2 1 2 1')
   })
 })
