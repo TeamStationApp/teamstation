@@ -20,6 +20,7 @@ import { liveRoutes } from './routes/live'
 import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { mediaRoutes } from './routes/media'
+import { scheduleRoutes } from './routes/schedule'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
@@ -104,6 +105,7 @@ describe('the API document', function () {
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(scheduleRoutes(db)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
@@ -135,6 +137,7 @@ describe('the API document', function () {
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(scheduleRoutes(db)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),

@@ -75,5 +75,6 @@
   "src2/app/field/trajectoryGrip.ts",
   "src2/app/field/grassApron.ts",
   "src2/app/locales/en_US.ts",
-  "src2/common/**/*.ts"
+  "src2/common/**/*.ts",
+  "src2/common/scheduleGames.ts"
 ]

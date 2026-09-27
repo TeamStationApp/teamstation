@@ -106,13 +106,17 @@ export interface SeasonsTable {
   updated_at: Timestamp
 }
 
+/** Where a team row came from. */
+export type TeamCreatedFrom =
+  'import' | 'peertube' | 'manual' | 'videoTitle' | 'api'
+
 export interface TeamsTable {
   id: string
   name: string
   short_name: string | null
   /** `external` plays games in a season without being in it. */
   kind: Generated<'full' | 'external'>
-  created_from: Generated<'import' | 'peertube' | 'manual' | 'videoTitle'>
+  created_from: Generated<TeamCreatedFrom>
   sport: Generated<string>
   is_managed: Generated<boolean>
   settings: Generated<Json>
@@ -188,6 +192,7 @@ export interface ExternalIdsTable {
   id: string
   entity_type: string
   entity_id: string
+  /** A caller-chosen name for the other system, `^[a-z][a-zA-Z0-9]{0,31}$`. */
   system: string
   kind: string
   external_id: string
