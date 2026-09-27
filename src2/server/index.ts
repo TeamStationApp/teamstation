@@ -42,6 +42,7 @@ import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { playerRoutes } from './routes/players'
+import { scheduleRoutes } from './routes/schedule'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
@@ -471,6 +472,7 @@ function runWorker(): void {
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))
+  app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', eventRoutes(db))
   app.use('/api/v1', logRoutes())
   app.use('/api/v1', statsRoutes(db))

@@ -8,6 +8,7 @@ import { migration037GameStatsState } from './migrations/037gameStatsState'
 import { migration038CurrentPlay } from './migrations/038currentPlay'
 import { migration039GumboEventTypes } from './migrations/039gumboEventTypes'
 import { migration040LegacyEventTypes } from './migrations/040legacyEventTypes'
+import { migration041ScheduleApi } from './migrations/041scheduleApi'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -1024,5 +1025,96 @@ describe('migration 040legacyEventTypes', function () {
       ...renames.slice(2).map(([legacy]) => legacy),
       ...genuine
     ])
+  })
+})
+
+const through041 = migrations.filter(migration => migration.name < '042')
+
+/**
+ * Migration 041 lets any caller-named system hold an external id and records
+ * teams the schedule API makes, over a database that already holds both.
+ */
+describe('migration 041scheduleApi', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_041_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+  let admin: Pool
+  let pool: Pool
+
+  const count = async (table: string): Promise<number> =>
+    Number(
+      (await pool.query(`select count(*)::int as n from ${table}`)).rows[0].n
+    )
+  const insertId = async (id: string, system: string): Promise<void> => {
+    await pool.query(
+      `insert into external_ids (id, entity_type, entity_id, system, kind, external_id)
+       values ($1, 'game', 'gam_041', $2, 'event', $1)`,
+      [id, system]
+    )
+  }
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through040)
+    await pool.query(
+      `insert into teams (id, name, created_from) values
+         ('tem_041a', 'A', 'import'), ('tem_041b', 'B', 'peertube'),
+         ('tem_041c', 'C', 'manual'), ('tem_041d', 'D', 'videoTitle')`
+    )
+    await pool.query(
+      `insert into games (id, home_team_id, away_team_id, start_at)
+       values ('gam_041', 'tem_041a', 'tem_041b', $1)`,
+      [PLAYED]
+    )
+    await insertId('ext_041_pt', 'peertube')
+    await insertId('ext_041_ex', 'external')
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('takes any short camel-case system and api teams once applied', async function () {
+    const applied = await migrateUp(pool, through041)
+    expect(applied.applied).deep.equals([migration041ScheduleApi.name])
+    expect(await count('external_ids')).equals(2)
+    expect(await count('teams')).equals(4)
+
+    await insertId('ext_041_ol', 'otherLeague')
+    let refused = ''
+    try {
+      await insertId('ext_041_bad', 'Other League')
+    } catch (error) {
+      refused = String(error)
+    }
+    expect(refused).includes('external_ids_system_check')
+    await pool.query(
+      `insert into teams (id, name, created_from) values ('tem_041e', 'E', 'api')`
+    )
+  })
+
+  it('turns api teams into manual ones and keeps other systems when rolled back', async function () {
+    const rolled = await migrateDown(pool, through041, 1)
+    expect(rolled).deep.equals([migration041ScheduleApi.name])
+    const team = await pool.query(
+      `select created_from from teams where id = 'tem_041e'`
+    )
+    expect(team.rows[0].created_from).equals('manual')
+    const kept = await pool.query(
+      `select system from external_ids where id = 'ext_041_ol'`
+    )
+    expect(kept.rows[0].system).equals('otherLeague')
+
+    const again = await migrateUp(pool, through041)
+    expect(again.applied).deep.equals([migration041ScheduleApi.name])
+    expect(await count('external_ids')).equals(3)
   })
 })
