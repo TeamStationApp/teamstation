@@ -96,10 +96,9 @@ describe('outcome names by event type', function () {
         label: 'Head: Someone',
         credit: credit('batter')
       })
-      const expected =
-        eventType === 'strikeout' || eventType === 'strikeout_double_play'
-          ? 'Dropped third strike'
-          : (OUTCOME_BY_TYPE[eventType] ?? 'Head')
+      const expected = eventType.startsWith('strike')
+        ? 'Dropped third strike'
+        : (OUTCOME_BY_TYPE[eventType] ?? 'Head')
       expect(name, eventType).equals(expected)
     }
   })
@@ -115,5 +114,24 @@ describe('outcome names by event type', function () {
     expect(
       outcomeName({ eventType: 'run', label: 'Run: Hunter P', credit: null })
     ).equals('Run scored')
+  })
+
+  it('reads a legacy code as the one it is stored as', function () {
+    for (const [legacy, listed] of [
+      ['catcher_interference', 'catcher_interf'],
+      ['manual_placement', 'gs_manual_placement'],
+      ['placed_runner', 'runner_placed']
+    ]) {
+      const named = (eventType: string): string =>
+        outcomeName({ eventType, label: 'Head: Someone', credit: null })
+      expect(named(legacy), legacy).equals(named(listed))
+    }
+    expect(
+      outcomeName({
+        eventType: 'strikeout_triple_play',
+        label: '',
+        credit: credit('pitcher')
+      })
+    ).equals('Strikeout pitching')
   })
 })

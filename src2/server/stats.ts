@@ -36,6 +36,7 @@ export interface StatRow {
   hbp: number
   ci: number
   sf: number
+  sh: number
   sb: number
   cs: number
   pitchBf: number
@@ -72,8 +73,10 @@ export interface BattingLine {
   hbp: number
   sb: number
   cs: number
-  /** Sacrifices, which an on-base percentage counts against. */
+  /** Sacrifice flies, which an on-base percentage counts against. */
   sf: number
+  /** Sacrifice bunts, which it does not. */
+  sh: number
 }
 
 export interface PitchingLine {
@@ -119,7 +122,8 @@ function emptyBatting(userId: number, teamId: string | null): BattingLine {
     hbp: 0,
     sb: 0,
     cs: 0,
-    sf: 0
+    sf: 0,
+    sh: 0
   }
 }
 
@@ -165,6 +169,7 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
     held.sb += row.sb
     held.cs += row.cs
     held.sf += row.sf
+    held.sh += row.sh
     byPlayer.set(row.userId, held)
   }
   return [...byPlayer.values()]

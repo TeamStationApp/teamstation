@@ -60,6 +60,93 @@ const asCredit = asObject({
 export type RunnerCredit = ReturnType<typeof asCredit>
 const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
 
+/** One pitch or action of a play, in Gumbo's shape. */
+export interface PlayEvent {
+  index: number
+  isPitch: boolean
+  type: string
+  details: {
+    description: string
+    /** A pitch's call code, or the engine's own name for an action. */
+    code: string
+    /** The umpire's call on a pitch, as Gumbo writes it. */
+    call?: { code: string; description: string }
+    /** The pitch was put in play. */
+    isInPlay?: boolean
+    /** The runner entry a runner's action wrote, just before it. */
+    runnerEntry?: number
+    /** Where a player who changed position played before. */
+    fromPosition?: string
+  }
+  /** A lineup change, which does not begin a play. */
+  isSubstitution?: boolean
+  /** A lineup change's position: `P` to `RF`, or `PH` and `PR`. */
+  position?: string
+  /** A lineup change's place in the order as MLB writes it, `601`. */
+  battingOrder?: string
+  /** The player a lineup change took out of the order or off the field. */
+  replacedPlayer?: PlayerRef
+  /** A change of batting order: each man it moves and where he now bats. */
+  moved?: Array<{ player: PlayerRef; bats: number }>
+  /** After a pitch, the count it left; the in-play pitch keeps its own. */
+  count: { balls: number; strikes: number; outs: number }
+  player: PlayerRef
+  /**
+   * On a runner's action, the pitcher on the mound when it happened: a
+   * pitching change later in the plate appearance changes the matchup, not
+   * who threw the wild pitch.
+   */
+  pitcher?: PlayerRef
+}
+const asPlayEvent = exactly(
+  asObject({
+    index: asSessionId,
+    isPitch: asBoolean,
+    type: asString,
+    details: asObject({
+      description: asString,
+      code: asString,
+      call: asOptional(asObject({ code: asString, description: asString })),
+      isInPlay: asOptional(asBoolean),
+      runnerEntry: asOptional(asNumber),
+      fromPosition: asOptional(asString)
+    }),
+    isSubstitution: asOptional(asBoolean),
+    position: asOptional(asString),
+    battingOrder: asOptional(asString),
+    replacedPlayer: asOptional(asPlayerRef),
+    moved: asOptional(
+      asArray(asObject({ player: asPlayerRef, bats: asNumber }))
+    ),
+    count: asCount,
+    player: asPlayerRef,
+    pitcher: asOptional(asPlayerRef)
+  })
+) as Cleaner<PlayEvent>
+
+const asDefense = asObject(
+  Object.fromEntries(
+    POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
+  ) as Record<Position, Cleaner<number | null>>
+)
+/** Each side's batting order and fielders at one moment of the game. */
+const asSideLineup = asObject({
+  battingOrder: asArray(asSessionId),
+  defense: asDefense
+})
+const asLineups = asObject({ away: asSideLineup, home: asSideLineup })
+export type Lineups = ReturnType<typeof asLineups>
+export type SideLineup = Lineups[Side]
+
+/** Each side's batting order and fielders as the game stands. */
+export function lineupsOf(state: GameState): Lineups {
+  const { away, home } = state.liveData.boxscore.teams
+  return copyState({
+    away: { battingOrder: away.battingOrder, defense: away.defense },
+    home: { battingOrder: home.battingOrder, defense: home.defense }
+  })
+}
+
 /** One play as the game holds it, in GUMBO's shape, with session ids. */
 export const asGamePlay = asObject({
   about: asObject({
@@ -91,28 +178,52 @@ export const asGamePlay = asObject({
         isOut: asBoolean,
         outNumber: asOptional(asNumber),
         forceOut: asBoolean,
+        /** A runner safe on a base he was forced to. */
+        forced: asOptional(asBoolean),
         runScored: asOptional(asBoolean)
       }),
-      details: asObject({ runner: asPlayerRef, movementReason: asString }),
+      details: asObject({
+        runner: asPlayerRef,
+        movementReason: asString,
+        /** The pitcher this runner is charged to (`earnedRuns.ts`). */
+        responsiblePitcher: asOptional(asEither(asNull, asPlayerRef)),
+        /** A run that is earned to the responsible pitcher. */
+        earned: asOptional(asBoolean),
+        /** A run that is unearned to the team, reconstructed over the whole half. */
+        teamUnearned: asOptional(asBoolean),
+        /** A run the batter drove in. */
+        rbi: asOptional(asBoolean),
+        /** The play event that made this movement. */
+        playIndex: asOptional(asNumber),
+        /**
+         * Made by an action between pitches — a steal, a wild pitch, a runner
+         * sent on — rather than on a play the plate appearance's result made.
+         */
+        byAction: asOptional(asBoolean)
+      }),
       credits: asArray(asCredit)
     })
   ),
-  playEvents: asArray(
-    asObject({
-      index: asSessionId,
-      isPitch: asBoolean,
-      type: asString,
-      details: asObject({ description: asString, code: asString }),
-      count: asCount,
-      player: asPlayerRef
-    })
-  ),
+  playEvents: asArray(asPlayEvent),
+  /**
+   * The lineups as the play opened, and as its first pitch or action came:
+   * a side announces its fielding changes as the net of the two
+   * (`document.ts`), so a change undone before then is never written.
+   */
+  lineups: asOptional(asObject({ opened: asLineups, began: asLineups })),
+  /**
+   * The ball in play as the scoring screen draws it: the launch angle and its
+   * label, where the scorer put the ball on the field, and the fielder who
+   * played it with his position then. Each is present only when the scorer
+   * gave it. The stored play writes MLB's `hitData` from it (`document.ts`).
+   */
   hitData: asOptional(
     asObject({
-      launchAngle: asNumber,
-      trajectory: asString,
-      coordinates: asPoint,
-      fielder: asOptional(asPlayerRef)
+      launchAngle: asOptional(asNumber),
+      trajectory: asOptional(asString),
+      coordinates: asOptional(asPoint),
+      fielder: asOptional(asPlayerRef),
+      position: asOptional(asString)
     })
   ),
   source: asObject({
@@ -127,6 +238,13 @@ export const asGamePlay = asObject({
         asValue('out-of-park' as const, 'in-park' as const)
       ),
       landingHeight: asOptional(asNumber),
+      /**
+       * The trajectory the scorer chose, in the action's own terms
+       * (`chopper` included), or the one his launch angle falls in.
+       */
+      trajectory: asOptional(asString),
+      /** The launch angle: the scorer's, or estimated from his trajectory. */
+      launchAngle: asOptional(asNumber),
       /** The lineup changed during this at-bat, so the at-bat is open. */
       lineupChanged: asOptional(asBoolean),
       errorCredit: asOptional(
@@ -190,6 +308,40 @@ export interface PlayerIdentityMap {
   nextId: number
 }
 
+export const BASE_KEYS = ['first', 'second', 'third'] as const
+export type BaseKey = (typeof BASE_KEYS)[number]
+
+/**
+ * What a runner carries for earned runs: the pitcher his run is charged to,
+ * and whether he reached on an error — catcher's interference, a dropped third
+ * strike that needed an error and the placed runner count as one — so that his
+ * run is unearned whatever follows.
+ */
+export interface RunnerCharge {
+  pitcher: PlayerRef | null
+  reachedOnError: boolean
+}
+
+/**
+ * The outs the defence would have made in this half without its errors: the
+ * team's over the whole half, and each pitcher's from when he took the mound
+ * (the half's first pitcher first). A reliever's entry names the pitcher he
+ * relieved and the count on the batter when he came in.
+ */
+export interface ErrorlessOuts {
+  team: number
+  pitchers: Array<{
+    pitcher: PlayerRef
+    outs: number
+    relieved?: {
+      pitcher: PlayerRef
+      atBatIndex: number
+      balls: number
+      strikes: number
+    }
+  }>
+}
+
 /** A runner's part in the play being resolved. Base 0 is the plate, 4 home. */
 export interface Movement {
   automaticHome?: boolean
@@ -243,6 +395,12 @@ export interface Resolution {
   originalRuns: number
   originalOuts: number
   movements: Movement[]
+  /** The play event the result came with: the in-play pitch, ball four, … */
+  eventIndex?: number
+  /** What each runner on base when the play began is charged with. */
+  charges?: Record<number, RunnerCharge>
+  /** The batter reached on an error, catcher's interference, or a dropped third strike that needed one. */
+  batterReachedOnError?: boolean
 }
 
 export interface GameState {
@@ -266,8 +424,14 @@ export interface GameState {
         first: PlayerRef | null
         second: PlayerRef | null
         third: PlayerRef | null
+        /** The pitcher each runner on base is charged to. */
+        responsiblePitcher?: Record<BaseKey, PlayerRef | null>
+        /** Each runner on base who reached on an error, as `RunnerCharge` says. */
+        reachedOnError?: Record<BaseKey, boolean>
       }
       defense: Record<Position, PlayerRef | null>
+      /** Absent until the engine first sees the half. */
+      errorlessOuts?: ErrorlessOuts
     }
     boxscore: { teams: Record<Side, GameSide> }
     plays: { allPlays: GamePlay[]; currentPlay: GamePlay | null }
@@ -328,11 +492,7 @@ const asSide = asObject({
   players: asArray(asSessionId),
   battingOrder: asArray(asSessionId),
   battingIndex: asNumber,
-  defense: asObject(
-    Object.fromEntries(
-      POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
-    ) as Record<Position, Cleaner<number | null>>
-  ),
+  defense: asDefense,
   pitchCounts: asObject(asNumber)
 })
 const asPlayer = asObject({
@@ -396,6 +556,24 @@ const asMovement = asObject({
   resolved: asOptional(asBoolean)
 })
 const asRef = asEither(asNull, asPlayerRef)
+const asCharge = asObject({ pitcher: asRef, reachedOnError: asBoolean })
+const asErrorlessOuts = asObject({
+  team: asNumber,
+  pitchers: asArray(
+    asObject({
+      pitcher: asPlayerRef,
+      outs: asNumber,
+      relieved: asOptional(
+        asObject({
+          pitcher: asPlayerRef,
+          atBatIndex: asNumber,
+          balls: asNumber,
+          strikes: asNumber
+        })
+      )
+    })
+  )
+})
 
 /** Checks a whole game, such as one a session kept or a test built. */
 export const asGameState: Cleaner<GameState> = exactly(
@@ -422,13 +600,20 @@ export const asGameState: Cleaner<GameState> = exactly(
           batter: asRef,
           first: asRef,
           second: asRef,
-          third: asRef
+          third: asRef,
+          responsiblePitcher: asOptional(
+            asObject({ first: asRef, second: asRef, third: asRef })
+          ),
+          reachedOnError: asOptional(
+            asObject({ first: asBoolean, second: asBoolean, third: asBoolean })
+          )
         }),
         defense: asObject(
           Object.fromEntries(
             POSITIONS.map(position => [position, asRef])
           ) as Record<Position, Cleaner<PlayerRef | null>>
-        )
+        ),
+        errorlessOuts: asOptional(asErrorlessOuts)
       }),
       boxscore: asObject({ teams: asObject({ away: asSide, home: asSide }) }),
       plays: asObject({
@@ -454,7 +639,10 @@ export const asGameState: Cleaner<GameState> = exactly(
         originalBases: asArray(asEither(asNull, asSessionId)),
         originalRuns: asNumber,
         originalOuts: asNumber,
-        movements: asArray(asMovement)
+        movements: asArray(asMovement),
+        eventIndex: asOptional(asNumber),
+        charges: asOptional(asObject(asCharge)),
+        batterReachedOnError: asOptional(asBoolean)
       })
     ),
     homeQueue: asArray(asSessionId),

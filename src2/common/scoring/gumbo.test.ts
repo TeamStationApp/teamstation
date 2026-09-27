@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
@@ -5,6 +7,7 @@ import { after, F, game, TEAMS } from '../../test/scoringGames'
 import { asCurrentPlay, asGumboPlay, type GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
+import { comparablePlay } from './comparable'
 import {
   FINAL_INDEX,
   foldCurrentPlay,
@@ -15,10 +18,15 @@ import {
   type Segment,
   segmentAfter
 } from './gumbo'
-import { halfOutcomes, lineScore, withHalfOuts } from './linescore'
+import {
+  halfOutcomes,
+  leftOnBase,
+  lineScore,
+  ordinal,
+  withHalfOuts
+} from './linescore'
 import { newSetup } from './lineup'
 import { copyState, type GameState, setupOf } from './state'
-import { comparablePlay } from './testing'
 
 /**
  * Scores a list of actions the way a session does: each completed play is
@@ -195,7 +203,12 @@ describe('folding a play for the server', function () {
     expect(runner.credits).deep.equals([
       {
         player: { id: 6004, fullName: 'Home 5' },
-        position: { abbreviation: 'SS' },
+        position: {
+          code: '6',
+          name: 'Shortstop',
+          type: 'Infielder',
+          abbreviation: 'SS'
+        },
         credit: 'f_fielded_ball'
       }
     ])
@@ -259,7 +272,10 @@ describe('folding a play for the server', function () {
       atBatIndex: 0,
       inning: 1,
       halfInning: 'top',
-      isComplete: false
+      isTopInning: true,
+      isComplete: false,
+      hasOut: false,
+      hasReview: false
     })
   })
 })
@@ -402,62 +418,69 @@ describe('reading a game back', function () {
         shortName: `H${i}`
       }))
     })
-    const imported = (
-      atBatIndex: number,
-      halfInning: 'top' | 'bottom',
-      batter: number,
-      eventType: string,
-      outs: number,
-      runners: Array<{ id: number; end: number; isOut?: boolean }>,
-      away = 0,
-      home = 0
-    ): GumboPlay =>
-      asGumboPlay({
-        about: { atBatIndex, inning: 1, halfInning },
-        result: { eventType, awayScore: away, homeScore: home },
-        count: { outs },
-        matchup: { batter: { id: batter } },
-        runners: runners.map(runner => ({
-          details: { runner: { id: runner.id } },
-          movement: { end: runner.end, isOut: runner.isOut ?? false }
-        }))
-      })
-    const plays = [
-      imported(0, 'top', 7000, 'single', 0, [{ id: 7000, end: 1 }]),
-      imported(1, 'top', 7001, 'double', 0, [
-        { id: 7000, end: 3 },
-        { id: 7001, end: 2 }
-      ]),
-      imported(
-        3,
-        'top',
-        7002,
-        'field_out',
-        1,
-        [{ id: 7002, end: 1, isOut: true }],
-        1
-      )
-    ]
-    const replayed = replayPlays(
-      { plays, currentPlay: null },
-      { gamePk: 'g1', teams: TEAMS, setup }
-    )
+    // A GameStation document whose record cannot be replayed still lists
+    // every runner, with Gumbo's bases or the numbers older ones stored.
+    const documents = (gameStation: boolean): GumboPlay[] => {
+      const doc = (
+        atBatIndex: number,
+        batter: number,
+        eventType: string,
+        outs: number,
+        runners: Array<{ id: number; end: string | number; isOut?: boolean }>,
+        away = 0
+      ): GumboPlay =>
+        asGumboPlay({
+          about: { atBatIndex, inning: 1, halfInning: 'top' },
+          result: { eventType, awayScore: away, homeScore: 0 },
+          count: { outs },
+          matchup: { batter: { id: batter } },
+          runners: runners.map(runner => ({
+            details: { runner: { id: runner.id } },
+            movement: { end: runner.end, isOut: runner.isOut ?? false }
+          })),
+          ...(gameStation ? { gameStation: { version: 1 } } : {})
+        })
+      return [
+        doc(0, 7000, 'single', 0, [{ id: 7000, end: '1B' }]),
+        doc(1, 7001, 'double', 0, [
+          { id: 7000, end: '3B' },
+          { id: 7001, end: 2 }
+        ]),
+        doc(3, 7002, 'field_out', 1, [{ id: 7002, end: '1B', isOut: true }], 1)
+      ]
+    }
+    const context = { gamePk: 'g1', teams: TEAMS, setup }
+    const plays = documents(true)
+    const replayed = replayPlays({ plays, currentPlay: null }, context)
     const state = replayed.state
     expect(replayed.derived).equals(3)
     expect(state.meta.derived).equals(true)
     expect(state.liveData.linescore.outs).equals(1)
     expect(state.liveData.linescore.teams.away.runs).equals(1)
+    expect(state.liveData.linescore.offense.first).equals(null)
     expect(state.liveData.linescore.offense.second!.id).equals(2)
     expect(state.liveData.linescore.offense.third!.id).equals(1)
     expect(state.liveData.linescore.offense.batter!.id).equals(4)
     expect(state.liveData.plays.currentPlay!.about.atBatIndex).equals(4)
 
+    // An imported game gives the score, the outs and the next batter, and
+    // leaves the bases for the scorer to set.
+    const imported = replayPlays(
+      { plays: documents(false), currentPlay: null },
+      context
+    ).state.liveData.linescore
+    expect([imported.outs, imported.teams.away.runs]).deep.equals([1, 1])
+    const offense = imported.offense
+    expect([offense.first, offense.second, offense.third]).deep.equals([
+      null,
+      null,
+      null
+    ])
+    expect(imported.offense.batter!.id).equals(4)
+
     // Scoring carries on from there with the lineup the first scored play kept.
     const next = score(state, [{ type: 'pitch', call: 'B' }])
-    const carried = replayPlays(
-      { plays, currentPlay: next.current },
-      { gamePk: 'g1', teams: TEAMS, setup }
-    )
+    const carried = replayPlays({ plays, currentPlay: next.current }, context)
     expect(carried.derived).equals(3)
     expect(carried.state.liveData.linescore.balls).equals(1)
   })
@@ -577,5 +600,232 @@ describe('the line score from documents', function () {
       hbp: 0
     })
     expect(line.home).includes({ r: 0, h: 1 })
+  })
+
+  describe("Gumbo's innings and teams (U20)", function () {
+    const walk: ScoringAction[] = [
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' }
+    ]
+    const strikeout: ScoringAction[] = [
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' }
+    ]
+    // Top 1st: two walks, then three strikeouts leave two on. Bottom 1st: a
+    // home run, a single, three strikeouts.
+    // Top 2nd: an override puts a runner on third, a home run, three
+    // strikeouts.
+    const actions: ScoringAction[] = [
+      ...walk,
+      ...walk,
+      ...strikeout,
+      ...strikeout,
+      ...strikeout,
+      { type: 'result', eventType: 'home_run' },
+      { type: 'result', eventType: 'single' },
+      ...strikeout,
+      ...strikeout,
+      ...strikeout,
+      { type: 'gameFlow', kind: 'override', bases: [null, null, 1] },
+      { type: 'result', eventType: 'home_run' },
+      ...strikeout,
+      ...strikeout,
+      ...strikeout,
+      // Opens the bottom of the 2nd, so the third strikeout is a completed play.
+      { type: 'pitch', call: 'B' }
+    ]
+    const scored = (list = actions): GumboPlay[] =>
+      withHalfOuts(score(game(), list).plays)
+    const lineOf = (plays: GumboPlay[]): ReturnType<typeof lineScore> => {
+      const last = plays[plays.length - 1]
+      return lineScore(
+        plays,
+        halfOutcomes(plays),
+        last.result.awayScore ?? null,
+        last.result.homeScore ?? null
+      )
+    }
+
+    it('sums its innings to the totals, beside the old fields unchanged', function () {
+      const line = lineOf(scored())
+      expect(line.away).deep.equals({
+        runs: [0, 2],
+        r: 2,
+        h: 1,
+        e: 0,
+        bb: 2,
+        k: 6,
+        hr: 1,
+        hbp: 0
+      })
+      expect(line.home).deep.equals({
+        runs: [1],
+        r: 1,
+        h: 2,
+        e: 0,
+        bb: 0,
+        k: 3,
+        hr: 1,
+        hbp: 0
+      })
+      expect(line.innings).deep.equals([
+        {
+          num: 1,
+          ordinalNum: '1st',
+          home: { runs: 1, hits: 2, errors: 0, leftOnBase: 1 },
+          away: { runs: 0, hits: 0, errors: 0, leftOnBase: 2 }
+        },
+        {
+          num: 2,
+          ordinalNum: '2nd',
+          // The bottom of the 2nd was never played: no runs, as MLB has it.
+          home: { hits: 0, errors: 0, leftOnBase: 0 },
+          away: { runs: 2, hits: 1, errors: 0, leftOnBase: null }
+        }
+      ])
+      for (const which of ['away', 'home'] as const) {
+        const sum = (key: 'runs' | 'hits' | 'errors'): number =>
+          line.innings.reduce(
+            (total, inning) => total + (inning[which][key] ?? 0),
+            0
+          )
+        expect(sum('runs')).equals(line.teams[which].runs)
+        expect(sum('hits')).equals(line.teams[which].hits)
+        expect(sum('errors')).equals(line.teams[which].errors)
+        expect(line.teams[which].runs).equals(line[which].r)
+        expect(line.teams[which].hits).equals(line[which].h)
+        expect(line.teams[which].errors).equals(line[which].e)
+      }
+      // A half with an override leaves the side's total unknown too.
+      expect(line.teams).deep.equals({
+        home: { runs: 1, hits: 2, errors: 0, leftOnBase: 1 },
+        away: { runs: 2, hits: 1, errors: 0, leftOnBase: null }
+      })
+    })
+
+    it("has the feed's keys and value types", function () {
+      const feed = JSON.parse(
+        readFileSync('src2/common/gumbo/reference/feed776258.json', 'utf8')
+      ) as {
+        liveData: {
+          linescore: {
+            innings: Array<Record<string, unknown>>
+            teams: Record<string, Record<string, unknown>>
+          }
+        }
+      }
+      const shape = (value: unknown): unknown =>
+        value != null && typeof value === 'object'
+          ? Object.fromEntries(
+              Object.entries(value)
+                .map(([key, item]) => [key, shape(item)])
+                .sort(([a], [b]) => String(a).localeCompare(String(b)))
+            )
+          : typeof value
+      // The 1st inning alone, which has no override.
+      const line = lineOf(
+        scored([...actions.slice(0, 28), { type: 'pitch', call: 'B' }])
+      )
+      expect(line.innings).to.have.length(1)
+      expect(shape(line.innings[0])).deep.equals(
+        shape(feed.liveData.linescore.innings[0])
+      )
+      expect(shape(line.teams)).deep.equals(
+        shape(feed.liveData.linescore.teams)
+      )
+    })
+
+    it('counts runners left only on halves GameStation scored whole', function () {
+      const plays = scored()
+      // The top of the 1st as an import sends it: no record.
+      const imported = plays.map(play =>
+        play.about.inning === 1 && play.about.halfInning === 'top'
+          ? (({ gameStation: _, ...rest }) => rest)(play)
+          : play
+      )
+      const line = lineOf(imported)
+      expect(line.innings[0].away.leftOnBase).equals(null)
+      expect(line.innings[0].home.leftOnBase).equals(1)
+      expect(line.teams.away.leftOnBase).equals(null)
+      // The unplayed bottom of the 2nd is unknown once any play is imported.
+      expect(line.innings[1].home.leftOnBase).equals(null)
+      expect(line.teams.home.leftOnBase).equals(null)
+      expect(leftOnBase([])).equals(0)
+    })
+
+    // Imported plays as an import sends them: no record.
+    const imported = (
+      atBatIndex: number,
+      eventType: string,
+      about: { inning: number | null; halfInning: 'top' | 'bottom' | null },
+      awayScore: number,
+      homeScore: number
+    ): GumboPlay =>
+      asGumboPlay({
+        about: { atBatIndex, ...about },
+        result: { eventType, awayScore, homeScore },
+        runners: []
+      })
+
+    it('has no innings and no runners left for a game with only its final score', function () {
+      const plays = [
+        imported(0, 'final_score', { inning: null, halfInning: null }, 18, 9)
+      ]
+      const line = lineScore(plays, halfOutcomes(plays), 18, 9)
+      expect(line.innings).deep.equals([])
+      expect(line.teams).deep.equals({
+        home: { runs: 9, hits: null, errors: null, leftOnBase: null },
+        away: { runs: 18, hits: null, errors: null, leftOnBase: null }
+      })
+      expect(line.away.runs).deep.equals([18])
+      expect(line.home.runs).deep.equals([9])
+    })
+
+    it("keeps a partial game's totals from its score and its innings from the halves it has", function () {
+      // Only the top of the 1st was recorded, and it scored 4 of 13.
+      const top = { inning: 1, halfInning: 'top' as const }
+      const plays = [
+        imported(0, 'walk', top, 0, 0),
+        imported(1, 'single', top, 4, 0),
+        imported(2, 'strikeout', top, 4, 0)
+      ]
+      const line = lineScore(plays, halfOutcomes(plays), 13, 4)
+      expect(line.teams.away.runs).equals(13)
+      expect(line.teams.home.runs).equals(4)
+      expect(line.innings).deep.equals([
+        {
+          num: 1,
+          ordinalNum: '1st',
+          home: { hits: 0, errors: 0, leftOnBase: null },
+          away: { runs: 13, hits: 1, errors: 0, leftOnBase: null }
+        }
+      ])
+      expect(line.teams.away.leftOnBase).equals(null)
+      expect(line.teams.home.leftOnBase).equals(null)
+    })
+
+    it('names innings as MLB does', function () {
+      expect(
+        [1, 2, 3, 4, 9, 10, 11, 12, 13, 21, 22, 23, 101, 111].map(ordinal)
+      ).deep.equals([
+        '1st',
+        '2nd',
+        '3rd',
+        '4th',
+        '9th',
+        '10th',
+        '11th',
+        '12th',
+        '13th',
+        '21st',
+        '22nd',
+        '23rd',
+        '101st',
+        '111th'
+      ])
+    })
   })
 })

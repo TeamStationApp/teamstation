@@ -1,46 +1,122 @@
+import { normalizeEventType } from '../../common/gumboEventTypes'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { battingTeamForHalf, type GameTeams } from '../events/eventWrite'
 
+// How each event type counts, after `normalizeEventType`, so a legacy
+// `catcher_interference` counts as `catcher_interf`. A type in none of these
+// sets is skipped: substitutions, `game_advisory`, `runner_placed`,
+// `final_score`, `score_correction`, the timeouts and mound visits. A skipped
+// play's outs are still counted, on the next play that is read.
+
+/** A plate appearance: the batter's line and the pitcher's batters faced. */
 const PLATE_APPEARANCE = new Set([
   'single',
   'double',
   'triple',
   'home_run',
+  'field_out',
+  'force_out',
+  'fielders_choice',
+  'fielders_choice_out',
+  'field_error',
+  'double_play',
+  'triple_play',
+  'grounded_into_double_play',
+  'grounded_into_triple_play',
+  'batter_interference',
+  'fan_interference',
   'strikeout',
+  'strike_out',
+  'strikeout_double_play',
+  'strikeout_triple_play',
   'walk',
   'intent_walk',
   'hit_by_pitch',
-  'field_out',
-  'grounded_into_double_play',
-  'triple_play',
-  'field_error',
-  'fielders_choice',
-  'catcher_interference',
+  'catcher_interf',
   'sac_fly',
-  'sac_bunt'
+  'sac_fly_double_play',
+  'sac_bunt',
+  'sac_bunt_double_play',
+  'gs_batter_out',
+  'gs_manual_placement'
 ])
 
+/** Not a plate appearance: only the runners, their runs and the outs count. */
 const COUNTED_NON_PA = new Set([
   'stolen_base',
+  'stolen_base_2b',
+  'stolen_base_3b',
+  'stolen_base_home',
   'caught_stealing',
+  'caught_stealing_2b',
+  'caught_stealing_3b',
+  'caught_stealing_home',
+  'pickoff_1b',
+  'pickoff_2b',
+  'pickoff_3b',
+  'pickoff_error_1b',
+  'pickoff_error_2b',
+  'pickoff_error_3b',
+  'pickoff_caught_stealing_2b',
+  'pickoff_caught_stealing_3b',
+  'pickoff_caught_stealing_home',
   'wild_pitch',
   'passed_ball',
   'balk',
-  'other_out'
+  'forced_balk',
+  'other_out',
+  'defensive_indiff',
+  'other_advance',
+  'runner_double_play',
+  'cs_double_play',
+  'error'
 ])
 
-const SKIPPED = new Set(['game_advisory', 'score_correction', 'final_score'])
-
+/** A plate appearance that is not an at-bat. */
 const NON_AB = new Set([
   'walk',
   'intent_walk',
   'hit_by_pitch',
-  'catcher_interference',
+  'catcher_interf',
   'sac_fly',
-  'sac_bunt'
+  'sac_fly_double_play',
+  'sac_bunt',
+  'sac_bunt_double_play',
+  'gs_manual_placement'
 ])
 
 const HIT_TYPES = new Set(['single', 'double', 'triple', 'home_run'])
+
+const STRIKEOUTS = new Set([
+  'strikeout',
+  'strike_out',
+  'strikeout_double_play',
+  'strikeout_triple_play'
+])
+
+const SAC_FLIES = new Set(['sac_fly', 'sac_fly_double_play'])
+
+const SAC_BUNTS = new Set(['sac_bunt', 'sac_bunt_double_play'])
+
+/**
+ * How a play of an event type counts on the batter's line: a plate
+ * appearance, an at-bat and a strikeout; `pa: false` for a play only its
+ * runners count on; null for a type that is skipped.
+ */
+export function eventTypeCounts(
+  value: string
+): { pa: boolean; ab: boolean; k: boolean } | null {
+  const eventType = normalizeEventType(value)
+  if (PLATE_APPEARANCE.has(eventType))
+    return {
+      pa: true,
+      ab: !NON_AB.has(eventType),
+      k: STRIKEOUTS.has(eventType)
+    }
+  return COUNTED_NON_PA.has(eventType)
+    ? { pa: false, ab: false, k: false }
+    : null
+}
 
 export interface PlayerGameLine {
   userId: number
@@ -59,6 +135,8 @@ export interface PlayerGameLine {
   hbp: number
   ci: number
   sf: number
+  /** Sacrifice bunts, which an on-base percentage leaves out. */
+  sh: number
   sb: number
   cs: number
   pitch_bf: number
@@ -96,6 +174,7 @@ function emptyLine(userId: number, teamId: string | null): PlayerGameLine {
     hbp: 0,
     ci: 0,
     sf: 0,
+    sh: 0,
     sb: 0,
     cs: 0,
     pitch_bf: 0,
@@ -122,7 +201,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function runnerDoc(
   entry: NonNullable<GumboPlay['runners']>[number]
 ): Record<string, unknown> {
-  return entry as Record<string, unknown>
+  return entry
 }
 
 function isSafeUserId(id: unknown): id is number {
@@ -170,6 +249,85 @@ function resolveId(
   return { id: player.id }
 }
 
+/**
+ * The pitching changes a play records, in order: the event's index and the
+ * pitcher it brought in, null when he is not a known user. Every one is the
+ * side in the field's: a side's changes while it bats are written, as their
+ * net change, in the first play it fields, as MLB writes them.
+ */
+function pitchingChanges(
+  play: GumboPlay,
+  knownUsers: ReadonlySet<number>
+): Array<{ index: number; pitcherId: number | null }> {
+  const events: unknown = (play as Record<string, unknown>).playEvents
+  if (!Array.isArray(events)) return []
+  return events.flatMap((event: unknown) => {
+    if (
+      !isRecord(event) ||
+      typeof event.index !== 'number' ||
+      !isRecord(event.details) ||
+      event.details.eventType !== 'pitching_substitution'
+    )
+      return []
+    const id = isRecord(event.player) ? event.player.id : null
+    return [
+      {
+        index: event.index,
+        pitcherId: isSafeUserId(id) && knownUsers.has(id) ? id : null
+      }
+    ]
+  })
+}
+
+/**
+ * Whether two stored player objects are the same man: equal ids, or, for men
+ * with no id (a player made in the roster sheet), equal names.
+ */
+function sameMan(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): boolean {
+  if (a.id != null || b.id != null) return a.id != null && a.id === b.id
+  return typeof a.fullName === 'string' && a.fullName === b.fullName
+}
+
+/**
+ * Whom a strikeout is charged to (9.15(b)): a batter who left with two
+ * strikes, when the pinch hitter who replaced him struck out. With more than
+ * one pinch hitter, the man the first sent in at two strikes replaced. Read
+ * from the play's offensive substitutions for its batter, each with its
+ * `count` as he came in and its `replacedPlayer`, whether or not the pinch
+ * hitter has an id; null when nobody left at two strikes.
+ */
+function strikeoutReplaced(
+  play: GumboPlay,
+  batter: Record<string, unknown>
+): { player: Record<string, unknown>; path: string } | null {
+  const events: unknown = (play as Record<string, unknown>).playEvents
+  if (!Array.isArray(events)) return null
+  let up = batter
+  let charged: { player: Record<string, unknown>; path: string } | null = null
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event: unknown = events[i]
+    if (
+      !isRecord(event) ||
+      !isRecord(event.details) ||
+      event.details.eventType !== 'offensive_substitution' ||
+      !isRecord(event.player) ||
+      !sameMan(event.player, up) ||
+      !isRecord(event.replacedPlayer)
+    )
+      continue
+    if (isRecord(event.count) && event.count.strikes === 2)
+      charged = {
+        player: event.replacedPlayer,
+        path: `playEvents[${i}].replacedPlayer`
+      }
+    up = event.replacedPlayer
+  }
+  return charged
+}
+
 function addFigure(
   lines: Map<number, PlayerGameLine>,
   userId: number | null,
@@ -196,22 +354,22 @@ export function gameStatLines(
   let homeRuns = 0
   let outsHalfKey: string | null = null
   let outsBefore = 0
+  /** The pitcher each half's last play ended with: who begins the next. */
+  const lastPitcher = new Map<string, number | null>()
 
   for (const play of plays) {
     const about = play.about
     const atBatIndex =
       typeof about.atBatIndex === 'number' ? about.atBatIndex : 0
-    const eventType =
+    const eventType = normalizeEventType(
       play.result != null && typeof play.result.eventType === 'string'
         ? play.result.eventType
         : ''
+    )
 
-    if (SKIPPED.has(eventType)) continue
-    if (!PLATE_APPEARANCE.has(eventType) && !COUNTED_NON_PA.has(eventType)) {
-      continue
-    }
-
-    const isPa = PLATE_APPEARANCE.has(eventType)
+    const counts = eventTypeCounts(eventType)
+    if (counts == null) continue
+    const isPa = counts.pa
 
     if (about.inning == null) return missing(atBatIndex, 'about.inning')
     if (about.halfInning == null) return missing(atBatIndex, 'about.halfInning')
@@ -219,11 +377,11 @@ export function gameStatLines(
     const inning = about.inning
 
     const matchup = play.matchup
-    if (matchup == null || matchup.pitcher == null) {
+    if (matchup?.pitcher == null) {
       return missing(atBatIndex, 'matchup.pitcher')
     }
     const pitcherResolved = resolveId(
-      matchup.pitcher as Record<string, unknown>,
+      matchup.pitcher,
       'matchup.pitcher',
       atBatIndex,
       knownUsers
@@ -251,7 +409,7 @@ export function gameStatLines(
         return missing(atBatIndex, 'matchup.batter')
       }
       const batterResolved = resolveId(
-        matchup.batter as Record<string, unknown>,
+        matchup.batter,
         'matchup.batter',
         atBatIndex,
         knownUsers
@@ -275,6 +433,23 @@ export function gameStatLines(
       }
     }
 
+    // A strikeout completed by a pinch hitter sent in at two strikes is the
+    // batter's he replaced: its plate appearance, at-bat and strikeout.
+    let strikeoutId = batterId
+    if (isPa && STRIKEOUTS.has(eventType) && matchup.batter != null) {
+      const replaced = strikeoutReplaced(play, matchup.batter)
+      if (replaced != null) {
+        const resolved = resolveId(
+          replaced.player,
+          replaced.path,
+          atBatIndex,
+          knownUsers
+        )
+        if ('incomplete' in resolved) return resolved.incomplete
+        strikeoutId = resolved.id
+      }
+    }
+
     const battingTeam = battingTeamForHalf(halfInning, teams)
     const pitchingTeam = pitchingTeamForHalf(halfInning, teams)
 
@@ -285,6 +460,21 @@ export function gameStatLines(
     }
     const outsDelta = outsAfter - outsBefore
     outsBefore = outsAfter
+
+    // An out made before a pitching change in the middle of a plate
+    // appearance is the pitcher's who was on the mound at its event: the one
+    // the last change before it brought in, or the one who began the play.
+    const changes = pitchingChanges(play, knownUsers)
+    const began = lastPitcher.has(halfInning)
+      ? (lastPitcher.get(halfInning) ?? null)
+      : matchupPitcherId
+    lastPitcher.set(halfInning, matchupPitcherId)
+    const moundAt = (index: number): number | null =>
+      changes.reduce(
+        (pitcherId, change) =>
+          change.index < index ? change.pitcherId : pitcherId,
+        began
+      )
 
     // Validate runner entries and collect out-entry pitcher overrides.
     const outPitcherOverrides: Array<number | null> = []
@@ -329,6 +519,13 @@ export function gameStatLines(
           if (outPitcher.id != null && outPitcher.id !== matchupPitcherId) {
             outPitcherOverrides.push(outPitcher.id)
           }
+        } else if (
+          typeof details.playIndex === 'number' &&
+          changes.length > 0
+        ) {
+          const pitcherId = moundAt(details.playIndex)
+          if (pitcherId !== matchupPitcherId)
+            outPitcherOverrides.push(pitcherId)
         }
       }
 
@@ -382,11 +579,13 @@ export function gameStatLines(
     }
 
     if (isPa) {
-      addFigure(lines, batterId, battingTeam, 'pa', 1)
-      if (!NON_AB.has(eventType)) {
-        addFigure(lines, batterId, battingTeam, 'ab', 1)
+      addFigure(lines, strikeoutId, battingTeam, 'pa', 1)
+      if (counts.ab) {
+        addFigure(lines, strikeoutId, battingTeam, 'ab', 1)
       }
-      addFigure(lines, matchupPitcherId, pitchingTeam, 'pitch_bf', 1)
+      // A walk charged to the pitcher before (9.16(h)) is his batter faced,
+      // not the reliever's; every other batter is the matchup pitcher's.
+      addFigure(lines, walkOwnerId, pitchingTeam, 'pitch_bf', 1)
 
       if (HIT_TYPES.has(eventType)) {
         addFigure(lines, batterId, battingTeam, 'h', 1)
@@ -404,19 +603,18 @@ export function gameStatLines(
       } else if (eventType === 'walk' || eventType === 'intent_walk') {
         addFigure(lines, batterId, battingTeam, 'bb', 1)
         addFigure(lines, walkOwnerId, pitchingTeam, 'pitch_bb', 1)
-        if (walkOwnerId != null && walkOwnerId !== matchupPitcherId) {
-          addFigure(lines, walkOwnerId, pitchingTeam, 'pitch_bf', 1)
-        }
-      } else if (eventType === 'strikeout') {
-        addFigure(lines, batterId, battingTeam, 'k', 1)
+      } else if (STRIKEOUTS.has(eventType)) {
+        addFigure(lines, strikeoutId, battingTeam, 'k', 1)
         addFigure(lines, matchupPitcherId, pitchingTeam, 'pitch_k', 1)
       } else if (eventType === 'hit_by_pitch') {
         addFigure(lines, batterId, battingTeam, 'hbp', 1)
         addFigure(lines, matchupPitcherId, pitchingTeam, 'pitch_hbp', 1)
-      } else if (eventType === 'catcher_interference') {
+      } else if (eventType === 'catcher_interf') {
         addFigure(lines, batterId, battingTeam, 'ci', 1)
-      } else if (eventType === 'sac_fly' || eventType === 'sac_bunt') {
+      } else if (SAC_FLIES.has(eventType)) {
         addFigure(lines, batterId, battingTeam, 'sf', 1)
+      } else if (SAC_BUNTS.has(eventType)) {
+        addFigure(lines, batterId, battingTeam, 'sh', 1)
       }
     }
 
@@ -456,7 +654,7 @@ export function gameStatLines(
           ? details.responsiblePitcher
           : null
         const rpId =
-          rp == null || rp.id == null
+          rp?.id == null
             ? null
             : isSafeUserId(rp.id) && knownUsers.has(rp.id)
               ? rp.id

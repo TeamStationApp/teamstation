@@ -565,6 +565,7 @@ export interface GamePlayerStatsTable {
   hbp: Generated<number>
   ci: Generated<number>
   sf: Generated<number>
+  sh: Generated<number>
   sb: Generated<number>
   cs: Generated<number>
   pitch_bf: Generated<number>

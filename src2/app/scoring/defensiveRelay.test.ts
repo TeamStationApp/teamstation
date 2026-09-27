@@ -302,9 +302,9 @@ describe('a relay that forces the lead runner before the batter', function () {
     const ended = completeMotions(drop(withTwoOuts(state), 'out'))
     expect(ended.session.liveData.linescore.outs).equals(0)
     expect(ended.session.liveData.linescore.isTopInning).equals(false)
-    // The batter was never put out: he reached on a fielder's choice.
+    // The batter was never put out, and the runner was forced: a forceout.
     const play = ended.session.liveData.plays.allPlays.at(-1)!
-    expect(play.result.eventType).equals('fielders_choice')
+    expect(play.result.eventType).equals('force_out')
     expect(play.runners.filter(runner => runner.movement.isOut)).length(1)
     expect(ended.runnerAction).equals(null)
   })

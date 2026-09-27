@@ -1,0 +1,4486 @@
+{
+  "finalScore": {
+    "away": 5,
+    "home": 8
+  },
+  "plays": [
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:13:18.925Z",
+        "atBatIndex": 0,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "field_error",
+        "homeScore": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 1
+            },
+            "eventType": "field_error"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:14:04.753Z",
+        "atBatIndex": 1,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "strikeout",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 2 pitching",
+          "credit": {
+            "name": "Player 2",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "home",
+          "eventType": "strikeout",
+          "creditUserId": 2
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 3
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 3
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:14:48.768Z",
+        "atBatIndex": 2,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "field_out",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 2 (P) to Player 5 (1B)",
+          "credit": {
+            "name": "Player 2",
+            "role": "fielder",
+            "position": "P"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 5",
+              "position": "1B",
+              "creditUserId": 5
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 2
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 4
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 4
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T00:15:40.589Z",
+        "atBatIndex": 3,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "field_out",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 7 (SS) to Player 5 (1B)",
+          "credit": {
+            "name": "Player 7",
+            "role": "fielder",
+            "position": "SS"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 5",
+              "position": "1B",
+              "creditUserId": 5
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 7
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 6
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 6
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:18:28.910Z",
+        "atBatIndex": 4,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "double",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Double: Player 8",
+          "credit": {
+            "name": "Player 8",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "double",
+          "creditUserId": 8
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 8
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 8
+            },
+            "eventType": "double"
+          },
+          "movement": {
+            "end": "2B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:20:05.540Z",
+        "atBatIndex": 5,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "strikeout",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 9 pitching",
+          "credit": {
+            "name": "Player 9",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 7
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 7
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:20:41.736Z",
+        "atBatIndex": 6,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "single",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Single: Player 10",
+          "credit": {
+            "name": "Player 10",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "single",
+          "creditUserId": 10
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 10
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 10
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:22:28.252Z",
+        "atBatIndex": 7,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "walk",
+        "homeScore": 0
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 5",
+          "credit": {
+            "name": "Player 5",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 5
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 5
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 5
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:23:54.574Z",
+        "atBatIndex": 8,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "field_out",
+        "homeScore": 1
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 11 (RF) to Player 6 (1B)",
+          "credit": {
+            "name": "Player 11",
+            "role": "fielder",
+            "position": "RF"
+          },
+          "teamId": "away",
+          "assists": [
+            {
+              "name": "Player 6",
+              "position": "1B",
+              "creditUserId": 6
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 11
+        },
+        {
+          "label": "Run: Player 8",
+          "credit": {
+            "name": "Player 8",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 8
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 2
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 2
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 8
+            },
+            "eventType": "field_out",
+            "responsiblePitcher": {
+              "id": 9
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:24:48.970Z",
+        "atBatIndex": 9,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "single",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Single: Player 12",
+          "credit": {
+            "name": "Player 12",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "single",
+          "creditUserId": 12
+        },
+        {
+          "label": "Run: Player 10",
+          "credit": {
+            "name": "Player 10",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 10
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 12
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 10
+            },
+            "eventType": "single",
+            "responsiblePitcher": {
+              "id": 9
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "startTime": "2026-06-23T00:26:43.711Z",
+        "atBatIndex": 10,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "walk",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 13",
+          "credit": {
+            "name": "Player 13",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 13
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 13
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 13
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 1,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T00:28:05.342Z",
+        "atBatIndex": 11,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "fielders_choice",
+        "homeScore": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 14
+            },
+            "eventType": "fielders_choice"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:30:21.434Z",
+        "atBatIndex": 12,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "hit_by_pitch",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Hit by pitch: Player 9",
+          "credit": {
+            "name": "Player 9",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "hit_by_pitch",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 9
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 9
+            },
+            "eventType": "hit_by_pitch"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:30:58.376Z",
+        "atBatIndex": 13,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "fielders_choice",
+        "homeScore": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 15
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 15
+            },
+            "eventType": "fielders_choice"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:32:09.301Z",
+        "atBatIndex": 14,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 0,
+        "eventType": "field_out",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 7 (SS) to Player 5 (1B)",
+          "credit": {
+            "name": "Player 7",
+            "role": "fielder",
+            "position": "SS"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 5",
+              "position": "1B",
+              "creditUserId": 5
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 7
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 16
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 16
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T00:33:59.885Z",
+        "atBatIndex": 15,
+        "halfInning": "top",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "strikeout",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 2 pitching",
+          "credit": {
+            "name": "Player 2",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "home",
+          "eventType": "strikeout",
+          "creditUserId": 2
+        },
+        {
+          "label": "Run: Player 15",
+          "credit": {
+            "name": "Player 15",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "run",
+          "creditUserId": 15
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 17
+        },
+        "pitcher": {
+          "id": 2
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 17
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": false,
+            "earned": true,
+            "runner": {
+              "id": null
+            },
+            "eventType": "strikeout",
+            "responsiblePitcher": {
+              "id": 2
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:37:46.924Z",
+        "atBatIndex": 16,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 18",
+          "credit": {
+            "name": "Player 18",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 18
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 18
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 18
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:38:18.729Z",
+        "atBatIndex": 17,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 9 (P) to Player 6 (1B)",
+          "credit": {
+            "name": "Player 9",
+            "role": "fielder",
+            "position": "P"
+          },
+          "teamId": "away",
+          "assists": [
+            {
+              "name": "Player 6",
+              "position": "1B",
+              "creditUserId": 6
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 19
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 19
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:39:05.015Z",
+        "atBatIndex": 18,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "single",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Single: Player 20",
+          "credit": {
+            "name": "Player 20",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "single",
+          "creditUserId": 20
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 20
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 20
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:41:33.665Z",
+        "atBatIndex": 19,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 21",
+          "credit": {
+            "name": "Player 21",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 21
+        },
+        {
+          "label": "Caught stealing home: Player 4 (SS)",
+          "credit": {
+            "name": "Player 4",
+            "role": "fielder",
+            "position": "SS"
+          },
+          "teamId": "away",
+          "eventType": "caught_stealing",
+          "creditUserId": 4
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 21
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 21
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:43:45.294Z",
+        "atBatIndex": 20,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 2
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 8",
+          "credit": {
+            "name": "Player 8",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 8
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 8
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 8
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "startTime": "2026-06-23T00:45:12.131Z",
+        "atBatIndex": 21,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "double",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Double: Player 7",
+          "credit": {
+            "name": "Player 7",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "double",
+          "creditUserId": 7
+        },
+        {
+          "label": "Run: Player 20",
+          "credit": {
+            "name": "Player 20",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 20
+        },
+        {
+          "label": "Run: Player 21",
+          "credit": {
+            "name": "Player 21",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 21
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 7
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 7
+            },
+            "eventType": "double"
+          },
+          "movement": {
+            "end": "2B",
+            "isOut": false,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 20
+            },
+            "eventType": "double",
+            "responsiblePitcher": {
+              "id": 9
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 21
+            },
+            "eventType": "double",
+            "responsiblePitcher": {
+              "id": 9
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 2,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T00:48:43.129Z",
+        "atBatIndex": 22,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Fly out: Player 15 (CF)",
+          "credit": {
+            "name": "Player 15",
+            "role": "fielder",
+            "position": "CF"
+          },
+          "teamId": "away",
+          "eventType": "field_out",
+          "creditUserId": 15
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 10
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 10
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T00:51:49.462Z",
+        "atBatIndex": 23,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 5 (1B)",
+          "credit": {
+            "name": "Player 5",
+            "role": "fielder",
+            "position": "1B"
+          },
+          "teamId": "home",
+          "assists": [],
+          "eventType": "field_out",
+          "creditUserId": 5
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 11
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 11
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T00:53:21.089Z",
+        "atBatIndex": 24,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Line out: Player 7 (SS)",
+          "credit": {
+            "name": "Player 7",
+            "role": "fielder",
+            "position": "SS"
+          },
+          "teamId": "home",
+          "eventType": "field_out",
+          "creditUserId": 7
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 1
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T00:53:50.684Z",
+        "atBatIndex": 25,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 10 (P) to Player 5 (1B)",
+          "credit": {
+            "name": "Player 10",
+            "role": "fielder",
+            "position": "P"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 5",
+              "position": "1B",
+              "creditUserId": 5
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 10
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 3
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 3
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T00:57:15.684Z",
+        "atBatIndex": 26,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "double",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Double: Player 5",
+          "credit": {
+            "name": "Player 5",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "double",
+          "creditUserId": 5
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 5
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 5
+            },
+            "eventType": "double"
+          },
+          "movement": {
+            "end": "2B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T00:59:40.127Z",
+        "atBatIndex": 27,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 4
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 3 (2B) to Player 15 (1B)",
+          "credit": {
+            "name": "Player 3",
+            "role": "fielder",
+            "position": "2B"
+          },
+          "teamId": "away",
+          "assists": [
+            {
+              "name": "Player 15",
+              "position": "1B",
+              "creditUserId": 15
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 3
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 2
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 2
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T01:00:24.485Z",
+        "atBatIndex": 28,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_error",
+        "homeScore": 5
+      },
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 12
+            },
+            "eventType": "field_error"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": false,
+            "earned": false,
+            "runner": {
+              "id": null
+            },
+            "eventType": "field_error",
+            "responsiblePitcher": {
+              "id": 4
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T01:01:14.036Z",
+        "atBatIndex": 29,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "single",
+        "homeScore": 5
+      },
+      "credits": [
+        {
+          "label": "Single: Player 13",
+          "credit": {
+            "name": "Player 13",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "single",
+          "creditUserId": 13
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 13
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 13
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T01:03:38.133Z",
+        "atBatIndex": 30,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 5
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 14",
+          "credit": {
+            "name": "Player 14",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 14
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 14
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T01:04:31.420Z",
+        "atBatIndex": 31,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "strikeout",
+        "homeScore": 5
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 4 pitching",
+          "credit": {
+            "name": "Player 4",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 4
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 18
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 18
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T01:06:11.968Z",
+        "atBatIndex": 32,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 6
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 19",
+          "credit": {
+            "name": "Player 19",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 19
+        },
+        {
+          "label": "Run: Player 12",
+          "credit": {
+            "name": "Player 12",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 12
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 19
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 19
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 12
+            },
+            "eventType": "walk",
+            "responsiblePitcher": {
+              "id": 4
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "startTime": "2026-06-23T01:06:44.787Z",
+        "atBatIndex": 33,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "single",
+        "homeScore": 7
+      },
+      "credits": [
+        {
+          "label": "Single: Player 20",
+          "credit": {
+            "name": "Player 20",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "single",
+          "creditUserId": 20
+        },
+        {
+          "label": "Run",
+          "credit": {
+            "name": "",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 22
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 20
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 20
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 22
+            },
+            "eventType": "single",
+            "responsiblePitcher": {
+              "id": 4
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 3,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T01:08:32.166Z",
+        "atBatIndex": 34,
+        "halfInning": "bottom",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 4 pitching",
+          "credit": {
+            "name": "Player 4",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 4
+        },
+        {
+          "label": "Run: Player 14",
+          "credit": {
+            "name": "Player 14",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "run",
+          "creditUserId": 14
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 21
+        },
+        "pitcher": {
+          "id": 4
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 21
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": false,
+            "earned": true,
+            "runner": {
+              "id": null
+            },
+            "eventType": "strikeout",
+            "responsiblePitcher": {
+              "id": 4
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:10:42.645Z",
+        "atBatIndex": 35,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 10 (P) to Player 2 (1B)",
+          "credit": {
+            "name": "Player 10",
+            "role": "fielder",
+            "position": "P"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 2",
+              "position": "1B",
+              "creditUserId": 2
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 10
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 4
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 4
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:11:58.762Z",
+        "atBatIndex": 36,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 6",
+          "credit": {
+            "name": "Player 6",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "walk",
+          "creditUserId": 6
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 6
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 6
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:13:36.785Z",
+        "atBatIndex": 37,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 1,
+        "eventType": "walk",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 9",
+          "credit": {
+            "name": "Player 9",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "walk",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 9
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 9
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:14:55.847Z",
+        "atBatIndex": 38,
+        "halfInning": "top",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 2,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 14 (2B) to Player 2 (1B)",
+          "credit": {
+            "name": "Player 14",
+            "role": "fielder",
+            "position": "2B"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 2",
+              "position": "1B",
+              "creditUserId": 2
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 14
+        },
+        {
+          "label": "Run: Player 6",
+          "credit": {
+            "name": "Player 6",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "run",
+          "creditUserId": 6
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 15
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 15
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 6
+            },
+            "eventType": "field_out",
+            "responsiblePitcher": {
+              "id": 10
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:15:53.773Z",
+        "atBatIndex": 39,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 2,
+        "eventType": "catcher_interference",
+        "homeScore": 8
+      },
+      "matchup": {
+        "batter": {
+          "id": 16
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 16
+            },
+            "eventType": "catcher_interference"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:18:06.929Z",
+        "atBatIndex": 40,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 2,
+        "eventType": "walk",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 17",
+          "credit": {
+            "name": "Player 17",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "walk",
+          "creditUserId": 17
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 17
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 17
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:19:06.451Z",
+        "atBatIndex": 41,
+        "halfInning": "top",
+        "isScoringPlay": true
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "single",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Single: Player 11",
+          "credit": {
+            "name": "Player 11",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "single",
+          "creditUserId": 11
+        },
+        {
+          "label": "Run: Player 16",
+          "credit": {
+            "name": "Player 16",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "run",
+          "creditUserId": 16
+        },
+        {
+          "label": "Run: Player 17",
+          "credit": {
+            "name": "Player 17",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "run",
+          "creditUserId": 17
+        },
+        {
+          "label": "Run: Player 9",
+          "credit": {
+            "name": "Player 9",
+            "role": "runner",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "run",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 11
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 11
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 16
+            },
+            "eventType": "single",
+            "responsiblePitcher": {
+              "id": 10
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 17
+            },
+            "eventType": "single",
+            "responsiblePitcher": {
+              "id": 10
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        },
+        {
+          "details": {
+            "rbi": true,
+            "earned": true,
+            "runner": {
+              "id": 9
+            },
+            "eventType": "single",
+            "responsiblePitcher": {
+              "id": 10
+            }
+          },
+          "movement": {
+            "end": "score",
+            "isOut": false,
+            "start": "1B"
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T01:20:47.074Z",
+        "atBatIndex": 42,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Pop out: Player 14 (2B)",
+          "credit": {
+            "name": "Player 14",
+            "role": "fielder",
+            "position": "2B"
+          },
+          "teamId": "home",
+          "eventType": "field_out",
+          "creditUserId": 14
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 1
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:25:57.419Z",
+        "atBatIndex": 43,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "walk",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 8",
+          "credit": {
+            "name": "Player 8",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "walk",
+          "creditUserId": 8
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 8
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 8
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:28:38.103Z",
+        "atBatIndex": 44,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 16 pitching",
+          "credit": {
+            "name": "Player 16",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 16
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 7
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 7
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "startTime": "2026-06-23T01:29:17.985Z",
+        "atBatIndex": 45,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 16 (P) to Player 6 (1B)",
+          "credit": {
+            "name": "Player 16",
+            "role": "fielder",
+            "position": "P"
+          },
+          "teamId": "away",
+          "assists": [
+            {
+              "name": "Player 6",
+              "position": "1B",
+              "creditUserId": 6
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 16
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 10
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 10
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 4,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T01:30:45.820Z",
+        "atBatIndex": 46,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 16 pitching",
+          "credit": {
+            "name": "Player 16",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 16
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 5
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 5
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:34:35.651Z",
+        "atBatIndex": 47,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 5 pitching",
+          "credit": {
+            "name": "Player 5",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "home",
+          "eventType": "strikeout",
+          "creditUserId": 5
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 3
+        },
+        "pitcher": {
+          "id": 5
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 3
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:35:57.585Z",
+        "atBatIndex": 48,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 5 pitching",
+          "credit": {
+            "name": "Player 5",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "home",
+          "eventType": "strikeout",
+          "creditUserId": 5
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 4
+        },
+        "pitcher": {
+          "id": 5
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 4
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:37:20.275Z",
+        "atBatIndex": 49,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "walk",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Walk: Player 6",
+          "credit": {
+            "name": "Player 6",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "walk",
+          "creditUserId": 6
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 6
+        },
+        "pitcher": {
+          "id": 5
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 6
+            },
+            "eventType": "walk"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:37:46.063Z",
+        "atBatIndex": 50,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "hit_by_pitch",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Hit by pitch: Player 9",
+          "credit": {
+            "name": "Player 9",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "hit_by_pitch",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 9
+        },
+        "pitcher": {
+          "id": 5
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 9
+            },
+            "eventType": "hit_by_pitch"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:39:37.164Z",
+        "atBatIndex": 51,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "single",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Single: Player 15",
+          "credit": {
+            "name": "Player 15",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "single",
+          "creditUserId": 15
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 15
+        },
+        "pitcher": {
+          "id": 5
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 15
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T01:41:42.621Z",
+        "atBatIndex": 52,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 5 pitching",
+          "credit": {
+            "name": "Player 5",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "home",
+          "eventType": "strikeout",
+          "creditUserId": 5
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 16
+        },
+        "pitcher": {
+          "id": 5
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 16
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:44:38.314Z",
+        "atBatIndex": 53,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "double",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Double: Player 2",
+          "credit": {
+            "name": "Player 2",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "double",
+          "creditUserId": 2
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 2
+        },
+        "pitcher": {
+          "id": 3
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 2
+            },
+            "eventType": "double"
+          },
+          "movement": {
+            "end": "2B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:46:20.184Z",
+        "atBatIndex": 54,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Line out: Player 9 (SS)",
+          "credit": {
+            "name": "Player 9",
+            "role": "fielder",
+            "position": "SS"
+          },
+          "teamId": "away",
+          "eventType": "field_out",
+          "creditUserId": 9
+        },
+        {
+          "label": "Caught stealing 3rd: Player 1 (C)",
+          "credit": {
+            "name": "Player 1",
+            "role": "fielder",
+            "position": "C"
+          },
+          "teamId": "away",
+          "eventType": "caught_stealing",
+          "creditUserId": 1
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 3
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 12
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "startTime": "2026-06-23T01:47:48.237Z",
+        "atBatIndex": 55,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "hit_by_pitch",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Hit by pitch",
+          "credit": {
+            "name": "",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "home",
+          "eventType": "hit_by_pitch",
+          "creditUserId": 22
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 22
+        },
+        "pitcher": {
+          "id": 3
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 22
+            },
+            "eventType": "hit_by_pitch"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 5,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T01:50:11.683Z",
+        "atBatIndex": 56,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 3 pitching",
+          "credit": {
+            "name": "Player 3",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 3
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 3
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 14
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "startTime": "2026-06-23T01:53:16.498Z",
+        "atBatIndex": 57,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 7 pitching",
+          "credit": {
+            "name": "Player 7",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "home",
+          "eventType": "strikeout",
+          "creditUserId": 7
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 17
+        },
+        "pitcher": {
+          "id": 7
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 17
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "startTime": "2026-06-23T01:54:10.269Z",
+        "atBatIndex": 58,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 7 (P) to Player 5 (1B)",
+          "credit": {
+            "name": "Player 7",
+            "role": "fielder",
+            "position": "P"
+          },
+          "teamId": "home",
+          "assists": [
+            {
+              "name": "Player 5",
+              "position": "1B",
+              "creditUserId": 5
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 7
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 11
+        },
+        "pitcher": {
+          "id": 7
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 11
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "startTime": "2026-06-23T01:55:05.881Z",
+        "atBatIndex": 59,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "single",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Single: Player 1",
+          "credit": {
+            "name": "Player 1",
+            "role": "batter",
+            "position": null
+          },
+          "teamId": "away",
+          "eventType": "single",
+          "creditUserId": 1
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 7
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 1
+            },
+            "eventType": "single"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T02:00:09.092Z",
+        "atBatIndex": 60,
+        "halfInning": "top",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "other_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Caught stealing 2nd: Player 12 (C)",
+          "credit": {
+            "name": "Player 12",
+            "role": "fielder",
+            "position": "C"
+          },
+          "teamId": "home",
+          "eventType": "caught_stealing",
+          "creditUserId": 12
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": null
+        },
+        "pitcher": {
+          "id": 7
+        }
+      },
+      "runners": []
+    },
+    {
+      "about": {
+        "inning": 6,
+        "startTime": "2026-06-23T02:00:09.092Z",
+        "atBatIndex": 61,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 0
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_error",
+        "homeScore": 8
+      },
+      "matchup": {
+        "batter": {
+          "id": 18
+        },
+        "pitcher": {
+          "id": 6
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 18
+            },
+            "eventType": "field_error"
+          },
+          "movement": {
+            "end": "1B",
+            "isOut": false,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "startTime": "2026-06-23T02:01:01.620Z",
+        "atBatIndex": 62,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 1
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "strikeout",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Strikeout: Player 6 pitching",
+          "credit": {
+            "name": "Player 6",
+            "role": "pitcher",
+            "position": "P"
+          },
+          "teamId": "away",
+          "eventType": "strikeout",
+          "creditUserId": 6
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 19
+        },
+        "pitcher": {
+          "id": 6
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 19
+            },
+            "eventType": "strikeout"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "startTime": "2026-06-23T02:02:37.621Z",
+        "atBatIndex": 63,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 2
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Ground out: Player 9 (SS) to Player 15 (1B)",
+          "credit": {
+            "name": "Player 9",
+            "role": "fielder",
+            "position": "SS"
+          },
+          "teamId": "away",
+          "assists": [
+            {
+              "name": "Player 15",
+              "position": "1B",
+              "creditUserId": 15
+            }
+          ],
+          "eventType": "field_out",
+          "creditUserId": 9
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 20
+        },
+        "pitcher": {
+          "id": 6
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 20
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "inning": 6,
+        "halfOuts": 3,
+        "startTime": "2026-06-23T02:04:38.906Z",
+        "atBatIndex": 64,
+        "halfInning": "bottom",
+        "isScoringPlay": false
+      },
+      "count": {
+        "outs": 3
+      },
+      "result": {
+        "awayScore": 5,
+        "eventType": "field_out",
+        "homeScore": 8
+      },
+      "credits": [
+        {
+          "label": "Line out: Player 3 (CF)",
+          "credit": {
+            "name": "Player 3",
+            "role": "fielder",
+            "position": "CF"
+          },
+          "teamId": "away",
+          "eventType": "field_out",
+          "creditUserId": 3
+        }
+      ],
+      "matchup": {
+        "batter": {
+          "id": 21
+        },
+        "pitcher": {
+          "id": 6
+        }
+      },
+      "runners": [
+        {
+          "details": {
+            "runner": {
+              "id": 21
+            },
+            "eventType": "field_out"
+          },
+          "movement": {
+            "end": null,
+            "isOut": true,
+            "start": null
+          }
+        }
+      ]
+    }
+  ],
+  "expected": [
+    {
+      "userId": 1,
+      "teamId": "away",
+      "pa": 4,
+      "ab": 4,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 2,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 0,
+      "doubles": 1,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 8,
+      "pitch_outs": 6,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 1,
+      "pitch_k": 2,
+      "pitch_r": 1,
+      "pitch_er": 1
+    },
+    {
+      "userId": 3,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 2,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 4,
+      "pitch_outs": 3,
+      "pitch_h": 1,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 1,
+      "pitch_k": 1,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 4,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 1,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 10,
+      "pitch_outs": 4,
+      "pitch_h": 3,
+      "pitch_hr": 0,
+      "pitch_bb": 2,
+      "pitch_hbp": 0,
+      "pitch_k": 2,
+      "pitch_r": 4,
+      "pitch_er": 3
+    },
+    {
+      "userId": 5,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 2,
+      "h": 1,
+      "singles": 0,
+      "doubles": 1,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 1,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 6,
+      "pitch_outs": 3,
+      "pitch_h": 1,
+      "pitch_hr": 0,
+      "pitch_bb": 1,
+      "pitch_hbp": 1,
+      "pitch_k": 3,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 6,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 1,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 2,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 4,
+      "pitch_outs": 3,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 1,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 7,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 0,
+      "doubles": 1,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 2,
+      "r": 0,
+      "rbi": 2,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 3,
+      "pitch_outs": 3,
+      "pitch_h": 1,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 1,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 8,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 1,
+      "h": 1,
+      "singles": 0,
+      "doubles": 1,
+      "triples": 0,
+      "hr": 0,
+      "bb": 2,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 9,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 0,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 2,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 14,
+      "pitch_outs": 5,
+      "pitch_h": 5,
+      "pitch_hr": 0,
+      "pitch_bb": 5,
+      "pitch_hbp": 0,
+      "pitch_k": 1,
+      "pitch_r": 4,
+      "pitch_er": 4
+    },
+    {
+      "userId": 10,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 11,
+      "pitch_outs": 6,
+      "pitch_h": 1,
+      "pitch_hr": 0,
+      "pitch_bb": 3,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 4,
+      "pitch_er": 4
+    },
+    {
+      "userId": 11,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 3,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 12,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 13,
+      "teamId": "home",
+      "pa": 2,
+      "ab": 1,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 14,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 1,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 15,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 16,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 1,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 1,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 4,
+      "pitch_outs": 3,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 1,
+      "pitch_hbp": 0,
+      "pitch_k": 2,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 17,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 2,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 18,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 1,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 19,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 1,
+      "r": 0,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 20,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 2,
+      "singles": 2,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 21,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 1,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 22,
+      "teamId": "home",
+      "pa": 1,
+      "ab": 0,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 1,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    }
+  ]
+}

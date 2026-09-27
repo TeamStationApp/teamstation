@@ -45,7 +45,12 @@ describe('applying pitches', function () {
       'C',
       'S'
     ])
-    expect(pitches[2].count).deep.equals({ balls: 1, strikes: 1, outs: 0 })
+    // Each pitch carries the count it left.
+    expect(pitches.map(event => event.count)).deep.equals([
+      { balls: 1, strikes: 0, outs: 0 },
+      { balls: 1, strikes: 1, outs: 0 },
+      { balls: 1, strikes: 2, outs: 0 }
+    ])
     expect(state.liveData.boxscore.teams.home.pitchCounts[F.P]).equals(3)
   })
 
@@ -143,8 +148,10 @@ describe('applying plate-appearance results', function () {
       coordinates: { x: 5, z: -60 }
     })
     expect(current.playEvents.at(-1)!.details).deep.equals({
+      call: { code: 'X', description: 'Ball in Play' },
       code: 'X',
-      description: 'Ball in Play'
+      description: 'Ball in Play',
+      isInPlay: true
     })
     expect(current.result).includes({ event: 'Single', eventType: 'single' })
     // Nobody left to decide: the play waits only to be closed.

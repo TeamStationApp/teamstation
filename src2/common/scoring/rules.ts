@@ -1,3 +1,4 @@
+import type { Trajectory } from './actions'
 import {
   addPlayer,
   allocatePlayer,
@@ -19,6 +20,7 @@ import {
 import { type HomeRunKind, homeRunKind, isFair, PARK } from './park'
 import {
   copyState,
+  type GamePlay,
   type GameSetup,
   type GameState,
   type Movement,
@@ -108,17 +110,31 @@ export const HIT_BASES: Partial<Record<ResolutionOutcome, number>> = {
   'Home Run': 4
 }
 
-export function trajectoryLabel(angle: number): string {
+/** The trajectory a launch angle falls in, in the scorer's own terms. */
+export function trajectoryOf(angle: number): Trajectory {
   const value = Math.round(angle)
   return value >= 48
-    ? 'Pop Fly'
+    ? 'popup'
     : value >= 35
-      ? 'Fly Ball'
+      ? 'fly_ball'
       : value >= 10
-        ? 'Line Drive'
+        ? 'line_drive'
         : value >= -25
-          ? 'Ground Ball'
-          : 'Chopper'
+          ? 'ground_ball'
+          : 'chopper'
+}
+
+const TRAJECTORY_LABELS: Record<Trajectory, string> = {
+  popup: 'Pop Fly',
+  fly_ball: 'Fly Ball',
+  line_drive: 'Line Drive',
+  ground_ball: 'Ground Ball',
+  chopper: 'Chopper'
+}
+
+/** What the scoring screen calls the trajectory of a launch angle. */
+export function trajectoryLabel(angle: number): string {
+  return TRAJECTORY_LABELS[trajectoryOf(angle)]
 }
 
 export function outcomeAvailable(
@@ -151,7 +167,10 @@ export function allowedAngle(
   )
 }
 
-/** A wild pitch or passed ball needs a ball, or a strike the catcher missed. */
+/**
+ * A wild pitch or passed ball needs a live ball the catcher could miss: a
+ * ball, a called strike or a swinging strike, by the pitch's call.
+ */
 export function hasEligiblePitch(state: GameState): boolean {
   const ref = state.recentPitch
   if (ref == null) return false
@@ -161,7 +180,20 @@ export function hasEligiblePitch(state: GameState): boolean {
   ]
   const pitch = plays.find(play => play?.about.atBatIndex === ref.atBatIndex)
     ?.playEvents[ref.index]
-  return pitch?.isPitch === true && ['B', 'C', 'S'].includes(pitch.details.code)
+  return (
+    pitch?.isPitch === true &&
+    ['B', 'C', 'S'].includes(pitch.details.call?.code ?? '')
+  )
+}
+
+/**
+ * The play's last pitch was put in play. Actions after it — a runner, a
+ * substitution — do not change that.
+ */
+export function inPlay(play: GamePlay | null | undefined): boolean {
+  return (
+    play?.playEvents.findLast(event => event.isPitch)?.details.isInPlay === true
+  )
 }
 
 export type MoreAction =
@@ -378,10 +410,7 @@ export function nextDecision(state: GameState): Decision {
  * ball or its result can follow — not a pitch.
  */
 export function awaitingResult(state: GameState): boolean {
-  return (
-    state.pending == null &&
-    state.liveData.plays.currentPlay?.playEvents.at(-1)?.details.code === 'X'
-  )
+  return state.pending == null && inPlay(state.liveData.plays.currentPlay)
 }
 
 /**

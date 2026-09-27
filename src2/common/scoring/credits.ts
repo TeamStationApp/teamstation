@@ -1,4 +1,5 @@
 import type { ErrorKind } from './actions'
+import { storedEventType } from './document'
 import { playerRef } from './lineup'
 import {
   type GamePlay,
@@ -16,7 +17,8 @@ import {
  * for a hit, or that the batter reached on, is credited with fielding it.
  */
 
-function positionOf(state: GameState, id: number): string {
+/** The position a fielder is playing, or '' when he is not in the field. */
+export function positionOf(state: GameState, id: number): string {
   return (
     POSITIONS.find(
       position => state.liveData.linescore.defense[position]?.id === id
@@ -67,40 +69,9 @@ export function errorCredit(
   )
 }
 
-/**
- * Whether a run on this play is batted in. Nobody drives in a run that scored
- * on a balk, on an error, or on a play the defence could have ended with a
- * force for the third out; those are taken back when the out is made.
- */
-export function earnsRbi(outcome: string | undefined): boolean {
-  return (
-    outcome !== 'Balk' &&
-    outcome !== 'Error' &&
-    outcome !== 'Dropped Third Strike'
-  )
-}
-
-/** Reasons a runner scores that nobody batted in, whatever the play. */
-const UNEARNED_ADVANCE = new Set([
-  'Wild Pitch',
-  'Passed Ball',
-  'Throwing Error',
-  'Fielding Error',
-  'Balk'
-])
-
-/**
- * A runner the scorer moves home while the play is still open — tagging up on
- * a caught fly, taking an extra base on the hit — was batted in, unless the
- * play itself earns none or he scored on the defence's mistake.
- */
-export function advanceEarnsRbi(
-  outcome: string | undefined,
-  reason: string
-): boolean {
-  return outcome != null && earnsRbi(outcome) && !UNEARNED_ADVANCE.has(reason)
-}
-
+// Keyed by the event type a play is stored with (`storedEventType`), so a
+// batter's own "Batter Out — Other" is a plate appearance and a runner's third
+// out between pitches is not.
 const PLATE_APPEARANCE = new Set([
   'single',
   'double',
@@ -108,34 +79,45 @@ const PLATE_APPEARANCE = new Set([
   'home_run',
   'field_error',
   'fielders_choice',
+  'fielders_choice_out',
+  'force_out',
   'field_out',
-  'other_out',
+  'gs_batter_out',
+  'double_play',
   'grounded_into_double_play',
+  'grounded_into_triple_play',
   'triple_play',
   'strikeout',
   'strikeout_double_play',
+  'strikeout_triple_play',
   'walk',
   'intent_walk',
   'hit_by_pitch',
-  'catcher_interference',
-  'manual_placement',
+  'catcher_interf',
+  'gs_manual_placement',
   'sac_fly',
   'sac_fly_double_play',
-  'sac_bunt'
+  'sac_bunt',
+  'sac_bunt_double_play'
 ])
 /** A plate appearance that does not count as an at-bat. */
 const NOT_AT_BAT = new Set([
   'walk',
   'intent_walk',
   'hit_by_pitch',
-  'catcher_interference',
-  'manual_placement',
+  'catcher_interf',
+  'gs_manual_placement',
   'sac_fly',
   'sac_fly_double_play',
-  'sac_bunt'
+  'sac_bunt',
+  'sac_bunt_double_play'
 ])
 const HITS = new Set(['single', 'double', 'triple', 'home_run'])
-const STRIKEOUTS = new Set(['strikeout', 'strikeout_double_play'])
+const STRIKEOUTS = new Set([
+  'strikeout',
+  'strikeout_double_play',
+  'strikeout_triple_play'
+])
 const WALKS = new Set(['walk', 'intent_walk'])
 
 export interface BattingLine {
@@ -164,6 +146,43 @@ function blankPitching(): PitchingLine {
   return { pitches: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0 }
 }
 
+/**
+ * What a play of a stored event type counts on the batter's line: a plate
+ * appearance, an at-bat, a strikeout.
+ */
+export function battingCounts(type: string): {
+  pa: boolean
+  ab: boolean
+  k: boolean
+} {
+  const pa = PLATE_APPEARANCE.has(type)
+  return { pa, ab: pa && !NOT_AT_BAT.has(type), k: STRIKEOUTS.has(type) }
+}
+
+/**
+ * Whom a play's strikeout is charged to (9.15(b)): a batter who left with
+ * two strikes, when the pinch hitter who replaced him struck out. With more
+ * than one pinch hitter, the man the first sent in at two strikes replaced.
+ * Read from the play's offensive substitutions for its batter, each with the
+ * count he came in at; otherwise the batter.
+ */
+export function strikeoutBatter(play: GamePlay): number {
+  let up = play.matchup.batter.id
+  let charged = up
+  for (const event of [...play.playEvents].reverse()) {
+    const replaced = event.replacedPlayer?.id
+    if (
+      event.details.code !== 'offensive_substitution' ||
+      event.player.id !== up ||
+      replaced == null
+    )
+      continue
+    if (event.count.strikes === 2) charged = replaced
+    up = replaced
+  }
+  return charged
+}
+
 /** Each batter's line and each pitcher's line, worked out from the plays. */
 export function statLines(plays: readonly GamePlay[]): {
   batting: Record<number, BattingLine>
@@ -174,7 +193,10 @@ export function statLines(plays: readonly GamePlay[]): {
   const bat = (id: number): BattingLine => (batting[id] ??= blankBatting())
   const pitch = (id: number): PitchingLine => (pitching[id] ??= blankPitching())
   for (const play of plays) {
-    const type = play.result.eventType
+    const type = storedEventType(
+      play.result.eventType,
+      play.source.gamestation.outcome
+    )
     const batter = play.matchup.batter.id
     const pitcher = pitch(play.matchup.pitcher.id)
     pitcher.pitches += play.playEvents.filter(event => event.isPitch).length
@@ -185,15 +207,16 @@ export function statLines(plays: readonly GamePlay[]): {
         pitcher.r++
       }
     }
-    if (!play.about.isComplete || !PLATE_APPEARANCE.has(type)) continue
-    const line = bat(batter)
+    const counts = battingCounts(type)
+    if (!play.about.isComplete || !counts.pa) continue
+    const line = bat(counts.k ? strikeoutBatter(play) : batter)
     line.pa++
-    if (!NOT_AT_BAT.has(type)) line.ab++
+    if (counts.ab) line.ab++
     if (HITS.has(type)) {
       line.h++
       pitcher.h++
     }
-    if (STRIKEOUTS.has(type)) {
+    if (counts.k) {
       line.k++
       pitcher.k++
     }
@@ -202,7 +225,7 @@ export function statLines(plays: readonly GamePlay[]): {
       pitcher.bb++
     }
     if (type === 'hit_by_pitch') line.hbp++
-    line.rbi += play.result.rbi
+    if (play.result.rbi > 0) bat(batter).rbi += play.result.rbi
   }
   return { batting, pitching }
 }

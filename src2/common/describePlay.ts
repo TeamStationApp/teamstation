@@ -1,4 +1,8 @@
-import { eventTypeName, type GumboEventType } from './gumboEventTypes'
+import {
+  eventTypeName,
+  type GumboEventType,
+  normalizeEventType
+} from './gumboEventTypes'
 
 // A play in a sentence, written by GameStation from what it knows about the
 // play — its type, who is credited with what, the half-inning, the score —
@@ -30,43 +34,94 @@ export interface DescribedPlay {
  * entry.
  */
 export const DID_BY_TYPE: Record<GumboEventType, string | null> = {
+  pickoff_1b: null,
+  pickoff_2b: null,
+  pickoff_3b: null,
+  pitcher_step_off: null,
+  pickoff_error_1b: null,
+  pickoff_error_2b: null,
+  pickoff_error_3b: null,
+  batter_timeout: null,
+  mound_visit: null,
+  no_pitch: null,
   single: 'singles',
   double: 'doubles',
   triple: 'triples',
   home_run: 'hits a home run',
+  double_play: null,
+  field_error: null,
+  error: null,
+  field_out: null,
+  fielders_choice: null,
+  fielders_choice_out: null,
+  force_out: null,
+  grounded_into_double_play: null,
+  grounded_into_triple_play: null,
   strikeout: null,
+  strike_out: null,
   strikeout_double_play: null,
+  strikeout_triple_play: null,
+  triple_play: null,
+  sac_fly: 'hits a sacrifice fly',
+  catcher_interf: "reaches on catcher's interference",
+  batter_interference: null,
+  fielder_interference: null,
+  runner_interference: null,
+  fan_interference: null,
+  batter_turn: null,
+  ejection: null,
+  cs_double_play: null,
+  defensive_indiff: null,
+  sac_fly_double_play: 'hits a sacrifice fly',
+  sac_bunt: 'lays down a sacrifice bunt',
+  sac_bunt_double_play: 'lays down a sacrifice bunt',
   walk: 'walks',
   intent_walk: 'is walked intentionally',
   hit_by_pitch: 'is hit by a pitch',
-  field_out: null,
-  other_out: null,
-  grounded_into_double_play: null,
-  triple_play: null,
-  field_error: null,
-  fielders_choice: null,
-  catcher_interference: "reaches on catcher's interference",
-  manual_placement: 'is placed on base',
-  sac_fly: 'hits a sacrifice fly',
-  sac_fly_double_play: 'hits a sacrifice fly',
-  sac_bunt: 'lays down a sacrifice bunt',
+  injury: null,
+  os_ruling_pending_prior: null,
+  os_ruling_pending_primary: null,
+  at_bat_start: null,
+  passed_ball: null,
+  other_advance: null,
+  runner_double_play: null,
+  runner_placed: 'is placed on base',
+  pitching_substitution: 'comes in to pitch',
+  offensive_substitution: 'comes in to bat',
+  defensive_switch: 'moves to a new position',
+  umpire_substitution: null,
+  pitcher_switch: null,
+  game_advisory: null,
   stolen_base: 'steals a base',
+  stolen_base_2b: 'steals second',
+  stolen_base_3b: 'steals third',
+  stolen_base_home: 'steals home',
   caught_stealing: null,
-  pickoff_1b: null,
-  pickoff_2b: null,
-  pickoff_3b: null,
+  caught_stealing_2b: null,
+  caught_stealing_3b: null,
+  caught_stealing_home: null,
+  defensive_substitution: 'comes in on defense',
   pickoff_caught_stealing_2b: null,
   pickoff_caught_stealing_3b: null,
   pickoff_caught_stealing_home: null,
-  defensive_indiff: null,
-  placed_runner: 'is placed on base',
-  wild_pitch: null,
-  passed_ball: null,
   balk: null,
-  game_advisory: null,
+  forced_balk: null,
+  wild_pitch: null,
+  other_out: null,
+  final_score: null,
   score_correction: null,
-  final_score: null
+  gs_manual_placement: 'is placed on base',
+  gs_batter_out: null,
+  gs_batting_order: null
 }
+
+/** The strikeouts, whose clause turns on who is credited with them. */
+const STRIKEOUTS: ReadonlySet<string> = new Set([
+  'strikeout',
+  'strike_out',
+  'strikeout_double_play',
+  'strikeout_triple_play'
+])
 
 /** Credit types that are not play types. */
 const DID_BY_CREDIT: Record<string, string> = { run: 'scores' }
@@ -83,17 +138,15 @@ function clause(outcome: DescribedCredit): string {
   const [head, ...rest] = outcome.label.split(':')
   const detail = rest.join(':').trim()
   if (name === '') return head.trim() === '' ? 'Play' : head.trim()
-  if (
-    outcome.eventType === 'strikeout' ||
-    outcome.eventType === 'strikeout_double_play'
-  ) {
+  const eventType = normalizeEventType(outcome.eventType)
+  if (STRIKEOUTS.has(eventType)) {
     return outcome.credit?.role === 'pitcher'
       ? `${name} strikes out the batter`
       : `${name} picks up a dropped third strike`
   }
   const did =
-    (DID_BY_TYPE as Record<string, string | null>)[outcome.eventType] ??
-    DID_BY_CREDIT[outcome.eventType]
+    (DID_BY_TYPE as Record<string, string | null>)[eventType] ??
+    DID_BY_CREDIT[eventType]
   if (did != null) return `${name} ${did}`
   // A fielding credit: the engine's label already says who and where,
   // `Ground out: Jordan P (SS) to Casey B (1B)`.
