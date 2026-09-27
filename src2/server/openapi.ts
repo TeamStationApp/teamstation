@@ -958,6 +958,195 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: { description: 'Games, newest first, with a video count' },
             404: errorResponse
           }
+        },
+        post: {
+          summary: "Schedule a team's games",
+          description:
+            'Schedules up to 200 games for the team in one call, and answers ' +
+            'each row on its own, in order. Rows are applied one at a time, ' +
+            'each in its own transaction, so one refused row stops nothing.\n\n' +
+            '**Who may call:** a site admin, an admin of the team (an ' +
+            '`admin_roles` team row, or its owner or manager), or an admin of ' +
+            "a season the team plays in or of that season's league. A plain " +
+            'member, parent or spectator gets 403; a team the caller can ' +
+            'neither see nor administer gets 404. A season or league admin ' +
+            'may only schedule into a season they administer: a row into ' +
+            'another season is `forbidden`.\n\n' +
+            '**A row:** `opponent` (`{teamId}` or `{name}`, 1-120 characters) ' +
+            'and `side` (`home` or `away`, the side this team plays on) are ' +
+            'needed to create a game and ignored for a matched one. ' +
+            '`startAt` is required, an ISO 8601 date-time with `Z` or an ' +
+            'offset. `seasonId` is optional and must be a season the team is ' +
+            "in; without it the season whose dates hold the game's UTC day " +
+            "is used (the latest to start), else the team's season of that " +
+            'year. `venue` (at most 200 characters) and `status` (`scheduled` ' +
+            'or `cancelled`) are optional; omitted, a held game keeps its own. ' +
+            '`externalId` is optional `{system, id, kind?}`, with `system` and ' +
+            '`kind` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` defaulting ' +
+            'to `event`.\n\n' +
+            '**What a row does:** with an `externalId`, a game already holding ' +
+            'that system and id (of any kind) is matched: an `inProgress` or ' +
+            '`final` game is left as it is; a `scheduled` or `cancelled` one ' +
+            "takes the row's time, venue and status. Teams, season and " +
+            'scores never change. Without a match, a game in the same season ' +
+            'between the same two teams at the same time takes the id. ' +
+            'Otherwise the row creates a game. A row without `externalId` ' +
+            'always creates one. An opponent named by `name` is a team of the ' +
+            'season with that name or coach, else an external team of that ' +
+            'name, else a new external team.\n\n' +
+            '**Answers:** `result` is `created`, `updated`, `unchanged` or ' +
+            "`error`, with `gameId` and the game's `status` after the row. " +
+            'Error codes: `invalid`, `notFound`, `conflict`, `noSeason`, ' +
+            '`forbidden`.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['games'],
+                  properties: {
+                    games: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['startAt'],
+                        properties: {
+                          opponent: {
+                            oneOf: [
+                              {
+                                type: 'object',
+                                required: ['teamId'],
+                                properties: { teamId: { type: 'string' } }
+                              },
+                              {
+                                type: 'object',
+                                required: ['name'],
+                                properties: {
+                                  name: {
+                                    type: 'string',
+                                    minLength: 1,
+                                    maxLength: 120
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          side: { type: 'string', enum: ['home', 'away'] },
+                          startAt: { type: 'string', format: 'date-time' },
+                          seasonId: { type: 'string' },
+                          venue: {
+                            type: 'string',
+                            nullable: true,
+                            maxLength: 200
+                          },
+                          status: {
+                            type: 'string',
+                            enum: ['scheduled', 'cancelled']
+                          },
+                          externalId: {
+                            type: 'object',
+                            required: ['system', 'id'],
+                            properties: {
+                              system: {
+                                type: 'string',
+                                pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                              },
+                              id: {
+                                type: 'string',
+                                minLength: 1,
+                                maxLength: 200
+                              },
+                              kind: {
+                                type: 'string',
+                                pattern: '^[a-z][a-zA-Z0-9]{0,31}$',
+                                default: 'event'
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description:
+                'One answer per row, in order, and the counts, even when ' +
+                'every row failed',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['results', 'counts'],
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['index', 'result'],
+                          properties: {
+                            index: { type: 'integer' },
+                            result: {
+                              type: 'string',
+                              enum: ['created', 'updated', 'unchanged', 'error']
+                            },
+                            gameId: { type: 'string' },
+                            status: {
+                              type: 'string',
+                              enum: [
+                                'scheduled',
+                                'inProgress',
+                                'final',
+                                'cancelled'
+                              ]
+                            },
+                            error: {
+                              type: 'object',
+                              required: ['code', 'message'],
+                              properties: {
+                                code: {
+                                  type: 'string',
+                                  enum: [
+                                    'invalid',
+                                    'notFound',
+                                    'conflict',
+                                    'noSeason',
+                                    'forbidden'
+                                  ]
+                                },
+                                message: { type: 'string' }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      counts: {
+                        type: 'object',
+                        properties: {
+                          created: { type: 'integer' },
+                          updated: { type: 'integer' },
+                          unchanged: { type: 'integer' },
+                          error: { type: 'integer' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
         }
       },
       '/games/{gameId}': {
