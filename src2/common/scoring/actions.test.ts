@@ -26,6 +26,7 @@ import {
   toolSchema,
   TRAJECTORIES
 } from './actions'
+import { storedEventType } from './document'
 import {
   asGameSetup,
   asGameState,
@@ -240,6 +241,7 @@ describe('scoring actions', function () {
     expect(props('batteryEvent').kind.enum).deep.equals(BATTERY_KINDS)
     expect(props('lineup').kind.enum).deep.equals(LINEUP_KINDS)
     expect(props('lineup').position.enum).deep.equals(POSITIONS)
+    expect(props('lineup').base.enum).deep.equals(BASES)
     expect(props('gameFlow').kind.enum).deep.equals(GAME_FLOW_KINDS)
     for (const tool of tools) {
       expect(tool.description).not.equals('')
@@ -289,9 +291,18 @@ describe('scoring actions', function () {
   })
 
   it('folds nothing the stored vocabulary does not accept', function () {
+    // The document writes each type the engine produces as a listed code.
     const stored: readonly string[] = GUMBO_EVENT_TYPES
     for (const type of PRODUCED_EVENT_TYPES)
-      expect(stored, type).to.include(type)
+      expect(stored, type).to.include(storedEventType(type))
+    expect(storedEventType('catcher_interference')).equals('catcher_interf')
+    expect(storedEventType('manual_placement')).equals('gs_manual_placement')
+    expect(storedEventType('placed_runner')).equals('runner_placed')
+    // Other out is a runner's between pitches, and the batter's own is ours.
+    expect(storedEventType('other_out')).equals('other_out')
+    expect(storedEventType('other_out', 'Batter Out — Other')).equals(
+      'gs_batter_out'
+    )
   })
 })
 

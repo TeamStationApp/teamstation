@@ -4,6 +4,7 @@ import {
   type BatteryEventAction,
   cleanAction,
   destinationBase,
+  DESTINATIONS,
   type FieldingPlayAction,
   type GameFlowAction,
   type LineupAction,
@@ -14,13 +15,22 @@ import {
   type RunnerMovementAction,
   type ScoringAction
 } from './actions'
+import { errorCredit, fieldedCredit, outCredits, positionOf } from './credits'
 import {
-  advanceEarnsRbi,
+  addErrorlessOut,
+  type ChargeBook,
+  chargeBook,
+  chargeOf,
+  countRbi,
   earnsRbi,
-  errorCredit,
-  fieldedCredit,
-  outCredits
-} from './credits'
+  errorlessOuts,
+  halfPitcher,
+  keepCharges,
+  outsCorrected,
+  REACHED_ON_ERROR_REASONS,
+  runDecision,
+  scoredOnError
+} from './earnedRuns'
 import {
   addPlayer,
   applyOverride,
@@ -29,6 +39,7 @@ import {
   battingSide,
   canSwitchBatter,
   fieldingSide,
+  lineupChanges,
   ordinal,
   playerRef,
   startAppearance
@@ -40,21 +51,28 @@ import {
   hasEligiblePitch,
   HIT_BASES,
   homeBackProposal,
+  inPlay,
   moreEligibility,
   nextDecision,
   runnerDecisionError,
-  trajectoryLabel
+  trajectoryLabel,
+  trajectoryOf
 } from './rules'
 import {
+  BASE_KEYS,
   copyState,
   type GamePlay,
   type GameState,
+  lineupsOf,
   type Movement,
+  type PlayerRef,
+  type PlayEvent,
   type Point,
   type Resolution,
   type ResolutionOutcome,
   type RunnerCredit,
-  setupOf
+  setupOf,
+  withoutUndefined
 } from './state'
 import type { Transition } from './transitions'
 
@@ -88,9 +106,10 @@ function refuse(code: Problem['code'], message: string): never {
 interface Ctx {
   state: GameState
   out: Transition[]
+  /** What each runner is charged with, while the action lands. */
+  charges: ChargeBook
 }
 
-const BASE_KEYS = ['first', 'second', 'third'] as const
 const line = (ctx: Ctx): GameState['liveData']['linescore'] =>
   ctx.state.liveData.linescore
 const current = (ctx: Ctx): GamePlay => {
@@ -128,6 +147,10 @@ function moved(ctx: Ctx, move: Movement): void {
 
 interface Recorded {
   reason: string
+  /** A run this movement scores is batted in. */
+  rbi?: boolean
+  /** The play event that made it, when that event is already written. */
+  playIndex?: number
   credits?: RunnerCredit[]
   route?: Array<{ id: number; point: Point }>
   thrower?: Point
@@ -139,6 +162,24 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
   const play = current(ctx)
   const out = movement.decision === 'out'
   const credits = record.credits ?? []
+  const scored = !out && movement.to === 4
+  const charge = chargeOf(state, ctx.charges, movement.playerId)
+  // A movement made on a play points at the event the play came with. One an
+  // action made between pitches points at that action's event, written next.
+  const pending = state.pending
+  const byAction = pending == null
+  const playIndex =
+    record.playIndex ??
+    (pending == null
+      ? play.playEvents.length
+      : (pending.eventIndex ?? play.playEvents.length - 1))
+  const run = scored
+    ? runDecision(
+        state,
+        charge,
+        scoredOnError(state.pending?.outcome, record.reason)
+      )
+    : { earned: false, teamUnearned: false }
   play.runners.push({
     movement: {
       originBase: movement.from,
@@ -146,15 +187,22 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
       end: movement.to,
       isOut: out,
       forceOut: out && movement.force,
+      forced: !out && movement.force,
       runScored: !out && movement.to === 4,
       outNumber: out ? line(ctx).outs : undefined
     },
     details: {
       runner: playerRef(state, movement.playerId),
-      movementReason: record.reason
+      movementReason: record.reason,
+      responsiblePitcher: charge.pitcher,
+      ...run,
+      rbi: scored && record.rbi === true,
+      playIndex,
+      byAction
     },
     credits
   })
+  countRbi(play)
   const runner = play.runners[play.runners.length - 1]
   play.source.gamestation.runnerActions ??= []
   play.source.gamestation.runnerActions.push({
@@ -180,9 +228,10 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
   })
   play.count = count(ctx)
 }
+/** A runner's movement as an event of its own, after its runner entry. */
 function actionEvent(ctx: Ctx, id: number, reason: string): void {
   const play = current(ctx)
-  play.playEvents.push({
+  const event: PlayEvent = {
     index: play.playEvents.length,
     isPitch: false,
     type: 'action',
@@ -193,11 +242,14 @@ function actionEvent(ctx: Ctx, id: number, reason: string): void {
           ? 'wild_pitch'
           : reason === 'Passed Ball'
             ? 'passed_ball'
-            : 'runner_action'
+            : 'runner_action',
+      runnerEntry: play.runners.length - 1
     },
     count: count(ctx),
-    player: playerRef(ctx.state, id)
-  })
+    player: playerRef(ctx.state, id),
+    pitcher: play.matchup.pitcher
+  }
+  play.playEvents.push(event)
 }
 function countPitch(ctx: Ctx): void {
   const play = current(ctx)
@@ -205,22 +257,60 @@ function countPitch(ctx: Ctx): void {
     ctx.state.liveData.boxscore.teams[fieldingSide(ctx.state)].pitchCounts
   counts[play.matchup.pitcher.id] = (counts[play.matchup.pitcher.id] ?? 0) + 1
 }
+/**
+ * A pitch, and the count it left. The in-play pitch keeps the count it was
+ * thrown in, and a pitch's own out is not counted until the play is.
+ */
 function pitchEvent(
   ctx: Ctx,
   code: string,
   description: string,
-  isPitch: boolean,
-  before = count(ctx)
+  left = count(ctx)
 ): void {
   const play = current(ctx)
-  play.playEvents.push({
+  const event: PlayEvent = {
     index: play.playEvents.length,
-    isPitch,
-    type: isPitch ? 'pitch' : 'action',
-    details: { code, description },
-    count: before,
+    isPitch: true,
+    type: 'pitch',
+    details: {
+      call: { code, description },
+      code,
+      description,
+      isInPlay: code === 'X'
+    },
+    count: left,
     player: play.matchup.pitcher
-  })
+  }
+  play.playEvents.push(event)
+}
+/**
+ * What the play came to without a pitch: an award, a balk, a placed runner.
+ * It names the pitcher, or the runner it is about (`player`).
+ */
+function playAction(
+  ctx: Ctx,
+  code: string,
+  description: string,
+  player?: PlayerRef
+): void {
+  const play = current(ctx)
+  const event: PlayEvent = {
+    index: play.playEvents.length,
+    isPitch: false,
+    type: 'action',
+    details: { code, description },
+    count: count(ctx),
+    player: player ?? play.matchup.pitcher
+  }
+  play.playEvents.push(event)
+}
+
+/** The batter reached where the defence would have put him out. */
+function batterReachedOnError(ctx: Ctx): void {
+  const pending = ctx.state.pending
+  if (pending == null || pending.batterReachedOnError === true) return
+  pending.batterReachedOnError = true
+  addErrorlessOut(ctx.state)
 }
 
 function newResolution(
@@ -231,6 +321,7 @@ function newResolution(
   const play = current(ctx)
   return {
     outcome,
+    eventIndex: play.playEvents.length - 1,
     originalRunnerRecordCount: play.runners.length,
     originalBases: baseIds(ctx.state),
     originalRuns: line(ctx).teams[battingSide(ctx.state)].runs,
@@ -256,6 +347,8 @@ function nextHalf(ctx: Ctx): void {
   l.strikes = 0
   l.outs = 0
   l.offense = { batter: null, first: null, second: null, third: null }
+  delete l.errorlessOuts
+  ctx.charges.clear()
   state.pending = null
   state.homeQueue = []
   state.recentPitch = null
@@ -274,6 +367,7 @@ function closePlay(ctx: Ctx): void {
   play.result.awayScore = line(ctx).teams.away.runs
   play.result.homeScore = line(ctx).teams.home.runs
   refineEventType(play, state.pending)
+  countRbi(play)
   state.liveData.plays.allPlays.push(copyState(play))
   ctx.out.push({
     type: 'playClosed',
@@ -297,52 +391,106 @@ function closePlay(ctx: Ctx): void {
 }
 
 /**
- * The event type a closed play carries, from what the play came to: a
- * strikeout or a fly out that also retired a runner, a sacrifice fly that
- * scored one, or a ground ball into a double or triple play.
+ * The event type a closed play carries, from what the play came to, as MLB
+ * types it. Only the outs and runs the play itself made count: a runner
+ * caught stealing earlier in the plate appearance does not make its ground
+ * ball a double play.
+ *
+ * - A strikeout that also retired a runner is a strikeout double play.
+ * - With the batter safe and one runner put out, the play is a `force_out`
+ *   when that runner was forced, and a `fielders_choice_out` when he was
+ *   not. A fielder's choice that put nobody out stays `fielders_choice`.
+ * - A fly ball caught with fewer than two out that scored a run is a
+ *   sacrifice fly.
+ * - A bunt that put the batter out and moved a runner up, with fewer than two
+ *   out, is a sacrifice bunt.
+ * - Two or three outs on a ground ball are a ground-ball double or triple
+ *   play; on anything else, a double or triple play.
  */
 function refineEventType(play: GamePlay, pending: Resolution | null): void {
-  const outs = play.runners.filter(runner => runner.movement.isOut).length
-  const scored = play.runners.some(
-    runner => runner.movement.runScored === true && !runner.movement.isOut
-  )
+  const made = play.runners.filter(runner => runner.details.byAction !== true)
+  const outs = made.filter(runner => runner.movement.isOut).length
   const type = play.result.eventType
   if (type === 'strikeout' && outs >= 2)
-    play.result.eventType = 'strikeout_double_play'
-  if (type !== 'field_out' || pending == null) return
-  const batterOut = play.runners.some(
-    runner =>
-      runner.movement.isOut &&
-      runner.details.runner.id === play.matchup.batter.id
+    play.result.eventType =
+      outs >= 3 ? 'strikeout_triple_play' : 'strikeout_double_play'
+  if ((type !== 'field_out' && type !== 'fielders_choice') || pending == null)
+    return
+  const batter = play.matchup.batter.id
+  const batterOut = made.some(
+    runner => runner.movement.isOut && runner.details.runner.id === batter
   )
-  // A runner forced out for the third out, with the batter never put out:
-  // the batter is scored as reaching on a fielder's choice, not as out.
-  if (pending.outcome === 'Throw Out' && !batterOut && outs === 1)
-    play.result.eventType = 'fielders_choice'
+  const scored = made.some(
+    runner => runner.movement.runScored === true && !runner.movement.isOut
+  )
+  const advanced = made.some(
+    runner =>
+      runner.details.runner.id !== batter &&
+      !runner.movement.isOut &&
+      runner.movement.end > runner.movement.start
+  )
+  const grounder =
+    pending.outcome === 'Throw Out' || pending.outcome === "Fielder's Choice"
+  const forced = made.some(
+    runner => runner.movement.isOut && runner.movement.forceOut
+  )
+  if (outs === 0) return
+  if (!batterOut && outs === 1 && grounder)
+    play.result.eventType = forced ? 'force_out' : 'fielders_choice_out'
   else if (
     pending.outcome === 'Ball Caught' &&
     pending.originalOuts < 2 &&
     scored
   )
     play.result.eventType = outs >= 2 ? 'sac_fly_double_play' : 'sac_fly'
-  else if (pending.outcome === 'Throw Out' && outs === 2)
-    play.result.eventType = 'grounded_into_double_play'
-  else if (outs >= 3) play.result.eventType = 'triple_play'
+  else if (
+    pending.contactKind === 'bunt' &&
+    pending.outcome === 'Throw Out' &&
+    batterOut &&
+    advanced &&
+    pending.originalOuts < 2
+  )
+    play.result.eventType = outs >= 2 ? 'sac_bunt_double_play' : 'sac_bunt'
+  else if (outs >= 3)
+    play.result.eventType = grounder
+      ? 'grounded_into_triple_play'
+      : 'triple_play'
+  else if (outs === 2)
+    play.result.eventType = grounder
+      ? 'grounded_into_double_play'
+      : 'double_play'
+}
+
+/**
+ * The event type of a play a runner's third out ended between pitches: a
+ * caught stealing or a pickoff names the base, anything else is a runner out.
+ */
+function betweenEventType(reason: string, from: number, to: number): string {
+  if (reason === 'Caught Stealing') return `caught_stealing_${stealTarget(to)}`
+  if (reason === 'Picked Off' && from >= 1 && from <= 3)
+    return to > from
+      ? `pickoff_caught_stealing_${stealTarget(to)}`
+      : `pickoff_${from}b`
+  return 'other_out'
+}
+/** The base a steal was headed for, as MLB's event types name it. */
+function stealTarget(base: number): string {
+  return base >= 4 ? 'home' : `${Math.max(2, base)}b`
 }
 
 /** Three outs between pitches: the play ends as the runner's out, and so does the half. */
-function finishBetween(ctx: Ctx, reason: string, from: number): void {
+function finishBetween(
+  ctx: Ctx,
+  reason: string,
+  from: number,
+  to: number
+): void {
   if (line(ctx).outs < 3) return
   const play = current(ctx)
   play.about.isComplete = true
   play.result.description = reason
   play.result.event = 'Runner out'
-  play.result.eventType =
-    reason === 'Caught Stealing'
-      ? 'caught_stealing'
-      : reason === 'Picked Off' && from >= 1 && from <= 3
-        ? `pickoff_${from}b`
-        : 'other_out'
+  play.result.eventType = betweenEventType(reason, from, to)
   play.result.awayScore = line(ctx).teams.away.runs
   play.result.homeScore = line(ctx).teams.home.runs
   ctx.state.liveData.plays.allPlays.push(copyState(play))
@@ -354,9 +502,9 @@ function finishBetween(ctx: Ctx, reason: string, from: number): void {
   nextHalf(ctx)
 }
 
+/** A run counts for the side; whether it was batted in is the runner's `rbi`. */
 function scoreRun(ctx: Ctx, runner: number, rbi: boolean): void {
   line(ctx).teams[battingSide(ctx.state)].runs++
-  if (rbi) current(ctx).result.rbi++
   ctx.out.push({ type: 'runScored', runner, rbi })
 }
 
@@ -373,13 +521,13 @@ function resolveAutomaticHomes(ctx: Ctx): void {
     if (ctx.state.homeQueue.length > 0) continue
     move.homeReleased = true
     move.resolved = true
-    scoreRun(ctx, move.playerId, pending.outcome !== 'Balk')
-    recordRunner(ctx, move, {
-      reason:
-        pending.automaticAward === true && pending.outcome !== 'Balk'
-          ? current(ctx).result.event
-          : pending.outcome
-    })
+    const reason =
+      pending.automaticAward === true && pending.outcome !== 'Balk'
+        ? current(ctx).result.event
+        : pending.outcome
+    const rbi = earnsRbi(pending.outcome, reason)
+    scoreRun(ctx, move.playerId, rbi)
+    recordRunner(ctx, move, { reason, rbi })
   }
 }
 
@@ -431,7 +579,7 @@ function settle(ctx: Ctx): void {
   resolveAutomaticHomes(ctx)
   if (pending.sameAppearance === true && nextDecision(ctx.state) === 'close') {
     ctx.state.pending = null
-    finishBetween(ctx, pending.outcome, 0)
+    finishBetween(ctx, pending.outcome, 0, 0)
   }
 }
 
@@ -476,6 +624,11 @@ function prepareHit(ctx: Ctx): void {
     line(ctx).teams[battingSide(ctx.state)].hits++
 }
 
+/**
+ * Puts each runner of an award where it sends him. Only the batter and the
+ * runners he forced move; a runner the award did not force stays on his base
+ * and, as in the feed, has no entry on the play.
+ */
 function applyAwardMovements(ctx: Ctx, reason: string): void {
   const pending = ctx.state.pending!
   rebuildQueue(ctx)
@@ -483,7 +636,7 @@ function applyAwardMovements(ctx: Ctx, reason: string): void {
   for (const movement of pending.movements) {
     if (movement.to < 4) {
       setBase(ctx, movement.playerId, movement.to)
-      recordRunner(ctx, movement, { reason })
+      if (movement.to !== movement.from) recordRunner(ctx, movement, { reason })
     }
     moved(ctx, movement)
   }
@@ -595,6 +748,13 @@ function finishOut(ctx: Ctx, call: OutCall): void {
     (old?.force === true && old.decision === 'pending') ||
     (call.from === 0 && call.to <= 1)
   l.outs++
+  // A batter who reached on an error and is then put out on the same play
+  // makes the one out his error already counted.
+  if (
+    pending?.batterReachedOnError !== true ||
+    call.runner !== current(ctx).matchup.batter.id
+  )
+    addErrorlessOut(ctx.state)
   const movement: Movement = {
     playerId: call.runner,
     from: call.from,
@@ -640,11 +800,15 @@ function finishOut(ctx: Ctx, call: OutCall): void {
       const taken = l.teams[battingSide(ctx.state)].runs - pending.originalRuns
       l.teams[battingSide(ctx.state)].runs = pending.originalRuns
       const play = current(ctx)
-      play.result.rbi = 0
       for (const record of play.runners.slice(
         pending.originalRunnerRecordCount
-      ))
+      )) {
         record.movement.runScored = false
+        record.details.rbi = false
+        record.details.earned = false
+        record.details.teamUnearned = false
+      }
+      countRbi(play)
       for (const record of (play.source.gamestation.runnerActions ?? []).slice(
         pending.originalRunnerRecordCount
       ))
@@ -661,12 +825,17 @@ function pitch(ctx: Ctx, action: PitchAction): void {
   if (ctx.state.pending != null)
     refuse('notNow', 'Finish the current play first')
   const play = current(ctx)
-  if (play.playEvents.at(-1)?.details.code === 'X')
-    refuse('notNow', 'A ball in play needs its result')
+  if (inPlay(play)) refuse('notNow', 'A ball in play needs its result')
   const l = line(ctx)
-  const before = count(ctx)
+  const outs = l.outs
   countPitch(ctx)
-  pitchEvent(ctx, action.call, PITCH_CALL_NAMES[action.call], true, before)
+  if (action.call === 'B') l.balls++
+  else if (action.call !== 'F' || l.strikes < 2) l.strikes++
+  pitchEvent(ctx, action.call, PITCH_CALL_NAMES[action.call], {
+    balls: l.balls,
+    strikes: l.strikes,
+    outs
+  })
   ctx.out.push({
     type: 'pitchThrown',
     call: action.call,
@@ -676,8 +845,6 @@ function pitch(ctx: Ctx, action: PitchAction): void {
     action.call === 'F'
       ? null
       : { atBatIndex: play.about.atBatIndex, index: play.playEvents.length - 1 }
-  if (action.call === 'B') l.balls++
-  else if (action.call !== 'F' || l.strikes < 2) l.strikes++
   if (l.balls >= 4 || l.strikes >= 3) {
     const walk = l.balls >= 4
     const originalBases = baseIds(ctx.state)
@@ -718,6 +885,7 @@ function pitch(ctx: Ctx, action: PitchAction): void {
       }
     } else {
       l.outs++
+      addErrorlessOut(ctx.state)
       const batter = play.matchup.batter.id
       const movement: Movement = {
         playerId: batter,
@@ -754,15 +922,14 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
     refuse('notNow', 'Finish the current play first')
   const play = current(ctx)
   // The ball already in play: this says more about it, and throws no pitch.
-  const again = play.playEvents.at(-1)?.details.code === 'X'
+  const again = inPlay(play)
   if (!again) {
     ctx.state.recentPitch = null
     countPitch(ctx)
     pitchEvent(
       ctx,
       'X',
-      action.contact === 'bunt' ? 'Bunt in Play' : 'Ball in Play',
-      true
+      action.contact === 'bunt' ? 'Bunt in Play' : 'Ball in Play'
     )
     ctx.out.push({
       type: 'pitchThrown',
@@ -782,23 +949,30 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
       refuse('unknownPlayer', 'That player is not in the field')
     ctx.out.push({ type: 'ballFielded', fielder: action.fielder })
   }
-  if (angle != null && action.location != null)
-    play.hitData = {
+  if (angle != null || action.location != null || action.fielder != null) {
+    play.hitData = withoutUndefined({
       launchAngle: angle,
-      trajectory: trajectoryLabel(angle),
-      coordinates: { ...action.location },
+      trajectory: angle == null ? undefined : trajectoryLabel(angle),
+      coordinates: action.location == null ? undefined : { ...action.location },
       fielder:
         action.fielder == null
           ? undefined
-          : playerRef(ctx.state, action.fielder)
+          : playerRef(ctx.state, action.fielder),
+      position:
+        action.fielder == null
+          ? undefined
+          : positionOf(ctx.state, action.fielder)
+    })
+    // The scorer's own pick, which the label and MLB's list both lose.
+    const detail = play.source.gamestation
+    if (angle == null) {
+      delete detail.trajectory
+      delete detail.launchAngle
+    } else {
+      detail.trajectory = action.trajectory ?? trajectoryOf(angle)
+      detail.launchAngle = angle
     }
-  else if (action.fielder != null)
-    play.hitData = {
-      launchAngle: angle ?? 0,
-      trajectory: angle == null ? '' : trajectoryLabel(angle),
-      coordinates: { x: 0, z: 0 },
-      fielder: playerRef(ctx.state, action.fielder)
-    }
+  }
   const kind =
     action.homeRunKind ??
     (action.location == null ? undefined : homeRunKind(action.location))
@@ -842,14 +1016,15 @@ function result(ctx: Ctx, action: ResultAction): void {
     battedResult(ctx, action, batted)
     return
   }
-  if (play.playEvents.at(-1)?.details.code === 'X')
+  if (inPlay(play))
     refuse('notNow', 'A ball in play needs a batted-ball result')
   ctx.state.recentPitch = null
   if (type === 'strikeout') {
     if (moreEligibility(ctx.state, 'Dropped Third Strike') != null)
       refuse('illegal', 'Requires two strikes and first empty or two outs')
     countPitch(ctx)
-    pitchEvent(ctx, 'strikeout', 'Dropped Third Strike', true)
+    // Strike three the catcher did not hold: a strike, not a ball in play.
+    pitchEvent(ctx, 'S', 'Dropped Third Strike', { ...count(ctx), strikes: 3 })
     play.result.event = 'Strikeout'
     play.result.eventType = 'strikeout'
     play.result.description = 'Dropped Third Strike'
@@ -861,7 +1036,7 @@ function result(ctx: Ctx, action: ResultAction): void {
     return
   }
   if (type === 'other_out') {
-    pitchEvent(ctx, 'other_out', 'Batter Out — Other', false)
+    playAction(ctx, 'other_out', 'Batter Out — Other')
     play.result.event = 'Batter Out — Other'
     play.result.eventType = 'other_out'
     play.result.description = 'Batter Out — Other'
@@ -878,7 +1053,7 @@ function result(ctx: Ctx, action: ResultAction): void {
       refuse('illegal', 'Requires empty bases')
     const base = destinationBase(action.base ?? '1B')
     label = 'Put Batter on Base'
-    pitchEvent(ctx, 'manual_placement', label, false)
+    playAction(ctx, 'manual_placement', label)
     movements.push({
       playerId: batter,
       from: 0,
@@ -891,9 +1066,13 @@ function result(ctx: Ctx, action: ResultAction): void {
     })
   } else {
     label = AWARDS[type as keyof typeof AWARDS]
-    if (type === 'hit_by_pitch') countPitch(ctx)
-    pitchEvent(ctx, type, label, type === 'hit_by_pitch')
+    if (type === 'hit_by_pitch') {
+      countPitch(ctx)
+      pitchEvent(ctx, 'H', label)
+    } else playAction(ctx, type, label)
     ctx.state.pending = newResolution(ctx, 'Walk', { automaticAward: true })
+    // Catcher's interference is an error: the batter might have been out.
+    if (type === 'catcher_interference') batterReachedOnError(ctx)
     movements.push({
       playerId: batter,
       from: 0,
@@ -932,8 +1111,7 @@ function battedResult(
   outcome: ResolutionOutcome
 ): void {
   const play = current(ctx)
-  if (play.playEvents.at(-1)?.details.code !== 'X')
-    ballInPlay(ctx, { type: 'ballInPlay', contact: 'swing' })
+  if (!inPlay(play)) ballInPlay(ctx, { type: 'ballInPlay', contact: 'swing' })
   const contact = play.source.gamestation.contactKind ?? 'swing'
   if (contact === 'bunt' && outcome === 'Home Run')
     refuse('illegal', 'A bunt cannot be a home run')
@@ -949,6 +1127,7 @@ function battedResult(
     fielder,
     ...(outcome === 'Home Run' ? { homeRunKind: kind ?? 'in-park' } : {})
   })
+  if (outcome === 'Error') batterReachedOnError(ctx)
   play.result.event = outcome
   play.result.eventType = action.eventType
   play.result.description = outcome
@@ -1012,7 +1191,15 @@ function locate(ctx: Ctx, runner: number): number {
   return -1
 }
 
-function runnerMovement(ctx: Ctx, action: RunnerMovementAction): void {
+/**
+ * `joining` is the event of the action this movement is part of, when that
+ * action has already written it: the second runner a wild pitch moved.
+ */
+function runnerMovement(
+  ctx: Ctx,
+  action: RunnerMovementAction,
+  joining?: number
+): void {
   const state = ctx.state
   const pending = state.pending
   const to = destinationBase(action.to)
@@ -1060,7 +1247,7 @@ function runnerMovement(ctx: Ctx, action: RunnerMovementAction): void {
       locations: action.locations,
       runnerLocation: action.runnerLocation
     })
-    if (pending == null) finishBetween(ctx, action.reason ?? 'Out', where)
+    if (pending == null) finishBetween(ctx, action.reason ?? 'Out', where, to)
     settle(ctx)
     return
   }
@@ -1070,14 +1257,15 @@ function runnerMovement(ctx: Ctx, action: RunnerMovementAction): void {
     to
   })
   if (error != null) refuse('illegal', error)
-  commitSafe(ctx, action, where, to)
+  commitSafe(ctx, action, where, to, joining)
 }
 
 function commitSafe(
   ctx: Ctx,
   action: RunnerMovementAction,
   from: number,
-  to: number
+  to: number,
+  joining?: number
 ): void {
   const pending = ctx.state.pending
   const movement: Movement = {
@@ -1097,8 +1285,17 @@ function commitSafe(
         pending.originalBases.slice(0, from).every(id => id != null)) &&
       pending.movements.some(move => move.from === 0 && move.decision !== 'out')
     Object.assign(old, movement)
-    if (pending.outcome === 'Dropped Third Strike')
+    if (pending.outcome === 'Dropped Third Strike') {
+      // Strike three the catcher dropped, and the batter reached on a passed
+      // ball or an error: he would have been out.
+      if (
+        from === 0 &&
+        action.reason != null &&
+        REACHED_ON_ERROR_REASONS.has(action.reason)
+      )
+        batterReachedOnError(ctx)
       recordRunner(ctx, movement, { reason: pending.outcome })
+    }
     let required = 0
     for (const other of [...pending.movements]
       .filter(move => move.decision !== 'out')
@@ -1111,17 +1308,24 @@ function commitSafe(
   }
   if (pending != null && from === to)
     refuse('illegal', 'The runner is already there')
+  // Between pitches, a runner who stays where he is was safe on a pickoff;
+  // nothing else leaves him on his base.
+  if (
+    from === to &&
+    (action.reason ?? 'Safe from Pickoff') !== 'Safe from Pickoff'
+  )
+    refuse('illegal', `That runner is already on ${DESTINATIONS[to]}`)
   const reason =
     action.reason ??
     (pending == null && from === to ? 'Safe from Pickoff' : 'Advance')
   setBase(ctx, action.runner, to)
-  if (to === 4 && from !== 4)
-    scoreRun(ctx, action.runner, advanceEarnsRbi(pending?.outcome, reason))
+  const rbi = to === 4 && earnsRbi(pending?.outcome, reason)
+  if (to === 4 && from !== 4) scoreRun(ctx, action.runner, rbi)
   const old = pending?.movements.find(move => move.playerId === action.runner)
   if (old != null) Object.assign(old, movement)
   else pending?.movements.push(movement)
-  recordRunner(ctx, movement, { reason })
-  actionEvent(ctx, action.runner, reason)
+  recordRunner(ctx, movement, { reason, rbi, playIndex: joining })
+  if (joining == null) actionEvent(ctx, action.runner, reason)
   moved(ctx, movement)
   settle(ctx)
 }
@@ -1155,8 +1359,10 @@ function homeMovement(
   if (to === 4) {
     movement.decision = 'safe'
     movement.resolved = true
-    scoreRun(ctx, action.runner, earnsRbi(pending.outcome))
-    recordRunner(ctx, movement, { reason: action.reason ?? 'Safe at home' })
+    const reason = action.reason ?? 'Safe at home'
+    const rbi = earnsRbi(pending.outcome, reason)
+    scoreRun(ctx, action.runner, rbi)
+    recordRunner(ctx, movement, { reason, rbi })
     state.homeQueue.shift()
     settle(ctx)
     return
@@ -1192,6 +1398,13 @@ function baseRunning(ctx: Ctx, action: BaseRunningAction): void {
   if (from === 0) refuse('unknownPlayer', 'That runner is not on base')
   const next = Math.min(4, from + 1)
   const target = action.to == null ? next : destinationBase(action.to)
+  // A steal, or a runner let go, is to a base ahead of him.
+  if (
+    target === from &&
+    action.kind !== 'pickoff' &&
+    action.kind !== 'pickoff_safe'
+  )
+    refuse('illegal', `That runner is already on ${DESTINATIONS[from]}`)
   const move = (
     to: number,
     out: boolean,
@@ -1234,17 +1447,25 @@ function batteryEvent(ctx: Ctx, action: BatteryEventAction): void {
         baseIds(ctx.state).indexOf(b.runner) -
         baseIds(ctx.state).indexOf(a.runner)
     )
-    for (const advance of lead)
-      runnerMovement(ctx, {
-        type: 'runnerMovement',
-        runner: advance.runner,
-        to: advance.to,
-        reason: action.kind === 'wild_pitch' ? 'Wild Pitch' : 'Passed Ball'
-      })
+    // One pitch the catcher did not hold is one event, however many runners
+    // it moved: the lead runner's movement writes it, and the rest join it.
+    const event = current(ctx).playEvents.length
+    lead.forEach((advance, i) => {
+      runnerMovement(
+        ctx,
+        {
+          type: 'runnerMovement',
+          runner: advance.runner,
+          to: advance.to,
+          reason: action.kind === 'wild_pitch' ? 'Wild Pitch' : 'Passed Ball'
+        },
+        i === 0 ? undefined : event
+      )
+    })
     return
   }
   ctx.state.recentPitch = null
-  pitchEvent(ctx, 'balk', 'Balk', false)
+  playAction(ctx, 'balk', 'Balk')
   const pending = newResolution(ctx, 'Balk', {
     automaticAward: true,
     sameAppearance: true
@@ -1264,6 +1485,17 @@ function batteryEvent(ctx: Ctx, action: BatteryEventAction): void {
   applyAwardMovements(ctx, 'Balk')
 }
 
+/** The runner a pinch runner runs for: the side at bat's man on the base. */
+function pinchedFor(ctx: Ctx, action: LineupAction): number {
+  if (action.base == null || action.player == null)
+    refuse('malformed', 'Say who runs, and for the runner on which base')
+  const runner = baseIds(ctx.state)[destinationBase(action.base) - 1]
+  if (runner == null) refuse('illegal', `Nobody is on ${action.base}`)
+  if (action.side !== battingSide(ctx.state))
+    refuse('illegal', 'A pinch runner runs for the side at bat')
+  return runner
+}
+
 function lineup(ctx: Ctx, action: LineupAction): void {
   const state = ctx.state
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
@@ -1280,6 +1512,8 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     return
   }
   const setup = action.setup ?? setupOf(state)
+  // Who took whose place in the order: a substitute bats when his man was due.
+  const replaced: Record<number, number> = {}
   if (action.setup == null) {
     const sideName = action.side
     if (sideName == null) refuse('malformed', 'Say which team')
@@ -1305,9 +1539,10 @@ function lineup(ctx: Ctx, action: LineupAction): void {
         if (id === action.player)
           team.defense[position as keyof typeof team.defense] = null
       team.defense[action.position] = action.player
-    } else if (action.kind === 'substitute') {
+    } else if (action.kind === 'substitute' || action.kind === 'pinchRunner') {
       const incoming = action.player
-      const leaving = action.replaces
+      const leaving =
+        action.kind === 'substitute' ? action.replaces : pinchedFor(ctx, action)
       if (incoming == null || leaving == null)
         refuse('malformed', 'Say who comes in and who leaves')
       if (!team.players.includes(incoming)) team.players.push(incoming)
@@ -1317,20 +1552,45 @@ function lineup(ctx: Ctx, action: LineupAction): void {
       for (const [position, id] of Object.entries(team.defense))
         if (id === leaving)
           team.defense[position as keyof typeof team.defense] = incoming
+      replaced[leaving] = incoming
     } else refuse('malformed', 'A roster change carries its setup')
   }
-  const replaced: Record<number, number> =
-    action.kind === 'substitute' &&
-    action.replaces != null &&
-    action.player != null
-      ? { [action.replaces]: action.player }
-      : {}
   const applied = applyRoster(state, setup, action.nextBatter, replaced)
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
   ctx.state = applied.state
+  // A pinch runner takes the charges of the man he runs for (9.16).
+  const was = baseIds(state)
+  baseIds(ctx.state).forEach((id, index) => {
+    const runner = was[index]
+    if (id == null || runner == null || id === runner) return
+    ctx.charges.set(id, chargeOf(state, ctx.charges, runner))
+    ctx.charges.delete(runner)
+  })
   const play = ctx.state.liveData.plays.currentPlay
-  if (play != null) play.source.gamestation.lineupChanged = true
+  if (play != null) {
+    play.source.gamestation.lineupChanged = true
+    for (const change of lineupChanges(state, ctx.state, applied.takers))
+      play.playEvents.push(
+        withoutUndefined({
+          index: play.playEvents.length,
+          isPitch: false,
+          type: 'action',
+          details: {
+            description: change.description,
+            code: change.eventType,
+            fromPosition: change.fromPosition
+          },
+          isSubstitution: true,
+          position: change.position,
+          battingOrder: change.battingOrder,
+          replacedPlayer: change.replacedPlayer,
+          moved: change.moved,
+          count: count(ctx),
+          player: change.player
+        })
+      )
+  }
   ctx.out.push({
     type: 'batterChanged',
     batter: ctx.state.liveData.linescore.offense.batter?.id ?? null
@@ -1351,10 +1611,12 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
     return
   }
   if (action.kind === 'endGame') {
+    // The play has begun with a pitch or any action but a substitution, and
+    // a runner who moved or a lineup changed during it holds it open too.
     const play = state.liveData.plays.currentPlay
     if (
       play != null &&
-      (play.playEvents.length > 0 ||
+      (play.playEvents.some(event => event.isSubstitution !== true) ||
         play.runners.length > 0 ||
         play.source.gamestation.lineupChanged === true)
     )
@@ -1383,8 +1645,20 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
         'Place a batting-team player who is not batting on an empty base'
       )
     state.recentPitch = null
-    pitchEvent(ctx, 'placed_runner', 'Place a Runner (Tiebreaker)', false)
+    // It names the runner placed, as a runner's own actions do.
+    playAction(
+      ctx,
+      'placed_runner',
+      'Place a Runner (Tiebreaker)',
+      playerRef(state, runner)
+    )
     line(ctx).offense[BASE_KEYS[base - 1]] = playerRef(state, runner)
+    // The extra-innings runner is taken to have reached on an error, and is
+    // charged to the pitcher who began the half.
+    ctx.charges.set(runner, {
+      pitcher: halfPitcher(state),
+      reachedOnError: true
+    })
     const movement: Movement = {
       playerId: runner,
       from: 0,
@@ -1392,7 +1666,10 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
       force: false,
       decision: 'safe'
     }
-    recordRunner(ctx, movement, { reason: 'Place a Runner (Tiebreaker)' })
+    recordRunner(ctx, movement, {
+      reason: 'Place a Runner (Tiebreaker)',
+      playIndex: play.playEvents.length - 1
+    })
     moved(ctx, movement)
     return
   }
@@ -1412,6 +1689,14 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid game state')
   ctx.state = applied.state
+  const before = state.liveData.linescore
+  outsCorrected(ctx.state, {
+    inning: before.currentInning,
+    top: before.isTopInning,
+    outs: before.outs
+  })
+  // Runners put on base in a new half are charged to its pitcher.
+  if (line(ctx).errorlessOuts == null) ctx.charges.clear()
   ctx.out.push({
     type: 'batterChanged',
     batter: ctx.state.liveData.linescore.offense.batter?.id ?? null
@@ -1457,7 +1742,10 @@ export function applyAction(state: GameState, raw: ScoringAction): Applied {
   const action = cleaned.action
   if (state.final)
     return unchanged({ code: 'gameOver', message: 'The game is over' })
-  const ctx: Ctx = { state: copyState(state), out: [] }
+  const copy = copyState(state)
+  const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy) }
+  const mound = copy.liveData.linescore.defense.P
+  errorlessOuts(copy)
   const played = state.liveData.plays.allPlays.length
   try {
     if (
@@ -1477,6 +1765,15 @@ export function applyAction(state: GameState, raw: ScoringAction): Applied {
       action
     )
     settle(ctx)
+    keepCharges(ctx.state, ctx.charges, mound)
+    // Until its first pitch or action, a play begins with the lineups as
+    // they stand.
+    const open = ctx.state.liveData.plays.currentPlay
+    if (
+      open?.lineups != null &&
+      open.playEvents.every(event => event.isSubstitution === true)
+    )
+      open.lineups.began = lineupsOf(ctx.state)
   } catch (error) {
     if (error instanceof Refused) return unchanged(error.problem)
     return unchanged({

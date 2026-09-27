@@ -12,7 +12,7 @@ import {
   walk
 } from '../../test/scoringGames'
 import type { ScoringAction } from './actions'
-import { advanceEarnsRbi, earnsRbi, statLines } from './credits'
+import { statLines } from './credits'
 import type { GamePlay, GameState } from './state'
 
 const out = (
@@ -152,7 +152,7 @@ describe('runs batted in', function () {
     expect(last(state).result.eventType).equals('sac_fly_double_play')
   })
 
-  it('names a strikeout that also retires a runner, and a triple play', function () {
+  it('names a strikeout that also retires a runner, and triple plays', function () {
     const k = after(
       walk(game()),
       strike,
@@ -170,16 +170,17 @@ describe('runs batted in', function () {
       out(2, '2B', [F['3B'], F['2B']]),
       close
     )
-    expect(last(tp).result.eventType).equals('triple_play')
-  })
-
-  it('says which plays and advances earn one', function () {
-    expect(earnsRbi('Single')).equals(true)
-    expect(earnsRbi('Error')).equals(false)
-    expect(earnsRbi('Balk')).equals(false)
-    expect(advanceEarnsRbi('Ball Caught', 'Advance')).equals(true)
-    expect(advanceEarnsRbi('Ball Caught', 'Wild Pitch')).equals(false)
-    expect(advanceEarnsRbi(undefined, 'Advance')).equals(false)
+    expect(last(tp).result.eventType).equals('grounded_into_triple_play')
+    // Caught on the fly, with both runners doubled off: not a ground ball.
+    const liner = after(
+      walk(walk(game())),
+      { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' },
+      out(2, '1B', [F.SS, F['1B']]),
+      out(1, '2B', [F.SS]),
+      close
+    )
+    expect(last(liner).result.eventType).equals('triple_play')
   })
 })
 
@@ -211,5 +212,73 @@ describe('stat lines', function () {
     const lines = statLines([current])
     expect(lines.batting).deep.equals({})
     expect(lines.pitching[F.P].pitches).equals(1)
+  })
+})
+
+describe('a pinch hitter at two strikes (U25, 9.15(b))', function () {
+  const ball: ScoringAction = { type: 'pitch', call: 'B' }
+  const bench = (name: string): ScoringAction => ({
+    type: 'lineup',
+    kind: 'addPlayer',
+    side: 'away',
+    name
+  })
+  const hitsFor = (player: number, replaces: number): ScoringAction => ({
+    type: 'lineup',
+    kind: 'substitute',
+    side: 'away',
+    player,
+    replaces
+  })
+  /** Away 1 bats; the bench players are 19 and 20. */
+  const lines = (...actions: ScoringAction[]): ReturnType<typeof statLines> =>
+    statLines(
+      after(game(), bench('Bench One'), bench('Bench Two'), ...actions, close)
+        .liveData.plays.allPlays
+    )
+  const line = (
+    got: ReturnType<typeof statLines>,
+    id: number
+  ): { pa: number; ab: number; k: number; bb: number } | undefined => {
+    const batting = got.batting[id]
+    return batting == null
+      ? undefined
+      : { pa: batting.pa, ab: batting.ab, k: batting.k, bb: batting.bb }
+  }
+
+  it('charges the strikeout of one sent in at 0-2 to the batter he replaced', function () {
+    const got = lines(strike, strike, hitsFor(19, 1), strike)
+    expect(line(got, 1)).deep.equals({ pa: 1, ab: 1, k: 1, bb: 0 })
+    expect(line(got, 19)).equals(undefined)
+    expect(got.pitching[F.P].k).equals(1)
+  })
+
+  it('leaves the strikeout of one sent in at 1-1 with him', function () {
+    const got = lines(ball, strike, hitsFor(19, 1), strike, strike)
+    expect(line(got, 19)).deep.equals({ pa: 1, ab: 1, k: 1, bb: 0 })
+    expect(line(got, 1)).equals(undefined)
+  })
+
+  it('leaves a walk after he came in at 0-2 with him', function () {
+    const got = lines(strike, strike, hitsFor(19, 1), ball, ball, ball, ball)
+    expect(line(got, 19)).deep.equals({ pa: 1, ab: 0, k: 0, bb: 1 })
+    expect(line(got, 1)).equals(undefined)
+  })
+
+  it('charges the man the first sent in at two strikes replaced', function () {
+    const second = lines(
+      strike,
+      hitsFor(19, 1),
+      strike,
+      hitsFor(20, 19),
+      strike
+    )
+    expect(line(second, 19)).deep.equals({ pa: 1, ab: 1, k: 1, bb: 0 })
+    expect(line(second, 1)).equals(undefined)
+    expect(line(second, 20)).equals(undefined)
+    const first = lines(strike, strike, hitsFor(19, 1), hitsFor(20, 19), strike)
+    expect(line(first, 1)).deep.equals({ pa: 1, ab: 1, k: 1, bb: 0 })
+    expect(line(first, 19)).equals(undefined)
+    expect(line(first, 20)).equals(undefined)
   })
 })

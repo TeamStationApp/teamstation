@@ -130,6 +130,7 @@ export const LINEUP_KINDS = [
   'position',
   'addPlayer',
   'substitute',
+  'pinchRunner',
   'batterSide'
 ] as const
 export type LineupKind = (typeof LINEUP_KINDS)[number]
@@ -144,28 +145,51 @@ export const GAME_FLOW_KINDS = [
 export type GameFlowKind = (typeof GAME_FLOW_KINDS)[number]
 
 /**
- * Every event type a play folded from these actions can carry: the results,
- * the two a pitch can end an appearance with, what runners do on their own,
+ * Every event type a play folded from these actions can carry, in the
+ * engine's own names (`document.ts` translates the three it names otherwise):
+ * the results, what a closed play is refined to, the plays a runner's third
+ * out ends between pitches, what runners do on their own, the lineup changes,
  * and the end of the game.
  */
 export const PRODUCED_EVENT_TYPES = [
   ...RESULT_TYPES,
   'walk',
   'strikeout_double_play',
+  'strikeout_triple_play',
+  'force_out',
+  'fielders_choice_out',
+  'sac_fly',
   'sac_fly_double_play',
-  'stolen_base',
-  'caught_stealing',
+  'sac_bunt',
+  'sac_bunt_double_play',
+  'double_play',
+  'triple_play',
+  'grounded_into_double_play',
+  'grounded_into_triple_play',
+  'caught_stealing_2b',
+  'caught_stealing_3b',
+  'caught_stealing_home',
   'pickoff_1b',
   'pickoff_2b',
   'pickoff_3b',
   'pickoff_caught_stealing_2b',
   'pickoff_caught_stealing_3b',
   'pickoff_caught_stealing_home',
+  'stolen_base_2b',
+  'stolen_base_3b',
+  'stolen_base_home',
   'defensive_indiff',
   'wild_pitch',
   'passed_ball',
   'balk',
+  'error',
+  'other_advance',
   'placed_runner',
+  'pitching_substitution',
+  'offensive_substitution',
+  'defensive_substitution',
+  'defensive_switch',
+  'gs_batting_order',
   'final_score'
 ] as const
 
@@ -252,6 +276,7 @@ const actionCleaners = {
     position: asOptional(asPosition),
     player: asOptional(asSessionId),
     replaces: asOptional(asSessionId),
+    base: asOptional(asOneOf(BASES)),
     name: asOptional(asString),
     jersey: asOptional(asString),
     batSide: asOptional(asValue('L' as const, 'R' as const))
@@ -509,14 +534,21 @@ export function toolSchema(): Tool[] {
     ),
     tool(
       'lineup',
-      'A change to a batting order, a position, or the players in the game.',
+      'A change to a batting order, a position, or the players in the game. A pinch runner is kind pinchRunner: the side at bat, the base of the runner he runs for, and the player coming in, who takes that base.',
       {
-        kind: oneOf(LINEUP_KINDS, 'What changed'),
+        kind: oneOf(
+          LINEUP_KINDS,
+          'What changed: substitute puts player in for replaces; pinchRunner puts player on base in place of the runner there'
+        ),
         side: oneOf(['away', 'home'], 'Which team'),
         order: ids('For battingOrder: the whole order'),
         position: oneOf(POSITIONS, 'For position and substitute'),
         player: id('The player placed, added or brought in'),
         replaces: id('For substitute: the player leaving'),
+        base: oneOf(
+          BASES,
+          'For pinchRunner: the base of the runner he runs for'
+        ),
         name: { type: 'string', description: 'For addPlayer' },
         jersey: { type: 'string', description: 'For addPlayer' },
         batSide: oneOf(['L', 'R'], 'For batterSide')

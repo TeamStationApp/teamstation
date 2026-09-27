@@ -22,13 +22,14 @@ describe('scoring layering', function () {
     )
     writeFileSync(
       join(root, 'src2/app/scoring/screen.tsx'),
-      "import { applyAction } from '../../common/scoring/apply'\nimport type { GameState } from '../../common/scoring/state'\nconst later = import('../../common/scoring/gumbo')\n"
+      "import { applyAction } from '../../common/scoring/apply'\nimport type { GameState } from '../../common/scoring/state'\nconst later = import('../../common/scoring/gumbo')\nimport { documentOf } from '../../common/scoring/document'\n"
     )
     expect(checkLayering(root)).deep.equals([
       'src2/common/scoring/apply.ts: the scoring library imports ../../app/scoring/thing',
       'src2/common/scoring/apply.ts: the scoring library imports ../../server/db',
       'src2/app/scoring/screen.tsx: the app may not import scoring/apply',
-      'src2/app/scoring/screen.tsx: the app may not import scoring/gumbo'
+      'src2/app/scoring/screen.tsx: the app may not import scoring/gumbo',
+      'src2/app/scoring/screen.tsx: the app may not import scoring/document'
     ])
   })
 })

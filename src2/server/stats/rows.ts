@@ -69,6 +69,7 @@ export async function statRows(
       'game_player_stats.hbp as hbp',
       'game_player_stats.ci as ci',
       'game_player_stats.sf as sf',
+      'game_player_stats.sh as sh',
       'game_player_stats.sb as sb',
       'game_player_stats.cs as cs',
       'game_player_stats.pitch_bf as pitchBf',

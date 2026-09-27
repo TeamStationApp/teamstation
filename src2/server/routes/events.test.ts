@@ -6,7 +6,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { asGumboPlay } from '../../common/gumboPlay'
+import { asGumboPlay, asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { halfOutcomes } from '../../common/scoring/linescore'
@@ -16,6 +16,8 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { replaceGameEvents } from '../events/eventWrite'
+import { postGamePlays } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -91,6 +93,7 @@ describe('posting and reading plays', function () {
   const openId = makeId('game')
   const driftId = makeId('game')
   const markerId = makeId('game')
+  const halvesId = makeId('game')
   const refusedId = makeId('game')
   const raceId = makeId('game')
   const unscoredId = makeId('game')
@@ -238,6 +241,12 @@ describe('posting and reading plays', function () {
         },
         {
           id: markerId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: now
+        },
+        {
+          id: halvesId,
           home_team_id: home,
           away_team_id: away,
           start_at: now
@@ -689,6 +698,189 @@ describe('posting and reading plays', function () {
     expect(linescore.away.runs.reduce((sum, n) => sum + n, 0)).equals(7)
     expect(linescore.home.runs).deep.equals([0])
     expect(linescore.away.h).equals(2)
+    // Gumbo's innings beside the totals; nobody is counted left on base
+    // without GameStation's record of every runner.
+    const gumbo = game.linescore as {
+      innings: Array<{ num: number; away: { runs: number } }>
+      teams: { away: { runs: number; leftOnBase: number | null } }
+    }
+    expect(gumbo.innings.map(inning => inning.num)).deep.equals([1, 2])
+    expect(gumbo.innings.map(inning => inning.away.runs)).deep.equals([4, 3])
+    expect(gumbo.teams.away).deep.equals({
+      runs: 7,
+      hits: 2,
+      errors: 0,
+      leftOnBase: null
+    })
+  })
+
+  it("reads each half's outs from halfOuts, else its last play's count (U21)", async function () {
+    // Rows stored some way other than a post, so nothing wrote halfOuts.
+    const row = (
+      atBatIndex: number,
+      inning: number,
+      halfInning: 'top' | 'bottom',
+      extra: Record<string, unknown>
+    ): { gumbo: Record<string, unknown>; source: string } => ({
+      gumbo: {
+        about: { atBatIndex, inning, halfInning, isScoringPlay: false },
+        result: { eventType: 'field_out', awayScore: 0, homeScore: 0 },
+        ...extra
+      },
+      source: 'external'
+    })
+    await replaceGameEvents(db!, {
+      gameId: halvesId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [
+        row(0, 1, 'top', { count: { outs: 1 } }),
+        row(1, 1, 'top', {
+          about: {
+            atBatIndex: 1,
+            inning: 1,
+            halfInning: 'top',
+            halfOuts: 3,
+            isScoringPlay: false
+          },
+          count: { outs: 2 }
+        }),
+        row(2, 1, 'bottom', { count: { outs: 2 } }),
+        row(3, 2, 'top', {})
+      ]
+    })
+    const halves = await ask(`/games/${halvesId}/halves`)
+    expect(halves.status).equals(200)
+    const list = halves.body.halves as Array<{ outs: number }>
+    expect(list.map(half => half.outs)).deep.equals([3, 2, 0])
+  })
+
+  it('writes through postGamePlays exactly what the route writes', async function () {
+    const bodies: Array<Record<string, unknown>> = [
+      {
+        plays: [
+          play({
+            atBatIndex: 0,
+            awayScore: 4,
+            homeScore: 0,
+            outs: 1,
+            playEvents: [{ type: 'inning_ended', outs: 3 }],
+            credits: [{ teamId: 'away', name: 'Ada' }],
+            startTime: '2026-05-01T18:00:00.000Z'
+          }),
+          play({
+            atBatIndex: 1,
+            awayScore: 6,
+            homeScore: 0,
+            inning: 2,
+            outs: 1,
+            halfOuts: 3
+          }),
+          play({
+            atBatIndex: 2,
+            awayScore: 6,
+            homeScore: 1,
+            halfInning: 'bottom',
+            inning: 2,
+            outs: 2,
+            eventType: 'catcher_interference'
+          })
+        ],
+        source: { system: 'gamestation' }
+      },
+      {
+        mode: 'live',
+        source: { system: 'gamestation' },
+        plays: [
+          play({ atBatIndex: 0, awayScore: 1, homeScore: 0, outs: 1 }),
+          play({ atBatIndex: 1, awayScore: 1, homeScore: 0, outs: 2 })
+        ],
+        remove: [],
+        currentPlay: {
+          about: {
+            atBatIndex: 2,
+            inning: 1,
+            halfInning: 'top',
+            isComplete: false
+          }
+        }
+      }
+    ]
+    const now = new Date()
+    let replaced = ''
+    for (const body of bodies) {
+      const [viaRoute, viaFunction] = [makeId('game'), makeId('game')]
+      replaced ||= viaFunction
+      await db!
+        .insertInto('games')
+        .values(
+          [viaRoute, viaFunction].map(id => ({
+            id,
+            home_team_id: home,
+            away_team_id: away,
+            start_at: now
+          }))
+        )
+        .execute()
+      const posted = await ask(`/games/${viaRoute}/events`, 'POST', body)
+      expect(posted.status).equals(200)
+      const returned = await postGamePlays(
+        db!,
+        viaFunction,
+        asPostEventsBody(body)
+      )
+      const written = async (id: string): Promise<unknown> => ({
+        events: await db!
+          .selectFrom('events')
+          .select([
+            'atBatIndex',
+            'eventType',
+            'startTime',
+            'endTime',
+            'source',
+            'battingTeamId',
+            'gumbo'
+          ])
+          .where('gameId', '=', id)
+          .orderBy('atBatIndex')
+          .execute(),
+        game: await db!
+          .selectFrom('games')
+          .select([
+            'linescore',
+            'status',
+            'away_score',
+            'home_score',
+            'ingest_status',
+            'scoringOwner',
+            'currentPlay'
+          ])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      })
+      expect(await written(viaFunction)).deep.equals(await written(viaRoute))
+      const gumbos = (list: unknown): unknown =>
+        (list as Array<{ gumbo: unknown }>).map(row => row.gumbo)
+      expect(gumbos(returned.plays)).deep.equals(gumbos(posted.body.plays))
+      expect(returned.currentPlay).deep.equals(posted.body.currentPlay)
+    }
+    // The half's outs, the credits' teams and the listed codes it writes.
+    const events = await db!
+      .selectFrom('events')
+      .select(['eventType', 'gumbo'])
+      .where('gameId', '=', replaced)
+      .orderBy('atBatIndex')
+      .execute()
+    const gumbo = events.map(
+      row =>
+        row.gumbo as {
+          about: { halfOuts?: number }
+          credits?: Array<{ teamId: string }>
+        }
+    )
+    expect(gumbo.map(doc => doc.about.halfOuts)).deep.equals([3, 3, 2])
+    expect(gumbo[0].credits?.[0].teamId).equals(away)
+    expect(events[2].eventType).equals('catcher_interf')
   })
 
   it('rejects a missing atBatIndex and hides a game from a stranger', async function () {
@@ -736,6 +928,49 @@ describe('posting and reading plays', function () {
     expect(linescore.away.runs).deep.equals([5])
     expect(linescore.away.h).equals(null)
     expect(linescore.away.r).equals(5)
+  })
+
+  it("stores older imports' own names as the listed codes (U26)", async function () {
+    const legacyId = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id: legacyId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const codes = [
+      'runner_out',
+      'batter_out',
+      'catcher_s_interference',
+      'fc_double_play',
+      'offensive_interference',
+      'batter_put_on_base',
+      'inning_changed_by_scorekeeper'
+    ]
+    const posted = await ask(`/games/${legacyId}/events`, 'POST', {
+      plays: codes.map((eventType, atBatIndex) =>
+        play({ atBatIndex, awayScore: 0, homeScore: 0, eventType })
+      )
+    })
+    expect(posted.status).equals(200)
+    const rows = await db!
+      .selectFrom('events')
+      .select('eventType')
+      .where('gameId', '=', legacyId)
+      .orderBy('atBatIndex')
+      .execute()
+    expect(rows.map(row => row.eventType)).deep.equals([
+      'other_out',
+      'field_out',
+      'catcher_interf',
+      'double_play',
+      'batter_interference',
+      'gs_manual_placement',
+      'final_score'
+    ])
   })
 
   it('keeps the last score a play carried when the last play carries none', async function () {
@@ -855,6 +1090,68 @@ describe('posting and reading plays', function () {
       .where('gameId', '=', outsideId)
       .executeTakeFirstOrThrow()
     expect(JSON.stringify(row.gumbo)).not.contains('description')
+  })
+
+  it('refuses a GameStation record in a version it cannot read, naming the play, and writes nothing', async function () {
+    const record = (version: unknown): unknown => ({
+      version,
+      setupBefore: {},
+      actions: []
+    })
+    for (const [body, message] of [
+      [
+        {
+          plays: [
+            play({ atBatIndex: 1, awayScore: 0, homeScore: 0 }),
+            {
+              ...play({ atBatIndex: 2, awayScore: 0, homeScore: 0 }),
+              gameStation: record(2)
+            }
+          ]
+        },
+        'Play 2: gameStation.version must be 1'
+      ],
+      [
+        {
+          plays: [],
+          currentPlay: {
+            about: {
+              atBatIndex: 5,
+              inning: 1,
+              halfInning: 'top',
+              isComplete: false
+            },
+            gameStation: record('2')
+          }
+        },
+        'Play 5: gameStation.version must be 1'
+      ],
+      [
+        {
+          plays: [
+            {
+              ...play({ atBatIndex: 0, awayScore: 0, homeScore: 0 }),
+              gameStation: { setupBefore: {}, actions: [] }
+            }
+          ]
+        },
+        'Play 0: gameStation.version must be 1'
+      ]
+    ] as const) {
+      const refused = await ask(`/games/${twiceId}/events`, 'POST', {
+        ...body,
+        source: { system: 'gamestation' },
+        mode: 'live'
+      })
+      expect(refused.status).equals(400)
+      expect(refused.body.message).equals(message)
+    }
+    const stored = await db!
+      .selectFrom('events')
+      .select('id')
+      .where('gameId', '=', twiceId)
+      .execute()
+    expect(stored).deep.equals([])
   })
 
   it('refuses two plays at one atBatIndex and writes nothing', async function () {

@@ -21,7 +21,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Every positive numeric player id a play names. */
+/**
+ * Every positive numeric player id a play names where the stats builder can
+ * charge a figure to him: the matchup, the runners, and the play events'
+ * players and the men they replaced (a strikeout under 9.15(b) is charged to
+ * a batter named only as a pinch hitter's `replacedPlayer`).
+ */
 export function namedPlayerIds(plays: unknown[]): number[] {
   const ids = new Set<number>()
   const take = (player: unknown): void => {
@@ -43,6 +48,12 @@ export function namedPlayerIds(plays: unknown[]): number[] {
       take(details.runner)
       take(details.responsiblePitcher)
       take(details.pitcher)
+    }
+    const events = Array.isArray(play.playEvents) ? play.playEvents : []
+    for (const event of events) {
+      if (!isRecord(event)) continue
+      take(event.player)
+      take(event.replacedPlayer)
     }
   }
   return [...ids]
@@ -121,7 +132,7 @@ export async function buildNext(
           hashtext(${'game_stats:' + gameId})
         ) as locked
       `.execute(trx)
-      if (lock.rows[0]?.locked !== true) {
+      if (!lock.rows[0]?.locked) {
         return { kind: 'skipped' as const, gameId }
       }
 
@@ -218,6 +229,7 @@ export async function buildNext(
             hbp: line.hbp,
             ci: line.ci,
             sf: line.sf,
+            sh: line.sh,
             sb: line.sb,
             cs: line.cs,
             pitch_bf: line.pitch_bf,
