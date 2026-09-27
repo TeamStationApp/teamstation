@@ -36,6 +36,7 @@ import { migration037GameStatsState } from './037gameStatsState'
 import { migration038CurrentPlay } from './038currentPlay'
 import { migration039GumboEventTypes } from './039gumboEventTypes'
 import { migration040LegacyEventTypes } from './040legacyEventTypes'
+import { migration041ScheduleApi } from './041scheduleApi'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -75,5 +76,6 @@ export const migrations: Migration[] = [
   migration037GameStatsState,
   migration038CurrentPlay,
   migration039GumboEventTypes,
-  migration040LegacyEventTypes
+  migration040LegacyEventTypes,
+  migration041ScheduleApi
 ]
