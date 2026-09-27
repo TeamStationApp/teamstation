@@ -505,6 +505,10 @@ describe('scheduling a team’s games', function () {
     expect(await seasonOf({ startAt: '2026-09-05T17:00:00Z' })).equals(
       lateSummer
     )
+    // Wall-clock day of the offset, not UTC — evening on summer's last day.
+    expect(
+      await seasonOf({ startAt: '2026-09-13T19:00:00-07:00' })
+    ).equals(summer)
     // Outside every range: the latest-starting season of 2026.
     expect(await seasonOf({ startAt: '2026-09-19T17:00:00Z' })).equals(fall)
     expect(

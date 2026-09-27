@@ -408,7 +408,9 @@ function resolveSeason(
     }
     return named
   }
-  const day = startAt.toISOString().slice(0, 10)
+  // Wall-clock calendar day from the request (`YYYY-MM-DD…`), not UTC — an
+  // evening game on 2026-08-31 in -07:00 must still match a season ending that day.
+  const day = row.startAt.slice(0, 10)
   const latestFirst = (a: TeamSeason, b: TeamSeason): number =>
     (b.startsOn ?? '').localeCompare(a.startsOn ?? '')
   const holding = context.seasons
@@ -422,7 +424,7 @@ function resolveSeason(
     .sort(latestFirst)
   if (holding.length > 0) return holding[0]
 
-  const year = startAt.getUTCFullYear()
+  const year = Number(day.slice(0, 4))
   const ofYear = context.seasons
     .filter(season => season.year === year)
     .sort(latestFirst)
