@@ -9,7 +9,7 @@ import {
 } from '../../common/errors'
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
-import { canScore, canSeeGame, roleScopes, visibleScopes } from '../access'
+import { canScore, roleScopes } from '../access'
 import type { Database } from '../db/database'
 import {
   documentOf,
@@ -17,6 +17,7 @@ import {
   postGamePlays,
   readPlays
 } from '../events/postPlays'
+import { requireVisibleGame } from '../events/requireVisibleGame'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -143,31 +144,6 @@ export function eventRoutes(
   )
 
   return router
-}
-
-/** Throws 404 unless the game exists and this person can see it. */
-async function requireVisibleGame(
-  db: Kysely<Database>,
-  userId: number,
-  isAdmin: boolean,
-  gameId: string
-): Promise<void> {
-  const game = await db
-    .selectFrom('games')
-    .select(['home_team_id', 'away_team_id', 'season_id'])
-    .where('id', '=', gameId)
-    .executeTakeFirst()
-  if (game == null) throw notFound()
-  const scopes = await visibleScopes(db, userId, isAdmin)
-  if (
-    !canSeeGame(scopes, {
-      homeTeamId: game.home_team_id,
-      awayTeamId: game.away_team_id,
-      seasonId: game.season_id
-    })
-  ) {
-    throw notFound()
-  }
 }
 
 function cleanBody<T>(cleaner: (raw: unknown) => T, raw: unknown): T {

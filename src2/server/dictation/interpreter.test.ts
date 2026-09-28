@@ -182,6 +182,16 @@ describe('dictation interpreter', function () {
     expect(system).includes('Read every other number\n  as a jersey.')
   })
 
+  it('offers a scope’s own tools when it has them', async function () {
+    const stub = provider([call('c1', 'pitch', { call: 'B' })])
+    const tools = toolSchema().filter(tool => tool.name === 'pitch')
+    await new Interpretation(config(stub.fetch, { tools }), 'c', 'ball').start()
+    expect(stub.sent[0].body.tools.map(t => t.function.name)).deep.equals([
+      'pitch',
+      'askScorer'
+    ])
+  })
+
   it('names the provider when it fails, is refused, or is too slow', async function () {
     const refused = provider({ status: 429, text: 'slow down' })
     expect(

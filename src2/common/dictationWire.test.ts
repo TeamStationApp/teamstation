@@ -34,6 +34,9 @@ describe('dictation wire', function () {
     expect(asDictationStart({ ...start, model: 'grok-4.3' }).model).equals(
       'grok-4.3'
     )
+    expect(asDictationStart({ ...start, model: undefined }).model).equals(
+      undefined
+    )
   })
 
   it('cleans key terms, a release, an answer and a dismissal', function () {

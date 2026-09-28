@@ -900,6 +900,16 @@ export const asAddedPerson = asObject({
 })
 export type AddedPerson = ReturnType<typeof asAddedPerson>
 
+/** What `/health` reports. `dictation` is absent from a server that predates it. */
+export const asHealth = asObject({
+  status: asValue('ok', 'degraded'),
+  version: asString,
+  database: asValue('ok', 'unreachable'),
+  migrations: asNumber,
+  dictation: asOptional(asBoolean, false)
+})
+export type Health = ReturnType<typeof asHealth>
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -1046,6 +1056,11 @@ export class GameStationClient {
   async signOut(): Promise<void> {
     await this.request('POST', '/auth/logout', asUnknownOk)
     this.token = undefined
+  }
+
+  /** What the server can do, including whether it takes dictation. */
+  async health(): Promise<Health> {
+    return await this.request('GET', '/health', asHealth)
   }
 
   async teams(): Promise<TeamSummary[]> {
@@ -1771,7 +1786,8 @@ const asStartBody = asObject({
   scope: asNonEmpty,
   target: asTarget,
   context: asNonEmpty,
-  model: asValue(...DICTATION_MODELS)
+  /** Absent means the model the server is configured with. */
+  model: asOptional(asValue(...DICTATION_MODELS))
 })
 export type DictationStart = { kind: 'start' } & ReturnType<typeof asStartBody>
 export const asDictationStart: Cleaner<DictationStart> = raw => {

@@ -177,6 +177,22 @@ export const asServerConfig = asObject({
     { url: 'redis://127.0.0.1:6379', prefix: '' }
   ),
 
+  /**
+   * Dictation on the scoring screen: xAI's dictation model for speech to text
+   * and its LLM for the tool calls. Absent, the route is not mounted and
+   * `/health` says so, which is how the client knows not to show the button.
+   * `baseUrl` and `sttUrl` exist so a test can point either somewhere else.
+   */
+  dictation: asOptional(
+    asObject({
+      apiKey: asString,
+      baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
+      sttUrl: asOptional(asString, 'wss://api.x.ai/v1/stt'),
+      sttModel: asOptional(asString, 'grok-voice-transcribe-2.0'),
+      model: asOptional(asString, 'grok-4.3')
+    })
+  ),
+
   /** Log every request. Noisy, but useful while the server is still new. */
   logRequests: asOptional(asBoolean, true),
 

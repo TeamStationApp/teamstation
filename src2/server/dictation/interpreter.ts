@@ -34,6 +34,8 @@ export interface InterpreterConfig {
    * prefix: xAI's `x-grok-conv-id` header.
    */
   cacheKey?: string
+  /** The scope's tools. Absent means the scoring library's. */
+  tools?: readonly Tool[]
   fetch?: typeof fetch
 }
 
@@ -356,7 +358,10 @@ export class Interpretation {
             tool_choice: 'required',
             // One sentence is regularly several actions.
             parallel_tool_calls: true,
-            tools: [...asOpenAiTools(toolSchema()), ASK_SCORER],
+            tools: [
+              ...asOpenAiTools(this.config.tools ?? toolSchema()),
+              ASK_SCORER
+            ],
             messages: this.messages
           })
         }
