@@ -32,7 +32,7 @@ Grotesk` so the family name plus a weight picks the right face.
 
 `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf` is 10.6 MB and holds every
 icon Google has drawn. It is pinned to the same instance the web app asks for —
-`opsz 24, wght 400, FILL 0, GRAD 0` — and then subset to the twenty-three icons
+`opsz 24, wght 400, FILL 0, GRAD 0` — and then subset to the twenty-five icons
 in `app/components/Icon.tsx`, keeping the `rlig` feature that turns the text
 `chevron_right` into the glyph. 8 KB.
 
