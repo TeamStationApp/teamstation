@@ -36,6 +36,8 @@ export type IconName =
   | 'settings'
   | 'close'
   | 'content_copy'
+  | 'forward_10'
+  | 'replay_10'
 
 export interface IconProps {
   name: IconName

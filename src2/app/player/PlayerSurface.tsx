@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from 'react'
-import { Text, View } from 'react-native'
+import { View } from 'react-native'
 import {
   GestureDetector,
   useExclusiveGestures,
@@ -7,15 +7,15 @@ import {
   useTapGesture
 } from 'react-native-gesture-handler'
 
-import { Icon } from '../components/Icon'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { liveRects, type Rect } from './controlGeometry'
+import { controlRects, liveRects, type Rect } from './controlGeometry'
 import { playerEngine } from './engine'
+import { SeekFlashView, SlowMoBadge, useFlash } from './GestureFeedback'
 import { slowMotion } from './slowMotion'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import type { VideoHandle } from './videoHandle'
-import { seekBy, STEP_SECONDS, type Zone, zoneFor } from './zones'
+import { HOLD_MS, seekBy, STEP_SECONDS, type Zone, zoneFor } from './zones'
 
 export interface PlayerSurfaceProps {
   videoRef: React.RefObject<VideoHandle | null>
@@ -40,9 +40,6 @@ export interface PlayerSurfaceProps {
   children: React.ReactNode
 }
 
-/** A press becomes a hold at a quarter of a second. */
-const HOLD_MS = 250
-
 /**
  * The nine squares, and the keyboard where there is one.
  *
@@ -50,6 +47,10 @@ const HOLD_MS = 250
  * quarter speed for as long as they are held; every other square pauses. On a
  * laptop the arrow keys do the same thing, taken in the capture phase because
  * the control bar takes them for itself once the scrubber has focus.
+ *
+ * A ten-second tap leaves a circular arrow behind it and a held crawl says
+ * `Slow Mo 25%` in the corner, so a press that landed by accident still says
+ * what it did.
  *
  * **The player's own controls stay, and they win where they are.** Whose they
  * are depends on where this is running — the browser's, AVPlayer's or
@@ -73,6 +74,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
   const slow = useMemo(() => slowMotion(() => videoRef.current), [videoRef])
   const [speed, setSpeed] = React.useState(0)
   const holding = useRef(false)
+  const [flash, showFlash] = useFlash()
 
   const engine = useMemo(() => playerEngine(), [])
   const pieces = useMemo(
@@ -86,6 +88,20 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
         : [{ x: 0, y: 0, w: width, h: height }],
     [controlsVisible, engine, height, width]
   )
+  // The slow-motion words sit just above whatever the player draws along the
+  // bottom, and in the corner itself once that has faded.
+  const barHeight = useMemo(
+    () =>
+      controlsVisible
+        ? Math.max(
+            0,
+            ...controlRects(width, height, engine)
+              .filter(rect => rect.y + rect.h >= height - 1)
+              .map(rect => height - rect.y)
+          )
+        : 0,
+    [controlsVisible, engine, height, width]
+  )
 
   /** `play()` returns a promise the caller has no use for, and may reject. */
   const play = (video: VideoHandle): void => {
@@ -97,14 +113,18 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     if (video == null) return
     if (zone === 'seekBack') {
       seekBy(video, -STEP_SECONDS)
+      showFlash('back')
       return
     }
     if (zone === 'seekForward') {
       seekBy(video, STEP_SECONDS)
+      showFlash('forward')
       return
     }
+    const direction = video.paused ? 'play' : 'pause'
     if (video.paused) play(video)
     else video.pause()
+    showFlash(direction)
   }
 
   const beginSlow = (zone: Zone): void => {
@@ -149,24 +169,11 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
           onRelease={endSlow}
         />
       ))}
-      {speed !== 0 && (
-        <View style={styles.speed} pointerEvents="none">
-          {/*
-            A Material Symbol turned round, not a `◀`. The triangle was a
-            literal U+25C0 drawn in the app's own font, which has no such
-            glyph — a browser borrows one and iOS draws the missing-glyph
-            box, so the backwards pill read `? 0.25×` on a phone. The arrow
-            that ships with the app, pointed the other way, is the same
-            picture everywhere.
-          */}
-          {speed < 0 && (
-            <View style={styles.speedArrow}>
-              <Icon name="play_arrow" size={0.875} color="#ffffff" />
-            </View>
-          )}
-          <Text style={styles.speedText}>0.25×</Text>
-        </View>
-      )}
+      <SeekFlashView flash={flash} />
+      <SlowMoBadge
+        rate={speed}
+        bottom={barHeight + theme.rem(theme.spaceSmRem)}
+      />
     </View>
   )
 }
@@ -235,26 +242,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     shadowRadius: theme.rem(0.75),
     shadowOffset: { width: 0, height: theme.rem(0.25) },
     elevation: elevationFor(theme.rem(0.75))
-  },
-  speed: {
-    position: 'absolute',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(0.125),
-    top: theme.rem(theme.spaceSmRem),
-    left: theme.rem(theme.spaceSmRem),
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.125),
-    borderRadius: theme.rem(1),
-    backgroundColor: 'rgba(0, 0, 0, 0.55)'
-  },
-  speedArrow: {
-    transform: [{ rotate: '180deg' }]
-  },
-  speedText: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
-    fontWeight: '600'
   }
 }))

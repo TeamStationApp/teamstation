@@ -31,6 +31,9 @@ export function zoneFor(
   return 'toggle'
 }
 
+/** A press becomes a hold at a quarter of a second. */
+export const HOLD_MS = 250
+
 /** How far a tap on the sides, or an arrow key, moves. */
 export const STEP_SECONDS = 10
 
