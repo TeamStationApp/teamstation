@@ -158,6 +158,8 @@ public enum CameraParameterName {
   public static let zoomMaximumDevice = "videoSource.zoom.maximumDevice"
   public static let zoomDisplayMultiplier = "videoSource.zoom.displayMultiplier"
   public static let zoomSwitchOverDevice = "videoSource.zoom.switchOverDevice"
+  /// Device zoom where the phone's software zoom begins; empty when it has none.
+  public static let zoomSoftwareStartDevice = "videoSource.zoom.softwareStartDevice"
   public static let ptzZoom = "ptz.zoom"
   public static let ptzZoomDevice = "ptz.zoom.device"
   public static let encoding = "videoEncoder.encoding"
@@ -199,6 +201,7 @@ public enum CameraParameterName {
     systemBatteryCharging,
     sourcePosition, sourceDeviceType,
     zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
+    zoomSoftwareStartDevice,
     ptzZoom, ptzZoomDevice,
     encoding, width, height, frameRate, bitrateKbps, bitrateFloorKbps, adaptiveBitrate, currentBitrateKbps,
     formatCount,
@@ -365,6 +368,7 @@ public enum CameraParameters {
       CameraParameterName.zoomSwitchOverDevice,
       snapshot.mapping.switchOverDeviceZooms.map(number).joined(separator: ",")
     )
+    set.set(CameraParameterName.zoomSoftwareStartDevice, snapshot.mapping.softwareZoomStartDeviceZoom.map(number) ?? "")
     set.set(CameraParameterName.ptzZoom, number(snapshot.displayedZoom))
     set.set(CameraParameterName.ptzZoomDevice, number(snapshot.deviceZoom))
     set.set(CameraParameterName.encoding, s.codec.sdpEncodingName)
@@ -430,7 +434,8 @@ public enum CameraParameters {
       minimumDeviceZoom: minimum,
       maximumDeviceZoom: maximum,
       displayMultiplier: multiplier,
-      switchOverDeviceZooms: switchOvers
+      switchOverDeviceZooms: switchOvers,
+      softwareZoomStartDeviceZoom: set[CameraParameterName.zoomSoftwareStartDevice].flatMap(Double.init)
     )
 
     var formats: [FormatCatalogue.Option] = []
@@ -636,7 +641,7 @@ public enum CameraParameters {
         if let unknown = ids.sorted().first(where: { !known.contains($0) }), !known.isEmpty {
           return .failure(bad("unknown lens id \(unknown)"))
         }
-        let selection = LensSelection(disabledIDs: ids)
+        let selection = LensSelection(disabledIDs: ids).normalized(in: snapshot.lenses)
         for position in CameraPosition.allCases
         where snapshot.lenses.contains(where: { $0.position == position })
           && !selection.hasEnabledLens(at: position, in: snapshot.lenses) {

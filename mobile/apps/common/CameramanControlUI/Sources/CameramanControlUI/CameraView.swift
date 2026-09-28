@@ -25,6 +25,9 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
   /// The picture's frame in the window, safe area included, so the edge bands are measured from
   /// the glass rather than from wherever the safe area happens to start.
   @State private var pictureFrame: CGRect = .zero
+  /// The zoom rail's frame in the window, top pill to bottom pill. A vertical drag zooms only when it
+  /// starts inside that band.
+  @State private var railFrame: CGRect = .zero
   /// Whether Settings is up. The phone hands in its own, so its test harness can open and close the
   /// sheet; a remote screen leaves it to this view.
   private let settingsShown: Binding<Bool>?
@@ -73,37 +76,35 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
       .allowsHitTesting(true)
       .opacity(model.isResponding ? 1 : Metrics.dimmedOpacity)
 
-      // Battery pill in the upper-right corner, thermal pill to its left, and the close control
-      // left of both when there is one. The zoom rail fills the height below them so the first
-      // and last stops keep the same vertical span when lenses are disabled.
-      HStack(alignment: .top) {
+      // The zoom rail runs the full height on the right, top pill to bottom pill, so the drag that
+      // walks it has as much travel as the screen allows. Battery, thermal and the close control sit
+      // to its left along the top, clear of the readout at the rail's middle.
+      HStack(alignment: .top, spacing: 10) {
         Spacer()
-        VStack(alignment: .trailing, spacing: 8) {
-          HStack(alignment: .center, spacing: 10) {
-            if onClose != nil {
-              closeButton
-            }
-            ThermalBadge(level: model.thermalLevel, animate: model.animatesChrome)
-            if let battery = model.battery {
-              BatteryBadge(status: battery)
-            }
+        HStack(alignment: .center, spacing: 10) {
+          if onClose != nil {
+            closeButton
           }
-          ZoomScaleView(
-            mapping: model.mapping,
-            displayedZoom: model.displayedZoom,
-            onSelect: { model.setDisplayedZoom($0) },
-            onSegmentLength: { length in
-              if abs(pointsPerSegment - length) > 0.5 { pointsPerSegment = length }
-            }
-          )
-          .frame(maxHeight: .infinity)
-          .opacity(model.isResponding ? 1 : Metrics.dimmedOpacity)
+          ThermalBadge(level: model.thermalLevel, animate: model.animatesChrome)
+          if let battery = model.battery {
+            BatteryBadge(status: battery)
+          }
         }
-        .padding(.top, 24)
-        .padding(.bottom, 24)
-        .padding(.trailing, 16)
+        ZoomScaleView(
+          mapping: model.mapping,
+          displayedZoom: model.displayedZoom,
+          onSelect: { model.setDisplayedZoom($0) },
+          onSegmentLength: { length in
+            if abs(pointsPerSegment - length) > 0.5 { pointsPerSegment = length }
+          }
+        )
         .frame(maxHeight: .infinity)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { railFrame = $0 }
+        .opacity(model.isResponding ? 1 : Metrics.dimmedOpacity)
       }
+      .padding(.top, 24)
+      .padding(.bottom, 24)
+      .padding(.trailing, 16)
       .frame(maxHeight: .infinity)
     }
     .background(.black)
@@ -126,14 +127,16 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
       .onEnded { _ in zoomAtGestureStart = nil }
   }
 
-  /// Vertical drag anywhere but the edge bands. Up zooms in. A drag as long as one pill-to-pill gap
-  /// walks one segment.
+  /// Vertical drag that starts between the top and bottom pills, anywhere across the screen. Up
+  /// zooms in. A drag as long as one pill-to-pill gap walks one segment, so the rail's full height
+  /// walks the whole range. The rail band stands in for the system edge bands here: it stops short
+  /// of both edges, and nothing above or below it starts a zoom.
   ///
   /// Global rather than local: this sits on the ZStack, whose own bounds stop at the safe area.
   private var verticalScrub: some Gesture {
     DragGesture(minimumDistance: 12, coordinateSpace: .global)
       .onChanged { value in
-        guard !isInSystemEdgeBand(value.startLocation.y - pictureFrame.minY) else { return }
+        guard isInRailBand(value.startLocation.y) else { return }
         let start = scrubAtGestureStart ?? model.displayedZoom
         scrubAtGestureStart = start
         let displayed = model.mapping.displayedZoom(
@@ -214,6 +217,12 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
   /// system instead: Notification Center and Control Center from the top edge, home and the app
   /// switcher from the bottom. Such a gesture leaves the zoom alone for its whole length, however
   /// far it then travels into the picture, so a pull-down does not reframe the shot on the way.
+  /// Between the top pill and the bottom pill. Nothing above or below the rail starts a zoom drag.
+  private func isInRailBand(_ y: CGFloat) -> Bool {
+    guard railFrame.height > 0 else { return true }
+    return y >= railFrame.minY && y <= railFrame.maxY
+  }
+
   private func isInSystemEdgeBand(_ y: CGFloat) -> Bool {
     // Before the first layout pass there is no frame to measure against; let the gesture through.
     guard pictureFrame.height > 0 else { return false }

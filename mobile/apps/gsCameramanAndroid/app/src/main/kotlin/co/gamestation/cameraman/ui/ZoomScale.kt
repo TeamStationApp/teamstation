@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -69,7 +70,7 @@ fun ZoomScale(
     ) {
         Text(
             text = ZoomMapping.label(displayedZoom),
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (mapping.isDigitalZoom(displayedZoom)) digitalZoomColour else MaterialTheme.colorScheme.onSurface,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.sp,
@@ -84,6 +85,7 @@ fun ZoomScale(
         )
 
         Rail(
+            mapping = mapping,
             presets = presets,
             highlight = highlight,
             onSelect = onSelect,
@@ -98,6 +100,7 @@ fun ZoomScale(
 
 @Composable
 private fun Rail(
+    mapping: ZoomMapping,
     presets: List<Double>,
     highlight: ZoomMapping.ScaleHighlight,
     onSelect: (Double) -> Unit,
@@ -116,7 +119,7 @@ private fun Rail(
         verticalArrangement = if (presets.size <= 1) Arrangement.Center else Arrangement.Top
     ) {
         if (presets.size <= 1) {
-            presets.firstOrNull()?.let { PresetPill(it, highlight, onSelect) }
+            presets.firstOrNull()?.let { PresetPill(it, mapping.isDigitalZoom(it), highlight, onSelect) }
             return@Column
         }
 
@@ -124,6 +127,7 @@ private fun Rail(
         for (index in presets.indices.reversed()) {
             PresetPill(
                 preset = presets[index],
+                isDigital = mapping.isDigitalZoom(presets[index]),
                 highlight = highlight,
                 onSelect = onSelect,
                 modifier = Modifier.onGloballyPositioned { coordinates ->
@@ -138,6 +142,7 @@ private fun Rail(
             if (index > 0) {
                 TickStack(
                     segment = index - 1,
+                    isDigital = mapping.isDigitalSegment(index - 1),
                     highlight = highlight,
                     modifier = Modifier.weight(1f)
                 )
@@ -159,6 +164,7 @@ private fun segmentLength(centres: Map<Int, Float>): Float? {
 @Composable
 private fun PresetPill(
     preset: Double,
+    isDigital: Boolean,
     highlight: ZoomMapping.ScaleHighlight,
     onSelect: (Double) -> Unit,
     modifier: Modifier = Modifier
@@ -169,7 +175,7 @@ private fun PresetPill(
     // Animated so a pinch that walks past a lens reads as a handover rather than a flicker.
     val container by animateColorAsState(
         targetValue = if (isActive) {
-            MaterialTheme.colorScheme.primary
+            if (isDigital) digitalZoomColour else MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.scrim.copy(alpha = CameramanTokens.chromeScrimAlpha)
         },
@@ -177,9 +183,9 @@ private fun PresetPill(
     )
     val content by animateColorAsState(
         targetValue = if (isActive) {
-            MaterialTheme.colorScheme.onPrimary
+            if (isDigital) Color.Black else MaterialTheme.colorScheme.onPrimary
         } else {
-            MaterialTheme.colorScheme.onSurface
+            if (isDigital) digitalZoomColour else MaterialTheme.colorScheme.onSurface
         },
         label = "zoom-pill-content"
     )
@@ -212,30 +218,41 @@ private fun PresetPill(
  * five.
  */
 @Composable
-private fun TickStack(segment: Int, highlight: ZoomMapping.ScaleHighlight, modifier: Modifier) {
+private fun TickStack(
+    segment: Int,
+    isDigital: Boolean,
+    highlight: ZoomMapping.ScaleHighlight,
+    modifier: Modifier
+) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.weight(1f))
         for (index in (ZoomMapping.scaleTicksPerSegment - 1) downTo 0) {
-            Tick(isActive = highlight == ZoomMapping.ScaleHighlight.Tick(segment, index), segment, index)
+            Tick(
+                isActive = highlight == ZoomMapping.ScaleHighlight.Tick(segment, index),
+                isDigital = isDigital,
+                segment = segment,
+                index = index
+            )
             Spacer(Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun Tick(isActive: Boolean, segment: Int, index: Int) {
+private fun Tick(isActive: Boolean, isDigital: Boolean, segment: Int, index: Int) {
     val width by animateDpAsState(
         targetValue = if (isActive) 14.dp else 10.dp,
         label = "zoom-tick-width"
     )
     val colour by animateColorAsState(
-        targetValue = if (isActive) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        targetValue = when {
+            isDigital && isActive -> digitalZoomColour
+            isDigital -> digitalZoomColour.copy(alpha = 0.38f)
+            isActive -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         },
         label = "zoom-tick-colour"
     )
@@ -251,3 +268,9 @@ private fun Tick(isActive: Boolean, segment: Int, index: Int) {
 private val pillSize = 32.dp
 private val tickThickness = 2.dp
 private val labelGap = 6.dp
+
+/**
+ * Zoom past the longest lens is digital, the camera's own and then Cameraman's software zoom, and is
+ * drawn in yellow as on iOS so the white pills are exactly the lenses.
+ */
+private val digitalZoomColour = Color(0xFFFFD60A)

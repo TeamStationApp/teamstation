@@ -101,6 +101,8 @@ public final class AppEnvironment {
     case settings, perfHarness, cameras, recordings
     /// Cameraman's own operating screen for the phone on a tile, full screen over the grid.
     case cameraControl(sourceIndex: Int)
+    /// Director's own zoom for a camera that is not a controllable Cameraman.
+    case digitalZoom(sourceIndex: Int)
 
     public var id: String {
       switch self {
@@ -109,6 +111,7 @@ public final class AppEnvironment {
       case .cameras: "cameras"
       case .recordings: "recordings"
       case let .cameraControl(sourceIndex): "cameraControl-\(sourceIndex)"
+      case let .digitalZoom(sourceIndex): "digitalZoom-\(sourceIndex)"
       }
     }
   }
@@ -1088,11 +1091,53 @@ public final class AppEnvironment {
       path: endpoint.path,
       userAgent: "GS Director/1.0"
     )
-    let model = RemoteCameraControl(transport: session, animatesChrome: !launch.isUITest)
+    // A phone that does not zoom past its own ceiling gets Director's zoom on top, the same 2x in
+    // yellow that Cameraman gives itself.
+    let id = pipeline.sourceID
+    let model = RemoteCameraControl(
+      transport: session,
+      animatesChrome: !launch.isUITest,
+      extendsWithDirectorZoom: true,
+      directorZoom: digitalZoom(for: id)
+    )
+    model.onDirectorZoom = { [weak self] zoom in self?.setDigitalZoom(zoom, for: id) }
     model.start()
     activeCameraControl = model
     activeCameraControlIndex = sourceIndex
     activeSheet = .cameraControl(sourceIndex: sourceIndex)
+  }
+
+  /// The tile's three-dot button: the phone's own screen for a controllable Cameraman, and
+  /// Director's zoom for any other camera.
+  public func openCameraMenu(sourceIndex: Int) {
+    if isCameramanControllable(sourceIndex: sourceIndex) {
+      openCameraControl(sourceIndex: sourceIndex)
+    } else {
+      openDigitalZoom(sourceIndex: sourceIndex)
+    }
+  }
+
+  public func openDigitalZoom(sourceIndex: Int) {
+    guard activeSheet == nil, router.pipeline(at: sourceIndex) != nil else { return }
+    activeSheet = .digitalZoom(sourceIndex: sourceIndex)
+  }
+
+  public func closeDigitalZoom() {
+    if case .digitalZoom = activeSheet { activeSheet = nil }
+  }
+
+  public func digitalZoom(for id: SourceID) -> Double {
+    selections.first(where: { $0.id == id })?.digitalZoom ?? 1
+  }
+
+  /// Director's zoom on one camera's picture: saved with the row and applied to its pipeline.
+  public func setDigitalZoom(_ zoom: Double, for id: SourceID) {
+    let before = digitalZoom(for: id)
+    SourceSelectionRules.setDigitalZoom(zoom, for: id, in: &selections)
+    let after = digitalZoom(for: id)
+    router.pipeline(for: id)?.setDigitalZoom(after)
+    guard after != before else { return }
+    selectionStore.save(selections)
   }
 
   public func closeCameraControl() {
@@ -1528,6 +1573,7 @@ public final class AppEnvironment {
         telemetry: telemetry
       )
       router.add(pipeline)
+      pipeline.setDigitalZoom(selection.digitalZoom)
       try pipeline.start()
       router.audioMixer.start()
       router.recordingMixer.start()
@@ -4598,6 +4644,9 @@ public final class AppEnvironment {
     case let .sourceAudio(index, on):
       guard index >= 0, index < selections.count else { return false }
       setUsesAudio(on, for: selections[index].id)
+    case let .digitalZoom(source, zoom):
+      guard let pipeline = router.pipeline(at: source) else { return false }
+      setDigitalZoom(zoom, for: pipeline.sourceID)
     case let .sourceGain(index, gain):
       guard index >= 0, index < selections.count else { return false }
       setInputGain(gain, for: selections[index].id)

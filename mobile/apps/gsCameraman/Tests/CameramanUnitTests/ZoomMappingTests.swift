@@ -232,4 +232,51 @@ struct ZoomMappingTests {
     #expect(thirteenPro.displayedZoom(draggingFrom: 1, byPoints: gap / 2, pointsPerSegment: gap) == 2)
     #expect(thirteenPro.displayedZoom(draggingFrom: 1, byPoints: 4 * gap, pointsPerSegment: gap) == 9)
   }
+
+  /// iPhone 15 Pro: the camera stops at 9x, and Cameraman's software zoom doubles it to 18x.
+  private let softwareZoom = ZoomMapping(
+    minimumDeviceZoom: 1,
+    maximumDeviceZoom: 36,
+    displayMultiplier: 0.5,
+    switchOverDeviceZooms: [ 2, 6 ],
+    softwareZoomStartDeviceZoom: 18
+  )
+
+  @Test("Software zoom adds the camera's ceiling and the doubled maximum as pills")
+  func softwareZoomPresets() {
+    #expect(softwareZoom.presetDisplayedZooms == [ 0.5, 1, 3, 9, 18 ])
+    #expect(softwareZoom.clampDisplayedZoom(100) == 18)
+    #expect(softwareZoom.softwareZoomStartDisplayedZoom == 9)
+  }
+
+  @Test("Only zoom past the camera's ceiling, and only its segment, is software")
+  func softwareZoomRange() {
+    #expect(!softwareZoom.isSoftwareZoom(displayed: 9))
+    #expect(!softwareZoom.isSoftwareZoom(displayed: 9.04))
+    #expect(softwareZoom.isSoftwareZoom(displayed: 12))
+    #expect(softwareZoom.isSoftwareZoom(displayed: 18))
+    #expect(!softwareZoom.isSoftwareSegment(2))
+    #expect(softwareZoom.isSoftwareSegment(3))
+    #expect(!thirteenPro.isSoftwareZoom(displayed: 9))
+    #expect(!thirteenPro.isSoftwareSegment(2))
+  }
+
+  @Test("A software start outside the range is dropped")
+  func softwareZoomOutOfRange() {
+    let atMaximum = ZoomMapping(maximumDeviceZoom: 8, softwareZoomStartDeviceZoom: 8)
+    #expect(atMaximum.softwareZoomStartDeviceZoom == nil)
+    #expect(atMaximum.presetDisplayedZooms == [ 1, 8 ])
+  }
+
+  @Test("The white pills are the lenses, and the two past the longest lens are digital")
+  func digitalPills() {
+    #expect(softwareZoom.opticalDisplayedZooms == [ 0.5, 1, 3 ])
+    #expect(softwareZoom.presetDisplayedZooms.map { softwareZoom.isDigitalZoom(displayed: $0) }
+      == [ false, false, false, true, true ])
+    #expect(!softwareZoom.isDigitalSegment(1))
+    #expect(softwareZoom.isDigitalSegment(2))
+    #expect(softwareZoom.isDigitalSegment(3))
+    #expect(!softwareZoom.isDigitalZoom(displayed: 2))
+    #expect(softwareZoom.isDigitalZoom(displayed: 5))
+  }
 }

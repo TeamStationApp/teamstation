@@ -184,6 +184,8 @@ object CameraParameterName {
     const val zoomMaximumDevice = "videoSource.zoom.maximumDevice"
     const val zoomDisplayMultiplier = "videoSource.zoom.displayMultiplier"
     const val zoomSwitchOverDevice = "videoSource.zoom.switchOverDevice"
+    /** Device zoom where the phone's software zoom begins; empty when it has none. */
+    const val zoomSoftwareStartDevice = "videoSource.zoom.softwareStartDevice"
     const val ptzZoom = "ptz.zoom"
     const val ptzZoomDevice = "ptz.zoom.device"
     const val encoding = "videoEncoder.encoding"
@@ -230,6 +232,7 @@ object CameraParameterName {
         systemBatteryCharging,
         sourcePosition, sourceDeviceType,
         zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
+        zoomSoftwareStartDevice,
         ptzZoom, ptzZoomDevice,
         encoding, width, height, frameRate, bitrateKbps, bitrateFloorKbps, adaptiveBitrate,
         currentBitrateKbps, formatCount,
@@ -357,6 +360,10 @@ object CameraParameters {
             CameraParameterName.zoomSwitchOverDevice,
             snapshot.mapping.switchOverDeviceZooms.joinToString(",") { number(it) }
         )
+        set.set(
+            CameraParameterName.zoomSoftwareStartDevice,
+            snapshot.mapping.softwareZoomStartDeviceZoom?.let { number(it) } ?: ""
+        )
         set.set(CameraParameterName.ptzZoom, number(snapshot.displayedZoom))
         set.set(CameraParameterName.ptzZoomDevice, number(snapshot.deviceZoom))
         set.set(CameraParameterName.encoding, s.codec.sdpEncodingName)
@@ -429,7 +436,8 @@ object CameraParameters {
             minimumDeviceZoom = minimum,
             maximumDeviceZoom = maximum,
             displayMultiplier = multiplier,
-            switchOverDeviceZooms = switchOvers
+            switchOverDeviceZooms = switchOvers,
+            softwareZoomStartDeviceZoom = set[CameraParameterName.zoomSoftwareStartDevice]?.toDoubleOrNull()
         )
 
         val formats = ArrayList<FormatCatalogue.Option>()
