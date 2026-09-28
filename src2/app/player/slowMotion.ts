@@ -19,10 +19,9 @@ interface Held {
 }
 
 /**
- * Quarter speed, in both directions.
+ * Quarter speed, in both directions, and silent both ways.
  *
- * Forwards is the easy half: every player has a playback rate and keeps the
- * pitch at it. Backwards has no support anywhere — no browser engine takes a
+ * Forwards is the easy half: every player has a playback rate. Backwards has no support anywhere — no browser engine takes a
  * negative rate, and neither does ExoPlayer — so it is stepped by hand, frame
  * by frame, with the player paused and muted. Sound played backwards helps
  * nobody.
@@ -70,9 +69,9 @@ export function slowMotion(getVideo: () => VideoHandle | null): SlowMotion {
     if (direction === 'forward') {
       current = SLOW_RATE
       video.playbackRate = SLOW_RATE
-      // Keeps speech intelligible at a quarter speed rather than an octave down.
-      video.preservesPitch = true
-      video.webkitPreservesPitch = true
+      // Silent, as backwards is: a quarter-speed crowd is noise, and the
+      // sound is given back exactly as it was found when the hold ends.
+      video.muted = true
       video.play().catch(() => undefined)
       return
     }
