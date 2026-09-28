@@ -313,6 +313,24 @@ struct SourceSelectionTests {
     store.clear()
     #expect(store.load() == nil)
   }
+
+  @Test("A row preview follows the session, and every camera type answers the same way")
+  func peekTargetIgnoresKindAndEnablement() {
+    let matrix: [(Bool, Bool, SourcePeekTarget)] = [
+      (true, true, .livePipeline),
+      (true, false, .livePipeline),
+      (false, true, .temporary),
+      (false, false, .unavailable)
+    ]
+    for kind in SourceKind.allCases {
+      for (hasLivePipeline, isDiscovered, expected) in matrix {
+        #expect(
+          SourcePeekRules.target(hasLivePipeline: hasLivePipeline, isDiscovered: isDiscovered) == expected,
+          "\(kind) pipeline=\(hasLivePipeline) discovered=\(isDiscovered)"
+        )
+      }
+    }
+  }
 }
 
 /// One source carries a take's sound. See `SourceSelectionRules.setUsesAudio` and the
