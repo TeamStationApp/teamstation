@@ -54,6 +54,51 @@ import Testing
     #expect(wait.requestId == "emc_abc")
     #expect(wait.clientSecret == "s3cret")
   }
+
+  @Test func readsASessionWhoseUserIdIsANumber() throws {
+    // asUserId on the server is a JSON number. A String-only decode left the
+    // Director flashing on the code screen while minting a session every poll.
+    let json = """
+    {
+      "token": "tok_x",
+      "expiresAt": "2027-03-26T04:56:21.869Z",
+      "user": {
+        "id": 7131311135112542,
+        "displayName": "root",
+        "email": "paul@vtex.net",
+        "isAdmin": true,
+        "avatarUrl": null
+      }
+    }
+    """
+    let session = try GameStationClient.decoder.decode(
+      GameStationSession.self,
+      from: Data(json.utf8)
+    )
+    #expect(session.user.id == "7131311135112542")
+    #expect(session.user.email == "paul@vtex.net")
+    #expect(session.user.isAdmin)
+  }
+
+  @Test func stillReadsASessionWhoseUserIdIsText() throws {
+    let json = """
+    {
+      "token": "tok_y",
+      "expiresAt": "2027-03-26T04:56:21Z",
+      "user": {
+        "id": "7131311135112542",
+        "displayName": "root",
+        "isAdmin": false
+      }
+    }
+    """
+    let session = try GameStationClient.decoder.decode(
+      GameStationSession.self,
+      from: Data(json.utf8)
+    )
+    #expect(session.user.id == "7131311135112542")
+    #expect(session.user.email == nil)
+  }
 }
 
 @Suite struct ErrorTests {
