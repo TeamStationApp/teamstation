@@ -67,6 +67,30 @@ public struct GameStationUser: Sendable, Codable, Equatable {
   public let displayName: String
   public let email: String?
   public let isAdmin: Bool
+
+  public init(id: String, displayName: String, email: String?, isAdmin: Bool) {
+    self.id = id
+    self.displayName = displayName
+    self.email = email
+    self.isAdmin = isAdmin
+  }
+
+  /// GameStation sends `id` as a JSON number (a 53-bit integer). Swift's
+  /// default `String` decode refuses that, so a correct sign-in came back
+  /// unreadable, the waiting screen never cleared, and the two-second poll
+  /// minted a fresh session on every tick.
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    if let text = try? container.decode(String.self, forKey: .id) {
+      id = text
+    } else {
+      let number = try container.decode(Int64.self, forKey: .id)
+      id = String(number)
+    }
+    displayName = try container.decode(String.self, forKey: .displayName)
+    email = try container.decodeIfPresent(String.self, forKey: .email)
+    isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
+  }
 }
 
 /**
