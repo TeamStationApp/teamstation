@@ -754,7 +754,6 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         angles={top.angles}
         audioId={top.audio}
-        zoomedId={top.zoom}
         onAngles={next => {
           // In place: arranging the tiles is not a new page, and a history
           // entry per drag would make Back mean "undo one drag".

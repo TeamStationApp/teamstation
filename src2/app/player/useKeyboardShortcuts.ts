@@ -20,7 +20,7 @@ export type { KeyboardShortcuts }
  * left where it was this was a `TypeError` on every mount of the watch tab.
  */
 export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
-  const { enabled = true, video } = shortcuts
+  const { enabled = true } = shortcuts
   // Through a ref, so a caller may pass fresh closures on every render —
   // which the multi-camera view does, because its actions close over which
   // tile is heard and where the take is — without tearing the listeners down
@@ -39,7 +39,7 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
       )
     }
     const down = (event: KeyboardEvent): void => {
-      const { act, beginSlow, holding, seek } = latest.current
+      const { act, beginSlow, holding, seek, video } = latest.current
       const player = video()
       if (player == null) return
       if (event.ctrlKey || event.metaKey || event.altKey) {
@@ -81,7 +81,9 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
       window.removeEventListener('blur', blur)
       latest.current.endSlow()
     }
-    // Rebound only when the player itself changes; the callbacks are recreated
-    // on every render and binding to them would rebind on every render too.
-  }, [enabled, video])
+    // Rebound only when it is switched on or off. Every caller hands in fresh
+    // closures on each render, `video` included, and a rebind is not free: its
+    // cleanup ends a crawl, so rebinding on the render that a crawl's own
+    // state change causes stopped every hold a quarter of a second in.
+  }, [enabled])
 }
