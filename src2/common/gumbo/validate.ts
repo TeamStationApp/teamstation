@@ -1,3 +1,4 @@
+import { isLaunchAngle } from '../launchAngle'
 import {
   HIT_TRAJECTORIES,
   MOVEMENT_REASONS,
@@ -116,8 +117,11 @@ const ACTION_DETAILS: Shape = {
   hasReview: ['boolean']
 }
 
-/** Measured on the ball in the feed; GameStation only ever estimates them. */
-const MEASURED = ['launchAngle', 'launchSpeed', 'totalDistance', 'hardness']
+/**
+ * Measured on the ball in the feed; GameStation only ever estimates them. Its
+ * `launchAngle` is the scorer's own, set on the field, so it is not here.
+ */
+const MEASURED = ['launchSpeed', 'totalDistance', 'hardness']
 
 const SIDES: ReadonlySet<unknown> = new Set(['L', 'R', 'S'])
 const HANDS: ReadonlySet<unknown> = new Set(['L', 'R'])
@@ -370,7 +374,13 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       add('hitData', path, `expected an object, got ${show(value)}`)
       return
     }
-    const { trajectory, location, coordinates } = value
+    const { trajectory, location, coordinates, launchAngle } = value
+    if (launchAngle !== undefined && !isLaunchAngle(launchAngle))
+      add(
+        'hitData',
+        `${path}.launchAngle`,
+        `expected degrees from -90 to 90, got ${show(launchAngle)}`
+      )
     if (
       trajectory !== undefined &&
       (typeof trajectory !== 'string' || !HIT_TRAJECTORIES.has(trajectory))

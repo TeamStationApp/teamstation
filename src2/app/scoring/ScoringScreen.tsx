@@ -31,7 +31,7 @@ import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
-import { allowedAngle, trajectoryLabel } from './battedBall'
+import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
@@ -383,13 +383,9 @@ function ScoringPanel(props: {
     return next
   }, [session, phase, pendingPlay, motions, runnerAction, presentation])
   useEffect(() => {
-    setAngle(
-      allowedAngle(
-        state.pendingPlay?.angle ?? 45,
-        state.pendingPlay?.outcome ?? '',
-        state.pendingPlay?.homeRunKind
-      )
-    )
+    setAngle(startingAngle(state))
+    // startingAngle reads only these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     state.pendingPlay?.angle,
     state.pendingPlay?.outcome,
@@ -472,7 +468,9 @@ function ScoringPanel(props: {
       return completesHitOffer(session, player.playerId, from, from + 1)
     })
     .map(player => player.id)
-  const hitOfferHomeIds = [...new Set([...hitOfferRetreatIds, ...hitOfferAdvanceIds])]
+  const hitOfferHomeIds = [
+    ...new Set([...hitOfferRetreatIds, ...hitOfferAdvanceIds])
+  ]
   const homeWaiting =
     state.phase === 'homeDecision' &&
     !state.motions.some(motion => !motion.complete)
@@ -651,9 +649,17 @@ function ScoringPanel(props: {
                 ? ['trajectory']
                 : ['place']
         },
-        onTrajectoryAccepted: (value, generation) => {
+        onTrajectoryAccepted: (value, generation, dragged) => {
           scoringAudio.unlock()
-          dispatch({ type: 'TRAJECTORY', angle: value, generation })
+          dispatch({
+            type: 'TRAJECTORY',
+            angle: value,
+            generation,
+            // The scorer's own angle: one a drag turned, or one accepted off
+            // where the control started, as a tap after the keyboard's
+            // arrows or their Enter leaves it.
+            dragged: dragged === true || value !== startingAngle(state)
+          })
         },
         registerKeyboard,
         onFieldPlacement: event => {

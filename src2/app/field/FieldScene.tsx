@@ -18,7 +18,12 @@ import {
   runnerTargetAt
 } from '../scoring/runnerDrag'
 import { BallArc } from './BallArc'
-import { arcTarget, type BallArcState, dragLaunchAngle } from './ballArcModel'
+import {
+  arcTarget,
+  type BallArcState,
+  dragLaunchAngle,
+  TAP_SLOP_PX
+} from './ballArcModel'
 import { Ballpark } from './Ballpark'
 import { applyFieldCamera } from './cameraModel'
 import { fieldKey } from './fieldKeyboard'
@@ -527,6 +532,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     startY: number
     startPointer: { x: number; y: number }
     moved: boolean
+    /** The pointer went further up or down than a tap's slop. */
+    turned: boolean
     initial: BallArcState
     latest: BallArcState
     generation: number
@@ -695,6 +702,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       startY: (event.pointer.y * size.height) / 2,
       startPointer: { x: event.pointer.x, y: event.pointer.y },
       moved: false,
+      turned: false,
       initial,
       latest: initial,
       generation: props.interaction?.generation ?? 0,
@@ -714,15 +722,14 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       Math.hypot(
         ((event.pointer.x - active.startPointer.x) * size.width) / 2,
         ((event.pointer.y - active.startPointer.y) * size.height) / 2
-      ) > 3
+      ) > TAP_SLOP_PX
     if (active.kind === 'target') aim(event, active.initial)
     else {
+      const pixelsUp = (event.pointer.y * size.height) / 2 - active.startY
+      active.turned ||= Math.abs(pixelsUp) > TAP_SLOP_PX
       const next = {
         ...active.initial,
-        angle: dragLaunchAngle(
-          active.initial.angle,
-          (event.pointer.y * size.height) / 2 - active.startY
-        )
+        angle: dragLaunchAngle(active.initial.angle, pixelsUp)
       }
       active.latest = next
       onArcChange?.(next)
@@ -740,10 +747,22 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     if (cancel || (props.homeRunPlacement === true && !active.moved))
       onArcChange?.(active.initial)
     else if (active.generation === (props.interaction?.generation ?? 0)) {
-      onArcFinish?.()
-      if (active.kind === 'target')
+      if (active.kind === 'target') {
+        onArcFinish?.()
         props.onLandingAccepted?.(active.latest, active.generation)
-      else props.onTrajectoryAccepted?.(active.latest.angle, active.generation)
+      } else {
+        // Only a vertical drag turns the angle: a tap, a pointer that
+        // slipped sideways or a finger's wobble within the slop accepts the
+        // angle it started at.
+        const accepted = active.turned ? active.latest : active.initial
+        if (!active.turned) onArcChange?.(active.initial)
+        onArcFinish?.()
+        props.onTrajectoryAccepted?.(
+          accepted.angle,
+          active.generation,
+          active.turned
+        )
+      }
     }
   }
   return (

@@ -13,7 +13,8 @@ import {
   type BallArcState,
   dragLaunchAngle,
   firstBounceFraction,
-  MAX_LAUNCH_ANGLE
+  MAX_LAUNCH_ANGLE,
+  TAP_SLOP_PX
 } from './ballArcModel'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
@@ -159,6 +160,133 @@ describe('ball flight authoring', function () {
       await renderer.unmount()
     }
   })
+})
+
+describe("the scorer's own launch angle", function () {
+  /** A gesture's stops: pixels right and up from where it went down. */
+  type Gesture = Array<[number, number]>
+  const taps: Array<[string, Gesture]> = [
+    ['still', []],
+    ['2 px up', [[0, 2]]],
+    ['2 px down', [[0, -2]]],
+    [
+      '2 px down by steps',
+      [
+        [1, -1],
+        [2, -2]
+      ]
+    ],
+    [
+      '2 px out and back',
+      [
+        [0, 2],
+        [0, 0]
+      ]
+    ],
+    [
+      'a 40 px sideways slip',
+      [
+        [20, 1],
+        [40, 0]
+      ]
+    ]
+  ]
+  const drags: Array<[string, Gesture, number]> = [
+    ['20 px up', [[0, 20]], 55],
+    [
+      '30 px down',
+      [
+        [5, -15],
+        [5, -30]
+      ],
+      30
+    ],
+    ['4 px up', [[0, 4]], 47]
+  ]
+  const canvases = [
+    { width: 390, height: 556, start: [0, 0] },
+    { width: 390, height: 556, start: [0, -0.3] },
+    { width: 1024, height: 700, start: [0.37, 0.21] },
+    { width: 834, height: 1112, start: [-0.53, -0.61] },
+    { width: 1180, height: 820, start: [0.123, -0.777] }
+  ] as const
+
+  for (const { width, height, start } of canvases)
+    it(`takes only vertical travel past ${TAP_SLOP_PX} px as a drag, on ${width}×${height} from (${start.join(', ')})`, async function () {
+      const accepted: Array<[number, number, boolean | undefined]> = []
+      let current: BallArcState | null = null
+      const arc: BallArcState = { target: { x: 0, z: -80 }, angle: 45 }
+      const renderer = await create(
+        React.createElement(FieldScene, {
+          players: createPlayers(),
+          selected: 'SS',
+          onSelect: () => undefined,
+          view: 'home',
+          zoom: 1,
+          arc,
+          arcMode: 'edit',
+          interaction: {
+            generation: 0,
+            selectableIds: [],
+            gestures: ['trajectory']
+          },
+          onArcChange: value => {
+            current = value
+          },
+          onTrajectoryAccepted: (angle, generation, dragged) => {
+            accepted.push([angle, generation, dragged])
+          }
+        }),
+        { width, height }
+      )
+      try {
+        await renderer.advanceFrames(1, 1 / 60)
+        const surface = renderer.scene.findByProps({
+          name: 'arc-interaction-surface'
+        })
+        const event = {
+          button: 0,
+          pointerId: 5,
+          pointer: new Vector2(),
+          ray: new Ray(new Vector3(0, 100, -80), new Vector3(0, -1, 0)),
+          target: {
+            setPointerCapture: () => undefined,
+            releasePointerCapture: () => undefined
+          }
+        }
+        const gesture = async (stops: Gesture): Promise<void> => {
+          event.pointer.set(start[0], start[1])
+          await renderer.fireEvent(surface, 'pointerDown', event)
+          for (const [right, up] of stops) {
+            event.pointer.set(
+              start[0] + (right * 2) / width,
+              start[1] + (up * 2) / height
+            )
+            await renderer.fireEvent(surface, 'pointerMove', event)
+          }
+          await renderer.fireEvent(surface, 'pointerUp', event)
+        }
+        // Taps accept the angle the control started at, and put it back.
+        for (const [name, stops] of taps) {
+          accepted.length = 0
+          current = null
+          await gesture(stops)
+          expect(accepted, name).deep.equals([[45, 0, false]])
+          if (stops.length > 0)
+            expect(current, name).deep.include({ angle: 45 })
+        }
+        // A drag up or down is the scorer's own, at the angle it turned to.
+        for (const [name, stops, angle] of drags) {
+          accepted.length = 0
+          await gesture(stops)
+          expect(accepted, name).length(1)
+          expect(accepted[0][0], name).closeTo(angle, 1e-9)
+          expect(accepted[0].slice(1), name).deep.equals([0, true])
+        }
+      } finally {
+        await renderer.unmount()
+      }
+    })
 })
 
 describe('home runs and pop-ups', function () {

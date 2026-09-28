@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
+import {
+  dictatedAction,
+  type ScoringAction
+} from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/session'
 import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
@@ -22,7 +25,10 @@ function script(): ScoringAction[] {
     readFileSync('src2/common/scoring/fixtures/halfInning.actions.json', 'utf8')
   ) as unknown[]
   return raw.map(entry => {
-    const cleaned = cleanAction(entry)
+    const cleaned = dictatedAction(
+      String((entry as { type?: unknown }).type),
+      entry
+    )
     if ('problem' in cleaned) throw new Error(cleaned.problem.message)
     return cleaned.action
   })

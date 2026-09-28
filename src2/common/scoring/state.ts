@@ -245,6 +245,12 @@ export const asGamePlay = asObject({
       trajectory: asOptional(asString),
       /** The launch angle: the scorer's, or estimated from his trajectory. */
       launchAngle: asOptional(asNumber),
+      /**
+       * The scorer set the launch angle himself, by dragging it on the field,
+       * so the stored play gives it as the ball's `launchAngle`. An angle
+       * estimated from a trajectory alone stays here and nowhere else.
+       */
+      launchAngleSet: asOptional(asBoolean),
       /** The lineup changed during this at-bat, so the at-bat is open. */
       lineupChanged: asOptional(asBoolean),
       errorCredit: asOptional(

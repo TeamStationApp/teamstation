@@ -10,7 +10,10 @@ import puppeteer, {
 } from 'puppeteer'
 
 import type { GameDetail } from '../../common/api'
-import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
+import {
+  dictatedAction,
+  type ScoringAction
+} from '../../common/scoring/actions'
 import { freshGame } from '../../common/scoring/rules'
 import {
   applyAction,
@@ -620,7 +623,10 @@ describe('scoring into the server', function () {
         )
       ) as unknown[]
     ).map(entry => {
-      const cleaned = cleanAction(entry)
+      const cleaned = dictatedAction(
+        String((entry as { type?: unknown }).type),
+        entry
+      )
       if ('problem' in cleaned) throw new Error(cleaned.problem.message)
       const action = cleaned.action
       if (action.type === 'ballInPlay' && action.location != null) {

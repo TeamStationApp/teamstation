@@ -380,9 +380,15 @@ const gumboSchemas = {
         type: 'object',
         description:
           'On the pitch put in play only, and only what the scorer gave. ' +
-          'GameStation writes no launch angle, speed or distance: it only ' +
-          'estimates them, and keeps them in the `gameStation` record.',
+          '`launchAngle` is the angle the scorer dragged on the field. ' +
+          'GameStation writes no speed or distance; a dictated angle, the ' +
+          'untouched default, or one estimated from a trajectory alone ' +
+          'stays in the `gameStation` record.',
         properties: {
+          launchAngle: {
+            type: 'number',
+            description: 'Degrees, -90 to 90, as the scorer dragged it.'
+          },
           trajectory: { type: 'string', enum: sorted(HIT_TRAJECTORIES) },
           location: {
             type: 'string',

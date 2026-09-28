@@ -357,6 +357,33 @@ describe('reading a game back', function () {
     )
   })
 
+  it('replays a saved ball in play whose launch angle is out of range, without it', function () {
+    // An old record may hold any number: the game still opens.
+    const scored = score(game(), [
+      { type: 'pitch', call: 'B' },
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: 14,
+        launchAngle: -120,
+        launchAngleDragged: true
+      },
+      { type: 'result', eventType: 'single' },
+      { type: 'pitch', call: 'C' }
+    ])
+    const replayed = replayPlays(
+      { plays: scored.plays, currentPlay: scored.current },
+      context
+    )
+    expect(replayed.problems).deep.equals([])
+    expect(replayed.state).deep.equals(scored.state)
+    const play = replayed.state.liveData.plays.allPlays[0]
+    expect(play.hitData).not.have.property('launchAngle')
+    expect(play.source.gamestation).not.have.property('launchAngle')
+    expect(play.source.gamestation).not.have.property('launchAngleSet')
+    expect(play.source.gamestation).not.have.property('trajectory')
+  })
+
   it('takes what the server writes on a play in its stride', function () {
     const scored = score(game(), inning)
     const stored = withHalfOuts(scored.plays).map(play => {

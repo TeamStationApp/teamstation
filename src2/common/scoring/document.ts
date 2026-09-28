@@ -495,17 +495,18 @@ export function sprayCoordinates(point: Point): {
 }
 
 interface HitData {
+  launchAngle?: number
   trajectory?: string
   location?: string
   coordinates?: { coordX: number; coordY: number }
 }
 
 /**
- * The ball in play as MLB writes it on the in-play pitch: the trajectory, the
- * fielder's position code as `location`, and where the scorer put the ball.
- * Each is written only when the scorer gave it. The launch angle is only ever
- * an estimate here, so it stays in the record with the scorer's own
- * trajectory, never in a Gumbo field.
+ * The ball in play as MLB writes it on the in-play pitch: the launch angle,
+ * the trajectory, the fielder's position code as `location`, and where the
+ * scorer put the ball. Each is written only when the scorer gave it. The launch
+ * angle is written when the scorer set it on the field; one estimated from a
+ * trajectory alone stays in the record with the scorer's own trajectory.
  */
 function hitDataOf(play: GamePlay): HitData | null {
   const hit = play.hitData
@@ -518,6 +519,10 @@ function hitDataOf(play: GamePlay): HitData | null {
   const location =
     hit.position == null ? undefined : GAME_POSITIONS.get(hit.position)?.code
   return withoutUndefined({
+    launchAngle:
+      detail.launchAngleSet === true && hit.launchAngle != null
+        ? Math.round(hit.launchAngle * 10) / 10
+        : undefined,
     trajectory:
       trajectory == null
         ? undefined
