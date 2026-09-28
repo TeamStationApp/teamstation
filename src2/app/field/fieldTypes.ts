@@ -79,7 +79,18 @@ export interface FieldCanvasProps {
   interaction?: FieldInteractionPolicy
   onFieldPlacement?: (event: FieldPlacement) => void
   onGestureActive?: (active: boolean) => void
-  onTrajectoryAccepted?: (angle: number, generation: number) => void
+  /**
+   * The scorer accepted the trajectory at `angle`: `dragged` when his drag
+   * on the field turned the angle, `false` for a gesture that left it where
+   * it was (up or down by no more than `TAP_SLOP_PX`, and then `angle` is
+   * where it started), and absent from the keyboard, whose arrows leave no
+   * gesture to tell by.
+   */
+  onTrajectoryAccepted?: (
+    angle: number,
+    generation: number,
+    dragged?: boolean
+  ) => void
   hintBatSide?: 'L' | 'R'
   selectableIds?: readonly string[]
   onPlayerPlacement?: (id: string, point: GroundPoint) => void

@@ -1,7 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { allowedAngle, trajectoryLabel } from './battedBall'
+import type { BallInPlayAction } from '../../common/scoring/actions'
+import { allowedAngle, startingAngle, trajectoryLabel } from './battedBall'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { type Outcome, outcomeEvents } from './scoringContract'
@@ -150,5 +151,68 @@ describe('contextual batted-ball choices', function () {
         ).equals(expected)
       }
     }
+  })
+
+  it("writes the launch angle as the scorer's own only when he dragged it", function () {
+    /** The launch angle the stored play gives, only when the scorer set it. */
+    const inPlayHit = (
+      state: ReturnType<typeof initialScoringState>
+    ): Record<string, unknown> => {
+      const play = state.session.liveData.plays.currentPlay!
+      const detail = play.source.gamestation
+      return {
+        trajectory: detail.trajectory,
+        ...(detail.launchAngleSet === true
+          ? { launchAngle: play.hitData?.launchAngle }
+          : {})
+      }
+    }
+    /** Whether the ball in play the screen sent says the scorer set it. */
+    const sentDragged = (
+      state: ReturnType<typeof initialScoringState>
+    ): unknown =>
+      state.log.findLast(
+        (action): action is BallInPlayAction => action.type === 'ballInPlay'
+      )?.launchAngleDragged
+    const fielded = scoringReducer(
+      scoringReducer(initial(), { type: 'OUTCOME', outcome: 'Single' }),
+      { type: 'FIELDER', id: 17, point: { x: 5, z: -80 }, generation: 0 }
+    )
+    expect(startingAngle(fielded)).equals(45)
+    // Accepted where the control starts, untouched: no launch angle.
+    const untouched = scoringReducer(fielded, {
+      type: 'TRAJECTORY',
+      angle: 45,
+      generation: 0
+    })
+    expect(sentDragged(untouched)).equals(undefined)
+    expect(inPlayHit(untouched)).not.have.property('launchAngle')
+    expect(inPlayHit(untouched)).includes({ trajectory: 'fly_ball' })
+    // Dragged there, even to the same 45°: the scorer's own.
+    for (const angle of [45, 12]) {
+      const dragged = scoringReducer(fielded, {
+        type: 'TRAJECTORY',
+        angle,
+        generation: 0,
+        dragged: true
+      })
+      expect(sentDragged(dragged)).equals(true)
+      expect(inPlayHit(dragged)).includes({ launchAngle: angle })
+    }
+    // A home run's landing sets 45° too, and that is no drag either.
+    const landed = scoringReducer(
+      scoringReducer(initial(), { type: 'OUTCOME', outcome: 'Home Run' }),
+      { type: 'LANDING', point: { x: 0, z: -129 }, generation: 0 }
+    )
+    expect(startingAngle(landed)).equals(45)
+    const homeRun = scoringReducer(landed, {
+      type: 'TRAJECTORY',
+      angle: 45,
+      generation: 0,
+      dragged: false
+    })
+    expect(inPlayHit(homeRun)).not.have.property('launchAngle')
+    // Before any play the control would start at 45° as well.
+    expect(startingAngle(initial())).equals(45)
   })
 })

@@ -23,6 +23,7 @@ import {
 } from '../gumbo/reference'
 import type { GumboPlay } from '../gumboPlay'
 import { type ScoringAction, TRAJECTORIES } from './actions'
+import { applyAction } from './apply'
 import {
   currentDocumentOf,
   documentOf,
@@ -1436,14 +1437,15 @@ describe('hit data (U17)', function () {
     expect(feedHits.length).greaterThan(0)
     const ours = hitDataOf(
       batted({
-        trajectory: 'ground_ball',
+        launchAngle: -5,
+        launchAngleDragged: true,
         location: { x: -12, z: -30 },
         fielder: F.SS
       })
     )!
     // What a scorer cannot know: the speed off the bat, how far the ball went
-    // and how hard it was hit, and the measured launch angle.
-    const unknown = ['hardness', 'launchAngle', 'launchSpeed', 'totalDistance']
+    // and how hard it was hit. The launch angle is his, set on the field.
+    const unknown = ['hardness', 'launchSpeed', 'totalDistance']
     const typeOf = (value: unknown): string =>
       value == null || typeof value !== 'object'
         ? typeof value
@@ -1484,9 +1486,15 @@ describe('hit data (U17)', function () {
         expect(detailOf(play)).includes({ trajectory, contactKind: contact })
         expect(detailOf(play).launchAngle).a('number')
       }
-    // The screen gives an angle, not a trajectory: the band it falls in.
-    const dragged = batted({ launchAngle: -40, location: { x: 3, z: -20 } })
+    // The screen gives an angle, not a trajectory: the band it falls in, and
+    // the angle itself, which the scorer set.
+    const dragged = batted({
+      launchAngle: -40,
+      launchAngleDragged: true,
+      location: { x: 3, z: -20 }
+    })
     expect(hitDataOf(dragged)).deep.equals({
+      launchAngle: -40,
       trajectory: 'ground_ball',
       coordinates: sprayCoordinates({ x: 3, z: -20 })
     })
@@ -1519,16 +1527,21 @@ describe('hit data (U17)', function () {
     expect(sprayCoordinates({ x: 0, z: -38.795 }).coordY).closeTo(151, 0.1)
     // A home run over the fence in straightaway centre, stored.
     const homeRun = batted(
-      { launchAngle: 30, location: { x: 0, z: -118 } },
+      {
+        launchAngle: 30,
+        launchAngleDragged: true,
+        location: { x: 0, z: -118 }
+      },
       'home_run'
     )
     expect(hitDataOf(homeRun)).deep.equals({
+      launchAngle: 30,
       trajectory: 'line_drive',
       coordinates: { coordX: 125, coordY: 42.69 }
     })
   })
 
-  it('writes no coordinates when only a fielder was picked, and never a launch angle', function () {
+  it('writes no coordinates when only a fielder was picked, and a launch angle only when the scorer set it', function () {
     const fielded = batted({ fielder: F.SS }, 'field_out')
     expect(hitDataOf(fielded)).deep.equals({ location: '6' })
     expect(detailOf(fielded)).not.have.property('trajectory')
@@ -1538,15 +1551,138 @@ describe('hit data (U17)', function () {
     const plays = [
       fielded,
       batted({ trajectory: 'popup', fielder: F.C }, 'field_out'),
-      batted({ launchAngle: 22, location: { x: 30, z: -70 }, fielder: F.RF }),
+      batted({
+        launchAngle: 22,
+        launchAngleDragged: true,
+        location: { x: 30, z: -70 },
+        fielder: F.RF
+      }),
       batted({ contact: 'bunt', trajectory: 'chopper', fielder: F.P })
     ]
-    for (const play of plays) {
-      expect(keysOf(play)).not.include('launchAngle')
+    for (const [i, play] of plays.entries()) {
+      // Only the dragged angle is the scorer's; a trajectory's is estimated.
+      if (i === 2) expect(keysOf(play)).include('launchAngle')
+      else expect(keysOf(play)).not.include('launchAngle')
       expect(keysOf(play)).not.include('launchSpeed')
       expect(detailOf(play)).not.have.property('launchSpeed')
     }
-    expect(detailOf(plays[2]).launchAngle).equals(22)
+    expect(detailOf(plays[2])).includes({
+      launchAngle: 22,
+      launchAngleSet: true
+    })
+    expect(detailOf(plays[1])).not.have.property('launchAngleSet')
+    // A fractional drag is kept to a tenth of a degree.
+    expect(
+      hitDataOf(
+        batted({ launchAngle: 22.46, launchAngleDragged: true, fielder: F.RF })
+      )?.launchAngle
+    ).equals(22.5)
+  })
+
+  it('writes the trajectory band each dragged angle falls in, at its edges', function () {
+    const swing: Array<[number, string, string]> = [
+      [90, 'popup', 'popup'],
+      [48, 'popup', 'popup'],
+      [47, 'fly_ball', 'fly_ball'],
+      [47.4, 'fly_ball', 'fly_ball'],
+      [35, 'fly_ball', 'fly_ball'],
+      [34, 'line_drive', 'line_drive'],
+      [10, 'line_drive', 'line_drive'],
+      [9, 'ground_ball', 'ground_ball'],
+      [-25, 'ground_ball', 'ground_ball'],
+      // A chopper is the record's; MLB's list calls it a ground ball.
+      [-26, 'chopper', 'ground_ball'],
+      [-90, 'chopper', 'ground_ball']
+    ]
+    for (const [launchAngle, band, written] of swing) {
+      const play = batted({
+        launchAngle,
+        launchAngleDragged: true,
+        fielder: F.CF
+      })
+      expect(hitDataOf(play), String(launchAngle)).deep.include({
+        launchAngle,
+        trajectory: written
+      })
+      expect(detailOf(play), String(launchAngle)).includes({ trajectory: band })
+    }
+    // A bunt has MLB's bunt list: grounders, line drives and pop-ups.
+    const bunts: Array<[number, string]> = [
+      [60, 'bunt_popup'],
+      [48, 'bunt_popup'],
+      [35, 'bunt_popup'],
+      [34, 'bunt_line_drive'],
+      [10, 'bunt_line_drive'],
+      [9, 'bunt_grounder'],
+      [-26, 'bunt_grounder']
+    ]
+    for (const [launchAngle, written] of bunts)
+      expect(
+        hitDataOf(
+          batted({
+            contact: 'bunt',
+            launchAngle,
+            launchAngleDragged: true,
+            fielder: F.P
+          })
+        ),
+        String(launchAngle)
+      ).deep.include({ launchAngle, trajectory: written })
+  })
+
+  it('writes no launch angle the scorer gave without dragging it', function () {
+    // Dictation, or the screen's untouched default: an angle, but not dragged.
+    for (const launchAngleDragged of [undefined, false]) {
+      const play = batted({
+        launchAngle: 45,
+        ...(launchAngleDragged == null ? {} : { launchAngleDragged }),
+        location: { x: 30, z: -70 },
+        fielder: F.RF
+      })
+      expect(keysOf(play)).not.include('launchAngle')
+      expect(detailOf(play)).includes({ launchAngle: 45 })
+      expect(detailOf(play)).not.have.property('launchAngleSet')
+    }
+    // A drag flag with no angle to go with it writes none either.
+    const flagOnly = batted({ launchAngleDragged: true, fielder: F.RF })
+    expect(keysOf(flagOnly)).not.include('launchAngle')
+    expect(detailOf(flagOnly)).not.have.property('launchAngleSet')
+  })
+
+  it('drops a launch angle outside -90 to 90 degrees, and keeps the ball in play', function () {
+    for (const launchAngle of [120, -90.5, Number.NaN, Infinity]) {
+      const play = batted({
+        launchAngle,
+        launchAngleDragged: true,
+        location: { x: 30, z: -70 },
+        fielder: F.RF
+      })
+      expect(keysOf(play), String(launchAngle)).not.include('launchAngle')
+      expect(keysOf(play), String(launchAngle)).not.include('trajectory')
+      expect(detailOf(play)).not.have.property('launchAngle')
+      expect(detailOf(play)).not.have.property('launchAngleSet')
+      expect(detailOf(play)).not.have.property('trajectory')
+      expect(hitDataOf(play)).deep.include({ location: '9' })
+    }
+    // A trajectory given beside it still says how the ball went.
+    const popped = batted({
+      launchAngle: 120,
+      launchAngleDragged: true,
+      trajectory: 'popup',
+      fielder: F.C
+    })
+    expect(keysOf(popped)).not.include('launchAngle')
+    expect(detailOf(popped)).includes({ trajectory: 'popup', launchAngle: 60 })
+    expect(detailOf(popped)).not.have.property('launchAngleSet')
+    for (const launchAngle of [-90, 90])
+      expect(
+        applyAction(game(), {
+          type: 'ballInPlay',
+          contact: 'swing',
+          launchAngle,
+          launchAngleDragged: true
+        }).problems
+      ).deep.equals([])
   })
 })
 

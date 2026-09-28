@@ -25,6 +25,12 @@ export function arcTarget(point: GroundPoint): GroundPoint {
 export function dragLaunchAngle(start: number, pixelsUp: number): number {
   return Math.max(-45, Math.min(MAX_LAUNCH_ANGLE, start + pixelsUp * 0.5))
 }
+/**
+ * Pixels a pointer may travel and still be a tap: a finger rarely lifts
+ * where it landed. On the trajectory grip only vertical travel counts, since
+ * only that turns the angle.
+ */
+export const TAP_SLOP_PX = 3
 export function firstBounceFraction(angle: number): number {
   return 0.5 - Math.max(0, Math.min(1, -angle / 45)) * 0.44
 }

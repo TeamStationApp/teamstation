@@ -9,6 +9,7 @@ import type { FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { ScoringScreen } from './ScoringScreen'
+import { DevelopmentScoringSource } from './scoringSource'
 
 type Props = Parameters<typeof BaseballScreen>[0]
 type FieldProps = NonNullable<Props['field']>
@@ -111,7 +112,7 @@ function placement(entityId: string): FieldPlacement {
 let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
-async function mount(): Promise<void> {
+async function mount(source?: DevelopmentScoringSource): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new GameStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
@@ -128,6 +129,7 @@ async function mount(): Promise<void> {
           gameId="g1"
           userId={21}
           onExit={() => undefined}
+          source={source}
         />
       </ThemeProvider>
     )
@@ -236,6 +238,62 @@ describe('scoring screen field wiring', function () {
         props().onUndo?.()
       })
     expect(props().accessibilitySummary).includes('0 outs')
+  })
+
+  it("sends the launch angle as the scorer's only when he moved it", async function () {
+    const source = new DevelopmentScoringSource()
+    await mount(source)
+    const outcome = props().ballInPlayControl as React.ReactElement<{
+      onChoose: (outcome: string, contact?: string) => void
+    }>
+    const shortstop = players().find(
+      player => player.playerId === 10 && player.team !== 'offense'
+    )
+    /** The launch angle on the stored ball in play, if it has one. */
+    const storedAngle = async (): Promise<unknown> => {
+      await settle()
+      const stored = source.store.games.get(String(gameFixture.id))
+      const play = stored?.currentPlay ?? stored?.plays.at(-1)
+      const events = (play?.playEvents ?? []) as Array<{
+        details: { isInPlay?: boolean }
+        hitData?: { launchAngle?: number }
+      }>
+      const hit = events.find(event => event.details.isInPlay === true)
+      expect(hit, 'the ball in play is stored').not.equals(undefined)
+      return hit?.hitData?.launchAngle
+    }
+    const generation = (): number => field().interaction?.generation ?? 0
+    const accept = async (
+      angle: number,
+      dragged?: boolean
+    ): Promise<unknown> => {
+      await step(() => {
+        outcome.props.onChoose('Single')
+      })
+      await step(() =>
+        field().onFieldPlacement?.({
+          ...placement(shortstop?.id ?? ''),
+          generation: generation()
+        })
+      )
+      await step(() =>
+        field().onTrajectoryAccepted?.(angle, generation(), dragged)
+      )
+      const stored = await storedAngle()
+      for (let undo = 0; undo < 8; undo++)
+        await step(() => {
+          props().onUndo?.()
+        })
+      return stored
+    }
+    // A tap on the untouched 45°, and the keyboard's Enter on it: no angle.
+    expect(await accept(45, false)).equals(undefined)
+    expect(await accept(45)).equals(undefined)
+    // A drag that turned it, even back to 45°, and the keyboard's arrows
+    // moving it off 45° then Enter or a tap: the scorer's own.
+    expect(await accept(45, true)).equals(45)
+    expect(await accept(30)).equals(30)
+    expect(await accept(30, false)).equals(30)
   })
 
   it('offers the more menu and a runner draft that can be cancelled', async function () {

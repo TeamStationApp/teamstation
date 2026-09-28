@@ -1,7 +1,4 @@
-import {
-  completesHitOffer,
-  undoesHitOffer
-} from '../../common/scoring/rules'
+import { completesHitOffer, undoesHitOffer } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import {
   acceptTrajectory,
@@ -405,7 +402,12 @@ export function scoringReducer(
       event.landingHeight
     )
   if (event.type === 'TRAJECTORY')
-    return acceptTrajectory(state, event.angle, event.generation)
+    return acceptTrajectory(
+      state,
+      event.angle,
+      event.generation,
+      event.dragged === true
+    )
   if (event.type === 'ROSTER' || event.type === 'OVERRIDE') {
     if (
       state.moreDraft != null ||
