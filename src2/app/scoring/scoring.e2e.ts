@@ -1974,7 +1974,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('runs a real ten-second correction window, pauses it for Settings and closes once', async function () {
+  it('runs a real seven-second correction window, pauses it for Settings and closes once', async function () {
     this.timeout(90000)
     const { page, unexpected } = await open('/games/g1/score')
     try {
@@ -1988,7 +1988,7 @@ describe('scoring browser', function () {
         '[aria-label="Time to edit play"]',
         node => node.getAttribute('aria-valuenow')
       )
-      expect(Number(seconds)).within(1, 10)
+      expect(Number(seconds)).within(1, 7)
       await new Promise(resolve => setTimeout(resolve, 10500))
       expect(
         await page.$eval('[aria-label="Time to edit play"]', node =>
@@ -2641,7 +2641,7 @@ describe('scoring browser', function () {
       await page.touchscreen.touchEnd()
       expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
       await page.waitForSelector(
-        '[aria-label="Time to edit play"][aria-valuenow="10"]',
+        '[aria-label="Time to edit play"][aria-valuenow="7"]',
         { timeout: 30000 }
       )
       expect(await page.$('[aria-label="Steal"]')).equals(null)
