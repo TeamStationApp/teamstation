@@ -1139,19 +1139,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <AnglePickerModal
       videos={game.videos}
       chosen={angles}
+      audioId={audioId ?? null}
       onClose={() => {
         setPicking(false)
       }}
-      onWatch={ids => {
+      onWatch={(ids, audio) => {
         setPicking(false)
         onAngles?.({
           angles: ids,
-          // Nothing, on purpose: which tile is heard is worked out by the
-          // grid from where the viewer is, and freezing an answer into the
-          // address here is how it stopped being able to change. A tile the
-          // viewer picks from the bar is written down; a tile the app chose
-          // for them is not.
-          audio: null,
+          // Chosen here and only here: the view itself has no way to change
+          // it, so a tap meant for the pictures cannot move the sound.
+          audio,
           zoom: null
         })
       }}
