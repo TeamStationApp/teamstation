@@ -16,6 +16,11 @@ import { asCurrentPlay, asGumboPlay } from './gumboPlay'
 import type { PlayerSettings } from './playerSettings'
 import { asRole, type Role, type RoleFlag } from './roles'
 import {
+  cleanAction,
+  type Problem,
+  type ScoringAction
+} from './scoring/actions'
+import {
   asDefaultLineup,
   asSideLineups,
   type DefaultLineup,
@@ -1715,4 +1720,189 @@ function errorFrom(status: number, text: string): HttpError {
   }
   if (api != null) return new HttpError(api.code, api.message, api.details)
   return new HttpError('internal', `The server answered ${status}`)
+}
+
+/*
+ * Dictation's wire. One socket at `/api/v1/dictation` carries PCM and these
+ * control frames up, and the reply frames down. Every frame names its `kind`,
+ * and every frame about an utterance carries that utterance's `id`, so a reply
+ * is never matched to the wrong sentence. Both ends clean with these.
+ */
+
+/** The two LLMs dictation can put an utterance to. */
+export const DICTATION_MODELS = ['grok-4.7', 'grok-4.3'] as const
+export type DictationModel = (typeof DICTATION_MODELS)[number]
+
+/** An LLM may offer at most this many answers to a question. */
+export const MAX_ASK_OPTIONS = 5
+
+const asNonEmpty: Cleaner<string> = raw => {
+  const text = asString(raw)
+  if (text.trim() === '') throw new TypeError('Expected a non-empty string')
+  return text
+}
+/** Whatever a scope acts on. Each scope cleans its own target. */
+const asTarget: Cleaner<Record<string, unknown>> = raw => {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw))
+    throw new TypeError('Expected a target object')
+  return raw as Record<string, unknown>
+}
+/** An action, checked by the scoring library's own cleaner. */
+export const asWireAction: Cleaner<ScoringAction> = raw => {
+  const cleaned = cleanAction(raw)
+  if ('problem' in cleaned) throw new TypeError(cleaned.problem.message)
+  return cleaned.action
+}
+const asProblem: Cleaner<Problem> = asObject({
+  code: asValue(
+    'unknownAction',
+    'malformed',
+    'notNow',
+    'illegal',
+    'unknownPlayer',
+    'gameOver'
+  ),
+  message: asString
+})
+
+/** Opens an utterance. The context is the game as it stands right now. */
+const asStartBody = asObject({
+  id: asNonEmpty,
+  scope: asNonEmpty,
+  target: asTarget,
+  context: asNonEmpty,
+  model: asValue(...DICTATION_MODELS)
+})
+export type DictationStart = { kind: 'start' } & ReturnType<typeof asStartBody>
+export const asDictationStart: Cleaner<DictationStart> = raw => {
+  if ((raw as { kind?: unknown } | null)?.kind !== 'start')
+    throw new TypeError('Expected a start frame')
+  return { kind: 'start', ...asStartBody(raw) }
+}
+
+/** Retargets the recogniser. Sent ahead of the utterances that will use it. */
+export interface DictationKeyterms {
+  kind: 'keyterms'
+  keyterms: string[]
+}
+export const asDictationKeyterms: Cleaner<DictationKeyterms> = raw => {
+  if ((raw as { kind?: unknown } | null)?.kind !== 'keyterms')
+    throw new TypeError('Expected a keyterms frame')
+  return { kind: 'keyterms', ...asObject({ keyterms: asArray(asString) })(raw) }
+}
+
+/** Ends the audio of an utterance. */
+export interface DictationRelease {
+  kind: 'release'
+  id: string
+}
+export const asDictationRelease: Cleaner<DictationRelease> = raw => {
+  if ((raw as { kind?: unknown } | null)?.kind !== 'release')
+    throw new TypeError('Expected a release frame')
+  return { kind: 'release', ...asObject({ id: asNonEmpty })(raw) }
+}
+
+/** The scorer's reply to an `ask`: an option chosen, or the question dismissed. */
+export const asDictationAnswer: Cleaner<
+  | { kind: 'answer'; id: string; option: number }
+  | { kind: 'dismiss'; id: string }
+> = raw => {
+  const kind = (raw as { kind?: unknown } | null)?.kind
+  if (kind === 'dismiss')
+    return { kind: 'dismiss', ...asObject({ id: asNonEmpty })(raw) }
+  if (kind !== 'answer') throw new TypeError('Expected an answer or dismiss')
+  const answer = asObject({ id: asNonEmpty, option: asNumber })(raw)
+  if (!Number.isInteger(answer.option) || answer.option < 0)
+    throw new TypeError('Expected an option index')
+  return { kind: 'answer', ...answer }
+}
+export type DictationAnswer = ReturnType<typeof asDictationAnswer>
+
+/** Any control frame the browser sends up. */
+export type DictationUp =
+  DictationStart | DictationKeyterms | DictationRelease | DictationAnswer
+export const asDictationUp: Cleaner<DictationUp> = raw => {
+  switch ((raw as { kind?: unknown } | null)?.kind) {
+    case 'start':
+      return asDictationStart(raw)
+    case 'keyterms':
+      return asDictationKeyterms(raw)
+    case 'release':
+      return asDictationRelease(raw)
+    case 'answer':
+    case 'dismiss':
+      return asDictationAnswer(raw)
+    default:
+      throw new TypeError('Unknown dictation frame')
+  }
+}
+
+const asAskOption: Cleaner<{
+  label: string
+  actions?: ScoringAction[]
+}> = raw => {
+  const { label, actions } = asObject({
+    label: asNonEmpty,
+    actions: asOptional(asArray(asWireAction))
+  })(raw)
+  return actions == null ? { label } : { label, actions }
+}
+/** Truncated rather than refused: a model has returned 14 for a limit of 5. */
+const asAskOptions: Cleaner<Array<ReturnType<typeof asAskOption>>> = raw => {
+  const options = asArray(asAskOption)(raw).slice(0, MAX_ASK_OPTIONS)
+  if (options.length === 0) throw new TypeError('A question needs an option')
+  return options
+}
+
+/** Every frame the route sends down. */
+export type DictationReply =
+  | { kind: 'partial'; id: string; text: string }
+  | { kind: 'transcript'; id: string; text: string }
+  | {
+      kind: 'actions'
+      id: string
+      transcript: string
+      actions: ScoringAction[]
+      dropped: Problem[]
+    }
+  | {
+      kind: 'ask'
+      id: string
+      question: string
+      options: Array<{ label: string; actions?: ScoringAction[] }>
+    }
+  | { kind: 'error'; id: string | null; message: string }
+export const asDictationReply: Cleaner<DictationReply> = raw => {
+  const kind = (raw as { kind?: unknown } | null)?.kind
+  switch (kind) {
+    case 'partial':
+    case 'transcript':
+      return { kind, ...asObject({ id: asNonEmpty, text: asString })(raw) }
+    case 'actions':
+      return {
+        kind,
+        ...asObject({
+          id: asNonEmpty,
+          transcript: asString,
+          actions: asArray(asWireAction),
+          dropped: asOptional(asArray(asProblem), () => [])
+        })(raw)
+      }
+    case 'ask':
+      return {
+        kind,
+        ...asObject({
+          id: asNonEmpty,
+          question: asNonEmpty,
+          options: asAskOptions
+        })(raw)
+      }
+    case 'error':
+      return {
+        kind,
+        ...asObject({ id: asNullable(asString), message: asString })(raw)
+      }
+    default:
+      throw new TypeError('Unknown dictation reply')
+  }
 }
