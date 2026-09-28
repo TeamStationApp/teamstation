@@ -347,9 +347,9 @@ describe('the reference validator (U22)', function () {
       `playEvent playEvents[${at + 4}].details`
     ])
 
-    // Hit data names a listed trajectory, fielders, a spray-chart point and
-    // a launch angle in degrees, and GameStation writes no measurement it
-    // only estimated.
+    // Hit data names a listed trajectory, fielders, a spray-chart point, a
+    // launch angle in degrees and a distance in feet, and GameStation writes
+    // no measurement it only estimated.
     const hit = copy(single) as Record<string, unknown>
     const inPlay = (hit.playEvents as Array<Record<string, unknown>>).find(
       event => event.hitData != null
@@ -359,17 +359,28 @@ describe('the reference validator (U22)', function () {
       location: '80',
       coordinates: { coordX: '1' },
       launchAngle: 120,
-      launchSpeed: 90
+      totalDistance: 0,
+      launchSpeed: 90,
+      hardness: 'hard'
     }
     expect(named(hit)).deep.equals([
       'hitData playEvents[0].hitData.launchAngle',
+      'hitData playEvents[0].hitData.totalDistance',
       'trajectory playEvents[0].hitData.trajectory',
       'location playEvents[0].hitData.location',
       'hitData playEvents[0].hitData.coordinates',
-      'hitData playEvents[0].hitData.launchSpeed'
+      'hitData playEvents[0].hitData.launchSpeed',
+      'hitData playEvents[0].hitData.hardness'
     ])
-    inPlay.hitData = { location: '8', launchAngle: 22.5 }
+    inPlay.hitData = { location: '8', launchAngle: 22.5, totalDistance: 183 }
     expect(named(hit)).deep.equals([])
+    for (const totalDistance of [-4, '183', Number.NaN])
+      expect(
+        named({
+          ...hit,
+          playEvents: [{ ...inPlay, hitData: { totalDistance } }]
+        })
+      ).deep.equals(['hitData playEvents[0].hitData.totalDistance'])
     inPlay.hitData = 'far'
     expect(named(hit)).deep.equals(['hitData playEvents[0].hitData'])
     // Another service's measured ball is its own.

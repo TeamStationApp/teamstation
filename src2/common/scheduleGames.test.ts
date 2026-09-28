@@ -28,7 +28,8 @@ describe('schedule rows', function () {
         seasonId: 'sea_1',
         venue: 'Lakeside',
         status: 'cancelled',
-        externalId: { system: 'acme', id: 'abc', kind: 'teamEvent' }
+        externalId: { system: 'acme', id: 'abc', kind: 'teamEvent' },
+        fenceDistanceFt: 210
       })
     ).deep.equals({
       opponent: { name: 'AC Hustle 10U' },
@@ -37,7 +38,8 @@ describe('schedule rows', function () {
       seasonId: 'sea_1',
       venue: 'Lakeside',
       status: 'cancelled',
-      externalId: { system: 'acme', id: 'abc', kind: 'teamEvent' }
+      externalId: { system: 'acme', id: 'abc', kind: 'teamEvent' },
+      fenceDistanceFt: 210
     })
     expect(
       asScheduleGameRow({ startAt: '2026-10-04T10:00:00-07:00' })
@@ -107,6 +109,10 @@ describe('schedule rows', function () {
         { startAt: START, externalId: { system: 'o', id: 'i'.repeat(201) } },
         'externalId.id'
       ],
+      [{ startAt: START, fenceDistanceFt: 0 }, 'fenceDistanceFt'],
+      [{ startAt: START, fenceDistanceFt: 601 }, 'fenceDistanceFt'],
+      [{ startAt: START, fenceDistanceFt: 200.5 }, 'fenceDistanceFt'],
+      [{ startAt: START, fenceDistanceFt: null }, 'fenceDistanceFt'],
       ['nope', 'game']
     ]
     for (const [raw, field] of cases) {

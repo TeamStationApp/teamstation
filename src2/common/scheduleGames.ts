@@ -7,6 +7,8 @@
  * answer, and the rest still apply.
  */
 
+import { isFenceDistance, MAX_FENCE_DISTANCE_FT } from './fenceDistance'
+
 /** At most this many rows per call. */
 export const SCHEDULE_GAMES_MAX = 200
 
@@ -32,6 +34,11 @@ export interface ScheduleGameRow {
   /** Undefined means `scheduled` on create and "keep" on update. */
   status?: ScheduleStatus
   externalId?: ScheduleExternalId
+  /**
+   * Feet to this game's fence, whole, 1 to 600. Undefined leaves it to the
+   * season or league on create, and keeps a held game's.
+   */
+  fenceDistanceFt?: number
 }
 
 export type ScheduleErrorCode =
@@ -166,6 +173,14 @@ export function asScheduleGameRow(raw: unknown): ScheduleGameRow {
   }
   if (raw.externalId !== undefined) {
     row.externalId = asExternalId(raw.externalId)
+  }
+  if (raw.fenceDistanceFt !== undefined) {
+    if (!isFenceDistance(raw.fenceDistanceFt)) {
+      fail(
+        `fenceDistanceFt must be whole feet from 1 to ${MAX_FENCE_DISTANCE_FT}`
+      )
+    }
+    row.fenceDistanceFt = raw.fenceDistanceFt
   }
   return row
 }

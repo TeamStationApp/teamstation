@@ -2,6 +2,7 @@ import { HttpError } from '../errors'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { Problem, ScoringAction } from './actions'
 import { type Applied, applyAction } from './apply'
+import { fenceOf } from './document'
 import {
   FINAL_INDEX,
   foldFinal,
@@ -47,6 +48,12 @@ export interface SaveChange {
   plays: GumboPlay[]
   remove: number[]
   currentPlay?: CurrentPlay | null
+  /**
+   * The fence, in feet, the plays were sized by: the game's
+   * `gameData.venue.fieldInfo.center`, or the default for a game saved
+   * without one. The game's first plays fix it there.
+   */
+  fenceDistanceFt?: number
 }
 /** Where a session reads and writes its game. It does no I/O of its own. */
 export interface EventStore {
@@ -58,6 +65,11 @@ export interface SessionContext {
   teams: Record<Side, GameTeam>
   /** The lineups to start from when nothing has been scored yet. */
   setup: GameSetup
+  /**
+   * Feet from home plate to the fence, which sizes where the scorer puts the
+   * ball. `DEFAULT_FENCE_DISTANCE_FT` when not given.
+   */
+  fenceDistanceFt?: number
 }
 export interface SessionOptions {
   now?: () => Date
@@ -524,7 +536,8 @@ export class ScoringSession {
       remove,
       ...(current === this.postedCurrent
         ? {}
-        : { currentPlay: picture.current })
+        : { currentPlay: picture.current }),
+      fenceDistanceFt: fenceOf(this.game)
     }
   }
 

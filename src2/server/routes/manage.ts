@@ -3,6 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { asUserId } from '../../common/userIdNumber'
 import { adminScopes } from '../access'
 import { findUserByEmail } from '../auth/emails'
@@ -25,6 +26,7 @@ import {
   removeFromScope,
   scopeTree
 } from '../invites/people'
+import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -279,6 +281,51 @@ export function manageRoutes(
     })
   )
 
+  /**
+   * How far the fence stands on this league's or season's fields, or `null`
+   * to leave it to the level above. A game of its own may still say
+   * otherwise. A team plays on whatever field its games are at, so it has no
+   * fence of its own.
+   */
+  router.put(
+    '/manage/:scopeType/:scopeId/field',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const scopeType = asScopeType(req.params.scopeType)
+      const scopeId = pathParam(req.params.scopeId)
+      if (scopeType === 'team') {
+        throw badRequest('A team has no field of its own: set its games')
+      }
+      await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
+      const body = cleanBody(asFenceDistanceBody, req.body)
+
+      const table = scopeType === 'league' ? 'leagues' : 'seasons'
+      const before = await db
+        .selectFrom(table)
+        .select(['fence_distance_ft'])
+        .where('id', '=', scopeId)
+        .executeTakeFirstOrThrow()
+      await db
+        .updateTable(table)
+        .set({
+          fence_distance_ft: body.fenceDistanceFt,
+          updated_at: new Date()
+        })
+        .where('id', '=', scopeId)
+        .execute()
+
+      setAudit(res.locals, {
+        entityType: scopeType,
+        entityId: scopeId,
+        before: { fenceDistanceFt: before.fence_distance_ft },
+        after: { fenceDistanceFt: body.fenceDistanceFt }
+      })
+      res.json({ scopeType, scopeId, fenceDistanceFt: body.fenceDistanceFt })
+    })
+  )
+
   return router
 }
 
@@ -313,15 +360,5 @@ function userIdParam(value: string | string[] | undefined): number {
     return asUserId(pathParam(value))
   } catch {
     throw notFound()
-  }
-}
-
-function cleanBody<T>(cleaner: (raw: unknown) => T, raw: unknown): T {
-  try {
-    return cleaner(raw)
-  } catch (error) {
-    throw badRequest(
-      error instanceof Error ? error.message : 'Malformed request body'
-    )
   }
 }

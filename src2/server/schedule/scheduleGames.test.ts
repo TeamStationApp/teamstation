@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import type { Kysely, Selectable } from 'kysely'
+import { type Kysely, type Selectable, sql } from 'kysely'
 import { after, before, beforeEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -352,6 +352,135 @@ describe('scheduling a team’s games', function () {
     expect(kinds.map(row => row.kind)).deep.equals(['event', 'teamEvent'])
   })
 
+  it('sets a game’s fence on create, changes it on a held game, and keeps it otherwise', async function () {
+    const externalId = { system: 'otherLeague', id: 'ol-fence' }
+    const startAt = nextStart()
+    const created = await post([
+      {
+        opponent: { name: 'Fencers' },
+        side: 'home',
+        startAt,
+        externalId,
+        fenceDistanceFt: 185
+      },
+      { opponent: { name: 'Fencers' }, side: 'away', startAt: nextStart() }
+    ])
+    const gameId = idOf(created.results[0])
+    expect((await game(gameId)).fence_distance_ft).equals(185)
+    // A row that does not give one leaves it to the season.
+    expect((await game(idOf(created.results[1]))).fence_distance_ft).equals(
+      null
+    )
+
+    const same = await post([{ startAt, externalId, fenceDistanceFt: 185 }])
+    expect(same.results[0].result).equals('unchanged')
+    const resized = await post([{ startAt, externalId, fenceDistanceFt: 210 }])
+    expect(resized.results[0]).deep.include({
+      result: 'updated',
+      status: 'scheduled'
+    })
+    expect((await game(gameId)).fence_distance_ft).equals(210)
+    expect((await post([{ startAt, externalId }])).results[0].result).equals(
+      'unchanged'
+    )
+    expect((await game(gameId)).fence_distance_ft).equals(210)
+
+    // A cancelled game is still a scheduled one's field.
+    await post([{ startAt, externalId, status: 'cancelled' }])
+    const cancelled = await post([
+      { startAt, externalId, fenceDistanceFt: 195 }
+    ])
+    expect(cancelled.results[0]).deep.include({
+      result: 'updated',
+      status: 'cancelled'
+    })
+    expect((await game(gameId)).fence_distance_ft).equals(195)
+
+    // Plays posted to it fix its field, cancelled or not.
+    const play = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'stolen_base', awayScore: null, homeScore: null }
+    }
+    const { away_team_id: battingTeamId } = await game(gameId)
+    await sql`insert into events (id, "gameId", "battingTeamId", gumbo)
+      values (${makeId('event')}, ${gameId}, ${battingTeamId}, ${JSON.stringify(play)}::jsonb)`.execute(
+      db!
+    )
+    const played = await post([{ startAt, externalId, fenceDistanceFt: 205 }])
+    expect(played.results[0].result).equals('unchanged')
+    expect((await game(gameId)).fence_distance_ft).equals(195)
+
+    // Once it is being played, or has been, the field is what it was.
+    for (const status of ['inProgress', 'final'] as const) {
+      await db!
+        .updateTable('games')
+        .set({ status })
+        .where('id', '=', gameId)
+        .execute()
+      const answer = await post([{ startAt, externalId, fenceDistanceFt: 300 }])
+      expect(answer.results[0].result, status).equals('unchanged')
+      expect((await game(gameId)).fence_distance_ft, status).equals(195)
+    }
+
+    const refused = await post([
+      { startAt: nextStart(), externalId, fenceDistanceFt: 601 }
+    ])
+    expect(refused.results[0]).deep.include({ result: 'error' })
+  })
+
+  it('keeps the fence a first post fixed while a row waited on it', async function () {
+    const play = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'stolen_base', awayScore: null, homeScore: null }
+    }
+    // A post puts a scheduled game under way; a cancelled one stays so.
+    for (const [status, after] of [
+      ['scheduled', 'inProgress'],
+      ['cancelled', 'cancelled']
+    ] as const) {
+      const externalId = { system: 'otherLeague', id: `ol-race-${status}` }
+      const startAt = nextStart()
+      const created = await post([
+        {
+          opponent: { name: 'Racers' },
+          side: 'home',
+          startAt,
+          externalId,
+          status,
+          fenceDistanceFt: 230
+        }
+      ])
+      const gameId = idOf(created.results[0])
+      let answer: ReturnType<typeof post> | undefined
+      await db!.transaction().execute(async trx => {
+        await trx
+          .selectFrom('games')
+          .select('id')
+          .where('id', '=', gameId)
+          .forUpdate()
+          .execute()
+        const { away_team_id: battingTeamId } = await game(gameId)
+        await sql`insert into events (id, "gameId", "battingTeamId", gumbo)
+          values (${makeId('event')}, ${gameId}, ${battingTeamId}, ${JSON.stringify(play)}::jsonb)`.execute(
+          trx
+        )
+        await trx
+          .updateTable('games')
+          .set({ status: after })
+          .where('id', '=', gameId)
+          .execute()
+        answer = post([{ startAt, externalId, fenceDistanceFt: 500 }])
+        await new Promise(resolve => setTimeout(resolve, 200))
+      })
+      const { results } = await answer!
+      expect(results[0], status).deep.include({
+        result: 'unchanged',
+        status: after
+      })
+      expect((await game(gameId)).fence_distance_ft, status).equals(230)
+    }
+  })
+
   it('leaves a game in progress or final as it is', async function () {
     for (const status of ['inProgress', 'final'] as const) {
       const externalId = { system: 'otherLeague', id: `ol-${status}` }
@@ -506,9 +635,9 @@ describe('scheduling a team’s games', function () {
       lateSummer
     )
     // Wall-clock day of the offset, not UTC — evening on summer's last day.
-    expect(
-      await seasonOf({ startAt: '2026-09-13T19:00:00-07:00' })
-    ).equals(summer)
+    expect(await seasonOf({ startAt: '2026-09-13T19:00:00-07:00' })).equals(
+      summer
+    )
     // Outside every range: the latest-starting season of 2026.
     expect(await seasonOf({ startAt: '2026-09-19T17:00:00Z' })).equals(fall)
     expect(

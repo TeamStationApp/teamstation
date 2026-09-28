@@ -8,6 +8,7 @@ import {
   type Cleaner
 } from 'cleaners'
 
+import { isFenceDistance } from './fenceDistance'
 import {
   type GumboEventType,
   isGumboEventType,
@@ -234,7 +235,15 @@ const asPostEventsShape = asObject({
   remove: asOptional(asArray(asCount)),
   /** On a live post: the at-bat in progress, or null when there is none. */
   currentPlay: (raw: unknown): CurrentPlay | null | undefined =>
-    raw === undefined ? undefined : raw === null ? null : asCurrentPlay(raw)
+    raw === undefined ? undefined : raw === null ? null : asCurrentPlay(raw),
+  /**
+   * The fence, in feet, the plays' distances were sized by: the game's
+   * `gameData.venue.fieldInfo.center`, which the plays do not carry. The
+   * game's first plays fix its fence at this one. Anything but whole feet
+   * from 1 to 600 is left out, and the game's own fence is fixed instead.
+   */
+  fenceDistanceFt: (raw: unknown): number | undefined =>
+    isFenceDistance(raw) ? raw : undefined
 })
 
 export type PostEventsBody = ReturnType<typeof asPostEventsShape>

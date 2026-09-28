@@ -9,6 +9,7 @@ import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForHighlight } from '../events/credits'
 import { whyEmpty } from '../events/whyEmpty'
+import { resolvedFenceDistance } from '../games/fenceDistance'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -268,6 +269,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       const game = await db
         .selectFrom('games')
         .selectAll()
+        .select(resolvedFenceDistance.as('resolved_fence_distance_ft'))
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) throw notFound()
@@ -374,6 +376,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         awayLogoUrl: logoOf(game.away_team_id),
         homeLogoUrl: logoOf(game.home_team_id),
         linescore: game.linescore,
+        fenceDistanceFt: Number(game.resolved_fence_distance_ft),
         videos: videos.map(video => ({
           id: video.id,
           numCameras: video.num_cameras,

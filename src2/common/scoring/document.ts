@@ -1,4 +1,5 @@
 import { type DescribedCredit, describePlay } from '../describePlay'
+import { DEFAULT_FENCE_DISTANCE_FT } from '../fenceDistance'
 import { GAME_POSITIONS, mlbEventName } from '../gumbo/reference'
 import { eventTypeName } from '../gumboEventTypes'
 import {
@@ -471,31 +472,61 @@ const HIT_TRAJECTORIES: Record<string, { swing: string; bunt: string }> = {
  * growing toward right field and y toward the plate. The reference feed's
  * fly balls put 2.4 feet in each grid unit: its `totalDistance` over the grid
  * distance from home is 2.39 to 2.43 for 14 of the 19, and 2.41 at the
- * median. The park model's fence is `PARK.outfieldRadius`, 118 m or 387 feet
- * from home, so it lands on the grid's arc 161.3 units out: straightaway
- * centre at (125, 42.7), the foul poles at (10.9, 89.9) and (239.1, 89.9).
- * The field's own units are metres, with centre field negative z, so one
- * metre is 1.367 grid units.
+ * median.
+ *
+ * The field model's fence is a circle `PARK.outfieldRadius` units from home,
+ * with centre field negative z. The model is drawn one size, and the game
+ * says how big it stands for: its fence distance in feet, so one model unit
+ * is that over the radius. A 200-foot fence lands on the grid's arc 83.3
+ * units out — straightaway centre at (125, 120.7), the foul poles at 45°
+ * either side — and any fence F at F / 2.4.
  */
 export const SPRAY_HOME = { coordX: 125, coordY: 204 } as const
-const FEET_PER_SPRAY_UNIT = 2.4
-export const SPRAY_WALL = PARK.outfieldRadius / 0.3048 / FEET_PER_SPRAY_UNIT
-const SPRAY_PER_METRE = SPRAY_WALL / PARK.outfieldRadius
+export const FEET_PER_SPRAY_UNIT = 2.4
+
+/** Feet in one unit of the field model, for a fence this far out. */
+export function feetPerUnit(
+  fenceDistanceFt: number = DEFAULT_FENCE_DISTANCE_FT
+): number {
+  return fenceDistanceFt / PARK.outfieldRadius
+}
 
 /** Where a point on the field sits on MLB's spray chart. */
-export function sprayCoordinates(point: Point): {
+export function sprayCoordinates(
+  point: Point,
+  fenceDistanceFt: number = DEFAULT_FENCE_DISTANCE_FT
+): {
   coordX: number
   coordY: number
 } {
+  const perUnit = feetPerUnit(fenceDistanceFt) / FEET_PER_SPRAY_UNIT
   const round = (value: number): number => Math.round(value * 100) / 100
   return {
-    coordX: round(SPRAY_HOME.coordX + point.x * SPRAY_PER_METRE),
-    coordY: round(SPRAY_HOME.coordY + point.z * SPRAY_PER_METRE)
+    coordX: round(SPRAY_HOME.coordX + point.x * perUnit),
+    coordY: round(SPRAY_HOME.coordY + point.z * perUnit)
   }
+}
+
+/** How far from home plate a point on the field is, in whole feet. */
+export function distanceFeet(
+  point: Point,
+  fenceDistanceFt: number = DEFAULT_FENCE_DISTANCE_FT
+): number {
+  return Math.round(Math.hypot(point.x, point.z) * feetPerUnit(fenceDistanceFt))
+}
+
+/**
+ * The fence a game is played to, which sizes its plays' distances: its
+ * centre-field distance, or the default for a game saved before fences had
+ * sizes.
+ */
+export function fenceOf(state: GameState): number {
+  return state.gameData.venue?.fieldInfo.center ?? DEFAULT_FENCE_DISTANCE_FT
 }
 
 interface HitData {
   launchAngle?: number
+  totalDistance?: number
   trajectory?: string
   location?: string
   coordinates?: { coordX: number; coordY: number }
@@ -504,11 +535,13 @@ interface HitData {
 /**
  * The ball in play as MLB writes it on the in-play pitch: the launch angle,
  * the trajectory, the fielder's position code as `location`, and where the
- * scorer put the ball. Each is written only when the scorer gave it. The launch
- * angle is written when the scorer set it on the field; one estimated from a
- * trajectory alone stays in the record with the scorer's own trajectory.
+ * scorer put the ball, with how far that is from home plate on a field whose
+ * fence stands `fenceDistanceFt` away. Each is written only when the scorer
+ * gave it. The launch angle is written when the scorer set it on the field;
+ * one estimated from a trajectory alone stays in the record with the
+ * scorer's own trajectory.
  */
-function hitDataOf(play: GamePlay): HitData | null {
+function hitDataOf(play: GamePlay, fenceDistanceFt: number): HitData | null {
   const hit = play.hitData
   if (hit == null) return null
   const detail = play.source.gamestation
@@ -518,11 +551,17 @@ function hitDataOf(play: GamePlay): HitData | null {
   const trajectory = picked == null ? undefined : HIT_TRAJECTORIES[picked]
   const location =
     hit.position == null ? undefined : GAME_POSITIONS.get(hit.position)?.code
+  const distance =
+    hit.coordinates == null
+      ? undefined
+      : distanceFeet(hit.coordinates, fenceDistanceFt)
   return withoutUndefined({
     launchAngle:
       detail.launchAngleSet === true && hit.launchAngle != null
         ? Math.round(hit.launchAngle * 10) / 10
         : undefined,
+    // A ball put down on the plate itself went nowhere a distance can say.
+    totalDistance: distance === 0 ? undefined : distance,
     trajectory:
       trajectory == null
         ? undefined
@@ -531,7 +570,9 @@ function hitDataOf(play: GamePlay): HitData | null {
           : trajectory.swing,
     location,
     coordinates:
-      hit.coordinates == null ? undefined : sprayCoordinates(hit.coordinates)
+      hit.coordinates == null
+        ? undefined
+        : sprayCoordinates(hit.coordinates, fenceDistanceFt)
   })
 }
 
@@ -1268,7 +1309,13 @@ function playEventsOf(
     const score = scores[event.index]
     written.push(
       event.isPitch
-        ? pitchDocument(event, ++pitchNumber, made, who, hitDataOf(play))
+        ? pitchDocument(
+            event,
+            ++pitchNumber,
+            made,
+            who,
+            hitDataOf(play, fenceOf(state))
+          )
         : event.isSubstitution === true
           ? substitutionDocument(event, who, score)
           : actionDocument(state, setup, play, event, made, score)
