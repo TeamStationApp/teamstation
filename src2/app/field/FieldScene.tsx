@@ -9,7 +9,6 @@ import {
   Plane,
   type Ray,
   Raycaster,
-  Sprite,
   Vector3
 } from 'three'
 
@@ -41,6 +40,11 @@ import {
 } from './movePreview'
 import { PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
+import {
+  hasPlayerLabel,
+  nameplateContains,
+  projectPlayerLabel
+} from './playerPresentation'
 import { PlayerShadows } from './PlayerShadows'
 import { relativeLandingPointer } from './relativeLanding'
 import { scoreboardBounds } from './scoreboardBounds'
@@ -73,6 +77,17 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const boundsKey = useRef('')
   const baseKey = useRef('')
   useFrame(() => {
+    const report = callbacks.current.onNameplates
+    if (report != null && camera instanceof PerspectiveCamera)
+      report(
+        callbacks.current.players
+          .filter(
+            player => player.suppressed !== true && hasPlayerLabel(player)
+          )
+          .map(player =>
+            projectPlayerLabel(player, camera, size.width, size.height)
+          )
+      )
     if (callbacks.current.onBaseProjection != null) {
       const value = {
         width: size.width,
@@ -341,8 +356,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       .filter((object): object is Object3D => object != null)
     scene.updateMatrixWorld(true)
     const hits = picker.intersectObjects(roots, true)
-    const hit = hits.find(item => item.object instanceof Sprite) ?? hits[0]
-    let object: Object3D | undefined = hit?.object
+    let object: Object3D | undefined = hits[0]?.object
     while (
       object != null &&
       !eligible.some(player => object?.name === `player-${player.id}`)
@@ -351,6 +365,20 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     let nearest: FieldPlayer | undefined = eligible.find(
       player => object?.name === `player-${player.id}`
     )
+    if (nearest == null && camera instanceof PerspectiveCamera) {
+      const pointerX = (event.pointer.x * 0.5 + 0.5) * size.width
+      const pointerY = (0.5 - event.pointer.y * 0.5) * size.height
+      nearest = eligible.find(player =>
+        nameplateContains(
+          player,
+          camera,
+          size.width,
+          size.height,
+          pointerX,
+          pointerY
+        )
+      )
+    }
     // Also retain a small touch allowance when tapping beside a narrow limb.
     if (nearest == null) {
       let best = 20

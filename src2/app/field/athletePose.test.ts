@@ -19,7 +19,6 @@ import { BALL_CONTACT } from './ballArcModel'
 import { createStartingPlayers } from './batterModel'
 import { samplePitch } from './playAnimationModel'
 import { Player } from './Player'
-import { makePlayerLabel } from './playerLabels'
 import { PLAYER_SCALE } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
@@ -195,12 +194,6 @@ describe('articulated athlete motion', function () {
   it('renders a possession ball in the right hand and four white foot rings', async function () {
     const player = createStartingPlayers()[0]
     player.hasBall = true
-    const texture = makePlayerLabel('⚾ Pitcher', true)
-    const rgba = Array.from(texture.image.data as Uint8Array)
-    expect(
-      rgba.some((v, i) => i % 4 === 0 && v === 196 && rgba[i + 1] === 48)
-    ).equals(true)
-    texture.dispose()
     const renderer = await create(
       React.createElement(Player, { player, selected: false })
     )

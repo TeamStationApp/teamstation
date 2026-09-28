@@ -32,13 +32,13 @@ const roster = [
   })
 ]
 describe('scoring renderer identities', function () {
-  it('renders a mirrored left-handed batter with a name and string jersey and omits missing jersey meshes', async function () {
+  it('renders a mirrored left-handed batter with a string jersey and no field name', async function () {
     const session = createDevelopmentSession(gameFixture, roster, [])
     const player = fieldPlayersFor(session).find(
       player => player.batting === true
     )
     if (player == null) throw new Error('Missing batter')
-    expect(hasPlayerLabel(player)).equals(true)
+    expect(hasPlayerLabel(player)).equals(false)
     expect(player.position.x).equals(4)
     const rendered = await create(
       React.createElement(Player, { player, selected: true })
@@ -49,7 +49,7 @@ describe('scoring renderer identities', function () {
       ).has.length(2)
       expect(
         rendered.scene.findAllByProps({ name: `player-label-${player.id}` })
-      ).has.length(1)
+      ).has.length(0)
       player.jersey = ''
       await rendered.update(
         React.createElement(Player, { player, selected: false })
@@ -147,7 +147,7 @@ describe('scoring field policy', function () {
       )
       expect(
         renderer.scene.findAllByProps({ name: `player-label-${player.id}` })
-      ).has.length(1)
+      ).has.length(0)
     } finally {
       await renderer.unmount()
     }

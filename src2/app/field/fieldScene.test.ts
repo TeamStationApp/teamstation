@@ -2,13 +2,14 @@ import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import React from 'react'
-import { type Camera, Ray, Sprite, Vector2, Vector3 } from 'three'
+import { type Camera, PerspectiveCamera, Ray, Vector2, Vector3 } from 'three'
 
 import type { BallArcState } from './ballArcModel'
 import { fieldingLocation } from './fieldingLocation'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
 import type { FieldPlacement } from './fieldTypes'
+import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 describe('rendered field interaction', function () {
@@ -108,27 +109,24 @@ describe('rendered field interaction', function () {
         setPointerCapture: () => undefined,
         releasePointerCapture: () => undefined
       }
+      if (!(camera instanceof PerspectiveCamera))
+        throw new Error('Expected a perspective camera')
       for (const id of ['1B', '3B', 'C', 'SS']) {
-        const sprite = renderer.scene.findByProps({
-          name: `player-label-${id}`
-        }).instance
-        if (!(sprite instanceof Sprite)) throw new Error('Missing label')
-        const center = sprite.getWorldPosition(new Vector3())
-        center.add(
-          new Vector3(
-            (0.5 - sprite.center.x) * sprite.scale.x,
-            (0.5 - sprite.center.y) * sprite.scale.y,
-            0
-          ).applyQuaternion(camera.quaternion)
-        )
-        const ndc = center.clone().project(camera)
+        const player = players.find(item => item.id === id)
+        if (player == null) throw new Error(`Missing ${id}`)
+        const plate = projectPlayerLabel(player, camera, 900, 650)
+        const box = nameplateSize(plate)
+        const cx = plate.x + (0.5 - plate.anchorX) * box.width
+        const cy = plate.y + (0.5 - plate.anchorY) * box.height
+        const ndc = new Vector3((cx / 900) * 2 - 1, -((cy / 650) * 2 - 1), 0.5)
+        const world = ndc.clone().unproject(camera)
         const event = {
           button: 0,
           pointerId: 8,
           pointer: new Vector2(ndc.x, ndc.y),
           ray: new Ray(
             camera.position.clone(),
-            center.sub(camera.position).normalize()
+            world.sub(camera.position).normalize()
           ),
           target
         }
