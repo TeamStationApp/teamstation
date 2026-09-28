@@ -12,6 +12,7 @@ import {
   CONTACTS,
   destinationBase,
   DESTINATIONS,
+  dictatedAction,
   ERROR_KINDS,
   GAME_FLOW_KINDS,
   HOME_RUN_KINDS,
@@ -121,6 +122,7 @@ const examples: ScoringAction[] = [
     contact: 'bunt',
     trajectory: 'ground_ball',
     launchAngle: -10,
+    launchAngleDragged: true,
     location: { x: 1, z: -20 },
     fielder: 11,
     landingHeight: 0,
@@ -220,6 +222,36 @@ describe('scoring actions', function () {
     )
   })
 
+  it('takes a dictated action from its tool call, never as a dragged angle', function () {
+    expect(
+      dictatedAction('ballInPlay', {
+        contact: 'swing',
+        launchAngle: 30,
+        launchAngleDragged: true,
+        fielder: 18
+      })
+    ).deep.equals({
+      action: {
+        type: 'ballInPlay',
+        contact: 'swing',
+        launchAngle: 30,
+        fielder: 18
+      }
+    })
+    // The tool's name is the type, whatever the input says.
+    expect(
+      dictatedAction('pitch', { type: 'ballInPlay', call: 'B' })
+    ).deep.equals({ action: { type: 'pitch', call: 'B' } })
+    expect(dictatedAction('result', 'single')).to.have.nested.property(
+      'problem.code',
+      'malformed'
+    )
+    expect(dictatedAction('swing', {})).to.have.nested.property(
+      'problem.code',
+      'unknownAction'
+    )
+  })
+
   it('offers exactly one tool per action, with every enum from its list', function () {
     const tools = toolSchema()
     expect(tools.map(tool => tool.name)).deep.equals([...ACTION_TYPES])
@@ -231,6 +263,9 @@ describe('scoring actions', function () {
     expect(props('ballInPlay').contact.enum).deep.equals(CONTACTS)
     expect(props('ballInPlay').trajectory.enum).deep.equals(TRAJECTORIES)
     expect(props('ballInPlay').homeRunKind.enum).deep.equals(HOME_RUN_KINDS)
+    // A dictated angle is an estimate: only the screen says the scorer dragged.
+    expect(props('ballInPlay')).have.property('launchAngle')
+    expect(props('ballInPlay')).not.have.property('launchAngleDragged')
     expect(props('result').eventType.enum).deep.equals(RESULT_TYPES)
     expect(props('result').outBy.enum).deep.equals(OUT_KINDS)
     expect(props('result').base.enum).deep.equals(BASES)

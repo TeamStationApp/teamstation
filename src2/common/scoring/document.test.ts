@@ -12,6 +12,7 @@ import {
   single,
   strike,
   strikeout,
+  TEAMS,
   walk
 } from '../../test/scoringGames'
 import {
@@ -23,13 +24,16 @@ import {
 } from '../gumbo/reference'
 import type { GumboPlay } from '../gumboPlay'
 import { type ScoringAction, TRAJECTORIES } from './actions'
+import { applyAction } from './apply'
 import {
   currentDocumentOf,
+  distanceFeet,
   documentOf,
+  FEET_PER_SPRAY_UNIT,
+  feetPerUnit,
   finalDocumentOf,
   PlayFolder,
   SPRAY_HOME,
-  SPRAY_WALL,
   sprayCoordinates,
   storedEventType
 } from './document'
@@ -1342,11 +1346,19 @@ describe('hit data (U17)', function () {
     ballInPlay: Omit<BallInPlay, 'type' | 'contact'> & {
       contact?: BallInPlay['contact']
     },
-    eventType: 'single' | 'field_out' | 'home_run' = 'single'
+    eventType: 'single' | 'field_out' | 'home_run' = 'single',
+    fenceDistanceFt?: number
   ): GumboPlay =>
     stored(
       after(
-        game(),
+        fenceDistanceFt == null
+          ? game()
+          : freshGame(
+              'g1',
+              TEAMS,
+              newSetup(TEAMS, { away: [], home: [] }),
+              fenceDistanceFt
+            ),
         ball,
         { type: 'ballInPlay', contact: 'swing', ...ballInPlay },
         {
@@ -1385,7 +1397,9 @@ describe('hit data (U17)', function () {
     >
     expect(pitch).not.have.property('hitData')
     expect(inPlay.details.isInPlay).equals(true)
+    // 60.8 units out on a 200-foot field, where the fence is 118 units.
     expect(inPlay.hitData).deep.equals({
+      totalDistance: 103,
       trajectory: 'line_drive',
       location: '8',
       coordinates: sprayCoordinates({ x: 10, z: -60 })
@@ -1436,14 +1450,16 @@ describe('hit data (U17)', function () {
     expect(feedHits.length).greaterThan(0)
     const ours = hitDataOf(
       batted({
-        trajectory: 'ground_ball',
+        launchAngle: -5,
+        launchAngleDragged: true,
         location: { x: -12, z: -30 },
         fielder: F.SS
       })
     )!
-    // What a scorer cannot know: the speed off the bat, how far the ball went
-    // and how hard it was hit, and the measured launch angle.
-    const unknown = ['hardness', 'launchAngle', 'launchSpeed', 'totalDistance']
+    // What a scorer cannot know: the speed off the bat and how hard it was
+    // hit. The launch angle is his, set on the field, and how far the ball
+    // went is where he put it on a field of the game's size.
+    const unknown = ['hardness', 'launchSpeed']
     const typeOf = (value: unknown): string =>
       value == null || typeof value !== 'object'
         ? typeof value
@@ -1484,9 +1500,16 @@ describe('hit data (U17)', function () {
         expect(detailOf(play)).includes({ trajectory, contactKind: contact })
         expect(detailOf(play).launchAngle).a('number')
       }
-    // The screen gives an angle, not a trajectory: the band it falls in.
-    const dragged = batted({ launchAngle: -40, location: { x: 3, z: -20 } })
+    // The screen gives an angle, not a trajectory: the band it falls in, and
+    // the angle itself, which the scorer set.
+    const dragged = batted({
+      launchAngle: -40,
+      launchAngleDragged: true,
+      location: { x: 3, z: -20 }
+    })
     expect(hitDataOf(dragged)).deep.equals({
+      launchAngle: -40,
+      totalDistance: 34,
       trajectory: 'ground_ball',
       coordinates: sprayCoordinates({ x: 3, z: -20 })
     })
@@ -1499,38 +1522,104 @@ describe('hit data (U17)', function () {
   it('puts home plate and the fence at their places on the spray chart', function () {
     expect(sprayCoordinates({ x: 0, z: 0 })).deep.equals(SPRAY_HOME)
     expect(SPRAY_HOME).deep.equals({ coordX: 125, coordY: 204 })
-    // The fence, 118 m out, is 387 feet: 161.3 units at 2.4 feet a unit.
     expect(PARK.outfieldRadius).equals(118)
-    expect(SPRAY_WALL).closeTo(161.31, 0.01)
+    expect(FEET_PER_SPRAY_UNIT).equals(2.4)
+    const pole = 118 * Math.SQRT1_2
+    // A fence F feet out sits F / 2.4 units from home, the poles at 45°.
+    for (const [fence, wall] of [
+      [200, 83.33],
+      [387, 161.25],
+      [150, 62.5]
+    ]) {
+      expect(feetPerUnit(fence) * PARK.outfieldRadius).closeTo(fence, 1e-9)
+      const round = (value: number): number => Math.round(value * 100) / 100
+      const at45 = (fence * Math.SQRT1_2) / FEET_PER_SPRAY_UNIT
+      expect(sprayCoordinates({ x: 0, z: -118 }, fence)).deep.equals({
+        coordX: 125,
+        coordY: round(204 - wall)
+      })
+      expect(sprayCoordinates({ x: pole, z: -pole }, fence)).deep.equals({
+        coordX: round(125 + at45),
+        coordY: round(204 - at45)
+      })
+      expect(sprayCoordinates({ x: -pole, z: -pole }, fence)).deep.equals({
+        coordX: round(125 - at45),
+        coordY: round(204 - at45)
+      })
+      expect(distanceFeet({ x: 0, z: -118 }, fence)).equals(fence)
+      expect(distanceFeet({ x: pole, z: -pole }, fence)).equals(fence)
+    }
+    // Without a fence, the 200-foot default: centre at (125, 120.67), the
+    // poles at (66.07, 145.07) and (183.93, 145.07).
     expect(sprayCoordinates({ x: 0, z: -118 })).deep.equals({
       coordX: 125,
-      coordY: 42.69
+      coordY: 120.67
     })
-    const pole = 118 * Math.SQRT1_2
     expect(sprayCoordinates({ x: pole, z: -pole })).deep.equals({
-      coordX: 239.06,
-      coordY: 89.94
+      coordX: 183.93,
+      coordY: 145.07
     })
     expect(sprayCoordinates({ x: -pole, z: -pole })).deep.equals({
-      coordX: 10.94,
-      coordY: 89.94
+      coordX: 66.07,
+      coordY: 145.07
     })
-    // Second base, 127.28 feet from home, is 53 units up the middle.
-    expect(sprayCoordinates({ x: 0, z: -38.795 }).coordY).closeTo(151, 0.1)
-    // A home run over the fence in straightaway centre, stored.
+    expect(distanceFeet({ x: 0, z: -59 })).equals(100)
+    // A home run over the fence in straightaway centre, stored, went as far
+    // as the fence.
     const homeRun = batted(
-      { launchAngle: 30, location: { x: 0, z: -118 } },
+      {
+        launchAngle: 30,
+        launchAngleDragged: true,
+        location: { x: 0, z: -118 }
+      },
       'home_run'
     )
     expect(hitDataOf(homeRun)).deep.equals({
+      launchAngle: 30,
+      totalDistance: 200,
       trajectory: 'line_drive',
-      coordinates: { coordX: 125, coordY: 42.69 }
+      coordinates: { coordX: 125, coordY: 120.67 }
+    })
+    // The same ball on a game played to a 250-foot fence.
+    const overridden = batted(
+      {
+        launchAngle: 30,
+        launchAngleDragged: true,
+        location: { x: 0, z: -118 }
+      },
+      'home_run',
+      250
+    )
+    expect(hitDataOf(overridden)).deep.equals({
+      launchAngle: 30,
+      totalDistance: 250,
+      trajectory: 'line_drive',
+      coordinates: { coordX: 125, coordY: 99.83 }
+    })
+    // Halfway to the fence down the right-field line, on that field.
+    const halfway = batted(
+      { location: { x: pole / 2, z: -pole / 2 }, fielder: F.RF },
+      'single',
+      250
+    )
+    expect(hitDataOf(halfway)).deep.include({
+      totalDistance: 125,
+      coordinates: sprayCoordinates({ x: pole / 2, z: -pole / 2 }, 250)
+    })
+    // A ball put down on the plate itself has no distance to write.
+    expect(
+      hitDataOf(batted({ location: { x: 0, z: -0.2 }, fielder: F.C }))
+    ).deep.equals({
+      location: '2',
+      coordinates: sprayCoordinates({ x: 0, z: -0.2 })
     })
   })
 
-  it('writes no coordinates when only a fielder was picked, and never a launch angle', function () {
+  it('writes no coordinates when only a fielder was picked, and a launch angle only when the scorer set it', function () {
     const fielded = batted({ fielder: F.SS }, 'field_out')
+    // Nowhere placed, so no distance either.
     expect(hitDataOf(fielded)).deep.equals({ location: '6' })
+    expect(keysOf(fielded)).not.include('totalDistance')
     expect(detailOf(fielded)).not.have.property('trajectory')
     expect(detailOf(fielded)).not.have.property('launchAngle')
     // No ball in play said anything: no hit data at all.
@@ -1538,15 +1627,138 @@ describe('hit data (U17)', function () {
     const plays = [
       fielded,
       batted({ trajectory: 'popup', fielder: F.C }, 'field_out'),
-      batted({ launchAngle: 22, location: { x: 30, z: -70 }, fielder: F.RF }),
+      batted({
+        launchAngle: 22,
+        launchAngleDragged: true,
+        location: { x: 30, z: -70 },
+        fielder: F.RF
+      }),
       batted({ contact: 'bunt', trajectory: 'chopper', fielder: F.P })
     ]
-    for (const play of plays) {
-      expect(keysOf(play)).not.include('launchAngle')
+    for (const [i, play] of plays.entries()) {
+      // Only the dragged angle is the scorer's; a trajectory's is estimated.
+      if (i === 2) expect(keysOf(play)).include('launchAngle')
+      else expect(keysOf(play)).not.include('launchAngle')
       expect(keysOf(play)).not.include('launchSpeed')
       expect(detailOf(play)).not.have.property('launchSpeed')
     }
-    expect(detailOf(plays[2]).launchAngle).equals(22)
+    expect(detailOf(plays[2])).includes({
+      launchAngle: 22,
+      launchAngleSet: true
+    })
+    expect(detailOf(plays[1])).not.have.property('launchAngleSet')
+    // A fractional drag is kept to a tenth of a degree.
+    expect(
+      hitDataOf(
+        batted({ launchAngle: 22.46, launchAngleDragged: true, fielder: F.RF })
+      )?.launchAngle
+    ).equals(22.5)
+  })
+
+  it('writes the trajectory band each dragged angle falls in, at its edges', function () {
+    const swing: Array<[number, string, string]> = [
+      [90, 'popup', 'popup'],
+      [48, 'popup', 'popup'],
+      [47, 'fly_ball', 'fly_ball'],
+      [47.4, 'fly_ball', 'fly_ball'],
+      [35, 'fly_ball', 'fly_ball'],
+      [34, 'line_drive', 'line_drive'],
+      [10, 'line_drive', 'line_drive'],
+      [9, 'ground_ball', 'ground_ball'],
+      [-25, 'ground_ball', 'ground_ball'],
+      // A chopper is the record's; MLB's list calls it a ground ball.
+      [-26, 'chopper', 'ground_ball'],
+      [-90, 'chopper', 'ground_ball']
+    ]
+    for (const [launchAngle, band, written] of swing) {
+      const play = batted({
+        launchAngle,
+        launchAngleDragged: true,
+        fielder: F.CF
+      })
+      expect(hitDataOf(play), String(launchAngle)).deep.include({
+        launchAngle,
+        trajectory: written
+      })
+      expect(detailOf(play), String(launchAngle)).includes({ trajectory: band })
+    }
+    // A bunt has MLB's bunt list: grounders, line drives and pop-ups.
+    const bunts: Array<[number, string]> = [
+      [60, 'bunt_popup'],
+      [48, 'bunt_popup'],
+      [35, 'bunt_popup'],
+      [34, 'bunt_line_drive'],
+      [10, 'bunt_line_drive'],
+      [9, 'bunt_grounder'],
+      [-26, 'bunt_grounder']
+    ]
+    for (const [launchAngle, written] of bunts)
+      expect(
+        hitDataOf(
+          batted({
+            contact: 'bunt',
+            launchAngle,
+            launchAngleDragged: true,
+            fielder: F.P
+          })
+        ),
+        String(launchAngle)
+      ).deep.include({ launchAngle, trajectory: written })
+  })
+
+  it('writes no launch angle the scorer gave without dragging it', function () {
+    // Dictation, or the screen's untouched default: an angle, but not dragged.
+    for (const launchAngleDragged of [undefined, false]) {
+      const play = batted({
+        launchAngle: 45,
+        ...(launchAngleDragged == null ? {} : { launchAngleDragged }),
+        location: { x: 30, z: -70 },
+        fielder: F.RF
+      })
+      expect(keysOf(play)).not.include('launchAngle')
+      expect(detailOf(play)).includes({ launchAngle: 45 })
+      expect(detailOf(play)).not.have.property('launchAngleSet')
+    }
+    // A drag flag with no angle to go with it writes none either.
+    const flagOnly = batted({ launchAngleDragged: true, fielder: F.RF })
+    expect(keysOf(flagOnly)).not.include('launchAngle')
+    expect(detailOf(flagOnly)).not.have.property('launchAngleSet')
+  })
+
+  it('drops a launch angle outside -90 to 90 degrees, and keeps the ball in play', function () {
+    for (const launchAngle of [120, -90.5, Number.NaN, Infinity]) {
+      const play = batted({
+        launchAngle,
+        launchAngleDragged: true,
+        location: { x: 30, z: -70 },
+        fielder: F.RF
+      })
+      expect(keysOf(play), String(launchAngle)).not.include('launchAngle')
+      expect(keysOf(play), String(launchAngle)).not.include('trajectory')
+      expect(detailOf(play)).not.have.property('launchAngle')
+      expect(detailOf(play)).not.have.property('launchAngleSet')
+      expect(detailOf(play)).not.have.property('trajectory')
+      expect(hitDataOf(play)).deep.include({ location: '9' })
+    }
+    // A trajectory given beside it still says how the ball went.
+    const popped = batted({
+      launchAngle: 120,
+      launchAngleDragged: true,
+      trajectory: 'popup',
+      fielder: F.C
+    })
+    expect(keysOf(popped)).not.include('launchAngle')
+    expect(detailOf(popped)).includes({ trajectory: 'popup', launchAngle: 60 })
+    expect(detailOf(popped)).not.have.property('launchAngleSet')
+    for (const launchAngle of [-90, 90])
+      expect(
+        applyAction(game(), {
+          type: 'ballInPlay',
+          contact: 'swing',
+          launchAngle,
+          launchAngleDragged: true
+        }).problems
+      ).deep.equals([])
   })
 })
 

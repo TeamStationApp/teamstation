@@ -194,7 +194,16 @@ export type ScoringEvent =
       landingHeight?: number
       generation: number
     }
-  | { type: 'TRAJECTORY'; angle: number; generation: number }
+  | {
+      type: 'TRAJECTORY'
+      angle: number
+      generation: number
+      /**
+       * The scorer set this angle himself: a drag turned it, or he accepted
+       * it off where the control started.
+       */
+      dragged?: boolean
+    }
   | { type: 'ROSTER'; draft: ScoringSessionState; nextBatter?: number }
   | { type: 'OVERRIDE'; draft: OverrideDraft }
   | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }

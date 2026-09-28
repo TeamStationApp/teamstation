@@ -14,7 +14,7 @@ import {
   ScoringSession,
   type StoredGame
 } from './session'
-import { setupOf, type Side } from './state'
+import { asGameState, type GameState, setupOf, type Side } from './state'
 
 /** A server in memory that records every post and can be made to fail. */
 class FakeStore implements EventStore {
@@ -93,6 +93,75 @@ describe('a scoring session', function () {
     await session.flush()
     expect(store.posts).deep.equals([])
     expect(session.state.liveData.linescore.offense.batter!.id).equals(1)
+  })
+
+  it('plays the game to the fence its context gives, and stores distances on it', async function () {
+    const hit: ScoringAction[] = [
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        location: { x: 0, z: -118 },
+        fielder: F.CF
+      },
+      { type: 'result', eventType: 'double' },
+      { type: 'gameFlow', kind: 'closePlay' }
+    ]
+    const distanceOn = async (
+      fenceDistanceFt: number | undefined
+    ): Promise<unknown> => {
+      const store = new FakeStore()
+      const session = await ScoringSession.open(
+        store,
+        'g1',
+        { ...context, fenceDistanceFt },
+        new Clock().options
+      )
+      expect(session.state.gameData.venue?.fieldInfo).deep.equals({
+        leftLine: fenceDistanceFt ?? 200,
+        center: fenceDistanceFt ?? 200,
+        rightLine: fenceDistanceFt ?? 200
+      })
+      for (const action of hit)
+        expect(session.apply(action).problems).deep.equals([])
+      await session.flush()
+      // Each post says the fence its plays were sized by.
+      expect(store.posts).not.have.length(0)
+      for (const post of store.posts)
+        expect(post.fenceDistanceFt).equals(fenceDistanceFt ?? 200)
+      // Read back, the game keeps its fence.
+      const again = await ScoringSession.open(store, 'g1', {
+        ...context,
+        fenceDistanceFt
+      })
+      expect(again.state.gameData.venue?.fieldInfo.center).equals(
+        fenceDistanceFt ?? 200
+      )
+      const events = store.plays.get(0)!.play.playEvents as Array<{
+        hitData?: { totalDistance?: number }
+      }>
+      return events.find(event => event.hitData != null)?.hitData?.totalDistance
+    }
+    expect(await distanceOn(undefined)).equals(200)
+    expect(await distanceOn(310)).equals(310)
+  })
+
+  it('reads a game kept before fences had sizes', function () {
+    const older = game() as { gameData: { venue?: unknown } }
+    delete older.gameData.venue
+    expect(asGameState(older).gameData).not.have.property('venue')
+    expect(asGameState(game()).gameData.venue?.fieldInfo.center).equals(200)
+  })
+
+  it('posts the default fence for a game kept before fences had sizes', async function () {
+    const { session, store } = await open()
+    // As a game read back from a copy saved without one would be.
+    const kept = session as unknown as { game: GameState; base: GameState }
+    for (const state of [kept.game, kept.base]) delete state.gameData.venue
+    expect(session.apply(ball).problems).deep.equals([])
+    await session.flush()
+    expect(session.state.gameData).not.have.property('venue')
+    expect(store.posts).not.have.length(0)
+    for (const post of store.posts) expect(post.fenceDistanceFt).equals(200)
   })
 
   it('posts a lineup set before the first pitch as the current play', async function () {

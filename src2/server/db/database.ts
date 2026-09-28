@@ -76,6 +76,8 @@ export interface LeaguesTable {
    * by hand in the database; nothing writes it.
    */
   era_innings: number | null
+  /** Feet from home plate to the fence, for seasons that do not set their own. */
+  fence_distance_ft: number | null
   spectator_access: Generated<'team' | 'league'>
   created_at: Timestamp
   updated_at: Timestamp
@@ -101,6 +103,8 @@ export interface SeasonsTable {
    * that is unset too.
    */
   era_innings: number | null
+  /** Feet from home plate to the fence. Null takes the league's. */
+  fence_distance_ft: number | null
   spectator_access: Generated<'team' | 'season'>
   created_at: Timestamp
   updated_at: Timestamp
@@ -222,6 +226,8 @@ export interface GamesTable {
   ingest_message: string | null
   /** The at-bat GameStation is scoring now, as a Gumbo document. */
   currentPlay: Json | null
+  /** Feet from home plate to the fence. Null takes the season's. */
+  fence_distance_ft: number | null
   created_at: Timestamp
   updated_at: Timestamp
 }

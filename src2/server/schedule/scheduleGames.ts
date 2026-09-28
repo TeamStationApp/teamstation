@@ -12,6 +12,7 @@ import {
 } from '../../common/scheduleGames'
 import { adminScopes } from '../access'
 import type { Database } from '../db/database'
+import { gameHasPlays } from '../games/fenceDistance'
 import { resolveOpponent } from '../teams/resolveOpponent'
 
 /**
@@ -93,6 +94,7 @@ interface HeldGame {
   start_at: Date
   venue: string | null
   status: GameStatus
+  fence_distance_ft: number | null
 }
 
 type Db = Kysely<Database> | Transaction<Database>
@@ -221,7 +223,8 @@ async function applyRow(
         'games.season_id',
         'games.start_at',
         'games.venue',
-        'games.status'
+        'games.status',
+        'games.fence_distance_ft'
       ])
       .where('external_ids.entity_type', '=', 'game')
       .where('external_ids.system', '=', externalId.system)
@@ -262,7 +265,8 @@ async function applyRow(
         'season_id',
         'start_at',
         'venue',
-        'status'
+        'status',
+        'fence_distance_ft'
       ])
       .where('season_id', '=', season.id)
       .where('start_at', '=', startAt)
@@ -306,7 +310,8 @@ async function applyRow(
       season_id: season.id,
       start_at: startAt,
       venue: row.venue ?? null,
-      status
+      status,
+      fence_distance_ft: row.fenceDistanceFt ?? null
     })
     .execute()
   if (externalId != null) await recordExternalId(trx, gameId, externalId)
@@ -351,8 +356,9 @@ async function recordExternalId(
 }
 
 /**
- * Moves, cancels or restores a scheduled or cancelled game. Its teams, season
- * and scores are never touched, and a venue the row does not give is kept.
+ * Moves, cancels or restores a scheduled or cancelled game, or resizes its
+ * field while it has no plays. Its teams, season and scores are never
+ * touched, and a venue or fence the row does not give is kept.
  */
 async function updateHeld(
   trx: Transaction<Database>,
@@ -361,17 +367,42 @@ async function updateHeld(
   startAt: Date,
   alreadyWritten: boolean
 ): Promise<Applied> {
+  // A post may be storing the game's first plays: wait for it, read the game
+  // as it left it, then its plays in a statement of their own.
+  const locked = await trx
+    .selectFrom('games')
+    .select(['start_at', 'venue', 'status', 'fence_distance_ft'])
+    .where('id', '=', held.id)
+    .forUpdate()
+    .executeTakeFirstOrThrow()
+  const game = { ...held, ...locked }
+  if (game.status === 'inProgress' || game.status === 'final') {
+    return {
+      result: alreadyWritten ? 'updated' : 'unchanged',
+      gameId: held.id,
+      status: game.status
+    }
+  }
+  const played = await gameHasPlays(trx, held.id)
   const changes: {
     start_at?: Date
     venue?: string
     status?: 'scheduled' | 'cancelled'
+    fence_distance_ft?: number
   } = {}
-  if (new Date(held.start_at).getTime() !== startAt.getTime()) {
+  if (new Date(game.start_at).getTime() !== startAt.getTime()) {
     changes.start_at = startAt
   }
-  if (row.venue != null && row.venue !== held.venue) changes.venue = row.venue
-  if (row.status != null && row.status !== held.status) {
+  if (row.venue != null && row.venue !== game.venue) changes.venue = row.venue
+  if (row.status != null && row.status !== game.status) {
     changes.status = row.status
+  }
+  if (
+    row.fenceDistanceFt != null &&
+    row.fenceDistanceFt !== game.fence_distance_ft &&
+    !played
+  ) {
+    changes.fence_distance_ft = row.fenceDistanceFt
   }
   if (Object.keys(changes).length > 0) {
     await trx
@@ -384,7 +415,7 @@ async function updateHeld(
   return {
     result: written ? 'updated' : 'unchanged',
     gameId: held.id,
-    status: changes.status ?? held.status
+    status: changes.status ?? game.status
   }
 }
 

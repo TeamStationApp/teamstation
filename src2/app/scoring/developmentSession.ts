@@ -57,7 +57,8 @@ export function createDevelopmentSession(
   const state = freshGame(
     game.id,
     teamsOf(game),
-    startingSetup(game, away, home)
+    startingSetup(game, away, home),
+    game.fenceDistanceFt
   )
   state.meta.source = 'local-development'
   return state

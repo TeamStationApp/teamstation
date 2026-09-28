@@ -79,6 +79,18 @@ const scopeIdParam = {
   required: true,
   schema: { type: 'string' }
 }
+/** Feet to the fence a level sets, or null to leave it to the one above. */
+const fenceDistanceFt = {
+  type: ['integer', 'null'],
+  minimum: 1,
+  maximum: 600
+}
+const fenceDistanceBody = {
+  type: 'object',
+  required: ['fenceDistanceFt'],
+  properties: { fenceDistanceFt }
+}
+
 /** Anything with an id and a name, which is how the tree is drawn. */
 const namedThing = {
   type: 'object',
@@ -380,9 +392,26 @@ const gumboSchemas = {
         type: 'object',
         description:
           'On the pitch put in play only, and only what the scorer gave. ' +
-          'GameStation writes no launch angle, speed or distance: it only ' +
-          'estimates them, and keeps them in the `gameStation` record.',
+          '`launchAngle` is the angle the scorer dragged on the field. ' +
+          '`totalDistance` and `coordinates` are where the scorer put the ' +
+          "ball, sized by the game's fence distance (`fenceDistanceFt` on " +
+          '`GET /games/{gameId}`, 200 feet unless the game, its season or ' +
+          'its league says otherwise). GameStation writes no speed; a ' +
+          'dictated angle, the untouched default, or one estimated from a ' +
+          'trajectory alone stays in the `gameStation` record.',
         properties: {
+          launchAngle: {
+            type: 'number',
+            description: 'Degrees, -90 to 90, as the scorer dragged it.'
+          },
+          totalDistance: {
+            type: 'number',
+            exclusiveMinimum: 0,
+            description:
+              'Whole feet from home plate to where the scorer put the ball: ' +
+              "a ball on the fence went the game's fence distance. Only when " +
+              'the scorer placed the ball.'
+          },
           trajectory: { type: 'string', enum: sorted(HIT_TRAJECTORIES) },
           location: {
             type: 'string',
@@ -391,7 +420,9 @@ const gumboSchemas = {
           coordinates: {
             type: 'object',
             description:
-              "MLB's 250 by 250 spray chart, home plate at (125, 204).",
+              "MLB's 250 by 250 spray chart, home plate at (125, 204), 2.4 " +
+              "feet to a unit: the game's fence is its distance over 2.4 " +
+              'units from home, the foul poles at 45°.',
             properties: {
               coordX: { type: 'number' },
               coordY: { type: 'number' }
@@ -981,13 +1012,17 @@ export function openApiDocument(version: string): OpenApiDocument {
             "is used (the latest to start), else the team's season of that " +
             'year. `venue` (at most 200 characters) and `status` (`scheduled` ' +
             'or `cancelled`) are optional; omitted, a held game keeps its own. ' +
+            '`fenceDistanceFt` (whole feet, 1 to 600) is optional too: ' +
+            "omitted, a new game is played to its season's or league's " +
+            'fence and a held game keeps its own, as does one with plays. ' +
             '`externalId` is optional `{system, id, kind?}`, with `system` and ' +
             '`kind` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` defaulting ' +
             'to `event`.\n\n' +
             '**What a row does:** with an `externalId`, a game already holding ' +
             'that system and id (of any kind) is matched: an `inProgress` or ' +
             '`final` game is left as it is; a `scheduled` or `cancelled` one ' +
-            "takes the row's time, venue and status. Teams, season and " +
+            "takes the row's time, venue, status and fence distance, and " +
+            'is `updated` when any of them changed. Teams, season and ' +
             'scores never change. Without a match, a game in the same season ' +
             'between the same two teams at the same time takes the id. ' +
             'Otherwise the row creates a game. A row without `externalId` ' +
@@ -1047,6 +1082,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                           status: {
                             type: 'string',
                             enum: ['scheduled', 'cancelled']
+                          },
+                          fenceDistanceFt: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 600
                           },
                           externalId: {
                             type: 'object',
@@ -1152,11 +1192,77 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/games/{gameId}': {
         get: {
           summary: 'One game and its videos',
+          description:
+            '`fenceDistanceFt` is the fence the game is played to, in feet: ' +
+            "the game's own, else its season's, else that season's " +
+            "league's, else 200. A game with plays keeps the fence it had " +
+            'when they began.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
             200: { description: 'The game, its score and its videos' },
             404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/field': {
+        put: {
+          summary: "Set or clear one game's fence distance",
+          description:
+            'Whole feet, 1 to 600, from home plate to the fence, which ' +
+            "sizes the ball's `totalDistance` and `coordinates` on the " +
+            "game's plays. `null` clears the game's own, so its season's, " +
+            "its league's or 200 feet applies. The fence is fixed once the " +
+            'game has plays, whatever its status: the post that stores its ' +
+            "first keeps the fence they were sized by (the post's " +
+            '`fenceDistanceFt`, else the one the game resolves to then), ' +
+            'whatever its season or league later sets, and this answers 409 ' +
+            'while the game has plays. **Who may call:** ' +
+            'a site admin, an admin of either team (an `admin_roles` team ' +
+            "row, or its owner or manager), or an admin of the game's season " +
+            'or its league. Anybody else who can see the game gets 403; a ' +
+            'game the caller cannot see, or that does not exist, 404.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: fenceDistanceBody
+              }
+            }
+          },
+          responses: {
+            200: {
+              description:
+                'What the game holds now, and the fence it is played to',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: [
+                      'gameId',
+                      'fenceDistanceFt',
+                      'resolvedFenceDistanceFt'
+                    ],
+                    properties: {
+                      gameId: { type: 'string' },
+                      fenceDistanceFt,
+                      resolvedFenceDistanceFt: {
+                        type: 'integer',
+                        minimum: 1,
+                        maximum: 600
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
@@ -1179,7 +1285,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the game `final`, and a final game refuses every later post with ' +
             '409, so a game is posted once it is over. Otherwise a ' +
             '`scheduled` game with plays becomes `inProgress`, and any other ' +
-            'status, `cancelled` included, is kept. ' +
+            'status, `cancelled` included, is kept. A post that leaves the ' +
+            "The post that stores a game's first plays, whatever its status, " +
+            'fixes its fence at the `fenceDistanceFt` it gives, else the one ' +
+            'the game resolves to then, so a later season or league change ' +
+            'never resizes its plays. ' +
             'The stats builder counts batting and pitching lines from these ' +
             'plays. Every counted play needs `about.inning`, ' +
             '`about.halfInning`, `matchup.pitcher`, `count.outs` and ' +
@@ -1242,6 +1352,16 @@ export function openApiDocument(version: string): OpenApiDocument {
                       description:
                         'On a live post: the at-bat in progress, or null ' +
                         'when there is none. Left out, the stored one stays.'
+                    },
+                    fenceDistanceFt: {
+                      type: 'integer',
+                      description:
+                        "Feet to the fence the plays' distances were sized " +
+                        "by: the game's `gameData.venue.fieldInfo.center`, " +
+                        'which the plays do not carry. The post that stores ' +
+                        "a game's first plays fixes its fence at this one. " +
+                        'Anything but whole feet from 1 to 600 is ignored, ' +
+                        "and the game's resolved fence is fixed instead."
                     }
                   }
                 }
@@ -1986,6 +2106,51 @@ export function openApiDocument(version: string): OpenApiDocument {
                 }
               }
             },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}/field': {
+        put: {
+          summary: "Set or clear a league's or season's fence distance",
+          description:
+            'Whole feet, 1 to 600, from home plate to the fence on this ' +
+            "league's or season's fields. A game takes its own, else its " +
+            "season's, else its league's, else 200. `null` clears this " +
+            "level's. A team has no field of its own: `team` answers 400. " +
+            'Answers 404 to anybody who does not administer the scope.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: fenceDistanceBody
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'What the level holds now',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['scopeType', 'scopeId', 'fenceDistanceFt'],
+                    properties: {
+                      scopeType: {
+                        type: 'string',
+                        enum: ['league', 'season']
+                      },
+                      scopeId: { type: 'string' },
+                      fenceDistanceFt
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
             401: errorResponse,
             404: errorResponse
           }

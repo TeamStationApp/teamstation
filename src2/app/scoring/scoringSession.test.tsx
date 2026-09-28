@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asRosterEntry, GameStationClient } from '../../common/api'
+import {
+  asGameDetail,
+  asRosterEntry,
+  GameStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import {
   applyAction,
@@ -23,7 +27,8 @@ import { saveStatusText, ScoringScreen } from './ScoringScreen'
 import {
   DevelopmentScoringSource,
   memoryStore,
-  type ScoringSource
+  type ScoringSource,
+  ServerScoringSource
 } from './scoringSource'
 
 let root: Root | undefined
@@ -401,5 +406,37 @@ describe('saving from the scoring screen', function () {
     expect(document.body.textContent).includes('1 balls')
     await click('Ball')
     expect(document.body.textContent).includes('2 balls')
+  })
+
+  it('plays the game to the fence the server gives it, 200 feet when it gives none', async function () {
+    const fieldOf = (session: {
+      state: { gameData: { venue?: { fieldInfo: object } } }
+    }): object | undefined => session.state.gameData.venue?.fieldInfo
+    const sized = asGameDetail({ ...gameFixture, fenceDistanceFt: 250 })
+    const older = asGameDetail({ ...gameFixture, fenceDistanceFt: undefined })
+    expect(older.fenceDistanceFt).equals(200)
+
+    const development = new DevelopmentScoringSource()
+    expect(fieldOf(await development.open(sized, [], []))).deep.equals({
+      leftLine: 250,
+      center: 250,
+      rightLine: 250
+    })
+    expect(
+      createDevelopmentSession(sized, [], []).gameData.venue?.fieldInfo.center
+    ).equals(250)
+
+    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    client.gameEvents = async () => ({ plays: [], currentPlay: null })
+    const server = new ServerScoringSource(client)
+    expect(
+      fieldOf(await server.open({ ...sized, id: 'g2' }, [], [])),
+      'server'
+    ).deep.equals({ leftLine: 250, center: 250, rightLine: 250 })
+    expect(fieldOf(await server.open(older, [], []))).deep.equals({
+      leftLine: 200,
+      center: 200,
+      rightLine: 200
+    })
   })
 })

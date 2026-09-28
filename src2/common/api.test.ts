@@ -180,6 +180,13 @@ describe('api client', function () {
       currentPlay: null
     })
     expect(JSON.parse(calls[1].body!)).to.have.property('currentPlay', null)
+    // The fence the plays were sized by goes with them.
+    await client.saveGameEvents('gam_1', {
+      plays: [],
+      remove: [],
+      fenceDistanceFt: 225
+    })
+    expect(JSON.parse(calls[2].body!)).to.have.property('fenceDistanceFt', 225)
   })
 
   it('reads sacrifice bunts on a batting line, and none from an older server', async function () {

@@ -223,6 +223,13 @@ const actionCleaners = {
     contact: asOneOf(CONTACTS),
     trajectory: asOptional(asOneOf(TRAJECTORIES)),
     launchAngle: asOptional(asNumber),
+    /**
+     * The scorer set the launch angle himself on the field, so it is his own
+     * and the stored play gives it as the ball's `launchAngle`. Dictation
+     * cannot say it: `dictatedAction` drops it, and a spoken angle stays an
+     * estimate.
+     */
+    launchAngleDragged: asOptional(asBoolean),
     location: asOptional(asPoint),
     fielder: asOptional(asSessionId),
     landingHeight: asOptional(asNumber),
@@ -367,6 +374,27 @@ export function cleanAction(
       }
     }
   }
+}
+
+/**
+ * Checks the action a dictation model called for: a tool's name and its
+ * input, as `toolSchema()` offers them. Only the scoring screen says the
+ * scorer set a launch angle himself, so a dictated ball in play loses
+ * `launchAngleDragged`, whatever the model sent: its angle stays an estimate.
+ */
+export function dictatedAction(
+  name: string,
+  input: unknown
+): { action: ScoringAction } | { problem: Problem } {
+  const cleaned = cleanAction(
+    input != null && typeof input === 'object'
+      ? { ...input, type: name }
+      : { type: name }
+  )
+  if ('problem' in cleaned || cleaned.action.type !== 'ballInPlay')
+    return cleaned
+  const { launchAngleDragged, ...action } = cleaned.action
+  return { action }
 }
 
 export function destinationBase(to: Destination): number {

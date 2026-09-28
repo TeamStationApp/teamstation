@@ -8,6 +8,7 @@ import {
   withHalfOuts
 } from '../../common/scoring/linescore'
 import type { Database, EventsTable } from '../db/database'
+import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import {
   type PlaySource,
   type PlayWrite,
@@ -84,6 +85,9 @@ export async function postGamePlays(
         .forUpdate()
         .executeTakeFirst()
       if (game == null) throw notFound()
+      // Read on its own, after the lock and before this post's writes: a
+      // post that held the lock first has fixed the fence already.
+      const hadPlays = await gameHasPlays(trx, gameId)
       const live = body.mode === 'live'
       if (
         game.status === 'final' &&
@@ -153,15 +157,25 @@ export async function postGamePlays(
             game.ingest_message
           )
       const halves = halfOutcomes(documents)
+      const status = live
+        ? statusAfterLivePost(game.status, stored, currentPlay != null)
+        : statusAfterPost(game.status, posted, stored.length)
       await trx
         .updateTable('games')
         .set({
           away_score: posted.away,
           home_score: posted.home,
           linescore: lineScore(documents, halves, posted.away, posted.home),
-          status: live
-            ? statusAfterLivePost(game.status, stored, currentPlay != null)
-            : statusAfterPost(game.status, posted, stored.length),
+          status,
+          // A game's first plays fix its fence, so a later season or league
+          // change leaves their distances be: the fence the scorer's
+          // documents were sized by, when the post says, else the one the
+          // game resolves to now.
+          ...(stored.length > 0 && !hadPlays
+            ? {
+                fence_distance_ft: body.fenceDistanceFt ?? resolvedFenceDistance
+              }
+            : {}),
           ingest_status: decision.ingestStatus,
           ingest_message: decision.ingestMessage,
           ...(live && body.currentPlay !== undefined

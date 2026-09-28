@@ -1,3 +1,4 @@
+import { isLaunchAngle } from '../launchAngle'
 import {
   type BallInPlayAction,
   type BaseRunningAction,
@@ -949,8 +950,14 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
   } else if (play.source.gamestation.contactKind !== action.contact)
     refuse('illegal', 'The ball is already in play as a different contact')
   play.source.gamestation.contactKind = action.contact
+  // A launch angle is from -90 to 90 degrees. Any other is dropped rather
+  // than refused, so a saved play that holds one still replays: the ball is
+  // in play without it.
+  const given = isLaunchAngle(action.launchAngle)
+    ? action.launchAngle
+    : undefined
   const angle =
-    action.launchAngle ??
+    given ??
     (action.trajectory == null
       ? undefined
       : TRAJECTORY_ANGLES[action.trajectory])
@@ -978,9 +985,13 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
     if (angle == null) {
       delete detail.trajectory
       delete detail.launchAngle
+      delete detail.launchAngleSet
     } else {
       detail.trajectory = action.trajectory ?? trajectoryOf(angle)
       detail.launchAngle = angle
+      if (given != null && action.launchAngleDragged === true)
+        detail.launchAngleSet = true
+      else delete detail.launchAngleSet
     }
   }
   const kind =
@@ -1236,10 +1247,7 @@ function runnerMovement(
   // Hit-offer retreat / re-take is allowed even while a lead runner waits on
   // home — the trailer on third can still be sent back to second (and forward
   // again). Occupancy still applies on retreat: the start base must be free.
-  if (
-    to < where &&
-    undoesHitOffer(state, action.runner, where, to)
-  ) {
+  if (to < where && undoesHitOffer(state, action.runner, where, to)) {
     const occupied = runnerDecisionError(state, {
       playerId: action.runner,
       from: where,
@@ -1377,7 +1385,12 @@ function commitSafe(
  * Returns an unforced runner who took his hit offer back to the start base and
  * drops the advance row so the stored play matches "never advanced".
  */
-function undoHitOffer(ctx: Ctx, runnerId: number, from: number, to: number): void {
+function undoHitOffer(
+  ctx: Ctx,
+  runnerId: number,
+  from: number,
+  to: number
+): void {
   const pending = ctx.state.pending
   if (pending == null) refuse('notNow', 'Finish the current play first')
   const move = pending.movements.find(m => m.playerId === runnerId)
@@ -1388,7 +1401,7 @@ function undoHitOffer(ctx: Ctx, runnerId: number, from: number, to: number): voi
     const row = play.runners[i]
     if (
       row.details.runner.id === runnerId &&
-      row.movement.isOut !== true &&
+      !row.movement.isOut &&
       row.movement.end === from &&
       row.movement.start === start
     ) {
