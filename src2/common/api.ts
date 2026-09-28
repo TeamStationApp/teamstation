@@ -978,7 +978,8 @@ export const asDjGame = asObject({
 export type DjGame = ReturnType<typeof asDjGame>
 
 export class GameStationClient {
-  private readonly baseUrl: string
+  /** Where the API is, which is also where its sockets are. */
+  readonly baseUrl: string
   private readonly doFetch: typeof fetch
   token: string | undefined
 

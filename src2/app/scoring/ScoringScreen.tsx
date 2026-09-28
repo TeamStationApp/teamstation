@@ -44,6 +44,7 @@ import { WalkUpControl } from '../walkup/WalkUpControl'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
+import { DictationButton } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
@@ -56,6 +57,7 @@ import { scoringAudio } from './scoringAudio'
 import { runnerDecisionError } from './scoringFlow'
 import {
   actsOnOpening,
+  atRest,
   resumedScoringState,
   scoringScreenModel,
   scoringScreenReducer
@@ -73,6 +75,7 @@ import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import { DevelopmentScoringSource, type ScoringSource } from './scoringSource'
 import type { ScoringEvent } from './scoringTypes'
+import { dictationUrl } from './useDictation'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
@@ -181,6 +184,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     <ScoringPanel
       key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}`}
       game={opened}
+      client={props.client}
+      gameId={props.gameId}
       persistent={source.persistent === true}
       onExit={props.onExit}
       userId={String(props.userId ?? 'local-scorer')}
@@ -237,6 +242,8 @@ export function saveStatusText(status: SaveStatus): string | null {
 }
 function ScoringPanel(props: {
   game: GameSession
+  client: GameStationClient
+  gameId: string
   persistent: boolean
   onExit: () => void
   userId: string
@@ -422,6 +429,9 @@ function ScoringPanel(props: {
   // screen reader.
   const actionsAllowed = bottomActionsAllowed(state) && !status.readOnly
   const session = state.session
+  const { client } = props
+  const health = useCallback(async () => await client.health(), [client])
+  const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
   const line = session.liveData.linescore
   const scoredHere = useRef(state.past.length)
   scoredHere.current = state.past.length
@@ -1007,6 +1017,21 @@ function ScoringPanel(props: {
       accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
       <ErrorCreditSheet state={state} dispatch={dispatch} />
+      {props.persistent && (
+        <DictationButton
+          health={health}
+          url={socketUrl}
+          gameId={props.gameId}
+          session={session}
+          log={state.log}
+          problem={state.dictation?.problem}
+          // While a play is drawn or a player dragged, Space is the field's.
+          spaceTalks={atRest(state) && !gestureActive}
+          onActions={(transcript, actions) => {
+            dispatch({ type: 'DICTATED', transcript, actions })
+          }}
+        />
+      )}
       <RelayedRunnerDragTargets
         relay={runnerDrag}
         hides={view =>
