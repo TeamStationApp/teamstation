@@ -17,7 +17,10 @@ const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
 const { initialHitTarget } = require('../src2/app/field/trajectoryGuide')
-const { BASES } = require('../src2/app/field/fieldModel')
+const { BASES, createPlayers } = require('../src2/app/field/fieldModel')
+const defender = Object.fromEntries(
+  createPlayers().map(player => [player.id, player.position])
+)
 const { runnerTargets } = require('../src2/app/scoring/runnerDrag')
 const { applyFieldCamera } = require('../src2/app/field/cameraModel')
 const required = key => {
@@ -292,7 +295,7 @@ try {
       await gesture([start, { x: start.x, y: start.y - 25 }], 80)
       if (outcome === 'Throw Out') {
         await visible('Tap or drag the next defender')
-        const receiver = g.project(24, -23, 6)
+        const receiver = g.project(defender['1B'].x, defender['1B'].z, 6)
         await m.tapOnPoint({
           x: Math.round(receiver.x),
           y: Math.round(receiver.y)

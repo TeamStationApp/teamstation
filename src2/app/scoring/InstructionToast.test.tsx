@@ -9,6 +9,7 @@ import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { CORRECTION_INSTRUCTION, InstructionToast } from './InstructionToast'
 import { runnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
+import { CORRECTION_WINDOW_MS } from './scoringTypes'
 let root: Root | undefined
 let host: HTMLDivElement
 async function render(element: React.ReactElement): Promise<void> {
@@ -171,15 +172,18 @@ describe('scoring instruction and completion toast', function () {
         }}
       />
     )
-    await render(view(10000))
+    await render(view(CORRECTION_WINDOW_MS))
     expect(host.textContent).includes(CORRECTION_INSTRUCTION)
     const progress = (): HTMLElement =>
       host.querySelector('[role="progressbar"]')!
-    expect(progress().getAttribute('aria-valuenow')).equals('10')
+    expect(progress().getAttribute('aria-valuemax')).equals('7')
+    expect(progress().getAttribute('aria-valuenow')).equals('7')
     expect((progress().firstChild as HTMLElement).style.width).equals('100%')
     await render(view(4201, false))
     expect(progress().getAttribute('aria-valuenow')).equals('5')
-    expect((progress().firstChild as HTMLElement).style.width).equals('42.01%')
+    expect((progress().firstChild as HTMLElement).style.width).equals(
+      `${(4201 / CORRECTION_WINDOW_MS) * 100}%`
+    )
     await act(async () => {
       host.querySelector<HTMLElement>('[aria-label="Finish at-bat"]')!.click()
     })

@@ -8,7 +8,7 @@ import { gameFixture } from './isUnscoredGame.test'
 import { moreEligibility } from './moreActions'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { baseIds, playerRef } from './scoringSelectors'
-import type { ScoringState } from './scoringTypes'
+import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 
 function start(mask = 0, outs = 0): ScoringState {
   let state = initialScoringState(createDevelopmentSession(gameFixture, [], []))
@@ -135,7 +135,7 @@ describe('automatic dropped third strike', () => {
       }
       expect(baseIds(state.session)).deep.equals(expectedBases[mask])
       expect(state.phase).equals('correctionWindow')
-      expect(state.correctionWindow?.remainingMs).equals(10000)
+      expect(state.correctionWindow?.remainingMs).equals(CORRECTION_WINDOW_MS)
       const play = state.session.liveData.plays.currentPlay!
       expect(play.result.eventType).equals('strikeout')
       expect(play.result.rbi).equals(0)
@@ -155,7 +155,7 @@ describe('automatic dropped third strike', () => {
       expect(done.phase).oneOf(['ready', 'awaitingBatter'])
       expect(done.session.liveData.plays.allPlays).has.length(1)
     })
-  it('waits ten seconds after Safe, ignores stale ticks, and resets after runner edits', () => {
+  it('waits seven seconds after Safe, ignores stale ticks, and resets after runner edits', () => {
     let state = completeMotions(drop(start()))
     state = scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'safe' })
     const timer = {
@@ -165,7 +165,9 @@ describe('automatic dropped third strike', () => {
       elapsedMs: 3000
     }
     state = scoringReducer(state, timer)
-    expect(state.correctionWindow!.remainingMs).equals(7000)
+    expect(state.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 3000
+    )
     state = scoringReducer(state, {
       type: 'RUNNER_DROP',
       id: 1,
@@ -175,12 +177,12 @@ describe('automatic dropped third strike', () => {
     })
     state = completeMotions(state)
     expect(state.phase).equals('correctionWindow')
-    expect(state.correctionWindow!.remainingMs).equals(10000)
+    expect(state.correctionWindow!.remainingMs).equals(CORRECTION_WINDOW_MS)
     expect(scoringReducer(state, timer)).equals(state)
     state = scoringReducer(state, {
       ...timer,
       revision: state.correctionWindow!.revision,
-      elapsedMs: 10000
+      elapsedMs: CORRECTION_WINDOW_MS
     })
     expect(state.session.liveData.plays.allPlays).has.length(1)
     expect(baseIds(state.session)[1]).equals(1)

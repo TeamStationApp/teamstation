@@ -15,6 +15,8 @@ export interface ScoreboardState {
   balls: number
   strikes: number
   outs: number
+  inning: number
+  half: 'top' | 'bottom'
 }
 /** Fictional preview data; the scene has no scoring engine or network dependency. */
 export const DEMO_SCOREBOARD: ScoreboardState = {
@@ -29,7 +31,9 @@ export const DEMO_SCOREBOARD: ScoreboardState = {
   pitchCount: 64,
   balls: 2,
   strikes: 1,
-  outs: 1
+  outs: 1,
+  inning: 5,
+  half: 'top'
 }
 export function shortName(person: ScoreboardState['batter']): string {
   if (person.lastName.trim() === '')
@@ -45,6 +49,20 @@ export function countLights(value: number, maximum: number): boolean[] {
   return Array.from({ length: maximum }, (_, index) => index < count)
 }
 
+/** A run total with no leading zero. Two digits only when the score needs them. */
+export function scoreDigits(value: number): string {
+  const n = Number.isFinite(value)
+    ? Math.max(0, Math.min(99, Math.floor(value)))
+    : 0
+  return String(n)
+}
+/** Pitch count tight against the P:, as `P:64`. */
+export function pitchLabel(count: number): string {
+  const n = Number.isFinite(count)
+    ? Math.max(0, Math.min(999, Math.floor(count)))
+    : 0
+  return `P:${n}`
+}
 export function battingLine(state: ScoreboardState): string {
   const count = (value: number | undefined): number =>
     value != null && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0

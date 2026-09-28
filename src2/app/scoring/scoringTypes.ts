@@ -95,6 +95,8 @@ export interface RunnerAction {
   defender?: number
   defenderPoint?: GroundPoint
 }
+/** How long the scorekeeper has to move another runner before the play closes. */
+export const CORRECTION_WINDOW_MS = 7000
 export interface CorrectionWindow {
   remainingMs: number
   revision: number

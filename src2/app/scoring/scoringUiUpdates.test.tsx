@@ -12,6 +12,7 @@ import { gsBallpark } from '../theme/gsBallpark'
 import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { OutcomeControls } from './OutcomeControls'
+import { CORRECTION_WINDOW_MS } from './scoringTypes'
 
 let root: Root | undefined
 const node = (label: string): HTMLElement | null =>
@@ -133,7 +134,7 @@ describe('scoring UI updates', () => {
       }
     }
     await render({
-      remainingMs: 10000,
+      remainingMs: CORRECTION_WINDOW_MS,
       canFinish: false,
       canPitch: false,
       onFinish: () => {

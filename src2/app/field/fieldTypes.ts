@@ -2,6 +2,7 @@ import type { RunnerDecision, RunnerDragView } from '../scoring/runnerDrag'
 import type { PresentationSequence } from '../scoring/scoringPresentation'
 import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
+import type { NameplatePlacement } from './playerPresentation'
 import type { ScoreboardState } from './scoreboardModel'
 import type { FieldTeams } from './teamUniform'
 
@@ -89,6 +90,8 @@ export interface FieldCanvasProps {
   arcMode?: ArcMode
   onArcChange?: (arc: BallArcState) => void
   onArcFinish?: () => void
+  /** Screen-space nameplates, projected after the camera transform. */
+  onNameplates?: (plates: NameplatePlacement[]) => void
   players: FieldPlayer[]
   selected: string
   onSelect: (id: string) => void

@@ -55,14 +55,33 @@ export const BASES: GroundPoint[] = [
   { x: 0, z: -2 * BASE },
   { x: -BASE, z: -BASE }
 ]
+/** Drawn fielder scale. Kept equal to PLAYER_SCALE in playerPresentation. */
+const DRAWN_FIELDER_SCALE = 3.2 * 1.15
+/** Shoulder-joint span of a drawn fielder, in field metres. */
+const SHOULDER_LENGTH = 1.12 * DRAWN_FIELDER_SCALE
+/** Outer edge of the skinned infield, where dirt meets outfield grass. */
+const DIRT_EDGE = 47.5
+/** One shoulder closer to second, then straight back onto the dirt edge. */
+function middleInfield(side: 1 | -1): [number, number] {
+  const fromX = side * 15
+  const fromZ = -41
+  const bag = BASES[2]
+  const dx = bag.x - fromX
+  const dz = bag.z - fromZ
+  const length = Math.hypot(dx, dz)
+  const x = fromX + (dx / length) * SHOULDER_LENGTH
+  return [x, -Math.sqrt(DIRT_EDGE * DIRT_EDGE - x * x)]
+}
 export function createPlayers(): FieldPlayer[] {
+  const [secondX, secondZ] = middleInfield(1)
+  const [shortX, shortZ] = middleInfield(-1)
   const positions: Array<[string, string, number, number]> = [
     ['P', 'Pitcher', 0, -18.44],
     ['C', 'Catcher', 0, 4],
-    ['1B', 'First baseman', 24, -23],
-    ['2B', 'Second baseman', 15, -41],
-    ['SS', 'Shortstop', -15, -41],
-    ['3B', 'Third baseman', -24, -23],
+    ['1B', 'First baseman', 24.17, -40.91],
+    ['2B', 'Second baseman', secondX, secondZ],
+    ['SS', 'Shortstop', shortX, shortZ],
+    ['3B', 'Third baseman', -24.72, -40.12],
     ['LF', 'Left fielder', -44, -69],
     ['CF', 'Center fielder', 0, -88],
     ['RF', 'Right fielder', 44, -69],

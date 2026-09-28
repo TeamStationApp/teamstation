@@ -1,26 +1,14 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber elements describe Three.js objects, not HTML. */
 import { useFrame, useThree } from '@react-three/fiber'
 import React, { useEffect, useMemo, useRef } from 'react'
-import {
-  Color,
-  type Group,
-  type Material,
-  Mesh,
-  PerspectiveCamera,
-  type Sprite,
-  type Texture
-} from 'three'
+import { Color, type Group, type Material, Mesh, type Texture } from 'three'
 
 import { AthleteRig } from './AthleteRig'
 import { BattingPose, DroppedBat } from './BattingPose'
 import { advancePlayer, type FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { makePlayerLabel } from './playerLabels'
-import {
-  hasPlayerLabel,
-  placePlayerLabel,
-  PLAYER_SCALE
-} from './playerPresentation'
+import { PLAYER_SCALE } from './playerPresentation'
 import { uniformColor } from './teamUniform'
 import { TERRAIN } from './terrain'
 
@@ -65,32 +53,17 @@ export function Player({
 }): React.ReactElement {
   const batting = player.batting === true
   const invalidate = useThree(state => state.invalidate)
-  const label = useRef<Sprite>(null)
-  const showLabel = player.suppressed !== true && hasPlayerLabel(player)
   const labels = useMemo(
     () => ({
-      badge: showLabel
-        ? makePlayerLabel(
-            `${player.hasBall === true ? '⚾ ' : ''}${player.displayName}`,
-            true
-          )
-        : null,
       jersey:
         player.jersey === '' || player.suppressed === true
           ? null
-          : makePlayerLabel(player.jersey, false)
+          : makePlayerLabel(player.jersey)
     }),
-    [
-      player.jersey,
-      player.displayName,
-      player.suppressed,
-      player.hasBall,
-      showLabel
-    ]
+    [player.jersey, player.suppressed]
   )
   useEffect(
     () => () => {
-      labels.badge?.dispose()
       labels.jersey?.dispose()
     },
     [labels]
@@ -144,7 +117,7 @@ export function Player({
     }
   }, [player.suppressed, invalidate])
   const shirt = uniformColor(player)
-  useFrame(({ camera, size }, dt) => {
+  useFrame((_, dt) => {
     if (!paused && player.pose?.run == null) advancePlayer(player, dt)
     const motion = player.motion
     if (
@@ -172,9 +145,6 @@ export function Player({
       TERRAIN.players,
       player.position.z
     )
-    if (label.current != null && camera instanceof PerspectiveCamera) {
-      placePlayerLabel(label.current, player, camera, size.height)
-    }
     body.current.visible = player.pose?.athlete == null
     body.current.rotation.y = player.heading
     const running = player.pose?.run ?? Math.min(1, player.speed / 5)
@@ -268,23 +238,6 @@ export function Player({
               />
             </mesh>
           ))}
-        {labels.badge != null && (
-          <sprite
-            ref={label}
-            position={[0, 12, 0]}
-            scale={[0, 0, 1]}
-            renderOrder={player.labelOrder ?? 5}
-            name={`player-label-${player.id}`}
-          >
-            <spriteMaterial
-              map={labels.badge}
-              depthTest={false}
-              transparent
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </sprite>
-        )}
         <AthleteRig player={player} jersey={labels.jersey} />
         <group ref={body} scale={[PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE]}>
           <mesh

@@ -6,7 +6,7 @@ import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
-import type { ScoringState } from './scoringTypes'
+import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 function initial(): ScoringState {
   const state = initialScoringState(
     createDevelopmentSession(gameFixture, [], [])
@@ -91,7 +91,7 @@ describe('atomic runner drafts', function () {
         type: 'TIMER_TICK',
         generation: grabbed.generation,
         revision: grabbed.correctionWindow!.revision,
-        elapsedMs: 10000
+        elapsedMs: CORRECTION_WINDOW_MS
       })
     ).equals(grabbed)
     const draft = scoringReducer(grabbed, {
@@ -103,7 +103,9 @@ describe('atomic runner drafts', function () {
     })
     const restored = scoringReducer(draft, { type: 'RUNNER_CANCEL' })
     expect(restored.phase).equals('correctionWindow')
-    expect(restored.correctionWindow!.remainingMs).equals(6150)
+    expect(restored.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 3850
+    )
     expect(restored.activeGesture).equals(false)
     expect(restored.past).deep.equals(state.past)
     const moved = completeMotions(
@@ -115,6 +117,6 @@ describe('atomic runner drafts', function () {
         generation: restored.generation
       })
     )
-    expect(moved.correctionWindow!.remainingMs).equals(10000)
+    expect(moved.correctionWindow!.remainingMs).equals(CORRECTION_WINDOW_MS)
   })
 })

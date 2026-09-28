@@ -4,8 +4,10 @@ import { Pressable, Text, View } from 'react-native'
 
 import { useBreakpoint } from '../components'
 import { useTheme } from '../theme/ThemeContext'
+import { syncFieldNameplates } from './fieldNameplates'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
+import type { NameplatePlacement } from './playerPresentation'
 
 /** R3F's async renderer setup does not always reach a React error boundary. */
 function supportsWebGL(): boolean {
@@ -121,6 +123,11 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
     if (!available) recover()
   }, [available, recover])
 
+  const labelHost = useRef<HTMLDivElement>(null)
+  const onNameplates = useCallback((plates: NameplatePlacement[]) => {
+    if (labelHost.current != null)
+      syncFieldNameplates(labelHost.current, plates)
+  }, [])
   const keyboard = useRef<((key: string) => boolean) | null>(null)
   const { registerKeyboard: registerParentKeyboard } = props
   const registerKeyboard = useCallback(
@@ -167,6 +174,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
         if (node != null) setEventHost(node)
       }}
       style={{
+        position: 'relative',
         width: '100%',
         height: '100%',
         userSelect: 'none',
@@ -207,6 +215,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
           >
             <FieldScene
               {...props}
+              onNameplates={onNameplates}
               presentationPaused={props.presentationPaused === true || hidden}
               registerInterruption={registerInterruption}
               registerKeyboard={registerKeyboard}
@@ -214,6 +223,15 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
             />
           </Canvas>
         )}
+        <div
+          ref={labelHost}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            overflow: 'hidden',
+            pointerEvents: 'none'
+          }}
+        />
       </RenderBoundary>
     </div>
   )
