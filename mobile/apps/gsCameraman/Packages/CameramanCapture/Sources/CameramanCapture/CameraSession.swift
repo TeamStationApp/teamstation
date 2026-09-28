@@ -117,7 +117,7 @@ public final class CameraSession: @unchecked Sendable {
   public func flip() {
     queue.async { [self] in
       let catalog = state.availableLenses
-      let selection = LensSelection(disabledIDs: settings.disabledLensIDs)
+      let selection = LensSelection(disabledIDs: settings.disabledLensIDs).normalized(in: catalog)
       let target: CameraPosition = state.position == .back ? .front : .back
       // An empty catalog is a simulator (or a probe that has not run yet); flipping still has to
       // work there. On a handset, a position with every lens toggled off is not a camera.
@@ -155,7 +155,7 @@ public final class CameraSession: @unchecked Sendable {
   private func applyDevice(position requested: CameraPosition) {
     let catalog = LensDiscovery.discover()
     state.availableLenses = catalog
-    let selection = LensSelection(disabledIDs: settings.disabledLensIDs)
+    let selection = LensSelection(disabledIDs: settings.disabledLensIDs).normalized(in: catalog)
 
     var position = requested
     if !catalog.isEmpty, !selection.hasEnabledLens(at: position, in: catalog) {
@@ -206,9 +206,7 @@ public final class CameraSession: @unchecked Sendable {
     // Start at the wide lens rather than the ultra-wide: 1x is what an operator pointing a phone at a
     // field expects to see, and 0.5x on a triple camera is a noticeably distorted framing. When 1x
     // is not among the remaining lenses, sit on the widest one that is still on.
-    if let locked = selection.lockedDisplayedZoom(for: position, in: catalog) {
-      applyZoom(state.mapping.deviceZoom(forDisplayed: locked))
-    } else if state.mapping.presetDisplayedZooms.contains(where: {
+    if state.mapping.presetDisplayedZooms.contains(where: {
       ZoomMapping.label(forDisplayed: $0) == ZoomMapping.label(forDisplayed: 1)
     }) {
       applyZoom(state.mapping.deviceZoom(forDisplayed: 1))
@@ -477,35 +475,25 @@ public final class CameraSession: @unchecked Sendable {
     catalog: [CameraLens] = [],
     position: CameraPosition = .back
   ) -> ZoomMapping {
-    if let locked = selection.lockedDisplayedZoom(for: position, in: catalog) {
-      let deviceZoom = locked / max(device.displayVideoZoomFactorMultiplier, 0.01)
-      return ZoomMapping(
-        minimumDeviceZoom: deviceZoom,
-        maximumDeviceZoom: deviceZoom,
-        displayMultiplier: device.displayVideoZoomFactorMultiplier,
-        switchOverDeviceZooms: []
-      )
-    }
-
-    var switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue)
+    // Lens handovers only. A native crop such as the 2x is not a lens, so it is not a stop on the
+    // rail: the pills are the optical zooms an operator can aim for to avoid digital zoom.
+    let switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue).sorted()
     let multiplier = device.displayVideoZoomFactorMultiplier
-    for lens in catalog where lens.position == position && lens.isSecondaryNative && selection.isEnabled(lens) {
-      let deviceZoom = lens.displayedZoom / max(multiplier, 0.01)
-      if !switchOvers.contains(where: { abs($0 - deviceZoom) < 0.05 }) {
-        switchOvers.append(deviceZoom)
-      }
-    }
-    switchOvers.sort()
 
     let recommended = device.activeFormat.systemRecommendedVideoZoomRange.map { Double($0.upperBound) }
+    let cameraCeiling = ZoomMapping.resolveMaximumDeviceZoom(
+      recommended: recommended,
+      available: device.maxAvailableVideoZoomFactor
+    )
+    // Software zoom past the camera's own ceiling: the device crops and upscales further, which
+    // `maxAvailableVideoZoomFactor` allows well beyond twice the recommended range.
+    let softwareCeiling = min(cameraCeiling * ZoomMapping.softwareZoomExtension, device.maxAvailableVideoZoomFactor)
     return ZoomMapping(
       minimumDeviceZoom: device.minAvailableVideoZoomFactor,
-      maximumDeviceZoom: ZoomMapping.resolveMaximumDeviceZoom(
-        recommended: recommended,
-        available: device.maxAvailableVideoZoomFactor
-      ),
+      maximumDeviceZoom: softwareCeiling,
       displayMultiplier: multiplier,
-      switchOverDeviceZooms: switchOvers
+      switchOverDeviceZooms: switchOvers,
+      softwareZoomStartDeviceZoom: cameraCeiling
     )
   }
 

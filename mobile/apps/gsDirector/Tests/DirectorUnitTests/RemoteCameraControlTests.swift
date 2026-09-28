@@ -117,6 +117,67 @@ struct RemoteCameraControlTests {
     #expect(model.displayedZoom == 3)
   }
 
+  @Test("A phone without its own software zoom gets Director's 2x on top, in yellow")
+  @MainActor
+  func directorZoomExtendsAPhoneWithoutSoftwareZoom() async {
+    let transport = ScriptedTransport(snapshot: Self.phone())
+    let model = RemoteCameraControl(
+      transport: transport,
+      animatesChrome: false,
+      extendsWithDirectorZoom: true,
+      zoomCoalesceInterval: .seconds(30)
+    )
+    var reported: [Double] = []
+    model.onDirectorZoom = { reported.append($0) }
+    await model.poll()
+    #expect(model.mapping.presetDisplayedZooms == [ 0.5, 1, 3, 9, 18 ])
+    #expect(model.mapping.isSoftwareSegment(3))
+
+    model.setDisplayedZoom(13.5)
+    await model.flushZoom()
+    #expect(transport.sets == [ "ptz.zoom: 9\r\n" ], "the phone is driven to its own ceiling")
+    #expect(model.directorZoom == 1.5)
+    #expect(reported == [ 1.5 ])
+    #expect(model.displayedZoom == 13.5)
+
+    // Back inside the phone's range, Director's share goes back to 1.
+    model.setDisplayedZoom(3)
+    #expect(model.directorZoom == 1)
+    #expect(reported == [ 1.5, 1 ])
+  }
+
+  @Test("A phone that zooms in software itself is left to do it")
+  @MainActor
+  func phoneWithSoftwareZoomNeedsNoDirectorZoom() async {
+    var phone = Self.phone()
+    phone.mapping = ZoomMapping(
+      minimumDeviceZoom: 1,
+      maximumDeviceZoom: 36,
+      displayMultiplier: 0.5,
+      switchOverDeviceZooms: [ 2, 6 ],
+      softwareZoomStartDeviceZoom: 18
+    )
+    let transport = ScriptedTransport(snapshot: phone)
+    let model = RemoteCameraControl(
+      transport: transport,
+      animatesChrome: false,
+      extendsWithDirectorZoom: true,
+      directorZoom: 1.5,
+      zoomCoalesceInterval: .seconds(30)
+    )
+    var reported: [Double] = []
+    model.onDirectorZoom = { reported.append($0) }
+    await model.poll()
+    #expect(model.mapping == phone.mapping)
+    #expect(model.directorZoom == 1)
+    #expect(reported == [ 1 ], "a zoom left over from before is cleared")
+
+    model.setDisplayedZoom(13.5)
+    await model.flushZoom()
+    #expect(transport.sets == [ "ptz.zoom: 13.5\r\n" ])
+    #expect(model.directorZoom == 1)
+  }
+
   @Test("Zoom is clamped to the phone's mapping and the echo is what the phone applied")
   @MainActor
   func zoomIsClampedAndEchoed() async {

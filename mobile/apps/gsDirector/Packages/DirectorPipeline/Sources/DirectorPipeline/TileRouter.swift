@@ -59,6 +59,9 @@ public final class SourcePipeline: @unchecked Sendable {
   private var latency = FrameLatencyGate()
   /// When the display gate started holding the last picture, nil while pictures are being shown.
   private var heldLateSince: WallClock?
+  /// Director's own zoom on this camera's picture, 1 for none. Applied to what the tile, the
+  /// programme and the scrub stills see; the camera's archive stays the picture as sent.
+  private var digitalZoom: Double = 1
   public init(
     sourceID: SourceID,
     sourceIndex: Int,
@@ -77,6 +80,28 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.lock()
     latency.setCaps(caps)
     lock.unlock()
+  }
+
+  public func setDigitalZoom(_ value: Double) {
+    let zoom = value.isFinite ? max(value, 1) : 1
+    lock.lock()
+    digitalZoom = zoom
+    lock.unlock()
+    telemetry.mutateTile(sourceIndex) { $0.digitalZoom = zoom }
+  }
+
+  public var currentDigitalZoom: Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return digitalZoom
+  }
+
+  /// The picture with Director's zoom applied, or the picture itself when there is none (or the
+  /// crop failed, which shows the whole picture rather than nothing).
+  private func zoomed(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer {
+    let zoom = currentDigitalZoom
+    guard zoom > 1.001 else { return pixelBuffer }
+    return converter.zoom(pixelBuffer, by: zoom) ?? pixelBuffer
   }
 
   /// Moves this pipeline to another grid slot. Callers must also rekey `TileRouter` and telemetry.
@@ -278,9 +303,21 @@ public final class SourcePipeline: @unchecked Sendable {
   private let wedgePolicy = ReplayWedgePolicy()
 
   private func handle(_ frame: PixelFrame) {
-    guard let converted = converter.convert(frame) else {
+    guard var converted = converter.convert(frame) else {
       telemetry.recordDroppedFrame(tile: sourceIndex)
       return
+    }
+    let zoomedBuffer = zoomed(converted.pixelBuffer)
+    if zoomedBuffer !== converted.pixelBuffer {
+      converted = PixelFrame(
+        sourceID: converted.sourceID,
+        pixelBuffer: zoomedBuffer,
+        presentationTime: converted.presentationTime,
+        wallClock: converted.wallClock,
+        captureWallClock: converted.captureWallClock,
+        frameID: converted.frameID,
+        markerValue: converted.markerValue
+      )
     }
 
     lock.lock()
@@ -508,8 +545,9 @@ public final class SourcePipeline: @unchecked Sendable {
       onProgramDiscontinuity?()
     }
 
-    presentOnRenderer(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
-    programSink?(pixelBuffer, presentationTime, nil)
+    let picture = zoomed(pixelBuffer)
+    presentOnRenderer(pixelBuffer: picture, presentationTime: presentationTime)
+    programSink?(picture, presentationTime, nil)
     // Only for the replay that delivered this frame, and under the lock. A return to live that
     // lands while the frame is being presented has already put the tile back on live; written
     // after it, this left the tile saying "replaying" for good -- the picture live, the tile still
@@ -918,6 +956,16 @@ public final class TileRouter: @unchecked Sendable {
     }
     audioMixer.retainContributors(ids)
     recordingMixer.retainContributors(ids)
+  }
+
+  /// Director's zoom per camera; a camera not named goes back to 1.
+  public func setDigitalZooms(_ zooms: [SourceID: Double]) {
+    lock.lock()
+    let all = Array(pipelines.values)
+    lock.unlock()
+    for pipeline in all {
+      pipeline.setDigitalZoom(zooms[pipeline.sourceID] ?? 1)
+    }
   }
 
   public func setInputGains(_ gains: [SourceID: Double]) {

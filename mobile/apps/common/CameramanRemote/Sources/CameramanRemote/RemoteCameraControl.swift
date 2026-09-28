@@ -13,6 +13,12 @@ import Observation
 /// Writes are coalesced where a finger produces a stream of them: zoom is sent at most every
 /// 100 ms with the latest value winning; everything else goes immediately. A value just written
 /// is shown locally until a later poll confirms it, so the rail never snaps back mid-drag.
+///
+/// A phone that does not zoom past its own ceiling (Android, an older Cameraman) can be given the
+/// same software range by Director: with `extendsWithDirectorZoom`, the rail runs to twice the
+/// phone's maximum, the phone is driven to its maximum, and the rest is `directorZoom`, which
+/// Director applies to the picture itself. A phone that reports its own software range is left to
+/// do it, and `directorZoom` stays 1.
 @Observable
 @MainActor
 public final class RemoteCameraControl: CameraControlling {
@@ -28,8 +34,12 @@ public final class RemoteCameraControl: CameraControlling {
   public private(set) var cname = ""
   public private(set) var position: CameraPosition = .back
   public private(set) var mapping = ZoomMapping(maximumDeviceZoom: 1)
+  /// Displayed and device zoom are the total the operator sees: the phone's zoom times
+  /// `directorZoom`.
   public private(set) var displayedZoom: Double = 1
   public private(set) var deviceZoom: Double = 1
+  /// Zoom Director applies to this camera's picture on top of the phone's own.
+  public private(set) var directorZoom: Double = 1
   public private(set) var availableLenses: [CameraLens] = []
   public private(set) var formatOptions: [FormatCatalogue.Option] = []
   public private(set) var settings = StreamSettings()
@@ -48,6 +58,11 @@ public final class RemoteCameraControl: CameraControlling {
   public private(set) var polls = 0
   public private(set) var writes = 0
 
+  /// Told whenever `directorZoom` changes, so Director can crop the picture to match.
+  @ObservationIgnored public var onDirectorZoom: ((Double) -> Void)?
+  @ObservationIgnored private let extendsWithDirectorZoom: Bool
+  /// The mapping as the phone reports it; `mapping` adds Director's range on top when that applies.
+  @ObservationIgnored private var phoneMapping = ZoomMapping(maximumDeviceZoom: 1)
   @ObservationIgnored private let transport: any ParameterTransport
   @ObservationIgnored private let pollInterval: Duration
   @ObservationIgnored private let zoomCoalesceInterval: Duration
@@ -70,10 +85,14 @@ public final class RemoteCameraControl: CameraControlling {
   public init(
     transport: any ParameterTransport,
     animatesChrome: Bool = true,
+    extendsWithDirectorZoom: Bool = false,
+    directorZoom: Double = 1,
     pollInterval: Duration = RemoteCameraControl.pollInterval,
     zoomCoalesceInterval: Duration = RemoteCameraControl.zoomCoalesceInterval
   ) {
     self.transport = transport
+    self.extendsWithDirectorZoom = extendsWithDirectorZoom
+    self.directorZoom = extendsWithDirectorZoom ? max(directorZoom, 1) : 1
     self.animatesChrome = animatesChrome
     self.pollInterval = pollInterval
     self.zoomCoalesceInterval = zoomCoalesceInterval
@@ -147,11 +166,15 @@ public final class RemoteCameraControl: CameraControlling {
     hasSnapshot = true
     cname = snapshot.cname
     if !overridden(nameWrittenAt) { name = snapshot.name }
-    mapping = snapshot.mapping
+    phoneMapping = snapshot.mapping
+    let addsDirectorZoom = extendsWithDirectorZoom && snapshot.mapping.softwareZoomStartDeviceZoom == nil
+    mapping = addsDirectorZoom ? snapshot.mapping.extendedBySoftwareZoom() : snapshot.mapping
+    // A phone that zooms in software itself needs nothing from Director on top.
+    if !addsDirectorZoom, directorZoom != 1 { setDirectorZoom(1) }
     if !overridden(positionWrittenAt) { position = snapshot.position }
     if pendingZoom == nil, !overridden(zoomWrittenAt) {
-      deviceZoom = snapshot.deviceZoom
-      displayedZoom = snapshot.displayedZoom
+      displayedZoom = mapping.clampDisplayedZoom(snapshot.displayedZoom * directorZoom)
+      deviceZoom = mapping.deviceZoom(forDisplayed: displayedZoom)
     }
     availableLenses = snapshot.lenses
     formatOptions = snapshot.formats
@@ -168,7 +191,10 @@ public final class RemoteCameraControl: CameraControlling {
     let clamped = mapping.clampDisplayedZoom(displayed)
     displayedZoom = clamped
     deviceZoom = mapping.deviceZoom(forDisplayed: clamped)
-    pendingZoom = clamped
+    // The phone takes what it can reach; Director makes up the rest.
+    let phone = phoneMapping.clampDisplayedZoom(clamped)
+    if mapping != phoneMapping, phone > 0 { setDirectorZoom(clamped / phone) }
+    pendingZoom = mapping != phoneMapping ? phone : clamped
     guard zoomTask == nil else { return }
     zoomTask = Task { [weak self] in
       guard let self else { return }
@@ -179,6 +205,13 @@ public final class RemoteCameraControl: CameraControlling {
 
   public func setDeviceZoom(_ device: Double) {
     setDisplayedZoom(mapping.displayedZoom(forDevice: mapping.clampDeviceZoom(device)))
+  }
+
+  private func setDirectorZoom(_ value: Double) {
+    let next = max(value, 1)
+    guard abs(next - directorZoom) > 0.000_1 else { return }
+    directorZoom = next
+    onDirectorZoom?(next)
   }
 
   /// Sends the latest zoom. Public so a test can flush without waiting out the coalescing timer.
@@ -290,7 +323,7 @@ public final class RemoteCameraControl: CameraControlling {
   /// screen shows what actually took rather than what was asked for.
   private func applyEcho(_ echo: CameraParameterSet) {
     if let zoom = echo[CameraParameterName.ptzZoom].flatMap(Double.init), pendingZoom == nil {
-      displayedZoom = mapping.clampDisplayedZoom(zoom)
+      displayedZoom = mapping.clampDisplayedZoom(phoneMapping.clampDisplayedZoom(zoom) * directorZoom)
       deviceZoom = mapping.deviceZoom(forDisplayed: displayedZoom)
     }
     if let raw = echo[CameraParameterName.sourcePosition], let echoed = CameraPosition(rawValue: raw) {

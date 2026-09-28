@@ -112,6 +112,15 @@ class CameraParametersTest {
     }
 
     @Test
+    fun `the software zoom start round-trips, and none is sent empty`() {
+        assertEquals("", CameraParameters.encode(snapshot())[CameraParameterName.zoomSoftwareStartDevice])
+        val extended = snapshot().copy(mapping = snapshot().mapping.extendedBySoftwareZoom())
+        val set = CameraParameters.encode(extended)
+        assertEquals("18", set[CameraParameterName.zoomSoftwareStartDevice])
+        assertEquals(extended.mapping, CameraParameters.decodeSnapshot(set)?.mapping)
+    }
+
+    @Test
     fun `values are ONVIF-shaped on the wire`() {
         val set = CameraParameters.encode(snapshot())
         assertEquals("H265", set["videoEncoder.encoding"])

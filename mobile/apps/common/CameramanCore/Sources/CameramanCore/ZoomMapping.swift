@@ -16,12 +16,16 @@ public struct ZoomMapping: Sendable, Equatable {
   /// Device-zoom values at which the virtual device hands over to the next constituent lens,
   /// i.e. `virtualDeviceSwitchOverVideoZoomFactors`.
   public let switchOverDeviceZooms: [Double]
+  /// Device zoom where the camera's own range ends and Cameraman's software zoom begins. Everything
+  /// above it, up to `maximumDeviceZoom`, is drawn in yellow. Nil when there is no software range.
+  public let softwareZoomStartDeviceZoom: Double?
 
   public init(
     minimumDeviceZoom: Double = 1,
     maximumDeviceZoom: Double,
     displayMultiplier: Double = 1,
-    switchOverDeviceZooms: [Double] = []
+    switchOverDeviceZooms: [Double] = [],
+    softwareZoomStartDeviceZoom: Double? = nil
   ) {
     let minimum = minimumDeviceZoom > 0 ? minimumDeviceZoom : 1
     let maximum = max(maximumDeviceZoom, minimum)
@@ -33,6 +37,62 @@ public struct ZoomMapping: Sendable, Equatable {
     self.switchOverDeviceZooms = switchOverDeviceZooms
       .filter { $0 > minimum && $0 <= maximum }
       .sorted()
+    // At the minimum is allowed: a camera with no zoom of its own is software from end to end.
+    self.softwareZoomStartDeviceZoom = softwareZoomStartDeviceZoom.flatMap {
+      $0 >= minimum && $0 < maximum ? $0 : nil
+    }
+  }
+
+  /// This mapping with a software range of `softwareZoomExtension` on top of its ceiling, or itself
+  /// when it already has one. What Director adds for a camera that does not zoom past its own
+  /// limit, and, from a single fixed zoom, the whole range of a camera with no zoom at all.
+  public func extendedBySoftwareZoom() -> ZoomMapping {
+    guard softwareZoomStartDeviceZoom == nil else { return self }
+    return ZoomMapping(
+      minimumDeviceZoom: minimumDeviceZoom,
+      maximumDeviceZoom: maximumDeviceZoom * Self.softwareZoomExtension,
+      displayMultiplier: displayMultiplier,
+      switchOverDeviceZooms: switchOverDeviceZooms,
+      softwareZoomStartDeviceZoom: maximumDeviceZoom
+    )
+  }
+
+  /// The camera's ceiling in displayed units: where the software range starts, or the maximum.
+  public var softwareZoomStartDisplayedZoom: Double? {
+    softwareZoomStartDeviceZoom.map { displayedZoom(forDevice: $0) }
+  }
+
+  /// The optical stops in displayed units: the widest lens and each lens switchover. Everything past
+  /// the last of them is digital, whether the camera or Cameraman does the cropping.
+  public var opticalDisplayedZooms: [Double] {
+    ([ minimumDeviceZoom ] + switchOverDeviceZooms).map { displayedZoom(forDevice: $0) }
+  }
+
+  /// True past the longest lens: the camera's own digital zoom and Cameraman's software zoom both.
+  /// What the rail draws in yellow, so an operator can see which stops are the lenses.
+  public func isDigitalZoom(displayed displayedZoom: Double) -> Bool {
+    guard let longest = opticalDisplayedZooms.last else { return false }
+    return Self.label(forDisplayed: displayedZoom) != Self.label(forDisplayed: longest) && displayedZoom > longest
+  }
+
+  /// True for a scale segment that starts at or past the longest lens.
+  public func isDigitalSegment(_ segment: Int) -> Bool {
+    let presets = presetDisplayedZooms
+    guard segment >= 0, segment + 1 < presets.count else { return false }
+    return isDigitalZoom(displayed: presets[segment + 1])
+  }
+
+  /// True above the camera's own ceiling, where only Cameraman's software zoom reaches.
+  public func isSoftwareZoom(displayed displayedZoom: Double) -> Bool {
+    guard let start = softwareZoomStartDisplayedZoom else { return false }
+    return Self.label(forDisplayed: displayedZoom) != Self.label(forDisplayed: start) && displayedZoom > start
+  }
+
+  /// True for the scale segment that runs from the camera's ceiling to the software maximum.
+  public func isSoftwareSegment(_ segment: Int) -> Bool {
+    let presets = presetDisplayedZooms
+    guard softwareZoomStartDeviceZoom != nil, segment >= 0, segment + 1 < presets.count else { return false }
+    return isSoftwareZoom(displayed: presets[segment + 1]) && !isSoftwareZoom(displayed: presets[segment])
   }
 
   public func displayedZoom(forDevice deviceZoom: Double) -> Double {
@@ -59,21 +119,25 @@ public struct ZoomMapping: Sendable, Equatable {
     }
   }
 
-  /// Preset pills in displayed units: the minimum, every lens switchover, and the recommended
-  /// maximum.
+  /// Preset pills in displayed units: one per lens (the minimum and every lens switchover), then the
+  /// camera's digital ceiling, then Cameraman's software maximum.
+  ///
+  /// The lens pills are the optical stops and nothing else, so an operator aiming to avoid digital
+  /// zoom can land on one. Native sensor crops (a 48 MP lens's 2x) are not lenses and get no pill.
   ///
   /// The far-right mark is the zoom ceiling even when that value is digital rather than a
   /// constituent lens. On an iPhone 13 Pro that is 9x. A literal `0.5 / 1 / 2 / 5` is wrong on
   /// every non-Pro iPhone and wrong on the front camera of all of them.
+  ///
+  /// With a software range, the camera's ceiling is a pill of its own and the software maximum sits
+  /// above it, so the last segment is exactly the software zoom.
   public var presetDisplayedZooms: [Double] {
-    var marks = ([ minimumDeviceZoom ] + switchOverDeviceZooms).map { displayedZoom(forDevice: $0) }
-    let maximum = displayedZoom(forDevice: maximumDeviceZoom)
-    if let last = marks.last {
-      if Self.label(forDisplayed: maximum) != Self.label(forDisplayed: last) {
-        marks.append(maximum)
-      }
-    } else {
-      marks.append(maximum)
+    var marks = opticalDisplayedZooms
+    let ceilings = [ softwareZoomStartDeviceZoom, maximumDeviceZoom ].compactMap { $0 }
+    for ceiling in ceilings {
+      let value = displayedZoom(forDevice: ceiling)
+      if let last = marks.last, Self.label(forDisplayed: value) == Self.label(forDisplayed: last) { continue }
+      marks.append(value)
     }
     return marks
   }
@@ -152,6 +216,10 @@ public struct ZoomMapping: Sendable, Equatable {
   }
 
   public static let singleLensZoomFallback: Double = 5
+
+  /// How far past the camera's recommended ceiling Cameraman's software zoom reaches: 9x becomes 18x
+  /// on a 15 Pro.
+  public static let softwareZoomExtension: Double = 2
 
   /// Formats a displayed zoom the way the Camera app does: `0.5x`, `1x`, `3x`, `10x`.
   public static func label(forDisplayed displayedZoom: Double) -> String {

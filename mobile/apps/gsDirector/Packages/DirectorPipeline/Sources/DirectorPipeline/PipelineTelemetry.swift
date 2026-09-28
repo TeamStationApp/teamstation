@@ -130,6 +130,8 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// The phone's `system.battery`, percent. Nil until the first poll, or when the phone cannot read it.
   public var cameraBatteryPercent: Int?
   public var cameraBatteryCharging = false
+  /// Director's own zoom on this tile's picture, 1 for none.
+  public var digitalZoom: Double = 1
   public var displayedFramesPerSecond: Double = 0
   /// Why `enqueue` returned false. Counters, not per-frame logs — a frozen tile with `out=0`
   /// is diagnosed from which of these climbed while `framesPerSecond` stayed healthy.

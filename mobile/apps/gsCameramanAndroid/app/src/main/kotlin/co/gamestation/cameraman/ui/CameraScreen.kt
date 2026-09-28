@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -81,6 +83,12 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     // of the top or bottom edge. Such a gesture is on its way to the system's shade or home bar and
     // leaves the zoom alone for its whole length, however far it then travels into the picture.
     var startedInSystemBand by remember { mutableStateOf(false) }
+    // The zoom rail's span in the window, top pill to bottom pill. A vertical drag zooms only when
+    // its first finger lands inside it; the rail stops short of both edges, so this also keeps the
+    // drag clear of the system's shade and home bar.
+    var railTop by remember { mutableFloatStateOf(Float.NaN) }
+    var railBottom by remember { mutableFloatStateOf(Float.NaN) }
+    var startedOutsideRail by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
@@ -106,6 +114,8 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                             val band = CameramanTokens.systemGestureBand.toPx()
                             startedInSystemBand =
                                 down.position.y < band || down.position.y > size.height - band
+                            startedOutsideRail = !railTop.isNaN() &&
+                                (down.position.y < railTop || down.position.y > railBottom)
                         }
                     }
                     .pointerInput(Unit) {
@@ -125,8 +135,9 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                         zoomAtGestureStart = null
                         pinchedScale = 1.0
                     }
-                    // Vertical drag anywhere but the edge bands. Up zooms in. A drag as long as one
-                    // pill-to-pill gap walks one segment.
+                    // Vertical drag that starts between the top and bottom pills, anywhere across
+                    // the screen. Up zooms in. A drag as long as one pill-to-pill gap walks one
+                    // segment, so the rail's full height walks the whole range.
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = {
@@ -136,7 +147,7 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                             onDragEnd = { scrubAtGestureStart = null },
                             onDragCancel = { scrubAtGestureStart = null }
                         ) { change, dragAmount ->
-                            if (startedInSystemBand) return@detectDragGestures
+                            if (startedOutsideRail) return@detectDragGestures
                             change.consume()
                             scrubbedPoints -= dragAmount.y
                             val start = scrubAtGestureStart ?: liveState.displayedZoom
@@ -182,14 +193,13 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                 }
             }
 
-            // Battery pill in the upper-right corner with the thermal pill to its left, and the
-            // zoom rail filling the height below them — so the first and last stops keep the same
-            // vertical span whether the camera offers two lenses or five.
-            Column(
-                horizontalAlignment = Alignment.End,
-                // The same margin below the badges as around the whole overlay, so the rail is not
-                // crowded against the pill above it.
-                verticalArrangement = Arrangement.spacedBy(CameramanTokens.chromeMargin),
+            // The zoom rail runs the full height on the right, top pill to bottom pill, so the drag
+            // that walks it has as much travel as the screen allows, whether the camera offers two
+            // lenses or five. The thermal and battery pills sit to its left along the top, clear of
+            // the readout at the rail's middle.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .fillMaxHeight()
@@ -215,7 +225,13 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                     onSegmentLength = { length ->
                         if (abs(pointsPerSegment - length) > 0.5f) pointsPerSegment = length
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .onGloballyPositioned { coordinates ->
+                            val bounds = coordinates.boundsInWindow()
+                            railTop = bounds.top
+                            railBottom = bounds.bottom
+                        }
                 )
             }
         }

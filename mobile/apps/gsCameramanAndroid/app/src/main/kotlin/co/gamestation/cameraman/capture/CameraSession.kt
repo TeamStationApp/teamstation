@@ -307,7 +307,7 @@ class CameraSession(private val context: Context) {
                 deviceType = deviceTypeName(characteristics, id),
                 availableFormats = descriptors,
                 activeFormat = wanted,
-                mapping = mapping,
+                mapping = mapping.extendedBySoftwareZoom(),
                 failure = null,
                 // Start at the wide lens rather than the ultra-wide: 1x is what an operator
                 // pointing a phone at a field expects to see, and 0.5x on a multi-lens camera is a
@@ -424,7 +424,9 @@ class CameraSession(private val context: Context) {
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                     CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF
                 )
-                set(CaptureRequest.CONTROL_ZOOM_RATIO, state.deviceZoom.toFloat())
+                val (ratio, software) = state.mapping.cameraAndSoftwareZoom(state.deviceZoom)
+                set(CaptureRequest.CONTROL_ZOOM_RATIO, ratio.toFloat())
+                renderer.digitalZoom = software.toFloat()
             }
         } catch (error: Exception) {
             publish(state.copy(failure = "could not build a capture request: ${error.message}"))
@@ -447,6 +449,9 @@ class CameraSession(private val context: Context) {
      * lens is actually kept out of shot — see `LensSelection` for why this is the only mechanism
      * Camera2 offers. The current zoom is pulled inside the new bounds, because leaving it outside
      * would keep using the lens that was just turned off.
+     *
+     * The clamp is where the camera stops, not where zoom stops: Cameraman's software zoom carries
+     * on past it on the lens that is still on, so choosing one lens never pins a single framing.
      */
     private fun applyLensBounds() {
         val bounds = lensSelection.zoomBounds(state.position, lensCatalog) ?: return
@@ -461,17 +466,20 @@ class CameraSession(private val context: Context) {
             maximumDeviceZoom = maxOf(maximum, minimum),
             displayMultiplier = base.displayMultiplier,
             switchOverDeviceZooms = base.switchOverDeviceZooms
-        )
+        ).extendedBySoftwareZoom()
         publish(state.copy(mapping = narrowed))
         applyZoom(narrowed.clampDeviceZoom(state.deviceZoom))
     }
 
     private fun applyZoom(value: Double) {
         val clamped = state.mapping.clampDeviceZoom(value)
+        // Past the camera's ceiling the camera holds there and the renderer crops the rest.
+        val (ratio, software) = state.mapping.cameraAndSoftwareZoom(clamped)
+        renderer?.digitalZoom = software.toFloat()
         val builder = requestBuilder
         val configured = session
         if (builder != null && configured != null) {
-            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, clamped.toFloat())
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, ratio.toFloat())
             runCatching { configured.setRepeatingRequest(builder.build(), null, handler) }
         }
         publish(state.copy(deviceZoom = clamped))

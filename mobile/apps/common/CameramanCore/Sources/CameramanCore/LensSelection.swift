@@ -5,6 +5,10 @@ import Foundation
 /// Disabled IDs rather than enabled ones, so a lens that appears for the first time (a new handset,
 /// a newly attached camera) is on until someone turns it off. The empty set is "use everything",
 /// which is the behaviour before this setting existed.
+///
+/// Only physical lenses are chosen. A native crop (the 48 mm 2x, the 17 Pro's 8x) is a zoom stop on
+/// its lens, not a lens of its own, so it is on exactly when that lens is. Settings saved when crops
+/// had their own toggles are read through `normalized(in:)`: a crop left on keeps its lens on.
 public struct LensSelection: Sendable, Equatable {
   public var disabledIDs: Set<String>
 
@@ -20,18 +24,44 @@ public struct LensSelection: Sendable, Equatable {
     catalog.filter(isEnabled)
   }
 
-  /// Turning off the last remaining lens would leave capture with nothing to open.
-  public func canDisable(_ lens: CameraLens, in catalog: [CameraLens]) -> Bool {
-    catalog.contains { $0.id != lens.id && isEnabled($0) }
+  /// The lenses an operator chooses between: the physical cameras, without their native crops.
+  public static func physical(in catalog: [CameraLens]) -> [CameraLens] {
+    catalog.filter { !$0.isSecondaryNative }
   }
 
-  public func toggling(_ lens: CameraLens, to enabled: Bool, in catalog: [CameraLens]) -> LensSelection {
+  /// A physical lens's native crops: the same camera, read out at a native zoom factor.
+  public static func crops(of lens: CameraLens, in catalog: [CameraLens]) -> [CameraLens] {
+    catalog.filter { $0.isSecondaryNative && $0.uniqueDeviceID == lens.uniqueDeviceID && $0.id != lens.id }
+  }
+
+  /// Each physical lens and its crops on or off together. A lens counts as on when it, or any crop
+  /// of it, is on, so an older selection of only the 8x crop reads as the telephoto.
+  public func normalized(in catalog: [CameraLens]) -> LensSelection {
     var ids = disabledIDs
+    for lens in Self.physical(in: catalog) {
+      let crops = Self.crops(of: lens, in: catalog)
+      let isOn = isEnabled(lens) || crops.contains(where: isEnabled)
+      let group = Set([ lens.id ] + crops.map(\.id))
+      if isOn { ids.subtract(group) } else { ids.formUnion(group) }
+    }
+    return LensSelection(disabledIDs: ids)
+  }
+
+  /// Turning off the last remaining lens would leave capture with nothing to open.
+  public func canDisable(_ lens: CameraLens, in catalog: [CameraLens]) -> Bool {
+    let current = normalized(in: catalog)
+    return Self.physical(in: catalog).contains { $0.id != lens.id && current.isEnabled($0) }
+  }
+
+  /// Turns a physical lens, and its crops with it, on or off.
+  public func toggling(_ lens: CameraLens, to enabled: Bool, in catalog: [CameraLens]) -> LensSelection {
+    var ids = normalized(in: catalog).disabledIDs
+    let group = Set([ lens.id ] + Self.crops(of: lens, in: catalog).map(\.id))
     if enabled {
-      ids.remove(lens.id)
+      ids.subtract(group)
     } else {
       guard canDisable(lens, in: catalog) else { return self }
-      ids.insert(lens.id)
+      ids.formUnion(group)
     }
     return LensSelection(disabledIDs: ids)
   }
@@ -99,15 +129,6 @@ public struct LensSelection: Sendable, Equatable {
     case (false, false, false):
       return Array(enabledTypes)
     }
-  }
-
-  /// When the only enabled lens at this position is a native crop (the 48 mm 2x), zoom has to
-  /// sit on that factor. A physical-only selection does not need this: opening that camera already
-  /// puts 1x on its native field of view.
-  public func lockedDisplayedZoom(for position: CameraPosition, in catalog: [CameraLens]) -> Double? {
-    let enabled = catalog.filter { $0.position == position && isEnabled($0) }
-    guard enabled.count == 1, let lens = enabled.first, lens.isSecondaryNative else { return nil }
-    return lens.displayedZoom
   }
 
   public static let backDefaultPreference = [

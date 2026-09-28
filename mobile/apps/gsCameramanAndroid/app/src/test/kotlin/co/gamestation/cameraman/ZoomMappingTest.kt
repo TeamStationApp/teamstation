@@ -2,6 +2,8 @@ package co.gamestation.cameraman
 
 import co.gamestation.cameraman.core.ZoomMapping
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -244,5 +246,67 @@ class ZoomMappingTest {
     fun `a degenerate drag leaves the zoom where it started`() {
         assertEquals(3.0, thirteenPro.displayedZoomByDragging(3.0, 10.0, 0.0), 1e-9)
         assertEquals(3.0, thirteenPro.displayedZoomByDragging(3.0, Double.NaN, 80.0), 1e-9)
+    }
+
+    @Test
+    fun `software zoom doubles the ceiling and adds it as the last, software, segment`() {
+        val pixel = ZoomMapping(
+            minimumDeviceZoom = 0.5,
+            maximumDeviceZoom = 20.0,
+            switchOverDeviceZooms = listOf(1.0, 5.0)
+        ).extendedBySoftwareZoom()
+        assertEquals(listOf(0.5, 1.0, 5.0, 20.0, 40.0), pixel.presetDisplayedZooms)
+        assertEquals(40.0, pixel.clampDisplayedZoom(100.0), 1e-9)
+        assertFalse(pixel.isSoftwareZoom(20.0))
+        assertTrue(pixel.isSoftwareZoom(30.0))
+        assertFalse(pixel.isSoftwareSegment(2))
+        assertTrue(pixel.isSoftwareSegment(3))
+        assertEquals(pixel, pixel.extendedBySoftwareZoom())
+    }
+
+    @Test
+    fun `past the ceiling the camera holds and the renderer crops the rest`() {
+        val pixel = ZoomMapping(minimumDeviceZoom = 0.5, maximumDeviceZoom = 20.0).extendedBySoftwareZoom()
+        assertEquals(5.0 to 1.0, pixel.cameraAndSoftwareZoom(5.0))
+        assertEquals(20.0 to 1.0, pixel.cameraAndSoftwareZoom(20.0))
+        assertEquals(20.0 to 1.5, pixel.cameraAndSoftwareZoom(30.0))
+        assertEquals(20.0 to 2.0, pixel.cameraAndSoftwareZoom(99.0))
+        assertEquals(7.0 to 1.0, thirteenPro.cameraAndSoftwareZoom(7.0))
+    }
+
+    @Test
+    fun `a range clamped below a lens that is off still zooms past it in software`() {
+        // Main lens only on a Pixel: the camera stops short of the telephoto's 5x handover.
+        val mainOnly = ZoomMapping(
+            minimumDeviceZoom = 1.0,
+            maximumDeviceZoom = 4.99,
+            switchOverDeviceZooms = listOf(1.0, 5.0)
+        ).extendedBySoftwareZoom()
+        assertEquals(9.98, mainOnly.maximumDeviceZoom, 1e-9)
+        assertEquals(4.99 to 2.0, mainOnly.cameraAndSoftwareZoom(9.98))
+    }
+
+    @Test
+    fun `no software range without an extension`() {
+        assertNull(thirteenPro.softwareZoomStartDeviceZoom)
+        assertFalse(thirteenPro.isSoftwareZoom(9.0))
+    }
+
+    @Test
+    fun `the white pills are the lenses, and the two past the longest lens are digital`() {
+        val pixel = ZoomMapping(
+            minimumDeviceZoom = 0.556,
+            maximumDeviceZoom = 16.5,
+            switchOverDeviceZooms = listOf(1.0, 4.136)
+        ).extendedBySoftwareZoom()
+        assertEquals(listOf(0.556, 1.0, 4.136), pixel.opticalDisplayedZooms)
+        assertEquals(listOf(0.556, 1.0, 4.136, 16.5, 33.0), pixel.presetDisplayedZooms)
+        assertEquals(
+            listOf(false, false, false, true, true),
+            pixel.presetDisplayedZooms.map { pixel.isDigitalZoom(it) }
+        )
+        assertFalse(pixel.isDigitalSegment(1))
+        assertTrue(pixel.isDigitalSegment(2))
+        assertTrue(pixel.isDigitalSegment(3))
     }
 }
