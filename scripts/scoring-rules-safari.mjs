@@ -18,7 +18,10 @@ const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
 const { applyFieldCamera } = require('../src2/app/field/cameraModel.ts')
-const { BASES } = require('../src2/app/field/fieldModel.ts')
+const { BASES, createPlayers } = require('../src2/app/field/fieldModel.ts')
+const defender = Object.fromEntries(
+  createPlayers().map(player => [player.id, player.position])
+)
 const { runnerTargets } = require('../src2/app/scoring/runnerDrag.ts')
 const required = key => {
   assert(process.env[key], `${key} is required`)
@@ -298,7 +301,11 @@ try {
   await visible('Tap and drag another defender')
   await absent('Home plate decision')
   g = await geometry()
-  await gesture([g.project({ x: 24, z: -23 }), g.project({ x: 28, z: -24 })], 0)
+  const first = defender['1B']
+  await gesture(
+    [g.project(first), g.project({ x: first.x + 4, z: first.z - 1 })],
+    0
+  )
   await visible('Tap and drag another defender')
   await tap('Finish defensive play')
   await visible('Who committed the error')

@@ -10,6 +10,7 @@ import {
   nextBase,
   setDestination
 } from './fieldModel'
+import { PLAYER_SCALE } from './playerPresentation'
 
 describe('field locomotion', function () {
   it('creates nine defenders and three independently movable runners', function () {
@@ -19,6 +20,31 @@ describe('field locomotion', function () {
     setDestination(players[0], { x: 10, z: -30 })
     expect(players[1].target).deep.equals({ x: 0, z: 4 })
     expect(createPlayers()[0].target).deep.equals({ x: 0, z: -18.44 })
+  })
+  it('stands short and second on the dirt edge and the corners behind the bags', function () {
+    expect(PLAYER_SCALE).equals(3.2 * 1.15)
+    const byId = Object.fromEntries(
+      createPlayers().map(player => [player.id, player.position])
+    )
+    const bag = BASES[2]
+    const shoulder = 1.12 * PLAYER_SCALE
+    const from = { x: 15, z: -41 }
+    const dx = bag.x - from.x
+    const dz = bag.z - from.z
+    const length = Math.hypot(dx, dz)
+    const x = from.x + (dx / length) * shoulder
+    expect(byId['2B'].x).closeTo(x, 1e-9)
+    expect(byId['2B'].z).closeTo(-Math.sqrt(47.5 ** 2 - x * x), 1e-9)
+    expect(byId.SS.x).closeTo(-byId['2B'].x, 1e-9)
+    expect(byId.SS.z).closeTo(byId['2B'].z, 1e-9)
+    expect(Math.hypot(byId['2B'].x, byId['2B'].z)).closeTo(47.5, 1e-9)
+    expect(Math.hypot(byId['2B'].x - bag.x, byId['2B'].z - bag.z)).lessThan(
+      Math.hypot(from.x - bag.x, from.z - bag.z)
+    )
+    expect(byId['1B'].x).closeTo(24.17, 1e-9)
+    expect(byId['1B'].z).closeTo(-40.91, 1e-9)
+    expect(byId['3B'].x).closeTo(-24.72, 1e-9)
+    expect(byId['3B'].z).closeTo(-40.12, 1e-9)
   })
   it('doubles normal offense while out approaches retain the slower pace', () => {
     for (const distance of [0.5, 5, 40]) {

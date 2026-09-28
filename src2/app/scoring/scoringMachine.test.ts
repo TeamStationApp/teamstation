@@ -23,7 +23,7 @@ import {
   scoreboardFor
 } from './scoringSelectors'
 import { DevelopmentScoringSource } from './scoringSource'
-import type { ScoringState } from './scoringTypes'
+import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 
 const roster = [
   asRosterEntry({
@@ -381,14 +381,14 @@ describe('local scoring sessions', function () {
         type: 'TIMER_TICK',
         generation: done.generation,
         revision: done.revision,
-        elapsedMs: 10000
+        elapsedMs: CORRECTION_WINDOW_MS
       })
     ).equals(closed)
     const expired = scoringReducer(state, {
       type: 'TIMER_TICK',
       generation: done.generation,
       revision: done.revision,
-      elapsedMs: 10000
+      elapsedMs: CORRECTION_WINDOW_MS
     })
     expect(scoringReducer(expired, done)).equals(expired)
     expect(

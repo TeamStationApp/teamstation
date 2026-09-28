@@ -7,7 +7,6 @@ import { Mesh, PerspectiveCamera, Raycaster, Vector3 } from 'three'
 import { applyFieldCamera } from './cameraModel'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
-import { hasPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 describe('stadium depth and camera regression', function () {
@@ -101,10 +100,13 @@ describe('stadium depth and camera regression', function () {
       }
       const numbers = renderer.scene.findAllByProps({ name: 'jersey-number' })
       expect(numbers.length).equals(24)
-      for (const player of createPlayers().filter(hasPlayerLabel))
-        expect(
-          renderer.scene.findByProps({ name: `player-label-${player.id}` })
-        ).not.equals(undefined)
+      expect(
+        renderer.scene.findAll(
+          node =>
+            typeof node.props.name === 'string' &&
+            node.props.name.startsWith('player-label-')
+        ).length
+      ).equals(0)
     } finally {
       await renderer.unmount()
     }

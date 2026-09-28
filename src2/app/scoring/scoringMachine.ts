@@ -23,11 +23,12 @@ import {
 import { approachFirst } from './scoringMotion'
 import { outBatterPoint, pitchPresentation } from './scoringPresentation'
 import { bottomActionsAllowed, canSwitchBatter } from './scoringSelectors'
-import type {
-  ScoringEvent,
-  ScoringSessionState,
-  ScoringSnapshot,
-  ScoringState
+import {
+  CORRECTION_WINDOW_MS,
+  type ScoringEvent,
+  type ScoringSessionState,
+  type ScoringSnapshot,
+  type ScoringState
 } from './scoringTypes'
 
 /**
@@ -160,7 +161,7 @@ function runnerTransition(
   ]
   if (result.correctionWindow != null)
     result.correctionWindow = {
-      remainingMs: 10000,
+      remainingMs: CORRECTION_WINDOW_MS,
       revision: result.correctionWindow.revision + 1
     }
   return result
@@ -295,7 +296,7 @@ export function scoringReducer(
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
       next.correctionWindow = {
-        remainingMs: 10000,
+        remainingMs: CORRECTION_WINDOW_MS,
         revision: next.correctionWindow.revision + 1
       }
     return next

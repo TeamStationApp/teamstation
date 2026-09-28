@@ -15,7 +15,7 @@ import {
 
 import { asGameDetail } from '../../common/api'
 import { applyFieldCamera } from '../field/cameraModel'
-import { BASES } from '../field/fieldModel'
+import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { ROSTER_CARD_GAP } from './rosterLayout'
 
@@ -633,10 +633,16 @@ describe('scoring browser', function () {
           rect.y + ((1 - p.y) * rect.height) / 2
         ]
       }
-      for (const [x, z, name] of [
-        [24, -23, 'Player 3'],
-        [15, -41, 'Player 4']
+      const spot = (id: string): { x: number; z: number } => {
+        const player = createPlayers().find(item => item.id === id)
+        if (player == null) throw new Error(id)
+        return player.position
+      }
+      for (const [id, name] of [
+        ['1B', 'Player 3'],
+        ['2B', 'Player 4']
       ] as const) {
+        const { x, z } = spot(id)
         await page.mouse.click(...project(x, z))
         await page.waitForSelector(`[aria-label="Undo Throw to ${name}"]`)
         await page.waitForSelector(
@@ -646,7 +652,8 @@ describe('scoring browser', function () {
           null
         )
       }
-      await page.mouse.move(...project(-15, -41))
+      const shortstop = spot('SS')
+      await page.mouse.move(...project(shortstop.x, shortstop.z))
       await page.mouse.down()
       await page.mouse.move(...project(-10, -35), { steps: 10 })
       await page.mouse.up()
@@ -1974,7 +1981,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('runs a real ten-second correction window, pauses it for Settings and closes once', async function () {
+  it('runs a real seven-second correction window, pauses it for Settings and closes once', async function () {
     this.timeout(90000)
     const { page, unexpected } = await open('/games/g1/score')
     try {
@@ -1988,7 +1995,7 @@ describe('scoring browser', function () {
         '[aria-label="Time to edit play"]',
         node => node.getAttribute('aria-valuenow')
       )
-      expect(Number(seconds)).within(1, 10)
+      expect(Number(seconds)).within(1, 7)
       await new Promise(resolve => setTimeout(resolve, 10500))
       expect(
         await page.$eval('[aria-label="Time to edit play"]', node =>
@@ -2641,7 +2648,7 @@ describe('scoring browser', function () {
       await page.touchscreen.touchEnd()
       expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
       await page.waitForSelector(
-        '[aria-label="Time to edit play"][aria-valuenow="10"]',
+        '[aria-label="Time to edit play"][aria-valuenow="7"]',
         { timeout: 30000 }
       )
       expect(await page.$('[aria-label="Steal"]')).equals(null)
