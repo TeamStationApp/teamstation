@@ -97,9 +97,8 @@ export interface GameScreenProps {
    * address. Empty or absent is the ordinary single player.
    */
   angles?: string[]
-  /** Which angle is heard, and which one fills the picture. */
+  /** Which angle is heard. */
   audioId?: string
-  zoomedId?: string
   /** Tells the shell what the viewer has arranged, so the address can say so. */
   onAngles?: (next: {
     angles?: string[]
@@ -254,7 +253,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onTab,
     angles,
     audioId,
-    zoomedId,
     onAngles,
     onOpenTeam,
     onOpenPlayer
@@ -1182,7 +1180,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       videos={game.videos}
       order={angles ?? defaultAngles(game.videos)}
       audioId={audioId ?? null}
-      zoomedId={zoomedId ?? null}
+      // No zoom for now: the double tap that made one tile fill the screen
+      // shared the pictures with the taps that play, pause and skip, and
+      // fought them. An address that still names one is ignored.
+      zoomedId={null}
       title={`${game.awayTeamName} @ ${game.homeTeamName}`}
       atMs={
         takeWindow != null && startAtSec != null && startAtSec > 0

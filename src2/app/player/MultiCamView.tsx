@@ -8,8 +8,8 @@ import { VideoPoster } from '../components/VideoPoster'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
+import { SeekFlashView, SlowMoBadge, useFlash } from './GestureFeedback'
 import {
-  BEHIND_WINDOW_MS,
   correctionFor,
   endFor,
   everythingEnded,
@@ -17,16 +17,13 @@ import {
   holdExpired,
   isFinished,
   isOurSilence,
-  isStarved,
   liveTargetMs,
   masterOf,
   type Placeable,
-  promotionWait,
-  readyToPromote,
-  runningBehind,
   WATCHDOG_MS,
   worthCorrecting
 } from './multiCam/align'
+import { useFullScreen } from './multiCam/fullScreen'
 import {
   dropTarget,
   MAX_TILES,
@@ -35,10 +32,11 @@ import {
   tileRects
 } from './multiCam/layout'
 import { angleLabels, soundAngle } from './multiCam/takes'
-import { MultiCamBar } from './MultiCamBar'
+import { barHeightRem, MultiCamBar } from './MultiCamBar'
 import { SLOW_RATE } from './slowMotion'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { secondsAt, wallAt, type Window, windowOf } from './wallClock'
+import { type AngleZone, angleZoneFor, HOLD_MS, STEP_SECONDS } from './zones'
 
 export interface MultiCamViewProps {
   client: GameStationClient
@@ -64,9 +62,6 @@ export interface MultiCamViewProps {
   onClose: () => void
 }
 
-/** How long a tile may stall before the view drops to two of them. */
-const DEMOTE_AFTER_MS = 6000
-
 /**
  * What one tile may run ahead, so four of them do not race for the line.
  *
@@ -77,6 +72,34 @@ const DEMOTE_AFTER_MS = 6000
  * carry this take into four streams starving each other.
  */
 const TILE_BUFFER = { seconds: 20, megabytes: 12 }
+
+/** How often a crawl backwards moves the tiles, at most. */
+const BACK_STEP_MS = 80
+
+/** How long the bar stays up after the last touch of it. */
+const BAR_HIDE_MS = 3000
+
+/**
+ * How long a finger has to rest on a tile before the tile can be moved.
+ *
+ * The tiles are the same surface the taps land on, so a drag that started at
+ * once moved a picture whenever a tap to pause or skip slipped a little.
+ */
+const REORDER_HOLD_MS = 1000
+
+/**
+ * How far a finger may slip, in CSS pixels, and still have made a tap.
+ *
+ * Every touch tap carries a pixel or two, so a press that moved less than
+ * this is the ordinary tap rather than the odd one; one that moved further is
+ * a drag, on a tile or on the black around them alike.
+ */
+const TAP_SLOP_PX = 8
+
+/** Whether a finger has moved this far from where it came down. */
+function beyondSlop(dx: number, dy: number): boolean {
+  return Math.abs(dx) >= TAP_SLOP_PX || Math.abs(dy) >= TAP_SLOP_PX
+}
 
 interface TileState {
   parked: 'beforeStart' | 'afterEnd' | null
@@ -89,6 +112,27 @@ const freshTile = (): TileState => ({
   stalledSince: null,
   ended: false
 })
+
+/** One finger on the view, followed from down to up. */
+interface Press {
+  pointerId: number
+  /** Running while the press may still become a crawl. */
+  timer: ReturnType<typeof setTimeout> | null
+  /** It became one, and its lift ends the crawl. */
+  held: boolean
+  /** It has moved far enough to be a drag, so its lift is not a tap. */
+  travelled: boolean
+}
+
+/**
+ * A mouse button other than the main one.
+ *
+ * A right click is the browser's menu and a middle click its scroll, and
+ * neither is a tap on the picture — a long right press used to start a crawl.
+ */
+function otherButton(event: { pointerType: string; button: number }): boolean {
+  return event.pointerType === 'mouse' && event.button !== 0
+}
 
 /**
  * Four angles of one game, playing together.
@@ -156,18 +200,12 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const [tiles, setTiles] = useState<Record<string, TileState>>({})
   const [playing, setPlaying] = useState(true)
   const [atWallMs, setAtWallMs] = useState<number | null>(atMs ?? null)
-  const [demoted, setDemoted] = useState(false)
-  /**
-   * Demotions so far, which decides how long the view waits before trying
-   * four angles again and when it stops trying on its own.
-   */
-  const [demotions, setDemotions] = useState(0)
   /**
    * `?debug=1`, which draws what each tile is actually doing.
    *
-   * Written because the view's own account of itself — "two angles, a camera
-   * kept dropping out" — is a conclusion, and a conclusion is no use to
-   * somebody on a gigabit line who can see the same view demote. This shows
+   * Written because the view's own account of itself — "camera catching up",
+   * "waiting for the pictures" — is a conclusion, and a conclusion is no use
+   * to somebody on a gigabit line who can see the same view stall. This shows
    * the numbers it reached that conclusion from.
    */
   const debug = useMemo(
@@ -177,8 +215,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     []
   )
   const [readout, setReadout] = useState<string[]>([])
-  /** Why the view last dropped to two, kept for the readout. */
-  const lastDemotion = useRef<string>('')
   const [ended, setEnded] = useState(false)
   /** Every camera that covers this moment is stuck. */
   const [waiting, setWaiting] = useState(false)
@@ -196,14 +232,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const seekedAt = useRef(new Map<string, number>())
   /** Tiles that have had pictures at some point, for telling a stall apart. */
   const everStarted = useRef(new Set<string>())
-  /** The clock's own progress, for spotting a take that cannot keep up. */
-  const rateSample = useRef<{ wallMs: number; at: number } | null>(null)
-  /**
-   * When the trouble last stopped: nothing stalled, nothing behind. Null
-   * while something is still wrong, so a demoted view only counts calm that
-   * has held without interruption.
-   */
-  const calmSince = useRef<number | null>(null)
   /**
    * The instant the view is showing, readable from an effect that must not
    * re-run when it changes — which is every attach. Without it a tile that is
@@ -239,10 +267,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    * The tile the sound comes out of.
    *
    * Derived here rather than handed in, because it depends on where the
-   * viewer is: `soundAngle` keeps a tile somebody picked from the bar, and
-   * otherwise takes the longest angle that has a picture at this moment. A
-   * grid can span two takes, so an answer worked out once when the address
-   * was written goes wrong the first time anybody scrubs.
+   * viewer is: `soundAngle` keeps the angle chosen in the picker while it is
+   * still on the grid, and otherwise takes the longest angle that has a
+   * picture at this moment. A grid can span two takes, so an answer worked out
+   * once when the address was written goes wrong the first time anybody
+   * scrubs.
    */
   const heardId = useMemo(
     // Not the angles the game holds: the ones this grid has been told it can
@@ -261,65 +290,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       ),
     [atWallMs, audioId, order, urls, videos]
   )
-
-  /**
-   * The two the view keeps when a weak connection makes four impossible.
-   *
-   * The one being heard, then the one that was made big, then whatever comes
-   * next in the arrangement. Picking them with a filter kept only one where
-   * the sound and the first tile were the same video, which is the ordinary
-   * case — two is the point.
-   */
-  const shown = useMemo(() => {
-    if (!demoted) return chosen
-    const stuck = (video: VideoSummary): boolean =>
-      tiles[video.id]?.stalledSince != null
-    const keep: VideoSummary[] = []
-    const add = (video: VideoSummary | undefined): void => {
-      if (video != null && !keep.some(one => one.id === video.id))
-        keep.push(video)
-    }
-    // A camera that has stopped drawing is the last thing to keep: demotion
-    // exists to leave the viewer with pictures, and keeping the dead one
-    // because it happened to hold the sound leaves them with one.
-    if (!stuck(chosen.find(video => video.id === heardId) ?? chosen[0])) {
-      add(chosen.find(video => video.id === heardId))
-    }
-    add(chosen.find(video => video.id === zoomedId && !stuck(video)))
-    for (const video of chosen) {
-      if (keep.length >= 2) break
-      if (!stuck(video)) add(video)
-    }
-    // And if everything is stuck, two of them anyway: something has to be on
-    // the screen, and they may all come back together.
-    for (const video of chosen) {
-      if (keep.length >= 2) break
-      add(video)
-    }
-    return keep.slice(0, 2)
-  }, [chosen, demoted, heardId, tiles, zoomedId])
-
-  /**
-   * The tile the sound actually comes out of.
-   *
-   * `heardId` is the answer for the grid; this is the answer for the two
-   * tiles left when a weak connection has demoted it. Demotion drops the
-   * heard tile when it is the one that has stalled — that is the whole point,
-   * the viewer is left with pictures — and the sound went on naming it, so
-   * both surviving tiles stayed muted with no speaker glyph anywhere for the
-   * length of the demotion.
-   */
-  const audibleId = useMemo(() => {
-    if (heardId != null && shown.some(video => video.id === heardId)) {
-      return heardId
-    }
-    return soundAngle(
-      shown.filter(one => urls[one.id] !== null),
-      shown.map(one => one.id),
-      null,
-      atWallMs
-    )
-  }, [atWallMs, heardId, shown, urls])
 
   tilesRef.current = tiles
 
@@ -346,38 +316,13 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     })
   }, [])
 
-  /**
-   * Back to four angles, from wherever the view got to.
-   *
-   * A fresh start for every tile, not just the two that stayed: the stall
-   * that caused the demotion is still written down, and without clearing it
-   * the next tick simply demotes again — which is what made the button look
-   * dead to anybody who pressed it. `everStarted` goes with it, because the
-   * two tiles coming back are being attached from nothing and a tile that is
-   * opening its source has not stalled, it has not started.
-   */
-  const restoreAll = useCallback(() => {
-    setTiles(current => {
-      const next: Record<string, TileState> = {}
-      for (const [id, tile] of Object.entries(current)) {
-        next[id] = { ...tile, stalledSince: null }
-      }
-      return next
-    })
-    frames.current.clear()
-    everStarted.current.clear()
-    calmSince.current = null
-    rateSample.current = null
-    setDemoted(false)
-  }, [])
-
   const rects = tileRects({
     width,
     height,
-    count: shown.length,
-    aspect: aspectOf(shown),
+    count: chosen.length,
+    aspect: aspectOf(chosen),
     zoomed:
-      zoomedId == null ? null : shown.findIndex(video => video.id === zoomedId)
+      zoomedId == null ? null : chosen.findIndex(video => video.id === zoomedId)
   })
 
   /**
@@ -436,11 +381,9 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    * A tile has been handed a source. Where should it start, and may the
    * watchdog believe it yet?
    *
-   * Each tile owns its own attach, so removing one — which is what demotion
-   * does — leaves the others playing instead of tearing every element down and
-   * rebuilding it. Doing that as one effect over the whole set meant a weak
-   * connection was answered by reloading the two tiles that were still
-   * managing, which is the opposite of the help intended.
+   * Each tile owns its own attach, so a tile given a new address, or taken
+   * off the grid, leaves the others playing instead of tearing every element
+   * down and rebuilding it.
    */
   const attaching = useCallback(
     (id: string): number | null => {
@@ -496,8 +439,17 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       }
 
       if (toSec != null) element.currentTime = toSec
-      intents.current.set(id, playing)
-      if (playing) element.play().catch(() => undefined)
+      // One that arrives in the middle of a crawl joins it at once, rather
+      // than running a frame or two at full speed with its sound on: forwards
+      // it plays slowly, backwards it waits to be stepped.
+      const crawl = crawlRate.current
+      if (crawl !== 0) {
+        element.playbackRate = crawl > 0 ? SLOW_RATE : 1
+        element.muted = true
+      }
+      const run = crawl === 0 ? playing : crawl > 0
+      intents.current.set(id, run)
+      if (run) element.play().catch(() => undefined)
     },
     [chosen, playing]
   )
@@ -505,20 +457,25 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   /** Everything the alignment rules need to know about a tile right now. */
   const placeables = useCallback(
     (): Placeable[] =>
-      shown.map(video => ({
+      chosen.map(video => ({
         id: video.id,
         video,
         playable:
           elements.current.get(video.id) != null && urls[video.id] != null,
         ended: tiles[video.id]?.ended
       })),
-    [shown, tiles, urls]
+    [chosen, tiles, urls]
   )
 
   /** Puts every tile on one instant, and says what each of them did. */
   const alignTo = useCallback(
-    (wallMs: number, toleranceSec?: number): void => {
-      for (const video of shown) {
+    (
+      wallMs: number,
+      toleranceSec?: number,
+      /** Whether the tiles should run; the view's own play state if left out. */
+      run: boolean = playing
+    ): void => {
+      for (const video of chosen) {
         const element = elements.current.get(video.id)
         if (element == null) continue
         const correction = correctionFor({
@@ -585,13 +542,15 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
                 [video.id]: { ...current[video.id], parked: null }
               }
         )
-        intents.current.set(video.id, playing)
-        if (playing && element.paused) {
+        intents.current.set(video.id, run)
+        if (run && element.paused) {
           element.play().catch(() => undefined)
+        } else if (!run && !element.paused) {
+          element.pause()
         }
       }
     },
-    [playing, shown]
+    [playing, chosen]
   )
 
   // The watchdog. Once a second, not once a frame: four tiles through Media
@@ -622,7 +581,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       // — and never before a tile has any pictures at all, because a tile that
       // is still opening its source has not stalled, it has not started.
       const finishedNow = new Map<string, boolean>()
-      for (const video of shown) {
+      for (const video of chosen) {
         const tileElement = elements.current.get(video.id)
         if (tileElement == null) continue
         if (tileElement.readyState >= 2) everStarted.current.add(video.id)
@@ -678,41 +637,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         })
       }
 
-      // Four buffers can fail where one would have stalled, and a viewer
-      // cannot diagnose four posters. Two tiles is the valve, and it says so.
-      //
-      // **Starving, not merely stopped.** Dropping two pictures relieves the
-      // line, so it is worth doing when the line is the trouble: a tile with
-      // nothing buffered has run out of stream. A tile sitting on twenty
-      // seconds that has stopped drawing is short of nothing — the decoder is
-      // wedged, or the tab was throttled — and taking two other cameras away
-      // fixes none of it. Judging on the stall alone is how a gigabit
-      // connection was told it could not carry four streams.
-      const stuckNow = shown.some(
-        video => tiles[video.id]?.stalledSince != null
-      )
-      if (!demoted && shown.length > 2) {
-        const struggling = shown.filter(video => {
-          const since = tiles[video.id]?.stalledSince
-          if (since == null || now - since <= DEMOTE_AFTER_MS) return false
-          const element = elements.current.get(video.id)
-          if (element == null) return false
-          return isStarved({
-            bufferAheadSec: bufferAhead(element),
-            readyState: element.readyState
-          })
-        })
-        if (struggling.length > 0) {
-          const who = struggling
-            .map(video => names.get(video.id) ?? video.id)
-            .join(', ')
-          lastDemotion.current = `${clockOf(now)} starved: ${who}`
-          setDemoted(true)
-          setDemotions(count => count + 1)
-          calmSince.current = null
-        }
-      }
-
       /**
        * Who the clock is read from.
        *
@@ -739,7 +663,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           return false
         }
         const element = elements.current.get(tile.id)
-        const summary = shown.find(video => video.id === tile.id)
+        const summary = chosen.find(video => video.id === tile.id)
         const correction = correctionFor({
           wallMs: instant,
           follower: {
@@ -770,8 +694,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         )
       })
 
-      const leader = masterOf(showing, audibleId)
-      const leaderVideo = shown.find(video => video.id === leader)
+      const leader = masterOf(showing, heardId)
+      const leaderVideo = chosen.find(video => video.id === leader)
       const leaderElement = leader == null ? null : elements.current.get(leader)
 
       let wallMs: number | null = null
@@ -799,8 +723,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
        * managing to draw it.
        *
        * Said out loud, because still pictures with no explanation is the state
-       * a viewer cannot diagnose — and with two angles left there is no
-       * demotion to fall back on. And **held**, not merely announced: the clock
+       * a viewer cannot diagnose. And **held**, not merely announced: the clock
        * has stopped, so a tile that is somehow still playing must stop with it
        * or it walks away from the moment the bar is showing. Without the hold a
        * mis-judged stall left a sharp picture running on half a minute past a
@@ -854,59 +777,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           (showing.length === 0 && end != null && wallMs >= end - 1000)
       )
 
-      // A connection that cannot carry four streams delivers all of them
-      // slowly: every tile draws, none stalls, and the game runs at two
-      // thirds speed. The clock is the only thing that shows it.
-      //
-      // Only while a camera is actually showing the moment. The clock stops
-      // at the end of a take by design, and stands still in the gap between
-      // recordings — read as a rate, both look exactly like a connection that
-      // has given out, and the first real four-camera take demoted itself on
-      // a healthy line as it reached its own last second.
-      const sample = rateSample.current
-      const measurable = playing && showing.length > 0
-      let behind = false
-      if (sample == null || !measurable) {
-        rateSample.current = measurable ? { wallMs, at: now } : null
-      } else if (runningBehind(wallMs - sample.wallMs, now - sample.at)) {
-        behind = true
-        if (!demoted && shown.length > 2) {
-          const rate = (wallMs - sample.wallMs) / (now - sample.at)
-          lastDemotion.current = `${clockOf(now)} take ran at ${rate.toFixed(2)}×`
-          setDemoted(true)
-          setDemotions(count => count + 1)
-        }
-        rateSample.current = { wallMs, at: now }
-      } else if (now - sample.at >= BEHIND_WINDOW_MS) {
-        rateSample.current = { wallMs, at: now }
-      }
-
-      /**
-       * How long the trouble has been over, and whether that is long enough.
-       *
-       * Calm is nothing stalled and nothing behind, held without a break —
-       * any stumble puts the clock back to nought rather than shortening the
-       * wait. It is only counted while the take is actually playing: a paused
-       * view is not evidence that a connection has recovered.
-       */
-      if (stuckNow || behind || !measurable) {
-        calmSince.current = null
-      } else {
-        calmSince.current ??= now
-      }
-      if (
-        demoted &&
-        calmSince.current != null &&
-        readyToPromote({
-          calmForMs: now - calmSince.current,
-          attempts: demotions
-        })
-      ) {
-        restoreAll()
-      }
-
       if (debug) {
-        const lines = shown.map(video => {
+        const lines = chosen.map(video => {
           const element = elements.current.get(video.id)
           const tile = tiles[video.id]
           if (element == null) return `${names.get(video.id) ?? video.id}: —`
@@ -922,11 +794,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
             `${element.paused ? 'paused' : 'playing'}  ${stalled}`
           )
         })
-        if (lastDemotion.current !== '') {
-          lines.push(`last drop: ${lastDemotion.current}`)
-        }
         lines.push(
-          `demotions ${demotions}  clock ${((wallMs - (takeRef.current?.fromMs ?? wallMs)) / 1000).toFixed(1)}s`
+          `clock ${((wallMs - (takeRef.current?.fromMs ?? wallMs)) / 1000).toFixed(1)}s`
         )
         setReadout(lines)
       }
@@ -940,15 +809,12 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   }, [
     alignTo,
     debug,
-    demoted,
-    demotions,
-    audibleId,
+    heardId,
     landscape,
     names,
     placeables,
     playing,
-    restoreAll,
-    shown,
+    chosen,
     tiles
   ])
 
@@ -978,8 +844,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const goTo = useCallback(
     (wallMs: number): void => {
       atWallRef.current = wallMs
-      // A scrub is a jump, not progress: the measurement starts again.
-      rateSample.current = null
       setAtWallMs(wallMs)
       alignTo(wallMs)
     },
@@ -988,7 +852,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 
   useEffect(() => {
     if (!landscape || !playing) return
-    for (const video of shown) {
+    for (const video of chosen) {
       const element = elements.current.get(video.id)
       if (element == null || tilesRef.current[video.id]?.parked != null)
         continue
@@ -1002,7 +866,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const toggle = useCallback((): void => {
     setPlaying(current => {
       const next = !current
-      for (const video of shown) {
+      for (const video of chosen) {
         const element = elements.current.get(video.id)
         if (element == null) continue
         if (tiles[video.id]?.parked != null) continue
@@ -1012,67 +876,95 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       }
       return next
     })
-  }, [shown, tiles])
+  }, [chosen, tiles])
 
   /**
-   * A quarter speed, in both directions, by moving the clock.
+   * A quarter speed, in both directions, by moving the clock — in silence.
    *
-   * Not four `playbackRate`s: nothing has measured four decoders agreeing at
-   * 0.25×, the rate control would fight the alignment at exactly the moment
-   * somebody is studying a swing frame by frame, and backwards has no browser
-   * support anywhere. The tiles are paused and stepped, which is what
-   * `slowMotion.ts` already does for the single player — here it is the take's
-   * own clock that is stepped, and every tile follows it.
+   * Forwards, every tile plays at a quarter of its rate and the take's clock
+   * steps at the same pace; a tile is only moved when it drifts past the
+   * usual tolerance. The first version paused the tiles and seeked all four
+   * on every frame — and handed each step to an alignment that called
+   * `play()` on them because the view was playing, so between seeks they ran
+   * at full speed with their sound on and every seek pulled them back: the
+   * picture lurched forwards and backwards and the sound stuttered.
+   *
+   * Backwards has no browser support anywhere, so it is still paused and
+   * stepped, but a seek at most every `BACK_STEP_MS`: four decoders cannot
+   * finish sixty seeks a second, and piling them up is what jitters.
    */
   const slowFrame = useRef(0)
   const [slow, setSlow] = useState(0)
+  /** The crawl's rate, for callbacks that outlive the render they were made in. */
+  const crawlRate = useRef(0)
 
-  const holdAll = useCallback((): void => {
-    for (const video of shown) {
-      const element = elements.current.get(video.id)
-      if (element == null) continue
-      intents.current.set(video.id, false)
-      element.pause()
-    }
-  }, [shown])
+  /**
+   * Every tile at the given rate, and heard or not as `muted` says.
+   *
+   * Over the elements actually on screen rather than a list of angles, so a
+   * crawl that outlives the render it began in still reaches every tile. Only
+   * what differs is written: an element announces every rate it is given.
+   */
+  const setRateAll = useCallback(
+    (rate: number, muted: (id: string) => boolean): void => {
+      for (const [id, element] of elements.current) {
+        if (element.playbackRate !== rate) element.playbackRate = rate
+        const silent = muted(id)
+        if (element.muted !== silent) element.muted = silent
+      }
+    },
+    []
+  )
 
+  /** False when a crawl was already running, or there is no clock to move. */
   const beginSlow = useCallback(
-    (direction: 'slowForward' | 'slowBack'): void => {
-      if (slowFrame.current !== 0 || atWallRef.current == null) return
-      const rate = direction === 'slowForward' ? SLOW_RATE : -SLOW_RATE
-      holdAll()
+    (direction: 'slowForward' | 'slowBack'): boolean => {
+      if (slowFrame.current !== 0 || atWallRef.current == null) return false
+      const forward = direction === 'slowForward'
+      const rate = forward ? SLOW_RATE : -SLOW_RATE
+      const elementRate = forward ? SLOW_RATE : 1
+      crawlRate.current = rate
+      setRateAll(elementRate, () => true)
       setSlow(rate)
+      alignTo(atWallRef.current, undefined, forward)
       let last = performance.now()
+      let lastSeek = 0
       const step = (now: number): void => {
         const seconds = (now - last) / 1000
         last = now
         const next = (atWallRef.current ?? 0) + seconds * rate * 1000
         atWallRef.current = next
         setAtWallMs(next)
-        // A tenth of a second is nothing at full speed and four frames at a
-        // quarter of it, so the tiles are held far tighter while stepping.
-        alignTo(next, 0.01)
+        // Every frame, not once at the start. A tile handed a new source
+        // mid-crawl loads at full speed, and one whose sound was switched on
+        // by the angle it was heard from changing would play out loud: set
+        // once, either lurched ahead of the others until the next seek.
+        setRateAll(elementRate, () => true)
+        if (forward) {
+          alignTo(next, undefined, true)
+        } else if (now - lastSeek >= BACK_STEP_MS) {
+          lastSeek = now
+          // A tenth of a second is nothing at full speed and four frames at
+          // a quarter of it, so a stepped tile is held far tighter.
+          alignTo(next, 0.01, false)
+        }
         slowFrame.current = requestAnimationFrame(step)
       }
       slowFrame.current = requestAnimationFrame(step)
+      return true
     },
-    [alignTo, holdAll]
+    [alignTo, setRateAll]
   )
 
   const endSlow = useCallback((): void => {
     if (slowFrame.current === 0) return
     cancelAnimationFrame(slowFrame.current)
     slowFrame.current = 0
+    crawlRate.current = 0
     setSlow(0)
-    if (!playing) return
-    for (const video of shown) {
-      const element = elements.current.get(video.id)
-      if (element == null || tilesRef.current[video.id]?.parked != null)
-        continue
-      intents.current.set(video.id, true)
-      element.play().catch(() => undefined)
-    }
-  }, [playing, shown])
+    setRateAll(1, id => id !== heardId)
+    if (atWallRef.current != null) alignTo(atWallRef.current)
+  }, [alignTo, heardId, setRateAll])
 
   // A key held while the tab changes never delivers its `keyup`.
   useEffect(() => {
@@ -1081,20 +973,246 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     }
   }, [])
 
+  // From the ref, not the render: a tap on a tile acts a moment after it
+  // lands, by which time the render it was made in is behind the game.
   const skip = useCallback(
     (deltaSec: number): void => {
-      if (atWallMs == null) return
-      goTo(atWallMs + deltaSec * 1000)
+      if (atWallRef.current == null) return
+      goTo(atWallRef.current + deltaSec * 1000)
     },
-    [atWallMs, goTo]
+    [goTo]
   )
+
+  /**
+   * The bar, which gets out of the way.
+   *
+   * Up when the take first has a clock to show, and for three seconds after anything touches it
+   * or a tap lands in the bottom third of the screen; gone otherwise, so the
+   * pictures have the whole screen.
+   */
+  const [barShown, setBarShown] = useState(true)
+  const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** When the three seconds were last started again. */
+  const barShownAt = useRef(0)
+  const showBar = useCallback((): void => {
+    // A mouse over the bottom third or the bar lands here on every move, many
+    // times a second, and a quarter of a second makes no difference to a
+    // three-second timer that is already running.
+    const now = Date.now()
+    if (barTimer.current != null && now - barShownAt.current < 250) return
+    barShownAt.current = now
+    setBarShown(true)
+    if (barTimer.current != null) clearTimeout(barTimer.current)
+    barTimer.current = setTimeout(() => {
+      barTimer.current = null
+      setBarShown(false)
+    }, BAR_HIDE_MS)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (barTimer.current != null) clearTimeout(barTimer.current)
+    }
+  }, [])
+
+  const [flash, showFlash] = useFlash()
+
+  // A mouse over the bottom third calls the bar up, as a tap there does. A
+  // mouse only: a finger's `pointermove` is a drag, and belongs to the tiles.
+  useEffect(() => {
+    const hover = (event: PointerEvent): void => {
+      if (event.pointerType !== 'mouse') return
+      if (event.clientY >= (window.innerHeight * 2) / 3) showBar()
+    }
+    document.addEventListener('pointermove', hover)
+    return () => {
+      document.removeEventListener('pointermove', hover)
+    }
+  }, [showBar])
+
+  /**
+   * The keyboard calls the bar up too, and Tab takes the focus into it.
+   *
+   * A hidden bar is inert, so Tab alone cannot be trusted to reach it: the
+   * focus may move before React has drawn the bar as visible, and then lands
+   * on the page behind the view instead. So a Tab from outside the bar is taken over —
+   * the bar is shown, and once it has been drawn the focus goes to its first
+   * control, or its last for Shift-Tab. Inside the bar, Tab is left alone and
+   * only keeps it up. The keys the view answers show it as well, so a seek
+   * from the keyboard shows where it went.
+   */
+  const barRoot = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const keys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
+    const down = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const bar = barRoot.current
+      if (bar == null) return
+      if (event.key === 'Tab') {
+        showBar()
+        if (bar.contains(document.activeElement)) return
+        event.preventDefault()
+        const backwards = event.shiftKey
+        requestAnimationFrame(() => {
+          const controls = barRoot.current?.querySelectorAll<HTMLElement>(
+            'button, [tabindex="0"]'
+          )
+          if (controls == null || controls.length === 0) return
+          controls[backwards ? controls.length - 1 : 0]?.focus()
+        })
+        return
+      }
+      if (keys.has(event.key) || event.key === ' ' || event.key === 'k') {
+        showBar()
+      }
+    }
+    window.addEventListener('keydown', down, true)
+    return () => {
+      window.removeEventListener('keydown', down, true)
+    }
+  }, [showBar])
+
+  /** What a tap in one of the nine squares does. */
+  const runZone = (zone: AngleZone): void => {
+    if (zone === 'controls') {
+      showBar()
+      return
+    }
+    if (zone === 'seekBack' || zone === 'seekForward') {
+      const back = zone === 'seekBack'
+      skip(back ? -STEP_SECONDS : STEP_SECONDS)
+      showFlash(back ? 'back' : 'forward')
+      return
+    }
+    toggle()
+    showFlash(playing ? 'pause' : 'play')
+  }
+  const runZoneRef = useRef(runZone)
+  runZoneRef.current = runZone
+
+  /**
+   * One finger on the screen, from down to up.
+   *
+   * The squares are worked out against the whole screen — the view is fixed
+   * to the window, so a pointer's client position is already in it — and not
+   * against whichever tile the finger happens to be on.
+   */
+  const press = useRef<Press | null>(null)
+  /**
+   * The finger the press belongs to, for the tiles: one that has picked its
+   * picture up puts it down again the moment another finger takes over.
+   */
+  const [pressPointer, setPressPointer] = useState<number | null>(null)
+
+  /**
+   * A finger has come down. False when it is to be ignored, because another
+   * finger is holding a crawl.
+   *
+   * Every finger reaches this one press, so it is kept by pointer. A second
+   * finger used to replace the first outright: the crawl the first was holding
+   * then never saw its finger lift and ran on for good, and the second
+   * finger's lift was taken for a tap. A press that is only waiting to become
+   * a hold is given up to the newer finger, which is the one the viewer is
+   * thinking about.
+   */
+  const pressStart = (pointerId: number, x: number, y: number): boolean => {
+    const current = press.current
+    if (current?.held === true && current.pointerId !== pointerId) return false
+    if (current?.timer != null) clearTimeout(current.timer)
+    const slowZone = angleZoneFor(x, y, width, height) === 'slowForward'
+    const state: Press = {
+      pointerId,
+      timer: null,
+      held: false,
+      travelled: false
+    }
+    if (slowZone) {
+      state.timer = setTimeout(() => {
+        state.timer = null
+        // Held only if this press started the crawl. One already running —
+        // an arrow key held down — belongs to its key, and lifting this
+        // finger must not end it.
+        state.held = beginSlow('slowForward')
+      }, HOLD_MS)
+    }
+    press.current = state
+    setPressPointer(pointerId)
+    return true
+  }
+
+  /** The press this pointer is making, if it is the one being followed. */
+  const pressOf = (pointerId: number): Press | null =>
+    press.current?.pointerId === pointerId ? press.current : null
+
+  /** The finger has travelled: it is a drag, and will not become a hold. */
+  const pressMoved = (pointerId: number): void => {
+    const state = pressOf(pointerId)
+    if (state == null) return
+    state.travelled = true
+    if (state.timer == null) return
+    clearTimeout(state.timer)
+    state.timer = null
+  }
+
+  /**
+   * Whether this pointer may still pick a tile up: it is the press being
+   * followed, and that press is not holding a crawl. A finger that has lost
+   * the press to another is done.
+   */
+  const mayReorder = (pointerId: number): boolean => {
+    const state = pressOf(pointerId)
+    return state != null && !state.held
+  }
+
+  /**
+   * The finger has come up. True when it was a hold, which the tile must not
+   * then read as a drop.
+   *
+   * A finger that travelled on the way is not a tap, even if it came back to
+   * where it started.
+   */
+  const pressEnd = (
+    pointerId: number,
+    still: boolean,
+    x: number,
+    y: number
+  ): boolean => {
+    const state = pressOf(pointerId)
+    if (state == null) return false
+    press.current = null
+    if (state.timer != null) clearTimeout(state.timer)
+    if (state.held) {
+      endSlow()
+      return true
+    }
+    if (still && !state.travelled) {
+      runZoneRef.current(angleZoneFor(x, y, width, height))
+    }
+    return false
+  }
+
+  const pressCancel = (pointerId: number): void => {
+    const state = pressOf(pointerId)
+    if (state == null) return
+    press.current = null
+    if (state.timer != null) clearTimeout(state.timer)
+    if (state.held) endSlow()
+  }
+
+  /** Where a press on the black around the tiles came down. */
+  const marginFrom = useRef<{ x: number; y: number; id: number } | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (press.current?.timer != null) clearTimeout(press.current.timer)
+    }
+  }, [])
 
   // The keyboard, and only here: the single player behind this stands down.
   // The same hook it uses, so the two cannot both answer one key — and the
   // arrows are taken over, because moving a take means moving four pictures
   // rather than the one this hook would otherwise seek.
   useKeyboardShortcuts({
-    video: () => elements.current.get(shown[0]?.id ?? '') ?? null,
+    video: () => elements.current.get(chosen[0]?.id ?? '') ?? null,
     act: zone => {
       if (zone === 'toggle') toggle()
     },
@@ -1108,32 +1226,58 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     holding: () => slowFrame.current !== 0
   })
 
-  // A landscape phone, where a browser will let us ask. Both of these fail on
-  // an iPhone — Safari has never supported locking the orientation, and
-  // fullscreen on something that is not a `<video>` arrived late and is not to
-  // be relied on — so neither is depended on and the portrait gate below is
-  // what actually carries the rule.
+  // Black around the view as well as under it. Safari keeps the page out of
+  // the notch and the home indicator when a phone is held sideways, and
+  // paints those two strips in the page's own background — the app's pale
+  // green-grey, which read as white bars either side of the pictures.
   useEffect(() => {
-    const root = document.documentElement as HTMLElement & {
-      requestFullscreen?: () => Promise<void>
+    const html = document.documentElement
+    const body = document.body
+    const theme = document.querySelector('meta[name="theme-color"]')
+    const before = {
+      html: html.style.backgroundColor,
+      body: body.style.backgroundColor,
+      theme: theme?.getAttribute('content') ?? null
     }
-    root.requestFullscreen?.().catch(() => undefined)
-    // `lock` is the Screen Orientation API's newest corner: Chrome on Android
-    // has it, Safari has never had it, and the two type-checkers this repo
-    // runs disagree about whether it exists — so the two methods are asked
-    // for by shape, which is true wherever they are and an assertion nowhere.
-    const orientation: {
-      lock?: (to: string) => Promise<void>
-      unlock?: () => void
-    } = screen.orientation
-    orientation?.lock?.('landscape').catch(() => undefined)
+    html.style.backgroundColor = '#000000'
+    body.style.backgroundColor = '#000000'
+    theme?.setAttribute('content', '#000000')
+    // A long press is a crawl or a move here, never a selection: Safari
+    // answered one by selecting the whole view and offering to copy it. Set
+    // on the body, where the prefixed names reach the browser as written.
+    const unselectable = [
+      'user-select',
+      '-webkit-user-select',
+      '-webkit-touch-callout'
+    ]
+    const selecting = unselectable.map(name =>
+      body.style.getPropertyValue(name)
+    )
+    for (const name of unselectable) body.style.setProperty(name, 'none')
     return () => {
-      if (document.fullscreenElement != null) {
-        document.exitFullscreen?.().catch(() => undefined)
-      }
-      orientation?.unlock?.()
+      unselectable.forEach((name, index) => {
+        body.style.setProperty(name, selecting[index] ?? '')
+      })
+      html.style.backgroundColor = before.html
+      body.style.backgroundColor = before.body
+      if (before.theme != null) theme?.setAttribute('content', before.theme)
     }
   }, [])
+
+  // Full screen, to the extent each browser allows; the portrait gate below
+  // is what actually carries the landscape rule. On an iPhone this is a swipe
+  // the viewer makes, and the layers let it through to the page while it is
+  // wanted.
+  const { swipeToHide } = useFullScreen(landscape, height)
+  const touchAction = swipeToHide ? 'pan-y' : 'none'
+
+  const notice = ended
+    ? lstrings.angles_all_ended
+    : waiting
+      ? lstrings.angles_waiting
+      : swipeToHide
+        ? lstrings.angles_swipe_full_screen
+        : null
 
   // A live take has no end of its own, so the furthest anybody has played to
   // stands in for one. A finished take does not: letting the clock extend the
@@ -1154,6 +1298,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   )
   takeRef.current = take
 
+  // The three seconds start when there is a bar to see, not when the view
+  // mounts: four sources take longer than that to open, and a bar that hid
+  // before it was ever drawn left the view with no sign it had one.
+  const barReady = landscape && take != null && atWallMs != null
+  useEffect(() => {
+    if (barReady) showBar()
+  }, [barReady, showBar])
+
   const [drag, setDrag] = useState<{
     index: number
     x: number
@@ -1171,14 +1323,69 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   // amount.
   return createPortal(
     <View style={styles.overlay}>
-      {(attachTiles ? shown : []).map((video, index) => (
+      {/* The black around the tiles, which takes the same squares they do. */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 0,
+          touchAction
+        }}
+        onPointerDown={event => {
+          if (otherButton(event)) return
+          if (!pressStart(event.pointerId, event.clientX, event.clientY)) {
+            return
+          }
+          ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
+          marginFrom.current = {
+            x: event.clientX,
+            y: event.clientY,
+            id: event.pointerId
+          }
+        }}
+        // The same rule as on a tile: a finger that travels is a drag, which
+        // neither becomes a crawl nor lands as a tap.
+        onPointerMove={event => {
+          const from = marginFrom.current
+          if (from?.id !== event.pointerId) return
+          if (beyondSlop(event.clientX - from.x, event.clientY - from.y)) {
+            pressMoved(event.pointerId)
+          }
+        }}
+        onPointerUp={event => {
+          const from = marginFrom.current
+          if (from?.id !== event.pointerId) return
+          marginFrom.current = null
+          const still = !beyondSlop(
+            event.clientX - from.x,
+            event.clientY - from.y
+          )
+          pressEnd(event.pointerId, still, event.clientX, event.clientY)
+        }}
+        onPointerCancel={event => {
+          if (marginFrom.current?.id === event.pointerId) {
+            marginFrom.current = null
+          }
+          pressCancel(event.pointerId)
+        }}
+        onPointerLeave={event => {
+          if (marginFrom.current?.id === event.pointerId) {
+            marginFrom.current = null
+          }
+          pressCancel(event.pointerId)
+        }}
+      />
+      {(attachTiles ? chosen : []).map((video, index) => (
         <Tile
           key={video.id}
           videoId={video.id}
           url={urls[video.id] ?? null}
           unavailable={urls[video.id] === null}
           onGiveUp={askAgain}
-          muted={video.id !== audibleId}
+          // Silent throughout a crawl, whichever angle is heard: the sound
+          // follows the moment, and a crawl across two recordings would
+          // otherwise switch one on at a quarter speed.
+          muted={slow !== 0 || video.id !== heardId}
           onAttaching={attaching}
           onAttached={attached}
           wantsToPlay={() => intents.current.get(video.id) === true}
@@ -1192,15 +1399,22 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           }
           unplaceable={video.startAt == null}
           takeRef={takeElement(video.id)}
+          touchAction={touchAction}
+          heard={video.id === heardId}
+          onPressStart={pressStart}
+          onPressMoved={pressMoved}
+          onPressEnd={pressEnd}
+          onPressCancel={pressCancel}
+          canReorder={mayReorder}
+          pressPointer={pressPointer}
           onMove={(x, y) => {
             setDrag({ index, x, y })
           }}
           onDrop={(x, y) => {
             setDrag(null)
             // A press that went nowhere is a tap: the tile goes back where it
-            // was, and nothing is reordered. Every touch tap carries a pixel
-            // or two, so this is the ordinary case rather than the odd one.
-            if (Math.abs(x) < 8 && Math.abs(y) < 8) return
+            // was, and nothing is reordered.
+            if (!beyondSlop(x, y)) return
             const rect = rects[index]
             if (rect == null) return
             const target = dropTarget(rects, {
@@ -1209,16 +1423,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
             })
             if (target == null || target === index) return
             onChange({ order: swap(order, index, target) })
-          }}
-          onZoom={() => {
-            // Size only. Handing the sound to whatever was made big reads
-            // well and is wrong on every real game: a camera's archive is
-            // silent by design, so a double-tap on one took the sound off the
-            // tile that had any, gave it to a tile that could not make one,
-            // and did not give it back when the picture was made small again.
-            // Which tile is heard is `soundAngle`'s to decide and the bar's
-            // chips to change.
-            onChange({ zoomedId: zoomedId === video.id ? null : video.id })
           }}
         />
       ))}
@@ -1251,23 +1455,23 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         </View>
       ) : null}
 
-      {slow !== 0 ? (
-        <View style={styles.speed} pointerEvents="none">
-          <Text style={styles.speedText}>{slow < 0 ? '◀ 0.25×' : '0.25×'}</Text>
-        </View>
-      ) : null}
+      <SeekFlashView flash={flash} />
+      <SlowMoBadge
+        rate={slow}
+        bottom={
+          landscape && barShown
+            ? theme.rem(barHeightRem(theme) + theme.spaceSmRem)
+            : undefined
+        }
+      />
 
       {/* One at a time, most specific first: they share a place on the screen
-          and two of them printed over each other unreadably. */}
-      {!demoted && !ended && waiting ? (
+          and two of them printed over each other unreadably. The swipe for
+          full screen comes last, because it is advice about the browser and
+          can wait while the pictures themselves have something to say. */}
+      {notice != null ? (
         <View style={styles.notice} pointerEvents="none">
-          <Text style={styles.noticeText}>{lstrings.angles_waiting}</Text>
-        </View>
-      ) : null}
-
-      {!demoted && ended ? (
-        <View style={styles.notice} pointerEvents="none">
-          <Text style={styles.noticeText}>{lstrings.angles_all_ended}</Text>
+          <Text style={styles.noticeText}>{notice}</Text>
         </View>
       ) : null}
 
@@ -1281,49 +1485,26 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         </View>
       ) : null}
 
-      {demoted ? (
-        <View style={styles.notice}>
-          <Text style={styles.noticeText}>
-            {promotionWait(demotions) == null
-              ? lstrings.angles_demoted_stuck
-              : lstrings.angles_demoted}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={lstrings.angles_restore}
-            onPress={restoreAll}
-          >
-            <Text style={styles.noticeAction}>{lstrings.angles_restore}</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
       {landscape && take != null && atWallMs != null ? (
         <MultiCamBar
           window={take}
           atMs={atWallMs}
           playing={playing}
-          angles={shown.map(video => ({
+          angles={chosen.map(video => ({
             id: video.id,
             name: names.get(video.id) ?? video.title,
             fromMs: startOf(video, take.fromMs),
             toMs:
               startOf(video, take.fromMs) +
-              (video.durationSec ?? (take.toMs - take.fromMs) / 1000) * 1000,
-            audio: video.id === audibleId
+              (video.durationSec ?? (take.toMs - take.fromMs) / 1000) * 1000
           }))}
           onTogglePlay={toggle}
           onSkip={skip}
           onScrub={goTo}
-          onPickAudio={id => {
-            // Tapping the tile that is already heard hands the choice back to
-            // the grid. Without a way back, one tap pinned the sound to a
-            // tile for good — and a pinned tile stops moving when the
-            // position leaves its span, which is the silence this rule was
-            // written to end.
-            onChange({ audioId: audibleId === id ? null : id })
-          }}
           onClose={onClose}
+          onInteract={showBar}
+          visible={barShown}
+          rootRef={barRoot}
         />
       ) : null}
     </View>,
@@ -1359,11 +1540,6 @@ function mediaLengthOf(element: HTMLVideoElement): number | null {
   if (declared == null) return seekable
   if (seekable == null) return declared
   return Math.min(declared, seekable)
-}
-
-/** `14:07:22`, so a line in the readout can be matched to a moment. */
-function clockOf(atMs: number): string {
-  return new Date(atMs).toTimeString().slice(0, 8)
 }
 
 /**
@@ -1428,9 +1604,33 @@ function Tile(props: {
   /** Its media is not there — the server answered, and there is nothing to play. */
   unavailable: boolean
   takeRef: (node: HTMLVideoElement | null) => void
+  /** `pan-y` while a swipe should reach the page and hide Safari's bars. */
+  touchAction: 'none' | 'pan-y'
+  /** True while this is the one being heard. */
+  heard: boolean
+  /**
+   * False while the press is doing something else, like a crawl, or once
+   * another finger has taken it over.
+   */
+  canReorder: (pointerId: number) => boolean
+  /** The finger the view's press now belongs to. */
+  pressPointer: number | null
+  /**
+   * The press itself, in window coordinates, for the view's nine squares.
+   * False when the view is ignoring this finger.
+   */
+  onPressStart: (pointerId: number, x: number, y: number) => boolean
+  onPressMoved: (pointerId: number) => void
+  /** True when the press was a hold, which is not a drop. */
+  onPressEnd: (
+    pointerId: number,
+    still: boolean,
+    x: number,
+    y: number
+  ) => boolean
+  onPressCancel: (pointerId: number) => void
   onMove: (x: number, y: number) => void
   onDrop: (x: number, y: number) => void
-  onZoom: () => void
 }): React.ReactElement {
   const {
     rect,
@@ -1440,11 +1640,30 @@ function Tile(props: {
     unavailable,
     unplaceable,
     waiting,
-    takeRef
+    takeRef,
+    heard
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const element = useRef<HTMLVideoElement | null>(null)
+  /**
+   * Whether this tile has drawn its first picture since its source was
+   * attached. Until then it is black, and says it is loading rather than
+   * leaving a black square to explain itself.
+   */
+  const [hasPicture, setHasPicture] = useState(false)
+  useEffect(() => {
+    const node = element.current
+    setHasPicture(node != null && node.readyState >= 2)
+    if (node == null) return
+    const drew = (): void => {
+      setHasPicture(true)
+    }
+    node.addEventListener('loadeddata', drew)
+    return () => {
+      node.removeEventListener('loadeddata', drew)
+    }
+  }, [props.url])
 
   // This tile's own source, attached when it has one and detached with it.
   // The play intent is injected rather than read off the element's pause
@@ -1485,7 +1704,8 @@ function Tile(props: {
   }, [props.muted])
 
   /**
-   * Dragging and the double tap, on pointer events.
+   * The press the view turns into a square's action, and — after a finger has
+   * rested for a second — a drag that moves the picture.
    *
    * Not through the gesture library the single player uses, for two reasons
    * that are both about where this view lives: it is portalled into the
@@ -1494,48 +1714,93 @@ function Tile(props: {
    * keeps for its `<video>` and its sticky `div`.
    */
   const dragFrom = useRef<{ x: number; y: number; id: number } | null>(null)
-  const lastTapAt = useRef(0)
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const armedRef = useRef(false)
+  const [armed, setArmed] = useState(false)
+
+  const disarm = (): void => {
+    if (armTimer.current != null) clearTimeout(armTimer.current)
+    armTimer.current = null
+    armedRef.current = false
+    setArmed(false)
+  }
+  useEffect(() => disarm, [])
+
+  // Another finger has taken the press: a picture this tile had picked up
+  // goes back where it was, and the finger that lifted it is done with it.
+  const onDropRef = useRef(props.onDrop)
+  onDropRef.current = props.onDrop
+  useEffect(() => {
+    const from = dragFrom.current
+    if (!armedRef.current || from == null || from.id === props.pressPointer) {
+      return
+    }
+    disarm()
+    onDropRef.current(0, 0)
+  }, [props.pressPointer])
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (otherButton(event)) return
+    // A finger the view is ignoring — another is holding a crawl — is not
+    // this tile's to follow either.
+    if (!props.onPressStart(event.pointerId, event.clientX, event.clientY)) {
+      return
+    }
     ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
     dragFrom.current = {
       x: event.clientX,
       y: event.clientY,
       id: event.pointerId
     }
+    disarm()
+    armTimer.current = setTimeout(() => {
+      armTimer.current = null
+      if (!props.canReorder(event.pointerId)) return
+      armedRef.current = true
+      setArmed(true)
+    }, REORDER_HOLD_MS)
   }
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
     const from = dragFrom.current
     if (from?.id !== event.pointerId) return
-    props.onMove(event.clientX - from.x, event.clientY - from.y)
+    const x = event.clientX - from.x
+    const y = event.clientY - from.y
+    if (armedRef.current) {
+      if (!props.canReorder(event.pointerId)) return
+      props.onMove(x, y)
+      return
+    }
+    // A finger that travels before the second is up is a slip, not a drag:
+    // it neither moves the picture nor becomes one later.
+    if (beyondSlop(x, y)) {
+      if (armTimer.current != null) clearTimeout(armTimer.current)
+      armTimer.current = null
+      props.onPressMoved(event.pointerId)
+    }
   }
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
     const from = dragFrom.current
+    if (from?.id !== event.pointerId) return
     dragFrom.current = null
-    if (from == null) return
+    // Armed, and still the press: a finger that lost it to another is done,
+    // and drops nothing.
+    const wasArmed = armedRef.current && props.canReorder(event.pointerId)
+    disarm()
     const moved = {
       x: event.clientX - from.x,
       y: event.clientY - from.y
     }
-    // A press that went nowhere is a tap, not a drag of no distance. Dropping
-    // it anyway swapped two tiles on every single tap — and while one was
-    // zoomed its rectangle is the whole grid, so the drop landed in the first
-    // quadrant and reordered the lot.
-    const still = Math.abs(moved.x) < 8 && Math.abs(moved.y) < 8
-    // Always: the parent decides what a press means, and it also has to put
-    // the picture back when the press meant nothing.
-    props.onDrop(moved.x, moved.y)
-    // Two taps in a third of a second is the double tap that makes a picture
-    // big, and makes it small again.
-    if (still) {
-      const now = Date.now()
-      if (now - lastTapAt.current < 350) {
-        lastTapAt.current = 0
-        props.onZoom()
-      } else {
-        lastTapAt.current = now
-      }
-    }
+    const still = !beyondSlop(moved.x, moved.y)
+    // A press that became a move is never also a tap.
+    props.onPressEnd(
+      event.pointerId,
+      still && !wasArmed,
+      event.clientX,
+      event.clientY
+    )
+    // Always: the parent puts the picture back when the press meant nothing.
+    if (wasArmed) props.onDrop(moved.x, moved.y)
+    else props.onDrop(0, 0)
   }
 
   return (
@@ -1567,21 +1832,31 @@ function Tile(props: {
         style={{
           position: 'absolute',
           inset: 0,
-          touchAction: 'none',
+          touchAction: props.touchAction,
           cursor: 'grab'
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
+        onPointerCancel={event => {
+          if (dragFrom.current?.id !== event.pointerId) return
           dragFrom.current = null
+          disarm()
+          props.onPressCancel(event.pointerId)
           props.onDrop(0, 0)
         }}
       />
-      <Text style={styles.tileName} numberOfLines={1}>
-        {name}
-      </Text>
-      {parked != null || unavailable || unplaceable || waiting ? (
+      {armed ? <View style={styles.tileArmed} pointerEvents="none" /> : null}
+      <View style={styles.tileName} pointerEvents="none">
+        <Text style={styles.tileNameText} numberOfLines={1}>
+          {heard ? `🔊 ${name}` : name}
+        </Text>
+      </View>
+      {parked != null ||
+      unavailable ||
+      unplaceable ||
+      waiting ||
+      !hasPicture ? (
         <View style={styles.tileParked} pointerEvents="none">
           <Text style={styles.tileParkedText}>
             {unavailable
@@ -1592,7 +1867,9 @@ function Tile(props: {
                   ? lstrings.angles_not_recording_yet
                   : parked === 'afterEnd'
                     ? lstrings.angles_stopped
-                    : lstrings.angles_waiting}
+                    : waiting
+                      ? lstrings.angles_tile_catching_up
+                      : lstrings.angles_tile_loading}
           </Text>
         </View>
       ) : null}
@@ -1623,6 +1900,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'absolute',
     top: theme.rem(theme.spaceXsRem),
     left: theme.rem(theme.spaceSmRem),
+    maxWidth: '80%',
+    paddingHorizontal: theme.rem(theme.spaceSmRem),
+    paddingVertical: theme.rem(0.125),
+    borderRadius: theme.rem(1),
+    backgroundColor: 'rgba(0, 0, 0, 0.45)'
+  },
+  tileArmed: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderWidth: 3,
+    borderColor: theme.activeColor
+  },
+  tileNameText: {
     color: '#ffffff',
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.75),
@@ -1704,23 +1997,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.875)
   },
-  speed: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 6,
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.125),
-    borderRadius: theme.rem(1),
-    margin: theme.rem(theme.spaceSmRem),
-    backgroundColor: 'rgba(0, 0, 0, 0.65)'
-  },
-  speedText: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
-    fontWeight: '600'
-  },
   readout: {
     position: 'absolute',
     // Above the tiles and clear of the notice, which sits at the top middle.
@@ -1739,9 +2015,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   notice: {
     position: 'absolute',
-    // Above the tiles: demotion happens on its own, so `Show all four` is its
-    // only way back and a press that lands on a picture instead is no way back
-    // at all.
+    // Above the tiles, which stack explicitly: otherwise the pictures draw
+    // over the words.
     zIndex: 6,
     top: theme.rem(theme.spaceSmRem),
     alignSelf: 'center',
@@ -1756,11 +2031,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   noticeText: {
     color: '#ffffff',
     fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.8125)
-  },
-  noticeAction: {
-    color: theme.activeColor,
-    fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.8125)
   }
 }))
