@@ -119,9 +119,11 @@ const ACTION_DETAILS: Shape = {
 
 /**
  * Measured on the ball in the feed; GameStation only ever estimates them. Its
- * `launchAngle` is the scorer's own, set on the field, so it is not here.
+ * `launchAngle` is the scorer's own, set on the field, and its
+ * `totalDistance` is where the scorer put the ball on a field of the game's
+ * size, so neither is here.
  */
-const MEASURED = ['launchSpeed', 'totalDistance', 'hardness']
+const MEASURED = ['launchSpeed', 'hardness']
 
 const SIDES: ReadonlySet<unknown> = new Set(['L', 'R', 'S'])
 const HANDS: ReadonlySet<unknown> = new Set(['L', 'R'])
@@ -374,12 +376,24 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       add('hitData', path, `expected an object, got ${show(value)}`)
       return
     }
-    const { trajectory, location, coordinates, launchAngle } = value
+    const { trajectory, location, coordinates, launchAngle, totalDistance } =
+      value
     if (launchAngle !== undefined && !isLaunchAngle(launchAngle))
       add(
         'hitData',
         `${path}.launchAngle`,
         `expected degrees from -90 to 90, got ${show(launchAngle)}`
+      )
+    if (
+      totalDistance !== undefined &&
+      (typeof totalDistance !== 'number' ||
+        !Number.isFinite(totalDistance) ||
+        totalDistance <= 0)
+    )
+      add(
+        'hitData',
+        `${path}.totalDistance`,
+        `expected feet, more than none, got ${show(totalDistance)}`
       )
     if (
       trajectory !== undefined &&

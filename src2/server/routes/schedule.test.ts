@@ -2,7 +2,7 @@ import type { AddressInfo } from 'node:net'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -15,6 +15,7 @@ import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
+import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { scheduleRoutes } from './schedule'
@@ -58,6 +59,7 @@ describe('scheduling a team’s games over HTTP', function () {
   const hawks = makeId('team')
   const gulls = makeId('team')
   const outsiders = makeId('team')
+  const fieldGame = makeId('game')
   const users = new Map<Person, number>()
   const token = (person: Person): string => `tok_schedule_${person}_0000000000`
 
@@ -193,9 +195,22 @@ describe('scheduling a team’s games over HTTP', function () {
       )
       .execute()
 
+    // Gulls at home to the Hawks: the Hawks' admins run the away side.
+    await db
+      .insertInto('games')
+      .values({
+        id: fieldGame,
+        home_team_id: gulls,
+        away_team_id: hawks,
+        season_id: spring,
+        start_at: new Date('2026-04-20T17:00:00Z')
+      })
+      .execute()
+
     const app = express()
     app.use(jsonBody)
     app.use(withActor(db))
+    app.use(withAudit(db))
     app.use('/api/v1', scheduleRoutes(db))
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
@@ -344,5 +359,183 @@ describe('scheduling a team’s games over HTTP', function () {
       .where('external_id', '=', 'mix-1')
       .executeTakeFirstOrThrow()
     expect(held.entity_id).equals(answer.body.results[0].gameId)
+  })
+
+  async function setField(
+    person: Person | null,
+    body: unknown,
+    gameId = fieldGame
+  ): Promise<{ status: number; body: any }> {
+    const response = await fetch(`${base}/games/${gameId}/field`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        ...(person == null ? {} : { authorization: `Bearer ${token(person)}` })
+      },
+      body: JSON.stringify(body)
+    })
+    return { status: response.status, body: await response.json() }
+  }
+  const storedFence = async (): Promise<number | null> =>
+    (
+      await db!
+        .selectFrom('games')
+        .select(['fence_distance_ft'])
+        .where('id', '=', fieldGame)
+        .executeTakeFirstOrThrow()
+    ).fence_distance_ft
+
+  it('sets and clears a game’s fence for each kind of admin, and audits it', async function () {
+    for (const [index, person] of (
+      [
+        'site',
+        'owner',
+        'manager',
+        'teamRole',
+        'seasonAdmin',
+        'leagueAdmin'
+      ] as const
+    ).entries()) {
+      const feet = 180 + index
+      const answer = await setField(person, { fenceDistanceFt: feet })
+      expect(answer.status, person).equals(200)
+      expect(answer.body).deep.equals({
+        gameId: fieldGame,
+        fenceDistanceFt: feet,
+        resolvedFenceDistanceFt: feet
+      })
+      expect(await storedFence()).equals(feet)
+    }
+    // Null hands the fence back to the season, then the league, then 200.
+    await db!
+      .updateTable('leagues')
+      .set({ fence_distance_ft: 225 })
+      .where('id', '=', league)
+      .execute()
+    const cleared = await setField('seasonAdmin', { fenceDistanceFt: null })
+    expect(cleared.body).deep.equals({
+      gameId: fieldGame,
+      fenceDistanceFt: null,
+      resolvedFenceDistanceFt: 225
+    })
+    expect(await storedFence()).equals(null)
+
+    let audited: Array<{ before: unknown; after: unknown }> = []
+    for (let tries = 0; tries < 50 && audited.length < 7; tries++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      audited = await db!
+        .selectFrom('audit_log')
+        .select(['before', 'after'])
+        .where('entity_type', '=', 'game')
+        .where('entity_id', '=', fieldGame)
+        .orderBy('at')
+        .execute()
+    }
+    expect(audited).length(7)
+    expect(audited.at(-1)).deep.equals({
+      before: { fenceDistanceFt: 185 },
+      after: { fenceDistanceFt: null }
+    })
+  })
+
+  it('refuses a game’s fence to anybody who does not run the game', async function () {
+    expect((await setField(null, { fenceDistanceFt: 200 })).status).equals(401)
+    expect(
+      (await setField('site', { fenceDistanceFt: 200 }, makeId('game'))).status
+    ).equals(404)
+    // Another season's admin sees the Hawks' games there, not this one.
+    for (const person of ['stranger', 'otherSeasonAdmin'] as const)
+      expect(
+        (await setField(person, { fenceDistanceFt: 200 })).status,
+        person
+      ).equals(404)
+    for (const person of ['member', 'parent'] as const) {
+      const answer = await setField(person, { fenceDistanceFt: 200 })
+      expect(answer.status, person).equals(403)
+      expect(answer.body.code, person).equals('forbidden')
+    }
+    for (const body of [
+      {},
+      { fenceDistanceFt: 0 },
+      { fenceDistanceFt: 601 },
+      { fenceDistanceFt: 200.5 },
+      { fenceDistanceFt: '200' },
+      [200]
+    ]) {
+      expect(
+        (await setField('owner', body)).status,
+        JSON.stringify(body)
+      ).equals(400)
+    }
+    expect(await storedFence()).equals(null)
+  })
+  it('refuses a game’s fence once the game has plays, whatever its status', async function () {
+    const setStatus = async (
+      status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
+    ): Promise<void> => {
+      await db!
+        .updateTable('games')
+        .set({ status })
+        .where('id', '=', fieldGame)
+        .execute()
+    }
+    // Under way with nothing posted yet, its fence can still move.
+    await setStatus('inProgress')
+    expect((await setField('site', { fenceDistanceFt: null })).status).equals(
+      200
+    )
+    const play = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'stolen_base', awayScore: null, homeScore: null }
+    }
+    await sql`insert into events (id, "gameId", "battingTeamId", gumbo)
+      values (${makeId('event')}, ${fieldGame}, ${hawks}, ${JSON.stringify(play)}::jsonb)`.execute(
+      db!
+    )
+    for (const status of [
+      'scheduled',
+      'inProgress',
+      'final',
+      'cancelled'
+    ] as const) {
+      await setStatus(status)
+      const answer = await setField('site', { fenceDistanceFt: 250 })
+      expect(answer.status, status).equals(409)
+      expect(answer.body.code, status).equals('conflict')
+      expect(answer.body.message, status).equals(
+        'The fence is fixed once a game has plays'
+      )
+      expect(await storedFence(), status).equals(null)
+    }
+    // Who may not set it at all still hears so first.
+    expect((await setField('member', { fenceDistanceFt: 250 })).status).equals(
+      403
+    )
+    await db!.deleteFrom('events').where('gameId', '=', fieldGame).execute()
+    await setStatus('scheduled')
+
+    // A first post that holds the game while the fence is set wins: the
+    // fence is refused once it commits.
+    let answer: Promise<{ status: number }> | undefined
+    await db!.transaction().execute(async trx => {
+      await trx
+        .selectFrom('games')
+        .select('id')
+        .where('id', '=', fieldGame)
+        .forUpdate()
+        .execute()
+      await sql`insert into events (id, "gameId", "battingTeamId", gumbo)
+        values (${makeId('event')}, ${fieldGame}, ${hawks}, ${JSON.stringify(play)}::jsonb)`.execute(
+        trx
+      )
+      answer = setField('site', { fenceDistanceFt: 250 })
+      await new Promise(resolve => setTimeout(resolve, 200))
+    })
+    expect((await answer!).status).equals(409)
+    expect(await storedFence()).equals(null)
+    await db!.deleteFrom('events').where('gameId', '=', fieldGame).execute()
+    expect((await setField('site', { fenceDistanceFt: null })).status).equals(
+      200
+    )
   })
 })

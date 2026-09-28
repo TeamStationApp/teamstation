@@ -466,4 +466,115 @@ describe('the manage page', function () {
     const page = await ask('/manage/season/sea_spring', BOSS)
     expect(page.status).equals(200)
   })
+
+  it('sets and clears the fence of a season or a league its administrator runs', async function () {
+    if (db == null) this.skip()
+    const fenceOf = async (
+      table: 'leagues' | 'seasons',
+      id: string
+    ): Promise<number | null> =>
+      (
+        await db!
+          .selectFrom(table)
+          .select(['fence_distance_ft'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).fence_distance_ft
+
+    const season = await ask('/manage/season/sea_spring/field', BOSS, 'PUT', {
+      fenceDistanceFt: 250
+    })
+    expect(season).deep.equals({
+      status: 200,
+      body: { scopeType: 'season', scopeId: 'sea_spring', fenceDistanceFt: 250 }
+    })
+    expect(await fenceOf('seasons', 'sea_spring')).equals(250)
+
+    // A season's administrator does not run its league.
+    expect(
+      (
+        await ask('/manage/league/lea_npll/field', BOSS, 'PUT', {
+          fenceDistanceFt: 300
+        })
+      ).status
+    ).equals(404)
+    await db
+      .insertInto('leagues')
+      .values({ id: 'lea_field', name: 'Field League' })
+      .execute()
+    await db
+      .insertInto('admin_roles')
+      .values({
+        id: 'adm_boss_field',
+        user_id: bossId,
+        scope_type: 'league',
+        scope_id: 'lea_field'
+      })
+      .execute()
+    const league = await ask('/manage/league/lea_field/field', BOSS, 'PUT', {
+      fenceDistanceFt: 300
+    })
+    expect(league.body).deep.equals({
+      scopeType: 'league',
+      scopeId: 'lea_field',
+      fenceDistanceFt: 300
+    })
+    expect(await fenceOf('leagues', 'lea_field')).equals(300)
+
+    const cleared = await ask('/manage/season/sea_spring/field', BOSS, 'PUT', {
+      fenceDistanceFt: null
+    })
+    expect(cleared.body.fenceDistanceFt).equals(null)
+    expect(await fenceOf('seasons', 'sea_spring')).equals(null)
+
+    let audited: Array<{ before: unknown; after: unknown }> = []
+    for (let tries = 0; tries < 50 && audited.length < 2; tries++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      audited = await db
+        .selectFrom('audit_log')
+        .select(['before', 'after'])
+        .where('entity_type', '=', 'season')
+        .where('entity_id', '=', 'sea_spring')
+        .orderBy('at')
+        .execute()
+    }
+    expect(audited).deep.equals([
+      { before: { fenceDistanceFt: null }, after: { fenceDistanceFt: 250 } },
+      { before: { fenceDistanceFt: 250 }, after: { fenceDistanceFt: null } }
+    ])
+  })
+
+  it('refuses a fence to a team, to a bad body and to anybody else', async function () {
+    if (db == null) this.skip()
+    const put = async (
+      path: string,
+      token: string | undefined,
+      body: unknown
+    ): Promise<number> => (await ask(path, token, 'PUT', body)).status
+    expect(
+      await put('/manage/season/sea_spring/field', undefined, {
+        fenceDistanceFt: 200
+      })
+    ).equals(401)
+    // A team plays on whatever field its games are at.
+    expect(
+      await put('/manage/team/tem_hawks/field', COACH, { fenceDistanceFt: 200 })
+    ).equals(400)
+    for (const token of [COACH, PARENT])
+      expect(
+        await put('/manage/season/sea_spring/field', token, {
+          fenceDistanceFt: 200
+        })
+      ).equals(404)
+    for (const body of [
+      {},
+      { fenceDistanceFt: -1 },
+      { fenceDistanceFt: 1000 },
+      { fenceDistanceFt: 'far' }
+    ])
+      expect(
+        await put('/manage/season/sea_spring/field', BOSS, body),
+        JSON.stringify(body)
+      ).equals(400)
+  })
 })

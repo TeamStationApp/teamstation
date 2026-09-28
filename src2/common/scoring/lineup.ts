@@ -1,7 +1,9 @@
+import { DEFAULT_FENCE_DISTANCE_FT } from '../fenceDistance'
 import {
   asGamePlay,
   BASE_KEYS,
   copyState,
+  fieldInfoOf,
   type GamePlay,
   type GamePlayer,
   type GameSetup,
@@ -1024,15 +1026,23 @@ function emptySide(): GameSide {
   }
 }
 
-/** Top of the first, nobody out, nobody on, nothing played. */
+/**
+ * Top of the first, nobody out, nobody on, nothing played, on a field whose
+ * fence stands `fenceDistanceFt` from home plate.
+ */
 export function freshGame(
   gamePk: string,
   teams: Record<Side, GameTeam>,
-  setup: GameSetup
+  setup: GameSetup,
+  fenceDistanceFt: number = DEFAULT_FENCE_DISTANCE_FT
 ): GameState {
   const state: GameState = {
     gamePk,
-    gameData: { teams: copyState(teams), players: copyState(setup.players) },
+    gameData: {
+      teams: copyState(teams),
+      players: copyState(setup.players),
+      venue: { fieldInfo: fieldInfoOf(fenceDistanceFt) }
+    },
     liveData: {
       linescore: {
         currentInning: 1,
