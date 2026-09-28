@@ -41,7 +41,9 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
           ] ?? 0),
     balls: line.balls,
     strikes: line.strikes,
-    outs: line.outs
+    outs: line.outs,
+    inning: line.currentInning,
+    half: line.inningState === 'Bottom' ? 'bottom' : 'top'
   }
 }
 
