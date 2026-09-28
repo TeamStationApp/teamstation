@@ -1,4 +1,4 @@
-import type { ScoringAction } from '../../common/scoring/actions'
+import type { Problem, ScoringAction } from '../../common/scoring/actions'
 import type { HomeRunKind, Override } from '../../common/scoring/rules'
 import type {
   BatSide,
@@ -127,6 +127,11 @@ export interface ScoringSnapshot {
   generation: number
   /** The server refused this game's changes: nothing more is scored. */
   readOnly?: boolean
+  /**
+   * The last utterance dictated, and why it was refused when it was. Cleared
+   * at each utterance and by Undo, so it never describes an older sentence.
+   */
+  dictation?: { transcript: string; problem?: Problem }
 }
 /**
  * The screen without the game: the step, what is drawn, the drafts. It is
@@ -256,3 +261,9 @@ export type ScoringEvent =
       readOnly?: boolean
     }
   | { type: 'SWITCH_SIDE'; side: BatSide }
+  /** One spoken sentence: applied whole as one undo step, or refused whole. */
+  | {
+      type: 'DICTATED'
+      transcript: string
+      actions: readonly ScoringAction[]
+    }

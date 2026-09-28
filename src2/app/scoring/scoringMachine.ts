@@ -1,3 +1,4 @@
+import type { ScoringAction } from '../../common/scoring/actions'
 import { completesHitOffer, undoesHitOffer } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { copyGame, setupOf } from '../../common/scoring/state'
@@ -465,6 +466,9 @@ export function scoringReducer(
     settleRunners(next)
     return next
   }
+  // Above the presentation guard, so a sentence spoken mid-animation is told
+  // why rather than swallowed.
+  if (event.type === 'DICTATED') return dictated(state, event)
   if (
     state.presentation != null &&
     !['UNDO', 'GESTURE', 'RUNNER_CANCEL', 'CANCEL_RUNNER'].includes(
@@ -510,12 +514,13 @@ export function scoringReducer(
   if (event.type === 'UNDO') {
     const last = state.past.at(-1)
     if (last == null || state.readOnly === true) return state
-    const next = {
+    const next: ScoringState = {
       ...restoreTo(state, last, state.past.length - 1),
       presentation: null,
       celebration: null,
       generation: state.generation + 1
     }
+    delete next.dictation
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
       next.correctionWindow = {
@@ -785,4 +790,64 @@ export function scoringScreenReducer(
     return { ...model, savedUndos: model.savedUndos + 1 }
   const next = scoringReducer(scoring, event)
   return next === scoring ? model : { ...model, scoring: next }
+}
+
+/** The steps a dictated sentence may land on: nothing drawn, nothing moving. */
+const AT_REST: ReadonlyArray<ScoringState['phase']> = [
+  'ready',
+  'awaitingBatter',
+  'correctionWindow'
+]
+
+/**
+ * Whether the screen is at rest: on a step where a dictated sentence may land,
+ * with nothing being drafted and nothing animating.
+ */
+export function atRest(state: ScoringState): boolean {
+  return (
+    AT_REST.includes(state.phase) &&
+    state.runnerDraft == null &&
+    state.moreDraft == null &&
+    state.presentation == null
+  )
+}
+
+/**
+ * A dictated sentence. It is one edit: every action applies, as one entry in
+ * Undo labelled with what was said, or none does and the reason is kept for
+ * the screen. The rules engine decides, through `act`, exactly as for a tap.
+ */
+function dictated(
+  state: ScoringState,
+  event: { transcript: string; actions: readonly ScoringAction[] }
+): ScoringState {
+  const { transcript, actions } = event
+  if (actions.length === 0) return state
+  const { dictation: _last, ...current } = state
+  const refused = (message: string): ScoringState => ({
+    ...current,
+    dictation: { transcript, problem: { code: 'notNow', message } }
+  })
+  // `act` throws before it reaches the rules engine here, so a dry run
+  // cannot see it.
+  if (state.readOnly === true) return refused('Scoring is read-only')
+  if (!atRest(state))
+    return refused('Finish what is on screen, then say it again')
+  let game = state.session
+  for (const action of actions) {
+    const applied = applyAction(game, action)
+    if (applied.problems.length > 0)
+      return {
+        ...current,
+        dictation: { transcript, problem: applied.problems[0] }
+      }
+    game = applied.state
+  }
+  const next = accepted(current, transcript, edit => {
+    for (const action of actions) act(edit, action)
+    settleRunners(edit)
+  })
+  // The dry run and `act` consult the same rules, so this is only a guard.
+  if (next === current) return refused('The game would not take that')
+  return { ...next, dictation: { transcript } }
 }
