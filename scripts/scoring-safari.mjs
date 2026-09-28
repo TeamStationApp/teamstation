@@ -18,7 +18,10 @@ const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
 const { applyFieldCamera } = require('../src2/app/field/cameraModel.ts')
-const { BASES } = require('../src2/app/field/fieldModel.ts')
+const { BASES, createPlayers } = require('../src2/app/field/fieldModel.ts')
+const defender = Object.fromEntries(
+  createPlayers().map(player => [player.id, player.position])
+)
 const { TERRAIN } = require('../src2/app/field/terrain.ts')
 const { runnerTargets } = require('../src2/app/scoring/runnerDrag.ts')
 const required = key => {
@@ -459,14 +462,11 @@ try {
     g = await geometry()
     const destination = g.project(BASES[1], TERRAIN.players)
     await gesture([
-      g.project({ x: 24, z: -23 }),
+      g.project(defender['1B']),
       { ...destination, y: destination.y }
     ])
     await visible('Tap and drag the next defender')
-    for (const point of [
-      { x: 15, z: -41 },
-      { x: -15, z: -41 }
-    ]) {
+    for (const point of [defender['2B'], defender.SS]) {
       await gesture([g.project(point), g.project(point, TERRAIN.players)])
       await visible('Tap and drag the next defender')
       await shot('relay-possession')
