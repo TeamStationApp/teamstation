@@ -9,6 +9,7 @@ import { migration038CurrentPlay } from './migrations/038currentPlay'
 import { migration039GumboEventTypes } from './migrations/039gumboEventTypes'
 import { migration040LegacyEventTypes } from './migrations/040legacyEventTypes'
 import { migration041ScheduleApi } from './migrations/041scheduleApi'
+import { migration042FenceDistance } from './migrations/042fenceDistance'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -1116,5 +1117,130 @@ describe('migration 041scheduleApi', function () {
     const again = await migrateUp(pool, through041)
     expect(again.applied).deep.equals([migration041ScheduleApi.name])
     expect(await count('external_ids')).equals(3)
+  })
+})
+
+const through042 = migrations.filter(migration => migration.name < '043')
+
+/**
+ * Migration 042 gives leagues, seasons and games a fence distance of their
+ * own, empty on every row already there but a game with plays, which is
+ * fixed at the 200-foot default, and takes it away again.
+ */
+describe('migration 042fenceDistance', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_042_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+  let admin: Pool
+  let pool: Pool
+
+  const fences = async (): Promise<unknown[]> =>
+    (
+      await pool.query(
+        `select 'league' as level, fence_distance_ft as feet from leagues
+         union all
+         select 'season', fence_distance_ft from seasons
+         union all
+         select 'game', fence_distance_ft from games
+         order by level, feet nulls first`
+      )
+    ).rows
+  const columns = async (): Promise<string[]> =>
+    (
+      await pool.query<{ table_name: string }>(
+        `select table_name from information_schema.columns
+         where column_name = 'fence_distance_ft' order by table_name`
+      )
+    ).rows.map(row => row.table_name)
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through041)
+    await pool.query(
+      `insert into leagues (id, name) values ('lea_042', 'League')`
+    )
+    await pool.query(
+      `insert into seasons (id, league_id, name, year)
+       values ('sea_042', 'lea_042', 'Season', 2026)`
+    )
+    await pool.query(
+      `insert into teams (id, name) values ('tem_042a', 'A'), ('tem_042b', 'B')`
+    )
+    await pool.query(
+      `insert into games (id, home_team_id, away_team_id, season_id, start_at)
+       values ('gam_042', 'tem_042a', 'tem_042b', 'sea_042', $1)`,
+      [PLAYED]
+    )
+    // Plays posted to a game that was cancelled after: it has plays all
+    // the same.
+    await pool.query(
+      `insert into games (id, home_team_id, away_team_id, season_id, start_at, status)
+       values ('gam_042p', 'tem_042a', 'tem_042b', 'sea_042', $1, 'cancelled')`,
+      [PLAYED]
+    )
+    const gumbo = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'single', awayScore: 0, homeScore: 0 }
+    }
+    await pool.query(
+      `insert into events (id, "gameId", "battingTeamId", gumbo)
+       values ('evt_042', 'gam_042p', 'tem_042b', $1::jsonb)`,
+      [JSON.stringify(gumbo)]
+    )
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('adds an empty fence to every level, held to 1-600 feet, and fixes a played game at 200', async function () {
+    const applied = await migrateUp(pool, through042)
+    expect(applied.applied).deep.equals([migration042FenceDistance.name])
+    expect(await columns()).deep.equals(['games', 'leagues', 'seasons'])
+    expect(await fences()).deep.equals([
+      { level: 'game', feet: null },
+      { level: 'game', feet: 200 },
+      { level: 'league', feet: null },
+      { level: 'season', feet: null }
+    ])
+    await pool.query(`update leagues set fence_distance_ft = 600`)
+    await pool.query(`update seasons set fence_distance_ft = 1`)
+    for (const [table, feet] of [
+      ['games', 0],
+      ['seasons', 601],
+      ['leagues', -1]
+    ] as const) {
+      let refused = ''
+      try {
+        await pool.query(`update ${table} set fence_distance_ft = ${feet}`)
+      } catch (error) {
+        refused = String(error)
+      }
+      expect(refused, table).includes('fence_distance_ft_check')
+    }
+  })
+
+  it('drops the fences when rolled back, and adds them again', async function () {
+    const rolled = await migrateDown(pool, through042, 1)
+    expect(rolled).deep.equals([migration042FenceDistance.name])
+    expect(await columns()).deep.equals([])
+    const again = await migrateUp(pool, through042)
+    expect(again.applied).deep.equals([migration042FenceDistance.name])
+    expect(await columns()).deep.equals(['games', 'leagues', 'seasons'])
+    expect(
+      (
+        await pool.query(
+          `select id from games where fence_distance_ft is not null`
+        )
+      ).rows
+    ).deep.equals([{ id: 'gam_042p' }])
   })
 })

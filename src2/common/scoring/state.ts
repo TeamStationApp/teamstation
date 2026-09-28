@@ -245,6 +245,12 @@ export const asGamePlay = asObject({
       trajectory: asOptional(asString),
       /** The launch angle: the scorer's, or estimated from his trajectory. */
       launchAngle: asOptional(asNumber),
+      /**
+       * The scorer set the launch angle himself, by dragging it on the field,
+       * so the stored play gives it as the ball's `launchAngle`. An angle
+       * estimated from a trajectory alone stays here and nowhere else.
+       */
+      launchAngleSet: asOptional(asBoolean),
       /** The lineup changed during this at-bat, so the at-bat is open. */
       lineupChanged: asOptional(asBoolean),
       errorCredit: asOptional(
@@ -411,11 +417,33 @@ export interface Resolution {
   batterReachedOnError?: boolean
 }
 
+/** Feet from home plate to the fence down each line and to centre. */
+export interface FieldInfo {
+  leftLine: number
+  center: number
+  rightLine: number
+}
+
+/** A fence the same distance all the way round, as the model draws it. */
+export function fieldInfoOf(fenceDistanceFt: number): FieldInfo {
+  return {
+    leftLine: fenceDistanceFt,
+    center: fenceDistanceFt,
+    rightLine: fenceDistanceFt
+  }
+}
+
 export interface GameState {
   gamePk: string
   gameData: {
     teams: Record<Side, GameTeam>
     players: Record<number, GamePlayer>
+    /**
+     * Gumbo's field sizes, in feet. The model's fence is a circle, so all
+     * three are the one fence distance. A game saved before fences had sizes
+     * has none, and is played to the default.
+     */
+    venue?: { fieldInfo: FieldInfo }
   }
   liveData: {
     linescore: {
@@ -591,7 +619,16 @@ export const asGameState: Cleaner<GameState> = exactly(
     gamePk: asString,
     gameData: asObject({
       teams: asObject({ away: asTeam, home: asTeam }),
-      players: asObject(asPlayer)
+      players: asObject(asPlayer),
+      venue: asOptional(
+        asObject({
+          fieldInfo: asObject({
+            leftLine: asNumber,
+            center: asNumber,
+            rightLine: asNumber
+          })
+        })
+      )
     }),
     liveData: asObject({
       linescore: asObject({

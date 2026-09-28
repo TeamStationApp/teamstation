@@ -131,10 +131,25 @@ export function placeLanding(
     next.phase = 'trajectory'
   })
 }
+/** The angle the trajectory control starts at before the scorer drags it. */
+export function startingAngle(state: ScoringState): number {
+  return allowedAngle(
+    state.pendingPlay?.angle ?? 45,
+    state.pendingPlay?.outcome ?? '',
+    state.pendingPlay?.homeRunKind
+  )
+}
+
+/**
+ * Accepts the trajectory at `angle`. Only one the scorer set himself
+ * (`dragged`) is his launch angle, the ball's `launchAngle` in the stored
+ * play; the angle the control starts at, accepted untouched, is not.
+ */
 export function acceptTrajectory(
   state: ScoringState,
   angle: number,
-  generation: number
+  generation: number,
+  dragged = false
 ): ScoringState {
   if (
     state.phase !== 'trajectory' ||
@@ -164,6 +179,7 @@ export function acceptTrajectory(
       type: 'ballInPlay',
       contact: pending.contactKind ?? 'swing',
       launchAngle: value,
+      ...(dragged ? { launchAngleDragged: true } : {}),
       ...(pending.location == null
         ? {}
         : { location: { ...pending.location } }),

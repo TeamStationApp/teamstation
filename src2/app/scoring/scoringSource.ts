@@ -30,7 +30,8 @@ function context(
   return {
     gamePk: game.id,
     teams: teamsOf(game),
-    setup: startingSetup(game, away, home)
+    setup: startingSetup(game, away, home),
+    fenceDistanceFt: game.fenceDistanceFt
   }
 }
 

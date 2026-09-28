@@ -174,7 +174,12 @@ export interface Replayed {
  */
 export function replayPlays(
   stored: { plays: GumboPlay[]; currentPlay: CurrentPlay | null },
-  context: { gamePk: string; teams: Record<Side, GameTeam>; setup: GameSetup }
+  context: {
+    gamePk: string
+    teams: Record<Side, GameTeam>
+    setup: GameSetup
+    fenceDistanceFt?: number
+  }
 ): Replayed {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays = [...stored.plays]
@@ -188,7 +193,12 @@ export function replayPlays(
     (firstLogged < 0 ? null : records[firstLogged]?.setupBefore) ??
     currentRecord?.setupBefore ??
     context.setup
-  let state = freshGame(context.gamePk, context.teams, setup)
+  let state = freshGame(
+    context.gamePk,
+    context.teams,
+    setup,
+    context.fenceDistanceFt
+  )
   if (prefix.length > 0) state = fromDocuments(state, prefix)
   const base = state
   const segments: Replayed['segments'] = []

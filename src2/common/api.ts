@@ -11,6 +11,7 @@ import {
 } from 'cleaners'
 
 import { type ApiError, asApiError, HttpError } from './errors'
+import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { asUserId } from './userIdNumber'
@@ -170,6 +171,13 @@ export const asGameDetail = asObject({
     ),
     null
   ),
+  /**
+   * Feet from home plate to the fence the game is played to: its own, its
+   * season's or its league's, fixed once the game has plays. A server from
+   * before fences had sizes sends none, and every game there is played to
+   * the default.
+   */
+  fenceDistanceFt: asOptional(asNumber, DEFAULT_FENCE_DISTANCE_FT),
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>
@@ -1169,7 +1177,10 @@ export class GameStationClient {
         remove: change.remove,
         ...(change.currentPlay === undefined
           ? {}
-          : { currentPlay: change.currentPlay })
+          : { currentPlay: change.currentPlay }),
+        ...(change.fenceDistanceFt === undefined
+          ? {}
+          : { fenceDistanceFt: change.fenceDistanceFt })
       }
     )
     return {

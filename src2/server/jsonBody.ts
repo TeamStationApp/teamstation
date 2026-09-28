@@ -1,5 +1,7 @@
 import express, { type RequestHandler } from 'express'
 
+import { badRequest } from '../common/errors'
+
 /** Most bodies: a sign-in, a setting, a batch of log lines. */
 const smallBody = express.json({ limit: '1mb' })
 
@@ -20,4 +22,18 @@ export const jsonBody: RequestHandler = (req, res, next) => {
     req.method === 'POST' && LARGE_POSTS.some(path => path.test(req.path))
   if (large) largeBody(req, res, next)
   else smallBody(req, res, next)
+}
+
+/**
+ * The parsed body as `cleaner` reads it, or a 400 carrying the cleaner's
+ * reason when it refuses the body.
+ */
+export function cleanBody<T>(cleaner: (raw: unknown) => T, raw: unknown): T {
+  try {
+    return cleaner(raw)
+  } catch (error) {
+    throw badRequest(
+      error instanceof Error ? error.message : 'Malformed request body'
+    )
+  }
 }
