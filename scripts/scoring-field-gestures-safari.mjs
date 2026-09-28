@@ -18,6 +18,10 @@ require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
 const { initialHitTarget } = require('../src2/app/field/trajectoryGuide')
 const { applyFieldCamera } = require('../src2/app/field/cameraModel')
+const { createPlayers } = require('../src2/app/field/fieldModel')
+const defender = Object.fromEntries(
+  createPlayers().map(player => [player.id, player.position])
+)
 const required = key => {
   assert(process.env[key], `${key} is required`)
   return process.env[key]
@@ -217,15 +221,22 @@ try {
   }
   await gesture([arcStart, { x: arcStart.x, y: arcStart.y - 25 }], 80)
   await visible('Tap or drag the next defender')
-  for (const [x, z, name] of [
-    [24, -23, 'Player 3'],
-    [15, -41, 'Player 4']
+  for (const [id, name] of [
+    ['1B', 'Player 3'],
+    ['2B', 'Player 4']
   ]) {
+    const { x, z } = defender[id]
     await gesture([relay.project(x, z, 6)], 80)
     await visible(`Undo Throw to ${name}`)
     await visible('Tap or drag the next defender')
   }
-  await gesture([relay.project(-15, -41, 6), relay.project(-10, -35, 6)], 80)
+  await gesture(
+    [
+      relay.project(defender.SS.x, defender.SS.z, 6),
+      relay.project(-10, -35, 6)
+    ],
+    80
+  )
   await visible('Undo Throw to Player 5')
   await visible('Tap or drag the next defender')
   await shot('three-recipient-relay')

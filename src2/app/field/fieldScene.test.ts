@@ -37,7 +37,11 @@ describe('rendered field interaction', function () {
           captured = false
         }
       }
-      const ray = new Ray(new Vector3(-15, 100, -41), new Vector3(0, -1, 0))
+      const start = { ...players[4].position }
+      const ray = new Ray(
+        new Vector3(start.x, 100, start.z),
+        new Vector3(0, -1, 0)
+      )
       const event = {
         button: 0,
         pointerId: 7,
@@ -45,7 +49,6 @@ describe('rendered field interaction', function () {
         ray,
         target
       }
-      const start = { ...players[4].position }
       await renderer.fireEvent(surface, 'pointerDown', event)
       expect(captured).equals(true)
       expect(players[4].target).deep.equals(start)
