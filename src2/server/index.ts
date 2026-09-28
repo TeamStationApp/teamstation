@@ -8,6 +8,7 @@ import path from 'node:path'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
+import { attachDictation } from './dictation/route'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
 import {
@@ -478,7 +479,10 @@ function runWorker(): void {
   app.get('/api/v1/openapi.json', (req, res) => {
     res.json(openApiDocument(VERSION))
   })
-  app.use('/api/v1', healthRoutes(db, VERSION))
+  app.use(
+    '/api/v1',
+    healthRoutes(db, VERSION, { dictation: serverConfig.dictation != null })
+  )
   app.use(
     '/api/v1',
     authRoutes(db, {
@@ -563,8 +567,20 @@ function runWorker(): void {
   const closeScoreboard = attachScoreboard(server, scoreboard.hub, {
     listen: false
   })
+  // Dictation is a WebSocket too, asked before the scoreboard, which takes
+  // whatever is left.
+  const dictation =
+    serverConfig.dictation == null
+      ? null
+      : attachDictation(server, {
+          db,
+          config: serverConfig.dictation,
+          allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
+          listenForUpgrades: false
+        })
   const unbindUpgrades = bindUpgrades(server, [
     (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
+    (req, socket, head) => dictation?.acceptUpgrade(req, socket, head) === true,
     (req, socket, head) => {
       scoreboard.hub.handleUpgrade(req, socket, head)
       return true
@@ -600,6 +616,7 @@ function runWorker(): void {
   const shutdown = (): void => {
     if (closing) return
     closing = true
+    dictation?.close()
     stopLiveController()
     unbindUpgrades()
     // Before the server: an upgraded socket is not one of its connections,
