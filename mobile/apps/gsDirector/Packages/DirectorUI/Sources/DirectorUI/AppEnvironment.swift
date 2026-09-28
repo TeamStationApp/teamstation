@@ -361,6 +361,21 @@ public final class AppEnvironment {
   private static let heartbeatInterval: TimeInterval = 5
   private var testClock: TestClock?
   private var announcedCameraStatus: [SourceID: String] = [:]
+  /// Picture for a preview opened without enabling the camera. A live tile uses its own renderer.
+  let peekRenderer = TileRenderer()
+  /// Camera whose preview modal is open. Nil when the modal is closed.
+  public private(set) var peekID: SourceID?
+  /// Why the modal has no picture. Nil while a renderer is feeding it.
+  public private(set) var peekStatus: String?
+  private var peekMode: SourcePeekTarget = .unavailable
+  private var peekSource: FrameSource?
+  private var peekAddress: String?
+  /// The camera whose tile is about to start because VIDEO was turned on with the modal open.
+  /// Holds the modal off a second connection until that pipeline exists.
+  private var peekPipelineHandoffID: SourceID?
+  private var peekStartError: String?
+  private static let peekConnecting = "Connecting…"
+  private static let peekUnavailable = "This camera is not available"
 
   // MARK: - Lifecycle
 
@@ -704,6 +719,7 @@ public final class AppEnvironment {
     heartbeatTimer?.invalidate()
     heartbeatTimer = nil
     if isRecording { await stopRecording() }
+    endPeek()
     pictureInPicture.tearDown()
     router.audioPlayer.stop()
     router.removeAll()
@@ -762,6 +778,11 @@ public final class AppEnvironment {
   }
 
   private func startDiscovery() {
+    releasePeekConnection()
+    if peekID != nil {
+      peekMode = .unavailable
+      peekStatus = Self.peekConnecting
+    }
     discovery?.stop()
     let kind = Self.kind(for: sourceProfile)
     selections = SourceSelectionRules.retaining(selections, kind: kind)
@@ -826,6 +847,11 @@ public final class AppEnvironment {
     }
     rebuildRelocatedPipelines(discovered)
     pushDisplayNamesToTiles()
+    if let peekID, !selections.contains(where: { $0.id == peekID }) {
+      endPeek()
+    } else {
+      reconcilePeek()
+    }
     Task { await syncEnabledSources() }
   }
 
@@ -1304,9 +1330,33 @@ public final class AppEnvironment {
       switch result {
       case let .enabled(sourceIndex):
         rememberProgramSource(id)
-        Task { await startSource(id: id, sourceIndex: sourceIndex) }
+        if peekID == id {
+          // The modal's temporary session is the camera's only connection. The tile has to
+          // take it over; leaving both up is a second login most cameras refuse.
+          releasePeekConnection()
+          peekStartError = nil
+          peekPipelineHandoffID = id
+          peekMode = .livePipeline
+          peekStatus = Self.peekConnecting
+        }
+        Task {
+          await startSource(id: id, sourceIndex: sourceIndex)
+          if peekPipelineHandoffID == id { peekPipelineHandoffID = nil }
+          if peekID == id {
+            if router.pipeline(for: id) == nil, peekStartError == nil,
+               selections.first(where: { $0.id == id })?.isEnabled == true {
+              peekStartError = Self.peekUnavailable
+            }
+            reconcilePeek()
+          }
+        }
       case .disabled:
+        if peekPipelineHandoffID == id { peekPipelineHandoffID = nil }
         stopSource(id)
+        if peekID == id {
+          peekStartError = nil
+          reconcilePeek()
+        }
       default:
         break
       }
@@ -1417,8 +1467,133 @@ public final class AppEnvironment {
   }
 
   public func dismissCameras() {
+    endPeek()
     activeSheet = nil
     discovery?.setPeriodicSearch(false)
+  }
+
+  /// Opens the preview modal for one row. Does not enable the camera and does not take a slot.
+  public func beginPeek(id: SourceID) {
+    guard selections.contains(where: { $0.id == id }) else { return }
+    if peekID == id {
+      if peekMode == .temporary, peekSource?.isRunning == true { return }
+      if peekMode == .livePipeline,
+         router.pipeline(for: id) != nil || peekPipelineHandoffID == id {
+        return
+      }
+    } else {
+      releasePeekConnection()
+      peekStartError = nil
+    }
+    peekID = id
+    reconcilePeek()
+  }
+
+  public func endPeek() {
+    peekID = nil
+    peekMode = .unavailable
+    peekStatus = nil
+    peekStartError = nil
+    peekPipelineHandoffID = nil
+    releasePeekConnection()
+  }
+
+  /// The renderer the modal should display, or nil while there is only a status line.
+  public func peekVideoRenderer() -> TileRenderer? {
+    guard let id = peekID else { return nil }
+    switch peekMode {
+    case .livePipeline:
+      return router.pipeline(for: id)?.renderer
+    case .temporary:
+      return peekRenderer
+    case .unavailable:
+      return nil
+    }
+  }
+
+  /// Keeps the open modal on one connection. An enabled row waits for its tile; a disabled row
+  /// gets a pixel-only source that is never asked to archive.
+  private func reconcilePeek() {
+    guard let id = peekID else { return }
+    let hasLivePipeline = router.pipeline(for: id) != nil
+    let enabled = selections.first(where: { $0.id == id })?.isEnabled == true
+
+    if hasLivePipeline {
+      peekPipelineHandoffID = nil
+      peekStartError = nil
+      releasePeekConnection()
+      peekMode = .livePipeline
+      peekStatus = nil
+      return
+    }
+    if peekPipelineHandoffID == id {
+      releasePeekConnection()
+      peekMode = .livePipeline
+      peekStatus = Self.peekConnecting
+      return
+    }
+    if enabled {
+      // The tile is coming up, or it failed. Either way a second session is the wrong fix.
+      releasePeekConnection()
+      peekMode = .livePipeline
+      peekStatus = peekStartError ?? Self.peekConnecting
+      return
+    }
+    peekStartError = nil
+
+    let discovered = discovery.flatMap {
+      SourceSelectionRules.startableSource(id: id, among: $0.currentSources)
+    }
+    switch SourcePeekRules.target(hasLivePipeline: false, isDiscovered: discovered != nil) {
+    case .temporary:
+      guard let discovered else { return }
+      adoptTemporaryPeek(discovered)
+    case .unavailable, .livePipeline:
+      releasePeekConnection()
+      peekMode = .unavailable
+      peekStatus = Self.peekUnavailable
+    }
+  }
+
+  private func adoptTemporaryPeek(_ discovered: DiscoveredSource) {
+    if peekSource?.isRunning == true,
+       peekSource?.sourceID == discovered.id,
+       peekAddress == discovered.address {
+      peekMode = .temporary
+      peekStatus = nil
+      return
+    }
+    releasePeekConnection()
+    guard let discovery else {
+      peekMode = .unavailable
+      peekStatus = Self.peekUnavailable
+      return
+    }
+    do {
+      let source = try discovery.makeSource(for: discovered)
+      let renderer = peekRenderer
+      let converter = converter
+      // Pixel sink only, and no `setArchiving`. NDI and synthetic cameras encode their archive
+      // themselves; a preview must not spend one of those sessions on a picture nobody is recording.
+      try source.start(sinks: FrameSinks(pixel: { frame in
+        guard let converted = converter.convert(frame) else { return }
+        renderer.enqueue(converted)
+      }))
+      peekSource = source
+      peekAddress = discovered.address
+      peekMode = .temporary
+      peekStatus = nil
+    } catch {
+      peekMode = .unavailable
+      peekStatus = "\(error)"
+    }
+  }
+
+  private func releasePeekConnection() {
+    peekSource?.stop()
+    peekSource = nil
+    peekAddress = nil
+    peekRenderer.invalidateFormatCache()
   }
 
   public func enterDirecting() async {
@@ -1542,6 +1717,7 @@ public final class AppEnvironment {
     }
     applyProgramSelection()
     applyAudioContributors()
+    if peekID != nil { reconcilePeek() }
   }
 
   private func startSource(id: SourceID, sourceIndex: Int) async {
@@ -1557,7 +1733,7 @@ public final class AppEnvironment {
       return
     }
     guard let discovery else { return }
-    guard let selection = selections.first(where: { $0.id == id }) else { return }
+    guard let selection = selections.first(where: { $0.id == id }), selection.isEnabled else { return }
     guard let discovered = SourceSelectionRules.startableSource(
       id: id,
       among: discovery.currentSources
@@ -1587,6 +1763,9 @@ public final class AppEnvironment {
         attachProxy(to: pipeline)
       }
     } catch {
+      if peekID == id {
+        peekStartError = "\(error)"
+      }
       if let message = OperatorAlert.cameraFailure(
         displayName: selection.displayName,
         detail: "\(error)",

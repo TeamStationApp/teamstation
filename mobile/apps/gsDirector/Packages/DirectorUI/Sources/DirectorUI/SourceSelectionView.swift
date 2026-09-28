@@ -1,4 +1,5 @@
 import DirectorCore
+import DirectorPipeline
 import DirectorSources
 import SwiftUI
 
@@ -45,6 +46,25 @@ public struct SourceSelectionView: View {
             onGain: { environment.setInputGain($0, for: selection.id) }
           )
           .padding(28)
+        }
+      }
+
+      if let peekID = environment.peekID {
+        if let selection = environment.selections.first(where: { $0.id == peekID }) {
+          ZStack {
+            Color.black.opacity(0.55)
+              .ignoresSafeArea()
+              .onTapGesture { environment.endPeek() }
+            SourcePreviewDetailView(
+              title: rowName(for: selection),
+              renderer: environment.peekVideoRenderer(),
+              status: environment.peekStatus,
+              onClose: { environment.endPeek() }
+            )
+            .padding(28)
+          }
+        } else {
+          Color.clear.onAppear { environment.endPeek() }
         }
       }
 
@@ -144,21 +164,7 @@ public struct SourceSelectionView: View {
 
   private func row(index: Int, selection: SourceSelection) -> some View {
     HStack(spacing: 14) {
-      if selection.isEnabled, let pipeline = environment.router.pipeline(for: selection.id) {
-        CameraPreviewView(renderer: pipeline.renderer)
-          .frame(width: 128, height: 72)
-          .clipShape(RoundedRectangle(cornerRadius: 8))
-          .accessibilityIdentifier("source-preview-\(index + 1)")
-      } else {
-        RoundedRectangle(cornerRadius: 8)
-          .fill(Color.black.opacity(0.45))
-          .frame(width: 128, height: 72)
-          .overlay {
-            Image(systemName: "video.slash")
-              .font(.system(size: 18, weight: .light))
-              .foregroundStyle(.white.opacity(0.25))
-          }
-      }
+      previewBox(index: index, selection: selection)
 
       Circle()
         .fill(selection.isPresent ? Color.programGreen : Color.white.opacity(0.18))
@@ -297,6 +303,42 @@ public struct SourceSelectionView: View {
         + "nameOrigin=\(environment.boundCamera(for: selection.id)?.nameOrigin.rawValue ?? "") "
         + "link=\(SourceLinkLabel.accessibilityLink(video: selection.linkedControlID.flatMap(displayNumber)))"
     )
+  }
+
+  /// Tapping the box opens a preview. The VIDEO toggle is what puts the camera on the grid; this
+  /// does not flip it, including while the box is still the empty placeholder.
+  private func previewBox(index: Int, selection: SourceSelection) -> some View {
+    Button {
+      environment.beginPeek(id: selection.id)
+    } label: {
+      // A clear hit target in front of the thumbnail. The live picture is a UIKit layer, and a
+      // layer that participates in hit testing keeps the tap for itself.
+      Color.clear
+        .frame(width: 128, height: 72)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+    .buttonStyle(.plain)
+    .background { previewImage(selection) }
+    .accessibilityIdentifier("source-preview-\(index + 1)")
+    .accessibilityLabel("Preview \(rowName(for: selection))")
+  }
+
+  @ViewBuilder
+  private func previewImage(_ selection: SourceSelection) -> some View {
+    if selection.isEnabled, let pipeline = environment.router.pipeline(for: selection.id) {
+      CameraPreviewView(renderer: pipeline.renderer)
+        .frame(width: 128, height: 72)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    } else {
+      RoundedRectangle(cornerRadius: 8)
+        .fill(Color.black.opacity(0.45))
+        .frame(width: 128, height: 72)
+        .overlay {
+          Image(systemName: "video.slash")
+            .font(.system(size: 18, weight: .light))
+            .foregroundStyle(.white.opacity(0.25))
+        }
+    }
   }
 
   /// A phone that is another row's control: no picture, no slot, no place in the mix. What is left
@@ -624,5 +666,64 @@ public struct SourceSelectionView: View {
     renamingID = nil
     draftName = ""
     isNamingFocused = false
+  }
+}
+
+/// Full-size picture for one camera row. Closing it is the backdrop tap or CLOSE; neither enables
+/// the camera.
+struct SourcePreviewDetailView: View {
+  let title: String
+  let renderer: TileRenderer?
+  let status: String?
+  let onClose: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(alignment: .firstTextBaseline, spacing: 12) {
+        Text(title)
+          .font(.system(size: 18, weight: .semibold, design: .rounded))
+          .foregroundStyle(.white)
+          .lineLimit(1)
+        Spacer()
+        Button(action: onClose) {
+          Text("CLOSE")
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .tracking(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("source-preview-close")
+        .accessibilityLabel("Close preview")
+      }
+
+      Group {
+        if let renderer {
+          CameraPreviewView(renderer: renderer)
+        } else {
+          ZStack {
+            Color.black
+            Text(status ?? "Connecting…")
+              .font(.system(size: 14, weight: .medium))
+              .foregroundStyle(.white.opacity(0.7))
+              .multilineTextAlignment(.center)
+              .padding(24)
+              .accessibilityIdentifier("source-preview-status")
+          }
+        }
+      }
+      .aspectRatio(16.0 / 9.0, contentMode: .fit)
+      .frame(maxWidth: 960)
+      .background(Color.black, in: RoundedRectangle(cornerRadius: 8))
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+      .accessibilityIdentifier("source-preview-video")
+    }
+    .padding(20)
+    .frame(maxWidth: 1000)
+    .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 12))
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("source-preview-detail")
   }
 }
