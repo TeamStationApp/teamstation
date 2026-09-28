@@ -3,7 +3,6 @@ import { describe, it } from 'mocha'
 
 import type { AngleVideo } from '../wallClock'
 import {
-  CALM_MS,
   correctionFor,
   endFor,
   everythingEnded,
@@ -11,14 +10,9 @@ import {
   holdExpired,
   isFinished,
   isOurSilence,
-  isStarved,
   liveTargetMs,
   masterOf,
   type Placeable,
-  PROMOTION_TRIES,
-  promotionWait,
-  readyToPromote,
-  runningBehind,
   worthCorrecting
 } from './align'
 
@@ -257,23 +251,6 @@ describe('telling our own doing from a tile that has stopped', function () {
   })
 })
 
-describe('a take that cannot keep up with itself', function () {
-  it('is one whose clock gains less than the time it takes', function () {
-    // Every tile drawing, none stalled, and the game at two thirds speed:
-    // the connection cannot carry four streams, which is what the valve is
-    // for, and no per-tile signal shows it.
-    expect(runningBehind(6400, 10_000)).equals(true)
-  })
-
-  it('is not one merely a little short', function () {
-    expect(runningBehind(9600, 10_000)).equals(false)
-  })
-
-  it('needs a long enough look to say anything', function () {
-    expect(runningBehind(0, 2000)).equals(false)
-  })
-})
-
 describe('four live edges', function () {
   it('hold back to the one furthest behind', function () {
     expect(liveTargetMs([5000, 3000, 4000])).equals(3000)
@@ -282,42 +259,5 @@ describe('four live edges', function () {
   it('ignore tiles that have no edge to offer', function () {
     expect(liveTargetMs([null, 4000, null])).equals(4000)
     expect(liveTargetMs([null, null])).equals(null)
-  })
-})
-
-describe('telling a starving tile from a wedged one', function () {
-  it('is starving with nothing left to play', function () {
-    expect(isStarved({ bufferAheadSec: 0, readyState: 4 })).equals(true)
-    expect(isStarved({ bufferAheadSec: 30, readyState: 1 })).equals(true)
-  })
-
-  it('is not starving while it is sitting on a buffer', function () {
-    // The case that told a gigabit line it could not carry four streams.
-    expect(isStarved({ bufferAheadSec: 20, readyState: 4 })).equals(false)
-  })
-})
-
-describe('climbing back to four angles', function () {
-  it('waits for the calm to hold before trying again', function () {
-    expect(readyToPromote({ calmForMs: CALM_MS - 1, attempts: 0 })).equals(
-      false
-    )
-    expect(readyToPromote({ calmForMs: CALM_MS, attempts: 0 })).equals(true)
-  })
-
-  it('waits longer after each demotion', function () {
-    expect(promotionWait(0)).equals(CALM_MS)
-    expect(promotionWait(1)).equals(CALM_MS * 2)
-    expect(promotionWait(2)).equals(CALM_MS * 4)
-    // The calm that was long enough the first time is not the second.
-    expect(readyToPromote({ calmForMs: CALM_MS, attempts: 1 })).equals(false)
-    expect(readyToPromote({ calmForMs: CALM_MS * 2, attempts: 1 })).equals(true)
-  })
-
-  it('stops asking, and leaves it to the viewer', function () {
-    expect(promotionWait(PROMOTION_TRIES)).equals(null)
-    expect(
-      readyToPromote({ calmForMs: 60 * 60_000, attempts: PROMOTION_TRIES })
-    ).equals(false)
   })
 })
