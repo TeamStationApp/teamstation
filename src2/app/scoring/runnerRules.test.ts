@@ -9,7 +9,7 @@ import { runnerReasons } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { basePath, homeQueuePoint } from './scoringMotion'
 import { baseIds, playerRef } from './scoringSelectors'
-import type { ScoringState } from './scoringTypes'
+import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 function initial(mask = 0): ScoringState {
   const state = initialScoringState(
     createDevelopmentSession(gameFixture, [], [])
@@ -48,7 +48,7 @@ function hit(
 function expire(state: ScoringState): ScoringState {
   return scoringReducer(state, {
     type: 'TIMER_TICK',
-    elapsedMs: 10000,
+    elapsedMs: CORRECTION_WINDOW_MS,
     generation: state.generation,
     revision: state.correctionWindow?.revision ?? 0
   })
@@ -120,7 +120,7 @@ describe('runner progression and correction deadline', function () {
         expect(state.session.liveData.linescore.teams.away.runs).equals(
           queue.length
         )
-        expect(state.correctionWindow!.remainingMs).equals(10000)
+        expect(state.correctionWindow!.remainingMs).equals(CORRECTION_WINDOW_MS)
         const beforeClose = state
         state = expire(state)
         expect(state.session.liveData.plays.allPlays).has.length(1)
@@ -133,7 +133,7 @@ describe('runner progression and correction deadline', function () {
         expect(
           scoringReducer(state, {
             type: 'TIMER_TICK',
-            elapsedMs: 10000,
+            elapsedMs: CORRECTION_WINDOW_MS,
             generation: beforeClose.generation,
             revision: beforeClose.correctionWindow?.revision ?? 0
           })
@@ -208,7 +208,7 @@ describe('runner progression and correction deadline', function () {
     ).equals(state)
     state = scoringReducer(state, {
       type: 'TIMER_TICK',
-      elapsedMs: 7500,
+      elapsedMs: CORRECTION_WINDOW_MS - 2500,
       generation: state.generation,
       revision: state.correctionWindow!.revision
     })
@@ -219,13 +219,13 @@ describe('runner progression and correction deadline', function () {
     state = completeMotions(
       scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'safe' })
     )
-    expect(state.correctionWindow!.remainingMs).equals(10000)
+    expect(state.correctionWindow!.remainingMs).equals(CORRECTION_WINDOW_MS)
     const undone = scoringReducer(state, { type: 'UNDO' })
     expect(undone.generation).greaterThan(state.generation)
     expect(
       scoringReducer(undone, {
         type: 'TIMER_TICK',
-        elapsedMs: 10000,
+        elapsedMs: CORRECTION_WINDOW_MS,
         generation: state.generation,
         revision: state.correctionWindow!.revision
       })

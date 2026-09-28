@@ -20,10 +20,11 @@ import { closePlay, copyState, snapshotOf } from './scoringMachine'
 import { approachFirst, sequencesFor } from './scoringMotion'
 import { throwPresentation, type ThrowSequence } from './scoringPresentation'
 import { battingSide } from './scoringSelectors'
-import type {
-  ScoringEvent,
-  ScoringSnapshot,
-  ScoringState
+import {
+  CORRECTION_WINDOW_MS,
+  type ScoringEvent,
+  type ScoringSnapshot,
+  type ScoringState
 } from './scoringTypes'
 
 /**
@@ -176,7 +177,7 @@ export function settleRunners(state: ScoringState): void {
   if (decision === 'close') {
     state.phase = 'correctionWindow'
     state.correctionWindow ??= {
-      remainingMs: 10000,
+      remainingMs: CORRECTION_WINDOW_MS,
       revision: game.meta.sequence
     }
     // Nothing a scorer would correct: an award, empty bases, the third out.
@@ -400,7 +401,7 @@ export function accepted(
   }
   if (next.correctionWindow != null)
     next.correctionWindow = {
-      remainingMs: 10000,
+      remainingMs: CORRECTION_WINDOW_MS,
       revision: next.correctionWindow.revision + 1
     }
   return next

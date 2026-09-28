@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import { GuidanceDetail } from './GuidanceDetail'
+import { CORRECTION_WINDOW_MS } from './scoringTypes'
 export const CORRECTION_INSTRUCTION =
   'Drag any other runners to advance them or have them called out'
 export interface ScoreboardBounds {
@@ -99,7 +100,7 @@ export function InstructionToast({
                 accessibilityRole="progressbar"
                 accessibilityLabel="Time to edit play"
                 aria-valuemin={0}
-                aria-valuemax={10}
+                aria-valuemax={CORRECTION_WINDOW_MS / 1000}
                 aria-valuenow={Math.ceil(remainingMs / 1000)}
                 style={{ flex: 1, height: 5 }}
               >
@@ -108,7 +109,7 @@ export function InstructionToast({
                     height: 5,
                     borderRadius: 3,
                     backgroundColor: theme.scoringCountdownColor,
-                    width: `${Math.max(0, Math.min(100, remainingMs / 100))}%`
+                    width: `${Math.max(0, Math.min(100, (remainingMs / CORRECTION_WINDOW_MS) * 100))}%`
                   }}
                 />
               </View>

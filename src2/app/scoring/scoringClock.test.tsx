@@ -8,7 +8,7 @@ import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { runCorrectionClock, type ScoringClock } from './scoringClock'
 import { initialScoringState, scoringReducer } from './scoringMachine'
-import type { ScoringState } from './scoringTypes'
+import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 import { useScoringClock } from './useScoringClock'
 import { useScoringClock as nativeClock } from './useScoringClock.native'
 class FakeClock implements ScoringClock {
@@ -97,12 +97,16 @@ describe('correction clock', function () {
     await act(async () => {
       clock.advance(2500)
     })
-    expect(result.correctionWindow!.remainingMs).equals(7500)
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 2500
+    )
     await render(true)
     await act(async () => {
       clock.advance(50000)
     })
-    expect(result.correctionWindow!.remainingMs).equals(7500)
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 2500
+    )
     await render(false)
     await act(async () => {
       Object.defineProperty(document, 'hidden', {
@@ -114,7 +118,9 @@ describe('correction clock', function () {
     await act(async () => {
       clock.advance(50000)
     })
-    expect(result.correctionWindow!.remainingMs).equals(7500)
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 2500
+    )
     await act(async () => {
       Object.defineProperty(document, 'hidden', {
         configurable: true,
@@ -123,7 +129,7 @@ describe('correction clock', function () {
       document.dispatchEvent(new window.Event('visibilitychange'))
     })
     await act(async () => {
-      clock.advance(7450)
+      clock.advance(CORRECTION_WINDOW_MS - 2500 - 50)
     })
     expect(result.session.liveData.plays.allPlays).has.length(0)
     await act(async () => {
