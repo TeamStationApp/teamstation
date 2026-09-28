@@ -1,0 +1,300 @@
+import type { BatteryKind, PitchCall, ResultType } from './actions'
+
+/**
+ * What dictation is told about baseball, for its two models.
+ *
+ * The dictation model — the recogniser — gets `DICTATION_TERMS` as key terms,
+ * so it hears a word. The LLM gets `DICTATION_VOCABULARY` in its system
+ * prompt, so it understands one. They are different lists on purpose: a key
+ * term is worth a slot only when the recogniser gets the word wrong without
+ * it, while the vocabulary has no slot limit and exists to say what a word
+ * means for the game.
+ */
+
+/**
+ * Scoring words the recogniser mishears. Names are not here; `keyterms` puts
+ * the players first. Everyday words — single, walk, strikeout, safe — are left
+ * out because the recogniser already hears them, and a term it already hears
+ * costs a slot and biases it toward hearing the word when it was not said.
+ *
+ * The last four were measured on 2026-09-28: without them the recogniser
+ * heard "beaned" as "beamed", "froze him" as "throws him", "whiffed" as "lift"
+ * and "dotted" as "that at". The rows above them are kept until a real game
+ * shows whether each earns its slot.
+ */
+export const DICTATION_TERMS: readonly string[] = [
+  // Double-play chains: the one place these scorers use position numbers.
+  'six four three',
+  'four six three',
+  'five four three',
+  // Outs.
+  "fielder's choice",
+  'double play',
+  'infield fly',
+  'dropped third strike',
+  'caught looking',
+  'sac fly',
+  'sac bunt',
+  'tagged up',
+  'doubled off',
+  // Hits.
+  'gapper',
+  'bloop',
+  'Texas leaguer',
+  'frozen rope',
+  'can of corn',
+  'chopper',
+  'nubber',
+  'dinger',
+  'ground-rule double',
+  'in-the-park home run',
+  'grand slam',
+  // Base running.
+  'caught stealing',
+  'picked off',
+  'rundown',
+  'defensive indifference',
+  'wild pitch',
+  'balk',
+  // Scoring.
+  'RBI',
+  // The at-bat, each one measured as misheard without its key term.
+  'beaned',
+  'froze him',
+  'whiffed',
+  'dotted'
+]
+
+/** What a phrase comes to, in the library's own vocabulary. */
+export type VocabularyAction =
+  | { type: 'pitch'; call: PitchCall }
+  | { type: 'result'; eventType: ResultType }
+  | { type: 'batteryEvent'; kind: BatteryKind }
+
+export interface VocabularyEntry {
+  phrases: readonly string[]
+  means: string
+  action: VocabularyAction
+  /** How the action is to be used, when the bare action would mislead. */
+  note?: string
+}
+
+/**
+ * The language of an at-bat, mapped onto actions the library takes. Typed
+ * against `PitchCall`, `ResultType` and `BatteryKind`, so the vocabulary cannot
+ * promise the LLM an action the library would refuse.
+ */
+export const VOCABULARY_ENTRIES: readonly VocabularyEntry[] = [
+  {
+    phrases: [
+      'outside',
+      'away',
+      'wide',
+      'off the plate',
+      'just missed',
+      'missed the corner',
+      'inside',
+      'in on the hands',
+      'high',
+      'up',
+      'above the letters',
+      'low',
+      'down',
+      'below the knees',
+      'in the dirt',
+      'spiked',
+      'bounced it',
+      'short-hopped',
+      'pitchout',
+      'chin music',
+      'brushback',
+      'backed him off the plate',
+      'high and tight'
+    ],
+    means: 'a ball — when the batter did not swing and was not hit',
+    action: { type: 'pitch', call: 'B' }
+  },
+  {
+    phrases: ['checked his swing', 'held up'],
+    means: 'no swing — a ball unless the call says otherwise',
+    action: { type: 'pitch', call: 'B' }
+  },
+  {
+    phrases: ['ball four', 'four wide ones', 'free pass', 'walked him'],
+    means: 'the fourth ball',
+    action: { type: 'pitch', call: 'B' },
+    note: 'the ball that makes four; the library records the walk'
+  },
+  {
+    phrases: ['intentional walk', 'put him on', 'IBB'],
+    means: 'an intentional walk',
+    action: { type: 'result', eventType: 'intent_walk' }
+  },
+  {
+    phrases: [
+      'painted',
+      'painted the black',
+      'on the black',
+      'caught the corner',
+      'nicked the corner',
+      'dotted',
+      'hit the spot',
+      'down the middle',
+      'down Broadway',
+      'grooved it',
+      'at the knees',
+      'at the letters',
+      'backdoor',
+      'front door',
+      'froze him',
+      'took it for a strike',
+      "didn't offer",
+      'framed it',
+      'stole a strike'
+    ],
+    means: 'a called strike',
+    action: { type: 'pitch', call: 'C' }
+  },
+  {
+    phrases: [
+      'rung up',
+      'punched out',
+      'backwards K',
+      'caught looking',
+      'struck out looking'
+    ],
+    means: 'strike three, called',
+    action: { type: 'pitch', call: 'C' },
+    note: 'the called strike that makes three; the library records the strikeout'
+  },
+  {
+    phrases: [
+      'swing and a miss',
+      'swung through it',
+      'whiff',
+      'whiffed',
+      'fanned',
+      'came up empty',
+      'chased',
+      'went fishing',
+      'blew it by him',
+      'went around'
+    ],
+    means: 'a swinging strike',
+    action: { type: 'pitch', call: 'S' }
+  },
+  {
+    phrases: [
+      'K',
+      'struck out swinging',
+      'went down swinging',
+      'blew him away'
+    ],
+    means: 'strike three, swinging',
+    action: { type: 'pitch', call: 'S' },
+    note: 'the swinging strike that makes three'
+  },
+  {
+    phrases: [
+      'fouled it off',
+      'fouled it back',
+      'spoiled it',
+      'stayed alive',
+      'got a piece of it',
+      'back to the screen'
+    ],
+    means: 'a foul ball',
+    action: { type: 'pitch', call: 'F' }
+  },
+  {
+    phrases: ['foul tip', 'tipped it', 'into the mitt'],
+    means: 'a foul tip — strike three with two strikes',
+    action: { type: 'pitch', call: 'T' }
+  },
+  {
+    phrases: ['bunted foul', 'foul bunt'],
+    means: 'a foul bunt — strike three with two strikes',
+    action: { type: 'pitch', call: 'L' }
+  },
+  {
+    phrases: [
+      'hit by pitch',
+      'HBP',
+      'beaned',
+      'plunked',
+      'drilled',
+      'nailed him',
+      'clipped',
+      'grazed',
+      'wore one',
+      'took one for the team'
+    ],
+    means: 'hit by the pitch',
+    action: { type: 'result', eventType: 'hit_by_pitch' }
+  },
+  {
+    phrases: ['wild pitch', 'got away from the pitcher', 'to the backstop'],
+    means: 'a wild pitch',
+    action: { type: 'batteryEvent', kind: 'wild_pitch' }
+  },
+  {
+    phrases: ['passed ball', 'got by the catcher'],
+    means: 'a passed ball',
+    action: { type: 'batteryEvent', kind: 'passed_ball' }
+  },
+  {
+    phrases: ['balk'],
+    means: 'a balk',
+    action: { type: 'batteryEvent', kind: 'balk' }
+  },
+  {
+    phrases: ["catcher's interference", 'glove hit the bat'],
+    means: "catcher's interference",
+    action: { type: 'result', eventType: 'catcher_interference' }
+  },
+  {
+    phrases: [
+      'dropped third strike',
+      "the catcher didn't hold it",
+      'uncaught third strike'
+    ],
+    means: 'strike three the catcher did not catch',
+    action: { type: 'result', eventType: 'strikeout' }
+  }
+]
+
+function actionText(action: VocabularyAction): string {
+  switch (action.type) {
+    case 'pitch':
+      return `pitch ${action.call}`
+    case 'result':
+      return `result ${action.eventType}`
+    case 'batteryEvent':
+      return `batteryEvent ${action.kind}`
+  }
+}
+
+/**
+ * The four places an LLM goes wrong with these words. Each is written against
+ * what `applyAction` does, not against what baseball calls things.
+ */
+const RULES = [
+  'Words that name the same event are ONE action. "Whiffed, K", "struck him out swinging, strike three" and "ball four, walked him" each describe one pitch. A summary word — K, strikeout, strike three, walk — restates the pitch before it and never adds another. A second pitch would record the strikeout and then put a strike on the next batter.',
+  'An ordinary strikeout is a pitch, never result strikeout. In this system result strikeout means a dropped third strike only, and it is refused unless there are two strikes and first base is empty or there are two outs. A called strike three is pitch C, a swinging one is pitch S, a foul tip with two strikes is pitch T. Likewise there is no walk result: a walk is the fourth pitch B.',
+  'A strikeout or a walk the count cannot reach is a question. Pitches are usually tapped, so the count in the context is normally current; "struck out" on a one-strike count means pitches went unrecorded. Call askScorer rather than inventing the missing pitches.',
+  '"High and tight", "chin music" and "brushback" are balls unless the batter is hit. They describe a pitch near the batter, not one that hit him.'
+]
+
+/** The vocabulary block, as the LLM reads it in its system prompt. */
+export const DICTATION_VOCABULARY: string = [
+  'BASEBALL VOCABULARY — what a scorer says, and the action it comes to.',
+  ...VOCABULARY_ENTRIES.map(
+    entry =>
+      `- ${entry.phrases.join(', ')}: ${entry.means} → ${actionText(entry.action)}${
+        entry.note == null ? '' : ` (${entry.note})`
+      }`
+  ),
+  '',
+  'RULES',
+  ...RULES.map(rule => `- ${rule}`)
+].join('\n')

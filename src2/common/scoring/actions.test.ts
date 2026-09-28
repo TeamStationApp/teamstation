@@ -16,6 +16,7 @@ import {
   ERROR_KINDS,
   GAME_FLOW_KINDS,
   HOME_RUN_KINDS,
+  keyterms,
   LINEUP_KINDS,
   OUT_KINDS,
   PITCH_CALLS,
@@ -24,6 +25,7 @@ import {
   RESULT_TYPES,
   RUNNER_REASONS,
   type ScoringAction,
+  shortName,
   toolSchema,
   TRAJECTORIES
 } from './actions'
@@ -37,6 +39,7 @@ import {
   POSITIONS,
   setupOf
 } from './state'
+import { DICTATION_TERMS } from './vocabulary'
 
 /** Nine a side, the home team in the field, a runner on second. */
 export function sampleGame(): GameState {
@@ -271,6 +274,13 @@ describe('scoring actions', function () {
     expect(props('result').outBy.enum).deep.equals(OUT_KINDS)
     expect(props('result').base.enum).deep.equals(BASES)
     expect(props('fieldingPlay').errorKind.enum).deep.equals(ERROR_KINDS)
+    const fielding = toolSchema().find(tool => tool.name === 'fieldingPlay')!
+    expect(fielding.input_schema.required).deep.equals(['fielders', 'error'])
+    expect(fielding.description).match(/only after a result of field_error/)
+    const movement = toolSchema().find(tool => tool.name === 'runnerMovement')!
+    expect(movement.description).match(
+      /A hit already moves the batter and every runner/
+    )
     expect(props('runnerMovement').to.enum).deep.equals(DESTINATIONS)
     expect(props('runnerMovement').reason.enum).deep.equals(RUNNER_REASONS)
     expect(props('baseRunning').kind.enum).deep.equals(BASE_RUNNING_KINDS)
@@ -330,10 +340,10 @@ describe('scoring actions', function () {
     expect(text).includes('Top of the 3rd, 1 out, count 1-2.')
     expect(text).includes('Visitors batting, Hosts in the field.')
     expect(text).includes(
-      'Batter: Player 4 (id 4). Pitcher: Player 10 (id 10).'
+      'Batter: Player 4. #4 (id 4). Pitcher: Player 1. #10 (id 10).'
     )
-    expect(text).includes('On first: nobody. On second: Player 3 (id 3).')
-    expect(text).includes('SS Player 14 (id 14)')
+    expect(text).includes('On first: nobody. On second: Player 3. #3 (id 3).')
+    expect(text).includes('SS Player 1. #14 (id 14)')
     expect(text).not.match(/runs?\b|score|atBatIndex|at-bat/i)
 
     const bottom = sampleGame()
@@ -349,6 +359,92 @@ describe('scoring actions', function () {
       'Hosts batting, Visitors in the field.'
     )
     expect(promptContext(bottom)).includes('Batter: Unlisted (id 99).')
+    // A player with no number on the roster is named without one.
+    bottom.gameData.players[14].jersey = '  '
+    expect(promptContext(bottom)).includes('SS Player 1. (id 14)')
+  })
+
+  it('names a player by first name and last initial, and never by surname', function () {
+    expect(
+      shortName({ fullName: 'Noah Dean', firstName: 'Noah', lastName: 'Dean' })
+    ).equals('Noah D.')
+    expect(shortName({ fullName: 'Marcus Kaczmarek' })).equals('Marcus K.')
+    expect(shortName({ fullName: 'Mary Ann Smith' })).equals('Mary Ann S.')
+    expect(shortName({ fullName: "Liam O'Brien" })).equals('Liam O.')
+    expect(shortName({ fullName: 'Sam P.' })).equals('Sam P.')
+    expect(shortName({ fullName: 'Unlisted' })).equals('Unlisted')
+    expect(shortName({ fullName: '  ', firstName: 'Ana' })).equals('Ana')
+    expect(shortName({ fullName: '' })).equals('')
+
+    const game = sampleGame()
+    for (const player of Object.values(game.gameData.players)) {
+      player.firstName = 'Chase'
+      player.lastName = `Kaczmarek${player.id}`
+      player.fullName = `Chase Kaczmarek${player.id}`
+    }
+    const text = promptContext(game)
+    expect(text).includes('Batter: Chase K. #4 (id 4).')
+    expect(text).not.match(/Kaczmarek/)
+    expect(keyterms(game).join(' ')).not.match(/Kaczmarek/)
+  })
+
+  it('biases the recogniser toward who is in the play first', function () {
+    const game = sampleGame()
+    for (const player of Object.values(game.gameData.players)) {
+      player.firstName = `First${player.id}`
+      player.lastName = `Last${player.id}`
+    }
+    const terms = keyterms(game)
+    // Batter 4, pitcher 10, runner on second 3, then the fielders.
+    expect(terms.slice(0, 3)).deep.equals([
+      'First4 L.',
+      'First10 L.',
+      'First3 L.'
+    ])
+    expect(terms[3]).equals('First11 L.')
+    // Every player once, then the team names, then the scoring words.
+    const names = terms.filter(term => /^First\d+ L\.$/.test(term))
+    expect(names).to.have.length(18)
+    expect(new Set(names).size).equals(18)
+    const afterNames = terms.slice(18)
+    expect(afterNames.slice(0, 2)).deep.equals(['Visitors', 'Hosts'])
+    expect(afterNames.slice(2)).deep.equals([...DICTATION_TERMS])
+    expect(terms.length).lessThan(100)
+    for (const term of terms) {
+      expect(term.length).within(1, 50)
+    }
+    expect(keyterms(game)).deep.equals(terms)
+  })
+
+  it('keeps the same terms when a runner only moves', function () {
+    const game = sampleGame()
+    const before = keyterms(game)
+    const line = game.liveData.linescore
+    line.offense.third = line.offense.second
+    line.offense.second = null
+    expect(keyterms(game)).deep.equals(before)
+  })
+
+  it('drops an empty or over-long name and repeats nothing', function () {
+    const game = sampleGame()
+    game.gameData.players[4].fullName = ''
+    game.gameData.players[5].fullName = `${'x'.repeat(60)} Y`
+    game.gameData.teams.home.name = 'Visitors'
+    const terms = keyterms(game)
+    expect(terms).not.includes('')
+    for (const term of terms) expect(term.length).at.most(50)
+    expect(terms.filter(term => term === 'Visitors')).to.have.length(1)
+    game.liveData.linescore.offense.batter = {
+      id: 777,
+      fullName: 'Pinch Hitter'
+    }
+    expect(keyterms(game)[0]).equals('Pinch H.')
+  })
+
+  it('tells a model that result strikeout is a dropped third strike', function () {
+    const result = toolSchema().find(tool => tool.name === 'result')
+    expect(result?.description).match(/dropped third strike/i)
+    expect(result?.description).match(/pitch that makes strike three/)
   })
 
   it('names bases and destinations both ways', function () {
