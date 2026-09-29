@@ -8,6 +8,7 @@ import path from 'node:path'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
+import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
@@ -481,7 +482,11 @@ function runWorker(): void {
   })
   app.use(
     '/api/v1',
-    healthRoutes(db, VERSION, { dictation: serverConfig.dictation != null })
+    healthRoutes(db, VERSION, {
+      dictation: serverConfig.dictation != null,
+      dictationModels:
+        serverConfig.dictation == null ? [] : modelsOf(serverConfig.dictation)
+    })
   )
   app.use(
     '/api/v1',

@@ -18,7 +18,7 @@ const start = {
   scope: 'scoring',
   target: { gameId: 'gam_1' },
   context: 'Top of the 1st, 0 outs, count 0-0.',
-  model: 'grok-4.7'
+  model: 'grok-4.3'
 }
 const ball = { type: 'pitch', call: 'B' }
 
@@ -28,6 +28,8 @@ describe('dictation wire', function () {
     expect(() => asDictationStart({ ...start, context: undefined })).throws()
     expect(() => asDictationStart({ ...start, context: '  ' })).throws()
     expect(() => asDictationStart({ ...start, model: 'gpt-5' })).throws()
+    // Grok 4.7 is not offered.
+    expect(() => asDictationStart({ ...start, model: 'grok-4.7' })).throws()
     expect(() => asDictationStart({ ...start, target: 'gam_1' })).throws()
     expect(() => asDictationStart({ ...start, target: null })).throws()
     expect(() => asDictationStart({ ...start, kind: 'keyterms' })).throws()

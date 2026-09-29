@@ -14,7 +14,7 @@ import {
   View
 } from 'react-native'
 
-import type { GameStationClient } from '../../common/api'
+import type { DictationModel, GameStationClient } from '../../common/api'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   awaitingResult,
@@ -343,6 +343,7 @@ function ScoringPanel(props: {
     })
   }, [props.game, model.savedUndos, model.savedUndone, state.log])
   const [sound, setSound] = useState(true)
+  const [dictationModel, setDictationModel] = useState<DictationModel>()
   useEffect(() => {
     let live = true
     scoringPreferences
@@ -350,6 +351,7 @@ function ScoringPanel(props: {
       .then(value => {
         if (live) {
           setSound(value.sound !== false)
+          setDictationModel(value.dictationModel)
           dispatch({
             type: 'PRESENTATION',
             enabled: value.animations !== false
@@ -452,7 +454,8 @@ function ScoringPanel(props: {
       version: '',
       database: 'ok' as const,
       migrations: 0,
-      dictation: false
+      dictation: false,
+      dictationModels: []
     }),
     []
   )
@@ -492,6 +495,7 @@ function ScoringPanel(props: {
     health: props.persistent ? health : noDictation,
     url: socketUrl,
     gameId: props.gameId,
+    model: dictationModel,
     session,
     log: state.log,
     problem: state.dictation?.problem,
@@ -1255,6 +1259,8 @@ function ScoringPanel(props: {
           {sheet === 'settings' && (
             <ScoringSettings
               userId={props.userId}
+              health={props.persistent ? health : noDictation}
+              onDictationModelChange={setDictationModel}
               onSoundChange={setSound}
               onAnimationsChange={enabled => {
                 dispatch({ type: 'PRESENTATION', enabled })

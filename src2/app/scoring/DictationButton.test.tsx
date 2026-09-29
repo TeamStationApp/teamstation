@@ -79,7 +79,8 @@ const healthy = async (): Promise<Health> => ({
   version: '1',
   database: 'ok',
   migrations: 1,
-  dictation: true
+  dictation: true,
+  dictationModels: ['grok-4.3']
 })
 
 function fresh(): ScoringState {
@@ -334,6 +335,49 @@ describe('the dictation control', function () {
     expect(dictationContext(fresh().session)).equals(
       promptContext(fresh().session)
     )
+  })
+
+  it('names the model the scorer picked in the start', async function () {
+    const h = harness(fresh(), { model: 'grok-4.3' })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    expect(socket.frames.at(-1)).deep.include({
+      kind: 'start',
+      model: 'grok-4.3'
+    })
+    await pointer('pointerup')
+  })
+
+  it('falls back from a picked model this server does not offer', async function () {
+    const h = harness(fresh(), { model: 'gpt-6-luna' })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    // The server offers neither it nor the default, so its first model
+    // stands in.
+    expect(socket.frames.at(-1)).deep.include({
+      kind: 'start',
+      model: 'grok-4.3'
+    })
+    await pointer('pointerup')
+  })
+
+  it('names the default model when the scorer picked none, as settings show it', async function () {
+    const h = harness(fresh(), {
+      health: async () => ({
+        ...(await healthy()),
+        dictationModels: ['grok-4.3', 'claude-haiku-4-5-20251001']
+      })
+    })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    expect(socket.frames.at(-1)).deep.include({
+      kind: 'start',
+      model: 'claude-haiku-4-5-20251001'
+    })
+    await pointer('pointerup')
   })
 
   it('sends a hold as a start with the game, then audio, then a release', async function () {

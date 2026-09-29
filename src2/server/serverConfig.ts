@@ -183,7 +183,8 @@ export const asServerConfig = asObject({
 
   /**
    * Dictation on the scoring screen: xAI's dictation model for speech to text
-   * and its LLM for the tool calls. Absent, the route is not mounted and
+   * and an LLM for the tool calls — xAI's by default, OpenAI's or Anthropic's
+   * when their keys are here and the scorer picks one. Absent, the route is not mounted and
    * `/health` says so, which is how the client knows not to show the button.
    * `baseUrl` and `sttUrl` exist so a test can point either somewhere else.
    */
@@ -193,7 +194,20 @@ export const asServerConfig = asObject({
       baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
       sttUrl: asOptional(asString, 'wss://api.x.ai/v1/stt'),
       sttModel: asOptional(asString, 'grok-voice-transcribe-2.0'),
-      model: asOptional(asString, 'grok-4.3')
+      model: asOptional(asString, 'grok-4.3'),
+      /** Keys for the GPT and Claude models; without one, those are not offered. */
+      openai: asOptional(
+        asObject({
+          apiKey: asString,
+          baseUrl: asOptional(asString, 'https://api.openai.com/v1')
+        })
+      ),
+      anthropic: asOptional(
+        asObject({
+          apiKey: asString,
+          baseUrl: asOptional(asString, 'https://api.anthropic.com/v1')
+        })
+      )
     })
   ),
 

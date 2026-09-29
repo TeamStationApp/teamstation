@@ -6,9 +6,13 @@ import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
 import {
   ASK_SCORER,
   asOpenAiTools,
+  callsWrittenAsText,
+  followUp,
   gamePrompt,
   Interpretation,
   type InterpreterConfig,
+  MAX_FOLLOW_UPS,
+  RESULT_MISSING,
   systemPrompt
 } from './interpreter'
 
@@ -428,8 +432,248 @@ describe('dictation interpreter', function () {
   })
 })
 
+/** Anthropic, answering each request with the next canned content blocks. */
+function anthropic(...replies: Array<Array<Record<string, unknown>>>): {
+  fetch: typeof fetch
+  sent: Array<{
+    url: string
+    body: Record<string, any>
+    headers: Record<string, string>
+  }>
+} {
+  const sent: Array<{
+    url: string
+    body: Record<string, any>
+    headers: Record<string, string>
+  }> = []
+  const fake = async (url: unknown, init?: RequestInit): Promise<Response> => {
+    sent.push({
+      url: String(url),
+      body: JSON.parse(init?.body as string),
+      headers: init?.headers as Record<string, string>
+    })
+    return new Response(JSON.stringify({ content: replies.shift() ?? [] }), {
+      status: 200
+    })
+  }
+  return { fetch: fake, sent }
+}
+
+describe('dictation interpreter, calls written as text', function () {
+  const names = new Set(['pitch', 'ballInPlay', 'result'])
+
+  it('reads calls a model wrote out as JSON instead of calling', function () {
+    expect(
+      callsWrittenAsText(
+        '{"name": "pitch", "parameters": {"call": "B"}}',
+        names
+      )
+    ).deep.equals([
+      {
+        id: 'written_1',
+        type: 'function',
+        function: { name: 'pitch', arguments: '{"call":"B"}' }
+      }
+    ])
+    // Several, back to back, with "type" and "arguments", even as a string;
+    // braces inside a string do not end an object.
+    const calls = callsWrittenAsText(
+      'Scoring: {"type":"function","name":"ballInPlay","arguments":{"contact":"bunt","note":"a } brace"}}{"type":"function","name":"result","arguments":"{\\"eventType\\":\\"single\\"}"}',
+      names
+    )
+    expect(calls.map(call => call.function.name)).deep.equals([
+      'ballInPlay',
+      'result'
+    ])
+    expect(JSON.parse(calls[1].function.arguments)).deep.equals({
+      eventType: 'single'
+    })
+    // An unknown tool, plain text and a broken object are not calls.
+    expect(
+      callsWrittenAsText(
+        '{"name": "dance", "parameters": {}} no call here {"name": "pitch"',
+        names
+      )
+    ).deep.equals([])
+  })
+
+  it('reads the text when the only call made was a closePlay', async function () {
+    const stub = provider({
+      status: 200,
+      text: JSON.stringify({
+        choices: [
+          {
+            message: {
+              content:
+                '{"type":"function","name":"ballInPlay","parameters":{"contact":"swing","trajectory":"popup","fielder":13}}{"type":"function","name":"result","parameters":{"eventType":"field_out","outBy":"catch"}}',
+              tool_calls: [call('c1', 'gameFlow', { kind: 'closePlay' })]
+            }
+          }
+        ]
+      })
+    })
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        'ctx',
+        'Pop out to the second baseman.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'popup',
+          fielder: 13
+        },
+        { type: 'result', eventType: 'field_out', outBy: 'catch' }
+      ],
+      dropped: []
+    })
+  })
+
+  it('scores a sentence whose calls came back as text', async function () {
+    const stub = provider({
+      status: 200,
+      text: JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: '{"name": "pitch", "parameters": {"call": "C"}}'
+            }
+          }
+        ]
+      })
+    })
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        'ctx',
+        'Struck out looking.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'pitch', call: 'C' }],
+      dropped: []
+    })
+  })
+})
+
+describe('dictation interpreter, a ball in play sent without its result', function () {
+  const single = call('c1', 'ballInPlay', {
+    contact: 'swing',
+    trajectory: 'line_drive'
+  })
+
+  it('asks once for the result, and keeps it after its ball in play', async function () {
+    const stub = provider(
+      [single],
+      [call('c2', 'result', { eventType: 'single' })]
+    )
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        'ctx',
+        'Single to left.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+        { type: 'result', eventType: 'single' }
+      ],
+      dropped: []
+    })
+    expect(stub.sent).to.have.length(2)
+    expect(stub.sent[1].body.tool_choice).equals('auto')
+    expect(stub.sent[1].body.messages.at(-1)).deep.equals({
+      role: 'tool',
+      tool_call_id: 'c1',
+      content: RESULT_MISSING
+    })
+  })
+
+  it('leaves the ball in play when the words say nothing more, and asks only once', async function () {
+    const stub = provider([single], [], [])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      'ctx',
+      'Ground ball to short.'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' }
+    ])
+    expect(stub.sent).to.have.length(2)
+    // With its result, nothing more is asked.
+    const whole = provider([
+      single,
+      call('c2', 'result', { eventType: 'single' })
+    ])
+    await new Interpretation(config(whole.fetch), 'ctx', 'Single.').start()
+    expect(whole.sent).to.have.length(1)
+  })
+
+  it('does not ask when the result came first, and adds it to a follow-up', async function () {
+    const first = provider([
+      call('c1', 'result', { eventType: 'single' }),
+      call('c2', 'ballInPlay', { contact: 'swing', trajectory: 'line_drive' })
+    ])
+    await new Interpretation(config(first.fetch), 'ctx', 'Single.').start()
+    expect(first.sent).to.have.length(1)
+    // A follow-up model is told what is recorded, and about the result.
+    const gpt = provider([single], [])
+    await new Interpretation(
+      config(gpt.fetch, { followUp: true }),
+      'ctx',
+      'Ground ball, the runner goes to second.'
+    ).start()
+    const told = gpt.sent[1].body.messages.at(-1).content!
+    expect(told).match(/^Recorded\. So far, in order: /)
+    expect(told).includes('The ball in play has no result.')
+  })
+
+  it('answers every call of the turn in one message to Anthropic', async function () {
+    const { fetch, sent } = anthropic(
+      [
+        { type: 'tool_use', id: 't1', name: 'pitch', input: { call: 'B' } },
+        {
+          type: 'tool_use',
+          id: 't2',
+          name: 'ballInPlay',
+          input: { contact: 'swing' }
+        }
+      ],
+      [
+        {
+          type: 'tool_use',
+          id: 't3',
+          name: 'result',
+          input: { eventType: 'single' }
+        }
+      ]
+    )
+    const turn = await new Interpretation(
+      config(fetch, { api: 'messages' }),
+      'ctx',
+      'Ball, then a single.'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions.length).equals(3)
+    expect(sent[1].body.messages.at(-1)).deep.equals({
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 't1', content: RESULT_MISSING },
+        { type: 'tool_result', tool_use_id: 't2', content: RESULT_MISSING }
+      ]
+    })
+    // Claude may now answer with no tool call.
+    expect(sent[0].body.tool_choice).deep.equals({ type: 'any' })
+    expect(sent[1].body.tool_choice).deep.equals({ type: 'auto' })
+  })
+})
+
 describe('dictation interpreter, cache routing', function () {
-  it('sends a cache key as xAI’s routing header', async function () {
+  it('sends a cache key as xAI’s routing header, and to OpenAI as prompt_cache_key', async function () {
     const xai = provider([call('c1', 'pitch', { call: 'B' })])
     await new Interpretation(
       config(xai.fetch, { cacheKey: 'scorer-1' }),
@@ -438,5 +682,351 @@ describe('dictation interpreter, cache routing', function () {
     ).start()
     expect(xai.sent[0].headers['x-grok-conv-id']).equals('scorer-1')
     expect(xai.sent[0].body).not.to.have.property('prompt_cache_key')
+    const openai = provider([call('c1', 'pitch', { call: 'B' })])
+    await new Interpretation(
+      config(openai.fetch, {
+        model: 'gpt-6-luna',
+        baseUrl: 'https://api.openai.com/v1',
+        cacheKey: 'scorer-1'
+      }),
+      'ctx',
+      'Ball.'
+    ).start()
+    expect(openai.sent[0].body.prompt_cache_key).equals('scorer-1')
+  })
+
+  it('puts the game in the user message for a model that caches only so', async function () {
+    const gpt = provider([call('c1', 'pitch', { call: 'B' })])
+    await new Interpretation(
+      config(gpt.fetch, { gameInUserMessage: true }),
+      'Top of the 1st.',
+      'Ball.'
+    ).start()
+    expect(gpt.sent[0].body.messages).deep.equals([
+      { role: 'system', content: systemPrompt() },
+      {
+        role: 'user',
+        content: `${gamePrompt('Top of the 1st.')}\n\nTHE SCORER SAID\nBall.`
+      }
+    ])
+  })
+})
+
+describe('dictation interpreter, other providers', function () {
+  it('adds a model’s own fields to a chat request', async function () {
+    const { fetch, sent } = provider([call('c1', 'pitch', { call: 'B' })])
+    const turn = await new Interpretation(
+      config(fetch, {
+        model: 'gpt-6-luna',
+        baseUrl: 'https://api.openai.com/v1',
+        api: 'chat',
+        body: { reasoning_effort: 'none' }
+      }),
+      'ctx',
+      'Ball.'
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'pitch', call: 'B' }],
+      dropped: []
+    })
+    expect(sent[0].url).equals('https://api.openai.com/v1/chat/completions')
+    expect(sent[0].body).deep.include({
+      model: 'gpt-6-luna',
+      tool_choice: 'required',
+      reasoning_effort: 'none'
+    })
+  })
+
+  it('asks Anthropic in its own shape and reads its tool uses', async function () {
+    const { fetch, sent } = anthropic([
+      { type: 'text', text: 'Scoring it.' },
+      { type: 'tool_use', id: 't1', name: 'pitch', input: { call: 'B' } },
+      { type: 'tool_use', id: 't2', name: 'pitch', input: { call: 'C' } }
+    ])
+    const turn = await new Interpretation(
+      config(fetch, {
+        apiKey: 'anthropic-key',
+        model: 'claude-haiku-4-5-20251001',
+        baseUrl: 'https://api.anthropic.com/v1',
+        api: 'messages'
+      }),
+      'the game',
+      'Ball. Called strike.'
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'pitch', call: 'B' },
+        { type: 'pitch', call: 'C' }
+      ],
+      dropped: []
+    })
+    const request = sent[0]
+    expect(request.url).equals('https://api.anthropic.com/v1/messages')
+    expect(request.headers).deep.include({
+      'x-api-key': 'anthropic-key',
+      'anthropic-version': '2023-06-01'
+    })
+    // The system prompt is asked to be cached, with the tools before it.
+    expect(request.body.system).deep.equals([
+      {
+        type: 'text',
+        text: systemPrompt(),
+        cache_control: { type: 'ephemeral' }
+      },
+      { type: 'text', text: gamePrompt('the game') }
+    ])
+    expect(request.body.tool_choice).deep.equals({ type: 'any' })
+    expect(request.body.temperature).equals(0)
+    expect(
+      request.body.tools.map((tool: { name: string }) => tool.name)
+    ).deep.equals([...ACTION_TYPES, 'askScorer'])
+    expect(request.body.tools.at(-1).input_schema).deep.equals(
+      ASK_SCORER.function.parameters
+    )
+    expect(request.body.messages).deep.equals([
+      { role: 'user', content: 'Ball. Called strike.' }
+    ])
+  })
+
+  it('carries a question and its answer to Anthropic as a tool use and its result', async function () {
+    const { fetch, sent } = anthropic(
+      [
+        {
+          type: 'tool_use',
+          id: 'q1',
+          name: 'askScorer',
+          input: {
+            question: 'Which Noah?',
+            options: [{ label: 'Noah D.' }, { label: 'Noah K.' }]
+          }
+        }
+      ],
+      [{ type: 'tool_use', id: 't1', name: 'pitch', input: { call: 'B' } }]
+    )
+    const interpretation = new Interpretation(
+      config(fetch, { api: 'messages', model: 'claude-haiku-4-5-20251001' }),
+      'ctx',
+      'Noah took ball one.'
+    )
+    expect(await interpretation.start()).deep.include({
+      kind: 'ask',
+      question: 'Which Noah?'
+    })
+    expect(await interpretation.answer(1)).deep.include({ kind: 'actions' })
+    expect(sent[1].body.messages).deep.equals([
+      { role: 'user', content: 'Noah took ball one.' },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'q1',
+            name: 'askScorer',
+            input: {
+              question: 'Which Noah?',
+              options: [{ label: 'Noah D.' }, { label: 'Noah K.' }]
+            }
+          }
+        ]
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'q1', content: 'Noah K.' }
+        ]
+      }
+    ])
+  })
+
+  it('passes on what Claude wrote when it used no tool, and reads a bare reply', async function () {
+    const { fetch } = anthropic([{ type: 'text', text: 'No play there.' }], [])
+    const said = await new Interpretation(
+      config(fetch, { api: 'messages' }),
+      'ctx',
+      'Nice weather.'
+    ).start()
+    expect(said).deep.equals({
+      kind: 'error',
+      message: 'Nothing to score in "Nice weather.": No play there.'
+    })
+    expect(
+      await new Interpretation(
+        config(fetch, { api: 'messages' }),
+        'ctx',
+        'Hm.'
+      ).start()
+    ).deep.equals({ kind: 'error', message: 'Nothing to score in "Hm."' })
+  })
+})
+
+describe('dictation interpreter, a model that makes one call a reply', function () {
+  it('answers each call and asks again until nothing is left', async function () {
+    const { fetch, sent } = provider(
+      [call('c1', 'pitch', { call: 'B' })],
+      [call('c2', 'pitch', { call: 'C' })],
+      []
+    )
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true }),
+      'ctx',
+      'Ball, called strike.'
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'pitch', call: 'B' },
+        { type: 'pitch', call: 'C' }
+      ],
+      dropped: []
+    })
+    expect(sent.map(each => each.body.tool_choice)).deep.equals([
+      'required',
+      'auto',
+      'auto'
+    ])
+    expect(sent[1].body.messages.slice(3)).deep.equals([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [call('c1', 'pitch', { call: 'B' })]
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'c1',
+        content: followUp([{ type: 'pitch', call: 'B' }])
+      }
+    ])
+  })
+
+  it('keeps what came before a question, and adds the answer to it', async function () {
+    const { fetch } = provider(
+      [call('c1', 'pitch', { call: 'B' })],
+      [
+        call('q1', 'askScorer', {
+          question: 'Which Noah?',
+          options: [
+            {
+              label: 'Noah D.',
+              actions: [
+                { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' }
+              ]
+            },
+            { label: 'Noah K.' }
+          ]
+        })
+      ]
+    )
+    const interpretation = new Interpretation(
+      config(fetch, { followUp: true }),
+      'ctx',
+      'Ball, and Noah stole second.'
+    )
+    expect(await interpretation.start()).deep.include({ kind: 'ask' })
+    expect(await interpretation.answer(0)).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'pitch', call: 'B' },
+        { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' }
+      ],
+      dropped: []
+    })
+  })
+
+  it('keeps no closePlay and no runner move twice, and ends on a round with nothing new', async function () {
+    const steal = {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 3,
+      to: '3B'
+    }
+    const { fetch, sent } = provider(
+      [
+        call('c1', 'baseRunning', steal),
+        call('c2', 'gameFlow', { kind: 'closePlay' })
+      ],
+      [
+        call('c3', 'baseRunning', steal),
+        call('c4', 'gameFlow', { kind: 'closePlay' })
+      ],
+      [call('c5', 'pitch', { call: 'B' })]
+    )
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true }),
+      'ctx',
+      'And he steals third.'
+    ).start()
+    expect(turn).deep.equals({ kind: 'actions', actions: [steal], dropped: [] })
+    expect(sent).to.have.length(2)
+  })
+
+  it('tells the model everything recorded so far, so a call said twice counts', async function () {
+    const { fetch, sent } = provider(
+      [call('c1', 'pitch', { call: 'B' })],
+      [call('c2', 'pitch', { call: 'B' })],
+      [call('c3', 'pitch', { call: 'S' })],
+      []
+    )
+    expect(
+      await new Interpretation(
+        config(fetch, { followUp: true }),
+        'ctx',
+        'Ball, ball, swinging strike.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'pitch', call: 'B' },
+        { type: 'pitch', call: 'B' },
+        { type: 'pitch', call: 'S' }
+      ],
+      dropped: []
+    })
+    expect(sent[2].body.messages.at(-1)).deep.equals({
+      role: 'tool',
+      tool_call_id: 'c2',
+      content: followUp([
+        { type: 'pitch', call: 'B' },
+        { type: 'pitch', call: 'B' }
+      ])
+    })
+  })
+
+  it('keeps a runner move once, whatever fielders a repeat names', async function () {
+    const out = (fielders: number[]): object =>
+      call('m', 'runnerMovement', { runner: 1, to: '1B', out: true, fielders })
+    const { fetch, sent } = provider([out([13, 12])], [out([13, 12, 12])], [])
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true }),
+      'ctx',
+      'Six four three.'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      {
+        type: 'runnerMovement',
+        runner: 1,
+        to: '1B',
+        out: true,
+        fielders: [13, 12]
+      }
+    ])
+    expect(sent).to.have.length(2)
+  })
+
+  it('stops asking after a few rounds', async function () {
+    const replies = Array.from({ length: MAX_FOLLOW_UPS + 3 }, (_, n) => [
+      call(`c${n}`, 'pitch', { call: n % 2 === 0 ? 'B' : 'C' })
+    ])
+    const { fetch, sent } = provider(...replies)
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true }),
+      'ctx',
+      'Ball.'
+    ).start()
+    expect(sent).to.have.length(MAX_FOLLOW_UPS + 1)
+    expect(turn.kind === 'actions' && turn.actions.length).equals(
+      MAX_FOLLOW_UPS + 1
+    )
   })
 })

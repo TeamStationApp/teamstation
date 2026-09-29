@@ -7,6 +7,8 @@ import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
 import {
   asDictationUp,
+  DICTATION_MODEL_NAMES,
+  type DictationModel,
   type DictationReply,
   type DictationStart,
   type DictationUp
@@ -21,6 +23,7 @@ import {
   type InterpreterConfig,
   type Turn
 } from './interpreter'
+import { endpointFor, type ProviderKeys } from './models'
 import { type Scope, SCOPES } from './scopes'
 import { type SttHandlers, SttSession } from './stt'
 
@@ -37,11 +40,10 @@ import { type SttHandlers, SttSession } from './stt'
 
 export const DICTATION_PATH = '/api/v1/dictation'
 
-export interface DictationConfig {
-  apiKey: string
-  baseUrl: string
+export interface DictationConfig extends ProviderKeys {
   sttUrl: string
   sttModel: string
+  /** The LLM an utterance goes to when the scorer picked none. */
   model: string
 }
 
@@ -88,6 +90,8 @@ type Phase = 'authorising' | 'holding' | 'released' | 'interpreting' | 'asking'
 
 interface InFlight {
   start: DictationStart
+  /** The LLM this utterance goes to. */
+  model: string
   scope: Scope
   phase: Phase
   /** Audio that arrived while the `start` was being authorised. */
@@ -276,9 +280,8 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
         ((c, context, t) => new Interpretation(c, context, t))
       )(
         {
-          apiKey: config.apiKey,
-          baseUrl: config.baseUrl,
-          model: flight.start.model ?? config.model,
+          ...endpointFor(flight.model, config)!,
+          model: flight.model,
           tools: flight.scope.tools,
           cacheKey
         },
@@ -364,8 +367,17 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
       fail(start.id, `Dictation cannot talk about ${start.scope}`)
       return
     }
+    const model = start.model ?? config.model
+    if (endpointFor(model, config) == null) {
+      fail(
+        start.id,
+        `${DICTATION_MODEL_NAMES[model as DictationModel] ?? model} is not set up on this server`
+      )
+      return
+    }
     const flight: InFlight = {
       start,
+      model,
       scope,
       phase: 'authorising',
       held: [],

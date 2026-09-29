@@ -96,6 +96,8 @@ export interface DictationButtonProps {
    */
   spaceTalks?: boolean
   onActions: (transcript: string, actions: ScoringAction[]) => void
+  /** The LLM the scorer picked in settings; absent, the server's own. */
+  model?: DictationModel
   openSocket?: (url: string) => DictationSocket
   openMicrophone?: OpenMicrophone
 }
