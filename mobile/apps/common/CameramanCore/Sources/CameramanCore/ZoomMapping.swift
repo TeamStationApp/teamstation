@@ -230,6 +230,12 @@ public struct ZoomMapping: Sendable, Equatable {
     return String(format: "%.1fx", rounded)
   }
 
+  /// Zoom-rail labels. At 1x and above, the nearest whole number. Below 1x the tenth stays.
+  public static func sliderLabel(forDisplayed displayedZoom: Double) -> String {
+    if displayedZoom < 1 { return label(forDisplayed: displayedZoom) }
+    return "\(Int(displayedZoom.rounded()))x"
+  }
+
   /// Tick marks drawn between each pair of lens presets.
   public static let scaleTicksPerSegment = 5
 
