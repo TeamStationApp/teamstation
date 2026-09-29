@@ -32,7 +32,7 @@ public struct ZoomScaleView: View {
     let highlight = mapping.scaleHighlight(forDisplayed: displayedZoom)
 
     HStack(alignment: .center, spacing: Metrics.labelGap) {
-      Text(ZoomMapping.label(forDisplayed: displayedZoom))
+      Text(ZoomMapping.sliderLabel(forDisplayed: displayedZoom))
         .font(.system(.caption2, design: .monospaced).weight(.semibold))
         .foregroundStyle(mapping.isDigitalZoom(displayed: displayedZoom) ? Metrics.softwareColor : .white)
         .frame(minWidth: 28, alignment: .trailing)
@@ -86,7 +86,7 @@ public struct ZoomScaleView: View {
     return Button {
       onSelect(preset)
     } label: {
-      Text(ZoomMapping.label(forDisplayed: preset))
+      Text(ZoomMapping.sliderLabel(forDisplayed: preset))
         .font(.system(.caption2, design: .rounded).weight(.semibold))
         .frame(width: Metrics.buttonSize, height: Metrics.buttonSize)
         .background(isActive ? color.opacity(0.9) : Color.black.opacity(0.45), in: .circle)
