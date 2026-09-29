@@ -48,7 +48,9 @@ const scoredActions: ScoringAction[] = [
     trajectory: 'line_drive',
     launchAngle: 15,
     location: { x: 10, z: -60 },
-    fielder: F.CF
+    fielder: F.CF,
+    speed: 72.4,
+    pitchLocation: { height: 'low', side: 'inside', inZone: true }
   },
   { type: 'result', eventType: 'single' },
   close,
@@ -74,7 +76,7 @@ const scoredActions: ScoringAction[] = [
   },
   strike,
   strike,
-  strike,
+  { type: 'pitch', call: 'C', speed: 68, zone: 5 },
   close,
   { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
   { type: 'result', eventType: 'field_error' },
@@ -141,6 +143,12 @@ describe('the reference validator (U22)', function () {
       'wild_pitch'
     ])
     expect(events.some(event => 'hitData' in event)).equals(true)
+    expect(
+      events.filter(event => 'pitchData' in event).map(event => event.pitchData)
+    ).deep.equals([
+      { startSpeed: 72.4, zone: 7 },
+      { startSpeed: 68, zone: 5 }
+    ])
 
     const stamp = { setupBefore: setupOf(state), actions: scoredActions }
     const pitched = after(state, ball)
@@ -387,5 +395,53 @@ describe('the reference validator (U22)', function () {
     delete hit.gameStation
     inPlay.hitData = { location: '78', launchAngle: 15 }
     expect(named(hit)).deep.equals([])
+  })
+
+  it('holds pitch data to a speed and a zone, on a pitch', function () {
+    const { plays } = scored()
+    // The double: a steal, then a ball, then the pitch hit.
+    const pitched = copy(plays[1])
+    const events = pitched.playEvents as Json[]
+    const at = events.findIndex(event => event.isPitch === true)
+    const withData = (pitchData: unknown): string[] =>
+      named({
+        ...pitched,
+        playEvents: events.map((event, i) =>
+          i === at ? { ...event, pitchData } : event
+        )
+      })
+    expect(withData({ startSpeed: 91.2, zone: 14 })).deep.equals([])
+    expect(withData({ startSpeed: 0.5, zone: 1 })).deep.equals([])
+    for (const startSpeed of [0, -80, '88', Number.NaN, Infinity])
+      expect(withData({ startSpeed }), String(startSpeed)).deep.equals([
+        `pitchData playEvents[${at}].pitchData.startSpeed`
+      ])
+    for (const zone of [0, 10, 15, 4.5, '5', null])
+      expect(withData({ zone }), String(zone)).deep.equals([
+        `pitchData playEvents[${at}].pitchData.zone`
+      ])
+    expect(withData('fast')).deep.equals([
+      `pitchData playEvents[${at}].pitchData`
+    ])
+    // GameStation measures nothing, so its plays carry no coordinates.
+    expect(withData({ zone: 5, coordinates: { pX: 0, pZ: 2 } })).deep.equals([
+      `pitchData playEvents[${at}].pitchData.coordinates`
+    ])
+    // Pitch data is a pitch's alone.
+    const action = events.findIndex(event => event.type === 'action')
+    const onAction = copy(pitched)
+    onAction.playEvents[action].pitchData = { zone: 5 }
+    expect(named(onAction)).deep.equals([
+      `pitchData playEvents[${action}].pitchData`
+    ])
+    // Another service's measured pitch is its own.
+    const theirs = copy(pitched)
+    delete theirs.gameStation
+    theirs.playEvents[at].pitchData = {
+      startSpeed: 95.1,
+      zone: 11,
+      coordinates: { pX: -1.2, pZ: 3.4 }
+    }
+    expect(named(theirs)).deep.equals([])
   })
 })

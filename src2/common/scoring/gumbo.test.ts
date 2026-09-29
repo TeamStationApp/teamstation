@@ -384,6 +384,38 @@ describe('reading a game back', function () {
     expect(play.source.gamestation).not.have.property('trajectory')
   })
 
+  it('replays a saved pitch whose speed or zone is out of range, without it', function () {
+    const scored = score(game(), [
+      { type: 'pitch', call: 'B', speed: 300, zone: 42 },
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: 14,
+        speed: 84.5,
+        zone: 10,
+        pitchLocation: { height: 'high', side: 'inside', inZone: true }
+      },
+      { type: 'result', eventType: 'single' },
+      { type: 'pitch', call: 'C', zone: 99, speed: 70 }
+    ])
+    const replayed = replayPlays(
+      { plays: scored.plays, currentPlay: scored.current },
+      context
+    )
+    expect(replayed.problems).deep.equals([])
+    expect(replayed.state).deep.equals(scored.state)
+    const pitches = (play: {
+      playEvents: Array<{ pitchData?: unknown }>
+    }): unknown[] => play.playEvents.map(event => event.pitchData)
+    expect(pitches(replayed.state.liveData.plays.allPlays[0])).deep.equals([
+      undefined,
+      { startSpeed: 84.5, zone: 1 }
+    ])
+    expect(pitches(replayed.state.liveData.plays.currentPlay!)).deep.equals([
+      { startSpeed: 70 }
+    ])
+  })
+
   it('takes what the server writes on a play in its stride', function () {
     const scored = score(game(), inning)
     const stored = withHalfOuts(scored.plays).map(play => {

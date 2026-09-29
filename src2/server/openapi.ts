@@ -388,6 +388,26 @@ const gumboSchemas = {
         }
       },
       count: { ...gumboCount, description: 'The count after the pitch.' },
+      pitchData: {
+        type: 'object',
+        description:
+          'Only what the scorer gave of the pitch: its speed and its zone. ' +
+          'GameStation measures nothing, so it writes no `coordinates` or ' +
+          'other tracking.',
+        properties: {
+          startSpeed: {
+            type: 'number',
+            exclusiveMinimum: 0,
+            description: 'Miles an hour, to a tenth.'
+          },
+          zone: {
+            type: 'integer',
+            description:
+              "MLB's zone as the catcher sees it: 1-9 the strike zone from " +
+              'top left, 11-14 the corners outside it.'
+          }
+        }
+      },
       hitData: {
         type: 'object',
         description:

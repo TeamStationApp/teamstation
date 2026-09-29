@@ -577,9 +577,10 @@ function hitDataOf(play: GamePlay, fenceDistanceFt: number): HitData | null {
 }
 
 /**
- * A pitch as Gumbo writes it: its call, what the call means, and the count it
- * left. The in-play pitch is `E` when the play scored a run on it, `X` when it
- * made an out, and `D` otherwise.
+ * A pitch as Gumbo writes it: its call, what the call means, the count it
+ * left, and the speed and zone the scorer gave it. The in-play pitch is `E`
+ * when the play scored a run on it, `X` when it made an out, and `D`
+ * otherwise.
  */
 function pitchDocument(
   event: PlayEvent,
@@ -614,6 +615,7 @@ function pitchDocument(
       hasReview: false
     },
     count: { ...event.count },
+    ...(event.pitchData == null ? {} : { pitchData: { ...event.pitchData } }),
     ...(isInPlay && hitData != null ? { hitData } : {}),
     player: who(event.player),
     // No action says when it happened; the play's own times are on `about`.

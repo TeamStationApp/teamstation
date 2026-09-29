@@ -631,4 +631,45 @@ describe('refolding the stored plays (U11)', function () {
     ])
     expect(await snapshot(old)).deep.equals(before)
   })
+
+  it('stores the speed and zone a scorer gave each pitch, and keeps them through a refold', async function () {
+    const gameId = await newGame()
+    await score(gameId, [
+      {
+        type: 'pitch',
+        call: 'C',
+        speed: 64.25,
+        pitchLocation: { height: 'low', side: 'away', inZone: true }
+      },
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: 14,
+        speed: 66,
+        pitchLocation: { height: 'high', side: 'inside', inZone: false }
+      },
+      { type: 'result', eventType: 'single' },
+      close
+    ])
+    const pitchData = async (): Promise<unknown[]> => {
+      const rows = await readPlays(db, gameId)
+      expect(rows).length(1)
+      const events = (rows[0].gumbo as GumboPlay).playEvents as Array<{
+        isPitch: boolean
+        pitchData?: unknown
+      }>
+      return events.filter(event => event.isPitch).map(event => event.pitchData)
+    }
+    const stored = [
+      { startSpeed: 64.3, zone: 9 },
+      { startSpeed: 66, zone: 11 }
+    ]
+    expect(await pitchData()).deep.equals(stored)
+    expect(await refoldScoredGames(db, { gameId })).deep.equals({
+      changed: [],
+      unchanged: [gameId],
+      skipped: []
+    })
+    expect(await pitchData()).deep.equals(stored)
+  })
 })
