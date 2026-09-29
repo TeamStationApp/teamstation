@@ -12,9 +12,11 @@ import SwiftUI
 /// Wiring for the whole app, injected by the app target so the UI package owns no globals.
 @MainActor
 @Observable
-public final class AppEnvironment {
+public final class AppEnvironment: RadarControlling {
   public let launch: LaunchConfiguration
   public let camera = CameraSession()
+  public let radarSession = RadarSession()
+  public private(set) var radar = RadarSnapshot()
   public let videoEncoder = VideoEncoder()
   public let audioEncoder = AudioEncoder()
   /// The external display, fed from the same frames the encoder gets.
@@ -316,7 +318,31 @@ public final class AppEnvironment {
     camera.configure(position: cameraState.position, settings: next)
   }
 
+  public func setRadarEnabled(_ enabled: Bool) {
+    radarSession.setEnabled(enabled)
+  }
+
+  public func openRadarPairing() {
+    radarSession.openPairing()
+  }
+
+  public func dismissRadarPairing() {
+    radarSession.dismissPairing()
+  }
+
+  public func pairRadar(_ serial: String) {
+    radarSession.pair(serial)
+  }
+
+  public func unpairRadar() {
+    radarSession.unpair()
+  }
+
   public func start() async {
+    radarSession.onChange = { [weak self] snapshot in
+      self?.radar = snapshot
+    }
+    radarSession.start()
     status = "requesting permissions"
     cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
     microphoneAuthorized = await AVCaptureDevice.requestAccess(for: .audio)

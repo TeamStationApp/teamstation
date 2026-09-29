@@ -106,6 +106,19 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
       .padding(.bottom, 24)
       .padding(.trailing, 16)
       .frame(maxHeight: .infinity)
+
+      if let radar = model as? any RadarControlling, let readout = radar.radar.readout {
+        Text(readout)
+          .font(.title2.weight(.semibold))
+          .foregroundStyle(.white)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(.black.opacity(0.55), in: .rect(cornerRadius: 12))
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+          .padding(.bottom, 24)
+          .padding(.trailing, 24 + 32 + 10)
+          .accessibilityIdentifier("radar-speeds")
+      }
     }
     .background(.black)
     .contentShape(Rectangle())
