@@ -1,6 +1,6 @@
 import type { DictationModel, Health } from '../../common/api'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
-import type { ScoringSessionState } from './scoringTypes'
+import type { DictationQuestion, ScoringSessionState } from './scoringTypes'
 
 /**
  * Dictation's types, in a file of their own so the web files and their
@@ -72,6 +72,10 @@ export interface DictationButtonProps {
   log: readonly ScoringAction[]
   /** Why the screen refused the last dictated sentence, if it did. */
   problem?: Problem
+  /** What the screen asks about a dictated sentence, with its answers. */
+  question?: DictationQuestion
+  onAnswer?: (answer: { option?: number; picks?: number[] }) => void
+  onDismissQuestion?: () => void
   /**
    * Whether Space is the talk key now. Absent means yes; the screen turns it
    * off while the field has a use for Space.

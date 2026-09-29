@@ -404,6 +404,8 @@ export function accepted(
 ): ScoringState {
   const next: ScoringState = { ...snapshotOf(state), ...withStep(state, label) }
   next.celebration = null
+  // A scorer who scores something else has moved on from a question.
+  delete next.dictationQuestion
   try {
     edit(next)
   } catch (error) {

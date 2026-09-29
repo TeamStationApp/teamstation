@@ -180,6 +180,11 @@ describe('dictation interpreter', function () {
       /barely use position numbers[^]*double play[^]*6 shortstop/
     )
     expect(system).includes('Read every other number\n  as a jersey.')
+    // The game finishes a play by rule; the LLM does not ask about it.
+    expect(system).includes('Leave fielders off an out nobody described')
+    expect(system).match(
+      /On a fielder's choice, send the ball in play and the result/
+    )
   })
 
   it('offers a scope’s own tools when it has them', async function () {

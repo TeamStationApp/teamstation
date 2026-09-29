@@ -750,6 +750,85 @@ describe('the dictation control', function () {
   })
 })
 
+describe('a question the screen asks', function () {
+  it('offers one button per answer, and the dismissal', async function () {
+    const answers: unknown[] = []
+    let dismissed = 0
+    const h = harness(fresh(), {
+      question: {
+        transcript: 'dropped third strike',
+        question: 'Did Noah reach first on the dropped third strike?',
+        options: [
+          { label: 'Safe at first', actions: [] },
+          { label: 'Out at first', actions: [] }
+        ]
+      },
+      onAnswer: answer => answers.push(answer),
+      onDismissQuestion: () => {
+        dismissed++
+      }
+    })
+    await h.render()
+    expect(find('Dictation question')?.textContent).includes(
+      'Did Noah reach first'
+    )
+    await press('Out at first')
+    expect(answers).deep.equals([{ option: 1 }])
+    await press('Dismiss question')
+    expect(dismissed).equals(1)
+  })
+
+  it('lets the scorer pick any runners and record them', async function () {
+    const answers: unknown[] = []
+    const h = harness(fresh(), {
+      question: {
+        transcript: 'fielders choice',
+        question: "Which runners were out on the fielder's choice?",
+        pick: {
+          choices: [
+            { label: 'Ann B. out at second', actions: [] },
+            { label: 'Cal D. out at third', actions: [] }
+          ],
+          before: [],
+          none: []
+        }
+      },
+      onAnswer: answer => answers.push(answer)
+    })
+    await h.render()
+    expect(find('Record')?.textContent).equals('Record — nobody out')
+    await press('Cal D. out at third')
+    expect(find('Cal D. out at third')?.getAttribute('aria-checked')).equals(
+      'true'
+    )
+    expect(find('Record')?.textContent).equals('Record')
+    await press('Ann B. out at second')
+    await press('Ann B. out at second')
+    await press('Record')
+    expect(answers).deep.equals([{ picks: [1] }])
+  })
+
+  it('shows nothing of its own while the LLM is asking', async function () {
+    const h = harness(fresh(), {
+      question: { transcript: 't', question: 'The screen asks', options: [] }
+    })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'ask',
+      id: socket.frames.find(f => f.kind === 'start')!.id,
+      question: 'The LLM asks',
+      options: [{ label: 'One' }, { label: 'Two' }]
+    })
+    expect(find('Dictation question')?.textContent).includes('The LLM asks')
+    expect(find('Dictation question')?.textContent).not.includes(
+      'The screen asks'
+    )
+  })
+})
+
 describe('the dictation socket address', function () {
   it('follows the API, over wss where the page is https', function () {
     const page = { protocol: 'https:', host: 'devhost3.examplegs.test' }

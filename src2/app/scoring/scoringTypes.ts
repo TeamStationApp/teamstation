@@ -144,6 +144,28 @@ export interface ScoringSnapshot {
   reel?: Beat[]
   /** Sentences that came back while a reel played, applied when it ends. */
   queuedDictation?: Array<{ transcript: string; actions: ScoringAction[] }>
+  /**
+   * What a dictated sentence left open that only the scorer can answer. The
+   * sentence is not applied until it is answered.
+   */
+  dictationQuestion?: DictationQuestion
+}
+/**
+ * A question the screen asks about a dictated sentence: one answer among
+ * `options`, or any of the `pick` choices, each carrying the whole sentence
+ * it comes to.
+ */
+export interface DictationQuestion {
+  transcript: string
+  question: string
+  options?: Array<{ label: string; actions: ScoringAction[] }>
+  pick?: {
+    choices: Array<{ label: string; actions: ScoringAction[] }>
+    /** The sentence the picked choices join. */
+    before: ScoringAction[]
+    /** What picking nobody comes to, after `before`. */
+    none: ScoringAction[]
+  }
 }
 /**
  * One step of a dictated sentence's animation: at most one picture — a pitch,
@@ -283,6 +305,9 @@ export type ScoringEvent =
       readOnly?: boolean
     }
   | { type: 'SWITCH_SIDE'; side: BatSide }
+  /** The scorer's answer to `dictationQuestion`: an option, or the runners picked. */
+  | { type: 'DICTATION_ANSWER'; option?: number; picks?: number[] }
+  | { type: 'DICTATION_DISMISS' }
   /** One spoken sentence: applied whole as one undo step, or refused whole. */
   | {
       type: 'DICTATED'
