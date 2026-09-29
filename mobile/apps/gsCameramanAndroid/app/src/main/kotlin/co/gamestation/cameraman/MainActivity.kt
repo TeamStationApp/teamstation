@@ -8,6 +8,8 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.os.IBinder
@@ -36,6 +38,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import co.gamestation.cameraman.core.ActivityPresence
 import co.gamestation.cameraman.engine.AppEnvironment
 import co.gamestation.cameraman.harness.ControlChannel
 import co.gamestation.cameraman.service.CameramanService
@@ -46,8 +50,9 @@ import co.gamestation.cameraman.ui.theme.CameramanTheme
  * A window onto the service, and nothing more.
  *
  * Every piece of state that matters — the camera, the encoders, the listener, the identity — lives
- * in [CameramanService], so closing this activity does not stop the stream. That inversion is the
- * point of the Android build: the iOS one cannot do it, because iOS suspends a backgrounded app.
+ * in [CameramanService]. Closing this activity keeps that service only while a broadcast is on.
+ * Otherwise the service is stopped, so a quiet camera is not a background process. The iOS build
+ * cannot keep a broadcast up either way, because iOS suspends a backgrounded app.
  *
  * Landscape only, so the encoded dimensions never change mid-stream. `sensorLandscape` rather than a
  * fixed side because both holds are legitimate on a tripod; the 180° that separates them is applied
@@ -57,12 +62,30 @@ class MainActivity : ComponentActivity() {
 
     private var environment by mutableStateOf<AppEnvironment?>(null)
     private var isBound = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Home and a dialog both stop the activity. A dialog comes back; home does not. Waiting briefly
+     * tells them apart, and a destroy cancels the wait and stops immediately.
+     */
+    private val releaseIfIdle = Runnable {
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@Runnable
+        val current = environment ?: return@Runnable
+        if (!current.isBroadcasting) releaseService()
+    }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val local = binder as? CameramanService.LocalBinder
             environment = local?.environment
             handleControlIntent(intent)
+            // Left before the bind finished. The service may already have decided to stay because
+            // the activity was still visible when it started.
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+                environment?.isBroadcasting != true
+            ) {
+                mainHandler.post { releaseService() }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -152,13 +175,31 @@ class MainActivity : ComponentActivity() {
         val missing = requiredPermissions().filterNot {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isEmpty()) {
-            startAndBind()
-        } else {
+        if (missing.isNotEmpty()) {
             // Asked before the service is started, because a camera-typed foreground service whose
             // camera permission was never granted is refused outright on API 34+.
             permissionLauncher.launch(missing.toTypedArray())
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ActivityPresence.visible = true
+        mainHandler.removeCallbacks(releaseIfIdle)
+        if (requiredPermissions().all {
+                ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+            }
+        ) {
+            startAndBind()
+        }
+    }
+
+    override fun onStop() {
+        ActivityPresence.visible = false
+        // A broadcast keeps the service, including across this stop. Anything else is released once
+        // it is clear the activity is not coming straight back.
+        mainHandler.postDelayed(releaseIfIdle, 400)
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -168,14 +209,27 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(releaseIfIdle)
+        val keep = environment?.isBroadcasting == true
         if (isBound) {
             unbindService(connection)
             isBound = false
         }
+        if (!keep) CameramanService.stop(this)
         super.onDestroy()
     }
 
+    private fun releaseService() {
+        if (isBound) {
+            unbindService(connection)
+            isBound = false
+        }
+        environment = null
+        CameramanService.stop(this)
+    }
+
     private fun startAndBind() {
+        if (isBound) return
         // Started from a resumed activity, which is the only state Android 14 will let a
         // camera-typed foreground service begin from.
         CameramanService.start(this, intent)

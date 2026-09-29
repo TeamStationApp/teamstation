@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -62,6 +63,11 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     val battery by environment.battery.collectAsStateWithLifecycle()
     val radar by environment.radarState.collectAsStateWithLifecycle()
     val stream by environment.settings.collectAsStateWithLifecycle()
+    val broadcasting by environment.broadcasting.collectAsStateWithLifecycle()
+    var confirmStop by remember { mutableStateOf(false) }
+    LaunchedEffect(broadcasting) {
+        if (!broadcasting) confirmStop = false
+    }
 
     // The gesture handlers below live inside `pointerInput`, whose block is only restarted when its
     // keys change — so anything they close over is frozen at that moment. The live camera state has
@@ -212,6 +218,9 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = CameramanTokens.badgeTopOffset)
                     ) {
+                        if (broadcasting) {
+                            BroadcastingPill(animate = environment.animatesChrome)
+                        }
                         ThermalBadge(level = thermalLevel, animate = environment.animatesChrome)
                         battery?.let { BatteryBadge(status = it) }
                     }
@@ -242,6 +251,35 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                             end = CameramanTokens.chromeMargin + 32.dp + 10.dp
                         )
                 )
+            }
+
+            if (confirmStop) {
+                SlideToStopDismiss(
+                    onDismiss = { confirmStop = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = CameramanTokens.chromeMargin)
+            ) {
+                if (confirmStop) {
+                    SlideToStop(
+                        animate = environment.animatesChrome,
+                        onStop = {
+                            confirmStop = false
+                            environment.setBroadcasting(false)
+                        }
+                    )
+                } else {
+                    BroadcastButton(
+                        isLive = broadcasting,
+                        onClick = {
+                            if (broadcasting) confirmStop = true else environment.setBroadcasting(true)
+                        }
+                    )
+                }
             }
         }
     }

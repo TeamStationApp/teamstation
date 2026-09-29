@@ -77,9 +77,9 @@
       </intent-filter>
     </activity>
 
-    <!-- `stopWithTask=false` is the platform default, but stated because it is load-bearing here:
-         an operator who swipes the app off Recents while the phone is on a tripod must not take
-         the stream down with it. Paired with START_STICKY in the service. -->
+    <!-- `stopWithTask=false` is the platform default, but stated because it is load-bearing while
+         a broadcast is on: swiping the app off Recents must not take that stream down. The activity
+         stops the service itself when the broadcast is off. Paired with START_STICKY only then. -->
     <service
         android:name=".service.CameramanService"
         android:exported="false"
