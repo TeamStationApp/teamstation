@@ -171,6 +171,11 @@ describe('dictation interpreter', function () {
       { role: 'user', content: 'ball' }
     ])
     expect(gamePrompt('X')).equals('GAME\nX')
+    // A ball in play comes with its result.
+    expect(system).includes(
+      '"pop up to the shortstop", "pops out to the second baseman"'
+    )
+    expect(system).includes('goes\n  alone, with no result')
     // Only what was said, every call a tool call, undo only when asked.
     expect(system).includes('it is not a list of events')
     expect(system).includes('never call pitch once for each of its codes')

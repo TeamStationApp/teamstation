@@ -1272,6 +1272,198 @@ describe('dictation, end to end', function () {
       }
     })
 
+    it('E20: where the ball went, a caught foul, a foul tip, and a throw home', async function () {
+      // Where a stored ball in play went: its angle from straight away, the
+      // saved coordinates being MLB's, with home at (125, 204).
+      const spray = (
+        play: Record<string, any>
+      ): { angle: number; fair: boolean; trajectory: string } => {
+        const hit = (play.playEvents as Array<Record<string, any>>).find(
+          event => event.hitData != null
+        )!.hitData
+        const x = Number(hit.coordinates.coordX) - 125
+        const y = 204 - Number(hit.coordinates.coordY)
+        return {
+          angle: (Math.atan2(x, y) * 180) / Math.PI,
+          fair: Math.abs(x) <= y,
+          trajectory: String(hit.trajectory)
+        }
+      }
+      const undoText = async (page: Page): Promise<string> =>
+        String(
+          await page.$eval('[aria-label^="Undo "]', node => node.textContent)
+        )
+      {
+        const gameId = scoringGame().games[0]
+        const { reply, page, browser } = await dictate(
+          scorer,
+          gameId,
+          'singleLeftCenter'
+        )
+        try {
+          expect(reply.kind, JSON.stringify(reply)).equals('actions')
+          expect(await undoText(page)).includes(
+            'line drive single to left center'
+          )
+          await finishAtBat(page)
+          await waitSaved(page)
+          const hit = spray(await playOf(scorer, gameId, 'single'))
+          expect(hit.angle).within(-20, -10)
+          expect(hit.trajectory).equals('line_drive')
+        } finally {
+          await browser.close()
+        }
+      }
+      {
+        const gameId = scoringGame().games[0]
+        const { reply, page, browser } = await dictate(
+          scorer,
+          gameId,
+          'foulCaughtFirst'
+        )
+        try {
+          expect(reply.kind, JSON.stringify(reply)).equals('actions')
+          expect(await undoText(page)).includes('fouls out to first')
+          await finishAtBat(page)
+          await waitSaved(page)
+          const play = await playOf(scorer, gameId, 'field_out')
+          expect(play.result.description).equals('Foul ball caught')
+          expect(spray(play).fair).equals(false)
+        } finally {
+          await browser.close()
+        }
+      }
+      // Said with no fielder: a caught foul is the corner infielder's away
+      // from the batter, a fly sent left center the center fielder's.
+      for (const clip of ['foulCaught', 'flyLeftCenter']) {
+        const gameId = scoringGame().games[0]
+        const { reply, page, browser } = await dictate(scorer, gameId, clip)
+        try {
+          expect(reply.kind, JSON.stringify(reply)).equals('actions')
+          expect(await summary(page)).includes('1 outs')
+          expect(await undoText(page)).includes(
+            clip === 'foulCaught' ? 'fouls out' : 'to left center'
+          )
+          await finishAtBat(page)
+          await waitSaved(page)
+          const play = await playOf(scorer, gameId, 'field_out')
+          expect(
+            creditsOf(play).some(credit => credit.startsWith('f_putout'))
+          ).equals(true)
+          if (clip === 'flyLeftCenter')
+            expect(creditsOf(play)).includes('f_putout CF')
+        } finally {
+          await browser.close()
+        }
+      }
+      {
+        const gameId = scoringGame().games[0]
+        const setup = await launch()
+        try {
+          const page = await open(setup, scorer, gameId)
+          await tap(page, 'Called Strike')
+          await tap(page, 'Called Strike')
+          await waitSaved(page)
+        } finally {
+          await setup.close()
+        }
+        const {
+          reply,
+          summary: board,
+          browser
+        } = await dictate(scorer, gameId, 'foulTip')
+        try {
+          expect(reply.actions, JSON.stringify(reply)).deep.equals([
+            { type: 'pitch', call: 'F' }
+          ])
+          expect(board).includes('0 balls 2 strikes 0 outs')
+        } finally {
+          await browser.close()
+        }
+      }
+      {
+        const gameId = scoringGame().games[0]
+        await runnerOn(scorer, gameId, 'third')
+        const { reply, page, browser } = await dictate(
+          scorer,
+          gameId,
+          'tagThrownHome'
+        )
+        try {
+          expect(reply.kind, JSON.stringify(reply)).equals('actions')
+          expect(await summary(page)).includes('2 outs')
+          await finishAtBat(page)
+          await waitSaved(page)
+          const play = (await stored(scorer, gameId)).plays
+            .map(each => each.gumbo)
+            .at(-1)!
+          const credits = creditsOf(play)
+          for (const credit of ['f_putout CF', 'f_assist CF', 'f_putout C'])
+            expect(credits, JSON.stringify(credits)).includes(credit)
+          // Gumbo names home 4B.
+          expect(endsOf(play)).deep.include({ '3B': 'out 4B' })
+        } finally {
+          await browser.close()
+        }
+      }
+    })
+
+    it('E21: a steal whose runner scored, and a caught foul with a runner tagging up', async function () {
+      {
+        const gameId = scoringGame().games[0]
+        await runnerOn(scorer, gameId, 'second')
+        const { reply, page, browser } = await dictate(
+          scorer,
+          gameId,
+          'stealScores'
+        )
+        try {
+          expect(reply.kind, JSON.stringify(reply)).equals('actions')
+          expect(await page.$('[aria-label="Dictation message"]')).equals(null)
+          expect(
+            await page.$eval('[aria-label^="Undo "]', node => node.textContent)
+          ).includes('steals third')
+          await waitSaved(page)
+          // The steal is of third, and the runner then scores: no steal of
+          // home from second.
+          const moves = (
+            ((await stored(scorer, gameId)).currentPlay?.runners ??
+              []) as Array<Record<string, any>>
+          ).map(
+            runner =>
+              `${String(runner.movement.start)}>${String(runner.movement.end ?? 'score')}`
+          )
+          trace(`stealScores moves ${JSON.stringify(moves)}`)
+          expect(moves).includes('2B>3B')
+          expect(moves.some(move => /^3B>(4B|score)$/.test(move))).equals(true)
+          expect(moves.some(move => /^2B>(4B|score)$/.test(move))).equals(false)
+        } finally {
+          await browser.close()
+        }
+      }
+      {
+        const gameId = scoringGame().games[0]
+        await runnerOn(scorer, gameId, 'second')
+        const { reply, page, browser } = await dictate(
+          scorer,
+          gameId,
+          'foulPopTagThird'
+        )
+        try {
+          expect(reply.kind, JSON.stringify(reply)).equals('actions')
+          await finishAtBat(page)
+          await waitSaved(page)
+          const play = await playOf(scorer, gameId, 'field_out')
+          expect(play.result.description).equals('Foul ball caught')
+          // Away from the batter, whatever the runner's "to third".
+          const away = play.matchup?.batSide?.code === 'L' ? '3B' : '1B'
+          expect(creditsOf(play)).includes(`f_putout ${away}`)
+        } finally {
+          await browser.close()
+        }
+      }
+    })
+
     it('E3: a play the rules engine refuses is shown and nothing changes', async function () {
       const gameId = scoringGame().games[0]
       const { reply, page, browser } = await dictate(

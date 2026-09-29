@@ -306,6 +306,17 @@ describe('a dictated sentence on the field', function () {
     expect(state.session.liveData.linescore.teams.away.runs).equals(1)
   })
 
+  it('shows a caught foul caught in foul territory, by the corner infielder away from the batter', function () {
+    const state = say(
+      game(),
+      { type: 'ballInPlay', contact: 'swing' },
+      { type: 'result', eventType: 'field_out', foulCaught: true }
+    )
+    const hit = state.presentation as HitSequence
+    expect(hit).deep.include({ kind: 'hit', fielder: F.B1 })
+    expect(Math.abs(hit.arc.target.x)).greaterThan(-hit.arc.target.z)
+  })
+
   it('plays an unassisted out as the fielder taking the ball to the base', function () {
     let state = say(game({ second: 5 }), {
       type: 'baseRunning',

@@ -12,6 +12,9 @@ import {
   answerOf,
   completeSentence,
   leadRunnersFirst,
+  playDefaults,
+  sentenceQuestion,
+  settleBetween,
   stealsByBase
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
@@ -519,7 +522,11 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     const question = state.dictationQuestion
     const actions = question == null ? undefined : answerOf(question, event)
     if (question == null || actions == null) return state
-    return dictated(state, { transcript: question.transcript, actions })
+    return dictated(state, {
+      transcript: question.transcript,
+      actions,
+      answered: true
+    })
   }
   if (event.type === 'DICTATION_DISMISS') {
     if (state.dictationQuestion == null) return state
@@ -880,16 +887,30 @@ export function atRest(state: ScoringState): boolean {
  */
 function dictated(
   state: ScoringState,
-  event: { transcript: string; actions: readonly ScoringAction[] }
+  event: {
+    transcript: string
+    actions: readonly ScoringAction[]
+    /** The whole sentence an answer came to: not asked about again. */
+    answered?: boolean
+  }
 ): ScoringState {
   const { transcript } = event
   if (event.actions.length === 0) return state
-  // A steal is the runner's on the base before the one taken, and runners
-  // who move together go lead runner first, however they were said.
-  const actions = leadRunnersFirst(
+  // What was left to be assumed is filled in, a steal is the runner's on the
+  // base before the one taken, and runners who move together go lead runner
+  // first, however they were said.
+  const between = settleBetween(
     state.session,
-    stealsByBase(state.session, event.actions)
+    leadRunnersFirst(
+      state.session,
+      stealsByBase(
+        state.session,
+        playDefaults(state.session, event.actions, transcript),
+        transcript
+      )
+    )
   )
+  const { actions } = between
   const { dictation: _last, dictationQuestion: _asked, ...current } = state
   const refused = (message: string): ScoringState => ({
     ...current,
@@ -910,6 +931,21 @@ function dictated(
     }
   if (!atRest(state))
     return refused('Finish what is on screen, then say it again')
+  // What the sentence leaves the screen unable to settle is asked first.
+  const asked = sentenceQuestion(
+    state.session,
+    transcript,
+    actions,
+    event.answered === true
+  )
+  if (asked != null)
+    return { ...current, dictationQuestion: { transcript, ...asked } }
+  // What a first play needs answered before the rest of the sentence.
+  if (between.question != null)
+    return {
+      ...current,
+      dictationQuestion: { transcript, ...between.question }
+    }
   let game = state.session
   for (const action of actions) {
     const applied = applyAction(game, action)

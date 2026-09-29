@@ -53,6 +53,15 @@ export const TRAJECTORIES = [
   'popup',
   'chopper'
 ] as const
+/** Where a ball in play went, across the outfield from left to right. */
+export const DIRECTIONS = [
+  'left',
+  'left_center',
+  'center',
+  'right_center',
+  'right'
+] as const
+export type Direction = (typeof DIRECTIONS)[number]
 export type Trajectory = (typeof TRAJECTORIES)[number]
 
 export const HOME_RUN_KINDS = ['out-of-park', 'in-park'] as const
@@ -234,6 +243,7 @@ const actionCleaners = {
     launchAngleDragged: asOptional(asBoolean),
     location: asOptional(asPoint),
     fielder: asOptional(asSessionId),
+    direction: asOptional(asOneOf(DIRECTIONS)),
     landingHeight: asOptional(asNumber),
     homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS)),
     ...PITCH_DATA_CLEANERS
@@ -487,6 +497,10 @@ export function toolSchema(): Tool[] {
         launchAngle: { type: 'number', description: 'Degrees, when known' },
         location: point,
         fielder: id('The fielder who first handled the ball'),
+        direction: oneOf(
+          DIRECTIONS,
+          'Where the ball went when the scorer says: left, left center, center, right center or right field'
+        ),
         homeRunKind: oneOf(HOME_RUN_KINDS, 'For a home run'),
         landingHeight: { type: 'number' },
         ...PITCH_DATA_TOOL_FIELDS
@@ -540,7 +554,10 @@ export function toolSchema(): Tool[] {
       {
         kind: oneOf(BASE_RUNNING_KINDS, 'What the runner did'),
         runner: id('The runner'),
-        to: oneOf(DESTINATIONS, 'The base he went for'),
+        to: oneOf(
+          DESTINATIONS,
+          'The base he went for; for a pickoff, the base he was picked off at'
+        ),
         fielders: ids('For an out: the fielders involved, putout last')
       },
       ['kind', 'runner']

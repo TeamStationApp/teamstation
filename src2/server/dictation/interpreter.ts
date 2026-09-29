@@ -234,6 +234,30 @@ Several calls from one sentence are normal.
   an error. On a fielder's choice, send the ball in play and the result, and a
   runner out only when the scorer said which. Do not call askScorer for any of
   these.
+- Where a ball went — left, left center, center, right center, right field —
+  is ballInPlay direction. "To left center" names no fielder.
+- A caught foul ball — a foul pop, "foul ball caught by the first baseman" —
+  is result field_out with outBy catch and foulCaught true, never an
+  ordinary fly out.
+- Any caught ball, fair or foul: send ballInPlay first, with fielder set to
+  the player who caught it when the scorer named him, then the result.
+  Every out, hit or error the scorer says has its result in the same reply:
+  "pop up to the shortstop", "pops out to the second baseman", "flies out
+  to the left fielder" and "lines out to short" are ballInPlay with that
+  fielder and result field_out with outBy catch; "ground out to short" is
+  result field_out with outBy throw; "double to right center" is result
+  double. Only a ball in play the words leave unfinished — "ground ball to
+  second", "fly ball to deep center", with no out, hit or error said — goes
+  alone, with no result.
+- A foul tip is a foul ball, pitch F, and cannot be strike three. A foul tip
+  caught, with no mitt said, is a caught foul pop — result field_out, outBy
+  catch, foulCaught — not strike three. Only a foul tip the scorer says went
+  into the catcher's mitt or glove is pitch T.
+- A runner thrown out at a base: fielders are the thrower, then the fielder
+  who took the throw there — the catcher at home, the third baseman at
+  third, the first baseman at first. After a caught fly the thrower is the
+  fielder who caught it: "pop fly to center, the runner tags and is thrown
+  out at home" is fielders [center fielder, catcher].
 - "Undo that", "undo that last play", "scratch that", "take that back": call
   undo, which takes back the last thing scored as the Undo button does, then
   report anything else the sentence says: "scratch that, it was a called

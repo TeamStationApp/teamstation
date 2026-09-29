@@ -1,6 +1,7 @@
 import {
   type BallInPlayAction,
   type Destination,
+  type Direction,
   type ScoringAction,
   shortName
 } from '../../common/scoring/actions'
@@ -40,6 +41,13 @@ const DIRECTIONS: Record<Position, string> = {
   LF: 'left',
   CF: 'center',
   RF: 'right'
+}
+const DIRECTION_WORDS: Record<Direction, string> = {
+  left: 'left',
+  left_center: 'left center',
+  center: 'center',
+  right_center: 'right center',
+  right: 'right'
 }
 const TRAJECTORIES: Record<string, string> = {
   ground_ball: 'ground ball',
@@ -235,7 +243,10 @@ export function describePlay(
           ? undefined
           : TRAJECTORIES[flight]
     const fielder = inPlay?.fielder
-    const direction = words.direction(fielder)
+    const direction =
+      inPlay?.direction != null
+        ? DIRECTION_WORDS[inPlay.direction]
+        : words.direction(fielder)
     const to = direction == null ? '' : ` to ${direction}`
     const hit = HITS[result.eventType]
     if (hit != null) {
@@ -250,12 +261,12 @@ export function describePlay(
     } else if (result.eventType === 'field_out') {
       if (result.outBy === 'catch' || result.foulCaught === true) {
         const verb =
-          flight === 'popup'
-            ? 'pops out'
-            : flight === 'line_drive'
-              ? 'lines out'
-              : result.foulCaught === true
-                ? 'fouls out'
+          result.foulCaught === true
+            ? 'fouls out'
+            : flight === 'popup'
+              ? 'pops out'
+              : flight === 'line_drive'
+                ? 'lines out'
                 : 'flies out'
         primary = `${name} ${verb}${to}`
         if (fielder != null)

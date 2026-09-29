@@ -8,6 +8,7 @@ import { allowedAngle } from '../../common/scoring/rules'
 import { fieldingLocation } from '../field/fieldingLocation'
 import { BASES, type GroundPoint } from '../field/fieldModel'
 import { homeRunLanding } from '../field/stadiumBoundary'
+import { foulFielder } from './dictatedGeometry'
 import { fieldPlayersFor } from './fieldAdapter'
 import type { Outcome } from './scoringContract'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -86,12 +87,16 @@ export function hitGeometry(
   result: ResultAction | undefined
 ): { pending: PendingPlay; angle: number } {
   const outcome = outcomeOf(result)
+  // A caught foul nobody was named for is shown caught by the corner
+  // infielder on its side; the play credits nobody for it.
+  const fielder =
+    action.fielder ??
+    (result?.foulCaught === true ? foulFielder(state.session) : undefined)
   const standing =
-    action.fielder == null
+    fielder == null
       ? undefined
       : fieldPlayersFor(state.session).find(
-          player =>
-            player.team === 'defense' && player.playerId === action.fielder
+          player => player.team === 'defense' && player.playerId === fielder
         )?.position
   const middle =
     outcome === 'Throw Out' || outcome === "Fielder's Choice"
@@ -123,7 +128,7 @@ export function hitGeometry(
     pending: {
       outcome,
       contactKind: action.contact === 'bunt' ? 'bunt' : 'swing',
-      fielder: action.fielder,
+      fielder,
       location,
       homeRunKind,
       trajectoryAccepted: true
