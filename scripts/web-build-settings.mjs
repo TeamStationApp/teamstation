@@ -30,7 +30,13 @@ export const worklets = {
 
 export const webSettings = {
   plugins: [worklets],
-  alias: { 'react-native': 'react-native-web' },
+  // 1.0's gradient alias, which came with 1.0's scoreboard: the board keeps
+  // 1.0's `react-native-linear-gradient` import, and on the web that is the
+  // package that draws it.
+  alias: {
+    'react-native': 'react-native-web',
+    'react-native-linear-gradient': 'react-native-web-linear-gradient'
+  },
   resolveExtensions: [
     '.web.tsx',
     '.web.ts',

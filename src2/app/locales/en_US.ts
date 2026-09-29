@@ -423,6 +423,12 @@ export const enUs = {
   scoring_finish_at_bat: 'Finish at-bat',
   scoring_finish_defensive_play: 'Finish defensive play',
 
+  // A game's scoreboard page, once it has closed
+  scoreboard_not_live: "This scoreboard isn't live",
+  scoreboard_not_live_detail:
+    'Scoreboards open when a game is scheduled and close after it ends.',
+  scoreboard_sign_up: 'Sign up for GameStation',
+
   // Shared
   common_done: 'Done',
   common_back: 'Back',

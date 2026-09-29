@@ -105,5 +105,7 @@
   "src2/app/components/glassBackdrop.ts",
   "src2/app/field/fieldSafeArea.ts",
   "src2/app/field/useFieldSurface.native.ts",
-  "src2/app/field/useFieldSurface.ts"
+  "src2/app/field/useFieldSurface.ts",
+  "src2/app/scoreboard/**/*.ts",
+  "src2/app/scoreboard/**/*.tsx"
 ]
