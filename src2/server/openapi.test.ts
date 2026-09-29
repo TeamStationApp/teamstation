@@ -25,11 +25,13 @@ import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
+import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
+import type { ScoreboardStore } from './scoreboard/scoreboardStore'
 
 /**
  * The document says what the API promises; the routers are what it does. This
@@ -41,6 +43,7 @@ import { walkUpSongRoutes } from './routes/walkUpSongs'
  */
 
 const db = {} as unknown as Kysely<Database>
+const store = {} as unknown as ScoreboardStore
 const media: MediaContext = {
   ffmpegPath: '/usr/bin/ffmpeg',
   mediaRoot: '/tmp',
@@ -103,6 +106,16 @@ const UNDOCUMENTED = new Set([
   'GET /videos/{videoId}/highlights'
 ])
 
+/**
+ * The scoreboard's sockets. The server's upgrade handler answers them, not a
+ * router, so no router lists them; the document describes them all the same.
+ */
+const UPGRADE_ONLY = new Set([
+  'GET /scoreboard/{gameId}/socket',
+  'GET /scoreboard/{gameId}/publish',
+  'GET /scoreboard/{gameId}/dashboard'
+])
+
 describe('the API document', function () {
   it('describes every route the server answers', function () {
     const mounted = [
@@ -123,7 +136,8 @@ describe('the API document', function () {
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(userRoutes(db)),
-      ...routesOf(walkUpSongRoutes(db))
+      ...routesOf(walkUpSongRoutes(db)),
+      ...routesOf(scoreboardRoutes(db, store))
     ]
 
     const documented = new Set<string>()
@@ -162,7 +176,8 @@ describe('the API document', function () {
       ...routesOf(walkUpSongRoutes(db)),
       // Only the player routes the document describes: the reads of a
       // player's page are left out of it, as they always have been.
-      ...routesOf(playerRoutes(db, media))
+      ...routesOf(playerRoutes(db, media)),
+      ...routesOf(scoreboardRoutes(db, store))
     ])
 
     const paths = openApiDocument('0.0.0').paths
@@ -173,7 +188,9 @@ describe('the API document', function () {
       }
     }
 
-    const invented = promised.filter(route => !mounted.has(route))
+    const invented = promised
+      .filter(route => !mounted.has(route))
+      .filter(route => !UPGRADE_ONLY.has(route))
     expect(
       invented,
       `promised but not served: ${invented.join(', ')}`

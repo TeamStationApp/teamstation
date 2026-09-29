@@ -163,6 +163,46 @@ that fails quietly rather than loudly.
 The ingest runs in **one** process — the cluster primary — so nothing changes
 about the systemd unit. It is off entirely when `live.enabled` is false.
 
+## Redis, for the scoreboards
+
+Every game's scoreboard lives in Redis, not Postgres: one hash per game, which
+expires two hours after its last write (never more than three days after the
+game's start), and one pub/sub channel that carries each write to every
+worker's sockets. `redis-server` is installed on the droplet and **stopped**;
+enabling it is a change to the shared machine, so it waits for Paul's
+go-ahead, and then it is done once:
+
+```sh
+sudo systemctl enable --now redis-server
+```
+
+and in `/etc/redis/redis.conf`, then `sudo systemctl restart redis-server`:
+
+```
+bind 127.0.0.1 ::1
+maxmemory 256mb
+maxmemory-policy volatile-ttl
+```
+
+keeping the default RDB snapshots. Every key the server writes has an expiry,
+so `volatile-ttl` may evict any of them under memory pressure, and the
+scoreboard's `version` rule means a board that loses its key, or comes back
+from an older snapshot, still moves forward.
+
+The server's side is one block of `serverConfig.json`, and the defaults are
+right for the droplet:
+
+```json
+{ "redis": { "url": "redis://127.0.0.1:6379", "prefix": "" } }
+```
+
+An empty `prefix` is `gs:<database name>`, so production and every seat —
+each with its own database — share the one Redis without seeing each other's
+keys. With Redis stopped the API still comes up: the scoreboard routes answer
+503, its sockets close with 1011, a game's Score Game screen shows its
+Scoreboard option as unavailable, and everything recovers on its own when Redis
+is back.
+
 ## What this deployment is called
 
 One name is written down, in `src2/common/primaryUrl.ts`:
