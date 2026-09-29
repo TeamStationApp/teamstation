@@ -36,6 +36,12 @@
     </dict>
   </array>
 
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>GS Cameraman connects to a TAG One radar for pitch, exit, and battery when radar is enabled.</string>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>bluetooth-central</string>
+  </array>
   <key>NSCameraUsageDescription</key>
   <string>GS Cameraman streams this camera to your production over RTSP.</string>
   <key>NSMicrophoneUsageDescription</key>
