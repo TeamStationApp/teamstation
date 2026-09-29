@@ -188,6 +188,12 @@ class ZoomMappingTest {
         assertEquals("3x", ZoomMapping.label(3.0))
         assertEquals("2.5x", ZoomMapping.label(2.5))
         assertEquals("16.5x", ZoomMapping.label(16.543366007620246))
+        assertEquals("0.6x", ZoomMapping.sliderLabel(0.556))
+        assertEquals("1x", ZoomMapping.sliderLabel(1.0))
+        assertEquals("4x", ZoomMapping.sliderLabel(4.136))
+        assertEquals("5x", ZoomMapping.sliderLabel(4.5))
+        assertEquals("17x", ZoomMapping.sliderLabel(16.5))
+        assertEquals("17x", ZoomMapping.sliderLabel(16.543366007620246))
     }
 
     @Test

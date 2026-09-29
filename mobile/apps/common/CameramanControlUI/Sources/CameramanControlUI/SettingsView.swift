@@ -50,6 +50,7 @@ struct SettingsView<Model: CameraControlling>: View {
               nameSection
               serverSection
             }
+            radarSection
             // A flow reads which layout is up. A marker rather than an identifier on the
             // container, which would hide every control inside it.
             Color.clear
@@ -72,6 +73,7 @@ struct SettingsView<Model: CameraControlling>: View {
         }
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { commit() }
+            .foregroundStyle(Color(red: 0.50, green: 0.85, blue: 0.61))
             .accessibilityIdentifier("settings-done")
         }
       }
@@ -110,6 +112,74 @@ struct SettingsView<Model: CameraControlling>: View {
     }
   }
 
+  @ViewBuilder
+  private var radarSection: some View {
+    if let radar = model as? any RadarControlling {
+      settingsCard("Radar") {
+        HStack {
+          Text(radar.radar.enabled ? "On" : "Off")
+          Spacer()
+          Toggle("Radar", isOn: Binding(
+            get: { radar.radar.enabled },
+            set: { radar.setRadarEnabled($0) }
+          ))
+          .labelsHidden()
+          .accessibilityIdentifier("settings-radar-enabled")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        if radar.radar.enabled {
+          if let serial = radar.radar.serial {
+            Text(serial)
+              .font(.body.monospaced())
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 16)
+              .padding(.vertical, 6)
+              .accessibilityIdentifier("settings-radar-serial")
+            Text(radar.radar.status)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 16)
+              .padding(.bottom, 4)
+              .accessibilityIdentifier("settings-radar-status")
+            if let readout = radar.radar.readout {
+              Text(readout)
+                .font(.title3.monospacedDigit())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("settings-radar-speeds")
+            }
+            Button("Unpair") { radar.unpairRadar() }
+              .padding(.horizontal, 16)
+              .padding(.bottom, 8)
+              .accessibilityIdentifier("settings-radar-unpair")
+          } else {
+            Button("Pair") { radar.openRadarPairing() }
+              .padding(.horizontal, 16)
+              .padding(.vertical, 8)
+              .accessibilityIdentifier("settings-radar-pair")
+          }
+          if radar.radar.pairing {
+            if radar.radar.choices.isEmpty {
+              Text("No radars in range")
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+            ForEach(radar.radar.choices, id: \.self) { name in
+              Button(name) { radar.pairRadar(name) }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("settings-radar-option-\(name)")
+            }
+            Button("Close") { radar.dismissRadarPairing() }
+              .padding(.horizontal, 16)
+              .padding(.bottom, 8)
+          }
+        }
+      }
+    }
+  }
+
   /// Intrinsic-height grouped card so the outer ScrollView is the only scroller.
   private func settingsCard<Content: View>(
     _ title: String,
@@ -119,7 +189,7 @@ struct SettingsView<Model: CameraControlling>: View {
     VStack(alignment: .leading, spacing: 6) {
       Text(title)
         .font(.footnote.weight(.semibold))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color(red: 0.50, green: 0.85, blue: 0.61))
         .textCase(.uppercase)
         .padding(.horizontal, 16)
       VStack(spacing: 0) {
@@ -127,7 +197,7 @@ struct SettingsView<Model: CameraControlling>: View {
       }
       .background(
         Color(uiColor: .secondarySystemGroupedBackground),
-        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
       )
       if let footer {
         Text(footer)

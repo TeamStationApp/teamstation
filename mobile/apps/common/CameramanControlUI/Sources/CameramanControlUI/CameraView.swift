@@ -28,6 +28,9 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
   /// The zoom rail's frame in the window, top pill to bottom pill. A vertical drag zooms only when it
   /// starts inside that band.
   @State private var railFrame: CGRect = .zero
+  /// The broadcast control, so a vertical zoom drag that starts on it does not also zoom.
+  @State private var broadcastFrame: CGRect = .zero
+  @State private var confirmStopBroadcast = false
   /// Whether Settings is up. The phone hands in its own, so its test harness can open and close the
   /// sheet; a remote screen leaves it to this view.
   private let settingsShown: Binding<Bool>?
@@ -85,6 +88,9 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
           if onClose != nil {
             closeButton
           }
+          if let broadcast = model as? any BroadcastControlling, broadcast.isBroadcasting {
+            BroadcastingPill(animate: model.animatesChrome)
+          }
           ThermalBadge(level: model.thermalLevel, animate: model.animatesChrome)
           if let battery = model.battery {
             BatteryBadge(status: battery)
@@ -106,6 +112,39 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
       .padding(.bottom, 24)
       .padding(.trailing, 16)
       .frame(maxHeight: .infinity)
+
+      if let radar = model as? any RadarControlling, let readout = radar.radar.readout {
+        Text(readout)
+          .font(.title2.weight(.semibold))
+          .foregroundStyle(.white)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(.black.opacity(0.55), in: .rect(cornerRadius: 12))
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+          .padding(.bottom, 24)
+          .padding(.trailing, 24 + 32 + 10)
+          .accessibilityIdentifier("radar-speeds")
+      }
+
+      ZStack(alignment: .bottom) {
+        if confirmStopBroadcast {
+          Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { confirmStopBroadcast = false }
+            .accessibilityIdentifier("slide-to-stop-dismiss")
+        }
+        if let broadcast = model as? any BroadcastControlling {
+          broadcastControl(broadcast)
+            .padding(.bottom, Metrics.broadcastBottomMargin)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { broadcastFrame = $0 }
+        }
+      }
+      // Alignment is load-bearing: without it the frame centers a button-sized stack, which is how
+      // the stop control landed in the middle of the screen. The bottom inset matches the pill row's
+      // top inset, measured from the glass rather than from the home-indicator safe area.
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+      .ignoresSafeArea(edges: .bottom)
     }
     .background(.black)
     .contentShape(Rectangle())
@@ -137,6 +176,7 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
     DragGesture(minimumDistance: 12, coordinateSpace: .global)
       .onChanged { value in
         guard isInRailBand(value.startLocation.y) else { return }
+        guard !broadcastFrame.contains(value.startLocation) else { return }
         let start = scrubAtGestureStart ?? model.displayedZoom
         scrubAtGestureStart = start
         let displayed = model.mapping.displayedZoom(
@@ -183,6 +223,24 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
     .foregroundStyle(.white)
     .accessibilityIdentifier("settings-button")
     .accessibilityLabel("Camera settings")
+  }
+
+  @ViewBuilder
+  private func broadcastControl(_ broadcast: any BroadcastControlling) -> some View {
+    if confirmStopBroadcast && broadcast.isBroadcasting {
+      SlideToStop(animate: model.animatesChrome) {
+        confirmStopBroadcast = false
+        broadcast.setBroadcasting(false)
+      }
+    } else {
+      BroadcastButton(isLive: broadcast.isBroadcasting) {
+        if broadcast.isBroadcasting {
+          confirmStopBroadcast = true
+        } else {
+          broadcast.setBroadcasting(true)
+        }
+      }
+    }
   }
 
   private var flipButton: some View {
@@ -233,6 +291,8 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
 /// File scope rather than nested: a generic type cannot hold static stored properties.
 private enum Metrics {
   static let dimmedOpacity = 0.4
+  /// Same inset as the broadcasting pill's row (`.padding(.top, 24)`), from the screen edge.
+  static let broadcastBottomMargin: CGFloat = 24
   /// About half an inch: an iPhone screen runs roughly 150 to 165 points to the inch. Matches the
   /// 80dp band on Android.
   static let systemEdgeBand: CGFloat = 80

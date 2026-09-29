@@ -1,5 +1,7 @@
 package co.gamestation.cameraman.harness
 
+import co.gamestation.cameraman.radar.RadarControl
+import co.gamestation.cameraman.radar.RadarPhase
 import java.net.URI
 import java.net.URLDecoder
 
@@ -63,6 +65,9 @@ sealed interface ControlCommand {
     /** Opens or closes Settings, so its screen can be checked without a tap. */
     data object ShowSettings : ControlCommand
     data object HideSettings : ControlCommand
+    data class RadarShow(val serial: String, val phase: RadarPhase, val step: Int) : ControlCommand
+    data class RadarFeed(val pitch: Int, val exit: Int, val now: Long) : ControlCommand
+    data object RadarUnpair : ControlCommand
 }
 
 object ControlChannel {
@@ -145,6 +150,15 @@ object ControlChannel {
                 jitter = query["jitter"]?.toDoubleOrNull() ?: 0.0,
                 burst = query["burst"]?.toDoubleOrNull() ?: 0.0
             )
+
+            "radar-show", "radar-feed", "radar-unpair" -> when (val parsed = RadarControl.parse(action, query)) {
+                is co.gamestation.cameraman.radar.RadarCommand.Show ->
+                    ControlCommand.RadarShow(parsed.serial, parsed.phase, parsed.step)
+                is co.gamestation.cameraman.radar.RadarCommand.Feed ->
+                    ControlCommand.RadarFeed(parsed.pitch, parsed.exit, parsed.now)
+                co.gamestation.cameraman.radar.RadarCommand.Unpair -> ControlCommand.RadarUnpair
+                null -> null
+            }
 
             else -> null
         }

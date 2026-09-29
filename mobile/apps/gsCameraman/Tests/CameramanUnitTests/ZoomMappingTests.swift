@@ -171,6 +171,12 @@ struct ZoomMappingTests {
     #expect(ZoomMapping.label(forDisplayed: 1) == "1x")
     #expect(ZoomMapping.label(forDisplayed: 3.0) == "3x")
     #expect(ZoomMapping.label(forDisplayed: 2.5) == "2.5x")
+    #expect(ZoomMapping.sliderLabel(forDisplayed: 0.556) == "0.6x")
+    #expect(ZoomMapping.sliderLabel(forDisplayed: 1) == "1x")
+    #expect(ZoomMapping.sliderLabel(forDisplayed: 4.136) == "4x")
+    #expect(ZoomMapping.sliderLabel(forDisplayed: 4.5) == "5x")
+    #expect(ZoomMapping.sliderLabel(forDisplayed: 16.5) == "17x")
+    #expect(ZoomMapping.sliderLabel(forDisplayed: 16.543366007620246) == "17x")
   }
 
   @Test("An exact lens zoom lights the preset, not a neighbouring tick")

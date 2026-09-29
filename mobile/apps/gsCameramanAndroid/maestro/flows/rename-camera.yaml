@@ -13,15 +13,12 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-# The name sits at the foot of the left column, below video and audio, as on the iPhone. Each column
-# scrolls on its own, and a scrollUntilVisible swipes at the middle of the screen, which is the gap
-# between them; so the left column is swiped directly, twice, which overshoots harmlessly.
-- swipe:
-    start: "25%, 90%"
-    end: "25%, 20%"
-- swipe:
-    start: "25%, 90%"
-    end: "25%, 20%"
+# The name sits at the foot of the left column, below video and audio, as on the iPhone. The screen
+# is one scroll, so a swipe that starts on the left column moves that scroll.
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: UP
 - assertVisible:
     id: "settings-cname"
 - assertVisible:
@@ -44,12 +41,10 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-- swipe:
-    start: "25%, 90%"
-    end: "25%, 20%"
-- swipe:
-    start: "25%, 90%"
-    end: "25%, 20%"
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: UP
 # Unchanged: a rename moves the label and nothing else.
 - assertVisible:
     text: "c94df9ca-d7c2-468f-8529-97d01fba14e7"

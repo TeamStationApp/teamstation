@@ -12,9 +12,11 @@ import SwiftUI
 /// Wiring for the whole app, injected by the app target so the UI package owns no globals.
 @MainActor
 @Observable
-public final class AppEnvironment {
+public final class AppEnvironment: RadarControlling, BroadcastControlling {
   public let launch: LaunchConfiguration
   public let camera = CameraSession()
+  public let radarSession = RadarSession()
+  public private(set) var radar = RadarSnapshot()
   public let videoEncoder = VideoEncoder()
   public let audioEncoder = AudioEncoder()
   /// The external display, fed from the same frames the encoder gets.
@@ -24,6 +26,8 @@ public final class AppEnvironment {
   public var settings: StreamSettings
   /// Whether Settings is up. Here rather than in the screen so the test harness can open it.
   public var isShowingSettings = false
+  /// The RTSP listener. Quiet until the operator taps broadcast, then restored from disk.
+  public private(set) var isBroadcasting = false
   public private(set) var cameraState = CameraSession.State()
   /// Live `ProcessInfo` name (`nominal` / `fair` / `serious` / `critical`). The overlay pill maps
   /// these to Cool / Fair / Warm / Hot the same way GS Director does.
@@ -112,14 +116,24 @@ public final class AppEnvironment {
   /// a no-op visit to Settings does not restart anything.
   private var appliedSettings: StreamSettings
   private let settingsStore: StreamSettingsStore
+  private let broadcastPreference: BroadcastPreference
 
   public init(
     launch: LaunchConfiguration = LaunchConfiguration(),
     store: IdentityStore? = nil,
-    settingsStore: StreamSettingsStore = StreamSettingsStore()
+    settingsStore: StreamSettingsStore = StreamSettingsStore(),
+    broadcastStore: SettingsStore = UserDefaultsSettingsStore()
   ) {
     self.launch = launch
     self.settingsStore = settingsStore
+    let preference = BroadcastPreference(store: broadcastStore)
+    self.broadcastPreference = preference
+    self.isBroadcasting = BroadcastPolicy.shouldListen(
+      saved: preference.load(),
+      isUITest: launch.isUITest,
+      selfTest: launch.selfTest,
+      recordSeconds: launch.recordSeconds
+    )
 
     // What the operator last chose comes back, except where this launch named a value outright.
     var initial = launch.settings
@@ -316,12 +330,37 @@ public final class AppEnvironment {
     camera.configure(position: cameraState.position, settings: next)
   }
 
+  public func setRadarEnabled(_ enabled: Bool) {
+    radarSession.setEnabled(enabled)
+  }
+
+  public func openRadarPairing() {
+    radarSession.openPairing()
+  }
+
+  public func dismissRadarPairing() {
+    radarSession.dismissPairing()
+  }
+
+  public func pairRadar(_ serial: String) {
+    radarSession.pair(serial)
+  }
+
+  public func unpairRadar() {
+    radarSession.unpair()
+  }
+
   public func start() async {
+    radarSession.onChange = { [weak self] snapshot in
+      self?.radar = snapshot
+    }
+    radarSession.start()
     status = "requesting permissions"
     cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
     microphoneAuthorized = await AVCaptureDevice.requestAccess(for: .audio)
 
     if launch.measureCapabilities {
+      isBroadcasting = false
       await measureCapabilities()
       return
     }
@@ -334,6 +373,7 @@ public final class AppEnvironment {
     } else {
       guard cameraAuthorized else {
         status = "camera permission denied"
+        isBroadcasting = false
         return
       }
 
@@ -359,7 +399,9 @@ public final class AppEnvironment {
       return
     }
 
-    startServer()
+    if isBroadcasting {
+      startServer()
+    }
     status = "running"
 
     if launch.selfTest {
@@ -372,6 +414,27 @@ public final class AppEnvironment {
       print("CAMERAMAN_LOOPBACK_BEGIN")
       printJSON(result)
       print("CAMERAMAN_LOOPBACK_END")
+    }
+  }
+
+  public func setBroadcasting(_ broadcasting: Bool) {
+    guard broadcasting != isBroadcasting || (broadcasting && server == nil) else { return }
+    isBroadcasting = broadcasting
+    if BroadcastPolicy.shouldPersist(
+      persistSettings: launch.persistSettings,
+      isUITest: launch.isUITest,
+      selfTest: launch.selfTest
+    ) {
+      broadcastPreference.save(broadcasting)
+    }
+    if broadcasting {
+      if server == nil { startServer() }
+    } else {
+      server?.stop()
+      adaptiveBitrate?.stop()
+      adaptiveBitrate = nil
+      server = nil
+      serverStatus = RTSPServer.Status()
     }
   }
 
@@ -705,6 +768,7 @@ public final class AppEnvironment {
     public var interrupted: Bool
     public var interruptionReason: String?
     public var audioPendingBytes: Int
+    public var broadcasting: Bool
     public var server: RTSPServer.Status
     public var addresses: [String]
     /// Injected late-delivery state. `sendDelayHeldTotal` climbing is the only proof the fault
@@ -769,6 +833,7 @@ public final class AppEnvironment {
       interrupted: cameraState.isInterrupted,
       interruptionReason: cameraState.interruptionReason,
       audioPendingBytes: audioEncoder.pendingBytes,
+      broadcasting: isBroadcasting,
       server: dumpServerStatus,
       addresses: ControlServer.localAddresses(),
       sendDelayMilliseconds: sendDelaySummary.delayMilliseconds,

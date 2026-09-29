@@ -2,6 +2,7 @@ package co.gamestation.cameraman.core
 
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -346,6 +347,19 @@ class ZoomMapping(
             }
             return String.format(Locale.US, "%.1fx", rounded)
         }
+
+        /**
+         * The zoom rail's labels. Stops at 1x and above are the nearest whole number, so a Pixel's
+         * 4.1x and 16.5x read as 4x and 17x. Below 1x the tenth stays, because 0.5x and 0.6x are
+         * different lenses.
+         */
+        fun sliderLabel(displayedZoom: Double): String {
+            if (displayedZoom < 1.0) return label(displayedZoom)
+            return "${roundHalfUp(displayedZoom)}x"
+        }
+
+        /** Nearest integer, halfway cases away from zero, so 16.5 reads as 17. */
+        private fun roundHalfUp(value: Double): Int = floor(value + 0.5).toInt()
 
         /** Tick marks drawn between each pair of lens presets. */
         const val scaleTicksPerSegment = 5

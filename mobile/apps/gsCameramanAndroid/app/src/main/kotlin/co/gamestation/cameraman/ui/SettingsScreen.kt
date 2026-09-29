@@ -3,49 +3,59 @@ package co.gamestation.cameraman.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +77,34 @@ import co.gamestation.cameraman.engine.AppEnvironment
 import co.gamestation.cameraman.ui.theme.MonospaceLabel
 import java.util.Locale
 
+private val SettingsMint = darkColorScheme(
+    primary = Color(0xFF80D99B),
+    onPrimary = Color(0xFF00391B),
+    primaryContainer = Color(0xFF005229),
+    onPrimaryContainer = Color(0xFF9DF7B5),
+    secondary = Color(0xFFB3CCB9),
+    onSecondary = Color(0xFF00391B),
+    secondaryContainer = Color(0xFF384B3E),
+    onSecondaryContainer = Color(0xFFB3CCB9),
+    tertiary = Color(0xFFA2CED9),
+    onTertiary = Color(0xFF00391B),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    background = Color(0xFF121316),
+    onBackground = Color(0xFFE2E2E6),
+    surface = Color(0xFF121316),
+    onSurface = Color(0xFFE2E2E6),
+    surfaceVariant = Color(0xFF2A2B30),
+    onSurfaceVariant = Color(0xFFC4C6CF),
+    surfaceContainerLowest = Color(0xFF0D0E10),
+    surfaceContainerLow = Color(0xFF1A1B1E),
+    surfaceContainer = Color(0xFF202125),
+    surfaceContainerHigh = Color(0xFF2A2B30),
+    surfaceContainerHighest = Color(0xFF35363B),
+    outline = Color(0xFF8E9099),
+    outlineVariant = Color(0xFF44474F)
+)
+
 /**
  * Name, codec, format and bitrate.
  *
@@ -74,15 +112,14 @@ import java.util.Locale
  * changed. A reconfigure that fires because the operator wanted to read the URL would look like the
  * camera glitching.
  *
- * Two columns because the app is landscape-only, laid out as the iPhone's landscape sheet
- * (`CameramanControlUI`'s `SettingsView`) is: video and audio on the left with the name below them,
- * lenses on the right with the stream below them. One layout on both phones means an operator who
- * knows one finds everything on the other, and the flows look for the same card in the same place.
+ * Two columns because the app is landscape-only: video, audio and the name on the left, lenses,
+ * the stream and the radar on the right. The cards follow the settings design: round containers,
+ * a mint primary, and the same test tags the flows already look for.
  *
  * A single list on a 411dp-tall window put everything below the bitrate off the bottom — the
  * resolution list was inline once, and the microphone toggle and the camera's identifier were both
- * unreachable. Each column scrolls on its own instead, so both columns start in view and nothing
- * is more than one short scroll away.
+ * unreachable. The two columns sit in one scroll, so a swipe moves both of them and the name and
+ * the stream stay a short scroll from the top.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,6 +128,7 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
     val identity by environment.identity.collectAsStateWithLifecycle()
     val serverStatus by environment.serverStatus.collectAsStateWithLifecycle()
     val lensCatalog by environment.lensCatalog.collectAsStateWithLifecycle()
+    val radar by environment.radarState.collectAsStateWithLifecycle()
 
     var draftName by remember { mutableStateOf(identity.name) }
     var draft by remember { mutableStateOf(environment.settings.value.copy()) }
@@ -112,12 +150,55 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
         it.width == draft.width && it.height == draft.height && it.frameRate == draft.frameRate
     }
 
+    val type = MaterialTheme.typography
+    MaterialTheme(colorScheme = SettingsMint, typography = type) {
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Camera", style = MaterialTheme.typography.titleLarge) },
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            "Camera",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier
+                                    .size(6.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                identity.name + " · " +
+                                    if (serverStatus.isListening) "Streaming" else "Standby",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
                 actions = {
-                    TextButton(
+                    if (serverStatus.isListening) {
+                        Text(
+                            "RTSP Active",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceContainer,
+                                    CircleShape
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                    CircleShape
+                                )
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                    Button(
                         onClick = {
                             val trimmed = draftName.trim()
                             if (trimmed != identity.name) environment.rename(trimmed)
@@ -127,35 +208,37 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                             }
                             onDone()
                         },
-                        modifier = Modifier.testTag("settings-done")
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .testTag("settings-done")
                     ) {
-                        Text("Done", style = MaterialTheme.typography.labelLarge)
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Done", fontWeight = FontWeight.SemiBold)
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
+                windowInsets = TopAppBarDefaults.windowInsets.union(
+                    WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)
                 )
             )
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 14.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            // The iPhone's landscape arrangement: its first row is video, audio and output beside
-            // lenses, its second is name beside stream. Android has no output card, and here each
-            // column scrolls on its own, so the second row's cards sit at the foot of the column
-            // above them.
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+        // The iPhone's landscape arrangement: its first row is video, audio and output beside
+        // lenses, its second is name beside stream. Android has no output card. Both columns are
+        // in the one scroll, so the second row's cards sit at the foot of the column above them.
+        SettingsBody(
+            modifier = Modifier.padding(padding),
+            left = {
                 VideoCard(
                     draft = draft,
                     options = options,
@@ -171,14 +254,8 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     onNameChange = { draftName = it },
                     identifier = identity.cname
                 )
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            },
+            right = {
                 LensesCard(
                     catalog = lensCatalog,
                     selection = LensSelection(draft.disabledLensIDs),
@@ -196,31 +273,68 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     didCopyURL = true
                 }
 
-                // Test chrome, last: on iOS it is a toolbar button rather than a card, and nothing
-                // an operator sets should sit below it.
+                RadarSettingsCard(
+                    state = radar,
+                    onPair = { environment.openRadarPicker() },
+                    onUnpair = { environment.unpairRadar() },
+                    onChoose = { environment.pairRadar(it) },
+                    onDismiss = { environment.dismissRadarPicker() },
+                    onStep = { environment.setRadarStep(it) },
+                    onEnabled = { environment.setRadarEnabled(it) }
+                )
+
                 if (environment.launch.isUITest) {
                     ThermalTestCard { environment.previewThermal(it) }
                 }
             }
-        }
+        )
+    }
     }
 }
 
 @Composable
-private fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsCard(
+    title: String,
+    subtitle: String? = null,
+    trailing: @Composable (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Card(
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainer
         ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(vertical = 6.dp)) {
-            Text(
-                text = title.uppercase(Locale.US),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 2.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                RoundedCornerShape(24.dp)
             )
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title.uppercase(Locale.US),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            subtitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                trailing?.invoke()
+            }
+            Spacer(Modifier.height(12.dp))
             content()
         }
     }
@@ -233,56 +347,102 @@ private fun StreamCard(
     didCopyURL: Boolean,
     onCopy: () -> Unit
 ) {
-    SettingsCard("Stream") {
+    SettingsCard(title = "Stream", subtitle = "Network broadcast endpoint") {
+        Text(
+            "Address",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    RoundedCornerShape(16.dp)
+                )
                 .clickable(onClick = onCopy)
-                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
                 .testTag("settings-url")
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Address",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    environment.streamURL,
-                    style = MonospaceLabel,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                environment.streamURL,
+                style = MonospaceLabel,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
             Icon(
                 imageVector = if (didCopyURL) Icons.Filled.Check else Icons.Filled.ContentCopy,
                 contentDescription = "Copy stream address",
                 tint = if (didCopyURL) {
-                    MaterialTheme.colorScheme.tertiary
+                    MaterialTheme.colorScheme.primary
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    MaterialTheme.colorScheme.onSurface
                 },
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(18.dp)
                     .testTag("settings-url-copy")
             )
         }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-        ValueRow("Clients", serverStatus.clientCount.toString(), "settings-clients")
-        ValueRow(
-            "Discovery",
-            if (serverStatus.isAdvertising) "advertising" else "not advertising",
-            "settings-advertising"
-        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            StatusChip(Modifier.weight(1f)) {
+                Text("Clients", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    serverStatus.clientCount.toString(),
+                    style = MonospaceLabel,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.testTag("settings-clients")
+                )
+            }
+            StatusChip(Modifier.weight(1f)) {
+                Text("Discovery", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (serverStatus.isAdvertising) {
+                        Box(
+                            Modifier
+                                .size(6.dp)
+                                .background(MaterialTheme.colorScheme.primary, CircleShape)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        if (serverStatus.isAdvertising) "advertising" else "not advertising",
+                        style = MonospaceLabel,
+                        color = if (serverStatus.isAdvertising) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.testTag("settings-advertising")
+                    )
+                }
+            }
+        }
     }
 }
 
 @Composable
+private fun StatusChip(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        content = content
+    )
+}
+
+@Composable
 private fun NameCard(draftName: String, onNameChange: (String) -> Unit, identifier: String) {
-    SettingsCard("Name") {
+    SettingsCard(title = "Name & identity") {
         OutlinedTextField(
             value = draftName,
             onValueChange = onNameChange,
@@ -292,10 +452,16 @@ private fun NameCard(draftName: String, onNameChange: (String) -> Unit, identifi
             // the opposite — that renaming a camera is what makes it a different camera — and this
             // is the field where that assumption gets acted on.
             supportingText = { Text("Renaming keeps this camera's identity.") },
-            textStyle = MaterialTheme.typography.bodyLarge,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+            shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.primary
+            ),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
                 .testTag("settings-name-field")
         )
         StackedValue("Identifier", identifier, "settings-cname")
@@ -310,22 +476,71 @@ private fun VideoCard(
     selected: FormatCatalogue.Option?,
     onDraftChange: (co.gamestation.cameraman.core.StreamSettings) -> Unit
 ) {
-    SettingsCard("Video") {
-        // A segmented button is M3's component for a small, mutually exclusive choice, which is
-        // exactly what two codecs are — a pair of chips would suggest they could both be on.
-        SingleChoiceSegmentedButtonRow(
+    SettingsCard(
+        title = "Video",
+        subtitle = "Encoding & bitrate settings",
+        trailing = {
+            Text(
+                if (draft.cameraPosition.name.equals("FRONT", ignoreCase = true)) "Front" else "Back",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+    ) {
+        Text(
+            "Codec format",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    CircleShape
+                )
+                .padding(4.dp)
         ) {
-            StreamCodec.entries.forEachIndexed { index, codec ->
-                SegmentedButton(
-                    selected = draft.codec == codec,
-                    onClick = { onDraftChange(draft.copy().apply { selectCodec(codec) }) },
-                    shape = SegmentedButtonDefaults.itemShape(index, StreamCodec.entries.size),
-                    modifier = Modifier.testTag("settings-codec-${codec.rawValue}")
+            StreamCodec.entries.forEach { codec ->
+                val selected = draft.codec == codec
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(CircleShape)
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
+                        )
+                        .clickable { onDraftChange(draft.copy().apply { selectCodec(codec) }) }
+                        .padding(vertical = 10.dp)
+                        .testTag("settings-codec-${codec.rawValue}")
                 ) {
-                    Text(codec.displayName)
+                    if (selected) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        codec.displayName,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                    )
                 }
             }
         }
@@ -336,7 +551,7 @@ private fun VideoCard(
         ExposedDropdownMenuBox(
             expanded = isPickingFormat,
             onExpandedChange = { isPickingFormat = it },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            modifier = Modifier.padding(top = 16.dp)
         ) {
             OutlinedTextField(
                 value = selected?.label
@@ -348,8 +563,15 @@ private fun VideoCard(
                     { Text(it, modifier = Modifier.testTag("settings-format-note")) }
                 },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isPickingFormat) },
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
+                    unfocusedLabelColor = MaterialTheme.colorScheme.primary
+                ),
                 modifier = Modifier
-                    .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable)
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                     .fillMaxWidth()
                     .testTag("settings-format")
             )
@@ -385,20 +607,39 @@ private fun VideoCard(
             }
         }
 
-        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(16.dp))
+                .padding(16.dp)
+        ) {
             val mbps = draft.bitrate / 1_000_000.0
             val floorMbps = draft.bitrateFloor / 1_000_000.0
             // Two spaces, which the Maestro flows match on: "Bitrate  2.0–8.0 Mbps" while adapting,
             // the floor to the rate, and "Bitrate  6.0 Mbps" otherwise.
-            Text(
-                if (draft.adaptiveBitrate) {
-                    String.format(Locale.US, "Bitrate  %.1f–%.1f Mbps", floorMbps, mbps)
-                } else {
-                    String.format(Locale.US, "Bitrate  %.1f Mbps", mbps)
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.testTag("settings-bitrate-value")
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Bitrate range", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text(
+                    if (draft.adaptiveBitrate) {
+                        String.format(Locale.US, "Bitrate  %.1f–%.1f Mbps", floorMbps, mbps)
+                    } else {
+                        String.format(Locale.US, "Bitrate  %.1f Mbps", mbps)
+                    },
+                    style = MonospaceLabel,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .background(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("settings-bitrate-value")
+                )
+            }
             // Swapped in place by the switch below. Adapting, the operator sets the range the stream
             // may move in; not adapting, the one rate it runs at, and a floor on screen would be a
             // setting that does nothing.
@@ -481,10 +722,10 @@ private fun VideoCard(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 2.dp)
+                .padding(top = 12.dp)
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Adaptive bitrate", style = MaterialTheme.typography.bodyMedium)
+                Text("Adaptive bitrate", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 Text(
                     "Comes down toward the low rate only while the network cannot keep up",
                     style = MaterialTheme.typography.labelSmall,
@@ -514,7 +755,17 @@ private fun LensesCard(
     onToggle: (CameraLens, Boolean) -> Unit
 ) {
     if (catalog.isEmpty()) return
-    SettingsCard("Lenses") {
+    SettingsCard(
+        title = "Lenses",
+        subtitle = "Available sensor focal lengths",
+        trailing = {
+            Text(
+                "${catalog.size} sensors",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    ) {
         for (lens in catalog) {
             val enabled = selection.isEnabled(lens)
             // The last lens at a position cannot be turned off: capture would have nothing to open.
@@ -525,8 +776,22 @@ private fun LensesCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 2.dp)
+                    .padding(vertical = 4.dp)
             ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
+                ) {
+                    Text(
+                        co.gamestation.cameraman.core.ZoomMapping.label(lens.displayedZoom),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
                 Text(
                     lens.settingsLabel,
                     style = MaterialTheme.typography.bodyMedium,
@@ -579,25 +844,17 @@ private fun ThermalTestCard(onPreview: (ThermalBadgeLevel) -> Unit) {
 
 @Composable
 private fun AudioCard(audioEnabled: Boolean, onAudioChange: (Boolean) -> Unit) {
-    SettingsCard("Audio") {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 2.dp)
-        ) {
-            Text(
-                "Microphone",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f)
-            )
+    SettingsCard(
+        title = "Audio",
+        subtitle = "Microphone input",
+        trailing = {
             Switch(
                 checked = audioEnabled,
                 onCheckedChange = onAudioChange,
                 modifier = Modifier.testTag("settings-audio")
             )
         }
-    }
+    ) {}
 }
 
 /**
@@ -622,50 +879,19 @@ private fun StackedValue(label: String, value: String, testTag: String) {
         Text(
             value,
             style = MonospaceLabel,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(testTag)
-        )
-    }
-}
-
-/**
- * A label and a value on one line.
- *
- * Not a `ListItem`: that component has a 56dp minimum height by specification, and six of them do
- * not fit in a 411dp-tall landscape window alongside a text field and a card of video settings.
- * Built from the same theme roles and type scale, so it still reads as part of the same list.
- */
-@Composable
-private fun ValueRow(label: String, value: String, testTag: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 7.dp)
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            value,
-            style = MonospaceLabel,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(testTag)
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest, RoundedCornerShape(12.dp))
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                    RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag(testTag)
         )
     }
 }
-
-/**
- * `ListItem` defaults to `surface`, which would draw a slab inside the card it already sits in.
- * Clearing the container lets the card's own colour show through, which is what M3 expects of a list
- * inside a container.
- */
-@Composable
-private fun transparentListItem() = ListItemDefaults.colors(
-    containerColor = androidx.compose.ui.graphics.Color.Transparent
-)

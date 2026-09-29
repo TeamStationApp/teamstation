@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlinx.kover")
 }
 
 android {
@@ -78,6 +79,7 @@ android {
     testOptions {
         unitTests {
             isReturnDefaultValues = true
+            isIncludeAndroidResources = true
         }
     }
 
@@ -100,4 +102,28 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+}
+
+kover {
+    reports {
+        filters {
+            includes {
+                classes(
+                    "co.gamestation.cameraman.ui.SettingsBody",
+                    "co.gamestation.cameraman.ui.RadarSettingsCard",
+                    "co.gamestation.cameraman.ui.RadarSettingsCardKt",
+                    "co.gamestation.cameraman.ui.SpeedOverlay",
+                    "co.gamestation.cameraman.radar.*"
+                )
+            }
+        }
+        verify {
+            rule {
+                minBound(90)
+            }
+        }
+    }
 }

@@ -24,15 +24,12 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-# The stream card sits at the foot of the right column, below the lenses, as on the iPhone. Each
-# column scrolls on its own, and a scrollUntilVisible swipes at the middle of the screen, which is the
-# gap between them; so the right column is swiped directly, twice, which overshoots harmlessly.
-- swipe:
-    start: "75%, 90%"
-    end: "75%, 20%"
-- swipe:
-    start: "75%, 90%"
-    end: "75%, 20%"
+# The stream card sits at the foot of the right column, below the lenses, as on the iPhone. The
+# screen is one scroll, so a swipe that starts on the right column moves that scroll.
+- scrollUntilVisible:
+    element:
+      id: "settings-url"
+    direction: UP
 # The address is read off the app rather than assumed.
 - assertVisible:
     id: "settings-url"

@@ -1,9 +1,12 @@
 package co.gamestation.cameraman.engine
 
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
@@ -27,15 +30,24 @@ import co.gamestation.cameraman.core.InMemoryIdentityStore
 import co.gamestation.cameraman.core.LensSelection
 import co.gamestation.cameraman.core.ParameterOutcome
 import co.gamestation.cameraman.core.PreferencesIdentityStore
+import co.gamestation.cameraman.core.BroadcastPolicy
+import co.gamestation.cameraman.core.BroadcastPreference
 import co.gamestation.cameraman.core.PreferencesSettingsStore
 import co.gamestation.cameraman.core.SettingsStore
 import co.gamestation.cameraman.core.StreamSettingsStore
 import co.gamestation.cameraman.core.ProcessLoad
 import co.gamestation.cameraman.core.StreamCodec
 import co.gamestation.cameraman.core.StreamSettings
+import co.gamestation.cameraman.radar.PreferencesRadarPairingStore
+import co.gamestation.cameraman.radar.RadarCommand
+import co.gamestation.cameraman.radar.RadarLink
+import co.gamestation.cameraman.radar.RadarPhase
+import co.gamestation.cameraman.radar.RadarSnapshot
+import co.gamestation.cameraman.radar.systemRadarRadio
 import co.gamestation.cameraman.core.ThermalBadgeLevel
 import co.gamestation.cameraman.encode.AudioEncoder
 import co.gamestation.cameraman.encode.VideoEncoder
+import androidx.core.content.ContextCompat
 import co.gamestation.cameraman.harness.AudioStreamRecorder
 import co.gamestation.cameraman.harness.ControlChannel
 import co.gamestation.cameraman.harness.ControlCommand
@@ -65,9 +77,9 @@ import kotlin.math.roundToInt
  * The one structural difference from the iOS build, and it is the reason this port exists: on iOS
  * this is owned by the SwiftUI `App` and dies with it, because iOS suspends a backgrounded app and
  * there is nothing to be done about it. Here it is owned by [co.gamestation.cameraman.service.CameramanService],
- * a foreground service, and the activity is only a window onto it. Close the activity, lock the
- * screen, switch apps — the camera keeps capturing and the listener keeps serving, because nothing
- * that matters lives in the activity.
+ * a foreground service, and the activity is a window onto it. The preview needs that service while
+ * the activity is open. The listener, and the service after the activity is gone, run only while
+ * the operator is broadcasting.
  */
 class AppEnvironment(
     private val context: Context,
@@ -81,6 +93,7 @@ class AppEnvironment(
     private val microphone = MicrophoneSource(audioEncoder)
     private val silence = SilenceSource(audioEncoder)
     private val settingsPersistence: StreamSettingsStore
+    private val broadcastPreference: BroadcastPreference
 
     private val identityProvider: DeviceIdentityProvider
     private var server: RTSPServer? = null
@@ -105,6 +118,36 @@ class AppEnvironment(
 
     /** The same, for the audio only. See `ControlCommand.SetAudioDelay`. */
     val audioSendDelay = SendDelayLine()
+
+    private val radarLink = RadarLink(
+        store = PreferencesRadarPairingStore(context),
+        radio = systemRadarRadio(context),
+        bluetoothOn = {
+            val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            manager?.adapter?.isEnabled == true
+        },
+        locationOn = {
+            context.getSystemService(LocationManager::class.java)?.isLocationEnabled == true
+        },
+        permissionsGranted = {
+            listOf(
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ).all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        },
+        log = { Log.i("CameramanRadar", it) }
+    )
+    val radarState = radarLink.state
+
+    fun openRadarPicker() = radarLink.openPicker()
+    fun dismissRadarPicker() = radarLink.dismissPicker()
+    fun pairRadar(serial: String) = radarLink.pair(serial)
+    fun unpairRadar() = radarLink.unpair()
+    fun setRadarStep(step: Int) = radarLink.setStep(step)
+    fun setRadarEnabled(enabled: Boolean) = radarLink.setEnabled(enabled)
 
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
@@ -174,6 +217,17 @@ class AppEnvironment(
     /** Whether Settings is up. Here rather than in the screen so the test harness can open it. */
     val settingsShown = MutableStateFlow(false)
 
+    /**
+     * Whether the RTSP listener should be up. Read at launch from disk, except for a harness that
+     * needs a listener and must not write the operator's choice.
+     */
+    private val broadcastingState = MutableStateFlow(false)
+    val broadcasting: StateFlow<Boolean> = broadcastingState.asStateFlow()
+    val isBroadcasting: Boolean get() = broadcastingState.value
+
+    /** The service re-reads [isBroadcasting] so its restart mode matches the operator's choice. */
+    var onBroadcastingChanged: ((Boolean) -> Unit)? = null
+
     /** What the overlay pills show. Both are chrome, and both are also in the state dump. */
     val thermalLevel: StateFlow<ThermalBadgeLevel> = thermalLevelState.asStateFlow()
 
@@ -212,8 +266,14 @@ class AppEnvironment(
         var loaded = provider.load()
         launch.cameraName?.let { loaded = provider.save(it) }
 
-        settingsPersistence = StreamSettingsStore(
-            settingsStore ?: PreferencesSettingsStore(context)
+        val backing = settingsStore ?: PreferencesSettingsStore(context)
+        settingsPersistence = StreamSettingsStore(backing)
+        broadcastPreference = BroadcastPreference(backing)
+        broadcastingState.value = BroadcastPolicy.shouldListen(
+            saved = broadcastPreference.load(),
+            isUITest = launch.isUITest,
+            selfTest = launch.selfTest,
+            recordSeconds = launch.recordSeconds
         )
         // What the operator last chose, laid under whatever this launch named outright. A camera on
         // a tripod is aimed once: coming back at the wrong lens or the wrong zoom after a restart
@@ -359,12 +419,29 @@ class AppEnvironment(
 
     // MARK: - Lifecycle
 
+    fun setBroadcasting(enabled: Boolean) {
+        if (enabled == broadcastingState.value && enabled == (server != null)) return
+        broadcastingState.value = enabled
+        if (BroadcastPolicy.shouldPersist(launch.persistSettings, launch.isUITest, launch.selfTest)) {
+            broadcastPreference.save(enabled)
+        }
+        if (enabled) {
+            acquireWakeLock()
+            acquireWifiLock()
+            if (server == null) startServer()
+        } else {
+            stopListening()
+            releaseWakeLock()
+            releaseWifiLock()
+        }
+        onBroadcastingChanged?.invoke(enabled)
+    }
+
     fun start() {
-        acquireWakeLock()
-        acquireWifiLock()
         observeThermalState()
         observeBattery()
         statusState.value = "starting"
+        radarLink.start()
 
         val settings = settingsState.value.copy()
         videoEncoder.onFailure = { encodeFailureState.value = it.description }
@@ -393,7 +470,13 @@ class AppEnvironment(
         camera.onCaptureRotationChange = { videoEncoder.requestKeyframe() }
         camera.onVideoFrame = { capturedFrameCount.incrementAndGet() }
 
-        startServer()
+        // The listener is the broadcast. The preview, the encoder and the radar link come up either
+        // way, so the operator can frame the shot before anyone is watching.
+        if (isBroadcasting) {
+            acquireWakeLock()
+            acquireWifiLock()
+            startServer()
+        }
         configureVideoEncoder(settings)
 
         val useSynthetic = launch.useSyntheticCamera || !permissionState.value.camera
@@ -620,6 +703,14 @@ class AppEnvironment(
         }
         audioEncoder.configure(settings.audioSampleRate, 1)
         microphone.start(settings.audioSampleRate, 1)
+    }
+
+    private fun stopListening() {
+        adaptiveBitrate?.stop()
+        adaptiveBitrate = null
+        server?.stop()
+        server = null
+        serverStatusState.value = RTSPServer.Status()
     }
 
     private fun startServer() {
@@ -932,6 +1023,21 @@ class AppEnvironment(
             settingsShown.value = false
             ok()
         }
+
+        is ControlCommand.RadarShow -> {
+            radarLink.show(RadarCommand.Show(command.serial, command.phase, command.step))
+            ok()
+        }
+
+        is ControlCommand.RadarFeed -> {
+            radarLink.feed(RadarCommand.Feed(command.pitch, command.exit, command.now))
+            ok()
+        }
+
+        ControlCommand.RadarUnpair -> {
+            radarLink.unpair()
+            ok()
+        }
     }
 
     private fun noteSettingsApplied(next: StreamSettings) {
@@ -1020,6 +1126,7 @@ class AppEnvironment(
             put("cameraPermission", permissionState.value.camera)
             put("microphonePermission", permissionState.value.microphone)
             put("notificationPermission", permissionState.value.notifications)
+            put("broadcasting", isBroadcasting)
             put("server", serverStatusJSON(server?.currentStatus() ?: serverStatusState.value))
             put("addresses", JSONArray(ControlServer.localAddresses()))
             put("streamURL", streamURL)
@@ -1029,6 +1136,7 @@ class AppEnvironment(
             put("wakeLockHeld", wakeLock?.isHeld == true)
             put("wifiLockHeld", wifiLock?.isHeld == true)
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
+            RadarSnapshot.putInto(this, radarLink.state.value)
         }
     }
 

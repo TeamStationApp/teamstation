@@ -108,7 +108,7 @@ is a real difference from the iOS build, where the same channel needs an IP addr
 
 `dump-state`, `clients`, `flip-camera`, `force-keyframe`, `reset`, `set-zoom`, `set-format`,
 `set-bitrate`, `set-adaptive-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-rotation`,
-`set-send-delay`.
+`set-send-delay`, `radar-show`, `radar-feed`, `radar-unpair`.
 
 `set-send-delay` holds outgoing frames back to imitate a congested link, in three shapes because they
 fail differently: a constant `ms` is the weak case that any correct receiver absorbs, `jitter` spreads
