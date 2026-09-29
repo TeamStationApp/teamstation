@@ -409,15 +409,18 @@ async function frame(page: Page): Promise<void> {
 /** Switches dictation on, and waits until the button can be held. */
 async function switchOn(page: Page): Promise<void> {
   await page.waitForSelector('[aria-label="Dictation"]', { timeout: 30000 })
-  await page.locator('[aria-label="Dictation"]').click()
+  // A tap on the microphone switches dictation on.
+  const button = await page.$('[aria-label="Dictation"]')
+  const box = await button!.boundingBox()
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
   await ready(page)
 }
-/** Waits until the button reads Hold to talk: connected, and nothing in flight. */
+/** Waits until the microphone reads Push to talk: connected, and nothing in flight. */
 async function ready(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
-      const button = document.querySelector('[aria-label="Hold to dictate"]')
-      return button != null && button.textContent === 'Hold to talk'
+      const status = document.querySelector('[aria-label="Dictation status"]')
+      return status != null && status.textContent === 'Push to talk'
     },
     { timeout: 15000 }
   )
@@ -430,7 +433,7 @@ async function play(page: Page): Promise<void> {
 }
 /** Holds the button while the clip plays, and a moment after. */
 async function hold(page: Page): Promise<void> {
-  const button = await page.$('[aria-label="Hold to dictate"]')
+  const button = await page.$('[aria-label="Dictation"]')
   const box = await button!.boundingBox()
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
   await page.mouse.down()
@@ -761,7 +764,7 @@ describe('dictation, end to end', function () {
         // The switch was not toggled by the key.
         expect(
           await page.$eval('[aria-label="Dictation"]', n =>
-            n.getAttribute('aria-checked')
+            n.getAttribute('aria-pressed')
           )
         ).equals('true')
       } finally {
@@ -1019,30 +1022,42 @@ describe('dictation, end to end', function () {
         false
       )
       try {
-        // The screen asks — or the LLM does, having seen both runners.
+        // The LLM sends the play; the screen asks, in a modal, which runners
+        // were out.
+        expect(reply.kind, JSON.stringify(reply)).equals('actions')
         await page.waitForSelector('[aria-label="Dictation question"]')
-        const lead = 'Visitor 01'
-        if (reply.kind === 'actions') {
-          const box = `[aria-label="${lead} out at third"]`
-          await page.waitForSelector(box)
-          expect(
-            await page.$('[aria-label="Visitor 02 out at second"]')
-          ).not.equal(null)
-          await page.locator(box).click()
-          await page.locator('[aria-label="Record"]').click()
-        } else {
-          expect(reply.kind, JSON.stringify(reply)).equals('ask')
-          const option = (reply.options as Array<{ label: string }>).find(
-            o => o.label.includes(lead) || /second|lead/i.test(o.label)
-          )
-          expect(option, JSON.stringify(reply.options)).not.equal(undefined)
-          await page.locator(`[aria-label="${option!.label}"]`).click()
-          await answered(page)
-        }
+        const box = '[aria-label="Visitor 01 out at third"]'
+        await page.waitForSelector(box)
+        expect(
+          await page.$('[aria-label="Visitor 02 out at second"]')
+        ).not.equal(null)
+        // Nothing else can be scored while it is open: the modal is on top
+        // of Ball, and a click there does not reach it.
+        const ball = await page.$eval('[aria-label="Ball"]', node => {
+          const r = node.getBoundingClientRect()
+          const x = r.x + r.width / 2
+          const y = r.y + r.height / 2
+          const top = document.elementFromPoint(x, y)
+          return { x, y, covered: top == null || !node.contains(top) }
+        })
+        expect(ball.covered).equals(true)
+        await page.mouse.click(ball.x, ball.y)
+        expect(await page.$('[aria-label="Dictation question"]')).not.equal(
+          null
+        )
+        await page.locator(box).click()
+        await page.locator('[aria-label="Record"]').click()
         await finishAtBat(page)
         await nothingToTap(page)
         await waitSaved(page)
         expect(await summary(page)).includes('1 outs')
+        expect(await summary(page)).includes('0 balls')
+        const play = await playOf(scorer, gameId, 'force_out')
+        expect(endsOf(play)).deep.equals({
+          '2B': 'out 3B',
+          '1B': '2B',
+          batter: '1B'
+        })
         // The whole sentence is one Undo step.
         const undo = await page.$eval('[aria-label^="Undo "]', n =>
           n.getAttribute('aria-label')
@@ -1274,7 +1289,7 @@ describe('dictation, end to end', function () {
       try {
         const page = await open(browser, scorer, gameId, path)
         await switchOn(page)
-        const button = await page.$('[aria-label="Hold to dictate"]')
+        const button = await page.$('[aria-label="Dictation"]')
         const box = await button!.boundingBox()
         await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
         await page.mouse.down()
@@ -1358,10 +1373,11 @@ describe('dictation, end to end', function () {
         )
         expect((await heard(first.page)).sent.at(-1)?.kind).equals('dismiss')
         expect(
-          await first.page.$eval('[aria-label="Hold to dictate"]', n =>
-            n.getAttribute('aria-disabled')
+          await first.page.$eval(
+            '[aria-label="Dictation status"]',
+            n => n.textContent
           )
-        ).not.equal('true')
+        ).equals('Push to talk')
         expect(await plays()).equals(before)
       } finally {
         await first.browser.close()

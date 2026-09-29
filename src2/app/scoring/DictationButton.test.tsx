@@ -12,7 +12,7 @@ import {
 import { completeMotions } from '../../test/scoringHelpers'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
-import { DictationButton } from './DictationButton'
+import { useDictationControls } from './DictationButton'
 import type { DictationButtonProps, DictationSocket } from './dictationTypes'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -52,13 +52,14 @@ class FakeSocket implements DictationSocket {
 
 let root: Root | undefined
 let host: HTMLDivElement
-afterEach(async () => {
+async function unmount(): Promise<void> {
   await act(async () => {
     root?.unmount()
   })
   root = undefined
   host?.remove()
-})
+}
+afterEach(unmount)
 
 interface Harness {
   sockets: FakeSocket[]
@@ -106,6 +107,10 @@ function harness(
       sockets.push(socket)
       return socket
     },
+    // A press of any length is a hold here, and a release ends it at once;
+    // the tap, tail and linger tests set their own.
+    tapMs: 0,
+    tailMs: 0,
     openMicrophone: async onPcm => {
       microphone.pcm = onPcm
       microphone.opened++
@@ -133,7 +138,7 @@ function harness(
       await act(async () => {
         root!.render(
           <ThemeProvider>
-            <DictationButton {...self.props} />
+            <Controls {...self.props} />
           </ThemeProvider>
         )
       })
@@ -142,8 +147,20 @@ function harness(
   return self
 }
 
+/** The two pieces, rendered side by side the way the screen places them. */
+function Controls(props: DictationButtonProps): React.ReactElement {
+  const { control, log } = useDictationControls(props)
+  return (
+    <>
+      {log}
+      {control}
+    </>
+  )
+}
+
 function find(label: string): HTMLElement | null {
-  return host.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+  // A question is a modal, drawn over the page rather than in the host.
+  return document.body.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 }
 async function press(label: string): Promise<void> {
   await act(async () => {
@@ -152,7 +169,7 @@ async function press(label: string): Promise<void> {
 }
 async function pointer(type: 'pointerdown' | 'pointerup'): Promise<void> {
   await act(async () => {
-    find('Hold to dictate')!.dispatchEvent(
+    find('Dictation')!.dispatchEvent(
       new window.MouseEvent(type, { bubbles: true })
     )
   })
@@ -168,8 +185,13 @@ async function opened(socket: FakeSocket): Promise<void> {
     socket.onopen?.()
   })
 }
+/** A quick press on the microphone button: it switches dictation on or off. */
+async function tap(): Promise<void> {
+  await pointer('pointerdown')
+  await pointer('pointerup')
+}
 async function enable(h: Harness): Promise<FakeSocket> {
-  await press('Dictation')
+  await tap()
   const socket = h.socket()
   await opened(socket)
   return socket
@@ -202,15 +224,13 @@ describe('the dictation control', function () {
     const on = harness()
     await on.render()
     expect(find('Dictation')).not.equal(null)
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
+    expect(text('Dictation status')).not.equal('Push to talk')
     expect(on.sockets).to.have.length(0)
     expect(on.microphone.opened).equals(0)
   })
 
   it('opens the socket and the microphone when switched on, key terms first', async function () {
-    const h = harness()
+    const h = harness(fresh(), { tapMs: 5000 })
     await h.render()
     const socket = await enable(h)
     expect(socket.url).equals('ws://host/api/v1/dictation')
@@ -219,17 +239,13 @@ describe('the dictation control', function () {
     expect(socket.frames).deep.equals([
       { kind: 'keyterms', keyterms: keyterms(h.props.session) }
     ])
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).not.equal(
-      'true'
-    )
-    expect(find('Dictation')?.getAttribute('aria-checked')).equals('true')
+    expect(text('Dictation status')).equals('Push to talk')
+    expect(find('Dictation')?.getAttribute('aria-pressed')).equals('true')
 
-    await press('Dictation')
+    await tap()
     expect(socket.closed).equals(true)
     expect(h.microphone.stopped).equals(true)
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
+    expect(text('Dictation status')).not.equal('Push to talk')
     await new Promise(resolve => setTimeout(resolve, 1100))
     expect(h.sockets).to.have.length(1)
   })
@@ -328,6 +344,8 @@ describe('the dictation control', function () {
     expect(socket.audio).to.have.length(0)
     await pointer('pointerdown')
     const start = socket.frames.at(-1)!
+    // The frame in hand as the press began leads the words.
+    expect(socket.audio.map(b => b.byteLength)).deep.equals([4])
     expect(start).deep.include({
       kind: 'start',
       scope: 'scoring',
@@ -335,19 +353,17 @@ describe('the dictation control', function () {
       context: promptContext(h.props.session)
     })
     expect(start.id).is.a('string')
-    expect(text('Hold to dictate')).equals('Listening…')
+    expect(text('Dictation status')).equals('Listening…')
     h.microphone.pcm!(pcm(6))
     h.microphone.pcm!(pcm(8))
-    expect(socket.audio.map(b => b.byteLength)).deep.equals([6, 8])
+    expect(socket.audio.map(b => b.byteLength)).deep.equals([4, 6, 8])
     await server(socket, { kind: 'partial', id: start.id, text: 'Noah sin' })
     expect(text('Dictated text')).equals('Noah sin')
     await pointer('pointerup')
     expect(socket.frames.at(-1)).deep.equals({ kind: 'release', id: start.id })
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
+    expect(text('Dictation status')).not.equal('Push to talk')
     h.microphone.pcm!(pcm(2))
-    expect(socket.audio).to.have.length(2)
+    expect(socket.audio).to.have.length(3)
     // A second hold while the first is answered does nothing.
     await pointer('pointerdown')
     expect(socket.frames.filter(f => f.kind === 'start')).to.have.length(1)
@@ -367,9 +383,7 @@ describe('the dictation control', function () {
       dropped: []
     })
     expect(h.dictated).deep.equals([{ transcript: 'Noah singled.', actions }])
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).not.equal(
-      'true'
-    )
+    expect(text('Dictation status')).equals('Push to talk')
     expect(find('Dictation message')).equals(null)
   })
 
@@ -446,9 +460,7 @@ describe('the dictation control', function () {
     await press('Chase M.')
     expect(socket.frames.at(-1)).deep.equals({ kind: 'answer', id, option: 1 })
     expect(find('Dictation question')).equals(null)
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
+    expect(text('Dictation status')).not.equal('Push to talk')
     await server(socket, {
       kind: 'actions',
       id,
@@ -462,9 +474,7 @@ describe('the dictation control', function () {
     await press('Dismiss question')
     expect(socket.frames.at(-1)).deep.equals({ kind: 'dismiss', id })
     expect(find('Dictation question')).equals(null)
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).not.equal(
-      'true'
-    )
+    expect(text('Dictation status')).equals('Push to talk')
   })
 
   it('reopens a dropped socket after one second, then two, key terms first', async function () {
@@ -480,7 +490,7 @@ describe('the dictation control', function () {
     expect(text('Dictation message')).equals(
       'The connection dropped and that was not scored. Say it again.'
     )
-    expect(text('Hold to dictate')).equals('Connecting…')
+    expect(text('Dictation status')).equals('Connecting…')
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 900))
     })
@@ -507,9 +517,7 @@ describe('the dictation control', function () {
       kind: 'keyterms',
       keyterms: keyterms(h.props.session)
     })
-    expect(find('Hold to dictate')?.getAttribute('aria-disabled')).not.equal(
-      'true'
-    )
+    expect(text('Dictation status')).equals('Push to talk')
   })
 
   it('closes the socket and the microphone when the screen goes mid-utterance', async function () {
@@ -531,36 +539,203 @@ describe('the dictation control', function () {
         await Promise.reject(new Error('Permission denied'))
     })
     await h.render()
-    await press('Dictation')
+    await tap()
     expect(text('Dictation message')).equals(
       'The microphone is not available: Permission denied'
     )
-    expect(find('Dictation')?.getAttribute('aria-checked')).not.equal('true')
+    expect(find('Dictation')?.getAttribute('aria-pressed')).not.equal('true')
     expect(h.socket().closed).equals(true)
   })
 
-  it('holds and releases from the button with Enter', async function () {
-    const h = harness()
+  it('talks while held, switches off on a quick tap, and toggles with Enter', async function () {
+    const h = harness(fresh(), { tapMs: 60 })
     await h.render()
+    expect(find('Dictation')?.getAttribute('aria-pressed')).not.equal('true')
+    expect(find('Dictation status')).equals(null)
+    // Off, a press of any length switches it on.
     const socket = await enable(h)
-    const key = async (
-      type: 'keydown' | 'keyup',
-      name: string
-    ): Promise<void> => {
+    expect(find('Dictation')?.getAttribute('aria-pressed')).equals('true')
+    // On, a held press talks once it outlasts a tap, and what was heard
+    // from the press on leads it.
+    const wait = async (ms: number): Promise<void> => {
       await act(async () => {
-        find('Hold to dictate')!.dispatchEvent(
-          new window.KeyboardEvent(type, { key: name, bubbles: true })
+        await new Promise(resolve => setTimeout(resolve, ms))
+      })
+    }
+    h.microphone.pcm!(pcm(3))
+    await wait(150)
+    h.microphone.pcm!(pcm(4))
+    await pointer('pointerdown')
+    h.microphone.pcm!(pcm(5))
+    expect(socket.frames.map(f => f.kind)).deep.equals(['keyterms'])
+    await wait(80)
+    expect(socket.audio.map(b => b.byteLength)).deep.equals([4, 5])
+    await pointer('pointerup')
+    expect(socket.frames.map(f => f.kind)).deep.equals([
+      'keyterms',
+      'start',
+      'release'
+    ])
+    expect(socket.closed).equals(false)
+    await server(socket, {
+      kind: 'error',
+      id: socket.frames[1].id,
+      message: 'Nothing was heard'
+    })
+    // A quick tap switches it off, and starts nothing.
+    await tap()
+    expect(socket.frames.map(f => f.kind)).deep.equals([
+      'keyterms',
+      'start',
+      'release'
+    ])
+    expect(socket.closed).equals(true)
+    expect(find('Dictation')?.getAttribute('aria-pressed')).not.equal('true')
+    // Enter switches it on and off.
+    const key = async (): Promise<void> => {
+      await act(async () => {
+        find('Dictation')!.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
         )
       })
     }
-    await key('keydown', 'Enter')
-    await key('keydown', 'Enter')
-    await key('keydown', 'x')
-    expect(socket.frames.filter(f => f.kind === 'start')).to.have.length(1)
-    await key('keyup', 'x')
-    expect(socket.frames.at(-1)?.kind).equals('start')
-    await key('keyup', 'Enter')
-    expect(socket.frames.at(-1)?.kind).equals('release')
+    await key()
+    expect(find('Dictation')?.getAttribute('aria-pressed')).equals('true')
+    await key()
+    expect(find('Dictation')?.getAttribute('aria-pressed')).not.equal('true')
+    // A pointer the browser cancels ends a hold without switching anything.
+    await act(async () => {
+      find('Dictation')!.dispatchEvent(
+        new window.MouseEvent('pointercancel', { bubbles: true })
+      )
+    })
+    expect(find('Dictation')?.getAttribute('aria-pressed')).not.equal('true')
+  })
+
+  it('keeps sending audio for a moment after a release, then ends the utterance', async function () {
+    const h = harness(fresh(), { tailMs: 60 })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const start = socket.frames.at(-1)!
+    h.microphone.pcm!(pcm(4))
+    await pointer('pointerup')
+    // Released: the button says so, and the audio already in flight still goes.
+    expect(text('Dictation status')).not.equal('Listening…')
+    expect(socket.frames.at(-1)).deep.equals(start)
+    h.microphone.pcm!(pcm(6))
+    await pointer('pointerup')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 90))
+    })
+    expect(socket.frames.filter(f => f.kind === 'release')).deep.equals([
+      { kind: 'release', id: start.id }
+    ])
+    h.microphone.pcm!(pcm(8))
+    expect(socket.audio.map(b => b.byteLength)).deep.equals([4, 6])
+  })
+
+  it('ends nothing when switched off before the tail runs out', async function () {
+    const h = harness(fresh(), { tailMs: 60, tapMs: 1 })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await pointer('pointerup')
+    await act(async () => {
+      find('Dictation')!.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      )
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 90))
+    })
+    expect(socket.closed).equals(true)
+    expect(socket.frames.some(f => f.kind === 'release')).equals(false)
+  })
+
+  it('lets the log fade once nothing new has come for a while', async function () {
+    const h = harness(fresh(), { lingerMs: 40 })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const start = socket.frames.at(-1)!
+    // While talking it stays, however long.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 80))
+    })
+    expect(find('Dictation log')).not.equals(null)
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'error',
+      id: start.id,
+      message: 'Nothing was heard'
+    })
+    expect(find('Dictation log')).not.equals(null)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    expect(find('Dictation log')).equals(null)
+    // A new line brings it back.
+    await pointer('pointerdown')
+    expect(text('Dictated text')).equals('…')
+  })
+
+  it('keeps a log of what was heard, the plays and messages, four lines tall', async function () {
+    const h = harness()
+    await h.render()
+    expect(find('Dictation log')).equals(null)
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const start = socket.frames.at(-1)!
+    expect(text('Dictated text')).equals('…')
+    await server(socket, { kind: 'partial', id: start.id, text: 'Line drive' })
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'transcript',
+      id: start.id,
+      text: 'Line drive double.'
+    })
+    expect(text('Dictated text')).equals('Line drive double.')
+    await server(socket, {
+      kind: 'actions',
+      id: start.id,
+      transcript: 'Line drive double.',
+      actions: [{ type: 'result', eventType: 'double' }],
+      dropped: []
+    })
+    await h.render({
+      played: {
+        id: 1,
+        lines: ['Chase L. line drive double to left', 'Ann B. scores']
+      }
+    })
+    expect(text('Dictated play')).equals('• Ann B. scores')
+    // The same plays again are not logged twice.
+    await h.render({
+      played: {
+        id: 1,
+        lines: ['Chase L. line drive double to left', 'Ann B. scores']
+      }
+    })
+    const log = find('Dictation log')!
+    expect(log.textContent).equals(
+      'Line drive double.• Chase L. line drive double to left• Ann B. scores'
+    )
+    // A refusal is a message line.
+    await h.render({
+      problem: { code: 'illegal', message: 'There is no runner on second' }
+    })
+    expect(text('Dictation message')).equals('There is no runner on second')
+    // Fixed at four lines tall (the clipping itself is a browser check).
+    expect(log.style.height).equals('84px')
+    // A dozen entries at most are kept.
+    for (let n = 0; n < 15; n++)
+      await h.render({ played: { id: 10 + n, lines: [`play ${n}`] } })
+    expect(find('Dictation log')!.children.length).equals(12)
+    expect(text('Dictated play')).equals('• play 14')
   })
 
   describe('Space, anywhere on the page', function () {
@@ -588,11 +763,9 @@ describe('the dictation control', function () {
       const h = harness()
       await h.render()
       const socket = await enable(h)
-      expect(find('Or hold Space')).not.equal(null)
       expect(await space('keydown')).equals(true)
       expect(starts(socket)).equals(1)
-      expect(text('Hold to dictate')).equals('Listening…')
-      expect(find('Or hold Space')).equals(null)
+      expect(text('Dictation status')).equals('Listening…')
       // Held, the key repeats; nothing more starts.
       expect(await space('keydown', document.body, { repeat: true })).equals(
         true
@@ -614,7 +787,7 @@ describe('the dictation control', function () {
       expect(await space('keydown', toggle)).equals(true)
       expect(await space('keyup', toggle)).equals(true)
       expect(starts(socket)).equals(1)
-      expect(find('Dictation')?.getAttribute('aria-checked')).equals('true')
+      expect(find('Dictation')?.getAttribute('aria-pressed')).equals('true')
     })
 
     it('is left alone with the mic off, while typing, with a modifier, or once handled', async function () {
@@ -685,7 +858,11 @@ describe('the dictation control', function () {
       // Held again, then the mic is switched off mid-hold.
       await space('keydown')
       expect(starts(socket)).equals(2)
-      await press('Dictation')
+      await act(async () => {
+        find('Dictation')!.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        )
+      })
       expect(socket.closed).equals(true)
       expect(await space('keyup')).equals(false)
       expect(await space('keydown')).equals(false)
@@ -751,6 +928,9 @@ describe('the dictation control', function () {
 })
 
 describe('a question the screen asks', function () {
+  // Before the page is cleared: the question's modal lives on the body.
+  afterEach(unmount)
+
   it('offers one button per answer, and the dismissal', async function () {
     const answers: unknown[] = []
     let dismissed = 0

@@ -11,7 +11,8 @@ export {
   CONTROL_DECK_HEIGHT,
   CONTROL_HEIGHT,
   CONTROL_GAP,
-  controlFrame
+  controlFrame,
+  DICTATION_LOG_HEIGHT
 } from './scoringControlStyle'
 
 export function ControlFace({

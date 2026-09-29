@@ -1,14 +1,17 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { DictationButton } from './DictationButton.native'
+import { useDictationControls } from './DictationButton.native'
 import type { DictationButtonProps } from './dictationTypes'
 import { dictationUrl, useDictation } from './useDictation.native'
 
 describe('dictation on the phone', function () {
   it('shows no control and does nothing, since the phone has no web microphone', function () {
     const props = {} as unknown as DictationButtonProps
-    expect(DictationButton(props)).equals(null)
+    expect(useDictationControls(props)).deep.equals({
+      control: null,
+      log: null
+    })
     const dictation = useDictation(props)
     expect(dictation).deep.include({
       enabled: false,
