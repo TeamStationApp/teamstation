@@ -1,3 +1,4 @@
+import DirectorCore
 import GameStationKit
 import SwiftUI
 
@@ -14,10 +15,18 @@ import SwiftUI
 /// and the sentence is spoken as a schedule is written. Paul chose both.
 public struct GameStationEventPicker: View {
   @Environment(AppEnvironment.self) private var environment
+  /// Where the stream is set to go. The game is claimed on picking only when
+  /// the stream goes to it.
+  let destination: StreamDestination
   let onChosen: () -> Void
   let onCancel: () -> Void
 
-  init(onChosen: @escaping () -> Void, onCancel: @escaping () -> Void) {
+  init(
+    destination: StreamDestination,
+    onChosen: @escaping () -> Void,
+    onCancel: @escaping () -> Void
+  ) {
+    self.destination = destination
     self.onChosen = onChosen
     self.onCancel = onCancel
   }
@@ -83,7 +92,7 @@ public struct GameStationEventPicker: View {
   private func row(for event: GameStationEvent) -> some View {
     Button {
       Task {
-        let taken = await environment.gameStation.choose(event: event)
+        let taken = await environment.pickEvent(event, destination: destination)
         if taken { onChosen() }
       }
     } label: {
@@ -110,7 +119,7 @@ public struct GameStationEventPicker: View {
       }
       .padding(.vertical, 4)
     }
-    .accessibilityIdentifier("event-picker-row")
+    .accessibilityIdentifier("event-picker-row-\(event.gameId)")
     .listRowBackground(Color.black)
   }
 

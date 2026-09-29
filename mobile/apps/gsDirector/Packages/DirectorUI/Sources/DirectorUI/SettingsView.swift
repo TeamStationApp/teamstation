@@ -185,18 +185,20 @@ public struct SettingsView: View {
           }
           .buttonStyle(.plain)
           .accessibilityIdentifier("settings-gamestation-account")
+
+          gameStationEventRow
         } header: {
           Text("GameStation")
         } footer: {
           Text("""
-          Signed in, this Director can list the games your teams are playing and stream to one \
-          without a URL being typed. Signing in changes nothing about where the Stream button \
-          publishes today — that is the section below.
+          The event is the game this Director is covering. Every recording made while it is \
+          chosen is filed under it, its scoreboard can be shown on the programme, and the Stream \
+          button can publish to it — that is chosen in the section below.
           """)
         }
 
         Section {
-          // Two destinations, one chosen. The event row is first because it is
+          // Two destinations, one chosen. The event is first because it is
           // the one somebody uses every week; the typed URL is what a one-off
           // to somebody else's service needs, and it keeps working exactly as
           // it did for every Director that already has one.
@@ -589,51 +591,60 @@ public struct SettingsView: View {
       ?? "Signed in"
   }
 
+  // MARK: - The event
+
+  /// The game this Director is covering. Tapping the row opens the list; the
+  /// Clear button beside it forgets the game.
+  @ViewBuilder
+  private var gameStationEventRow: some View {
+    let chosen = environment.gameStation.chosen
+    HStack(spacing: 12) {
+      Button {
+        cover = environment.gameStation.isSignedIn
+          ? .eventPicker
+          : .gameStationSignIn
+      } label: {
+        HStack {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Event")
+              .foregroundStyle(.primary)
+            Text(chosen?.title ?? "None")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          Spacer()
+          Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("settings-gamestation-event")
+
+      if chosen != nil {
+        Button("Clear", role: .destructive) {
+          environment.clearEvent()
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("settings-gamestation-event-clear")
+      }
+    }
+  }
+
   // MARK: - Where the stream goes
 
-  /// The row that stands for "a game on GameStation".
-  ///
-  /// Tapping the row opens the list; tapping the radio to its left chooses this
-  /// as the destination. Two targets in one row, deliberately: picking a game
-  /// and deciding to stream to it are separate decisions, and somebody opening
-  /// the list to see what is on should not have their destination changed by
-  /// looking.
+  /// The radio for "the GameStation event", which is picked in the section
+  /// above.
   @ViewBuilder
   private var streamEventRow: some View {
     let chosen = environment.gameStation.chosen
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 12) {
         destinationButton(.event, label: "Use a GameStation event")
-        Button {
-          cover = environment.gameStation.isSignedIn
-            ? .eventPicker
-            : .gameStationSignIn
-        } label: {
-          HStack {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Stream to a GameStation event")
-                .foregroundStyle(.primary)
-              // What is chosen, or why nothing can be: the picker needs an
-              // account, and saying so here is kinder than opening a sign-in
-              // screen somebody did not ask for and leaving them to work out
-              // why.
-              Text(
-                environment.gameStation.isSignedIn
-                  ? (chosen?.title ?? "Tap to choose a game")
-                  : "Sign in above to choose a game"
-              )
-              .font(.caption)
-              .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Image(systemName: "chevron.right")
-              .font(.footnote.weight(.semibold))
-              .foregroundStyle(.tertiary)
-          }
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-stream-event-row")
+        Text("GameStation event — \(chosen?.title ?? "pick one above")")
+          .foregroundStyle(.primary)
+        Spacer()
       }
 
       if let message = environment.gameStation.lastError {
@@ -651,6 +662,7 @@ public struct SettingsView: View {
   ) -> some View {
     Button {
       draft.streamDestination = destination
+      environment.streamDestinationChanged(to: destination)
     } label: {
       Image(
         systemName: draft.streamDestination == destination
@@ -682,7 +694,11 @@ public struct SettingsView: View {
       RemoteControlEditorView(onClose: dismissCover)
         .environment(environment)
     case .eventPicker:
-      GameStationEventPicker(onChosen: dismissCover, onCancel: dismissCover)
+      GameStationEventPicker(
+        destination: draft.streamDestination,
+        onChosen: dismissCover,
+        onCancel: dismissCover
+      )
         .environment(environment)
     case .gameStationSignIn:
       GameStationSignIn(onClose: dismissCover)
