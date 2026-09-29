@@ -11,8 +11,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -68,21 +68,26 @@ fun ZoomScale(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(labelGap)
     ) {
-        Text(
-            text = ZoomMapping.label(displayedZoom),
-            color = if (mapping.isDigitalZoom(displayedZoom)) digitalZoomColour else MaterialTheme.colorScheme.onSurface,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 11.sp,
-            textAlign = TextAlign.End,
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .widthIn(min = 30.dp)
+                .width(48.dp)
                 .background(
                     MaterialTheme.colorScheme.scrim.copy(alpha = CameramanTokens.subtleScrimAlpha),
                     MaterialTheme.shapes.extraSmall
                 )
+                .padding(vertical = 2.dp)
                 .testTag("zoom-label")
-        )
+        ) {
+            Text(
+                text = ZoomMapping.sliderLabel(displayedZoom),
+                color = if (mapping.isDigitalZoom(displayedZoom)) digitalZoomColour else MaterialTheme.colorScheme.onSurface,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center
+            )
+        }
 
         Rail(
             mapping = mapping,
@@ -171,6 +176,7 @@ private fun PresetPill(
 ) {
     val isActive = highlight == ZoomMapping.ScaleHighlight.Preset(preset)
     val label = ZoomMapping.label(preset)
+    val shown = ZoomMapping.sliderLabel(preset)
 
     // Animated so a pinch that walks past a lens reads as a handover rather than a flicker.
     val container by animateColorAsState(
@@ -198,11 +204,11 @@ private fun PresetPill(
         modifier = modifier
             .size(pillSize)
             .testTag("zoom-preset-$label")
-            .semantics { contentDescription = label }
+            .semantics { contentDescription = shown }
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
-                text = label,
+                text = shown,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
             )

@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -47,7 +48,7 @@ import co.gamestation.cameraman.ui.theme.CameramanTokens
 import kotlin.math.abs
 
 /**
- * The operating screen: full-bleed preview, pinch to zoom, chrome in the corners, zoom on the right.
+ * The operating screen: the broadcast frame letterboxed on black, pinch to zoom, chrome inside that frame.
  *
  * Every piece of chrome here sits on top of moving pictures, which is the one place Material 3's
  * surface roles do not apply directly — a `surfaceContainer` behind a badge is invisible over a
@@ -60,6 +61,13 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     val identity by environment.identity.collectAsStateWithLifecycle()
     val thermalLevel by environment.thermalLevel.collectAsStateWithLifecycle()
     val battery by environment.battery.collectAsStateWithLifecycle()
+    val radar by environment.radarState.collectAsStateWithLifecycle()
+    val stream by environment.settings.collectAsStateWithLifecycle()
+    val broadcasting by environment.broadcasting.collectAsStateWithLifecycle()
+    var confirmStop by remember { mutableStateOf(false) }
+    LaunchedEffect(broadcasting) {
+        if (!broadcasting) confirmStop = false
+    }
 
     // The gesture handlers below live inside `pointerInput`, whose block is only restarted when its
     // keys change — so anything they close over is frozen at that moment. The live camera state has
@@ -163,76 +171,115 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                     }
             )
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(CameramanTokens.chromeMargin),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.height(CameramanTokens.chromeButtonSize)
+            CameraFrame(aspectRatio = stream.width.toFloat() / stream.height.toFloat()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(CameramanTokens.chromeMargin),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    ChromeIconButton(
-                        icon = Icons.Filled.Settings,
-                        description = "Camera settings",
-                        testTag = "settings-button",
-                        onClick = onOpenSettings
-                    )
-                    Spacer(Modifier.width(16.dp))
-                    NameBadge(identity.name)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.height(CameramanTokens.chromeButtonSize)
+                    ) {
+                        ChromeIconButton(
+                            icon = Icons.Filled.Settings,
+                            description = "Camera settings",
+                            testTag = "settings-button",
+                            onClick = onOpenSettings
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        NameBadge(identity.name)
+                    }
+
+                    Row {
+                        ChromeIconButton(
+                            icon = Icons.Filled.Cameraswitch,
+                            description = "Flip camera",
+                            testTag = "flip-button",
+                            onClick = { environment.camera.flip() }
+                        )
+                    }
                 }
 
-                Row {
-                    ChromeIconButton(
-                        icon = Icons.Filled.Cameraswitch,
-                        description = "Flip camera",
-                        testTag = "flip-button",
-                        onClick = { environment.camera.flip() }
-                    )
-                }
-            }
-
-            // The zoom rail runs the full height on the right, top pill to bottom pill, so the drag
-            // that walks it has as much travel as the screen allows, whether the camera offers two
-            // lenses or five. The thermal and battery pills sit to its left along the top, clear of
-            // the readout at the rail's middle.
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .fillMaxHeight()
-                    .padding(CameramanTokens.chromeMargin)
-            ) {
+                // The zoom rail runs the full height of the picture, top pill to bottom pill. The
+                // thermal and battery pills sit to its left, still inside the frame, so the bars
+                // outside the picture stay empty.
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    // Dropped onto the same line as the camera name opposite, which sits lower than
-                    // the margin because its row is as tall as the button beside it. Offsetting
-                    // rather than matching that height keeps the gap down to the rail at exactly one
-                    // margin.
-                    modifier = Modifier.padding(top = CameramanTokens.badgeTopOffset)
+                    verticalAlignment = Alignment.Top,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .fillMaxHeight()
+                        .padding(CameramanTokens.chromeMargin)
                 ) {
-                    ThermalBadge(level = thermalLevel, animate = environment.animatesChrome)
-                    battery?.let { BatteryBadge(status = it) }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = CameramanTokens.badgeTopOffset)
+                    ) {
+                        if (broadcasting) {
+                            BroadcastingPill(animate = environment.animatesChrome)
+                        }
+                        ThermalBadge(level = thermalLevel, animate = environment.animatesChrome)
+                        battery?.let { BatteryBadge(status = it) }
+                    }
+
+                    ZoomScale(
+                        mapping = cameraState.mapping,
+                        displayedZoom = cameraState.displayedZoom,
+                        onSelect = { environment.camera.setDisplayedZoom(it) },
+                        onSegmentLength = { length ->
+                            if (abs(pointsPerSegment - length) > 0.5f) pointsPerSegment = length
+                        },
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .onGloballyPositioned { coordinates ->
+                                val bounds = coordinates.boundsInWindow()
+                                railTop = bounds.top
+                                railBottom = bounds.bottom
+                            }
+                    )
                 }
 
-                ZoomScale(
-                    mapping = cameraState.mapping,
-                    displayedZoom = cameraState.displayedZoom,
-                    onSelect = { environment.camera.setDisplayedZoom(it) },
-                    onSegmentLength = { length ->
-                        if (abs(pointsPerSegment - length) > 0.5f) pointsPerSegment = length
-                    },
+                SpeedOverlay(
+                    state = radar,
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .onGloballyPositioned { coordinates ->
-                            val bounds = coordinates.boundsInWindow()
-                            railTop = bounds.top
-                            railBottom = bounds.bottom
-                        }
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            bottom = CameramanTokens.chromeMargin,
+                            end = CameramanTokens.chromeMargin + 32.dp + 10.dp
+                        )
                 )
+            }
+
+            if (confirmStop) {
+                SlideToStopDismiss(
+                    onDismiss = { confirmStop = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = CameramanTokens.chromeMargin)
+            ) {
+                if (confirmStop) {
+                    SlideToStop(
+                        animate = environment.animatesChrome,
+                        onStop = {
+                            confirmStop = false
+                            environment.setBroadcasting(false)
+                        }
+                    )
+                } else {
+                    BroadcastButton(
+                        isLive = broadcasting,
+                        onClick = {
+                            if (broadcasting) confirmStop = true else environment.setBroadcasting(true)
+                        }
+                    )
+                }
             }
         }
     }

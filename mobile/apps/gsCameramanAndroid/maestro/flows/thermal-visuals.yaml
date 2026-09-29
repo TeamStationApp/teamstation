@@ -15,15 +15,12 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-# The preview buttons are the last thing in the right column, below lenses and stream. Each column
-# scrolls on its own, and a scrollUntilVisible swipes at the middle of the screen, which is the gap
-# between them; so the right column is swiped directly, twice, which overshoots harmlessly.
-- swipe:
-    start: "75%, 90%"
-    end: "75%, 20%"
-- swipe:
-    start: "75%, 90%"
-    end: "75%, 20%"
+# The preview buttons are the last thing in the right column, below lenses and stream. The screen
+# is one scroll, so a swipe that starts on the right column moves that scroll.
+- scrollUntilVisible:
+    element:
+      id: "settings-test-thermal"
+    direction: UP
 - assertVisible:
     id: "settings-test-thermal"
 
@@ -36,12 +33,10 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-- swipe:
-    start: "75%, 90%"
-    end: "75%, 20%"
-- swipe:
-    start: "75%, 90%"
-    end: "75%, 20%"
+- scrollUntilVisible:
+    element:
+      id: "settings-test-thermal-cool"
+    direction: UP
 - tapOn:
     id: "settings-test-thermal-cool"
 - tapOn:
