@@ -8,6 +8,12 @@ import {
   placeFielder,
   placeLanding
 } from './battedBall'
+import {
+  answerOf,
+  completeSentence,
+  leadRunnersFirst,
+  stealsByBase
+} from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreReducer } from './moreActions'
 import {
@@ -494,6 +500,17 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
   // Above the presentation guard, so a sentence spoken mid-animation is told
   // why rather than swallowed.
   if (event.type === 'DICTATED') return dictated(state, event)
+  if (event.type === 'DICTATION_ANSWER') {
+    const question = state.dictationQuestion
+    const actions = question == null ? undefined : answerOf(question, event)
+    if (question == null || actions == null) return state
+    return dictated(state, { transcript: question.transcript, actions })
+  }
+  if (event.type === 'DICTATION_DISMISS') {
+    if (state.dictationQuestion == null) return state
+    const { dictationQuestion: _dropped, ...rest } = state
+    return rest
+  }
   if (
     state.presentation != null &&
     !['UNDO', 'GESTURE', 'RUNNER_CANCEL', 'CANCEL_RUNNER'].includes(
@@ -548,6 +565,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     delete next.dictation
     delete next.reel
     delete next.queuedDictation
+    delete next.dictationQuestion
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
       next.correctionWindow = {
@@ -849,9 +867,15 @@ function dictated(
   state: ScoringState,
   event: { transcript: string; actions: readonly ScoringAction[] }
 ): ScoringState {
-  const { transcript, actions } = event
-  if (actions.length === 0) return state
-  const { dictation: _last, ...current } = state
+  const { transcript } = event
+  if (event.actions.length === 0) return state
+  // A steal is the runner's on the base before the one taken, and runners
+  // who move together go lead runner first, however they were said.
+  const actions = leadRunnersFirst(
+    state.session,
+    stealsByBase(state.session, event.actions)
+  )
+  const { dictation: _last, dictationQuestion: _asked, ...current } = state
   const refused = (message: string): ScoringState => ({
     ...current,
     dictation: { transcript, problem: { code: 'notNow', message } }
@@ -881,10 +905,15 @@ function dictated(
       }
     game = applied.state
   }
+  // Whatever the play is left waiting on is finished, or asked.
+  const done = completeSentence(state.session, actions)
+  if ('question' in done)
+    return { ...current, dictationQuestion: { transcript, ...done.question } }
+  const sentence = done.actions
   const reel = new ReelBuilder(state.presentationEnabled === true)
   const next = accepted(current, transcript, edit => {
-    actions.forEach((action, index) => {
-      reel.before(edit, action, actions.slice(index + 1))
+    sentence.forEach((action, index) => {
+      reel.before(edit, action, sentence.slice(index + 1))
       const known = new Set(edit.motions.map(motion => motion.id))
       act(edit, action)
       reel.after(edit.motions.filter(motion => !known.has(motion.id)))

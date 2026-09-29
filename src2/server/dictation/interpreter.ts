@@ -136,6 +136,29 @@ Several calls from one sentence are normal.
   as a jersey.
 - A player named by base ("the runner at second") is the one the game says is
   there now.
+- A steal names the base taken, and with it the runner: the one on the base
+  before it — first for second, second for third, third for home — unless the
+  scorer names someone else. "He steals third" with runners on first and
+  second is the runner on second; do not ask who. With only one runner on,
+  "he steals" or "steals" with no base and no name is that runner stealing
+  the next base; do not ask. With two or more runners on, a steal with no
+  base and no name does not say who: call askScorer, with an option for each
+  runner who could steal and one for a double steal.
+- A double or triple steal is one steal for each runner, and each takes only
+  the next base: the runner on first steals second, the runner on second
+  steals third, the runner on third steals home. With runners on first and
+  second it is the runner on second to third and the runner on first to
+  second. Report the lead runner's first.
+- Credit a fielder only when the scorer named him or his base: "thrown to
+  first" names the first baseman. Leave fielders off an out nobody described,
+  rather than supplying the usual ones.
+- Report what was said and leave the rest to the game, which settles it by
+  rule and asks the scorer itself when it cannot: the batter out at first on a
+  ground out, the batter safe at first on a fielder's choice and which runner
+  was out on it, a runner sent home by a hit scoring, the fielder charged with
+  an error. On a fielder's choice, send the ball in play and the result, and a
+  runner out only when the scorer said which. Do not call askScorer for any of
+  these.
 - If you cannot tell who or what, call askScorer instead of guessing. Ask a
   real question about this sentence, with an option for each real answer.`
 

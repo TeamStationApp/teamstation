@@ -1025,6 +1025,13 @@ function ScoringPanel(props: {
           session={session}
           log={state.log}
           problem={state.dictation?.problem}
+          question={state.dictationQuestion}
+          onAnswer={answer => {
+            dispatch({ type: 'DICTATION_ANSWER', ...answer })
+          }}
+          onDismissQuestion={() => {
+            dispatch({ type: 'DICTATION_DISMISS' })
+          }}
           // While a play is drawn or a player dragged, Space is the field's.
           spaceTalks={(atRest(state) || state.reel != null) && !gestureActive}
           onActions={(transcript, actions) => {

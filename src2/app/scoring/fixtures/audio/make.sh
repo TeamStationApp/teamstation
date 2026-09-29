@@ -47,3 +47,9 @@ clip singleToLeft 'Line drive single to left, fielded by the left fielder.'
 clip tagUp 'Fly ball caught by the left fielder. The runner at third tags up and scores.'
 clip groundOut 'Ground ball to the shortstop, thrown to first for the out.'
 clip ballStrike 'Ball. Called strike.'
+# E15-E16: a fielder's choice finishes itself, or asks
+clip fieldersChoice "Ground ball to the shortstop, fielder's choice."
+# E18: a steal names its runner by the base; a double steal goes lead first
+clip heStealsThird 'And he steals third.'
+clip doubleSteal "And it's a double steal."
+clip heSteals 'And he steals.'

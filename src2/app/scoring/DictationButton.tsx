@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native'
 import { useTheme } from '../theme/ThemeContext'
 import type { DictationButtonProps } from './dictationTypes'
 import { ScoringButton } from './ScoringSheet'
+import type { DictationQuestion } from './scoringTypes'
 import { useDictation } from './useDictation'
 
 /**
@@ -23,6 +24,9 @@ export function DictationButton(
     session,
     log,
     problem,
+    question,
+    onAnswer,
+    onDismissQuestion,
     spaceTalks = true,
     onActions,
     openSocket,
@@ -260,6 +264,111 @@ export function DictationButton(
           />
         </View>
       )}
+      {ask == null && question != null && (
+        <ScreenQuestion
+          key={`${question.transcript}:${question.question}`}
+          question={question}
+          onAnswer={answer => onAnswer?.(answer)}
+          onDismiss={() => onDismissQuestion?.()}
+        />
+      )}
+    </View>
+  )
+}
+
+/**
+ * What the screen asks about a sentence it could not finish on its own: one
+ * button per answer, or a toggle per runner and Record.
+ */
+function ScreenQuestion(props: {
+  question: DictationQuestion
+  onAnswer: (answer: { option?: number; picks?: number[] }) => void
+  onDismiss: () => void
+}): React.ReactElement {
+  const theme = useTheme()
+  const { question, onAnswer, onDismiss } = props
+  const [picks, setPicks] = useState<number[]>([])
+  return (
+    <View
+      accessibilityRole="alert"
+      accessibilityLabel="Dictation question"
+      style={{
+        borderRadius: theme.rem(theme.radiusRem),
+        borderWidth: 2,
+        borderColor: theme.scoringInstructionBorder,
+        backgroundColor: theme.backgroundColor,
+        padding: 10,
+        gap: 6,
+        minWidth: 220
+      }}
+    >
+      <Text
+        style={{
+          color: theme.primaryTextColor,
+          fontFamily: theme.semiBoldTextFont,
+          fontSize: 16
+        }}
+      >
+        {question.question}
+      </Text>
+      {question.options?.map((option, index) => (
+        <ScoringButton
+          key={`${index}:${option.label}`}
+          label={option.label}
+          onPress={() => {
+            onAnswer({ option: index })
+          }}
+        />
+      ))}
+      {question.pick?.choices.map((choice, index) => {
+        const on = picks.includes(index)
+        return (
+          <Pressable
+            key={`${index}:${choice.label}`}
+            accessibilityRole="checkbox"
+            accessibilityLabel={choice.label}
+            aria-checked={on}
+            onPress={() => {
+              setPicks(
+                on ? picks.filter(pick => pick !== index) : [...picks, index]
+              )
+            }}
+            style={{
+              borderRadius: theme.rem(theme.radiusRem),
+              borderWidth: 2,
+              borderColor: on
+                ? theme.scoringOutColor
+                : theme.scoringInstructionBorder,
+              backgroundColor: on ? theme.scoringOutColor : 'transparent',
+              padding: 10
+            }}
+          >
+            <Text
+              style={{
+                color: on ? theme.scoringDecisionText : theme.primaryTextColor,
+                fontFamily: theme.semiBoldTextFont
+              }}
+            >
+              {on ? '✓ ' : ''}
+              {choice.label}
+            </Text>
+          </Pressable>
+        )
+      })}
+      {question.pick != null && (
+        <ScoringButton
+          label="Record"
+          text={picks.length === 0 ? 'Record — nobody out' : 'Record'}
+          onPress={() => {
+            onAnswer({ picks })
+          }}
+        />
+      )}
+      <ScoringButton
+        label="Dismiss question"
+        text="Dismiss — score nothing"
+        onPress={onDismiss}
+      />
     </View>
   )
 }

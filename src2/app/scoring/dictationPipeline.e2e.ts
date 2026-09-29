@@ -588,6 +588,30 @@ async function dictateWatched(
   )
   return { reply, shown, context, page, browser }
 }
+/** Walks this many batters by tapping four balls each. */
+async function walks(
+  token: string,
+  gameId: string,
+  count: number
+): Promise<void> {
+  const setup = await launch()
+  try {
+    const page = await open(setup, token, gameId)
+    for (let batter = 0; batter < count; batter++) {
+      for (let n = 0; n < 4; n++) await tap(page, 'Ball')
+      await finishAtBat(page)
+    }
+    await waitSaved(page)
+  } finally {
+    await setup.close()
+  }
+}
+/** Nothing waits on the screen: a pitch can be tapped. */
+async function nothingToTap(page: Page): Promise<void> {
+  await waitReady(page)
+  expect(await page.$('[aria-label="Dictation question"]')).equals(null)
+}
+
 /** Walks the leadoff batter by tapping, then dictates steals for him. */
 async function runnerOn(
   token: string,
@@ -956,6 +980,127 @@ describe('dictation, end to end', function () {
         expect(await summary(page)).includes('1 balls 1 strikes')
       } finally {
         await browser.close()
+      }
+    })
+
+    it('E15: a fielder’s choice finishes itself', async function () {
+      const gameId = scoringGame().games[0]
+      await walks(scorer, gameId, 1)
+      const { reply, page, browser } = await dictateWatched(
+        scorer,
+        gameId,
+        'fieldersChoice'
+      )
+      try {
+        expect(reply.kind, JSON.stringify(reply)).equals('actions')
+        await finishAtBat(page)
+        await nothingToTap(page)
+        await waitSaved(page)
+        expect(await summary(page)).includes('1 outs')
+        // The runner out at second, the batter on first, and no credit
+        // beyond the fielder who was named.
+        const play = await playOf(scorer, gameId, 'force_out')
+        expect(endsOf(play)).deep.equals({ '1B': 'out 2B', batter: '1B' })
+        expect(
+          creditsOf(play).filter(credit => !credit.startsWith('f_fielded_ball'))
+        ).deep.equals([])
+      } finally {
+        await browser.close()
+      }
+    })
+
+    it('E16: a fielder’s choice with two runners asks which were out', async function () {
+      const gameId = scoringGame().games[0]
+      await walks(scorer, gameId, 2)
+      const { reply, page, browser } = await dictate(
+        scorer,
+        gameId,
+        'fieldersChoice',
+        false
+      )
+      try {
+        // The screen asks — or the LLM does, having seen both runners.
+        await page.waitForSelector('[aria-label="Dictation question"]')
+        const lead = 'Visitor 01'
+        if (reply.kind === 'actions') {
+          const box = `[aria-label="${lead} out at third"]`
+          await page.waitForSelector(box)
+          expect(
+            await page.$('[aria-label="Visitor 02 out at second"]')
+          ).not.equal(null)
+          await page.locator(box).click()
+          await page.locator('[aria-label="Record"]').click()
+        } else {
+          expect(reply.kind, JSON.stringify(reply)).equals('ask')
+          const option = (reply.options as Array<{ label: string }>).find(
+            o => o.label.includes(lead) || /second|lead/i.test(o.label)
+          )
+          expect(option, JSON.stringify(reply.options)).not.equal(undefined)
+          await page.locator(`[aria-label="${option!.label}"]`).click()
+          await answered(page)
+        }
+        await finishAtBat(page)
+        await nothingToTap(page)
+        await waitSaved(page)
+        expect(await summary(page)).includes('1 outs')
+        // The whole sentence is one Undo step.
+        const undo = await page.$eval('[aria-label^="Undo "]', n =>
+          n.getAttribute('aria-label')
+        )
+        await page.locator(`[aria-label="${undo}"]`).click()
+        await waitSaved(page)
+        expect(await summary(page)).includes('0 outs')
+      } finally {
+        await browser.close()
+      }
+    })
+
+    it('E18: a steal names its runner by base, or by being the only one, and a double steal goes lead first', async function () {
+      for (const clip of ['heStealsThird', 'doubleSteal', 'heSteals']) {
+        const gameId = scoringGame().games[0]
+        await walks(scorer, gameId, clip === 'heSteals' ? 1 : 2)
+        const { reply, heard, page, browser } = await dictate(
+          scorer,
+          gameId,
+          clip
+        )
+        try {
+          expect(reply.kind, `${clip}: ${JSON.stringify(reply)}`).equals(
+            'actions'
+          )
+          const context = String(
+            heard.sent.find(f => f.kind === 'start')!.context
+          )
+          const first = idIn(context, 'On first')
+          const steals = Object.fromEntries(
+            (reply.actions as Array<Record<string, any>>)
+              .filter(action => action.type === 'baseRunning')
+              .map(action => [action.runner, `${action.kind} ${action.to}`])
+          )
+          expect(steals, clip).deep.equals(
+            clip === 'heSteals'
+              ? { [first]: 'steal 2B' }
+              : clip === 'heStealsThird'
+                ? { [idIn(context, 'On second')]: 'steal 3B' }
+                : {
+                    [idIn(context, 'On second')]: 'steal 3B',
+                    [first]: 'steal 2B'
+                  }
+          )
+          // Applied, whichever order it came in: nothing refused, and the
+          // Undo control reads the lead runner's steal.
+          expect(await page.$('[aria-label="Dictation message"]')).equals(null)
+          const undo = await page.$eval(
+            '[aria-label^="Undo "]',
+            node => node.textContent
+          )
+          expect(undo).includes(
+            clip === 'heSteals' ? 'steals second' : 'steals third'
+          )
+          if (clip === 'doubleSteal') expect(undo).includes('steals second')
+        } finally {
+          await browser.close()
+        }
       }
     })
 
