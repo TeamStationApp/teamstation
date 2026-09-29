@@ -1,7 +1,9 @@
-import React, { createContext, useState } from 'react'
+import React, { createContext, useMemo, useRef, useState } from 'react'
 import {
+  Animated,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   SafeAreaView as WebSafeAreaView,
@@ -135,6 +137,14 @@ export function ScoringButton({
   )
 }
 export const ScoringSheetHeight = createContext<number | undefined>(undefined)
+
+/** How far, or how fast, a sheet must be pulled down to close. */
+const SWIPE_CLOSE_PX = 120
+const SWIPE_CLOSE_SPEED = 0.8
+/** Whether a pull that ended here closes the sheet. */
+export function swipeCloses(dy: number, vy: number): boolean {
+  return dy > SWIPE_CLOSE_PX || (dy > 20 && vy > SWIPE_CLOSE_SPEED)
+}
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- Web implementation uses CSS env() and avoids measuring a sliding portal. Native uses safe-area-context.
 const SheetArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
 
@@ -142,6 +152,9 @@ export function ScoringSheet({
   title,
   textCancel = false,
   fullScreen = false,
+  tall = false,
+  done = false,
+  swipeToDismiss = false,
   scroll = true,
   onShow,
   onClose,
@@ -150,6 +163,12 @@ export function ScoringSheet({
   title: string
   textCancel?: boolean
   fullScreen?: boolean
+  /** The whole height of the screen, still a sheet over the game. */
+  tall?: boolean
+  /** Closed by a Done button at the bottom rather than Cancel at the top. */
+  done?: boolean
+  /** Pulled down by its handle or its title, it closes. */
+  swipeToDismiss?: boolean
   scroll?: boolean
   onShow?: () => void
   onClose: () => void
@@ -158,6 +177,37 @@ export function ScoringSheet({
   const theme = useTheme()
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
+  const close = useRef(onClose)
+  close.current = onClose
+  const pulled = useRef(new Animated.Value(0)).current
+  const pull = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_event, move) =>
+          move.dy > 4 && Math.abs(move.dy) > Math.abs(move.dx),
+        // Once pulling, the pull keeps the gesture.
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderMove: (_event, move) => {
+          pulled.setValue(Math.max(0, move.dy))
+        },
+        onPanResponderRelease: (_event, move) => {
+          if (swipeCloses(move.dy, move.vy)) close.current()
+          else
+            Animated.spring(pulled, {
+              toValue: 0,
+              useNativeDriver: false
+            }).start()
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(pulled, {
+            toValue: 0,
+            useNativeDriver: false
+          }).start()
+        }
+      }),
+    [pulled]
+  )
   return (
     <Modal
       transparent={!fullScreen}
@@ -184,7 +234,7 @@ export function ScoringSheet({
         >
           <SheetArea
             edges={
-              fullScreen
+              fullScreen || tall
                 ? ['top', 'bottom', 'left', 'right']
                 : ['bottom', 'left', 'right']
             }
@@ -205,11 +255,13 @@ export function ScoringSheet({
                 }}
               />
             )}
-            <View
+            <Animated.View
               accessibilityViewIsModal
               style={{
-                maxHeight: fullScreen ? undefined : '92%',
-                flex: fullScreen ? 1 : undefined,
+                transform: [{ translateY: pulled }],
+                maxHeight: fullScreen || tall ? undefined : '92%',
+                flex: fullScreen || tall ? 1 : undefined,
+                marginTop: tall ? 8 : undefined,
                 backgroundColor: theme.backgroundColor,
                 borderTopLeftRadius: fullScreen
                   ? 0
@@ -222,50 +274,71 @@ export function ScoringSheet({
               }}
             >
               <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 12
-                }}
+                {...(swipeToDismiss ? pull.panHandlers : {})}
+                style={{ gap: 12 }}
               >
-                <Text
-                  accessibilityRole="header"
+                {swipeToDismiss && (
+                  <View
+                    accessibilityLabel="Pull down to close"
+                    style={{
+                      alignSelf: 'center',
+                      width: 40,
+                      height: 5,
+                      borderRadius: 3,
+                      marginTop: -6,
+                      backgroundColor: theme.secondaryTextColor
+                    }}
+                  />
+                )}
+                <View
                   style={{
-                    fontFamily: theme.boldTextFont,
-                    fontSize: 22,
-                    color: theme.primaryTextColor,
-                    flex: 1
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12
                   }}
                 >
-                  {title}
-                </Text>
-                {textCancel ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Cancel"
-                    onPress={onClose}
+                  <Text
+                    accessibilityRole="header"
                     style={{
-                      minHeight: 44,
-                      paddingHorizontal: 10,
-                      justifyContent: 'center'
+                      fontFamily: theme.boldTextFont,
+                      fontSize: 22,
+                      color: theme.primaryTextColor,
+                      flex: 1
                     }}
                   >
-                    <Text
+                    {title}
+                  </Text>
+                  {done ? null : textCancel ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel"
+                      onPress={onClose}
                       style={{
-                        fontFamily: theme.semiBoldTextFont,
-                        color: theme.dangerColor
+                        minHeight: 44,
+                        paddingHorizontal: 10,
+                        justifyContent: 'center'
                       }}
                     >
-                      Cancel
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <ScoringButton label="Cancel" onPress={onClose} />
-                )}
+                      <Text
+                        style={{
+                          fontFamily: theme.semiBoldTextFont,
+                          color: theme.dangerColor
+                        }}
+                      >
+                        Cancel
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <ScoringButton label="Cancel" onPress={onClose} />
+                  )}
+                </View>
               </View>
               <Content
-                style={{ flex: fullScreen ? 1 : undefined, minHeight: 0 }}
+                style={{
+                  flex: fullScreen || tall ? 1 : undefined,
+                  minHeight: 0
+                }}
                 onLayout={event => {
                   setContentHeight(event.nativeEvent.layout.height)
                 }}
@@ -276,7 +349,8 @@ export function ScoringSheet({
                   {children}
                 </ScoringSheetHeight.Provider>
               </Content>
-            </View>
+              {done && <ScoringButton label="Done" onPress={onClose} />}
+            </Animated.View>
           </SheetArea>
         </KeyboardAvoidingView>
       </SafeAreaProvider>

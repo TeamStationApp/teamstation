@@ -483,8 +483,8 @@ describe('scoring into the server', function () {
           await click(page, 'Open scoring menu')
           await click(page, 'Settings')
           await click(page, 'Toggle play animations')
-          await page.waitForFunction(() =>
-            String(document.body.textContent).includes('Animate plays: Off')
+          await page.waitForSelector(
+            '[aria-label="Toggle play animations"]:not(:checked)'
           )
           await page.keyboard.press('Escape')
           await page.waitForSelector('[aria-label="Toggle play animations"]', {
