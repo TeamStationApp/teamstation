@@ -226,6 +226,7 @@ struct ContentEditorView: View {
         OverlayEditSheet(
           session: session,
           photoItem: $photoItem,
+          eventTitle: environment.gameStation.chosen?.title,
           onSaveURL: { url in
             switch session {
             case .add:
@@ -290,6 +291,13 @@ struct ContentEditorView: View {
           overlayFieldBlurred = false
           environment.beginEditingTextOverlay(id: id)
         }
+        // One per template: the chosen event has one scoreboard.
+        addKindButton("Scoreboard", identifier: "content-add-scoreboard") {
+          choosingKind = false
+          environment.addScoreboardOverlay()
+        }
+        .disabled(!environment.canAddScoreboard)
+        .opacity(environment.canAddScoreboard ? 1 : 0.4)
         Button("Cancel") { choosingKind = false }
           .font(.system(size: 15, weight: .semibold, design: .rounded))
           .foregroundStyle(.white.opacity(0.65))
@@ -578,6 +586,7 @@ private struct OverlayListSheet: View {
         OverlayEditSheet(
           session: session,
           photoItem: $photoItem,
+          eventTitle: environment.gameStation.chosen?.title,
           onSaveURL: { url in
             if let overlay = session.overlay {
               environment.updateOverlayURL(id: overlay.id, url: url)
@@ -598,6 +607,8 @@ private struct OverlayListSheet: View {
 
   private func listTitle(_ overlay: ProgramOverlay) -> String {
     switch overlay.kind {
+    case .scoreboard:
+      "Scoreboard"
     case .web:
       overlay.url
     case .image:
@@ -631,15 +642,24 @@ private struct OverlayListThumb: View {
       if let image {
         Image(uiImage: image)
           .resizable()
-          .aspectRatio(contentMode: overlay.kind == .web ? .fill : .fit)
+          .aspectRatio(contentMode: overlay.kind.isWebBacked ? .fill : .fit)
       } else {
-        Image(systemName: overlay.kind == .web ? "globe" : overlay.kind == .text ? "textformat" : "photo")
+        Image(systemName: Self.symbol(overlay.kind))
           .foregroundStyle(.secondary)
       }
     }
     .frame(width: 48, height: 48)
     .clipShape(RoundedRectangle(cornerRadius: 6))
     .accessibilityHidden(true)
+  }
+
+  private static func symbol(_ kind: ProgramOverlayKind) -> String {
+    switch kind {
+    case .web: "globe"
+    case .scoreboard: "sportscourt"
+    case .text: "textformat"
+    case .image: "photo"
+    }
   }
 }
 
@@ -822,7 +842,7 @@ private struct OverlayHandle: View {
               height: value.location.y - origin.y
             )
             onResize(
-              overlay.kind == .web
+              overlay.kind.isWebBacked
                 ? OverlayLayout.scaledFromOrigin(start, translation: translation)
                 : overlay.kind == .text
                   ? OverlayLayout.resizedFree(
@@ -865,6 +885,8 @@ private struct OverlayHandle: View {
     switch overlay.kind {
     case .web:
       "Web"
+    case .scoreboard:
+      "Scoreboard"
     case .image:
       overlay.imageDisplayName.isEmpty ? "Image" : overlay.imageDisplayName
     case .text:
@@ -884,6 +906,8 @@ private struct OverlayHandle: View {
 private struct OverlayEditSheet: View {
   let session: OverlayEditSession
   @Binding var photoItem: PhotosPickerItem?
+  /// The chosen GameStation event, which a scoreboard shows.
+  let eventTitle: String?
   let onSaveURL: (String) -> Void
   let onDelete: () -> Void
 
@@ -893,11 +917,13 @@ private struct OverlayEditSheet: View {
   init(
     session: OverlayEditSession,
     photoItem: Binding<PhotosPickerItem?>,
+    eventTitle: String?,
     onSaveURL: @escaping (String) -> Void,
     onDelete: @escaping () -> Void
   ) {
     self.session = session
     _photoItem = photoItem
+    self.eventTitle = eventTitle
     self.onSaveURL = onSaveURL
     self.onDelete = onDelete
     _url = State(initialValue: session.overlay?.url ?? "https://")
@@ -906,7 +932,16 @@ private struct OverlayEditSheet: View {
   var body: some View {
     NavigationStack {
       Form {
-        if session.kind == .web {
+        if session.kind == .scoreboard {
+          // No URL: the page is the chosen event's board.
+          Section("Scoreboard") {
+            Text(
+              eventTitle.map { "Shows the scoreboard of \($0)" }
+                ?? "Pick a GameStation event in Settings to show it on the programme"
+            )
+            .accessibilityIdentifier("overlay-edit-scoreboard")
+          }
+        } else if session.kind == .web {
           Section("URL") {
             ClearableTextField(
               text: $url,

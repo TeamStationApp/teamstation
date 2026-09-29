@@ -5,6 +5,18 @@ public enum ProgramOverlayKind: String, Sendable, Codable, Hashable {
   case web
   case image
   case text
+  /// The chosen GameStation event's scoreboard: a web page whose URL the app
+  /// decides, so the overlay stores none.
+  case scoreboard
+
+  /// Drawn from a web page's snapshot: sized by its page and a scale, anchors
+  /// the overlays parked against it, and grows down and to the right.
+  public var isWebBacked: Bool {
+    switch self {
+    case .web, .scoreboard: true
+    case .image, .text: false
+    }
+  }
 }
 
 public enum TextOverlayAlign: String, Sendable, Codable, Hashable, CaseIterable, Identifiable {
@@ -417,6 +429,102 @@ public enum OverlayLayout {
       return WebNativeResolution(native: saved, pending: pending, applyLayout: false)
     }
     return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+  }
+
+  /// A web-backed overlay after one snapshot of its page, with the page-size
+  /// sighting still waiting to prove itself, and whether the overlay was laid
+  /// out (so the new bitmap fits the box).
+  public struct WebFit: Equatable, Sendable {
+    public var overlay: ProgramOverlay
+    public var pending: PendingWebNative?
+    public var applied: Bool
+  }
+
+  /// Lays a web-backed overlay out from a snapshot of its page measuring
+  /// `incoming`, as `AppEnvironment` does with every snapshot.
+  ///
+  /// Web overlays keep their top-left. Display size is natural page size times the user's scale,
+  /// so a refresh that grows the page grows the box down and to the right instead of cropping.
+  ///
+  /// After a relaunch the first snapshot is often larger than the saved page (unfinished CSS or a
+  /// 1× image.scale on retina). Applying that native size immediately is what made Output jump to
+  /// about half the frame until the content editor forced a second layout.
+  ///
+  /// An overlay that has never been laid out takes its first measure as the page and is placed
+  /// from it. An overlay that already knows its page size (a scoreboard) holds a different
+  /// measure back until it has settled.
+  public static func fitWebSnapshot(
+    _ overlay: ProgramOverlay,
+    native incoming: CGSize,
+    canvas: CGSize,
+    pending: PendingWebNative?,
+    now: Date
+  ) -> WebFit {
+    var next = overlay
+    let firstMeasure = next.nativeWidth < 1
+    var native = incoming
+    if next.hasLaidOut, !firstMeasure {
+      let saved = CGSize(width: next.nativeWidth, height: next.nativeHeight)
+      let resolved = resolveWebNative(incoming: incoming, saved: saved, pending: pending, now: now)
+      guard resolved.applyLayout else {
+        return WebFit(overlay: overlay, pending: resolved.pending, applied: false)
+      }
+      native = resolved.native
+    }
+    next.nativeWidth = Double(native.width)
+    next.nativeHeight = Double(native.height)
+    if !next.hasLaidOut {
+      if next.placement == .topLeftNative {
+        next.scale = 1
+        next.originX = Double(topLeftInset.x / canvas.width)
+        next.originY = Double(topLeftInset.y / canvas.height)
+      } else {
+        next.scale = scaleFittingQuarter(native: native, canvas: canvas)
+        let size = CGSize(width: native.width * next.scale, height: native.height * next.scale)
+        next.originX = Double((canvas.width - size.width) / 2 / canvas.width)
+        next.originY = Double((canvas.height - size.height) / 2 / canvas.height)
+      }
+    } else if firstMeasure, next.width > 0 {
+      next.scale = (next.width * canvas.width) / max(Double(native.width), 1)
+    }
+    let size = scaledNormalized(native: native, scale: next.scale, canvas: canvas)
+    next.width = size.width
+    next.height = size.height
+    next.hasLaidOut = true
+    return WebFit(overlay: next, pending: nil, applied: true)
+  }
+
+  /// An overlay resized in the editor to `rect`, in fractions of the canvas.
+  ///
+  /// A web-backed overlay's scale follows the new width and its height
+  /// follows its page's shape, so the next snapshot, which lays the overlay
+  /// out from its page size and scale, keeps the new size. A text box that
+  /// hugged its glyphs stops hugging them.
+  public static func applyResize(
+    _ overlay: ProgramOverlay,
+    to rect: CGRect,
+    canvas: CGSize
+  ) -> ProgramOverlay {
+    var next = overlay
+    next.originX = Double(rect.origin.x)
+    next.originY = Double(rect.origin.y)
+    next.width = min(max(Double(rect.width), 0.02), 4)
+    next.height = min(max(Double(rect.height), 0.02), 4)
+    next.hasLaidOut = true
+    if next.kind == .text, next.hugText {
+      next.hugText = false
+    }
+    if next.kind.isWebBacked, next.nativeWidth >= 1 {
+      next.scale = (next.width * canvas.width) / next.nativeWidth
+      let size = scaledNormalized(
+        native: CGSize(width: next.nativeWidth, height: next.nativeHeight),
+        scale: next.scale,
+        canvas: canvas
+      )
+      next.width = size.width
+      next.height = size.height
+    }
+    return next
   }
 
   public static func pixelRect(_ overlay: ProgramOverlay, canvas: CGSize) -> CGRect {

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Named set of Output graphics. One is active at a time.
@@ -16,6 +17,39 @@ public struct OverlayTemplate: Sendable, Codable, Identifiable, Hashable {
     self.id = id
     self.name = name
     self.overlays = overlays
+  }
+}
+
+extension OverlayTemplate {
+  /// This template with a scoreboard added in the centre quarter, placed as
+  /// a page of board size B (`ScoreboardOverlaySource.boardSize`) would be,
+  /// or nil when it already has one: a template holds one scoreboard at most.
+  ///
+  /// It is added already laid out from that page, scale and page size
+  /// included. The page's first measure is the empty document before the
+  /// board mounts, the whole web view, and an overlay not yet laid out would
+  /// be placed from it and keep that scale when the board arrived, about a
+  /// twenty-fifth of the programme wide. Knowing its page, the overlay holds
+  /// that measure back until it settles, and it never does.
+  public func addingScoreboard(canvas: CGSize) -> OverlayTemplate? {
+    guard !overlays.contains(where: { $0.kind == .scoreboard }) else { return nil }
+    let page = ScoreboardOverlaySource.boardSize
+    let rect = OverlayLayout.centerQuarter(native: page, canvas: canvas)
+    let placed = OverlayLayout.normalized(rect, canvas: canvas)
+    var next = self
+    next.overlays.append(ProgramOverlay(
+      kind: .scoreboard,
+      originX: placed.originX,
+      originY: placed.originY,
+      width: placed.width,
+      height: placed.height,
+      scale: OverlayLayout.scaleFittingQuarter(native: page, canvas: canvas),
+      nativeWidth: Double(page.width),
+      nativeHeight: Double(page.height),
+      placement: .centerQuarter,
+      hasLaidOut: true
+    ))
+    return next
   }
 }
 
