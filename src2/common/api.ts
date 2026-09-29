@@ -1922,6 +1922,8 @@ export type DictationReply =
       transcript: string
       actions: ScoringAction[]
       dropped: Problem[]
+      /** Take back the last thing scored, as Undo does, before the actions. */
+      undo?: boolean
     }
   | {
       kind: 'ask'
@@ -1936,16 +1938,16 @@ export const asDictationReply: Cleaner<DictationReply> = raw => {
     case 'partial':
     case 'transcript':
       return { kind, ...asObject({ id: asNonEmpty, text: asString })(raw) }
-    case 'actions':
-      return {
-        kind,
-        ...asObject({
-          id: asNonEmpty,
-          transcript: asString,
-          actions: asArray(asWireAction),
-          dropped: asOptional(asArray(asProblem), () => [])
-        })(raw)
-      }
+    case 'actions': {
+      const { undo, ...rest } = asObject({
+        id: asNonEmpty,
+        transcript: asString,
+        actions: asArray(asWireAction),
+        dropped: asOptional(asArray(asProblem), () => []),
+        undo: asOptional(asBoolean)
+      })(raw)
+      return { kind, ...rest, ...(undo === true ? { undo } : {}) }
+    }
     case 'ask':
       return {
         kind,

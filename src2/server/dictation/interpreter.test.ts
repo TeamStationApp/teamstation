@@ -13,7 +13,8 @@ import {
   type InterpreterConfig,
   MAX_FOLLOW_UPS,
   RESULT_MISSING,
-  systemPrompt
+  systemPrompt,
+  UNDO
 } from './interpreter'
 
 interface Sent {
@@ -157,7 +158,8 @@ describe('dictation interpreter', function () {
     expect(sent.body.tool_choice).equals('required')
     expect(sent.body.tools.map(t => t.function.name)).deep.equals([
       ...ACTION_TYPES,
-      'askScorer'
+      'askScorer',
+      'undo'
     ])
     const system = sent.body.messages[0].content ?? ''
     // The system prompt is the same for every sentence, so a provider can
@@ -169,10 +171,13 @@ describe('dictation interpreter', function () {
       { role: 'user', content: 'ball' }
     ])
     expect(gamePrompt('X')).equals('GAME\nX')
-    // Only what was said, every call a tool call.
+    // Only what was said, every call a tool call, undo only when asked.
     expect(system).includes('it is not a list of events')
     expect(system).includes('never call pitch once for each of its codes')
     expect(system).includes('Never write a call, or its JSON')
+    expect(system).match(
+      /"caught stealing", "picked off",\s+"out" — never call undo/
+    )
     expect(system).includes(DICTATION_VOCABULARY)
     expect(system).match(/Never call gameFlow with kind closePlay/)
     // With no cache key, no routing hint.
@@ -197,7 +202,8 @@ describe('dictation interpreter', function () {
     await new Interpretation(config(stub.fetch, { tools }), 'c', 'ball').start()
     expect(stub.sent[0].body.tools.map(t => t.function.name)).deep.equals([
       'pitch',
-      'askScorer'
+      'askScorer',
+      'undo'
     ])
   })
 
@@ -781,8 +787,8 @@ describe('dictation interpreter, other providers', function () {
     expect(request.body.temperature).equals(0)
     expect(
       request.body.tools.map((tool: { name: string }) => tool.name)
-    ).deep.equals([...ACTION_TYPES, 'askScorer'])
-    expect(request.body.tools.at(-1).input_schema).deep.equals(
+    ).deep.equals([...ACTION_TYPES, 'askScorer', 'undo'])
+    expect(request.body.tools.at(-2).input_schema).deep.equals(
       ASK_SCORER.function.parameters
     )
     expect(request.body.messages).deep.equals([
@@ -1028,5 +1034,142 @@ describe('dictation interpreter, a model that makes one call a reply', function 
     expect(turn.kind === 'actions' && turn.actions.length).equals(
       MAX_FOLLOW_UPS + 1
     )
+  })
+})
+
+describe('dictation interpreter, undo', function () {
+  it('takes back the last thing scored, alone or before what follows', async function () {
+    const alone = provider([call('u1', 'undo', {})])
+    expect(
+      await new Interpretation(config(alone.fetch), 'ctx', 'Undo that.').start()
+    ).deep.equals({ kind: 'actions', actions: [], dropped: [], undo: true })
+    expect(
+      alone.sent[0].body.tools.map(tool => tool.function.name).slice(-2)
+    ).deep.equals(['askScorer', 'undo'])
+    const then = provider([
+      call('u1', 'undo', {}),
+      call('c1', 'pitch', { call: 'C' })
+    ])
+    expect(
+      await new Interpretation(
+        config(then.fetch),
+        'ctx',
+        'Scratch that, it was a called strike.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'pitch', call: 'C' }],
+      dropped: [],
+      undo: true
+    })
+  })
+
+  it('takes back the last play when the sentence opens by taking it back, though the model left out undo', async function () {
+    for (const words of [
+      'Scratch that, it was a called strike.',
+      'Undo that last pitch, ball.',
+      'Take that back, it was a strike.',
+      'Scratch the last pitch, called strike.'
+    ]) {
+      const left = provider([call('c1', 'pitch', { call: 'C' })])
+      expect(
+        await new Interpretation(config(left.fetch), 'ctx', words).start(),
+        words
+      ).deep.equals({
+        kind: 'actions',
+        actions: [{ type: 'pitch', call: 'C' }],
+        dropped: [],
+        undo: true
+      })
+    }
+    // A take-back later in the sentence corrects its own words, a scratch
+    // hit is a play, and "never mind" is left to the model.
+    for (const words of [
+      'Ball, no, scratch that, called strike.',
+      'Scratch single to third.',
+      'Never mind, called strike.'
+    ]) {
+      const plain = provider([call('c1', 'pitch', { call: 'C' })])
+      expect(
+        await new Interpretation(config(plain.fetch), 'ctx', words).start(),
+        words
+      ).not.to.have.property('undo')
+    }
+  })
+
+  it('keeps an undo said in other take-back words', async function () {
+    for (const words of [
+      'Strike that, it was a foul ball.',
+      'Go back one, that was a strike.',
+      'Remove that last pitch.',
+      'Undue that last play.'
+    ]) {
+      const kept = provider([call('u1', 'undo', {})])
+      expect(
+        await new Interpretation(config(kept.fetch), 'ctx', words).start(),
+        words
+      ).deep.include({ undo: true })
+    }
+  })
+
+  it('reads calls written as text beside an undo the words did not ask for', async function () {
+    const stub = provider({
+      status: 200,
+      text: JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: '{"name": "pitch", "parameters": {"call": "B"}}',
+              tool_calls: [call('u1', 'undo', {})]
+            }
+          }
+        ]
+      })
+    })
+    expect(
+      await new Interpretation(config(stub.fetch), 'ctx', 'Ball four.').start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'pitch', call: 'B' }],
+      dropped: []
+    })
+  })
+
+  it('ignores an undo the words did not ask for', async function () {
+    const stray = provider([call('u1', 'undo', {})])
+    const turn = await new Interpretation(
+      config(stray.fetch),
+      'ctx',
+      'Double to right center.'
+    ).start()
+    expect(turn.kind).equals('error')
+    expect(turn.kind === 'error' && turn.message).includes(
+      'An undo the words did not ask for was ignored'
+    )
+  })
+
+  it('offers undo to Anthropic too, and counts it once in a follow-up round', async function () {
+    const { fetch, sent } = anthropic([
+      { type: 'tool_use', id: 'u1', name: 'undo', input: {} }
+    ])
+    expect(
+      await new Interpretation(
+        config(fetch, { api: 'messages' }),
+        'ctx',
+        'Undo.'
+      ).start()
+    ).deep.include({ undo: true })
+    expect(sent[0].body.tools.at(-1)).deep.equals({
+      name: 'undo',
+      description: UNDO.function.description,
+      input_schema: UNDO.function.parameters
+    })
+    const twice = provider([call('u1', 'undo', {})], [call('u2', 'undo', {})])
+    await new Interpretation(
+      config(twice.fetch, { followUp: true }),
+      'ctx',
+      'Undo.'
+    ).start()
+    expect(twice.sent).to.have.length(2)
   })
 })

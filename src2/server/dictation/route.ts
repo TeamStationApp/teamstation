@@ -322,11 +322,12 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
           id,
           transcript,
           actions: turn.actions,
-          dropped: turn.dropped
+          dropped: turn.dropped,
+          ...(turn.undo === true ? { undo: true } : {})
         })
         finish(
           flight,
-          `${turn.actions.length} actions, ${turn.dropped.length} dropped`
+          `${turn.undo === true ? 'undo, ' : ''}${turn.actions.length} actions, ${turn.dropped.length} dropped`
         )
         return
       case 'ask':

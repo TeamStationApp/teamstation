@@ -24,6 +24,7 @@ import {
   undoesHitOffer
 } from '../../common/scoring/rules'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
+import type { GameState } from '../../common/scoring/state'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -49,7 +50,11 @@ import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
-import { describeEntryPlays, describeLastPlay } from './playDescription'
+import {
+  describeEntryPlays,
+  describeLastPlay,
+  describePlay
+} from './playDescription'
 import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -479,18 +484,85 @@ function ScoringPanel(props: {
       lastEntry?.label === state.dictation.transcript
         ? {
             id: entryId(lastEntry),
-            lines: describeEntryPlays(
-              state.log,
-              state.past,
-              () => game.opening
+            lines: describeEntryPlays(log, past, logLength =>
+              sessionAt({ log, checkpoints }, logLength, () => game.opening)
             ).flatMap(play => [
               play.primary,
               ...(play.secondary == null ? [] : [play.secondary])
             ])
           }
         : undefined,
-    [state.dictation, lastEntry, state.log, state.past, game]
+    [state.dictation, lastEntry, log, past, checkpoints, game]
   )
+  // A dictated undo: the step back the Undo button takes, but at once, so the
+  // rest of the sentence is applied after it. What it took back — the
+  // actions, and the game they were applied to — or null for nothing.
+  const undoLast = (): {
+    removed: ScoringAction[]
+    before: GameState
+    label?: string
+  } | null => {
+    scoringAudio.stop()
+    if (status.readOnly) return null
+    const entry = state.past.at(-1)
+    if (entry != null || state.log.length === 0) {
+      dispatch({ type: 'UNDO' })
+      return entry == null
+        ? null
+        : {
+            removed: state.log.slice(entry.logLength),
+            before: sessionAt(state, entry.logLength, () => game.opening),
+            label: entry.label
+          }
+    }
+    // Scored before this screen opened: the game steps back one action, and
+    // on past any step the screen cannot rest on, as an Undo tap does.
+    props.game.sync(state.log)
+    let undone = props.game.undo()
+    while (
+      undone.problems.length === 0 &&
+      (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
+    )
+      undone = props.game.undo()
+    if (undone.problems.length > 0) return null
+    dispatch({
+      type: 'RESET',
+      session: props.game.state,
+      log: [...props.game.actions]
+    })
+    return {
+      removed: state.log.slice(props.game.actions.length),
+      before: props.game.state
+    }
+  }
+  // The log's line for a dictated undo, from what it took back.
+  const undoneLine = (
+    taken: {
+      removed: ScoringAction[]
+      before: GameState
+      label?: string
+    } | null
+  ): string => {
+    if (taken == null) return 'Nothing to undo'
+    const closing = (action: ScoringAction): boolean =>
+      action.type === 'gameFlow' && action.kind === 'closePlay'
+    const shown = taken.removed.filter(action => !closing(action))
+    if (shown.length === 0 && taken.removed.length > 0)
+      return 'Reopened the last play'
+    // A tapped step that changed no play of its own ("Fielded by …") is
+    // named as the Undo entry names it.
+    const described =
+      shown.length === 0
+        ? undefined
+        : describePlay(taken.before, shown, state.session)?.primary
+    return `Undid ${
+      described != null && described !== 'Play changed'
+        ? described
+        : (taken.label ?? 'the last step')
+    }`
+  }
+  // The log's line for a dictated undo; `id` changes per undo.
+  const [undone, setUndone] = useState<{ id: number; line: string }>()
   const dictation = useDictationControls({
     health: props.persistent ? health : noDictation,
     url: socketUrl,
@@ -509,8 +581,21 @@ function ScoringPanel(props: {
     },
     // While a play is drawn or a player dragged, Space is the field's.
     spaceTalks: (atRest(state) || state.reel != null) && !gestureActive,
-    onActions: (transcript, actions) => {
-      dispatch({ type: 'DICTATED', transcript, actions })
+    undone,
+    onActions: (transcript, actions, undo) => {
+      if (undo === true) {
+        // Undone now, before the rest of the sentence is applied. With a
+        // question open, what is taken back is the unanswered sentence.
+        const line =
+          state.dictationQuestion != null
+            ? 'Dropped the question'
+            : undoneLine(undoLast())
+        if (state.dictationQuestion != null)
+          dispatch({ type: 'DICTATION_DISMISS' })
+        setUndone(last => ({ id: (last?.id ?? 0) + 1, line }))
+      }
+      if (actions.length > 0)
+        dispatch({ type: 'DICTATED', transcript, actions })
     }
   })
   const line = session.liveData.linescore

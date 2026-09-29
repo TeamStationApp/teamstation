@@ -53,3 +53,6 @@ clip fieldersChoice "Ground ball to the shortstop, fielder's choice."
 clip heStealsThird 'And he steals third.'
 clip doubleSteal "And it's a double steal."
 clip heSteals 'And he steals.'
+# E19: Undo by voice
+clip undoLast 'Undo that last play.'
+clip scratchStrike 'Scratch that, it was a called strike.'

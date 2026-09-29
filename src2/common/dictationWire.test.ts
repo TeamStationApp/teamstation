@@ -102,7 +102,15 @@ describe('dictation wire', function () {
         question: 'Which Chase?',
         options: [{ label: 'Chase L.', actions: [ball] }, { label: 'Chase M.' }]
       },
-      { kind: 'error', id: null, message: 'down' }
+      { kind: 'error', id: null, message: 'down' },
+      {
+        kind: 'actions',
+        id: 'u1',
+        transcript: 'undo that',
+        actions: [],
+        dropped: [],
+        undo: true
+      }
     ]
     for (const reply of replies)
       expect(asDictationReply(reply)).deep.equals(reply)
