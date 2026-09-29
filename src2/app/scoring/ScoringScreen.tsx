@@ -1026,7 +1026,7 @@ function ScoringPanel(props: {
           log={state.log}
           problem={state.dictation?.problem}
           // While a play is drawn or a player dragged, Space is the field's.
-          spaceTalks={atRest(state) && !gestureActive}
+          spaceTalks={(atRest(state) || state.reel != null) && !gestureActive}
           onActions={(transcript, actions) => {
             dispatch({ type: 'DICTATED', transcript, actions })
           }}

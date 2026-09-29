@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import { useBreakpoint } from '../components'
 import { useTheme } from '../theme/ThemeContext'
+import { fieldActivity } from './fieldActivity'
 import { syncFieldNameplates } from './fieldNameplates'
 import { fieldPixelRatioRange } from './fieldResolution'
 import { FieldScene } from './FieldScene'
@@ -156,6 +157,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
     setGeneration(value => value + 1)
   }
   if (!available) return <Unavailable retry={retry} />
+  const activity = fieldActivity(props.presentation, props.players)
   return (
     <div
       onPointerCancelCapture={() => {
@@ -165,6 +167,9 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
         cancelGesture.current?.()
       }}
       tabIndex={0}
+      data-presentation={activity.presentation}
+      data-presentation-id={activity.id}
+      data-moving={activity.moving}
       role="application"
       aria-label="Baseball field. Brackets focus a player, Space grabs, arrows move, S or O chooses runner Safe or Out, Enter releases, Escape cancels."
       onKeyDown={event => {

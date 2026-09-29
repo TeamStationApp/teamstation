@@ -8,6 +8,7 @@ import {
   placeFielder,
   placeLanding
 } from './battedBall'
+import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreReducer } from './moreActions'
 import {
   accepted,
@@ -386,6 +387,24 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  let next = reduce(state, event)
+  // A sentence that came back while the last one was shown applies once the
+  // screen is at rest again.
+  while (
+    next.queuedDictation != null &&
+    next.queuedDictation.length > 0 &&
+    next.reel == null &&
+    atRest(next)
+  ) {
+    const [first, ...rest] = next.queuedDictation
+    const waiting: ScoringState = { ...next }
+    if (rest.length > 0) waiting.queuedDictation = rest
+    else delete waiting.queuedDictation
+    next = dictated(waiting, first)
+  }
+  return next
+}
+function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
   if (event.type === 'PRESENTATION')
     return state.presentationEnabled === event.enabled
       ? state
@@ -428,6 +447,12 @@ export function scoringReducer(
       past: state.past,
       checkpoints: state.checkpoints,
       presentation: null
+    }
+    // A dictated picture shows what the sentence already recorded.
+    if (sequence.dictated === true) {
+      advanceReel(next)
+      settleRunners(next)
+      return next
     }
     if (sequence.kind === 'throw') {
       completeDefense(next, sequence)
@@ -521,6 +546,8 @@ export function scoringReducer(
       generation: state.generation + 1
     }
     delete next.dictation
+    delete next.reel
+    delete next.queuedDictation
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
       next.correctionWindow = {
@@ -808,7 +835,8 @@ export function atRest(state: ScoringState): boolean {
     AT_REST.includes(state.phase) &&
     state.runnerDraft == null &&
     state.moreDraft == null &&
-    state.presentation == null
+    state.presentation == null &&
+    state.reel == null
   )
 }
 
@@ -831,6 +859,16 @@ function dictated(
   // `act` throws before it reaches the rules engine here, so a dry run
   // cannot see it.
   if (state.readOnly === true) return refused('Scoring is read-only')
+  // The last sentence is still being shown. The game already holds it, so
+  // this one was spoken about the game as it is: it waits its turn.
+  if (state.reel != null)
+    return {
+      ...state,
+      queuedDictation: [
+        ...(state.queuedDictation ?? []),
+        { transcript, actions: [...actions] }
+      ]
+    }
   if (!atRest(state))
     return refused('Finish what is on screen, then say it again')
   let game = state.session
@@ -843,8 +881,22 @@ function dictated(
       }
     game = applied.state
   }
+  const reel = new ReelBuilder(state.presentationEnabled === true)
   const next = accepted(current, transcript, edit => {
-    for (const action of actions) act(edit, action)
+    actions.forEach((action, index) => {
+      reel.before(edit, action, actions.slice(index + 1))
+      const known = new Set(edit.motions.map(motion => motion.id))
+      act(edit, action)
+      reel.after(edit.motions.filter(motion => !known.has(motion.id)))
+      edit.motions = edit.motions.filter(motion => known.has(motion.id))
+    })
+    if (reel.homeRunKind != null)
+      edit.celebration = {
+        id: `${edit.generation}:${edit.session.meta.sequence}:home-run`,
+        generation: edit.generation,
+        kind: reel.homeRunKind
+      }
+    beginReel(edit, reel.finish(edit))
     settleRunners(edit)
   })
   // The dry run and `act` consult the same rules, so this is only a guard.

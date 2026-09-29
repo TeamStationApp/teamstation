@@ -249,6 +249,15 @@ export function scoringFieldPlayers(
       player.runnerBase = 4
     }
   for (const command of state.motions) {
+    // Waiting for his beat of a dictated sentence: where he starts, still.
+    if (command.held === true && !command.complete) {
+      const player = addRunner(command.playerId)
+      player.batting = false
+      player.position = { ...command.waypoints[0] }
+      player.target = { ...command.waypoints[0] }
+      player.motion = undefined
+      continue
+    }
     if (
       command.complete ||
       (state.presentation?.kind === 'hit' &&

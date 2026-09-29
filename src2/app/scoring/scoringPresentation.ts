@@ -16,6 +16,8 @@ export interface Point3 extends GroundPoint {
   y: number
 }
 export interface PitchSequence {
+  /** Played for a dictated sentence: it shows what was already recorded. */
+  dictated?: boolean
   id: string
   generation: number
   stage: 'delivery'
@@ -76,6 +78,7 @@ export function pitchPresentation(
   }
 }
 export interface HitSequence {
+  dictated?: boolean
   contactKind?: ContactKind
   outOfPark?: boolean
   fielderTarget?: GroundPoint
@@ -98,6 +101,7 @@ export interface HitSequence {
   out: boolean
 }
 export interface ThrowSequence {
+  dictated?: boolean
   id: string
   generation: number
   kind: 'throw'
@@ -140,6 +144,72 @@ export function outBatterPoint(
     z: start.z + (end.z - start.z) * t
   }
 }
+/** What a throw is made of, however it came about: a drag or a sentence. */
+export interface ThrowParts {
+  /** The field as the throw starts; the three below are placed on it. */
+  players: FieldPlayer[]
+  thrower: number
+  receiver: number
+  runner: number
+  from: GroundPoint
+  to: GroundPoint
+  runnerPoint: GroundPoint
+  /** The last fielder runs the ball to the base himself. */
+  final: boolean
+}
+export function throwSequence(
+  state: ScoringState,
+  parts: ThrowParts
+): ThrowSequence {
+  const { players, thrower, receiver, from, to, runnerPoint, final } = parts
+  const runner = players.find(p => p.playerId === parts.runner)!
+  runner.position = { ...runnerPoint }
+  runner.target = { ...runnerPoint }
+  runner.batting = false
+  for (const player of players) {
+    if (player.playerId === thrower) {
+      player.position = { ...from }
+      player.target = { ...from }
+    } else if (player.playerId === receiver) {
+      player.position = { ...to }
+      player.target = { ...to }
+    }
+  }
+  const unassisted = final
+  const throwSide =
+    state.session.gameData.players[thrower].throws === 'left' ? 'L' : 'R'
+  const heading = Math.atan2(to.x - from.x, to.z - from.z)
+  return {
+    id: `${state.generation}:${state.session.meta.sequence + 1}:throw`,
+    generation: state.generation,
+    kind: 'throw',
+    stage: final ? 'tag' : 'transfer',
+    players,
+    thrower,
+    receiver,
+    runner: parts.runner,
+    holderOrigin: { ...from },
+    runnerFrom: { ...runnerPoint },
+    throwSide,
+    heading,
+    from: final
+      ? { ...from, y: 6 }
+      : pitchingHand(from, 150, 150, throwSide, heading),
+    to: { ...to, y: 5.2 },
+    unassisted,
+    durationMs: unassisted
+      ? Math.max(
+          650,
+          (Math.max(
+            Math.hypot(to.x - from.x, to.z - from.z),
+            Math.hypot(to.x - runnerPoint.x, to.z - runnerPoint.z)
+          ) /
+            OUT_APPROACH_SPEED) *
+            1000
+        )
+      : 900
+  }
+}
 export function throwPresentation(
   state: ScoringState,
   receiver: number,
@@ -170,52 +240,16 @@ export function throwPresentation(
     state.pendingPlay?.batterPoint != null
       ? state.pendingPlay.batterPoint
       : runner.position)
-  runner.position = { ...runnerPoint }
-  runner.target = { ...runnerPoint }
-  runner.batting = false
-  for (const player of players) {
-    if (player.playerId === thrower) {
-      player.position = { ...from }
-      player.target = { ...from }
-    } else if (player.playerId === receiver) {
-      player.position = { ...to }
-      player.target = { ...to }
-    }
-  }
-  const unassisted = final
-  const throwSide =
-    state.session.gameData.players[thrower].throws === 'left' ? 'L' : 'R'
-  const heading = Math.atan2(to.x - from.x, to.z - from.z)
-  return {
-    id: `${state.generation}:${state.session.meta.sequence + 1}:throw`,
-    generation: state.generation,
-    kind: 'throw',
-    stage: final ? 'tag' : 'transfer',
+  return throwSequence(state, {
     players,
     thrower,
     receiver,
     runner: action.playerId,
-    holderOrigin: { ...from },
-    runnerFrom: { ...runnerPoint },
-    throwSide,
-    heading,
-    from: final
-      ? { ...from, y: 6 }
-      : pitchingHand(from, 150, 150, throwSide, heading),
-    to: { ...to, y: 5.2 },
-    unassisted,
-    durationMs: unassisted
-      ? Math.max(
-          650,
-          (Math.max(
-            Math.hypot(to.x - from.x, to.z - from.z),
-            Math.hypot(to.x - runnerPoint.x, to.z - runnerPoint.z)
-          ) /
-            OUT_APPROACH_SPEED) *
-            1000
-        )
-      : 900
-  }
+    from,
+    to,
+    runnerPoint,
+    final
+  })
 }
 export function hitPresentation(
   state: ScoringState,
