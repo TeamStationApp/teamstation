@@ -42,6 +42,8 @@ export interface UseDictationOptions {
   log: readonly ScoringAction[]
   onActions: (transcript: string, actions: ScoringAction[]) => void
   model?: DictationModel
+  /** How long audio keeps flowing after a release. Tests shorten it. */
+  tailMs?: number
   openSocket?: (url: string) => DictationSocket
   openMicrophone?: OpenMicrophone
 }
@@ -57,7 +59,11 @@ export interface Dictation {
   message: string | null
   ask: DictationAsk | null
   setEnabled: (on: boolean) => void
-  hold: () => void
+  /**
+   * Starts an utterance. `since` is when the press began: the audio heard
+   * from then, kept while nobody was talking, leads it.
+   */
+  hold: (since?: number) => void
   release: () => void
   answer: (option: number) => void
   dismiss: () => void
@@ -76,6 +82,14 @@ export interface DictationButtonProps {
   question?: DictationQuestion
   onAnswer?: (answer: { option?: number; picks?: number[] }) => void
   onDismissQuestion?: () => void
+  /** The plays the last applied sentence made, for the log; `id` changes per sentence. */
+  played?: { id: number; lines: string[] }
+  /** A press shorter than this is a tap. Tests shorten it. */
+  tapMs?: number
+  /** How long audio keeps flowing after a release. Tests shorten it. */
+  tailMs?: number
+  /** How long the log stays up after its last new line. Tests shorten it. */
+  lingerMs?: number
   /**
    * Whether Space is the talk key now. Absent means yes; the screen turns it
    * off while the field has a use for Space.

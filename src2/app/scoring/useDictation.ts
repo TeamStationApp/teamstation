@@ -57,6 +57,15 @@ export function dictationContext(session: ScoringSessionState): string {
 const OPEN = 1
 const FIRST_RETRY_MS = 1000
 const LAST_RETRY_MS = 30000
+/**
+ * How long audio keeps going to the recogniser after a release: the frames
+ * the audio thread had captured but the page had not yet sent, and the last
+ * syllable of a scorer who lets go as the word ends.
+ */
+export const RELEASE_TAIL_MS = 250
+/** How much audio is kept while nobody talks, and one frame of it. */
+const PRE_ROLL_MS = 1000
+const FRAME_MS = 100
 
 export function useDictation(options: UseDictationOptions): Dictation {
   const [enabled, setEnabledState] = useState(false)
@@ -69,6 +78,10 @@ export function useDictation(options: UseDictationOptions): Dictation {
   const socket = useRef<DictationSocket | null>(null)
   const utterance = useRef<string | null>(null)
   const holdingNow = useRef(false)
+  // Released, with the tail of its audio still going out.
+  const releasing = useRef(false)
+  // The last moment of audio, for a press that is a hold only once it lasts.
+  const recent = useRef<Array<{ at: number; pcm: ArrayBuffer }>>([])
   const sentTerms = useRef<string | null>(null)
   const counter = useRef(0)
   const latest = useRef(options)
@@ -177,7 +190,15 @@ export function useDictation(options: UseDictationOptions): Dictation {
     }
     connect()
     ;(latest.current.openMicrophone ?? browserMicrophone)(pcm => {
-      if (holdingNow.current && utterance.current != null) send(pcm)
+      if (holdingNow.current && utterance.current != null) {
+        send(pcm)
+        return
+      }
+      const now = Date.now()
+      recent.current = [
+        ...recent.current.filter(frame => now - frame.at < PRE_ROLL_MS),
+        { at: now, pcm }
+      ]
     }).then(
       opened => {
         if (live) microphone = opened
@@ -230,7 +251,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
       if (on) setMessage(null)
       setEnabledState(on)
     },
-    hold: () => {
+    hold: since => {
       if (utterance.current != null || socket.current?.readyState !== OPEN)
         return
       const id = `u${Date.now().toString(36)}${(counter.current++).toString(36)}`
@@ -249,15 +270,31 @@ export function useDictation(options: UseDictationOptions): Dictation {
         context: dictationContext(session),
         ...(model == null ? {} : { model })
       })
+      if (since != null)
+        for (const frame of recent.current)
+          if (frame.at >= since - FRAME_MS) send(frame.pcm)
+      recent.current = []
     },
     release: () => {
-      if (!holdingNow.current) return
-      holdingNow.current = false
+      if (!holdingNow.current || releasing.current) return
       setHolding(false)
       const id = utterance.current
-      if (id == null) return
+      if (id == null) {
+        holdingNow.current = false
+        return
+      }
       setBusy(true)
-      send({ kind: 'release', id })
+      releasing.current = true
+      const end = (): void => {
+        releasing.current = false
+        // Switched off, or dropped, in the meantime: nothing to end.
+        if (utterance.current !== id) return
+        holdingNow.current = false
+        send({ kind: 'release', id })
+      }
+      const tail = latest.current.tailMs ?? RELEASE_TAIL_MS
+      if (tail <= 0) end()
+      else setTimeout(end, tail)
     },
     answer: option => {
       const id = utterance.current

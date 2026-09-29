@@ -44,12 +44,12 @@ import { WalkUpControl } from '../walkup/WalkUpControl'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
-import { DictationButton } from './DictationButton'
+import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
-import { describeLastPlay } from './playDescription'
+import { describeEntryPlays, describeLastPlay } from './playDescription'
 import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -76,7 +76,7 @@ import {
 import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import { DevelopmentScoringSource, type ScoringSource } from './scoringSource'
-import type { ScoringEvent } from './scoringTypes'
+import type { HistoryEntry, ScoringEvent } from './scoringTypes'
 import { dictationUrl } from './useDictation'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
@@ -241,6 +241,17 @@ export function saveStatusText(status: SaveStatus): string | null {
   if (status.problem != null) return `Not saved: ${status.problem}`
   if (status.pending > 0) return 'Saving…'
   return null
+}
+/** A number for each Undo entry, the same for as long as the entry lasts. */
+const entryIds = new WeakMap<HistoryEntry, number>()
+let nextEntryId = 1
+function entryId(entry: HistoryEntry): number {
+  let id = entryIds.get(entry)
+  if (id == null) {
+    id = nextEntryId++
+    entryIds.set(entry, id)
+  }
+  return id
 }
 function ScoringPanel(props: {
   game: GameSession
@@ -433,7 +444,20 @@ function ScoringPanel(props: {
   const session = state.session
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
+  const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
+  // A development game has no server to dictate to.
+  const noDictation = useCallback(
+    async () => ({
+      status: 'ok' as const,
+      version: '',
+      database: 'ok' as const,
+      migrations: 0,
+      dictation: false
+    }),
+    []
+  )
   // The last play in two lines, however many entries it took to tap.
+  const lastEntry = state.past.at(-1)
   const { game } = props
   const { log, past, checkpoints } = state
   const lastPlay = useMemo(
@@ -443,7 +467,48 @@ function ScoringPanel(props: {
       ),
     [game, log, past, session, checkpoints]
   )
-  const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
+  // The last sentence's plays — each batter's, when it scored more than
+  // one — once per sentence, for the dictation log.
+  const played = useMemo(
+    () =>
+      state.dictation != null &&
+      state.dictation.problem == null &&
+      lastEntry?.label === state.dictation.transcript
+        ? {
+            id: entryId(lastEntry),
+            lines: describeEntryPlays(
+              state.log,
+              state.past,
+              () => game.opening
+            ).flatMap(play => [
+              play.primary,
+              ...(play.secondary == null ? [] : [play.secondary])
+            ])
+          }
+        : undefined,
+    [state.dictation, lastEntry, state.log, state.past, game]
+  )
+  const dictation = useDictationControls({
+    health: props.persistent ? health : noDictation,
+    url: socketUrl,
+    gameId: props.gameId,
+    session,
+    log: state.log,
+    problem: state.dictation?.problem,
+    question: state.dictationQuestion,
+    played,
+    onAnswer: answer => {
+      dispatch({ type: 'DICTATION_ANSWER', ...answer })
+    },
+    onDismissQuestion: () => {
+      dispatch({ type: 'DICTATION_DISMISS' })
+    },
+    // While a play is drawn or a player dragged, Space is the field's.
+    spaceTalks: (atRest(state) || state.reel != null) && !gestureActive,
+    onActions: (transcript, actions) => {
+      dispatch({ type: 'DICTATED', transcript, actions })
+    }
+  })
   const line = session.liveData.linescore
   const scoredHere = useRef(state.past.length)
   scoredHere.current = state.past.length
@@ -1027,31 +1092,11 @@ function ScoringPanel(props: {
         state.presentation == null
       }
       summary={summary}
+      dictationControl={dictation.control}
+      dictationLog={dictation.log}
       accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
       <ErrorCreditSheet state={state} dispatch={dispatch} />
-      {props.persistent && (
-        <DictationButton
-          health={health}
-          url={socketUrl}
-          gameId={props.gameId}
-          session={session}
-          log={state.log}
-          problem={state.dictation?.problem}
-          question={state.dictationQuestion}
-          onAnswer={answer => {
-            dispatch({ type: 'DICTATION_ANSWER', ...answer })
-          }}
-          onDismissQuestion={() => {
-            dispatch({ type: 'DICTATION_DISMISS' })
-          }}
-          // While a play is drawn or a player dragged, Space is the field's.
-          spaceTalks={(atRest(state) || state.reel != null) && !gestureActive}
-          onActions={(transcript, actions) => {
-            dispatch({ type: 'DICTATED', transcript, actions })
-          }}
-        />
-      )}
       <RelayedRunnerDragTargets
         relay={runnerDrag}
         hides={view =>
