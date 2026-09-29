@@ -20,6 +20,11 @@
        permission. Denying it does not stop the service, but it does hide the only affordance an
        operator has for getting back into a backgrounded camera. -->
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
   <!-- Encoding and serving must survive the screen going off on a phone on a tripod. -->
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <!-- A wake lock keeps the CPU scheduled and says nothing about the radio. Without a WifiLock
@@ -36,6 +41,7 @@
   <uses-feature android:name="android.hardware.camera" android:required="true" />
   <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
   <uses-feature android:name="android.hardware.microphone" android:required="false" />
+  <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
   <application
       android:name=".CameramanApplication"
@@ -78,7 +84,7 @@
         android:name=".service.CameramanService"
         android:exported="false"
         android:stopWithTask="false"
-        android:foregroundServiceType="camera|microphone" />
+        android:foregroundServiceType="camera|microphone|connectedDevice|location" />
 
   </application>
 </manifest>

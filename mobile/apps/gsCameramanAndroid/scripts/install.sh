@@ -12,7 +12,7 @@ bash "$CAMERAMAN_ROOT/scripts/build.sh"
 log "Installing on $DEVICE"
 adb -s "$DEVICE" install -r "$CAMERAMAN_ROOT/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
 
-for permission in CAMERA RECORD_AUDIO POST_NOTIFICATIONS; do
+for permission in CAMERA RECORD_AUDIO POST_NOTIFICATIONS BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_FINE_LOCATION; do
   adb -s "$DEVICE" shell pm grant "$CAMERAMAN_PACKAGE" "android.permission.$permission" || true
 done
 log "Installed and permitted"

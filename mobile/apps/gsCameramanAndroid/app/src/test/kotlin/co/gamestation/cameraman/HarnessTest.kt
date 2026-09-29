@@ -10,6 +10,7 @@ import co.gamestation.cameraman.core.StreamSettings
 import co.gamestation.cameraman.capture.CameraSession
 import co.gamestation.cameraman.capture.FormatCatalogue
 import co.gamestation.cameraman.harness.ControlChannel
+import co.gamestation.cameraman.radar.RadarPhase
 import co.gamestation.cameraman.harness.ControlCommand
 import co.gamestation.cameraman.harness.ControlServer
 import co.gamestation.cameraman.harness.LaunchConfiguration
@@ -442,6 +443,20 @@ class ControlChannelTest {
     fun `set-rotation clears its override when given no value`() {
         assertEquals(ControlCommand.SetRotation(90), command("/set-rotation?degrees=90"))
         assertEquals(ControlCommand.SetRotation(null), command("/set-rotation"))
+    }
+
+    @Test
+    fun `radar commands parse and a serial that is not a TAG One is refused`() {
+        assertEquals(
+            ControlCommand.RadarShow("ADFAA003519", RadarPhase.connected, 0),
+            command("/radar-show?serial=ADFAA003519&phase=connected&step=0")
+        )
+        assertEquals(
+            ControlCommand.RadarFeed(50, 60, 1_000_000),
+            command("/radar-feed?pitch=50&exit=60&now=1000000")
+        )
+        assertEquals(ControlCommand.RadarUnpair, command("/radar-unpair"))
+        assertNull(command("/radar-show?serial=nope&phase=connected"))
     }
 
     @Test

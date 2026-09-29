@@ -166,9 +166,26 @@ class CameramanService : Service() {
      */
     private fun startForegroundWithTypes(environment: AppEnvironment) {
         createNotificationChannel()
-        var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-        if (environment.settings.value.audioEnabled && granted(Manifest.permission.RECORD_AUDIO)) {
-            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        val radarGranted = listOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ).all { granted(it) }
+        var types = 0
+        for (name in co.gamestation.cameraman.radar.ForegroundServiceTypes.names(
+            microphone = environment.settings.value.audioEnabled && granted(Manifest.permission.RECORD_AUDIO),
+            radarGranted = radarGranted
+        )) {
+            types = types or when (name) {
+                co.gamestation.cameraman.radar.ServiceTypeName.Camera ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                co.gamestation.cameraman.radar.ServiceTypeName.Microphone ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                co.gamestation.cameraman.radar.ServiceTypeName.ConnectedDevice ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                co.gamestation.cameraman.radar.ServiceTypeName.Location ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            }
         }
         ServiceCompat.startForeground(
             this,

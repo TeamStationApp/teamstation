@@ -60,6 +60,7 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     val identity by environment.identity.collectAsStateWithLifecycle()
     val thermalLevel by environment.thermalLevel.collectAsStateWithLifecycle()
     val battery by environment.battery.collectAsStateWithLifecycle()
+    val radar by environment.radarState.collectAsStateWithLifecycle()
     val stream by environment.settings.collectAsStateWithLifecycle()
 
     // The gesture handlers below live inside `pointerInput`, whose block is only restarted when its
@@ -231,6 +232,16 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                             }
                     )
                 }
+
+                SpeedOverlay(
+                    state = radar,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            bottom = CameramanTokens.chromeMargin,
+                            end = CameramanTokens.chromeMargin + 32.dp + 10.dp
+                        )
+                )
             }
         }
     }
