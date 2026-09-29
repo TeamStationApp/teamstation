@@ -49,6 +49,7 @@ import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
+import { describeLastPlay } from './playDescription'
 import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -60,7 +61,8 @@ import {
   atRest,
   resumedScoringState,
   scoringScreenModel,
-  scoringScreenReducer
+  scoringScreenReducer,
+  sessionAt
 } from './scoringMachine'
 import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -431,6 +433,16 @@ function ScoringPanel(props: {
   const session = state.session
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
+  // The last play in two lines, however many entries it took to tap.
+  const { game } = props
+  const { log, past, checkpoints } = state
+  const lastPlay = useMemo(
+    () =>
+      describeLastPlay(log, past, session, logLength =>
+        sessionAt({ log, checkpoints }, logLength, () => game.opening)
+      ),
+    [game, log, past, session, checkpoints]
+  )
   const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
   const line = session.liveData.linescore
   const scoredHere = useRef(state.past.length)
@@ -923,6 +935,7 @@ function ScoringPanel(props: {
           : (state.past.at(-1)?.label ??
             (state.log.length > 0 ? 'Last play' : undefined))
       }
+      historyDetail={status.readOnly ? undefined : lastPlay}
       // Read-only asks nothing of the scorer, so it shows no instruction.
       instruction={
         status.readOnly

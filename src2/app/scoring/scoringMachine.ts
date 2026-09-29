@@ -237,7 +237,7 @@ function replay(
  * game back, so the newest and the one before it always hold one.
  */
 function gameAt(
-  state: ScoringState,
+  state: Pick<ScoringState, 'log' | 'checkpoints'>,
   logLength: number
 ): { session: ScoringSessionState; checkpoints: GameCheckpoint[] } {
   const checkpoints = state.checkpoints.filter(
@@ -301,6 +301,21 @@ function restoreTo(
 }
 
 /** Closes the decided play: the game moves on to the next batter. */
+/**
+ * The game when the log was `logLength` long: rebuilt from the checkpoints,
+ * or, before the first of them — a game picked up with its log already
+ * played — from `opening`, the game before the whole log.
+ */
+export function sessionAt(
+  state: Pick<ScoringState, 'log' | 'checkpoints'>,
+  logLength: number,
+  opening: () => ScoringSessionState
+): ScoringSessionState {
+  if (state.checkpoints.some(checkpoint => checkpoint.logLength <= logLength))
+    return gameAt(state, logLength).session
+  return replay(copyGame(opening()), state.log, 0, logLength)
+}
+
 export function closePlay(state: ScoringState): ScoringState {
   if (state.phase !== 'correctionWindow') return state
   const next = {

@@ -251,6 +251,11 @@ export class ScoringSession {
     return this.log
   }
 
+  /** The game before any of its actions: `actions` played on it is `state`. */
+  get opening(): GameState {
+    return this.base
+  }
+
   /**
    * Where a screen picks the game up: the game as it stands, or, when it was
    * left with a ball in play still waiting for its result, the game at the

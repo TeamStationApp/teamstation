@@ -48,6 +48,8 @@ export interface BaseballScreenProps {
   onUndo: () => void
   onPitch: (kind: (typeof PITCH_CONTROLS)[number]['kind']) => void
   historyLabel?: string
+  /** The last play in two lines, shown in place of the label and the hint. */
+  historyDetail?: { primary: string; secondary?: string }
   canPitch: boolean
   remainingMs?: number
   instruction?: string
@@ -322,7 +324,10 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                           fontWeight: '900'
                         }}
                       >
-                        {props.historyLabel ?? lstrings.scoring_no_plays}
+                        {props.historyLabel == null
+                          ? lstrings.scoring_no_plays
+                          : (props.historyDetail?.primary ??
+                            props.historyLabel)}
                       </Text>
                       <Text
                         selectable={false}
@@ -335,7 +340,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                       >
                         {props.historyLabel == null
                           ? lstrings.scoring_history_hint
-                          : lstrings.scoring_undo_hint}
+                          : props.historyDetail == null
+                            ? lstrings.scoring_undo_hint
+                            : (props.historyDetail.secondary ?? '')}
                       </Text>
                     </View>
                   </Pressable>
