@@ -1,9 +1,12 @@
 package co.gamestation.cameraman.engine
 
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
@@ -33,9 +36,16 @@ import co.gamestation.cameraman.core.StreamSettingsStore
 import co.gamestation.cameraman.core.ProcessLoad
 import co.gamestation.cameraman.core.StreamCodec
 import co.gamestation.cameraman.core.StreamSettings
+import co.gamestation.cameraman.radar.PreferencesRadarPairingStore
+import co.gamestation.cameraman.radar.RadarCommand
+import co.gamestation.cameraman.radar.RadarLink
+import co.gamestation.cameraman.radar.RadarPhase
+import co.gamestation.cameraman.radar.RadarSnapshot
+import co.gamestation.cameraman.radar.systemRadarRadio
 import co.gamestation.cameraman.core.ThermalBadgeLevel
 import co.gamestation.cameraman.encode.AudioEncoder
 import co.gamestation.cameraman.encode.VideoEncoder
+import androidx.core.content.ContextCompat
 import co.gamestation.cameraman.harness.AudioStreamRecorder
 import co.gamestation.cameraman.harness.ControlChannel
 import co.gamestation.cameraman.harness.ControlCommand
@@ -105,6 +115,36 @@ class AppEnvironment(
 
     /** The same, for the audio only. See `ControlCommand.SetAudioDelay`. */
     val audioSendDelay = SendDelayLine()
+
+    private val radarLink = RadarLink(
+        store = PreferencesRadarPairingStore(context),
+        radio = systemRadarRadio(context),
+        bluetoothOn = {
+            val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            manager?.adapter?.isEnabled == true
+        },
+        locationOn = {
+            context.getSystemService(LocationManager::class.java)?.isLocationEnabled == true
+        },
+        permissionsGranted = {
+            listOf(
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ).all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        },
+        log = { Log.i("CameramanRadar", it) }
+    )
+    val radarState = radarLink.state
+
+    fun openRadarPicker() = radarLink.openPicker()
+    fun dismissRadarPicker() = radarLink.dismissPicker()
+    fun pairRadar(serial: String) = radarLink.pair(serial)
+    fun unpairRadar() = radarLink.unpair()
+    fun setRadarStep(step: Int) = radarLink.setStep(step)
+    fun setRadarEnabled(enabled: Boolean) = radarLink.setEnabled(enabled)
 
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
@@ -365,6 +405,7 @@ class AppEnvironment(
         observeThermalState()
         observeBattery()
         statusState.value = "starting"
+        radarLink.start()
 
         val settings = settingsState.value.copy()
         videoEncoder.onFailure = { encodeFailureState.value = it.description }
@@ -932,6 +973,21 @@ class AppEnvironment(
             settingsShown.value = false
             ok()
         }
+
+        is ControlCommand.RadarShow -> {
+            radarLink.show(RadarCommand.Show(command.serial, command.phase, command.step))
+            ok()
+        }
+
+        is ControlCommand.RadarFeed -> {
+            radarLink.feed(RadarCommand.Feed(command.pitch, command.exit, command.now))
+            ok()
+        }
+
+        ControlCommand.RadarUnpair -> {
+            radarLink.unpair()
+            ok()
+        }
     }
 
     private fun noteSettingsApplied(next: StreamSettings) {
@@ -1029,6 +1085,7 @@ class AppEnvironment(
             put("wakeLockHeld", wakeLock?.isHeld == true)
             put("wifiLockHeld", wifiLock?.isHeld == true)
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
+            RadarSnapshot.putInto(this, radarLink.state.value)
         }
     }
 
