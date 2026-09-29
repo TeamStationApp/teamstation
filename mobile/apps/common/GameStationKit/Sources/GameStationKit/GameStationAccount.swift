@@ -13,9 +13,14 @@ import Observation
 /// is where this app works and a ball field is where the signal is worst; an
 /// operator who picked the game at home on Friday must be able to press Stream
 /// on Saturday with no network at all.
+///
+/// Choosing a game and claiming it are separate. The chosen game is the one
+/// this Director is covering: every recording is filed under it, and its
+/// scoreboard can be drawn on the programme. Claiming asks GameStation for
+/// somewhere to stream it, which only a stream to the game itself needs.
 @MainActor
 @Observable
-public final class GameStationAccount {
+public final class GameStationAccount: GameStationEventService {
   public private(set) var user: GameStationUser?
   public private(set) var events: [GameStationEvent] = []
   /// The games already played, latest first — the list an upload picks from.
@@ -35,31 +40,37 @@ public final class GameStationAccount {
 
   private let keychain: KeychainStore
   private let deviceName: String
+  private let session: URLSession
 
   public init(
     serverURL: URL,
     deviceName: String,
-    keychain: KeychainStore = KeychainStore(service: "co.gamestation.director")
+    keychain: KeychainStore = KeychainStore(service: "co.gamestation.director"),
+    session: URLSession = .shared
   ) {
     self.serverURL = serverURL
     self.deviceName = deviceName
     self.keychain = keychain
+    self.session = session
     chosen = keychain.chosenEvent()
   }
 
   /// What was picked, kept whole so the app can show the row and stream to it
   /// without asking anybody anything.
+  ///
+  /// `streamURL` is nil until the game has been claimed: a game chosen only to
+  /// file recordings under, or to draw its scoreboard, never asks for one.
   public struct ChosenEvent: Sendable, Codable, Equatable {
     public let gameId: String
     public let title: String
     public let startAt: Date
-    public let streamURL: String
+    public let streamURL: String?
 
     public init(
       gameId: String,
       title: String,
       startAt: Date,
-      streamURL: String
+      streamURL: String?
     ) {
       self.gameId = gameId
       self.title = title
@@ -69,7 +80,7 @@ public final class GameStationAccount {
   }
 
   private var client: GameStationClient {
-    GameStationClient(baseURL: serverURL, token: keychain.token())
+    GameStationClient(baseURL: serverURL, token: keychain.token(), session: session)
   }
 
   /// What one recording's upload is doing, for the row it came from.
@@ -290,27 +301,98 @@ public final class GameStationAccount {
     }
   }
 
-  /// Takes a game: the server hands back where to publish it, and it is kept.
+  /**
+   * Points this Director at a game, and claims it when `claim` is true.
+   *
+   * Unclaimed, nothing is asked of the server: the game is kept as the one
+   * being covered, and a stream address is fetched only if the programme is
+   * later streamed to it. A claim that fails fails the choice, and the game
+   * chosen before stays chosen.
+   */
   @discardableResult
-  public func choose(event: GameStationEvent) async -> Bool {
-    isLoading = true
-    defer { isLoading = false }
-    do {
-      let claim = try await client.claim(gameId: event.gameId)
-      let next = ChosenEvent(
+  public func choose(event: GameStationEvent, claim: Bool = true) async -> Bool {
+    guard claim else {
+      // Choosing the same game again keeps the address it was given.
+      let kept = chosen?.gameId == event.gameId ? chosen?.streamURL : nil
+      keep(ChosenEvent(
         gameId: event.gameId,
         title: event.title,
         startAt: event.startAt,
-        streamURL: claim.url
-      )
-      chosen = next
-      keychain.setChosenEvent(next)
+        streamURL: kept
+      ))
+      lastError = nil
+      return true
+    }
+    isLoading = true
+    defer { isLoading = false }
+    do {
+      let taken = try await client.claim(gameId: event.gameId)
+      keep(claimed(taken, gameId: event.gameId, title: event.title, startAt: event.startAt))
       lastError = nil
       return true
     } catch {
       lastError = error.localizedDescription
       return false
     }
+  }
+
+  /**
+   * Claims the game already chosen, and keeps the address it is given.
+   *
+   * Unlike `refreshChosen` this is loud: it is asked for when somebody picks
+   * the game as the stream's destination or presses Stream with no address
+   * yet, and a refusal is something they need to read. `lastError` says why.
+   */
+  @discardableResult
+  public func claimChosen() async -> Bool {
+    guard let current = chosen else {
+      lastError = "Pick a GameStation event first."
+      return false
+    }
+    isLoading = true
+    defer { isLoading = false }
+    do {
+      let taken = try await client.claim(gameId: current.gameId)
+      // Another game may have been picked while the claim was out.
+      guard chosen?.gameId == current.gameId else { return false }
+      keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
+      lastError = nil
+      return true
+    } catch {
+      lastError = error.localizedDescription
+      return false
+    }
+  }
+
+  /// The chosen game's scoreboard page, drawn on the programme.
+  ///
+  /// Built here without asking anybody: every game has one, open from the
+  /// moment the game exists. `quiet=1` makes a closed scoreboard draw nothing
+  /// rather than the page that invites a visitor to sign up.
+  public func scoreboardURL(for gameId: String) -> URL {
+    let page = serverURL.appending(path: "scoreboard").appending(path: gameId)
+    var parts = URLComponents(url: page, resolvingAgainstBaseURL: false)
+    parts?.queryItems = [URLQueryItem(name: "quiet", value: "1")]
+    return parts?.url ?? page
+  }
+
+  private func claimed(
+    _ claim: GameStationClaim,
+    gameId: String,
+    title: String,
+    startAt: Date
+  ) -> ChosenEvent {
+    ChosenEvent(
+      gameId: gameId,
+      title: title,
+      startAt: startAt,
+      streamURL: claim.url
+    )
+  }
+
+  private func keep(_ next: ChosenEvent) {
+    chosen = next
+    keychain.setChosenEvent(next)
   }
 
   /**
@@ -327,15 +409,9 @@ public final class GameStationAccount {
   public func refreshChosen() async {
     guard let current = chosen else { return }
     do {
-      let claim = try await client.claim(gameId: current.gameId)
-      let next = ChosenEvent(
-        gameId: current.gameId,
-        title: current.title,
-        startAt: current.startAt,
-        streamURL: claim.url
-      )
-      chosen = next
-      keychain.setChosenEvent(next)
+      let taken = try await client.claim(gameId: current.gameId)
+      guard chosen?.gameId == current.gameId else { return }
+      keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
       lastError = nil
     } catch {
       // Kept to itself: the cached address is what the Stream button is about
@@ -373,4 +449,24 @@ public final class GameStationAccount {
     chosen = nil
     keychain.setChosenEvent(nil)
   }
+}
+
+/**
+ * The part of the account that decides which game this Director covers.
+ *
+ * Director's event coordinator talks to this rather than to the account, so
+ * its rules can be tested against a stub that answers without a server.
+ */
+@MainActor
+public protocol GameStationEventService: AnyObject {
+  var chosen: GameStationAccount.ChosenEvent? { get }
+  /// Why the last request failed, in GameStation's words.
+  var lastError: String? { get }
+  @discardableResult
+  func choose(event: GameStationEvent, claim: Bool) async -> Bool
+  @discardableResult
+  func claimChosen() async -> Bool
+  func refreshChosen() async
+  func forgetChosenEvent()
+  func scoreboardURL(for gameId: String) -> URL
 }
