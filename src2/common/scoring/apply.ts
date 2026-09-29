@@ -1,4 +1,5 @@
 import { isLaunchAngle } from '../launchAngle'
+import { isPitchSpeed, isPitchZone } from '../pitchData'
 import {
   type BallInPlayAction,
   type BaseRunningAction,
@@ -46,6 +47,7 @@ import {
   startAppearance
 } from './lineup'
 import { homeRunKind, isFair } from './park'
+import { pitchZone } from './pitchLocation'
 import {
   choiceOpen,
   completesHitOffer,
@@ -68,6 +70,7 @@ import {
   type GameState,
   lineupsOf,
   type Movement,
+  type PitchData,
   type PlayerRef,
   type PlayEvent,
   type Point,
@@ -286,6 +289,29 @@ function pitchEvent(
   }
   play.playEvents.push(event)
 }
+/**
+ * What a pitch's action says of the pitch itself, as Gumbo's `pitchData`:
+ * its speed to a tenth of a mile an hour, and its zone — the one given as a
+ * number, else the one its location falls in for this batter. A speed or zone
+ * out of range is dropped rather than refused, so a saved play that holds one
+ * still replays: the pitch is thrown without it.
+ */
+function pitchDataOf(
+  play: GamePlay,
+  action: PitchAction | BallInPlayAction
+): PitchData | undefined {
+  const startSpeed = isPitchSpeed(action.speed)
+    ? Math.round(action.speed * 10) / 10
+    : undefined
+  const zone = isPitchZone(action.zone)
+    ? action.zone
+    : action.pitchLocation == null
+      ? undefined
+      : pitchZone(action.pitchLocation, play.matchup.batSide.code)
+  if (startSpeed == null && zone == null) return undefined
+  return withoutUndefined({ startSpeed, zone })
+}
+
 /**
  * What the play came to without a pitch: an award, a balk, a placed runner.
  * It names the pitcher, or the runner it is about (`player`).
@@ -847,6 +873,9 @@ function pitch(ctx: Ctx, action: PitchAction): void {
     strikes: l.strikes,
     outs
   })
+  const pitchData = pitchDataOf(play, action)
+  if (pitchData != null)
+    play.playEvents[play.playEvents.length - 1].pitchData = pitchData
   ctx.out.push({
     type: 'pitchThrown',
     call: action.call,
@@ -950,6 +979,11 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
   } else if (play.source.gamestation.contactKind !== action.contact)
     refuse('illegal', 'The ball is already in play as a different contact')
   play.source.gamestation.contactKind = action.contact
+  // The pitch the batter hit, which a second ball in play says more of.
+  const pitchData = pitchDataOf(play, action)
+  const hit = play.playEvents.findLast(event => event.details.isInPlay === true)
+  if (pitchData != null && hit != null)
+    hit.pitchData = { ...hit.pitchData, ...pitchData }
   // A launch angle is from -90 to 90 degrees. Any other is dropped rather
   // than refused, so a saved play that holds one still replays: the ball is
   // in play without it.
