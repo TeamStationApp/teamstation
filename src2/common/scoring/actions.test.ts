@@ -28,6 +28,7 @@ import {
   TRAJECTORIES
 } from './actions'
 import { storedEventType } from './document'
+import { PITCH_HEIGHTS, PITCH_SIDES } from './pitchLocation'
 import {
   asGameSetup,
   asGameState,
@@ -283,6 +284,44 @@ describe('scoring actions', function () {
       expect(tool.input_schema.additionalProperties).equals(false)
       for (const required of tool.input_schema.required ?? [])
         expect(tool.input_schema.properties).to.have.property(required)
+    }
+  })
+
+  it('takes and offers a pitch’s speed, location and zone, thrown or hit', function () {
+    const pitchData = {
+      speed: 84.5,
+      pitchLocation: { height: 'low', side: 'away', inZone: false },
+      zone: 14
+    } as const
+    expect(dictatedAction('pitch', { call: 'B', ...pitchData })).deep.equals({
+      action: { type: 'pitch', call: 'B', ...pitchData }
+    })
+    expect(
+      dictatedAction('ballInPlay', { contact: 'swing', ...pitchData })
+    ).deep.equals({
+      action: { type: 'ballInPlay', contact: 'swing', ...pitchData }
+    })
+    // A speed or zone out of range is the engine's to drop; a location in
+    // other words is no location.
+    expect(
+      cleanAction({ type: 'pitch', call: 'B', speed: 500, zone: 10 })
+    ).to.have.property('action')
+    expect(
+      cleanAction({
+        type: 'pitch',
+        call: 'B',
+        pitchLocation: { height: 'up', side: 'away', inZone: true }
+      })
+    ).to.have.nested.property('problem.code', 'malformed')
+    const tools = toolSchema()
+    for (const name of ['pitch', 'ballInPlay']) {
+      const props =
+        tools.find(tool => tool.name === name)?.input_schema.properties ?? {}
+      expect(props, name).to.include.keys('speed', 'pitchLocation', 'zone')
+      expect(props.pitchLocation.properties?.height.enum).deep.equals(
+        PITCH_HEIGHTS
+      )
+      expect(props.pitchLocation.properties?.side.enum).deep.equals(PITCH_SIDES)
     }
   })
 

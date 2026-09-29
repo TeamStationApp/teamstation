@@ -9,6 +9,7 @@ import {
   type Cleaner
 } from 'cleaners'
 
+import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import {
   asGameSetup,
   asSessionId,
@@ -216,7 +217,7 @@ const actionCleaners = {
   pitch: asObject({
     type: asValue('pitch' as const),
     call: asOneOf(PITCH_CALLS),
-    zone: asOptional(asNumber)
+    ...PITCH_DATA_CLEANERS
   }),
   ballInPlay: asObject({
     type: asValue('ballInPlay' as const),
@@ -233,7 +234,8 @@ const actionCleaners = {
     location: asOptional(asPoint),
     fielder: asOptional(asSessionId),
     landingHeight: asOptional(asNumber),
-    homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS))
+    homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS)),
+    ...PITCH_DATA_CLEANERS
   }),
   result: asObject({
     type: asValue('result' as const),
@@ -471,7 +473,7 @@ export function toolSchema(): Tool[] {
           PITCH_CALLS,
           'B ball, C called strike, S swinging strike, F foul, T foul tip, L foul bunt'
         ),
-        zone: { type: 'integer', description: 'MLB zone 1-14, when said' }
+        ...PITCH_DATA_TOOL_FIELDS
       },
       ['call']
     ),
@@ -485,7 +487,8 @@ export function toolSchema(): Tool[] {
         location: point,
         fielder: id('The fielder who first handled the ball'),
         homeRunKind: oneOf(HOME_RUN_KINDS, 'For a home run'),
-        landingHeight: { type: 'number' }
+        landingHeight: { type: 'number' },
+        ...PITCH_DATA_TOOL_FIELDS
       },
       ['contact']
     ),

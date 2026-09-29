@@ -1,4 +1,5 @@
 import { isLaunchAngle } from '../launchAngle'
+import { isPitchZone } from '../pitchData'
 import {
   HIT_TRAJECTORIES,
   MOVEMENT_REASONS,
@@ -33,6 +34,7 @@ export type GumboRule =
   | 'position'
   | 'playEvent'
   | 'hitData'
+  | 'pitchData'
   | 'trajectory'
   | 'location'
   | 'matchup'
@@ -354,6 +356,8 @@ export function gumboViolations(play: unknown): GumboViolation[] {
           add('hitData', `${at}.hitData`, 'is on a pitch not in play')
         hitData(`${at}.hitData`, event.hitData)
       }
+      if (event.pitchData !== undefined)
+        pitchData(`${at}.pitchData`, event.pitchData)
     } else if (type === 'action') {
       if (
         shaped(
@@ -369,6 +373,41 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       if (event.hitData !== undefined)
         add('hitData', `${at}.hitData`, 'is on an action, not a pitch')
     }
+    if (type !== 'pitch' && event.pitchData !== undefined)
+      add('pitchData', `${at}.pitchData`, `is on a ${type}, not a pitch`)
+  }
+
+  /**
+   * A pitch's speed and zone. Everything else the feed writes there is
+   * measured, so a play GameStation scored carries none of it.
+   */
+  function pitchData(path: string, value: unknown): void {
+    if (!isRecord(value)) {
+      add('pitchData', path, `expected an object, got ${show(value)}`)
+      return
+    }
+    const { startSpeed, zone } = value
+    if (
+      startSpeed !== undefined &&
+      (typeof startSpeed !== 'number' ||
+        !Number.isFinite(startSpeed) ||
+        startSpeed <= 0)
+    )
+      add(
+        'pitchData',
+        `${path}.startSpeed`,
+        `expected mph, more than none, got ${show(startSpeed)}`
+      )
+    if (zone !== undefined && !isPitchZone(zone))
+      add(
+        'pitchData',
+        `${path}.zone`,
+        `expected a zone 1-9 or 11-14, got ${show(zone)}`
+      )
+    if (whole)
+      for (const key of Object.keys(value))
+        if (key !== 'startSpeed' && key !== 'zone')
+          add('pitchData', `${path}.${key}`, 'is measured, never scored')
   }
 
   function hitData(path: string, value: unknown): void {
