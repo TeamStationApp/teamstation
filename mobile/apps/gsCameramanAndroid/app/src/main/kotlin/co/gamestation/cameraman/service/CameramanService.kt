@@ -18,6 +18,8 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import co.gamestation.cameraman.MainActivity
 import co.gamestation.cameraman.R
+import co.gamestation.cameraman.core.ActivityPresence
+import co.gamestation.cameraman.core.BroadcastPolicy
 import co.gamestation.cameraman.engine.AppEnvironment
 import co.gamestation.cameraman.harness.LaunchConfiguration
 import kotlinx.coroutines.CoroutineScope
@@ -47,8 +49,10 @@ import kotlinx.coroutines.flow.onEach
  * - Started from the activity while it is resumed. A service started from the background gets
  *   `ForegroundServiceStartNotAllowedException`, and one that starts anyway without the camera type
  *   has its `CameraDevice` closed by the system as soon as the activity stops.
- * - `START_STICKY` plus the engine's `PARTIAL_WAKE_LOCK`, so a camera on a tripod with the screen
- *   off keeps encoding rather than being scheduled out.
+ * - `START_STICKY` while a broadcast is on, plus the engine's `PARTIAL_WAKE_LOCK`, so a camera on a
+ *   tripod with the screen off keeps encoding. With the broadcast off the service returns
+ *   `START_NOT_STICKY` and the activity stops it on the way out, so a quiet camera does not sit
+ *   in the background holding the radio.
  *
  * The notification is not decoration: it is what the platform requires in exchange, and it is the
  * only way back into a Cameraman whose activity has been swiped away.
@@ -79,6 +83,12 @@ class CameramanService : Service() {
      */
     private var orientationListener: OrientationEventListener? = null
 
+    /**
+     * True while the activity that started this service is in the foreground. A sticky restart has
+     * no activity, so this begins false and the saved broadcast choice is what keeps the process.
+     */
+    private var activityVisible = false
+
     private fun startWatchingOrientation() {
         val listener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(orientation: Int) {
@@ -104,6 +114,7 @@ class CameramanService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        activityVisible = ActivityPresence.visible
         if (environment == null) {
             val launch = LaunchConfiguration.from(intent)
             if (launch.unknownKeys.isNotEmpty()) {
@@ -115,6 +126,7 @@ class CameramanService : Service() {
             }
 
             val created = AppEnvironment(applicationContext, launch)
+            created.onBroadcastingChanged = { refreshSticky() }
             created.setPermissions(
                 camera = granted(Manifest.permission.CAMERA),
                 microphone = granted(Manifest.permission.RECORD_AUDIO),
@@ -139,10 +151,20 @@ class CameramanService : Service() {
                 }
                 .launchIn(scope)
         }
-        // START_STICKY with a null intent on restart is correct: the launch configuration belonged
-        // to that test run, and a soak that came back with different settings than it started with
-        // would be unreadable.
-        return START_STICKY
+        val broadcasting = environment?.isBroadcasting == true
+        // A null intent is a sticky restart: the launch configuration belonged to that test run,
+        // and a soak that came back with different settings than it started with would be unreadable.
+        // The restart itself only happens while a broadcast asked to be kept.
+        if (BroadcastPolicy.shouldStopService(activityVisible, broadcasting)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return if (BroadcastPolicy.keepProcessAlive(broadcasting)) START_STICKY else START_NOT_STICKY
+    }
+
+    /** `onStartCommand` is the only place the restart mode is chosen, so a change has to re-enter it. */
+    private fun refreshSticky() {
+        startService(Intent(this, CameramanService::class.java))
     }
 
     override fun onDestroy() {
@@ -228,10 +250,15 @@ class CameramanService : Service() {
             1 -> "1 client"
             else -> "$clients clients"
         }
+        val detail = if (environment.isBroadcasting) {
+            "${environment.streamURL} — $watchers"
+        } else {
+            "Preview"
+        }
 
         return Notification.Builder(this, channelId)
             .setContentTitle(environment.identity.value.name)
-            .setContentText("${environment.streamURL} — $watchers")
+            .setContentText(detail)
             .setSmallIcon(android.R.drawable.presence_video_online)
             .setContentIntent(open)
             .setOngoing(true)

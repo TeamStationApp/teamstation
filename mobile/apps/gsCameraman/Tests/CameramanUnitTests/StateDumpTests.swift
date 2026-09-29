@@ -1,3 +1,4 @@
+import CameramanCore
 import CameramanTestHarness
 import Foundation
 import Testing
@@ -8,7 +9,7 @@ import Testing
 struct StateDumpTests {
   @Test @MainActor
   func encodesProcessAndCaptureHealth() throws {
-    let environment = AppEnvironment()
+    let environment = AppEnvironment(broadcastStore: InMemorySettingsStore())
     let data = try JSONEncoder().encode(environment.stateDump)
     let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
     #expect(json != nil)
@@ -32,6 +33,7 @@ struct StateDumpTests {
     #expect(server?["closedClients"] as? Int == 0)
     #expect(server?["sendQueuePendingBytes"] as? Int == 0)
     #expect(server?["isListening"] as? Bool == false)
+    #expect(json?["broadcasting"] as? Bool == false)
   }
 
   @Test @MainActor
