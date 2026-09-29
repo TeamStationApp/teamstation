@@ -56,3 +56,13 @@ clip heSteals 'And he steals.'
 # E19: Undo by voice
 clip undoLast 'Undo that last play.'
 clip scratchStrike 'Scratch that, it was a called strike.'
+# E20: where the ball went, fouls, and throws to a base
+clip singleLeftCenter 'Single to left center.'
+clip foulCaughtFirst 'Foul ball caught by the first baseman.'
+clip foulTip 'Foul tip.'
+clip foulCaught 'Foul ball caught.'
+clip flyLeftCenter 'Fly out to left center.'
+clip tagThrownHome 'Pop fly to center field. The man at third tags up but gets thrown out at home.'
+# E21: a steal whose runner scored, and a caught foul with a runner tagging
+clip stealScores 'He steals, and scores when the throw gets away.'
+clip foulPopTagThird 'The runner on second tags up to third on the foul pop out.'

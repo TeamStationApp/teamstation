@@ -156,7 +156,8 @@ describe('a play in two lines', function () {
     })
     expect(told(game({ second: 2 }), inPlay(17), result('single'))).deep.equals(
       {
-        primary: 'Chase L. single to center',
+        // Said with no trajectory, a hit is a line drive.
+        primary: 'Chase L. line drive single to center',
         secondary: 'Ann B. to third'
       }
     )
@@ -173,6 +174,26 @@ describe('a play in two lines', function () {
     })
   })
 
+  it('names the direction a ball was sent, and a caught foul as a foul out', function () {
+    expect(
+      told(
+        game(),
+        { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
+        result('single')
+      )?.primary
+    ).equals('Chase L. line drive single to left center')
+    expect(
+      told(
+        game(),
+        { type: 'ballInPlay', contact: 'swing', fielder: 12 },
+        result('field_out', { foulCaught: true })
+      )
+    ).deep.equals({
+      primary: 'Chase L. fouls out to first',
+      secondary: 'Caught by Sam P. (1B)'
+    })
+  })
+
   it('names a batter thrown out stretching a hit', function () {
     expect(
       told(game(), inPlay(17), result('single'), {
@@ -183,7 +204,7 @@ describe('a play in two lines', function () {
         fielders: [17, 13]
       })
     ).deep.equals({
-      primary: 'Chase L. single to center',
+      primary: 'Chase L. line drive single to center',
       secondary: 'Out at second, Ben C. (CF) to Tia R. (2B)'
     })
   })

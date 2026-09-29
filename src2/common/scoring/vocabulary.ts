@@ -207,9 +207,22 @@ export const VOCABULARY_ENTRIES: readonly VocabularyEntry[] = [
     action: { type: 'pitch', call: 'F' }
   },
   {
-    phrases: ['foul tip', 'tipped it', 'into the mitt'],
-    means: 'a foul tip — strike three with two strikes',
+    phrases: ['foul tip', 'tipped it', 'tipped foul', 'fouled off'],
+    means:
+      'a foul ball — what a scorer means by a foul tip unless it went into the mitt',
+    action: { type: 'pitch', call: 'F' }
+  },
+  {
+    phrases: ['foul tip into the mitt', 'tipped into the glove'],
+    means: "a foul tip into the catcher's mitt — strike three with two strikes",
     action: { type: 'pitch', call: 'T' }
+  },
+  {
+    phrases: ['foul tip caught', 'foul pop caught', 'fouled out'],
+    means:
+      'a caught foul pop, an out — not strike three; a foul tip is caught this way unless it went into the mitt',
+    action: { type: 'result', eventType: 'field_out' },
+    note: 'with outBy catch and foulCaught true'
   },
   {
     phrases: ['bunted foul', 'foul bunt'],

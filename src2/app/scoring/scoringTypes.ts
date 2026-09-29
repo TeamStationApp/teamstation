@@ -165,6 +165,8 @@ export interface DictationQuestion {
     before: ScoringAction[]
     /** What picking nobody comes to, after `before`. */
     none: ScoringAction[]
+    /** The rest of the sentence, after the picks. */
+    after?: ScoringAction[]
   }
 }
 /**
