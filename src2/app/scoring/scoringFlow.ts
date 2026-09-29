@@ -16,6 +16,7 @@ import {
 } from '../../common/scoring/rules'
 import { type Applied, applyAction } from '../../common/scoring/session'
 import { BASES } from '../field/fieldModel'
+import { advanceReel } from './dictatedReel'
 import {
   closePlay,
   copyGame,
@@ -97,6 +98,11 @@ const DRAFTING = [
 /** The step the screen is on once everything has moved. */
 export function settleRunners(state: ScoringState): void {
   if (DRAFTING.includes(state.phase)) return
+  // A dictated sentence is still being shown.
+  if ((state.reel?.length ?? 0) > 0) {
+    state.phase = 'runnerMovement'
+    return
+  }
   const pending = state.pendingPlay
   if (pending != null && !pending.trajectoryAccepted) {
     state.phase = 'trajectory'
@@ -465,6 +471,7 @@ export function runnerReducer(
       next.pendingPlay.batterPoint = {
         ...command.waypoints[command.waypoints.length - 1]
       }
+    advanceReel(next)
     settleRunners(next)
     return next
   }

@@ -73,6 +73,11 @@ export interface PendingPlay {
 }
 export interface MotionCommand {
   purpose?: 'approachFirst'
+  /**
+   * A runner waiting for a later beat of a dictated sentence: drawn at his
+   * first point, not moved, until his beat starts and replaces this.
+   */
+  held?: boolean
   id: string
   generation: number
   playerId: number
@@ -132,6 +137,23 @@ export interface ScoringSnapshot {
    * at each utterance and by Undo, so it never describes an older sentence.
    */
   dictation?: { transcript: string; problem?: Problem }
+  /**
+   * The beats of a dictated sentence still to play, first first. Present from
+   * the moment the sentence is accepted until its last picture and motion end.
+   */
+  reel?: Beat[]
+  /** Sentences that came back while a reel played, applied when it ends. */
+  queuedDictation?: Array<{ transcript: string; actions: ScoringAction[] }>
+}
+/**
+ * One step of a dictated sentence's animation: at most one picture — a pitch,
+ * a hit or a throw — the runner motions that run with it, and whether it may
+ * start as soon as the picture before it ends or only once nothing moves.
+ */
+export interface Beat {
+  presentation?: PresentationSequence
+  motions: MotionCommand[]
+  after: 'presentation' | 'motions'
 }
 /**
  * The screen without the game: the step, what is drawn, the drafts. It is

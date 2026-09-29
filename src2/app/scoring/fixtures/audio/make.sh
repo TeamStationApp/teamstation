@@ -42,3 +42,8 @@ clip fullPass6 'Ground ball to the second baseman, thrown to first for the out. 
 clip fullPass7 'Ball. Ball. Ball. Ball four.'
 clip fullPass8 'Double to left, fielded by the left fielder. The runner at first goes to third.'
 clip fullPass9 'Fly ball, caught by the center fielder.'
+# E10-E13: how a dictated sentence is shown
+clip singleToLeft 'Line drive single to left, fielded by the left fielder.'
+clip tagUp 'Fly ball caught by the left fielder. The runner at third tags up and scores.'
+clip groundOut 'Ground ball to the shortstop, thrown to first for the out.'
+clip ballStrike 'Ball. Called strike.'

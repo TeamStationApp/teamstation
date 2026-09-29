@@ -121,6 +121,49 @@ async function stored(token: string, gameId: string): Promise<Stored> {
   return (await response.json()) as Stored
 }
 
+/** The saved play of this kind, the last one. */
+async function playOf(
+  token: string,
+  gameId: string,
+  eventType: string
+): Promise<Record<string, any>> {
+  const play = (await stored(token, gameId)).plays
+    .map(p => p.gumbo)
+    .filter(gumbo => gumbo.result?.eventType === eventType)
+    .at(-1)
+  if (play == null) throw new Error(`No ${eventType} saved`)
+  return play
+}
+/**
+ * Where a play left each runner, by where his last move began (`batter` for
+ * the batter's own): a base, `score`, or `out 2B`.
+ */
+function endsOf(play: Record<string, any>): Record<string, string> {
+  const byRunner = new Map<number, Array<Record<string, any>>>()
+  for (const runner of play.runners as Array<Record<string, any>>) {
+    const id = Number(runner.details.runner.id)
+    byRunner.set(id, [...(byRunner.get(id) ?? []), runner.movement])
+  }
+  const ends: Record<string, string> = {}
+  for (const moves of byRunner.values()) {
+    const last = moves[moves.length - 1]
+    ends[String(last.start ?? 'batter')] =
+      last.isOut === true
+        ? `out ${String(last.outBase)}`
+        : String(last.end ?? 'score')
+  }
+  return ends
+}
+/** Every fielding credit of a play, as `credit position`. */
+function creditsOf(play: Record<string, any>): string[] {
+  return (play.runners as Array<Record<string, any>>).flatMap(runner =>
+    (runner.credits as Array<Record<string, any>>).map(
+      credit =>
+        `${String(credit.credit)} ${String(credit.position.abbreviation)}`
+    )
+  )
+}
+
 /** The PCM of a 16 kHz mono WAV, whatever chunks its writer added. */
 function pcmOf(wav: Buffer): Buffer {
   for (let at = 12; at + 8 <= wav.length;) {
@@ -448,6 +491,127 @@ async function settled(
   return await settled(page, (await heard(page)).received.at(-1)!)
 }
 
+/**
+ * Records every change to what the field shows — its picture and the players
+ * it is moving — from now on, as the field's data attributes report them.
+ */
+async function watchField(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const field = document.querySelector('[role="application"]')!
+    const seen: string[] = []
+    ;(window as any).__field = seen
+    const read = (): void => {
+      const entry = [
+        field.getAttribute('data-presentation'),
+        field.getAttribute('data-presentation-id'),
+        field.getAttribute('data-moving')
+      ].join('|')
+      if (seen[seen.length - 1] !== entry) seen.push(entry)
+    }
+    read()
+    new MutationObserver(read).observe(field, {
+      attributes: true,
+      attributeFilter: [
+        'data-presentation',
+        'data-presentation-id',
+        'data-moving'
+      ]
+    })
+  })
+}
+interface FieldMoment {
+  presentation: string
+  id: string
+  moving: number[]
+}
+/** What the field showed, once it has shown nothing for a while. */
+async function fieldShown(page: Page): Promise<FieldMoment[]> {
+  await page.waitForFunction(
+    () => {
+      const seen: string[] = (window as any).__field
+      const last = seen[seen.length - 1]
+      const w = window as any
+      if (last !== w.__fieldLast) {
+        w.__fieldLast = last
+        w.__fieldSince = Date.now()
+        return false
+      }
+      return (
+        last != null &&
+        last.startsWith('none|') &&
+        last.endsWith('|') &&
+        Date.now() - Number(w.__fieldSince) > 1500
+      )
+    },
+    { timeout: 60000, polling: 100 }
+  )
+  const seen = await page.evaluate(() => (window as any).__field as string[])
+  return seen.map(entry => {
+    const [presentation, id, moving] = entry.split('|')
+    return {
+      presentation,
+      id,
+      moving: moving === '' ? [] : moving.split(',').map(Number)
+    }
+  })
+}
+/** A player's id, as the sentence's context named him. */
+function idIn(context: string, label: string): number {
+  const match = new RegExp(`${label}: [^(]*\\(id (\\d+)\\)`).exec(context)
+  if (match == null) throw new Error(`No ${label} in ${context}`)
+  return Number(match[1])
+}
+/** One utterance watched: the reply and what the field showed of it. */
+async function dictateWatched(
+  token: string,
+  gameId: string,
+  clip: string
+): Promise<{
+  reply: Record<string, any>
+  shown: FieldMoment[]
+  context: string
+  page: Page
+  browser: Browser
+}> {
+  const { path } = clipFile(clip)
+  const browser = await launch()
+  const page = await open(browser, token, gameId, path)
+  await switchOn(page)
+  await watchField(page)
+  await hold(page)
+  const reply = await answered(page)
+  trace(`${clip}: ${JSON.stringify(reply)}`)
+  const shown = await fieldShown(page)
+  trace(`${clip}: shown ${JSON.stringify(shown)}`)
+  const context = String(
+    (await heard(page)).sent.find(f => f.kind === 'start')!.context
+  )
+  return { reply, shown, context, page, browser }
+}
+/** Walks the leadoff batter by tapping, then dictates steals for him. */
+async function runnerOn(
+  token: string,
+  gameId: string,
+  base: 'second' | 'third'
+): Promise<void> {
+  const setup = await launch()
+  try {
+    const page = await open(setup, token, gameId)
+    for (let n = 0; n < 4; n++) await tap(page, 'Ball')
+    await finishAtBat(page)
+    await waitSaved(page)
+  } finally {
+    await setup.close()
+  }
+  for (const clip of base === 'second'
+    ? ['fullPass2']
+    : ['fullPass2', 'stealThird']) {
+    const { reply, browser } = await dictate(token, gameId, clip)
+    await browser.close()
+    expect(reply.kind, `${clip}: ${JSON.stringify(reply)}`).equals('actions')
+  }
+}
+
 /** One utterance: a browser with the clip as its microphone, held and released. */
 async function dictate(
   token: string,
@@ -657,6 +821,139 @@ describe('dictation, end to end', function () {
         await finishAtBat(page)
         await waitSaved(page)
         expect(await summary(page)).includes('0 outs')
+      } finally {
+        await browser.close()
+      }
+    })
+
+    it('E10: a hit runs the batter and the runner at once, while the ball flies', async function () {
+      const gameId = scoringGame().games[0]
+      await runnerOn(scorer, gameId, 'second')
+      const { reply, shown, context, page, browser } = await dictateWatched(
+        scorer,
+        gameId,
+        'singleToLeft'
+      )
+      try {
+        expect(reply.kind, JSON.stringify(reply)).equals('actions')
+        const batter = idIn(context, 'Batter')
+        const runner = idIn(context, 'On second')
+        const kinds = shown.map(moment => moment.presentation)
+        expect(kinds).includes('hit:swing')
+        expect(kinds).includes('hit:flight')
+        expect(
+          shown.some(
+            moment =>
+              moment.presentation === 'hit:flight' &&
+              moment.moving.includes(batter) &&
+              moment.moving.includes(runner)
+          ),
+          JSON.stringify(shown)
+        ).equals(true)
+        // Neither ran before the ball was hit.
+        const contact = kinds.indexOf('hit:flight')
+        expect(
+          shown.slice(0, contact).some(moment => moment.moving.length > 0)
+        ).equals(false)
+        await finishAtBat(page)
+        await waitSaved(page)
+        expect(endsOf(await playOf(scorer, gameId, 'single'))).deep.equals({
+          batter: '1B',
+          '2B': '3B'
+        })
+      } finally {
+        await browser.close()
+      }
+    })
+
+    it('E11: a tag-up waits for the catch', async function () {
+      const gameId = scoringGame().games[0]
+      await runnerOn(scorer, gameId, 'third')
+      const { reply, shown, context, page, browser } = await dictateWatched(
+        scorer,
+        gameId,
+        'tagUp'
+      )
+      try {
+        expect(reply.kind, JSON.stringify(reply)).equals('actions')
+        const runner = idIn(context, 'On third')
+        const flying = shown.filter(moment =>
+          moment.presentation.startsWith('hit:')
+        )
+        expect(flying.length).greaterThan(0)
+        expect(flying.some(moment => moment.moving.includes(runner))).equals(
+          false
+        )
+        const caught = shown.findIndex(
+          (moment, index) =>
+            index > 0 &&
+            moment.presentation === 'none' &&
+            shown[index - 1].presentation.startsWith('hit:')
+        )
+        expect(caught).greaterThan(0)
+        expect(
+          shown.slice(caught).some(moment => moment.moving.includes(runner)),
+          JSON.stringify(shown)
+        ).equals(true)
+        await finishAtBat(page)
+        await waitSaved(page)
+        expect(await summary(page)).match(/^Visitors [^·]* 1 · /)
+      } finally {
+        await browser.close()
+      }
+    })
+
+    it('E12: a throw-out plays its throw after the hit', async function () {
+      const gameId = scoringGame().games[0]
+      const { reply, shown, page, browser } = await dictateWatched(
+        scorer,
+        gameId,
+        'groundOut'
+      )
+      try {
+        expect(reply.kind, JSON.stringify(reply)).equals('actions')
+        const pictures: string[] = []
+        for (const moment of shown)
+          if (moment.presentation !== 'none') {
+            const key = `${moment.id}|${moment.presentation}`
+            if (pictures.at(-1) !== key) pictures.push(key)
+          }
+        expect(pictures.map(key => key.split('|')[1])).deep.equals([
+          'hit:swing',
+          'hit:flight',
+          'throw:transfer'
+        ])
+        await waitSaved(page)
+        expect(await summary(page)).includes('1 outs')
+        // Credited as said: the shortstop's assist, the first baseman's out.
+        const play = await playOf(scorer, gameId, 'field_out')
+        expect(creditsOf(play)).deep.equals(['f_assist SS', 'f_putout 1B'])
+        expect(endsOf(play)).deep.equals({ batter: 'out 1B' })
+      } finally {
+        await browser.close()
+      }
+    })
+
+    it('E13: two dictated pitches play one after the other', async function () {
+      const gameId = scoringGame().games[0]
+      const { reply, shown, page, browser } = await dictateWatched(
+        scorer,
+        gameId,
+        'ballStrike'
+      )
+      try {
+        expect(reply.actions, JSON.stringify(reply)).deep.equals([
+          { type: 'pitch', call: 'B' },
+          { type: 'pitch', call: 'C' }
+        ])
+        const pitches = new Set(
+          shown
+            .filter(moment => moment.presentation === 'pitch:delivery')
+            .map(moment => moment.id)
+        )
+        // One picture each, the second straight after the first.
+        expect(pitches.size).equals(2)
+        expect(await summary(page)).includes('1 balls 1 strikes')
       } finally {
         await browser.close()
       }
