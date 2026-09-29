@@ -88,8 +88,9 @@ internal class CaptureRenderer(
 
     /**
      * Cameraman's software zoom past the camera's own ceiling, 1 for none. The quad is drawn this
-     * much larger and the overflow falls off the edges, so the encoder and the preview both get the
-     * centre of the picture, and the preview still shows exactly what is sent.
+     * much larger and the overflow falls off the edges of the encoded frame. The preview is clipped
+     * to the same fitted rectangle, so the crop stays inside the 16:9 picture and the bars either
+     * side stay empty.
      */
     @Volatile
     var digitalZoom: Float = 1f
@@ -293,9 +294,16 @@ internal class CaptureRenderer(
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             val (scaleX, scaleY) = fitScale(previewWidth, previewHeight)
+            // Clip to the unzoomed fit. Software zoom scales the quad past this rectangle; without
+            // the scissor that growth paints over the bars and the operator no longer sees the
+            // frame that is being broadcast.
+            val frame = fittedFrame(previewWidth, previewHeight, scaleX, scaleY)
+            GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
+            GLES20.glScissor(frame.x, frame.y, frame.width, frame.height)
             buildMvp(scaleX, scaleY)
             program.draw(textureId, textureMatrix, mvpMatrix)
             egl.swapBuffers(surface)
+            GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
         }
     }
 
