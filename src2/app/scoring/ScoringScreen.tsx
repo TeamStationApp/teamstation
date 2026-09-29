@@ -1213,6 +1213,9 @@ function ScoringPanel(props: {
         <ScoringSheet
           textCancel={sheet === 'rosters'}
           fullScreen={sheet === 'rosters'}
+          tall={sheet === 'settings'}
+          done={sheet === 'settings'}
+          swipeToDismiss={sheet === 'settings'}
           scroll={sheet !== 'rosters'}
           title={
             {

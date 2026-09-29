@@ -336,7 +336,7 @@ describe('scoring slide-up sheets', function () {
       help: false,
       shown: 0
     })
-    await click('Cancel')
+    await click('Done')
     await menu('End Half Inning')
     await click('Cancel')
     expect(document.body.textContent).includes('Top 1st')
@@ -354,7 +354,7 @@ describe('scoring slide-up sheets', function () {
       ).equals('true')
     await click('Dismiss scoring menu')
     await menu('Settings')
-    await click('Cancel')
+    await click('Done')
     await menu('Exit Current Game')
     await click('Cancel')
   })
@@ -478,11 +478,17 @@ describe('the animation switch in settings', function () {
   it('turns play animations off and back on', async function () {
     await mount()
     await menu('Settings')
+    // A switch, which says whether it is on as a checkbox does.
+    const checked = (): boolean | undefined =>
+      document.querySelector<HTMLInputElement>(
+        '[aria-label="Toggle play animations"]'
+      )?.checked
+    expect(checked()).equals(true)
     await click('Toggle play animations')
-    expect(document.body.textContent).includes('Animate plays: Off')
+    expect(checked()).equals(false)
     expect((await scoringPreferences.read('12')).animations).equals(false)
     await click('Toggle play animations')
-    expect(document.body.textContent).includes('Animate plays: On')
-    await click('Cancel')
+    expect(checked()).equals(true)
+    await click('Done')
   })
 })
