@@ -2318,3 +2318,130 @@ describe('folding a whole game', function () {
     expect(folder.play(plays[4], stamp)).deep.equals(alone[4])
   })
 })
+
+describe('pitch data', function () {
+  const pitchDataOf = (play: GumboPlay): unknown[] =>
+    eventsOf(play)
+      .filter(event => event.isPitch)
+      .map(event => (event as { pitchData?: unknown }).pitchData)
+
+  it('writes the speed and zone the scorer gave a pitch, and the one the batter hit', function () {
+    const play = stored(
+      after(
+        game(),
+        {
+          type: 'pitch',
+          call: 'B',
+          speed: 71.26,
+          pitchLocation: { height: 'high', side: 'away', inZone: false }
+        },
+        { type: 'pitch', call: 'C', zone: 5 },
+        ball,
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: F.SS,
+          speed: 68,
+          pitchLocation: { height: 'low', side: 'inside', inZone: true }
+        },
+        { type: 'result', eventType: 'single' },
+        close
+      ),
+      true
+    )
+    expect(pitchDataOf(play)).deep.equals([
+      { startSpeed: 71.3, zone: 12 },
+      { zone: 5 },
+      undefined,
+      { startSpeed: 68, zone: 7 }
+    ])
+    // The in-play pitch keeps its hit data beside it.
+    const inPlay = eventsOf(play).at(-1) as { hitData?: unknown }
+    expect(inPlay.hitData).deep.include({ location: '6' })
+  })
+
+  it('takes the batter’s side for the location, and a zone given as a number over it', function () {
+    const play = stored(
+      after(
+        game(),
+        { type: 'lineup', kind: 'batterSide', batSide: 'L' },
+        {
+          type: 'pitch',
+          call: 'B',
+          pitchLocation: { height: 'low', side: 'inside', inZone: false }
+        },
+        {
+          type: 'pitch',
+          call: 'C',
+          zone: 1,
+          pitchLocation: { height: 'low', side: 'inside', inZone: true }
+        },
+        {
+          type: 'pitch',
+          call: 'B',
+          pitchLocation: { height: 'high', side: 'middle', inZone: false }
+        }
+      )
+    )
+    expect(pitchDataOf(play)).deep.equals([
+      { zone: 14 },
+      { zone: 1 },
+      undefined
+    ])
+  })
+
+  it('says more of the pitch the batter hit when the ball in play says more', function () {
+    const play = stored(
+      after(
+        game(),
+        { type: 'ballInPlay', contact: 'swing', speed: 80 },
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: F.CF,
+          pitchLocation: { height: 'middle', side: 'middle', inZone: true }
+        },
+        { type: 'result', eventType: 'single' },
+        close
+      ),
+      true
+    )
+    expect(pitchDataOf(play)).deep.equals([{ startSpeed: 80, zone: 5 }])
+  })
+
+  it('drops a speed or zone out of range, and still throws the pitch', function () {
+    const state = after(
+      game(),
+      { type: 'pitch', call: 'B', speed: 150, zone: 10 },
+      { type: 'pitch', call: 'B', speed: 12, zone: 2.5 },
+      // A zone out of range leaves the location to say where it was.
+      {
+        type: 'pitch',
+        call: 'B',
+        speed: Number.NaN,
+        zone: 0,
+        pitchLocation: { height: 'middle', side: 'away', inZone: true }
+      },
+      {
+        type: 'ballInPlay',
+        contact: 'bunt',
+        speed: -3,
+        zone: 15,
+        fielder: F.C
+      },
+      { type: 'result', eventType: 'single' },
+      close
+    )
+    const play = stored(state, true)
+    expect(pitchDataOf(play)).deep.equals([
+      undefined,
+      undefined,
+      { zone: 6 },
+      undefined
+    ])
+    for (const speed of [20, 110])
+      expect(
+        pitchDataOf(stored(after(game(), { type: 'pitch', call: 'B', speed })))
+      ).deep.equals([{ startSpeed: speed }])
+  })
+})

@@ -60,6 +60,15 @@ const asCredit = asObject({
 export type RunnerCredit = ReturnType<typeof asCredit>
 const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
 
+/**
+ * A pitch's `pitchData` as the scorer gives it: its speed, and its zone. Gumbo
+ * writes much more there, all of it measured, so GameStation writes no more.
+ */
+export interface PitchData {
+  startSpeed?: number
+  zone?: number
+}
+
 /** One pitch or action of a play, in Gumbo's shape. */
 export interface PlayEvent {
   index: number
@@ -90,6 +99,11 @@ export interface PlayEvent {
   moved?: Array<{ player: PlayerRef; bats: number }>
   /** After a pitch, the count it left; the in-play pitch keeps its own. */
   count: { balls: number; strikes: number; outs: number }
+  /**
+   * What the scorer said of a pitch itself: its speed in mph, to a tenth, and
+   * its MLB zone. Each is present only when he gave it, in range.
+   */
+  pitchData?: PitchData
   player: PlayerRef
   /**
    * On a runner's action, the pitcher on the mound when it happened: a
@@ -119,6 +133,9 @@ const asPlayEvent = exactly(
       asArray(asObject({ player: asPlayerRef, bats: asNumber }))
     ),
     count: asCount,
+    pitchData: asOptional(
+      asObject({ startSpeed: asOptional(asNumber), zone: asOptional(asNumber) })
+    ),
     player: asPlayerRef,
     pitcher: asOptional(asPlayerRef)
   })
