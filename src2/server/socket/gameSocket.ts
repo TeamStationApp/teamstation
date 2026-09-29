@@ -53,12 +53,23 @@ export interface GameSocketOptions {
     gameId: string,
     check: () => Promise<GameScope | undefined>
   ) => Promise<GameScope | undefined>
+  /**
+   * When false, nothing here listens for upgrades. The server calls
+   * `acceptUpgrade` from the one listener every socket shares. Default
+   * true: this is the only socket, and any other path is refused.
+   */
+  listenForUpgrades?: boolean
 }
 
 export interface GameSocketHandle {
   fanout: GameFanout
   /** How many sockets are open. */
   size: () => number
+  /**
+   * Takes a `/socket` upgrade. A path this socket does not own is left as it
+   * arrived, so another socket on the same server can take it.
+   */
+  acceptUpgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => boolean
   close: () => Promise<void>
 }
 
@@ -430,21 +441,23 @@ export function attachGameSocket(
     })
   }
 
-  const upgrade = (
+  const acceptUpgrade = (
     req: IncomingMessage,
     socket: Duplex,
     head: Buffer
-  ): void => {
-    socket.on('error', () => undefined)
-    const path = new URL(req.url ?? '/', 'http://socket.invalid').pathname
-    if (path !== SOCKET_PATH) {
-      refuseUpgrade(socket, 404, 'Not Found')
-      return
+  ): boolean => {
+    let path: string
+    try {
+      path = new URL(req.url ?? '/', 'http://socket.invalid').pathname
+    } catch {
+      return false
     }
+    if (path !== SOCKET_PATH) return false
+    socket.on('error', () => undefined)
     const token = sessionToken(req.headers.authorization, req.headers.cookie)
     if (token == null) {
       refuseUpgrade(socket, 401, 'Unauthorized')
-      return
+      return true
     }
     actorForToken(db, token).then(
       actor => {
@@ -461,8 +474,18 @@ export function attachGameSocket(
         refuseUpgrade(socket, 500, 'Internal Server Error')
       }
     )
+    return true
   }
-  server.on('upgrade', upgrade)
+  const upgrade = (
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): void => {
+    if (!acceptUpgrade(req, socket, head)) {
+      refuseUpgrade(socket, 404, 'Not Found')
+    }
+  }
+  if (options.listenForUpgrades !== false) server.on('upgrade', upgrade)
 
   // Two missed pings and the socket is gone: a phone that walked out of Wi-Fi
   // range never says goodbye, and its subscriptions would be read for ever.
@@ -504,7 +527,12 @@ export function attachGameSocket(
   stopSignals?.on('SIGTERM', stop)
   stopSignals?.on('SIGINT', stop)
 
-  return { fanout, size: () => connections.size, close }
+  return {
+    fanout,
+    size: () => connections.size,
+    acceptUpgrade,
+    close
+  }
 }
 
 function rawText(data: RawData): string {

@@ -1511,7 +1511,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'when they began. `canScore` is whether the caller may post its ' +
             'plays: a scorekeeper of either team, which every admin of it ' +
             'is. `canDj` is whether the caller may DJ it: a songkeeper of ' +
-            'either team, which every admin of it is.',
+            'either team, which every admin of it is. `scoreboard` is `{ open, mayOverride }`: ' +
+            "whether the game's scoreboard is open, and whether the caller " +
+            'runs the game and so may override it; null when the ' +
+            'scoreboard store cannot be asked.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -3125,6 +3128,85 @@ export function openApiDocument(version: string): OpenApiDocument {
             404: errorResponse,
             503: errorResponse
           }
+        }
+      },
+      '/scoreboard/{gameId}': {
+        get: {
+          summary: "A game's scoreboard, as it is drawn",
+          description:
+            'No sign-in. `{ state }`, the board with every override applied, ' +
+            "while the scoreboard is open: from the game's creation until two " +
+            'hours after its start, and after that until two hours after the ' +
+            'last write, never later than three days after the start. 404 ' +
+            'for a cancelled or unknown game or a closed scoreboard, and 503 ' +
+            'while the scoreboard store is unreachable.',
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: '`{ state }`' },
+            404: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/scoreboard/{gameId}/dashboard': {
+        get: {
+          summary: "The override dashboard's state, or its socket",
+          description:
+            'As JSON: `{ automated, overrides, final, gameAt, watcherAt }`, ' +
+            'where `gameAt` and `watcherAt` are when (epoch ms) each ' +
+            'automated source last reported a contested field. ' +
+            'With `Upgrade: websocket` it is the dashboard socket: it sends ' +
+            "`{ type: 'state', automated, overrides, final, gameAt, " +
+            'watcherAt }` on open and after every change, and takes ' +
+            "`{ type: 'overrides', data }`, stored whole, or " +
+            "`{ type: 'reset' }`, which clears every override and GS " +
+            "Watcher's stored state, so the board shows the game's own " +
+            'scoring. An unreadable message is answered with ' +
+            '`{ error }` and the socket stays open. **Who may call:** a site ' +
+            'admin or an admin of either team; anybody else gets 404, or ' +
+            'close 4403 on the socket. Socket close codes: 4401 not signed ' +
+            'in, 4403 may not override this game, 4404 no such game or its ' +
+            'scoreboard is closed, 1011 the store is unreachable.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            101: { description: 'The dashboard socket' },
+            200: { description: 'The dashboard state' },
+            401: errorResponse,
+            404: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/scoreboard/{gameId}/socket': {
+        get: {
+          summary: "A game's scoreboard as a WebSocket",
+          description:
+            'No sign-in. Sends the board as it is drawn, `ScoreState` JSON, ' +
+            'on open and after every change from any source. Inbound ' +
+            'messages are ignored. Closes with 4404 when there is no such ' +
+            'game or its scoreboard is closed, and 1011 while the store is ' +
+            'unreachable.',
+          parameters: [gameIdParam],
+          responses: { 101: { description: 'The viewer socket' } }
+        }
+      },
+      '/scoreboard/{gameId}/publish': {
+        get: {
+          summary: "Publish to a game's scoreboard over a WebSocket",
+          description:
+            "GS Watcher's socket. Each message is a bare partial " +
+            '`ScoreState` JSON object, merged into what Watcher has sent ' +
+            'before. Team names are ignored: they come from the game. An ' +
+            'unreadable message is answered with `{ error }` and the socket ' +
+            'stays open. **Who may call:** a site admin or an admin of ' +
+            'either team, by bearer token or session cookie. Close codes: ' +
+            '4401 not signed in, 4403 may not publish this game, 4404 no ' +
+            'such game or its scoreboard is closed, 1011 the store is ' +
+            'unreachable.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: { 101: { description: 'The publisher socket' } }
         }
       },
       '/director/events/{gameId}/claim': {

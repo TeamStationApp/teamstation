@@ -201,6 +201,16 @@ export const asGameDetail = asObject({
    * every administrator of it is. Absent from an older server, and false.
    */
   canDj: asOptional(asBoolean, false),
+  /**
+   * The game's scoreboard: whether it is open, and whether this caller runs
+   * the game and so may override it. Null when the server cannot tell, which
+   * leaves the Score Game screen's Scoreboard option unavailable, and from a
+   * server from before scoreboards.
+   */
+  scoreboard: asOptional(
+    asNullable(asObject({ open: asBoolean, mayOverride: asBoolean })),
+    null
+  ),
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>

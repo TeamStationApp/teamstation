@@ -1,0 +1,199 @@
+[
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": 10,
+    "location": {
+      "x": 5,
+      "z": -80
+    },
+    "fielder": 17
+  },
+  {
+    "type": "result",
+    "eventType": "single"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": 10,
+    "location": {
+      "x": -45,
+      "z": -75
+    },
+    "fielder": 16
+  },
+  {
+    "type": "result",
+    "eventType": "double"
+  },
+  {
+    "type": "runnerMovement",
+    "runner": 1,
+    "to": "home",
+    "reason": "Advance"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "pitch",
+    "call": "C"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "pitch",
+    "call": "C"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "pitch",
+    "call": "C"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "point": "bottomFirst"
+  },
+  {
+    "type": "pitch",
+    "call": "C"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": 10,
+    "location": {
+      "x": 5,
+      "z": -80
+    },
+    "fielder": 8
+  },
+  {
+    "type": "result",
+    "eventType": "single"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": 10,
+    "location": {
+      "x": 5,
+      "z": -80
+    },
+    "fielder": 8
+  },
+  {
+    "type": "result",
+    "eventType": "single"
+  },
+  {
+    "type": "runnerMovement",
+    "runner": 11,
+    "to": "3B",
+    "reason": "Advance"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "pitch",
+    "call": "B"
+  },
+  {
+    "type": "pitch",
+    "call": "C"
+  },
+  {
+    "type": "pitch",
+    "call": "B"
+  },
+  {
+    "point": "midAtBat"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "type": "pitch",
+    "call": "C"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "pitch",
+    "call": "S"
+  },
+  {
+    "type": "gameFlow",
+    "kind": "closePlay"
+  },
+  {
+    "point": "afterThirdOut"
+  }
+]

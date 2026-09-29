@@ -7,14 +7,16 @@ import { fileURLToPath } from 'node:url'
  * imports the app or the server, and the app imports only the parts of the
  * library that describe a game and ask about it — never the parts that change
  * one or store one: `apply`, `gumbo`, and `document`, which alone writes a
- * stored play.
+ * stored play. `scoreboardOf` reads what a game's scoreboard shows, so the
+ * scorer's field scoreboard and the public one agree; it changes nothing.
  */
 export const APP_MAY_IMPORT = [
   'state',
   'actions',
   'transitions',
   'session',
-  'rules'
+  'rules',
+  'scoreboardOf'
 ]
 const LIBRARY = 'src2/common/scoring'
 

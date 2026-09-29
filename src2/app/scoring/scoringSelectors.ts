@@ -5,8 +5,8 @@ import {
   fieldingSide,
   refOf
 } from '../../common/scoring/rules'
+import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { ScoreboardState } from '../field/scoreboardModel'
-import type { PlayerRef } from './scoringContract'
 import type { ScoringSessionState, ScoringSnapshot } from './scoringTypes'
 
 /**
@@ -17,33 +17,27 @@ export { baseIds, battingSide, canSwitchBatter, fieldingSide }
 export const playerRef = refOf
 
 export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
-  const line = session.liveData.linescore
+  const board = scoreboardOfGame(session)
   // Field labels already carry short names; keep the entire supplied name.
   const person = (
-    ref: PlayerRef | null
+    fullName: string
   ): { firstName: string; lastName: string } => ({
-    firstName: ref?.fullName ?? '',
+    firstName: fullName,
     lastName: ''
   })
-  const pitcher = line.defense.P
   return {
     awayTeam: session.gameData.teams.away.name,
     homeTeam: session.gameData.teams.home.name,
-    awayScore: line.teams.away.runs,
-    homeScore: line.teams.home.runs,
-    batter: person(line.offense.batter),
-    pitcher: person(pitcher),
-    pitchCount:
-      pitcher == null
-        ? 0
-        : (session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts[
-            pitcher.id
-          ] ?? 0),
-    balls: line.balls,
-    strikes: line.strikes,
-    outs: line.outs,
-    inning: line.currentInning,
-    half: line.inningState === 'Bottom' ? 'bottom' : 'top'
+    awayScore: board.awayScore,
+    homeScore: board.homeScore,
+    batter: person(board.batterName),
+    pitcher: person(board.pitcherName),
+    pitchCount: board.numPitches,
+    balls: board.balls,
+    strikes: board.strikes,
+    outs: board.outs,
+    inning: board.inning,
+    half: board.half === 'bottom' ? 'bottom' : 'top'
   }
 }
 
