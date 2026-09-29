@@ -1,0 +1,327 @@
+{
+  "scoreboardContainer": {
+    "alignItems": "flex-start",
+    "justifyContent": "flex-start"
+  },
+  "scoreboard": {
+    "backgroundColor": "#2d2d2d",
+    "borderRadius": 15,
+    "padding": 10,
+    "shadowColor": "#000000",
+    "shadowOffset": {
+      "width": 0,
+      "height": 5
+    },
+    "shadowOpacity": 0.3,
+    "shadowRadius": 10,
+    "elevation": 8,
+    "borderWidth": 2,
+    "borderColor": "#4d4d4d",
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "headerRow": {
+    "flexDirection": "row",
+    "justifyContent": "space-between",
+    "alignItems": "center",
+    "paddingHorizontal": 10,
+    "paddingBottom": 5
+  },
+  "batterAbbrev": {
+    "color": "#E8E4D8",
+    "fontSize": 25,
+    "fontWeight": "bold",
+    "letterSpacing": 1,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "batterAtBatsText": {
+    "color": "#E8E4D8",
+    "fontSize": 25,
+    "fontWeight": "bold",
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "separatorLine": {
+    "height": 1,
+    "backgroundColor": "#555",
+    "marginHorizontal": 5
+  },
+  "inningCountSeparator": {
+    "width": 1,
+    "alignSelf": "stretch",
+    "backgroundColor": "#555",
+    "marginLeft": 0,
+    "marginRight": 20
+  },
+  "pitcherRow": {
+    "flexDirection": "row",
+    "justifyContent": "space-between",
+    "alignItems": "center",
+    "paddingHorizontal": 10,
+    "paddingVertical": 5
+  },
+  "pitcherName": {
+    "color": "#E8E4D8",
+    "fontSize": 25,
+    "fontWeight": "bold",
+    "textTransform": "uppercase",
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "pitchCount": {
+    "color": "#E8E4D8",
+    "fontSize": 25,
+    "fontWeight": "bold",
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "mainRow": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "justifyContent": "space-between"
+  },
+  "teamsSection": {
+    "marginTop": 1,
+    "flexDirection": "column",
+    "flex": 1
+  },
+  "teamRow": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "marginBottom": 1.5
+  },
+  "teamBox": {
+    "flex": 1,
+    "height": 71,
+    "justifyContent": "center",
+    "alignItems": "center",
+    "paddingHorizontal": 20,
+    "borderRadius": 10,
+    "marginRight": 5,
+    "borderWidth": 2,
+    "borderColor": "#606060"
+  },
+  "teamName": {
+    "color": "#E8E4D8",
+    "fontSize": 30,
+    "fontWeight": "bold",
+    "textAlign": "center",
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "scoreBox": {
+    "backgroundColor": "#FFFFFF",
+    "width": 91,
+    "height": 71,
+    "borderRadius": 5,
+    "alignItems": "center",
+    "justifyContent": "center"
+  },
+  "scoreText": {
+    "color": "#000000",
+    "fontSize": 61,
+    "fontWeight": "bold",
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "rightSection": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "marginLeft": 20
+  },
+  "arrowsOutsColumn": {
+    "alignItems": "center",
+    "marginRight": 20
+  },
+  "inningCount": {
+    "color": "#E8E4D8",
+    "fontSize": 46,
+    "fontWeight": "bold",
+    "marginVertical": 1,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "arrowOuterUp": {
+    "position": "relative",
+    "width": 0,
+    "height": 0,
+    "borderLeftWidth": 18,
+    "borderRightWidth": 18,
+    "borderBottomWidth": 24,
+    "borderLeftColor": "transparent",
+    "borderRightColor": "transparent",
+    "marginBottom": 3
+  },
+  "arrowInnerUp": {
+    "position": "absolute",
+    "top": 3,
+    "left": -14,
+    "width": 0,
+    "height": 0,
+    "borderLeftWidth": 14,
+    "borderRightWidth": 14,
+    "borderBottomWidth": 19,
+    "borderLeftColor": "transparent",
+    "borderRightColor": "transparent"
+  },
+  "arrowOuterActiveUp": {
+    "borderBottomColor": "#ef4444"
+  },
+  "arrowOuterInactiveUp": {
+    "borderBottomColor": "#606060"
+  },
+  "arrowInnerActiveUp": {
+    "borderBottomColor": "#ef4444"
+  },
+  "arrowInnerInactiveUp": {
+    "borderBottomColor": "#383838"
+  },
+  "arrowOuterDown": {
+    "position": "relative",
+    "width": 0,
+    "height": 0,
+    "borderLeftWidth": 18,
+    "borderRightWidth": 18,
+    "borderTopWidth": 24,
+    "borderLeftColor": "transparent",
+    "borderRightColor": "transparent",
+    "marginTop": 3
+  },
+  "arrowInnerDown": {
+    "position": "absolute",
+    "bottom": 3,
+    "left": -14,
+    "width": 0,
+    "height": 0,
+    "borderLeftWidth": 14,
+    "borderRightWidth": 14,
+    "borderTopWidth": 19,
+    "borderLeftColor": "transparent",
+    "borderRightColor": "transparent"
+  },
+  "arrowOuterActiveDown": {
+    "borderTopColor": "#ef4444"
+  },
+  "arrowOuterInactiveDown": {
+    "borderTopColor": "#606060"
+  },
+  "arrowInnerActiveDown": {
+    "borderTopColor": "#ef4444"
+  },
+  "arrowInnerInactiveDown": {
+    "borderTopColor": "#383838"
+  },
+  "countOutsContainer": {
+    "alignItems": "center",
+    "marginRight": 25
+  },
+  "countDisplay": {
+    "color": "#E8E4D8",
+    "fontSize": 56,
+    "fontWeight": "bold",
+    "marginBottom": 5,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "outsDotsRow": {
+    "flexDirection": "row",
+    "justifyContent": "center"
+  },
+  "outDot": {
+    "width": 25,
+    "height": 25,
+    "borderRadius": 15,
+    "borderWidth": 2,
+    "borderColor": "#606060",
+    "backgroundColor": "#383838",
+    "marginHorizontal": 5
+  },
+  "outDotActive": {
+    "backgroundColor": "#ef4444",
+    "borderColor": "#ef4444"
+  },
+  "basesAndSpeedColumn": {
+    "alignItems": "center",
+    "justifyContent": "flex-start"
+  },
+  "basesRotatedContainer": {
+    "transform": [
+      {
+        "rotate": "45deg"
+      }
+    ],
+    "width": 81,
+    "height": 56,
+    "justifyContent": "center",
+    "alignItems": "center",
+    "marginTop": 20
+  },
+  "basesGrid": {
+    "width": 56,
+    "height": 56,
+    "position": "relative"
+  },
+  "pitchSpeedContainer": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "justifyContent": "center",
+    "marginTop": 5
+  },
+  "pitchSpeedNumber": {
+    "color": "#E8E4D8",
+    "fontSize": 56,
+    "fontWeight": "bold",
+    "lineHeight": 56,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "pitchSpeedLettersColumn": {
+    "flexDirection": "column",
+    "alignItems": "center",
+    "justifyContent": "center",
+    "marginLeft": 5
+  },
+  "pitchSpeedLetter": {
+    "color": "#E8E4D8",
+    "fontSize": 15,
+    "fontWeight": "bold",
+    "lineHeight": 16,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "pitchSpeedHidden": {
+    "opacity": 0
+  },
+  "baseSquare": {
+    "width": 25,
+    "height": 25,
+    "backgroundColor": "#383838",
+    "borderWidth": 2,
+    "borderColor": "#606060",
+    "position": "absolute"
+  },
+  "baseSecondPos": {
+    "top": 0,
+    "left": 0
+  },
+  "baseFirstPos": {
+    "top": 0,
+    "left": 36
+  },
+  "baseThirdPos": {
+    "top": 36,
+    "left": 0
+  },
+  "baseSquareGray": {},
+  "baseSquareFilled": {
+    "backgroundColor": "#ef4444",
+    "borderColor": "#ef4444"
+  },
+  "noGameContainer": {
+    "padding": 51,
+    "alignItems": "center",
+    "justifyContent": "center"
+  },
+  "noGameText": {
+    "color": "#E8E4D8",
+    "fontSize": 30,
+    "fontWeight": "bold",
+    "marginBottom": 15,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  },
+  "noGameSubtext": {
+    "color": "#6B8E4E",
+    "fontSize": 20,
+    "fontFamily": "Helvetica Neue, Arial, sans-serif"
+  }
+}
