@@ -21,29 +21,49 @@ verification as part of the work — not an optional follow-up.
 
 ### Device
 
-- Do **not** hard-code a simulator or hardware UDID in scripts, YAML, docs defaults, or agent
+- Do **not** hard-code a simulator or hardware UDID in scripts, tests, docs defaults, or agent
   rules.
 - Paul names the target for the run. Pass it as `DIRECTOR_DEVICE_UDID` (or
-  `node scripts/run-maestro.js --device <udid>`). Fail if it is missing.
-- Maestro YAML must not name a device; the runner supplies `--device` so the same flows can hit
-  different iPads.
-- Do not boot or shut down simulators. Target an already-running instance. Maestro:
-  `--shutdown-after=false`.
+  `DIRECTOR_SIMULATOR_UDID` for a simulator). Fail if it is missing.
+- A test must not name a device; it reads the UDID from the environment and passes it to
+  maestro-d as `device:`, so the same test can hit different iPads.
+- Do not boot or shut down simulators. Target an already-running instance.
 - Do not use the 2018 A12X unless Paul named it.
 
 ### How much testing
 
-After the code change, run **as much of the suite that already exists** as the change can affect:
+After the code change, run **as much of the testing that already exists** as the change can affect:
 
 1. `DIRECTOR_DEVICE_UDID=<udid> ./scripts/build-sim.sh` (simulator) or `build-device.sh`
-   (hardware) so Maestro `clearState` has an `.app`
-2. `DIRECTOR_DEVICE_UDID=<udid> ./scripts/test-unit.sh` when Swift logic changed
-3. `node scripts/run-maestro.js --device <udid> --suite operator` for product/UI/pipeline work
+   (hardware) so there is an `.app` to test
+2. `DIRECTOR_SIMULATOR_UDID=<udid> ./scripts/test-unit.sh` when Swift logic changed
+3. The maestro-d TypeScript tests that cover the product/UI/pipeline area you changed (see
+   **UI and device tests** below)
 
-Quote the runner line that names the UDID. Fix failures before handing back.
+Quote the line that names the UDID. Fix failures before handing back.
 
 ### Before launching a build on an iPad holding footage
 
 Retention sweeps the camera archive at app launch. Check the build's retention settings before
 running anything against an iPad with an unrecovered take on it — a six-hour window once deleted
 all 3,617 segments of a 109-minute game. See `mobile/apps/gsDirector/docs/sync-alignment-handoff.md`.
+
+## UI and device tests: maestro-d in TypeScript
+
+Every UI, simulator, emulator and device test is driven by **maestro-d** and written in
+**TypeScript** against its JavaScript client (`import { MaestroD } from 'maestro-d'`, or the
+client under `MAESTRO_D_CLIENT_ROOT` as `scripts/scoring-feedback-safari.mjs` loads it). This
+applies to every app in the repository: GS Director, GS Cameraman, GS Watcher, GS Distributor and
+the web app in a mobile browser.
+
+- **No new Maestro YAML flows.** Do not add `.yaml` flows, and do not use `maestro-runner test` or
+  `scripts/run-maestro.js` as the test for new work. The YAML flows that already exist stay until
+  someone migrates them; they are not the standard, and they are not required for handing back.
+- Write a test as a `.ts` file beside the app it drives (for example
+  `mobile/apps/gsDirector/e2e/<name>.e2e.ts`), run with `node -r sucrase/register <file>`.
+- Each agent uses its own daemon name (`MAESTRO_D=<name>`); daemons are not shared. Run
+  `maestro-d ps` before attaching, and always pin the device with `device:`.
+- The maestro-d docs are in `~/git/maestro-d/docs/daemon/` (`js.md`, `rest.md`, `cli.md`,
+  `commands.md`).
+- A result on a real device is confirmed with a frame from the bench webcam as well as a maestro-d
+  screenshot.
