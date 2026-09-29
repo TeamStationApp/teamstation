@@ -236,7 +236,13 @@ describe('dictation route', function () {
       }
     })
     const app = express()
-    app.use('/api/v1', healthRoutes(db, '1.2.3', { dictation: true }))
+    app.use(
+      '/api/v1',
+      healthRoutes(db, '1.2.3', {
+        dictation: true,
+        dictationModels: ['grok-4.3', 'grok-4.7']
+      })
+    )
     server = createServer(app)
     detach = attachDictation(server, {
       db,
@@ -754,9 +760,28 @@ describe('dictation route', function () {
     recogniser.handlers.onFinal('Ball.')
     await client.next()
     expect(await client.next()).deep.include({ kind: 'actions', id: 'u1' })
-    expect(conversations[conversations.length - 1].config.model).equals(
-      'grok-4.3'
-    )
+    expect(conversations[conversations.length - 1].config).deep.include({
+      model: 'grok-4.3',
+      api: 'chat',
+      apiKey: 'key',
+      baseUrl: 'https://llm.example/v1'
+    })
+    client.ws.close()
+  })
+
+  it('refuses a model this server has no key for, before any audio', async function () {
+    const client = await connect()
+    const recogniser = recognisers[recognisers.length - 1]
+    client.send(start('u1', { model: 'gpt-6-luna' }))
+    expect(await client.next()).deep.equals({
+      kind: 'error',
+      id: 'u1',
+      message: 'GPT-6 Luna is not set up on this server'
+    })
+    // Nothing is in flight: the next start is taken.
+    client.send(start('u2'))
+    await settled(recogniser, 'begin')
+    expect(recogniser.calls).deep.equals(['begin'])
     client.ws.close()
   })
 
@@ -987,7 +1012,8 @@ describe('dictation route', function () {
       expect(await client.health()).deep.include({
         status: 'ok',
         version: '1.2.3',
-        dictation: true
+        dictation: true,
+        dictationModels: ['grok-4.3', 'grok-4.7']
       })
 
       const plain = express()
@@ -997,7 +1023,10 @@ describe('dictation route', function () {
       const off = new GameStationClient({
         baseUrl: `http://127.0.0.1:${(bare.address() as AddressInfo).port}/api/v1`
       })
-      expect((await off.health()).dictation).equals(false)
+      expect(await off.health()).deep.include({
+        dictation: false,
+        dictationModels: []
+      })
       bare.close()
 
       const older = new GameStationClient({
@@ -1025,7 +1054,22 @@ describe('dictation route', function () {
         baseUrl: 'https://api.x.ai/v1',
         sttUrl: 'wss://api.x.ai/v1/stt',
         sttModel: 'grok-voice-transcribe-2.0',
-        model: 'grok-4.3'
+        model: 'grok-4.3',
+        openai: undefined,
+        anthropic: undefined
+      })
+      // OpenAI's and Anthropic's keys, each at its own address by default.
+      expect(
+        asServerConfig({
+          dictation: {
+            apiKey: 'k',
+            openai: { apiKey: 'o' },
+            anthropic: { apiKey: 'a' }
+          }
+        }).dictation
+      ).deep.include({
+        openai: { apiKey: 'o', baseUrl: 'https://api.openai.com/v1' },
+        anthropic: { apiKey: 'a', baseUrl: 'https://api.anthropic.com/v1' }
       })
       expect(() => asServerConfig({ dictation: {} })).throws()
     })

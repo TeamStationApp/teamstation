@@ -900,13 +900,58 @@ export const asAddedPerson = asObject({
 })
 export type AddedPerson = ReturnType<typeof asAddedPerson>
 
-/** What `/health` reports. `dictation` is absent from a server that predates it. */
+/** The LLMs dictation can put an utterance to, in the order a scorer picks. */
+/**
+ * The models a scorer can pick. Grok 4.7 is not offered, though the server
+ * still routes any grok- model to xAI and its prompt is the same.
+ */
+export const DICTATION_MODELS = [
+  'grok-4.3',
+  'gpt-6-luna',
+  'gpt-6-sol',
+  'claude-haiku-4-5-20251001'
+] as const
+export type DictationModel = (typeof DICTATION_MODELS)[number]
+/**
+ * The model a scorer who never picked one gets, when the server has it:
+ * the fastest of them, and as accurate as any on everyday sentences.
+ */
+export const DEFAULT_DICTATION_MODEL: DictationModel =
+  'claude-haiku-4-5-20251001'
+
+/**
+ * The model dictation uses: the scorer's pick when the server offers it, or
+ * else the default, or else the first the server offers.
+ */
+export function dictationModelOf(
+  picked: DictationModel | undefined,
+  offered: readonly string[]
+): DictationModel | undefined {
+  for (const choice of [picked, DEFAULT_DICTATION_MODEL])
+    if (choice != null && offered.includes(choice)) return choice
+  return DICTATION_MODELS.find(model => offered.includes(model))
+}
+
+/** What a scorer calls each of them. */
+export const DICTATION_MODEL_NAMES: Record<DictationModel, string> = {
+  'grok-4.3': 'Grok 4.3',
+  'gpt-6-luna': 'GPT-6 Luna',
+  'gpt-6-sol': 'GPT-6 Sol',
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5'
+}
+
+/**
+ * What `/health` reports. `dictation` is absent from a server that predates
+ * it; `dictationModels` lists the models this server has a key for, and may
+ * name one this client does not know.
+ */
 export const asHealth = asObject({
   status: asValue('ok', 'degraded'),
   version: asString,
   database: asValue('ok', 'unreachable'),
   migrations: asNumber,
-  dictation: asOptional(asBoolean, false)
+  dictation: asOptional(asBoolean, false),
+  dictationModels: asOptional(asArray(asString), [])
 })
 export type Health = ReturnType<typeof asHealth>
 
@@ -1744,10 +1789,6 @@ function errorFrom(status: number, text: string): HttpError {
  * and every frame about an utterance carries that utterance's `id`, so a reply
  * is never matched to the wrong sentence. Both ends clean with these.
  */
-
-/** The two LLMs dictation can put an utterance to. */
-export const DICTATION_MODELS = ['grok-4.7', 'grok-4.3'] as const
-export type DictationModel = (typeof DICTATION_MODELS)[number]
 
 /** An LLM may offer at most this many answers to a question. */
 export const MAX_ASK_OPTIONS = 5

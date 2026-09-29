@@ -13,6 +13,8 @@ export interface HealthBody {
   pid: number
   /** Whether dictation is configured. Never the key. */
   dictation: boolean
+  /** The LLMs dictation has a key for. */
+  dictationModels: string[]
 }
 
 /**
@@ -22,7 +24,7 @@ export interface HealthBody {
 export function healthRoutes(
   db: Kysely<Database>,
   version: string,
-  options: { dictation?: boolean } = {}
+  options: { dictation?: boolean; dictationModels?: readonly string[] } = {}
 ): Router {
   const router = Router()
 
@@ -48,7 +50,8 @@ export function healthRoutes(
         migrations,
         uptimeSec: Math.round(process.uptime()),
         pid: process.pid,
-        dictation: options.dictation ?? false
+        dictation: options.dictation ?? false,
+        dictationModels: [...(options.dictationModels ?? [])]
       }
       res.status(database === 'ok' ? 200 : 503).json(body)
     })

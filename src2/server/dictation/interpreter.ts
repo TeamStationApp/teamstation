@@ -24,16 +24,55 @@ export const DEADLINE_MS = 180_000
 /** How many questions one utterance may ask before it is given up on. */
 export const MAX_ASKS = 2
 
+/** How many times a follow-up model is asked for more about one sentence. */
+export const MAX_FOLLOW_UPS = 8
+
+/** Results a ball in play does not come to. */
+const UNBATTED: ReadonlySet<string> = new Set([
+  'strikeout',
+  'hit_by_pitch',
+  'intent_walk',
+  'catcher_interference',
+  'manual_placement'
+])
+
+/** What a model is told when it sent a ball in play and no result for it. */
+export const RESULT_MISSING =
+  "Recorded. The ball in play has no result. If the scorer's words say how it ended — a hit, an out, an error, a fielder's choice — call result for it now; if they do not, answer with no tool call."
+
+/**
+ * What a follow-up model is told of each call it made: everything recorded
+ * so far, so a call said twice ("ball, ball") is told from a duplicate.
+ */
+export function followUp(recorded: readonly ScoringAction[]): string {
+  return `Recorded. So far, in order: ${JSON.stringify(recorded)}. Call a tool again only for something the scorer said that is not in that list yet. When all of it is there, answer with no tool call.`
+}
+
 export interface InterpreterConfig {
   apiKey: string
   model: string
   baseUrl?: string
+  /** OpenAI's chat completions (xAI speaks it too), or Anthropic's messages. */
+  api?: 'chat' | 'messages'
+  /** Fields the provider needs on every request for this model. */
+  body?: Record<string, unknown>
+  /**
+   * The model makes one call a reply and waits for its result, as GPT does
+   * with its reasoning off: each call is answered and the model asked again,
+   * until it makes no more.
+   */
+  followUp?: boolean
   deadlineMs?: number
   /**
    * Routes a scorer's requests to the provider server that holds the cached
-   * prefix: xAI's `x-grok-conv-id` header.
+   * prefix: xAI's `x-grok-conv-id` header, and OpenAI's `prompt_cache_key`.
    */
   cacheKey?: string
+  /**
+   * The game goes in the user message, before the scorer's words, rather
+   * than in a second system message: GPT caches the fixed prefix only so.
+   */
+  gameInUserMessage?: boolean
   /** The scope's tools. Absent means the scoring library's. */
   tools?: readonly Tool[]
   fetch?: typeof fetch
@@ -191,6 +230,60 @@ type Message =
   | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
   | { role: 'tool'; tool_call_id: string; content: string }
 
+/**
+ * Tool calls a model wrote as text rather than calling: JSON objects, one
+ * after another, each naming one of `names` with its fields as
+ * `parameters` or `arguments` ({"name": "pitch", "parameters": {"call": "B"}},
+ * with or without "type": "function"). Anything else in the text is left.
+ */
+export function callsWrittenAsText(
+  text: string,
+  names: ReadonlySet<string>
+): ToolCall[] {
+  const calls: ToolCall[] = []
+  for (let start = text.indexOf('{'); start >= 0;) {
+    // The object that opens here, to its matching brace, strings and all.
+    let depth = 0
+    let inString = false
+    let end = -1
+    for (let at = start; at < text.length && end < 0; at++) {
+      const char = text[at]
+      if (inString) {
+        if (char === '\\') at++
+        else if (char === '"') inString = false
+      } else if (char === '"') inString = true
+      else if (char === '{') depth++
+      else if (char === '}' && --depth === 0) end = at
+    }
+    if (end < 0) break
+    const object = parse(text.slice(start, end + 1))
+    const name = object?.name
+    const given = object?.parameters ?? object?.arguments
+    const fields = typeof given === 'string' ? parse(given) : given
+    if (
+      typeof name === 'string' &&
+      names.has(name) &&
+      fields != null &&
+      typeof fields === 'object'
+    )
+      calls.push({
+        id: `written_${calls.length + 1}`,
+        type: 'function',
+        function: { name, arguments: JSON.stringify(fields) }
+      })
+    start = text.indexOf('{', end + 1)
+  }
+  return calls
+}
+
+/** A closePlay call, which is never the scorer's to report. */
+function isClosePlay(call: ToolCall): boolean {
+  return (
+    call.function.name === 'gameFlow' &&
+    parse(call.function.arguments)?.kind === 'closePlay'
+  )
+}
+
 function parse(raw: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(raw)
@@ -252,17 +345,33 @@ export class Interpretation {
   private readonly messages: Message[]
   private asks = 0
   private open: { callId: string; options: AskOption[] } | null = null
+  /** What a follow-up model has reported so far. */
+  private readonly actions: ScoringAction[] = []
+  private readonly dropped: Problem[] = []
+  /** Whether the next reply must be a tool call. */
+  private required = true
+  /** Whether the model was asked once for a result it left out. */
+  private nudged = false
 
   constructor(
     private readonly config: InterpreterConfig,
     context: string,
     readonly transcript: string
   ) {
-    this.messages = [
-      { role: 'system', content: systemPrompt() },
-      { role: 'system', content: gamePrompt(context) },
-      { role: 'user', content: transcript }
-    ]
+    this.messages =
+      config.gameInUserMessage === true
+        ? [
+            { role: 'system', content: systemPrompt() },
+            {
+              role: 'user',
+              content: `${gamePrompt(context)}\n\nTHE SCORER SAID\n${transcript}`
+            }
+          ]
+        : [
+            { role: 'system', content: systemPrompt() },
+            { role: 'system', content: gamePrompt(context) },
+            { role: 'user', content: transcript }
+          ]
   }
 
   /** Whether a question is waiting on the scorer. */
@@ -287,7 +396,11 @@ export class Interpretation {
       return { kind: 'error', message: `There is no option ${index}` }
     this.open = null
     if (option.actions != null)
-      return { kind: 'actions', actions: option.actions, dropped: [] }
+      return {
+        kind: 'actions',
+        actions: [...this.actions, ...option.actions],
+        dropped: [...this.dropped]
+      }
     this.messages.push({
       role: 'tool',
       tool_call_id: open.callId,
@@ -297,8 +410,65 @@ export class Interpretation {
   }
 
   private async turn(): Promise<Turn> {
-    const reply = await this.request()
-    if ('error' in reply) return { kind: 'error', message: reply.error }
+    for (let round = 0; ; round++) {
+      const reply = await this.request()
+      if ('error' in reply) return { kind: 'error', message: reply.error }
+      // A model that wrote its calls out as text, as Grok sometimes does
+      // despite being told to call, sometimes beside a closePlay it did
+      // call (never kept): those calls, read from the text.
+      const written = reply.calls.every(isClosePlay)
+        ? callsWrittenAsText(reply.said, this.toolNames())
+        : []
+      const calls = written.length === 0 ? reply.calls : written
+      const read = this.read({
+        calls,
+        said: written.length === 0 ? reply.said : ''
+      })
+      if (typeof read !== 'number') return read
+      // A ball in play sent without its result: asked once for the result,
+      // if the words say how it ended.
+      const nudge = !this.nudged && calls.length > 0 && this.resultMissing()
+      // A follow-up round that adds nothing new means the sentence is done.
+      const more =
+        this.config.followUp === true && read > 0 && round < MAX_FOLLOW_UPS
+      if (!nudge && !more) return this.finished(reply.said)
+      if (nudge) this.nudged = true
+      // Each call answered, and the model asked for whatever is left.
+      this.messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: calls
+      })
+      for (const call of calls)
+        this.messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: nudge
+            ? this.config.followUp === true
+              ? `${followUp(this.actions)} ${RESULT_MISSING.replace(/^Recorded\. /, '')}`
+              : RESULT_MISSING
+            : followUp(this.actions)
+        })
+      this.required = false
+    }
+  }
+
+  /** Whether a ball in play the sentence sent has no result after it. */
+  private resultMissing(): boolean {
+    // In either order: a ball in play sent after its result has one.
+    const balls = this.actions.filter(action => action.type === 'ballInPlay')
+    const batted = this.actions.filter(
+      action => action.type === 'result' && !UNBATTED.has(action.eventType)
+    )
+    return balls.length > batted.length
+  }
+
+  /**
+   * One reply: a question, returned as the turn, or actions, kept — the
+   * number of new ones. A `closePlay` is never the scorer's to report, and a
+   * runner's move already kept is not kept twice.
+   */
+  private read(reply: { calls: ToolCall[]; said: string }): Turn | number {
     const calls = reply.calls
     const ask = calls.find(
       call => call.function.name === ASK_SCORER.function.name
@@ -325,26 +495,55 @@ export class Interpretation {
         tool_calls: [ask]
       })
       this.open = { callId: ask.id, options }
+      this.required = true
       return { kind: 'ask', question, options }
     }
-    const actions: ScoringAction[] = []
-    const dropped: Problem[] = []
+    let kept = 0
     for (const call of calls) {
       const cleaned = clean(call.function.name, parse(call.function.arguments))
-      if ('action' in cleaned) actions.push(cleaned.action)
-      else dropped.push(cleaned.problem)
+      if (!('action' in cleaned)) {
+        this.dropped.push(cleaned.problem)
+        kept++
+        continue
+      }
+      const { action } = cleaned
+      if (action.type === 'gameFlow' && action.kind === 'closePlay') continue
+      // A runner's move is the same move for the same runner, base and
+      // outcome, whatever fielders it names.
+      const move = moveOf(action)
+      if (
+        move != null &&
+        this.actions.some(earlier => moveOf(earlier) === move)
+      )
+        continue
+      this.actions.push(action)
+      kept++
     }
+    return kept
+  }
+
+  /** Every tool this conversation offers, by name. */
+  private toolNames(): ReadonlySet<string> {
+    return new Set([
+      ...(this.config.tools ?? toolSchema()).map(tool => tool.name),
+      ASK_SCORER.function.name
+    ])
+  }
+
+  /** The sentence's actions, or why there are none. */
+  private finished(said: string): Turn {
+    const { actions, dropped } = this
     if (actions.length === 0)
       return {
         kind: 'error',
         message:
           dropped.length > 0
             ? `Nothing usable came back: ${dropped.map(p => p.message).join('; ')}`
-            : reply.said === ''
+            : said === ''
               ? `Nothing to score in "${this.transcript}"`
-              : `Nothing to score in "${this.transcript}": ${reply.said}`
+              : `Nothing to score in "${this.transcript}": ${said.slice(0, 300)}`
       }
-    return { kind: 'actions', actions, dropped }
+    return { kind: 'actions', actions: [...actions], dropped: [...dropped] }
   }
 
   /** The tool calls, and whatever the LLM wrote instead of calling one. */
@@ -360,50 +559,23 @@ export class Interpretation {
       timedOut = true
       controller.abort()
     }, deadlineMs)
+    const call =
+      this.config.api === 'messages'
+        ? this.messagesCall(baseUrl)
+        : this.chatCall(baseUrl)
     try {
-      const response = await (this.config.fetch ?? fetch)(
-        `${baseUrl}/chat/completions`,
-        {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            'Content-Type': 'application/json',
-            ...(this.config.cacheKey == null
-              ? {}
-              : { 'x-grok-conv-id': this.config.cacheKey })
-          },
-          body: JSON.stringify({
-            model: this.config.model,
-            temperature: 0,
-            // Every sentence comes back as tool calls: actions, or a question.
-            // Left to choose, the model has written a call out as text.
-            tool_choice: 'required',
-            // One sentence is regularly several actions.
-            parallel_tool_calls: true,
-            tools: [
-              ...asOpenAiTools(this.config.tools ?? toolSchema()),
-              ASK_SCORER
-            ],
-            messages: this.messages
-          })
-        }
-      )
+      const response = await (this.config.fetch ?? fetch)(call.url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { ...call.headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...call.body, ...this.config.body })
+      })
       const text = await response.text()
       if (!response.ok)
         return {
           error: `${provider} answered ${response.status}: ${text.slice(0, 200)}`
         }
-      const body = parse(text) as {
-        choices?: Array<{
-          message?: { tool_calls?: ToolCall[]; content?: string | null }
-        }>
-      } | null
-      const message = body?.choices?.[0]?.message
-      return {
-        calls: message?.tool_calls ?? [],
-        said: (message?.content ?? '').trim().slice(0, 300)
-      }
+      return call.read(parse(text))
     } catch (error) {
       if (timedOut)
         return {
@@ -416,6 +588,190 @@ export class Interpretation {
       clearTimeout(timer)
     }
   }
+
+  /** OpenAI's chat completions, which xAI and OpenAI both answer. */
+  private chatCall(baseUrl: string): LlmCall {
+    return {
+      url: `${baseUrl}/chat/completions`,
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+        ...(this.config.cacheKey == null
+          ? {}
+          : { 'x-grok-conv-id': this.config.cacheKey })
+      },
+      body: {
+        model: this.config.model,
+        temperature: 0,
+        // Every sentence comes back as tool calls: actions, or a question.
+        // Left to choose, the model has written a call out as text. Only a
+        // follow-up model, asked for what is left, may answer with none.
+        tool_choice: this.required ? 'required' : 'auto',
+        // One sentence is regularly several actions.
+        parallel_tool_calls: true,
+        tools: [
+          ...asOpenAiTools(this.config.tools ?? toolSchema()),
+          ASK_SCORER
+        ],
+        messages: this.messages,
+        ...(this.config.cacheKey != null && hostOf(baseUrl) === 'api.openai.com'
+          ? { prompt_cache_key: this.config.cacheKey }
+          : {})
+      },
+      read: body => {
+        const choices = body?.choices as
+          | Array<{
+              message?: { tool_calls?: ToolCall[]; content?: string | null }
+            }>
+          | undefined
+        const message = choices?.[0]?.message
+        return {
+          calls: message?.tool_calls ?? [],
+          said: (message?.content ?? '').trim()
+        }
+      }
+    }
+  }
+
+  /**
+   * Anthropic's messages. The library's tools are already in its shape; the
+   * conversation is kept in the chat shape and translated here, and its
+   * `tool_use` blocks are read back as the same tool calls.
+   */
+  private messagesCall(baseUrl: string): LlmCall {
+    const [system, game, ...rest] = this.messages
+    return {
+      url: `${baseUrl}/messages`,
+      headers: {
+        'x-api-key': this.config.apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: {
+        model: this.config.model,
+        max_tokens: 4096,
+        temperature: 0,
+        // The tools and this block are the same for every sentence: cached.
+        system: [
+          {
+            type: 'text',
+            text: system.content,
+            cache_control: { type: 'ephemeral' }
+          },
+          { type: 'text', text: game.content }
+        ],
+        // Any tool, and as many as the sentence needs.
+        tool_choice: this.required ? { type: 'any' } : { type: 'auto' },
+        tools: [
+          ...(this.config.tools ?? toolSchema()),
+          {
+            name: ASK_SCORER.function.name,
+            description: ASK_SCORER.function.description,
+            input_schema: ASK_SCORER.function.parameters
+          }
+        ],
+        messages: anthropicTurns(rest.map(asAnthropicMessage))
+      },
+      read: body => {
+        const blocks = Array.isArray(body?.content)
+          ? (body.content as Array<Record<string, unknown>>)
+          : []
+        return {
+          calls: blocks
+            .filter(block => block.type === 'tool_use')
+            .map(block => ({
+              id: String(block.id),
+              type: 'function' as const,
+              function: {
+                name: String(block.name),
+                arguments: JSON.stringify(block.input ?? {})
+              }
+            })),
+          said: blocks
+            .filter(block => block.type === 'text')
+            .map(block => String(block.text))
+            .join(' ')
+            .trim()
+        }
+      }
+    }
+  }
+}
+
+/** A runner's move as a key: who, what kind, to where, out or not. */
+function moveOf(action: ScoringAction): string | undefined {
+  if (action.type === 'runnerMovement')
+    return `move ${action.runner} ${action.to} ${action.out === true}`
+  if (action.type === 'baseRunning')
+    return `run ${action.kind} ${action.runner} ${action.to ?? ''}`
+  return undefined
+}
+
+/** One request to an LLM, and how its reply is read. */
+interface LlmCall {
+  url: string
+  headers: Record<string, string>
+  body: Record<string, unknown>
+  read: (body: Record<string, unknown> | null) => {
+    calls: ToolCall[]
+    said: string
+  }
+}
+
+/**
+ * Anthropic takes every tool result of one turn in a single user message:
+ * consecutive tool results are joined.
+ */
+function anthropicTurns(
+  messages: ReadonlyArray<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  const results = (message: Record<string, unknown>): unknown[] | null =>
+    message.role === 'user' &&
+    Array.isArray(message.content) &&
+    message.content.every(
+      (block: Record<string, unknown>) => block.type === 'tool_result'
+    )
+      ? message.content
+      : null
+  const out: Array<Record<string, unknown>> = []
+  for (const message of messages) {
+    const last = out.at(-1)
+    const joined = last == null ? null : results(last)
+    const these = results(message)
+    if (joined != null && these != null)
+      out[out.length - 1] = { role: 'user', content: [...joined, ...these] }
+    else out.push(message)
+  }
+  return out
+}
+
+/** A chat-shaped message as Anthropic takes it. */
+function asAnthropicMessage(message: Message): Record<string, unknown> {
+  if (message.role === 'tool')
+    return {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: message.tool_call_id,
+          content: message.content
+        }
+      ]
+    }
+  if (message.role === 'assistant')
+    return {
+      role: 'assistant',
+      content: [
+        ...(message.content == null || message.content === ''
+          ? []
+          : [{ type: 'text', text: message.content }]),
+        ...(message.tool_calls ?? []).map(call => ({
+          type: 'tool_use',
+          id: call.id,
+          name: call.function.name,
+          input: parse(call.function.arguments) ?? {}
+        }))
+      ]
+    }
+  return { role: 'user', content: message.content }
 }
 
 function hostOf(url: string): string {

@@ -1,6 +1,7 @@
 import React, { type RefObject, useEffect, useRef, useState } from 'react'
 import { Animated, Modal, Pressable, Text, View } from 'react-native'
 
+import { dictationModelOf } from '../../common/api'
 import { useTheme } from '../theme/ThemeContext'
 import type { DictationButtonProps } from './dictationTypes'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
@@ -39,6 +40,7 @@ export function useDictationControls(props: DictationButtonProps): {
 } {
   const theme = useTheme()
   const [available, setAvailable] = useState(false)
+  const [offered, setOffered] = useState<readonly string[]>([])
   const {
     health,
     url,
@@ -52,6 +54,7 @@ export function useDictationControls(props: DictationButtonProps): {
     onDismissQuestion,
     spaceTalks = true,
     onActions,
+    model,
     openSocket,
     openMicrophone,
     tapMs = TAP_MS,
@@ -64,6 +67,10 @@ export function useDictationControls(props: DictationButtonProps): {
     session,
     log: actions,
     onActions,
+    // The model settings show checked: the pick, or the default when there
+    // is none, and one this server no longer offers falls back rather than
+    // being refused on every sentence.
+    model: dictationModelOf(model, offered),
     tailMs,
     openSocket,
     openMicrophone
@@ -72,7 +79,9 @@ export function useDictationControls(props: DictationButtonProps): {
     let live = true
     health().then(
       reply => {
-        if (live) setAvailable(reply.dictation)
+        if (!live) return
+        setAvailable(reply.dictation)
+        setOffered(reply.dictationModels)
       },
       () => undefined
     )

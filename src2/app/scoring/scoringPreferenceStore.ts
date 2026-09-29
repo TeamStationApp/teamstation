@@ -1,7 +1,11 @@
+import { DICTATION_MODELS, type DictationModel } from '../../common/api'
+
 export interface ScoringPreferences {
   sound?: boolean
   /** Plays are drawn as they happen; off, the field just shows the result. */
   animations?: boolean
+  /** The LLM dictation puts a sentence to; absent, the server's own. */
+  dictationModel?: DictationModel
   help: boolean
   shown: number
 }
@@ -32,6 +36,10 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
           ...('sound' in value ? { sound: value.sound !== false } : {}),
           ...('animations' in value
             ? { animations: value.animations !== false }
+            : {}),
+          ...('dictationModel' in value &&
+          DICTATION_MODELS.includes(value.dictationModel as DictationModel)
+            ? { dictationModel: value.dictationModel as DictationModel }
             : {}),
           help: value.help !== false,
           shown:
