@@ -419,7 +419,7 @@ describe('the scoreboard over HTTP', function () {
     ): Promise<unknown> => {
       const answer = await get(`${root}/games/${gameId}`, who)
       expect(answer.status).equals(200)
-      return answer.body.mayScore
+      return answer.body.canScore
     }
     for (const [label, who, expected] of [
       ['an owner of the home team', owner, true],

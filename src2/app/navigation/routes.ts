@@ -21,6 +21,11 @@ export type Route =
    * web has no music to play, and shows the game instead.
    */
   | { name: 'djGame'; gameId: string }
+  /**
+   * The override dashboard of a game's scoreboard, for the people who run
+   * the game.
+   */
+  | { name: 'scoreboardOverride'; gameId: string }
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
@@ -57,7 +62,7 @@ export type Route =
   | {
       name: 'game'
       gameId: string
-      tab?: 'watch' | 'boxScore'
+      tab?: 'boxScore' | 'watch' | 'score'
       videoId?: string
       /** Seconds into the video. The link somebody pastes into a group chat. */
       at?: number
@@ -199,6 +204,14 @@ export function parseRoute(path: string, search = ''): Route {
       if (id == null) return { name: 'home' }
       if (parts[2] === 'score') return { name: 'scoreGame', gameId: id }
       if (parts[2] === 'dj') return { name: 'djGame', gameId: id }
+      // The Score Game section of the game page. The same address it had as
+      // its own screen, so a link to it still opens, with the hero above it.
+      if (parts[2] === 'score-game') {
+        return { name: 'game', gameId: id, tab: 'score' }
+      }
+      if (parts[2] === 'scoreboard-override') {
+        return { name: 'scoreboardOverride', gameId: id }
+      }
       const at = Number(query.get('t'))
       // Empty entries dropped, and capped at four: the address is somewhere
       // anybody can type, and the view draws four tiles at most.
@@ -214,7 +227,12 @@ export function parseRoute(path: string, search = ''): Route {
       return {
         name: 'game',
         gameId: id,
-        tab: query.get('tab') === 'boxScore' ? 'boxScore' : 'watch',
+        tab:
+          query.get('tab') === 'boxScore'
+            ? 'boxScore'
+            : query.get('tab') === 'score'
+              ? 'score'
+              : 'watch',
         videoId: query.get('video') ?? undefined,
         at: Number.isFinite(at) && at > 0 ? at : undefined,
         ...(angles.length > 0 ? { angles } : {}),
@@ -236,6 +254,8 @@ export function routePath(route: Route): string {
       return `/games/${route.gameId}/score`
     case 'djGame':
       return `/games/${route.gameId}/dj`
+    case 'scoreboardOverride':
+      return `/games/${route.gameId}/scoreboard-override`
     case 'videos':
       return route.when === 'past' ? '/videos' : `/videos?when=${route.when}`
     case 'schedule':
@@ -292,6 +312,7 @@ export function routePath(route: Route): string {
     case 'manage':
       return `/${route.scopeKind}s/${route.scopeId}/manage`
     case 'game': {
+      if (route.tab === 'score') return `/games/${route.gameId}/score-game`
       const query = new URLSearchParams()
       if (route.tab === 'boxScore') query.set('tab', 'boxScore')
       if (route.videoId != null) query.set('video', route.videoId)

@@ -59,6 +59,10 @@ export const enUs = {
   games_count_one: '%s game',
   games_count_many: '%s games',
   game_box_score: 'Box score',
+  /** The game page's one scoring pill, and the screen it opens. */
+  game_score_game: 'Score Game',
+  /** The title of the simplified scoreboard, the 1.0 override dashboard. */
+  game_override_scoreboard: 'Override Scoreboard',
   game_no_video: 'No video for this game.',
   game_video_unavailable: 'This video is not available right now.',
   /** Marks a video in the picker whose file is no longer on the server. */
@@ -428,6 +432,51 @@ export const enUs = {
   scoreboard_not_live_detail:
     'Scoreboards open when a game is scheduled and close after it ends.',
   scoreboard_sign_up: 'Sign up for GameStation',
+
+  // The Score Game screen
+  score_game_full_header:
+    'Score game with full stats (ie. pitches, hits, walks, errors)',
+  score_game_full: 'Full game scoring',
+  score_game_full_unavailable: "Full scoring isn't available for this game",
+  score_game_full_not_scorer:
+    'Only people who run a team in this game can score it',
+  score_game_scoreboard_header:
+    'Operate simplified scoreboard with only bases, balls, strikes, outs, and inning',
+  score_game_scoreboard: 'Scoreboard',
+  score_game_scoreboard_closed: "This game's scoreboard has closed",
+  score_game_scoreboard_not_runner:
+    'Only people who run a team in this game can operate the scoreboard',
+  score_game_scoreboard_unavailable: 'The scoreboard is unavailable right now',
+  score_game_link_header: 'Web Widget Scoreboard Link',
+  score_game_copy_link: 'Copy scoreboard link',
+  score_game_copied: 'Copied',
+
+  // The scoreboard override dashboard
+  override_loading: 'Connecting to the scoreboard…',
+  override_away_team: 'Away team name',
+  override_home_team: 'Home team name',
+  override_away_score: 'Away score',
+  override_home_score: 'Home score',
+  override_inning: 'Inning',
+  override_top: 'Top of the inning',
+  override_bottom: 'Bottom of the inning',
+  override_first: 'First base',
+  override_second: 'Second base',
+  override_third: 'Third base',
+  override_add_ball: 'Add a ball',
+  override_add_strike: 'Add a strike',
+  override_add_out: 'Add an out',
+  override_clear_balls: 'Clear balls',
+  override_clear_strikes: 'Clear strikes',
+  override_clear_outs: 'Clear outs',
+  override_revert_team: 'Revert team names',
+  override_revert_score: 'Revert score',
+  override_revert_inning: 'Revert inning',
+  override_revert_bases: 'Revert bases',
+  override_revert_count: 'Revert count',
+  override_pick: 'Pick %s',
+  override_close_picker: 'Close the picker',
+  override_reset: 'Reset Game State',
 
   // Shared
   common_done: 'Done',

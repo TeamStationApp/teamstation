@@ -15,6 +15,44 @@ describe('addresses', function () {
     expect(parseRoute('')).deep.equals({ name: 'home' })
   })
 
+  it('reads and writes the Score Game section, and leaves the scorer alone', function () {
+    expect(parseRoute('/games/g1/score-game')).deep.equals({
+      name: 'game',
+      gameId: 'g1',
+      tab: 'score'
+    })
+    expect(
+      routePath({ name: 'game', gameId: 'g1', tab: 'score' })
+    ).equals('/games/g1/score-game')
+    expect(
+      roundTrip({ name: 'game', gameId: 'g1', tab: 'score' })
+    ).deep.equals({
+      name: 'game',
+      gameId: 'g1',
+      tab: 'score'
+    })
+    expect(parseRoute('/games/g1/score')).deep.equals({
+      name: 'scoreGame',
+      gameId: 'g1'
+    })
+    expect(routePath({ name: 'scoreGame', gameId: 'g1' })).equals(
+      '/games/g1/score'
+    )
+  })
+
+  it('reads and writes a game scoreboard override dashboard', function () {
+    expect(parseRoute('/games/g1/scoreboard-override')).deep.equals({
+      name: 'scoreboardOverride',
+      gameId: 'g1'
+    })
+    expect(routePath({ name: 'scoreboardOverride', gameId: 'g1' })).equals(
+      '/games/g1/scoreboard-override'
+    )
+    expect(roundTrip({ name: 'scoreboardOverride', gameId: 'g1' })).deep.equals(
+      { name: 'scoreboardOverride', gameId: 'g1' }
+    )
+  })
+
   it('carries a game, its video and the moment in it', function () {
     expect(parseRoute('/games/gam_1', 'video=vid_2&t=734')).deep.equals({
       name: 'game',

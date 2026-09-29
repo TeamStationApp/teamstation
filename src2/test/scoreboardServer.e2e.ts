@@ -353,6 +353,8 @@ async function e3(): Promise<void> {
     })
     await page.goto(`${WEB}/games/${gameId}`)
     await click(page, 'Score Game')
+    await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
+    await click(page, 'Full game scoring')
     await page.waitForFunction(() => location.pathname.endsWith('/score'))
     await page.waitForSelector('canvas[data-field-ready="true"]')
     if ((await page.$('[aria-label="OK"]')) != null) await click(page, 'OK')

@@ -33,6 +33,7 @@ const game = asGameDetail({
   awayScore: null,
   ingestStatus: 'pending',
   ingestMessage: null,
+  canScore: true,
   videos: []
 })
 interface ProbeFiber {
@@ -277,6 +278,13 @@ async function readGuide(
   })
 }
 /* eslint-enable @typescript-eslint/prefer-optional-chain */
+/** The Score Game pill, then the Score Game screen's Full game scoring. */
+async function startScoring(page: Page): Promise<void> {
+  await click(page, 'Score Game')
+  await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
+  await click(page, 'Full game scoring')
+  await page.waitForFunction(() => location.pathname.endsWith('/score'))
+}
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
   await page.waitForFunction(
@@ -878,7 +886,7 @@ describe('scoring browser', function () {
   it('opens an unscored game full screen and protects unsaved plays from browser Back', async function () {
     const { page, unexpected } = await open('/games/g1')
     try {
-      await click(page, 'Score Game')
+      await startScoring(page)
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       await page.waitForSelector('canvas')
       expect(await page.$('[aria-label="Schedule"]')).equals(null)
@@ -894,13 +902,16 @@ describe('scoring browser', function () {
       await page.waitForFunction(
         () => document.querySelector('[aria-label="Save status"]') == null
       )
+      // Back returns to the Score Game screen.
       await page.evaluate(() => {
         history.back()
       })
-      await page.waitForSelector('[aria-label="Score Game"]')
+      await page.waitForSelector('[aria-label="Full game scoring"]')
+      expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
       expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
       holdSaves = true
-      await click(page, 'Score Game')
+      await click(page, 'Full game scoring')
+      await page.waitForFunction(() => location.pathname === '/games/g1/score')
       await page.waitForSelector('canvas')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
@@ -921,8 +932,8 @@ describe('scoring browser', function () {
         history.back()
       })
       await click(page, 'Discard and Exit')
-      await page.waitForSelector('[aria-label="Score Game"]')
-      expect(new URL(page.url()).pathname).equals('/games/g1')
+      await page.waitForSelector('[aria-label="Full game scoring"]')
+      expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
       expect(unexpected).deep.equals([])
     } finally {
       holdSaves = false
@@ -5066,4 +5077,3 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
     }
   })
 })
-
