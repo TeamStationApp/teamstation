@@ -113,6 +113,7 @@ export function PillButton({
       accessibilityState={
         role === 'tab' ? { selected, disabled } : { disabled }
       }
+      aria-selected={role === 'tab' ? selected : undefined}
       accessibilityLabel={accessibilityLabel}
       disabled={disabled}
       onPress={onPress}

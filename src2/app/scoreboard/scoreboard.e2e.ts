@@ -31,7 +31,8 @@ import {
 
 /**
  * The scoreboard pages in a real browser, against a running API and web app:
- * E6 to E8 (M2), and E9 by pointing the same file at a seat.
+ * E6 to E8 (M2), and E9 by pointing the same file at a seat. E9 is E6 and
+ * E7 steps 1–3, the tests whose titles end in `[E9]`.
  *
  *   GS_SCOREBOARD_WEB_URL=http://127.0.0.1:8080 \
  *   GS_API_TEST_URL=http://127.0.0.1:9100/api/v1 \
@@ -43,13 +44,13 @@ import {
  * Each group seeds its own games first (`seedScoreboardGames`) and signs the
  * two e2e accounts in with codes read from the server's log. On a seat, where
  * the codes are in the service's journal, pass the tokens instead, and run
- * only the steps that need no local Redis:
+ * only the E9 tests, which need no local Redis and change nothing there:
  *
  *   GS_SCOREBOARD_WEB_URL=https://$SEAT_HOST \
  *   GS_API_TEST_URL=https://$SEAT_HOST/api/v1 \
  *   GS_E2E_DATABASE=postgres://localhost:<tunnel>/GameStation_<seat> \
  *   GS_E2E_RUNNER_TOKEN=… GS_E2E_OTHER_TOKEN=… \
- *     node_modules/.bin/mocha … --grep 'E6|E7\.[123]' \
+ *     node_modules/.bin/mocha … --fgrep '[E9]' \
  *     src2/app/scoreboard/scoreboard.e2e.ts
  *
  * Other settings: GS_CHROME_PATH (the Chrome puppeteer drives),
@@ -72,6 +73,21 @@ const PREFIX =
   process.env.GS_E2E_REDIS_KEY ??
   `gs:${new URL(DATABASE_URL).pathname.slice(1)}`
 const SHOTS = process.env.GS_E2E_SHOTS ?? '/tmp/nsbShots'
+
+/**
+ * E7.5 and E8 change the game's row, its Redis key and its overrides
+ * directly, so they run only against an API and web app on this machine,
+ * never a seat. The database URL is no guide: a seat's is a local tunnel.
+ */
+function requireLocal(step: string): void {
+  const local = (url: string): boolean =>
+    ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)
+  if (!local(API) || !local(WEB)) {
+    throw new Error(
+      `${step} runs only against a local API and web app, not ${API} and ${WEB}`
+    )
+  }
+}
 const MEASURE_SCRIPT = join(
   __dirname,
   '../../../mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/WebOverlayController.swift'
@@ -435,7 +451,7 @@ async function publishAt(
   }
 }
 
-describe('scoreboard pages (E6–E9)', function () {
+describe('the scoreboard pages', function () {
   let group: Group
   let browser: Browser
   let anonymous: BrowserContext
@@ -451,7 +467,7 @@ describe('scoreboard pages (E6–E9)', function () {
     await browser?.close()
   })
 
-  it('E6: the sample page is transparent, B, laid out as 1.0 drew it, and asks for no session', async function () {
+  it('E6: the sample page is transparent, B, laid out as 1.0 drew it, and asks for no session [E9]', async function () {
     const requests: string[] = []
     const page = await anonymous.newPage()
     page.on('request', request => requests.push(request.url()))
@@ -532,7 +548,7 @@ describe('scoreboard pages (E6–E9)', function () {
     await ported.close()
   })
 
-  it('E7.1: a live board draws the seeded names and 0–0 before anything is published', async function () {
+  it('E7.1: a live board draws the seeded names and 0–0 before anything is published [E9]', async function () {
     livePage = await open(anonymous, `/scoreboard/${group.games['+1h']}`)
     const board = await boardShows(
       livePage,
@@ -549,7 +565,7 @@ describe('scoreboard pages (E6–E9)', function () {
     })
   })
 
-  it('E7.2: a published partial reaches the page within 1 s', async function () {
+  it('E7.2: a published partial reaches the page within 1 s [E9]', async function () {
     if (livePage == null) this.skip()
     const page = livePage
     const published = await publishAt(group.games['+1h'], group.runner, {
@@ -576,7 +592,7 @@ describe('scoreboard pages (E6–E9)', function () {
     await shot(page, 'live')
   })
 
-  it('E7.3: a closed board shows the branded 404', async function () {
+  it('E7.3: a closed board shows the branded 404 [E9]', async function () {
     const page = await open(anonymous, `/scoreboard/${group.games['-4h']}`)
     await until('the branded 404', async () => await notFoundShown(page))
     await shot(page, 'notFound')
@@ -598,6 +614,7 @@ describe('scoreboard pages (E6–E9)', function () {
 
   it('E7.5: a board that closes while open switches to the 404 at the 60 s check', async function () {
     this.timeout(120_000)
+    requireLocal('E7.5')
     if (livePage == null) this.skip()
     const page = livePage
     const gameId = group.games['+1h']
@@ -625,6 +642,7 @@ describe('scoreboard pages (E6–E9)', function () {
   })
 
   it('E8: Director measures B on the sample, a long-named live board and a quiet closed page', async function () {
+    requireLocal('E8')
     const gameId = group.games['-10m']
     const long = 'L'.repeat(40)
     const set = await override(HOST, gameId, group.runner, {
@@ -675,17 +693,383 @@ describe('scoreboard pages (E6–E9)', function () {
         sizes.push(
           `${one.name} @ ${viewport.width}×${viewport.height}: ${size.join('×')}`
         )
-        expect(
-          size,
-          `${one.name} at ${viewport.width} × ${viewport.height}`
-        ).deep.equals([
-          SCOREBOARD_BOARD_SIZE.width,
-          SCOREBOARD_BOARD_SIZE.height
-        ])
+        if (one.name.startsWith('live, 40')) {
+          // The longer team name carries the board past B. The height stays.
+          expect(size[0], one.name).to.be.greaterThan(
+            SCOREBOARD_BOARD_SIZE.width
+          )
+          expect(size[1], one.name).equals(SCOREBOARD_BOARD_SIZE.height)
+          const boxes = await page.evaluate(() => {
+            const box = (name: string): number[] => {
+              const node = document.querySelector(`[data-scoreboard="${name}"]`)
+              const team = node == null ? null : node.parentElement
+              if (team == null) return []
+              const rect = team.getBoundingClientRect()
+              const text = node.getBoundingClientRect()
+              return [rect.width, rect.x, text.width]
+            }
+            return { away: box('awayTeam'), home: box('homeTeam') }
+          })
+          expect(boxes.away[0], 'name boxes match').equals(boxes.home[0])
+          expect(boxes.away[1], 'name boxes share a left edge').equals(
+            boxes.home[1]
+          )
+          expect(
+            boxes.home[2],
+            'the long name is not clipped'
+          ).to.be.greaterThan(400)
+        } else {
+          expect(
+            size,
+            `${one.name} at ${viewport.width} × ${viewport.height}`
+          ).deep.equals([
+            SCOREBOARD_BOARD_SIZE.width,
+            SCOREBOARD_BOARD_SIZE.height
+          ])
+        }
       }
       await page.close()
     }
     for (const line of sizes) console.log(`      ${line}`)
     await override(HOST, gameId, group.runner, NO_OVERRIDES)
+  })
+})
+
+async function press(page: Page, label: string): Promise<number> {
+  const selector = `[aria-label="${label}"]`
+  await page.waitForSelector(selector, { visible: true })
+  const at = Date.now()
+  await page.locator(selector).click()
+  return at
+}
+
+/** Holds the mouse down on `label` long enough to be a long press. */
+async function longPress(page: Page, label: string): Promise<void> {
+  const target = await page.waitForSelector(`[aria-label="${label}"]`, {
+    visible: true
+  })
+  const box = await target?.boundingBox()
+  if (box == null) throw new Error(`${label} has no box`)
+  await page.mouse.move(box.x + box.width / 3, box.y + box.height / 2)
+  await page.mouse.down()
+  await sleep(800)
+  await page.mouse.up()
+}
+
+/** The game page has loaded: its Box score pill, or its not-found message. */
+async function gameLoaded(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Box score"]') != null ||
+      String(document.body.textContent).includes('That game is not here'),
+    { timeout: 30_000 }
+  )
+  // The pill depends on the same answer as the tabs, but give a late render
+  // a moment before saying it is absent.
+  await sleep(500)
+}
+
+async function tileOverridden(page: Page, group: string): Promise<boolean> {
+  return await page.evaluate(group => {
+    const tile = document.querySelector(
+      `[data-testid="override-tile-${group}"]`
+    )
+    return (
+      tile !== null &&
+      // 1.0's override colour, gsMediumOlive #6B8E4E.
+      getComputedStyle(tile).backgroundColor === 'rgb(107, 142, 78)'
+    )
+  }, group)
+}
+
+/** Where the Score Game screen's parts sit, top to bottom, and its link. */
+async function scoreGameScreen(page: Page): Promise<{
+  inOrder: boolean
+  link: string
+  monospace: boolean
+  copyIcon: boolean
+}> {
+  await page.waitForSelector('[aria-label="Copy scoreboard link"]')
+  return await page.evaluate(() => {
+    const text = String(document.body.textContent)
+    const order = [
+      'Score game with full stats (ie. pitches, hits, walks, errors)',
+      'Full game scoring',
+      'Operate simplified scoreboard with only bases, balls, strikes, outs, and inning',
+      'Scoreboard',
+      'Web Widget Scoreboard Link'
+    ].map(part => text.indexOf(part))
+    const link = document.querySelector('[data-testid="scoreboardLink"]')
+    // No optional chaining in here: it runs in the page, where Sucrase's
+    // helper for it does not exist.
+    const copy = document.querySelector('[aria-label="Copy scoreboard link"]')
+    return {
+      inOrder:
+        !order.includes(-1) &&
+        order.every((at, i) => i === 0 || at > order[i - 1]),
+      link: link == null ? '' : String(link.textContent),
+      monospace:
+        link != null && getComputedStyle(link).fontFamily.includes('monospace'),
+      copyIcon:
+        copy != null && String(copy.textContent).includes('content_copy')
+    }
+  })
+}
+
+/** Whether a button is there and disabled, and the reason under it. */
+async function disabledWith(
+  page: Page,
+  label: string,
+  reason: string
+): Promise<boolean> {
+  return await page.evaluate(
+    (label, reason) => {
+      const button = document.querySelector(`[aria-label="${label}"]`)
+      return (
+        // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Browser evaluation cannot reference generated Sucrase helpers.
+        button != null &&
+        button.getAttribute('aria-disabled') === 'true' &&
+        String(document.body.textContent).includes(reason)
+      )
+    },
+    label,
+    reason
+  )
+}
+
+describe('the Score Game screen and the override dashboard (E10–E11)', function () {
+  let group: Group
+  let browser: Browser
+  let runner: BrowserContext
+  let anonymous: BrowserContext
+
+  before(async function () {
+    group = await seedGroup()
+    browser = await launch()
+    runner = await contextAs(browser, group.runner)
+    // Tapping copy writes the clipboard, and the test reads it back.
+    await runner.setPermission(
+      WEB,
+      { permission: { name: 'clipboard-read' }, state: 'granted' },
+      { permission: { name: 'clipboard-write' }, state: 'granted' }
+    )
+    anonymous = await contextAs(browser)
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  it('E10: one Score Game pill opens the Score Game screen, whose Scoreboard taps reach the board, and a non-runner gets no pill', async function () {
+    const gameId = group.games['-10m']
+    // 1. Exactly one Score Game pill, and no Override Scoreboard pill.
+    const page = await open(runner, `/games/${gameId}`, {
+      width: 1200,
+      height: 900
+    })
+    await page.waitForSelector('[aria-label="Score Game"]')
+    expect(await page.$$('[aria-label="Score Game"]')).length(1)
+    expect(await page.$('[aria-label="Override Scoreboard"]')).equals(null)
+    expect(await page.$('[aria-label="Continue Scoring"]')).equals(null)
+    await shot(page, 'gamePill')
+
+    // 2. The Score Game screen, top to bottom, and its link copied.
+    await press(page, 'Score Game')
+    await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
+    expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
+    const screen = await scoreGameScreen(page)
+    expect(screen).deep.equals({
+      inOrder: true,
+      link: `${WEB}/scoreboard/${gameId}`,
+      monospace: true,
+      copyIcon: true
+    })
+    await shot(page, 'scoreGameRunner')
+    await press(page, 'Copy scoreboard link')
+    await page.waitForFunction(() =>
+      String(document.body.textContent).includes('Copied')
+    )
+    expect(
+      await page.evaluate(async () => await navigator.clipboard.readText())
+    ).equals(`${WEB}/scoreboard/${gameId}`)
+    await shot(page, 'scoreGameCopied')
+    await until(
+      '"Copied" gone after 2 s',
+      async () =>
+        !(await page.evaluate(() =>
+          String(document.body.textContent).includes('Copied')
+        )),
+      4000
+    )
+
+    // 2a. Full game scoring opens the scorer, and Back returns here.
+    await press(page, 'Full game scoring')
+    await page.waitForFunction(() => location.pathname.endsWith('/score'))
+    expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score`)
+    await page.waitForSelector('canvas[data-field-ready="true"]')
+    await page.goBack()
+    await page.waitForSelector('[aria-label="Copy scoreboard link"]')
+    expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
+
+    // 2b. Scoreboard opens the dashboard at its own address.
+    await press(page, 'Scoreboard')
+    await page.waitForFunction(() =>
+      location.pathname.endsWith('/scoreboard-override')
+    )
+    expect(new URL(page.url()).pathname).equals(
+      `/games/${gameId}/scoreboard-override`
+    )
+
+    // 3. B twice reaches a viewer in another tab.
+    const viewer = await open(anonymous, `/scoreboard/${gameId}`)
+    await boardShows(viewer, 'the first state', one => one.count === '0-0')
+    await press(page, 'Add a ball')
+    await boardShows(viewer, '1-0', one => one.count === '1-0')
+    const tapped = await press(page, 'Add a ball')
+    await boardShows(viewer, '2-0', one => one.count === '2-0', 5000)
+    const took = Date.now() - tapped
+    console.log(`      2-0 on the viewer ${took} ms after the tap`)
+    expect(took).lessThan(1000)
+    expect(await tileOverridden(page, 'count')).equals(true)
+
+    // 4. The count tile's ✕ puts the automated count back.
+    await press(page, 'Revert count')
+    await boardShows(viewer, 'the automated 0-0', one => one.count === '0-0')
+    expect(await tileOverridden(page, 'count')).equals(false)
+
+    // 5. A base, the home score tapped twice, then long-pressed and picked,
+    // then Reset.
+    await press(page, 'Second base')
+    await boardShows(viewer, 'second base', one => one.bases[1])
+    await press(page, 'Home score')
+    await boardShows(viewer, 'home 1', one => one.homeScore === '1')
+    await press(page, 'Home score')
+    await boardShows(viewer, 'home 2', one => one.homeScore === '2')
+    await longPress(page, 'Home score')
+    await press(page, 'Pick 9')
+    await boardShows(viewer, 'home 9', one => one.homeScore === '9')
+    expect(await tileOverridden(page, 'bases')).equals(true)
+    expect(await tileOverridden(page, 'score-home')).equals(true)
+    await shot(page, 'dashboard')
+    await press(page, 'Reset Game State')
+    await boardShows(
+      viewer,
+      'everything automated again',
+      one => !one.bases[1] && one.homeScore === '0' && one.count === '0-0'
+    )
+    await until(
+      'every tile back to automated',
+      async () =>
+        !(await tileOverridden(page, 'bases')) &&
+        !(await tileOverridden(page, 'score-home'))
+    )
+    await viewer.close()
+    await page.close()
+
+    // 6. A plain member of the team, who sees the game but may not score it.
+    const answer = await fetch(`${API}/games/${gameId}`, {
+      headers: { authorization: `Bearer ${group.other}` }
+    })
+    expect(answer.status, 'the game is visible to a plain member').equals(200)
+    const theirGame = (await answer.json()) as {
+      canScore: boolean
+      scoreboard: unknown
+      homeScore: unknown
+      awayScore: unknown
+    }
+    expect(theirGame.canScore).equals(false)
+    expect(theirGame.scoreboard).deep.equals({ open: true, mayOverride: false })
+    expect(
+      [theirGame.homeScore, theirGame.awayScore],
+      'the game is unscored'
+    ).deep.equals([null, null])
+    const other = await contextAs(browser, group.other)
+    const theirs = await open(other, `/games/${gameId}`)
+    await gameLoaded(theirs)
+    expect(
+      await theirs.$('[aria-label="Box score"]'),
+      'the game page loaded'
+    ).not.equals(null)
+    expect(
+      await theirs.$('[aria-label="Score Game"]'),
+      'no Score Game pill for somebody who may not score'
+    ).equals(null)
+    expect(await theirs.$('[aria-label="Override Scoreboard"]')).equals(null)
+    await shot(theirs, 'gameMember')
+    const menu = await open(other, `/games/${gameId}/score-game`)
+    await scoreGameScreen(menu)
+    expect(
+      await disabledWith(
+        menu,
+        'Scoreboard',
+        'Only people who run a team in this game can operate the scoreboard'
+      )
+    ).equals(true)
+    await shot(menu, 'scoreGameMember')
+    const direct = await open(other, `/games/${gameId}/scoreboard-override`)
+    await until('the branded 404', async () => await notFoundShown(direct))
+    await shot(direct, 'dashboardRefused')
+    await other.close()
+  })
+
+  it('E10: the scorer path, pill to Score Game screen to one pitch and Back', async function () {
+    const gameId = group.games['+1h']
+    const page = await open(runner, `/games/${gameId}`, {
+      width: 1200,
+      height: 900
+    })
+    await press(page, 'Score Game')
+    await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
+    await press(page, 'Full game scoring')
+    await page.waitForFunction(() => location.pathname.endsWith('/score'))
+    await page.waitForSelector('canvas[data-field-ready="true"]')
+    if ((await page.$('[aria-label="OK"]')) != null) await press(page, 'OK')
+    await press(page, 'Open scoring menu')
+    await press(page, 'Set Team Rosters')
+    await press(page, 'Save Rosters')
+    const saved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith(`/games/${gameId}/events`) &&
+        response.status() === 200
+    )
+    await press(page, 'Ball')
+    await page.waitForSelector('[aria-label="Undo Ball"]')
+    await saved
+    await page.waitForFunction(
+      () => document.querySelector('[aria-label="Save status"]') == null
+    )
+    // Back returns to the Score Game screen, where the scorer was opened.
+    await page.goBack()
+    await page.waitForSelector('[aria-label="Copy scoreboard link"]')
+    expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
+    const events = await fetch(`${API}/games/${gameId}/events`, {
+      headers: { authorization: `Bearer ${group.runner}` }
+    })
+    const stored = (await events.json()) as {
+      currentPlay: { playEvents?: unknown[] } | null
+      plays: unknown[]
+    }
+    expect(
+      (stored.currentPlay?.playEvents ?? []).length + stored.plays.length,
+      'the pitch was stored'
+    ).greaterThan(0)
+    await page.close()
+  })
+
+  it('E11: an expired game’s dashboard is the branded 404, and its Score Game screen says the board has closed', async function () {
+    const gameId = group.games['-4h']
+    const page = await open(runner, `/games/${gameId}/scoreboard-override`)
+    await until('the branded 404', async () => await notFoundShown(page))
+    const menu = await open(runner, `/games/${gameId}/score-game`)
+    const screen = await scoreGameScreen(menu)
+    expect(screen.link).equals(`${WEB}/scoreboard/${gameId}`)
+    expect(
+      await disabledWith(
+        menu,
+        'Scoreboard',
+        "This game's scoreboard has closed"
+      )
+    ).equals(true)
+    await shot(menu, 'scoreGameClosed')
   })
 })

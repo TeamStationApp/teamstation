@@ -11,6 +11,7 @@ import {
   asVideoSummary,
   GameStationClient
 } from '../../common/api'
+import { ScoreGameScreen } from '../scoreboard/ScoreGameScreen'
 import { GameScreen } from '../screens/GameScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
@@ -34,37 +35,64 @@ afterEach(async function () {
   root = undefined
 })
 describe('actual game scoring entry', function () {
-  it('renders Score Game after Box score and launches only on press', async function () {
+  it('renders Score Game after Box score and Videos, and shows its choices under the pills', async function () {
     const client = new GameStationClient({ baseUrl: '/api/v1' })
-    client.game = async () => gameFixture
+    client.game = async () => ({ ...gameFixture, canScore: true })
     client.teams = async () => []
-    let opened = 0
-    await render(
-      <GameScreen
-        client={client}
-        gameId="g1"
-        onScoreGame={() => {
-          opened++
-        }}
-      />
-    )
-    expect(opened).equals(0)
-    expect(button('Score Game')?.getAttribute('role')).equals('button')
+    await render(<GameScreen client={client} gameId="g1" />)
+    expect(button('Score Game')?.getAttribute('role')).equals('tab')
     const text = document.body.textContent ?? ''
-    expect(text.indexOf('Videos')).lessThan(text.indexOf('Box score'))
-    expect(text.indexOf('Box score')).lessThan(text.indexOf('Score Game'))
+    expect(text.indexOf('Box score')).lessThan(text.indexOf('Videos'))
+    expect(text.indexOf('Videos')).lessThan(text.indexOf('Score Game'))
+    expect(text).includes('Owls')
+    expect(text).not.includes('Full game scoring')
     await act(async () => {
       button('Score Game')?.click()
     })
-    expect(opened).equals(1)
+    const next = document.body.textContent ?? ''
+    expect(next).includes('Owls')
+    expect(next).includes('Full game scoring')
+    expect(next.indexOf('Owls')).lessThan(next.indexOf('Full game scoring'))
+    expect(button('Videos')).not.equals(null)
+    expect(button('Box score')).not.equals(null)
+  })
+  it('launches full scoring from the Score Game screen, for a game in progress too', async function () {
+    for (const game of [
+      gameFixture,
+      { ...gameFixture, scoringOwner: 'gamestation' as const, homeScore: 1 }
+    ]) {
+      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      client.game = async () => ({ ...game, canScore: true })
+      let scored = 0
+      await render(
+        <ScoreGameScreen
+          client={client}
+          gameId="g1"
+          onFullScoring={() => {
+            scored++
+          }}
+          onScoreboard={() => undefined}
+        />
+      )
+      await act(async () => {
+        button('Full game scoring')?.click()
+      })
+      expect(scored).equals(1)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
   })
   it('does not offer scoring for a recorded 0–0 game', async function () {
     const client = new GameStationClient({ baseUrl: '/api/v1' })
-    client.game = async () => ({ ...gameFixture, awayScore: 0, homeScore: 0 })
+    client.game = async () => ({
+      ...gameFixture,
+      canScore: true,
+      awayScore: 0,
+      homeScore: 0
+    })
     client.teams = async () => []
-    await render(
-      <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
-    )
+    await render(<GameScreen client={client} gameId="g1" />)
     expect(button('Score Game')).equals(null)
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
@@ -86,9 +114,7 @@ describe('actual game scoring entry', function () {
       const client = new GameStationClient({ baseUrl: '/api/v1' })
       client.game = async () => game
       client.teams = async () => []
-      await render(
-        <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
-      )
+      await render(<GameScreen client={client} gameId="g1" />)
       expect(button('Score Game')).equals(null)
       expect(button('Continue Scoring')).equals(null)
       expect(button('Box score')).not.equals(null)
@@ -100,27 +126,23 @@ describe('actual game scoring entry', function () {
     const client = new GameStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({
       ...gameFixture,
+      canScore: true,
       scoringOwner: 'gamestation' as const,
       status: 'inProgress',
       awayScore: 1
     })
     client.teams = async () => []
-    await render(
-      <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
-    )
-    expect(button('Continue Scoring')).not.equals(null)
+    await render(<GameScreen client={client} gameId="g1" />)
+    expect(button('Score Game')).not.equals(null)
   })
 })
 
 describe('scoring entry on the phones', function () {
-  // The phone app draws the field through expo-gl, so the tab follows the
-  // same rules there as in a browser: a scorekeeper, a game that can still be
-  // scored, and somewhere to go.
+  // Score Game is a tab of the web game page. A phone does not offer it.
   const web = Platform.OS
   afterEach(function () {
     Platform.OS = web
   })
-  // Gesture Handler insists on its root view off the web, as `App.tsx` gives it.
   async function renderOn(
     os: 'ios' | 'android',
     element: React.ReactElement
@@ -128,75 +150,15 @@ describe('scoring entry on the phones', function () {
     Platform.OS = os
     await render(<GestureHandlerRootView>{element}</GestureHandlerRootView>)
   }
-  async function tabs(
-    os: 'ios' | 'android',
-    game: typeof gameFixture
-  ): Promise<{ score: boolean; resume: boolean }> {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
-    client.game = async () => game
-    client.teams = async () => []
-    await renderOn(
-      os,
-      <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
-    )
-    const shown = {
-      score: button('Score Game') != null,
-      resume: button('Continue Scoring') != null
-    }
-    await act(async () => {
-      root?.unmount()
-    })
-    root = undefined
-    return shown
-  }
   for (const os of ['ios', 'android'] as const) {
-    it(`shows Score Game on ${os} under the same rules as the web`, async function () {
-      const inProgress = {
-        ...gameFixture,
-        scoringOwner: 'gamestation' as const,
-        status: 'inProgress',
-        awayScore: 1
-      }
-      expect(await tabs(os, gameFixture)).deep.equals({
-        score: true,
-        resume: false
-      })
-      expect(await tabs(os, inProgress)).deep.equals({
-        score: false,
-        resume: true
-      })
-      expect(
-        await tabs(os, { ...gameFixture, awayScore: 0, homeScore: 0 })
-      ).deep.equals({ score: false, resume: false })
-      expect(await tabs(os, { ...gameFixture, canScore: false })).deep.equals({
-        score: false,
-        resume: false
-      })
-      expect(await tabs(os, { ...inProgress, canScore: false })).deep.equals({
-        score: false,
-        resume: false
-      })
-    })
-    it(`opens the scorer on ${os} only on press`, async function () {
+    it(`does not offer Score Game on ${os}`, async function () {
       const client = new GameStationClient({ baseUrl: '/api/v1' })
       client.game = async () => gameFixture
       client.teams = async () => []
-      let opened = 0
-      await renderOn(
-        os,
-        <GameScreen
-          client={client}
-          gameId="g1"
-          onScoreGame={() => {
-            opened++
-          }}
-        />
-      )
-      expect(opened).equals(0)
-      await act(async () => {
-        button('Score Game')?.click()
-      })
-      expect(opened).equals(1)
+      await renderOn(os, <GameScreen client={client} gameId="g1" />)
+      expect(button('Score Game')).equals(null)
+      expect(button('Continue Scoring')).equals(null)
+      expect(button('Box score')).not.equals(null)
     })
   }
 })

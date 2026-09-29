@@ -211,7 +211,6 @@ describe('the DJ Game button (U30)', function () {
       <GameScreen
         client={client(true)}
         gameId="g1"
-        onScoreGame={() => undefined}
         onDjGame={() => {
           opened++
         }}
@@ -226,8 +225,8 @@ describe('the DJ Game button (U30)', function () {
       all.indexOf('Continue Scoring')
     )
     expect(score).greaterThan(-1)
-    expect(all.indexOf('Videos')).lessThan(all.indexOf('Box score'))
-    expect(all.indexOf('Box score')).lessThan(score)
+    expect(all.indexOf('Box score')).lessThan(all.indexOf('Videos'))
+    expect(all.indexOf('Videos')).lessThan(score)
     expect(score).lessThan(all.indexOf('DJ Game'))
     await act(async () => {
       dj?.click()
