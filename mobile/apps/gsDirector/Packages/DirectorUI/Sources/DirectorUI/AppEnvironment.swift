@@ -143,6 +143,14 @@ public final class AppEnvironment {
   /// screens watch is the state inside it, and the reference never changes.
   @ObservationIgnored
   public private(set) lazy var gameStation: GameStationAccount = makeAccount()
+  /// The rules for the chosen event: which takes it files, and when it is
+  /// claimed. Every decision is in there, where it is tested.
+  @ObservationIgnored
+  public private(set) lazy var eventCoordinator = EventCoordinator(
+    events: gameStation,
+    linker: index,
+    currentTake: { [weak self] in self?.activeRecordingID }
+  )
   public private(set) var snapshot = TelemetrySnapshot()
   public private(set) var isRecording = false {
     didSet {
@@ -2013,10 +2021,9 @@ public final class AppEnvironment {
       $0.dvr.lastDowntimeSeconds = 0
     }
     beginLiveSession(recording: recordingID)
-    // A take started while the stream is already up belongs to the game the
-    // stream is going to, just as much as one started by the stream does —
-    // this is the take that follows a recording somebody stopped mid-game.
-    if isStreaming { rememberStreamedGame() }
+    // Every take started with an event chosen is filed under it, streamed or
+    // not; the one started by streaming included.
+    eventCoordinator.recordingStarted(take: recordingID)
     startRetentionSweeps()
     syncLiveSessionPresentation()
   }
@@ -2056,11 +2063,14 @@ public final class AppEnvironment {
       statusMessage = "GS Distributor is exporting — stream once it has finished"
       return
     }
-    let url = streamDestinationURL
-    guard !url.isEmpty else {
-      // Chosen an event and not yet taken it — signed out, or the list was
-      // never opened. Saying which of the two destinations is empty is the
-      // difference between a fixable message and a shrug.
+    // An event with no address yet is claimed as the stream is dialled, so
+    // only an event that was never chosen stops it here.
+    let ready = config.streamDestination == .event
+      ? gameStation.chosen != nil
+      : !config.streamURL.isEmpty
+    guard ready else {
+      // Saying which of the two destinations is empty is the difference
+      // between a fixable message and a shrug.
       reportStreamError(
         config.streamDestination == .event
           ? "Pick a GameStation event in Settings first"
@@ -2080,30 +2090,24 @@ public final class AppEnvironment {
     // back. Stopping the stream deliberately does not stop it: an operator who
     // drops the publish is usually still filming.
     if !isRecording { startRecording() }
-    rememberStreamedGame()
     beginLiveSession(streaming: true)
     dialStream()
   }
 
-  /// Writes the game this take is being streamed to onto the take itself.
-  ///
-  /// This is what lets an upload afterwards need no question asked: the take
-  /// already knows its event, so pressing Upload sends it there instead of
-  /// opening a list of games and asking somebody to remember which one this
-  /// was. Only for a game that was picked — a bare RTSP publish names nothing,
-  /// and that take is the one an operator is asked about.
-  private func rememberStreamedGame() {
-    guard config.streamDestination == .event,
-      let chosen = gameStation.chosen,
-      let take = recordingID
-    else { return }
-    let day = ISO8601DateFormatter()
-    day.formatOptions = [.withFullDate]
-    try? index.setGame(
-      take,
-      gameId: chosen.gameId,
-      title: "\(day.string(from: chosen.startAt)) \(chosen.title)"
-    )
+  /// Chooses the game this Director covers, from Settings' event picker.
+  @discardableResult
+  public func pickEvent(_ event: GameStationEvent, destination: StreamDestination) async -> Bool {
+    await eventCoordinator.pick(event: event, destination: destination)
+  }
+
+  /// Settings' Clear: this Director covers no game.
+  public func clearEvent() {
+    eventCoordinator.clear()
+  }
+
+  /// Settings' destination radio. Choosing the event claims it now.
+  public func streamDestinationChanged(to destination: StreamDestination) {
+    Task { await eventCoordinator.destinationChanged(to: destination) }
   }
 
   /// How long to wait before dialling the ingest again, and how far that backs off. A squeezed
@@ -2124,15 +2128,17 @@ public final class AppEnvironment {
     router.setStreamRate(session.streamFrameRate)
     Task { [weak self] in
       guard let self else { return }
-      // A key can have been rotated since the game was picked — on the website,
-      // or by another Director taking the same game — and the first anybody
-      // would know is a stream that will not start at the first pitch. Asked
-      // again here, where it is about to be used, and on every redial with it:
-      // offline, the cached address is what there is and it is usually right.
-      if destination == .event {
-        await self.gameStation.refreshChosen()
+      // The event is claimed here if it never was, and asked for again if it
+      // was: a key can have been rotated since, and offline the cached address
+      // is what there is. A refusal goes the way a failed publish does.
+      let publishTo: String
+      do {
+        publishTo = try await self.eventCoordinator.streamURLForDial(destination: destination)
+          ?? self.config.streamURL
+      } catch {
+        self.handleStreamDrop(error.localizedDescription)
+        return
       }
-      let publishTo = self.streamDestinationURL
       do {
         try await self.programStreamer.start(urlString: publishTo, config: session) { [weak self] message in
           Task { @MainActor in

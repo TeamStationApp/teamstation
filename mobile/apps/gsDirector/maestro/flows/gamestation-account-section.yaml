@@ -29,6 +29,6 @@ appId: co.gamestation.director
 
 # The list only fills from the server, so this is the address being right.
 - tapOn:
-    id: 'settings-stream-event-row'
+    id: 'settings-gamestation-event'
 - waitForAnimationToEnd
 - takeScreenshot: /tmp/dirShots/configEvents
