@@ -40,7 +40,12 @@ export interface UseDictationOptions {
   /** The screen's own copy of the game, which is the one the scorer sees. */
   session: ScoringSessionState
   log: readonly ScoringAction[]
-  onActions: (transcript: string, actions: ScoringAction[]) => void
+  /** A sentence's actions; `undo` first takes back the last thing scored. */
+  onActions: (
+    transcript: string,
+    actions: ScoringAction[],
+    undo?: boolean
+  ) => void
   model?: DictationModel
   /** How long audio keeps flowing after a release. Tests shorten it. */
   tailMs?: number
@@ -84,6 +89,8 @@ export interface DictationButtonProps {
   onDismissQuestion?: () => void
   /** The plays the last applied sentence made, for the log; `id` changes per sentence. */
   played?: { id: number; lines: string[] }
+  /** What a dictated undo took back, for the log; `id` changes per undo. */
+  undone?: { id: number; line: string }
   /** A press shorter than this is a tap. Tests shorten it. */
   tapMs?: number
   /** How long audio keeps flowing after a release. Tests shorten it. */
@@ -95,7 +102,11 @@ export interface DictationButtonProps {
    * off while the field has a use for Space.
    */
   spaceTalks?: boolean
-  onActions: (transcript: string, actions: ScoringAction[]) => void
+  onActions: (
+    transcript: string,
+    actions: ScoringAction[],
+    undo?: boolean
+  ) => void
   /** The LLM the scorer picked in settings; absent, the server's own. */
   model?: DictationModel
   openSocket?: (url: string) => DictationSocket

@@ -64,7 +64,11 @@ afterEach(unmount)
 interface Harness {
   sockets: FakeSocket[]
   socket: () => FakeSocket
-  dictated: Array<{ transcript: string; actions: ScoringAction[] }>
+  dictated: Array<{
+    transcript: string
+    actions: ScoringAction[]
+    undo?: boolean
+  }>
   microphone: {
     pcm?: (pcm: ArrayBuffer) => void
     stopped: boolean
@@ -100,8 +104,8 @@ function harness(
     gameId: 'gam_1',
     session: state.session,
     log: state.log,
-    onActions: (transcript, actions) => {
-      dictated.push({ transcript, actions })
+    onActions: (transcript, actions, undo) => {
+      dictated.push({ transcript, actions, ...(undo === true ? { undo } : {}) })
     },
     openSocket: url => {
       const socket = new FakeSocket(url)
@@ -727,6 +731,35 @@ describe('the dictation control', function () {
     expect(text('Dictated text')).equals('…')
   })
 
+  it('passes on an undo, and logs what it took back', async function () {
+    const h = harness()
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const start = socket.frames.at(-1)!
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'actions',
+      id: start.id,
+      transcript: 'Undo that last play.',
+      actions: [],
+      dropped: [],
+      undo: true
+    })
+    expect(h.dictated.at(-1)).deep.equals({
+      transcript: 'Undo that last play.',
+      actions: [],
+      undo: true
+    })
+    await h.render({ undone: { id: 1, line: 'Undid Ball' } })
+    expect(text('Dictated play')).equals('Undid Ball')
+    // The same undo is not logged twice.
+    await h.render({ undone: { id: 1, line: 'Undid Ball' } })
+    expect(find('Dictation log')!.textContent).equals(
+      'Undo that last play.Undid Ball'
+    )
+  })
+
   it('keeps a log of what was heard, the plays and messages, four lines tall', async function () {
     const h = harness()
     await h.render()
@@ -756,7 +789,7 @@ describe('the dictation control', function () {
         lines: ['Chase L. line drive double to left', 'Ann B. scores']
       }
     })
-    expect(text('Dictated play')).equals('• Ann B. scores')
+    expect(text('Dictated play')).equals('Ann B. scores')
     // The same plays again are not logged twice.
     await h.render({
       played: {
@@ -766,7 +799,7 @@ describe('the dictation control', function () {
     })
     const log = find('Dictation log')!
     expect(log.textContent).equals(
-      'Line drive double.• Chase L. line drive double to left• Ann B. scores'
+      'Line drive double.Chase L. line drive double to leftAnn B. scores'
     )
     // A refusal is a message line.
     await h.render({
@@ -779,7 +812,7 @@ describe('the dictation control', function () {
     for (let n = 0; n < 15; n++)
       await h.render({ played: { id: 10 + n, lines: [`play ${n}`] } })
     expect(find('Dictation log')!.children.length).equals(12)
-    expect(text('Dictated play')).equals('• play 14')
+    expect(text('Dictated play')).equals('play 14')
   })
 
   describe('Space, anywhere on the page', function () {

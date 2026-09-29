@@ -50,6 +50,7 @@ export function useDictationControls(props: DictationButtonProps): {
     problem,
     question,
     played,
+    undone,
     onAnswer,
     onDismissQuestion,
     spaceTalks = true,
@@ -101,7 +102,7 @@ export function useDictationControls(props: DictationButtonProps): {
     release: dictation.release
   }
   useSpaceToTalk(available && dictation.enabled, spaceTalks, keys)
-  const entries = useLog(dictation, problem?.message, played)
+  const entries = useLog(dictation, problem?.message, played, undone)
   const linger = useLinger(
     entries,
     dictation.holding ||
@@ -305,11 +306,16 @@ export function useDictationControls(props: DictationButtonProps): {
                     ? 'Dictated play'
                     : 'Dictation message'
             }
+            // Two columns: what was said on the right, in white; what was
+            // done on the left, in the log's yellow.
             style={{
+              textAlign: entry.kind === 'said' ? 'right' : 'left',
               color:
-                entry.kind === 'message'
-                  ? theme.scoringCountdownColor
-                  : theme.scoringInstructionText,
+                entry.kind === 'said'
+                  ? SAID_COLOR
+                  : entry.kind === 'message'
+                    ? MESSAGE_COLOR
+                    : theme.scoringCountdownColor,
               fontFamily:
                 entry.kind === 'said'
                   ? theme.regularTextFont
@@ -319,7 +325,7 @@ export function useDictationControls(props: DictationButtonProps): {
               lineHeight: LINE_HEIGHT
             }}
           >
-            {entry.kind === 'play' ? `• ${entry.text}` : entry.text}
+            {entry.text}
           </Text>
         )
       })}
@@ -336,7 +342,8 @@ export function useDictationControls(props: DictationButtonProps): {
 function useLog(
   dictation: ReturnType<typeof useDictation>,
   problem: string | undefined,
-  played: DictationButtonProps['played']
+  played: DictationButtonProps['played'],
+  undone: DictationButtonProps['undone']
 ): LogEntry[] {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const next = useRef(0)
@@ -364,6 +371,13 @@ function useLog(
   useEffect(() => {
     if (problem != null) add('message', problem)
   }, [problem])
+  // An undo is logged ahead of the plays that replaced it, as it happened.
+  const shownUndo = useRef<number | null>(null)
+  useEffect(() => {
+    if (undone == null || undone.id === shownUndo.current) return
+    shownUndo.current = undone.id
+    add('play', undone.line)
+  }, [undone])
   const shownPlay = useRef<number | null>(null)
   useEffect(() => {
     if (played == null || played.id === shownPlay.current) return
@@ -375,6 +389,11 @@ function useLog(
   }, [dictation.enabled])
   return entries
 }
+
+/** What the scorer said, in the log's right-hand column. */
+const SAID_COLOR = '#FFFFFF'
+/** A message, told apart from the yellow plays; 5:1 on the log's brown. */
+const MESSAGE_COLOR = '#FFC9BD'
 
 /** How long the log stays up after its last new line, and its fade. */
 export const LOG_LINGER_MS = 8000

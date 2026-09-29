@@ -27,6 +27,23 @@ export const MAX_ASKS = 2
 /** How many times a follow-up model is asked for more about one sentence. */
 export const MAX_FOLLOW_UPS = 8
 
+/**
+ * Words that take back what was scored: "undo that", "scratch that",
+ * "take that back". An undo call is kept only when the sentence has them.
+ */
+const TAKE_BACK =
+  /\b(?:undo|undue|un-do|redo|scratch|strike that|take (?:that|it) back|take back|go back|back up|remove|erase|delete|cancel|never ?mind|disregard|reverse|revert|wrong|mistake|oops|correction|start over|no wait|wait no)\b/i
+
+/**
+ * A sentence that opens by taking back — "scratch that, it was a called
+ * strike", "undo that" — takes back the last thing scored, whether or not
+ * the model called undo: nothing before it in the sentence is what it takes
+ * back. "Scratch hit" and "scratch single" are plays, not take-backs, and
+ * "never mind" may drop only the sentence being said.
+ */
+const OPENS_WITH_TAKE_BACK =
+  /^[\s"'“(]*(?:undo|undue|un-do|scratch (?:that|it|the last)|take (?:that|it) back)\b/i
+
 /** Results a ball in play does not come to. */
 const UNBATTED: ReadonlySet<string> = new Set([
   'strikeout',
@@ -83,9 +100,17 @@ export interface AskOption {
   actions?: ScoringAction[]
 }
 
-/** What one turn of the conversation came to. */
+/**
+ * What one turn of the conversation came to. `undo` asks for the last thing
+ * scored to be taken back first, as the Undo button does.
+ */
 export type Turn =
-  | { kind: 'actions'; actions: ScoringAction[]; dropped: Problem[] }
+  | {
+      kind: 'actions'
+      actions: ScoringAction[]
+      dropped: Problem[]
+      undo?: true
+    }
   | { kind: 'ask'; question: string; options: AskOption[] }
   | { kind: 'error'; message: string }
 
@@ -110,7 +135,18 @@ export function asOpenAiTools(tools: readonly Tool[]): OpenAiTool[] {
   }))
 }
 
-/** The one tool dictation adds: a question for the scorer. */
+/** A tool dictation adds: taking back the last thing scored. */
+export const UNDO: OpenAiTool = {
+  type: 'function',
+  function: {
+    name: 'undo',
+    description:
+      'The scorer takes back the last thing scored, as the Undo button does: "undo that", "undo that last play", "scratch that", "take that back". Call it once, before anything else said after it.',
+    parameters: { type: 'object', additionalProperties: false, properties: {} }
+  }
+}
+
+/** A tool dictation adds: a question for the scorer. */
 export const ASK_SCORER: OpenAiTool = {
   type: 'function',
   function: {
@@ -198,6 +234,17 @@ Several calls from one sentence are normal.
   an error. On a fielder's choice, send the ball in play and the result, and a
   runner out only when the scorer said which. Do not call askScorer for any of
   these.
+- "Undo that", "undo that last play", "scratch that", "take that back": call
+  undo, which takes back the last thing scored as the Undo button does, then
+  report anything else the sentence says: "scratch that, it was a called
+  strike" is undo and then pitch C. A correction inside the sentence, where
+  the scorer takes back words he has just said with "no", "scratch that" or
+  "I mean" — "ball, no, scratch that, called strike" — is not undo: report
+  only what he settled on, pitch C. Take-back words that open the sentence,
+  with nothing earlier in it to take back, take back the last thing scored:
+  undo. Without such words every call counts: "ball, called strike" is two
+  pitches, B then C. A play's own words — "caught stealing", "picked off",
+  "out" — never call undo.
 - If you cannot tell who or what, call askScorer instead of guessing. Ask a
   real question about this sentence, with an option for each real answer.`
 
@@ -350,6 +397,8 @@ export class Interpretation {
   private readonly dropped: Problem[] = []
   /** Whether the next reply must be a tool call. */
   private required = true
+  /** Whether the model called undo for words that take back a play. */
+  private undo = false
   /** Whether the model was asked once for a result it left out. */
   private nudged = false
 
@@ -399,7 +448,8 @@ export class Interpretation {
       return {
         kind: 'actions',
         actions: [...this.actions, ...option.actions],
-        dropped: [...this.dropped]
+        dropped: [...this.dropped],
+        ...(this.undone() ? { undo: true as const } : {})
       }
     this.messages.push({
       role: 'tool',
@@ -414,9 +464,15 @@ export class Interpretation {
       const reply = await this.request()
       if ('error' in reply) return { kind: 'error', message: reply.error }
       // A model that wrote its calls out as text, as Grok sometimes does
-      // despite being told to call, sometimes beside a closePlay it did
-      // call (never kept): those calls, read from the text.
-      const written = reply.calls.every(isClosePlay)
+      // despite being told to call, sometimes beside a call that is never
+      // kept — a closePlay, an undo the words did not ask for: those calls,
+      // read from the text.
+      const written = reply.calls.every(
+        call =>
+          isClosePlay(call) ||
+          (call.function.name === UNDO.function.name &&
+            !TAKE_BACK.test(this.transcript))
+      )
         ? callsWrittenAsText(reply.said, this.toolNames())
         : []
       const calls = written.length === 0 ? reply.calls : written
@@ -500,6 +556,20 @@ export class Interpretation {
     }
     let kept = 0
     for (const call of calls) {
+      if (call.function.name === UNDO.function.name) {
+        // Taking back a play is destructive: only when the words say so.
+        if (!TAKE_BACK.test(this.transcript)) {
+          this.dropped.push({
+            code: 'malformed',
+            message: 'An undo the words did not ask for was ignored'
+          })
+          kept++
+          continue
+        }
+        if (!this.undo) kept++
+        this.undo = true
+        continue
+      }
       const cleaned = clean(call.function.name, parse(call.function.arguments))
       if (!('action' in cleaned)) {
         this.dropped.push(cleaned.problem)
@@ -522,17 +592,30 @@ export class Interpretation {
     return kept
   }
 
+  /** Whether the scorer took back the last thing scored. */
+  private undone(): boolean {
+    return this.undo || OPENS_WITH_TAKE_BACK.test(this.transcript)
+  }
+
   /** Every tool this conversation offers, by name. */
   private toolNames(): ReadonlySet<string> {
     return new Set([
       ...(this.config.tools ?? toolSchema()).map(tool => tool.name),
-      ASK_SCORER.function.name
+      ASK_SCORER.function.name,
+      UNDO.function.name
     ])
   }
 
   /** The sentence's actions, or why there are none. */
   private finished(said: string): Turn {
     const { actions, dropped } = this
+    if (this.undone())
+      return {
+        kind: 'actions',
+        actions: [...actions],
+        dropped: [...dropped],
+        undo: true
+      }
     if (actions.length === 0)
       return {
         kind: 'error',
@@ -610,7 +693,8 @@ export class Interpretation {
         parallel_tool_calls: true,
         tools: [
           ...asOpenAiTools(this.config.tools ?? toolSchema()),
-          ASK_SCORER
+          ASK_SCORER,
+          UNDO
         ],
         messages: this.messages,
         ...(this.config.cacheKey != null && hostOf(baseUrl) === 'api.openai.com'
@@ -662,11 +746,11 @@ export class Interpretation {
         tool_choice: this.required ? { type: 'any' } : { type: 'auto' },
         tools: [
           ...(this.config.tools ?? toolSchema()),
-          {
-            name: ASK_SCORER.function.name,
-            description: ASK_SCORER.function.description,
-            input_schema: ASK_SCORER.function.parameters
-          }
+          ...[ASK_SCORER, UNDO].map(tool => ({
+            name: tool.function.name,
+            description: tool.function.description,
+            input_schema: tool.function.parameters
+          }))
         ],
         messages: anthropicTurns(rest.map(asAnthropicMessage))
       },

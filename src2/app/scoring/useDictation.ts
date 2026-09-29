@@ -138,7 +138,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
             ? `Left out: ${reply.dropped.map(problem => problem.message).join('; ')}`
             : null
         )
-        latest.current.onActions(reply.transcript, reply.actions)
+        latest.current.onActions(reply.transcript, reply.actions, reply.undo)
         return
       case 'error':
         settle(reply.message)

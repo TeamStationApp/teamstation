@@ -1189,6 +1189,89 @@ describe('dictation, end to end', function () {
       }
     })
 
+    it('E19: the log has what was said on the right, what was done on the left, and Undo by voice', async function () {
+      const gameId = scoringGame().games[0]
+      const first = await dictate(scorer, gameId, 'ball')
+      try {
+        expect(first.reply.kind, JSON.stringify(first.reply)).equals('actions')
+        expect(first.summary).includes('1 balls')
+        const styleOf = async (
+          label: string
+        ): Promise<{ align: string; color: string; text: string }> =>
+          await first.page.$eval(`[aria-label="${label}"]`, node => {
+            const style = getComputedStyle(node)
+            return {
+              align: style.textAlign,
+              color: style.color,
+              text: String(node.textContent)
+            }
+          })
+        const said = await styleOf('Dictated text')
+        expect(said.align).equals('right')
+        expect(said.color).equals('rgb(255, 255, 255)')
+        const done = await styleOf('Dictated play')
+        expect(done).deep.include({ align: 'left', text: 'Ball' })
+        expect(done.color).not.equals('rgb(255, 255, 255)')
+      } finally {
+        await first.browser.close()
+      }
+      // Undo and a new pitch in one sentence: the ball is taken back first.
+      const board = async (page: Page, count: string): Promise<void> => {
+        await page.waitForFunction(
+          want => {
+            const node = document.querySelector('[aria-label*=" balls "]')
+            return (
+              node != null &&
+              String(node.getAttribute('aria-label')).includes(want)
+            )
+          },
+          {},
+          count
+        )
+      }
+      const scratch = await dictate(scorer, gameId, 'scratchStrike')
+      try {
+        expect(scratch.reply, JSON.stringify(scratch.reply)).deep.include({
+          kind: 'actions',
+          undo: true
+        })
+        await board(scratch.page, '0 balls 1 strikes')
+        const log = await scratch.page.$eval(
+          '[aria-label="Dictation log"]',
+          node => node.textContent
+        )
+        expect(log).includes('Undid Ball')
+        expect(log).includes('Called strike')
+        await waitSaved(scratch.page)
+      } finally {
+        await scratch.browser.close()
+      }
+      const undo = await dictate(scorer, gameId, 'undoLast')
+      try {
+        expect(undo.reply, JSON.stringify(undo.reply)).deep.include({
+          kind: 'actions',
+          actions: [],
+          undo: true
+        })
+        await board(undo.page, '0 balls 0 strikes')
+        expect(
+          await undo.page.$eval(
+            '[aria-label="Dictation log"]',
+            node => node.textContent
+          )
+        ).includes('Undid Called strike')
+        await waitSaved(undo.page)
+        const current = (await stored(scorer, gameId)).currentPlay
+        expect(
+          ((current?.playEvents ?? []) as Array<Record<string, any>>).filter(
+            event => event.details?.call?.code != null
+          )
+        ).to.have.length(0)
+      } finally {
+        await undo.browser.close()
+      }
+    })
+
     it('E3: a play the rules engine refuses is shown and nothing changes', async function () {
       const gameId = scoringGame().games[0]
       const { reply, page, browser } = await dictate(
