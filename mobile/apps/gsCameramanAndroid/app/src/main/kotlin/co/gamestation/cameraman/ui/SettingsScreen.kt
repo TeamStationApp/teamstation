@@ -129,6 +129,7 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
     val serverStatus by environment.serverStatus.collectAsStateWithLifecycle()
     val lensCatalog by environment.lensCatalog.collectAsStateWithLifecycle()
     val radar by environment.radarState.collectAsStateWithLifecycle()
+    val scoreboard by environment.scoreboard.state.collectAsStateWithLifecycle()
 
     var draftName by remember { mutableStateOf(identity.name) }
     var draft by remember { mutableStateOf(environment.settings.value.copy()) }
@@ -238,6 +239,14 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
         // in the one scroll, so the second row's cards sit at the foot of the column above them.
         SettingsBody(
             modifier = Modifier.padding(padding),
+            header = {
+                GameStationLoginCard(
+                    state = scoreboard,
+                    onSendCode = { environment.scoreboard.sendCode(it) },
+                    onVerify = { email, code -> environment.scoreboard.verify(email, code) },
+                    onSignOut = { environment.scoreboard.signOut() }
+                )
+            },
             left = {
                 VideoCard(
                     draft = draft,
@@ -286,6 +295,16 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                 if (environment.launch.isUITest) {
                     ThermalTestCard { environment.previewThermal(it) }
                 }
+            },
+            footer = {
+                ScoreboardSettingsCard(
+                    state = scoreboard,
+                    onRoute = { environment.scoreboard.selectRoute(it) },
+                    onV1 = { server, event -> environment.scoreboard.setV1(server, event) },
+                    onOpenEvents = { environment.scoreboard.openEvents() },
+                    onDismissEvents = { environment.scoreboard.dismissEvents() },
+                    onChoose = { environment.scoreboard.choose(it) }
+                )
             }
         )
     }

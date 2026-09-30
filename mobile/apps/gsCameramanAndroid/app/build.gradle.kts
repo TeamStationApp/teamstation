@@ -21,6 +21,11 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        // Empty, the usual case, is gamestation.co. A special build sets
+        // GS_PRIMARY_HOST=devhost3.examplegs.test and sign-in follows it.
+        val primaryHost = (System.getenv("GS_PRIMARY_HOST") ?: "").trim().ifEmpty { "gamestation.co" }
+        buildConfigField("String", "GS_PRIMARY_HOST", "\"${primaryHost.replace("\"", "")}\"")
+
         // Only for the Pixel this ships to. The one native call is `SocketQueue`'s.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -56,6 +61,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -99,6 +105,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

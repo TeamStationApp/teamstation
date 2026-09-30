@@ -12,11 +12,13 @@ import SwiftUI
 /// Wiring for the whole app, injected by the app target so the UI package owns no globals.
 @MainActor
 @Observable
-public final class AppEnvironment: RadarControlling, BroadcastControlling {
+public final class AppEnvironment: RadarControlling, BroadcastControlling, ScoreboardControlling {
   public let launch: LaunchConfiguration
   public let camera = CameraSession()
   public let radarSession = RadarSession()
   public private(set) var radar = RadarSnapshot()
+  private let scoreboardDesk: ScoreboardDesk
+  public private(set) var scoreboard: ScoreboardSnapshot
   public let videoEncoder = VideoEncoder()
   public let audioEncoder = AudioEncoder()
   /// The external display, fed from the same frames the encoder gets.
@@ -128,6 +130,9 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling {
     self.settingsStore = settingsStore
     let preference = BroadcastPreference(store: broadcastStore)
     self.broadcastPreference = preference
+    let desk = ScoreboardDesk(store: broadcastStore, origin: "ios")
+    self.scoreboardDesk = desk
+    self.scoreboard = desk.snapshot
     self.isBroadcasting = BroadcastPolicy.shouldListen(
       saved: preference.load(),
       isUITest: launch.isUITest,
@@ -170,6 +175,14 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling {
     CleanFeedController.active = cleanFeed
     observeThermalState()
     observeBattery()
+    scoreboardDesk.onSnapshot = { [weak self] next in
+      self?.scoreboard = next
+    }
+    radarSession.onSpeeds = { [weak self] pitch, exit in
+      Task { @MainActor in
+        self?.scoreboardDesk.publish(pitchMph: pitch, exitMph: exit)
+      }
+    }
   }
 
   /// Force the overlay pill to `state` for `duration`, then return to the live thermal reading.
@@ -348,6 +361,42 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling {
 
   public func unpairRadar() {
     radarSession.unpair()
+  }
+
+  public func selectScoreboardRoute(_ route: ScoreboardRoute) {
+    scoreboardDesk.selectRoute(route)
+  }
+
+  public func setScoreboardV1(apiServer: String, eventId: String) {
+    scoreboardDesk.setV1(apiServer: apiServer, eventId: eventId)
+  }
+
+  public func setScoreboardAccountServer(_ server: String) {
+    scoreboardDesk.setAccountServer(server)
+  }
+
+  public func sendScoreboardCode(email: String) {
+    scoreboardDesk.sendCode(email: email)
+  }
+
+  public func verifyScoreboardCode(email: String, code: String) {
+    scoreboardDesk.verify(email: email, code: code)
+  }
+
+  public func signOutScoreboard() {
+    scoreboardDesk.signOut()
+  }
+
+  public func openScoreboardEvents() {
+    scoreboardDesk.openEvents()
+  }
+
+  public func dismissScoreboardEvents() {
+    scoreboardDesk.dismissEvents()
+  }
+
+  public func chooseScoreboardEvent(_ gameId: String) {
+    scoreboardDesk.choose(gameId: gameId)
   }
 
   public func start() async {
