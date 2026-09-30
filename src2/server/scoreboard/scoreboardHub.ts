@@ -74,6 +74,12 @@ export interface ScoreboardHubOptions {
   checkMs?: number
   /** How often every socket is pinged; one that missed the last is dropped. */
   pingMs?: number
+  /**
+   * How long a pitch speed stays on the board. A newer speed starts this
+   * over. When it ends, the hub writes `pitchSpeed: 0` so every listener
+   * drops the number.
+   */
+  speedHoldMs?: number
 }
 
 export interface ScoreboardHub {
@@ -99,10 +105,42 @@ export function makeScoreboardHub(
 ): ScoreboardHub {
   const { db, store, subscriber, log } = options
   const now = options.now ?? store.now
+  const speedHoldMs = options.speedHoldMs ?? 5000
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 })
   const rooms = new Map<string, Room>()
   const everyone = new Set<Member>()
+  /** One hold per game, armed only by a publisher's own pitch speed. */
+  const speedHolds = new Map<string, ReturnType<typeof setTimeout>>()
   let closing = false
+
+  function clearSpeedHold(gameId: string): void {
+    const timer = speedHolds.get(gameId)
+    if (timer == null) return
+    clearTimeout(timer)
+    speedHolds.delete(gameId)
+  }
+
+  /**
+   * A pitch reading is good for `speedHoldMs`, then the board shows no speed.
+   *
+   * Armed here, on the worker that took the publisher's message, and never
+   * from the pub/sub echo of that write — including the zero this timer
+   * writes, which would otherwise clear itself forever. The timer is not the
+   * socket's: a camera that drops off still owes the listeners a zero.
+   */
+  function armSpeedHold(gameId: string, startAt: number): void {
+    clearSpeedHold(gameId)
+    const timer = setTimeout(() => {
+      speedHolds.delete(gameId)
+      void store.mergeWatcher(gameId, { pitchSpeed: 0 }, startAt).catch(
+        (error: unknown) => {
+          if (error instanceof ScoreboardUnavailable) return
+          log(`scoreboard ${gameId}: pitch speed: ${describe(error)}`)
+        }
+      )
+    }, speedHoldMs)
+    speedHolds.set(gameId, timer)
+  }
 
   /** Runs a step on the game's chain; a failed step is logged, not fatal. */
   function enqueue(room: Room, step: () => Promise<void>): void {
@@ -336,9 +374,11 @@ export function makeScoreboardHub(
       return
     }
     let write: () => Promise<WriteResult>
+    let pitchSpeed: number | undefined
     try {
       if (member.kind === 'publisher') {
         const update = asScoreboardUpdate(raw)
+        if (typeof update.pitchSpeed === 'number') pitchSpeed = update.pitchSpeed
         write = async () =>
           await store.mergeWatcher(room.gameId, update, room.record.startAt)
       } else {
@@ -360,7 +400,14 @@ export function makeScoreboardHub(
       const result = await write()
       if (result.kind === 'closed') {
         shut(socket, SCOREBOARD_CLOSE.closed, 'The scoreboard is closed')
+        return
       }
+      // A balls update is not a speed update, so it leaves the hold alone.
+      // Zero cancels it: the publisher already said there is no speed, and
+      // arming on zero would broadcast another zero when the timer fired.
+      if (pitchSpeed == null) return
+      if (pitchSpeed > 0) armSpeedHold(room.gameId, room.record.startAt)
+      else clearSpeedHold(room.gameId)
     } catch (error) {
       if (!(error instanceof ScoreboardUnavailable)) {
         log(`scoreboard ${room.gameId}: write: ${describe(error)}`)
@@ -445,6 +492,8 @@ export function makeScoreboardHub(
       closing = true
       clearInterval(checker)
       clearInterval(pinger)
+      for (const timer of speedHolds.values()) clearTimeout(timer)
+      speedHolds.clear()
       for (const member of everyone) {
         shut(member.socket, GOING_AWAY, 'The server is going away')
       }
