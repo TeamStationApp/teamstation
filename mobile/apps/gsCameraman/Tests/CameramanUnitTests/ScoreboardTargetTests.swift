@@ -87,7 +87,8 @@ struct ScoreboardTargetTests {
   func eventLabelsMatchTheWatcher() {
     #expect(ScoreboardTarget.eventTitle(away: "Visitors", home: "Home") == "Visitors at Home")
     let zone = TimeZone(identifier: "America/Los_Angeles")!
-    #expect(ScoreboardTarget.localStartTime("2026-09-28T22:05:00Z", zone: zone) == "Mon 9/28 3:05 PM")
+    #expect(ScoreboardTarget.localStartTime("2026-09-28T22:05:00Z", zone: zone) == "Mon Sep 28, 2026 3:05 PM")
+    #expect(ScoreboardTarget.localStartTime("2026-12-23T00:35:00Z", zone: zone) == "Tue Dec 22, 2026 4:35 PM")
     #expect(ScoreboardTarget.localStartTime("not-a-date", zone: zone) == "not-a-date")
   }
 

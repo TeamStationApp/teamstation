@@ -106,7 +106,7 @@ class ScoreboardTargetTest {
     fun `event labels match the watcher`() {
         assertEquals("Visitors at Home", ScoreboardTarget.eventTitle("Visitors", "Home"))
         assertEquals(
-            "Mon 9/28 3:05 PM",
+            "Mon Sep 28, 2026 3:05 PM",
             ScoreboardTarget.localStartTime("2026-09-28T22:05:00Z", pacific)
         )
         assertEquals("not-a-date", ScoreboardTarget.localStartTime("not-a-date", pacific))

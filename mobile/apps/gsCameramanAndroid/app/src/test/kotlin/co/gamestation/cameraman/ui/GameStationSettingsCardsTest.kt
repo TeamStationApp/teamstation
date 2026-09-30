@@ -99,7 +99,7 @@ class GameStationSettingsCardsTest {
 
         val title = rule.onNodeWithText("Owls at Hawks", useUnmergedTree = true).getUnclippedBoundsInRoot()
         val whenLine = rule.onNodeWithText("Mon 9/28 3:05 PM", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        assertTrue("time top ${whenLine.top} title top ${title.top}", whenLine.top > title.top)
+        assertTrue("time top ${whenLine.top} title top ${title.top}", whenLine.top < title.top)
         assertTrue("time left ${whenLine.left} title left ${title.left}", whenLine.left == title.left)
     }
 

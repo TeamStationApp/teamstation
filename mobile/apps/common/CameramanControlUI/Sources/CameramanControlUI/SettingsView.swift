@@ -315,16 +315,25 @@ struct SettingsView<Model: CameraControlling>: View {
         ) {
           board.selectScoreboardRoute(.event)
         }
+        Text("Gamestation Event")
+          .font(.headline)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 16)
+        Text("Pick event for radar data")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 16)
         Button {
           board.openScoreboardEvents()
         } label: {
           VStack(alignment: .leading, spacing: 2) {
-            Text(board.scoreboard.gameTitle.isEmpty ? "Choose event" : board.scoreboard.gameTitle)
             if !board.scoreboard.gameWhen.isEmpty {
               Text(board.scoreboard.gameWhen)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             }
+            Text(board.scoreboard.gameTitle.isEmpty ? "Tap to pick an event" : board.scoreboard.gameTitle)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }

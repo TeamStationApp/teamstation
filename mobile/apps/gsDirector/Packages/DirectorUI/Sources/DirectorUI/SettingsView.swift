@@ -185,8 +185,6 @@ public struct SettingsView: View {
           }
           .buttonStyle(.plain)
           .accessibilityIdentifier("settings-gamestation-account")
-
-          gameStationEventRow
         } header: {
           Text("GameStation")
         } footer: {
@@ -195,6 +193,14 @@ public struct SettingsView: View {
           chosen is filed under it, its scoreboard can be shown on the programme, and the Stream \
           button can publish to it — that is chosen in the section below.
           """)
+        }
+
+        Section {
+          gameStationEventRow
+        } header: {
+          Text("Gamestation Event")
+        } footer: {
+          Text("Pick event for video stream and scoreboard overlay")
         }
 
         Section {
@@ -606,11 +612,16 @@ public struct SettingsView: View {
       } label: {
         HStack {
           VStack(alignment: .leading, spacing: 2) {
-            Text("Event")
-              .foregroundStyle(.primary)
-            Text(chosen?.title ?? "None")
-              .font(.caption)
-              .foregroundStyle(.secondary)
+            if let chosen {
+              Text(GameStationEventPicker.when(chosen.startAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Text(chosen.title)
+                .foregroundStyle(.primary)
+            } else {
+              Text("Tap to pick an event")
+                .foregroundStyle(.primary)
+            }
           }
           Spacer()
           Image(systemName: "chevron.right")
