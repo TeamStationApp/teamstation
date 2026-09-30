@@ -37,6 +37,9 @@ internal class RadarLink(
     private var scanning = false
     private var suppressed = false
     private val handshake = Handshake()
+
+    /** A pitch or exit that just arrived, in miles per hour. Expiry to a dash does not call this. */
+    var onSpeeds: ((pitchMph: Int, exitMph: Int) -> Unit)? = null
     private var loggedIdle = false
     private var session = 0
     private var dropsSinceLive = 0
@@ -121,6 +124,7 @@ internal class RadarLink(
         stopScan()
         val board = mutable.value.board.receive(command.pitch, command.exit, command.now)
         mutable.value = mutable.value.copy(board = board, linkSuppressed = true)
+        reportSpeeds(command.pitch, command.exit)
     }
 
     fun onAdvertisement(name: String) {
@@ -177,7 +181,12 @@ internal class RadarLink(
             val now = System.currentTimeMillis()
             val board = mutable.value.board.receive(speeds.pitchMph, speeds.exitMph, now)
             mutable.value = mutable.value.copy(board = board)
+            reportSpeeds(speeds.pitchMph, speeds.exitMph)
         }
+    }
+
+    private fun reportSpeeds(pitchMph: Int, exitMph: Int) {
+        if (pitchMph > 0 || exitMph > 0) onSpeeds?.invoke(pitchMph, exitMph)
     }
 
     fun refresh() {

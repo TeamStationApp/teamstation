@@ -44,6 +44,7 @@ import co.gamestation.cameraman.radar.RadarLink
 import co.gamestation.cameraman.radar.RadarPhase
 import co.gamestation.cameraman.radar.RadarSnapshot
 import co.gamestation.cameraman.radar.systemRadarRadio
+import co.gamestation.cameraman.scoreboard.ScoreboardDesk
 import co.gamestation.cameraman.core.ThermalBadgeLevel
 import co.gamestation.cameraman.encode.AudioEncoder
 import co.gamestation.cameraman.encode.VideoEncoder
@@ -148,6 +149,9 @@ class AppEnvironment(
     fun unpairRadar() = radarLink.unpair()
     fun setRadarStep(step: Int) = radarLink.setStep(step)
     fun setRadarEnabled(enabled: Boolean) = radarLink.setEnabled(enabled)
+
+    internal lateinit var scoreboard: ScoreboardDesk
+        private set
 
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
@@ -294,6 +298,8 @@ class AppEnvironment(
         publishedIdentity = loaded
         publishedSettings = initial.copy()
         appliedSettings = initial.copy()
+        scoreboard = ScoreboardDesk(backing, scope)
+        radarLink.onSpeeds = { pitch, exit -> scoreboard.publishSpeeds(pitch, exit) }
     }
 
     /**

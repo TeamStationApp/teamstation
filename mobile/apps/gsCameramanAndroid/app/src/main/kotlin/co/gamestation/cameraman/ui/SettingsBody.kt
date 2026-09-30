@@ -33,6 +33,7 @@ fun SettingsBody(
     horizontalInsets: WindowInsets = WindowInsets.displayCutout
         .union(WindowInsets.safeDrawing)
         .only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal),
+    header: @Composable ColumnScope.() -> Unit = {},
     left: @Composable ColumnScope.() -> Unit,
     right: @Composable ColumnScope.() -> Unit,
     footer: @Composable ColumnScope.() -> Unit = {}
@@ -45,6 +46,7 @@ fun SettingsBody(
             .padding(horizontal = 14.dp, vertical = 4.dp)
             .testTag("settings-scroll")
     ) {
+        header()
         Row(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.Top
