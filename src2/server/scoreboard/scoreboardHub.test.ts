@@ -79,7 +79,12 @@ describe('the scoreboard hub', function () {
   const logged: string[] = []
 
   async function startWorker(
-    options: { checkMs?: number; pingMs?: number; db?: Kysely<Database> } = {}
+    options: {
+      checkMs?: number
+      pingMs?: number
+      speedHoldMs?: number
+      db?: Kysely<Database>
+    } = {}
   ): Promise<Worker> {
     const client = await connectedClient()
     const subscriber = makeScoreboardSubscriber(client, quiet)
@@ -270,6 +275,47 @@ describe('the scoreboard hub', function () {
       })
       expect(probe.messages.map(state => state.homeTeam)).not.includes('WRONG')
     }
+  })
+
+  it('keeps a pitch speed for the hold, then broadcasts 0', async function () {
+    const worker = await startWorker({ speedHoldMs: 80 })
+    const gameId = await newGame()
+    const watching = viewer(worker, gameId)
+    await heard(watching, 1)
+    const phone = publisher(worker, gameId, runner)
+    await phone.opened
+    send(phone, { pitchSpeed: 91 })
+    await until('91 mph', () => last(watching)?.pitchSpeed === 91)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    // The same number starts the hold over, so this is still 91 past the
+    // first deadline.
+    send(phone, { pitchSpeed: 91 })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(last(watching).pitchSpeed).equals(91)
+    send(phone, { pitchSpeed: 88 })
+    await until('88 mph', () => last(watching)?.pitchSpeed === 88)
+    phone.socket.close()
+    await until('cleared', () => last(watching)?.pitchSpeed === 0)
+    const cleared = watching.messages.length
+    await new Promise(resolve => setTimeout(resolve, 120))
+    expect(last(watching).pitchSpeed).equals(0)
+    expect(watching.messages).has.length(cleared)
+  })
+
+  it('a publisher zero cancels the pitch-speed hold', async function () {
+    const worker = await startWorker({ speedHoldMs: 80 })
+    const gameId = await newGame()
+    const watching = viewer(worker, gameId)
+    await heard(watching, 1)
+    const phone = publisher(worker, gameId, runner)
+    await phone.opened
+    send(phone, { pitchSpeed: 70 })
+    await until('70 mph', () => last(watching)?.pitchSpeed === 70)
+    send(phone, { pitchSpeed: 0 })
+    await until('publisher zero', () => last(watching)?.pitchSpeed === 0)
+    const cleared = watching.messages.length
+    await new Promise(resolve => setTimeout(resolve, 120))
+    expect(watching.messages).has.length(cleared)
   })
 
   it('delivers a burst of 50 to viewers on two workers, all of them, in order', async function () {
