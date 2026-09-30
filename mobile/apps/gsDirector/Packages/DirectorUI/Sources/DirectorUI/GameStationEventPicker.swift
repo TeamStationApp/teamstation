@@ -99,12 +99,12 @@ public struct GameStationEventPicker: View {
       HStack(spacing: 12) {
         mark(url: event.homeLogoURL, name: event.homeTeamName)
         VStack(alignment: .leading, spacing: 2) {
-          Text(event.title)
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.primary)
           Text(Self.when(event.startAt))
             .font(.subheadline)
             .foregroundStyle(.secondary)
+          Text(event.title)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.primary)
         }
         Spacer(minLength: 8)
         if event.isLive {
@@ -150,17 +150,8 @@ public struct GameStationEventPicker: View {
     return words.compactMap { $0.first }.map(String.init).joined().uppercased()
   }
 
-  /// `Thursday, September 17, 3:15 pm`, in the iPad's own clock.
-  ///
-  /// `nonisolated` for the same reason as `initials`.
+  /// `Thu Sep 17, 2026 3:15 PM`, in the iPad's own clock.
   public nonisolated static func when(_ date: Date) -> String {
-    date.formatted(
-      .dateTime
-        .weekday(.wide)
-        .month(.wide)
-        .day()
-        .hour(.defaultDigits(amPM: .abbreviated))
-        .minute()
-    )
+    EventWhenLabel.format(date)
   }
 }

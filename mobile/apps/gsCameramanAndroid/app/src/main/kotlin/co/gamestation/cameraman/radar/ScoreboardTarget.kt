@@ -155,17 +155,22 @@ internal object ScoreboardTarget {
 
     fun eventTitle(away: String, home: String): String = "$away at $home"
 
-    /** "Mon 9/28 3:05 PM" in [zone]. An unreadable stamp is returned as typed. */
+    /** "Tue Dec 22, 2026 4:35 PM" in [zone]. An unreadable stamp is returned as typed. */
     fun localStartTime(startAt: String, zone: ZoneId): String {
         val instant = runCatching { Instant.parse(startAt) }.getOrNull() ?: return startAt
         val zoned = instant.atZone(zone)
-        val names = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-        val day = names[if (zoned.dayOfWeek == DayOfWeek.SUNDAY) 0 else zoned.dayOfWeek.value]
+        val days = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        val months = arrayOf(
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+        )
+        val day = days[if (zoned.dayOfWeek == DayOfWeek.SUNDAY) 0 else zoned.dayOfWeek.value]
+        val month = months[zoned.monthValue - 1]
         val hour = zoned.hour
         val hour12 = if (hour % 12 == 0) 12 else hour % 12
         val meridiem = if (hour < 12) "AM" else "PM"
         val minutes = zoned.minute.toString().padStart(2, '0')
-        return "$day ${zoned.monthValue}/${zoned.dayOfMonth} $hour12:$minutes $meridiem"
+        return "$day $month ${zoned.dayOfMonth}, ${zoned.year} $hour12:$minutes $meridiem"
     }
 
     fun load(store: SettingsStore): ScoreboardSaved {

@@ -197,25 +197,14 @@ public enum ScoreboardTarget {
     "\(away) at \(home)"
   }
 
-  /// "Mon 9/28 3:05 PM" in `zone`. An unreadable stamp is returned as typed.
+  /// "Tue Dec 22, 2026 4:35 PM" in `zone`. An unreadable stamp is returned as typed.
   public static func localStartTime(_ startAt: String, zone: TimeZone) -> String {
     guard let date = parseISO(startAt) else { return startAt }
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = zone
-    let parts = calendar.dateComponents([.weekday, .month, .day, .hour, .minute], from: date)
-    guard
-      let weekday = parts.weekday,
-      let month = parts.month,
-      let day = parts.day,
-      let hour = parts.hour,
-      let minute = parts.minute,
-      weekday >= 1, weekday <= 7
-    else { return startAt }
-    let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    let hour12 = hour % 12 == 0 ? 12 : hour % 12
-    let meridiem = hour < 12 ? "AM" : "PM"
-    let minutes = String(format: "%02d", minute)
-    return "\(names[weekday - 1]) \(month)/\(day) \(hour12):\(minutes) \(meridiem)"
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = zone
+    formatter.dateFormat = "EEE MMM d, yyyy h:mm a"
+    return formatter.string(from: date)
   }
 
   public static func load(_ store: SettingsStore) -> ScoreboardSaved {

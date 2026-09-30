@@ -223,6 +223,17 @@ internal fun ScoreboardSettingsCard(
                 tag = "scoreboard-route-event",
                 onClick = { onRoute(ScoreboardRoute.Event) }
             )
+            Text(
+                "Gamestation Event",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+            )
+            Text(
+                "Pick event for radar data",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp)
+            )
             TextButton(
                 onClick = onOpenEvents,
                 enabled = state.signedIn,
@@ -231,7 +242,6 @@ internal fun ScoreboardSettingsCard(
                     .testTag("scoreboard-choose-event")
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(if (state.gameTitle.isEmpty()) "Choose event" else state.gameTitle)
                     if (state.gameWhen.isNotEmpty()) {
                         Text(
                             state.gameWhen,
@@ -239,6 +249,7 @@ internal fun ScoreboardSettingsCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Text(if (state.gameTitle.isEmpty()) "Tap to pick an event" else state.gameTitle)
                 }
             }
             if (isRouteStatus(state.status)) {
@@ -353,12 +364,12 @@ private fun EventSection(
                     .testTag("scoreboard-event-${row.gameId}")
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(row.title)
                     Text(
                         row.whenLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Text(row.title)
                 }
             }
         }
