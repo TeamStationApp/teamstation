@@ -14,7 +14,7 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     DEVELOPMENT_TEAM: G5LQ7MERPK
     # Signed with the team's development identity rather than ad hoc, so every build is the same
-    # app to the Keychain and the logins kept there are read without a prompt. Not sandboxed:
+    # app to the Keychain and the GameStation session kept there is read without a prompt. Not sandboxed:
     # usbmuxd's socket is outside any sandbox.
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "Apple Development"

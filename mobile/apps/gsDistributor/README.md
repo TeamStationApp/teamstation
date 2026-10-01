@@ -18,9 +18,9 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
 - **GameStation.** `../common/GameStationKit` signs this Mac in and sends each file to one game,
   in parts, asking first what already landed so a cut-off upload carries on where it stopped. The
   same code GS Director uploads with, so both resume the same way.
-- **Settings and logins on both devices.** The Mac keeps its copy in
-  `~/Library/Application Support/GS Distributor` (`Packages/MacState`) and the logins in its
-  Keychain; GS Director keeps the same on the iPad. They are brought together whenever the iPad is
+- **Settings on both devices.** The Mac keeps its copy in
+  `~/Library/Application Support/GS Distributor` (`Packages/MacState`); GS Director keeps the same
+  on the iPad. They are brought together whenever the iPad is
   attached, each group from whichever side changed it last, so the Distributor works with the iPad
   away. Windows are not restored.
 - **REST API.** `Packages/DistributorAPI` serves the Distributor's work as JSON on
