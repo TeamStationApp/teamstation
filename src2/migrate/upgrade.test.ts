@@ -4,1528 +4,294 @@ import { Pool } from 'pg'
 
 import { mintUserId } from '../common/mintUserId'
 import { migrations } from './migrations'
-import { migration037GameStatsState } from './migrations/037gameStatsState'
-import { migration038CurrentPlay } from './migrations/038currentPlay'
-import { migration039GumboEventTypes } from './migrations/039gumboEventTypes'
-import { migration040LegacyEventTypes } from './migrations/040legacyEventTypes'
-import { migration041ScheduleApi } from './migrations/041scheduleApi'
-import { migration042FenceDistance } from './migrations/042fenceDistance'
-import { migration043RoleFlags } from './migrations/043roleFlags'
-import { migration044TeamDefaultLineup } from './migrations/044teamDefaultLineup'
-import { migration045WalkUpSongs } from './migrations/045walkUpSongs'
-import { migrateDown, migrateUp } from './runner'
+import { migration046ExternalCleanup } from './migrations/046externalCleanup'
+import { BASELINE, migrateUp } from './runner'
+import { schemaSnapshot } from './schemaSnapshot'
 import { testDatabaseUrl } from './testDatabase'
 
 /**
- * The scoring migrations run over a database that already holds plays.
+ * 046 over a database that ran an outside integration.
  *
- * `runner.test.ts` applies every migration to an empty database, where none
- * of the conversion SQL in 031 to 033 touches a single row. Here 001 to 030
- * build the schema as it was, rows are written in that shape — string user
- * ids, credits JSON, a sentence per play — and the rest are applied over
- * them. Then everything is rolled back to 030, and the
- * down path is held to what it says it restores.
+ * `runner.test.ts` applies every migration to an empty database, where 046
+ * finds nothing. Here a database is built to 045, then given the history 046
+ * exists for — under stand-in names, because the point is that 046 finds what
+ * it removes by what it carries:
+ *
+ * - four tables carrying the signature columns;
+ * - the relay pair on `live_streams`, prefixed `x`;
+ * - every provenance column allowing, and holding, a value the new lists do
+ *   not name;
+ * - a stored play with a `source` key, and the bookkeeping rows of two
+ *   migrations whose files are gone;
+ * - audit rows about the stand-in accounts, one of them for an account no
+ *   longer in the table, and audit rows that flipped the relay switch.
+ *
+ * After 046 the database must have exactly the schema of one built empty.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_upgrade_${Date.now()}`
-const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+const stamp = Date.now()
+const upgradedName = `gamestation_upgrade_${stamp}`
+const freshName = `gamestation_fresh_${stamp}`
+const urlOf = (name: string): string => adminUrl.replace(/\/[^/]*$/, `/${name}`)
 
-const before031 = migrations.filter(migration => migration.name < '031')
-const from031 = migrations.filter(migration => migration.name >= '031')
-
-const ada = mintUserId(() => false)
-const bea = mintUserId(id => id === ada.userId)
-const cy = mintUserId(id => id === ada.userId || id === bea.userId)
-
-const PLAYED = '2026-05-02T18:30:00.000Z'
-
-describe('the scoring migrations over existing plays', function () {
-  this.timeout(60000)
-
-  let admin: Pool
-  let pool: Pool
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, before031)
-    await seed(pool)
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('applies over the old rows', async function () {
-    const result = await migrateUp(pool, migrations)
-    expect(result.applied).deep.equals(from031.map(item => item.name))
-  })
-
-  it('turns each user id into its leading 53 bits and keeps the string', async function () {
-    const { rows } = await pool.query<{ id: string; legacyId: string }>(
-      'select id::text, "legacyId" from users'
-    )
-    const byLegacy = (
-      a: { legacyId: string },
-      b: { legacyId: string }
-    ): number => (a.legacyId < b.legacyId ? -1 : 1)
-    expect(rows.sort(byLegacy)).deep.equals(
-      [ada, bea, cy]
-        .map(made => ({ id: String(made.userId), legacyId: made.legacyId }))
-        .sort(byLegacy)
-    )
-    const players = await pool.query<{ userId: string }>(
-      'select user_id::text as "userId" from event_players'
-    )
-    expect(players.rows).deep.equals([{ userId: String(ada.userId) }])
-    const merged = await pool.query<{ mergedInto: string }>(
-      'select merged_into::text as "mergedInto" from users where id = $1',
-      [bea.userId]
-    )
-    expect(merged.rows).deep.equals([{ mergedInto: String(ada.userId) }])
-  })
-
-  it("rewrites only a person's external ids", async function () {
-    const { rows } = await pool.query<{ id: string; entityId: string }>(
-      'select id, entity_id as "entityId" from external_ids order by id'
-    )
-    expect(rows).deep.equals([
-      { id: 'ext_bea', entityId: String(bea.userId) },
-      { id: 'ext_cyPlayer', entityId: String(cy.userId) },
-      { id: 'ext_cyUser', entityId: String(bea.userId) },
-      { id: 'ext_nobody', entityId: 'tem_away' },
-      { id: 'ext_player', entityId: String(ada.userId) },
-      { id: 'ext_team', entityId: 'tem_home' }
-    ])
-  })
-
-  it('stores each play as Gumbo, crediting people by user id alone', async function () {
-    const { rows } = await pool.query<{
-      id: string
-      atBatIndex: number
-      gumbo: Record<string, any>
-      creditsLookedAt: boolean
-    }>(
-      `select id, "atBatIndex", gumbo, "creditsLookedAt"
-       from events order by "gameId", "atBatIndex"`
-    )
-    const byId = new Map(rows.map(row => [row.id, row]))
-
-    const single = byId.get('evt_single')
-    expect(single?.atBatIndex).equals(0)
-    expect(single?.gumbo.result).deep.equals({
-      eventType: 'single',
-      awayScore: 1,
-      homeScore: 0
-    })
-    expect(single?.gumbo.about).deep.include({
-      atBatIndex: 0,
-      inning: 1,
-      halfInning: 'top',
-      isScoringPlay: true
-    })
-    expect(new Date(single?.gumbo.about.startTime).toISOString()).equals(PLAYED)
-    const credited = (name: string, creditUserId: number | null): unknown => ({
-      eventType: 'single',
-      label: `Single: ${name}`,
-      teamId: 'tem_away',
-      creditUserId,
-      credit: { name, role: 'batter', position: null }
-    })
-    expect(single?.gumbo.credits).deep.equals([
-      credited('Ada', ada.userId),
-      credited('Bea', null),
-      credited('Cy', null),
-      credited('Nobody', null)
-    ])
-    expect(single?.creditsLookedAt).equals(true)
-
-    // Never looked at, which is not the same as looked at and found empty.
-    expect(byId.get('evt_out')?.creditsLookedAt).equals(false)
-    expect(byId.get('evt_out')?.gumbo).not.have.property('credits')
-
-    // After everything else in its game, off the index it held.
-    expect(byId.get('evt_correction')?.atBatIndex).equals(2)
-    expect(byId.get('evt_correction')?.gumbo.about.atBatIndex).equals(2)
-
-    // A game the import held nothing but a line score for.
-    expect(byId.get('evt_lineScore')?.gumbo).deep.equals({
-      about: { atBatIndex: 0, isScoringPlay: false },
-      result: { eventType: 'final_score', awayScore: 3, homeScore: 2 }
-    })
-
-    const credits = await pool.query<{
-      eventId: string
-      name: string
-      creditUserId: string | null
-    }>(
-      `select "eventId", name, "creditUserId"::text as "creditUserId"
-       from "eventCredits" order by name`
-    )
-    expect(credits.rows).deep.equals([
-      { eventId: 'evt_single', name: 'Ada', creditUserId: String(ada.userId) },
-      { eventId: 'evt_single', name: 'Bea', creditUserId: null },
-      { eventId: 'evt_single', name: 'Cy', creditUserId: null },
-      { eventId: 'evt_single', name: 'Nobody', creditUserId: null }
-    ])
-    const external = await pool.query(
-      `select column_name from information_schema.columns
-       where table_name = 'eventCredits' and column_name = 'externalPlayerId'
-       union all
-       select indexname from pg_indexes
-       where indexname = 'event_credits_external_player'`
-    )
-    expect(external.rows).deep.equals([])
-  })
-
-  it('rebuilds credits only when the play itself changes', async function () {
-    const creditId = async (): Promise<string> =>
-      (
-        await pool.query<{ id: string }>(
-          `select id from "eventCredits"
-           where "eventId" = 'evt_single' and name = 'Ada'`
-        )
-      ).rows[0].id
-    const first = await creditId()
-    await pool.query(
-      `update events set hidden = true, "timeNudgeSec" = 2
-       where id = 'evt_single'`
-    )
-    expect(await creditId(), 'hiding a play keeps its credits').equals(first)
-    await pool.query(
-      `update events set gumbo = jsonb_set(gumbo, '{about,inning}', '2')
-       where id = 'evt_single'`
-    )
-    expect(await creditId(), 'a changed play is read again').not.equals(first)
-
-    const indexes = await pool.query<{ name: string }>(
-      `select indexname as name from pg_indexes
-       where indexname in ('events_game_order', 'external_ids_game_external')`
-    )
-    expect(indexes.rows).deep.equals([{ name: 'external_ids_game_external' }])
-  })
-
-  it('keeps the at-bat in progress on the game, and takes it away again', async function () {
-    const column = async (): Promise<string[]> =>
-      (
-        await pool.query<{ name: string }>(
-          `select column_name as name from information_schema.columns
-           where table_name = 'games' and column_name = 'currentPlay'`
-        )
-      ).rows.map(row => row.name)
-    expect(await column()).deep.equals(['currentPlay'])
-    const client = await pool.connect()
-    try {
-      await client.query('begin')
-      await client.query(migration038CurrentPlay.down)
-      const dropped = await client.query(
-        `select 1 from information_schema.columns
-         where table_name = 'games' and column_name = 'currentPlay'`
-      )
-      expect(dropped.rows).deep.equals([])
-      await client.query(migration038CurrentPlay.up)
-    } finally {
-      await client.query('rollback')
-      client.release()
-    }
-    expect(await column()).deep.equals(['currentPlay'])
-  })
-
-  it('rolls back to 030 and puts back what the down path claims to', async function () {
-    const rolledBack = await migrateDown(pool, migrations, from031.length)
-    expect(rolledBack).deep.equals(from031.map(item => item.name).reverse())
-
-    const users = await pool.query<{ id: string }>('select id from users')
-    expect(users.rows.map(row => row.id).sort()).deep.equals(
-      [ada.legacyId, bea.legacyId, cy.legacyId].sort()
-    )
-    const players = await pool.query<{ userId: string }>(
-      'select user_id as "userId" from event_players'
-    )
-    expect(players.rows).deep.equals([{ userId: ada.legacyId }])
-    const merged = await pool.query<{ mergedInto: string }>(
-      'select merged_into as "mergedInto" from users where id = $1',
-      [bea.legacyId]
-    )
-    expect(merged.rows).deep.equals([{ mergedInto: ada.legacyId }])
-    const external = await pool.query<{ entityId: string }>(
-      `select entity_id as "entityId" from external_ids where id = 'ext_player'`
-    )
-    expect(external.rows).deep.equals([{ entityId: ada.legacyId }])
-
-    // The typed columns come back out of the document. The sentence does
-    // not: 033 dropped it, and its down does not say it can put it back.
-    const events = await pool.query<{
-      id: string
-      at_bat_index: number
-      event_type: string
-      inning: number | null
-      half_inning: string | null
-      away_score: number | null
-      home_score: number | null
-    }>(
-      `select id, at_bat_index, event_type, inning, half_inning,
-              away_score, home_score
-       from events order by id`
-    )
-    expect(events.rows).deep.equals([
-      {
-        id: 'evt_correction',
-        at_bat_index: 2,
-        event_type: 'score_correction',
-        inning: null,
-        half_inning: null,
-        away_score: 1,
-        home_score: 1
-      },
-      {
-        id: 'evt_lineScore',
-        at_bat_index: 0,
-        event_type: 'final_score',
-        inning: null,
-        half_inning: null,
-        away_score: 3,
-        home_score: 2
-      },
-      {
-        id: 'evt_out',
-        at_bat_index: 1,
-        event_type: 'field_out',
-        inning: 1,
-        half_inning: 'bottom',
-        away_score: 1,
-        home_score: 0
-      },
-      {
-        id: 'evt_single',
-        at_bat_index: 0,
-        event_type: 'single',
-        inning: 2,
-        half_inning: 'top',
-        away_score: 1,
-        home_score: 0
-      }
-    ])
-
-    const tables = await pool.query<{ name: string }>(
-      `select tablename as name from pg_tables
-       where tablename = 'eventCredits'`
-    )
-    expect(tables.rows).deep.equals([])
-
-    // The credits list comes back on its column, naming users by their
-    // string ids, and a play nobody credited has none.
-    const restored = (name: string, creditUserId: string | null): unknown => ({
-      eventType: 'single',
-      label: `Single: ${name}`,
-      teamId: 'tem_away',
-      creditUserId,
-      credit: { name, role: 'batter', position: null }
-    })
-    const credits = await pool.query<{ id: string; credits: unknown }>(
-      `select id, credits from events
-       where id in ('evt_single', 'evt_out') order by id`
-    )
-    expect(credits.rows).deep.equals([
-      { id: 'evt_out', credits: null },
-      {
-        id: 'evt_single',
-        credits: [
-          restored('Ada', ada.legacyId),
-          restored('Bea', null),
-          restored('Cy', null),
-          restored('Nobody', null)
-        ]
-      }
-    ])
-    const creditIndex = await pool.query<{ name: string }>(
-      `select indexname as name from pg_indexes
-       where indexname = 'events_credits'`
-    )
-    expect(creditIndex.rows).deep.equals([{ name: 'events_credits' }])
-    const indexes = await pool.query<{ name: string }>(
-      `select indexname as name from pg_indexes
-       where indexname in ('events_game_order', 'external_ids_game_external')`
-    )
-    expect(indexes.rows).deep.equals([{ name: 'events_game_order' }])
-  })
-})
-
-/**
- * Two people, two games, and plays in the shape 030 stored them: a credited
- * single and an uncredited out in one game with a score correction after
- * them, and a line-score-only game.
- */
-async function seed(pool: Pool): Promise<void> {
-  for (const [made, name] of [
-    [ada, 'Ada'],
-    [bea, 'Bea'],
-    [cy, 'Cy']
-  ] as const) {
-    await pool.query('insert into users (id, display_name) values ($1, $2)', [
-      made.legacyId,
-      name
-    ])
-  }
-  // A user column on users itself, which the down path cannot read users
-  // for while it rewrites that table.
-  await pool.query('update users set merged_into = $1 where id = $2', [
-    ada.legacyId,
-    bea.legacyId
-  ])
-  await pool.query(
-    `insert into teams (id, name) values
-       ('tem_home', 'Home'), ('tem_away', 'Away')`
-  )
-  await pool.query(
-    `insert into games (id, home_team_id, away_team_id, start_at) values
-       ('gam_plays', 'tem_home', 'tem_away', $1),
-       ('gam_lineScore', 'tem_home', 'tem_away', $1)`,
-    [PLAYED]
-  )
-  await pool.query(
-    `insert into external_ids
-       (id, entity_type, entity_id, system, kind, external_id)
-     values
-       ('ext_player', 'user', $1, 'external', 'player', 'ext-ada'),
-       ('ext_bea', 'user', $2, 'external', 'player', 'ext-bea'),
-       ('ext_cyUser', 'user', $2, 'external', 'user', 'ext-cy'),
-       ('ext_cyPlayer', 'user', $3, 'external', 'player', 'ext-cy'),
-       ('ext_nobody', 'team', 'tem_away', 'external', 'team', 'ext-nobody'),
-       ('ext_team', 'team', 'tem_home', 'external', 'team', 'ext-home')`,
-    [ada.legacyId, bea.legacyId, cy.legacyId]
-  )
-
-  const oldCredit = (
-    name: string,
-    ids: { creditUserId?: string | null }
-  ): unknown => ({
-    eventType: 'single',
-    label: `Single: ${name}`,
-    teamId: 'tem_away',
-    ...(ids.creditUserId === undefined
-      ? {}
-      : { creditUserId: ids.creditUserId }),
-    credit: { name, role: 'batter', position: null }
-  })
-
-  const insertEvent = async (row: {
-    id: string
-    gameId: string
-    atBatIndex: number
-    inning: number | null
-    half: 'top' | 'bottom' | null
-    eventType: string
-    description: string
-    scoring: boolean
-    away: number
-    home: number
-    gumbo: unknown
-    credits: unknown
-    startTime: string | null
-  }): Promise<void> => {
-    await pool.query(
-      `insert into events (
-         id, game_id, at_bat_index, inning, half_inning, event_type,
-         description, is_scoring_play, away_score, home_score, gumbo,
-         credits, start_time
-       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-      [
-        row.id,
-        row.gameId,
-        row.atBatIndex,
-        row.inning,
-        row.half,
-        row.eventType,
-        row.description,
-        row.scoring,
-        row.away,
-        row.home,
-        JSON.stringify(row.gumbo),
-        row.credits == null ? null : JSON.stringify(row.credits),
-        row.startTime
-      ]
-    )
-  }
-
-  await insertEvent({
-    id: 'evt_single',
-    gameId: 'gam_plays',
-    atBatIndex: 0,
-    inning: 1,
-    half: 'top',
-    eventType: 'single',
-    description: 'Ada singles to left field.',
-    scoring: true,
-    away: 1,
-    home: 0,
-    gumbo: {
-      about: { inning: 1, halfInning: 'top' },
-      result: { eventType: 'single', awayScore: 1, homeScore: 0 }
-    },
-    // Ada by her user id; Bea and Nobody by name alone, beside a null user
-    // id; Cy by name alone, with no user id key at all.
-    credits: [
-      oldCredit('Ada', { creditUserId: ada.legacyId }),
-      oldCredit('Bea', { creditUserId: null }),
-      oldCredit('Cy', {}),
-      oldCredit('Nobody', { creditUserId: null })
-    ],
-    startTime: PLAYED
-  })
-  await insertEvent({
-    id: 'evt_out',
-    gameId: 'gam_plays',
-    atBatIndex: 1,
-    inning: 1,
-    half: 'bottom',
-    eventType: 'field_out',
-    description: 'Bea grounds out.',
-    scoring: false,
-    away: 1,
-    home: 0,
-    gumbo: {
-      about: { inning: 1, halfInning: 'bottom' },
-      result: { eventType: 'field_out', awayScore: 1, homeScore: 0 }
-    },
-    credits: null,
-    startTime: null
-  })
-  await insertEvent({
-    id: 'evt_correction',
-    gameId: 'gam_plays',
-    atBatIndex: 50,
-    inning: null,
-    half: null,
-    eventType: 'score_correction',
-    description: 'Score corrected to 1-1.',
-    scoring: false,
-    away: 1,
-    home: 1,
-    gumbo: {
-      result: { eventType: 'score_correction', awayScore: 1, homeScore: 1 }
-    },
-    credits: null,
-    startTime: null
-  })
-  await insertEvent({
-    id: 'evt_lineScore',
-    gameId: 'gam_lineScore',
-    atBatIndex: 0,
-    inning: null,
-    half: null,
-    eventType: 'final_score',
-    description: 'Final score 3–2.',
-    scoring: false,
-    away: 3,
-    home: 2,
-    gumbo: { source: 'lineScore', away: 3, home: 2 },
-    credits: null,
-    startTime: null
-  })
-
-  await pool.query(
-    `insert into event_players (id, event_id, user_id, team_id, role)
-     values ('evp_ada', 'evt_single', $1, 'tem_away', 'batter')`,
-    [ada.legacyId]
-  )
-}
-
-const through036 = migrations.filter(migration => migration.name < '037')
-const through037 = migrations.filter(migration => migration.name < '038')
-
-const batter = mintUserId(() => false)
-const pitcher = mintUserId(id => id === batter.userId)
-const otherRunner = mintUserId(
-  id => id === batter.userId || id === pitcher.userId
+const throughBaseline = migrations.filter(
+  migration => migration.name <= BASELINE
 )
 
-/**
- * Migration 037's table and its change to the events trigger: a batter who
- * reaches is not also listed as their own runner, and rolling the migration
- * back restores the old rows.
- */
-describe('migration 037gameStatsState', function () {
-  this.timeout(60000)
+const PROVENANCE = [
+  ['teams', 'created_from', 'import'],
+  ['teams', 'logo_source', 'import'],
+  ['seasons', 'logo_source', 'import'],
+  ['leagues', 'logo_source', 'import'],
+  ['users', 'avatar_source', 'import'],
+  ['users', 'bats_source', 'import'],
+  ['user_emails', 'source', 'import'],
+  ['season_members', 'source', 'import'],
+  ['league_members', 'source', 'import'],
+  ['events', 'source', 'external']
+] as const
 
-  const scratchName = `gamestation_upgrade_037_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+const ada = mintUserId(() => false)
+
+describe('046 over a database with an outside integration', function () {
+  this.timeout(120000)
 
   let admin: Pool
   let pool: Pool
+  let fresh: Pool
 
   before(async function () {
     admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through036)
-    await seedPost031(pool)
+    await admin.query(`create database ${upgradedName}`)
+    await admin.query(`create database ${freshName}`)
+    pool = new Pool({ connectionString: urlOf(upgradedName) })
+    fresh = new Pool({ connectionString: urlOf(freshName) })
+    await migrateUp(pool, throughBaseline)
+    await migrateUp(fresh, migrations)
+    await giveItHistory(pool)
   })
 
   after(async function () {
     if (pool != null) await pool.end()
+    if (fresh != null) await fresh.end()
     if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.query(`drop database if exists ${upgradedName}`)
+      await admin.query(`drop database if exists ${freshName}`)
       await admin.end()
     }
   })
 
-  it('skips the batter as a runner and leaves game_player_stats alone', async function () {
-    const applied = await migrateUp(pool, through037)
-    expect(applied.applied).deep.equals([migration037GameStatsState.name])
-
-    const table = await pool.query(
-      `select to_regclass('game_stats_state')::text as name`
-    )
-    expect(table.rows).deep.equals([{ name: 'game_stats_state' }])
-
-    const before = await pool.query<{
-      id: string
-      pa: number
-      ab: number
-      h: number
-    }>(`select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`)
-
-    await pool.query(`update events set gumbo = gumbo where id = 'evt_037'`)
-
-    const players = await pool.query<{ role: string; userId: string }>(
-      `select role, user_id::text as "userId"
-       from event_players
-       where event_id = 'evt_037' and role in ('batter', 'runner')
-       order by role, user_id`
-    )
-    expect(players.rows).deep.equals([
-      { role: 'batter', userId: String(batter.userId) },
-      { role: 'runner', userId: String(otherRunner.userId) }
-    ])
-
-    const after = await pool.query<{
-      id: string
-      pa: number
-      ab: number
-      h: number
-    }>(`select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`)
-    expect(after.rows).deep.equals(before.rows)
+  it('applies 046 alone', async function () {
+    const result = await migrateUp(pool, migrations)
+    expect(result.applied).deep.equals([migration046ExternalCleanup.name])
   })
 
-  it('restores the batter as a runner when 037 is rolled back', async function () {
-    const rolled = await migrateDown(pool, through037, 1)
-    expect(rolled).deep.equals([migration037GameStatsState.name])
-
-    const table = await pool.query(
-      `select to_regclass('game_stats_state')::text as name`
+  it('drops the four tables and the relay pair', async function () {
+    const { rows } = await pool.query<{ name: string | null }>(
+      `select to_regclass(name)::text as name
+       from unnest(array['x_accounts', 'x_jobs', 'x_targets', 'x_archive'])
+         as t(name)`
     )
-    expect(table.rows).deep.equals([{ name: null }])
-
-    await pool.query(`update events set gumbo = gumbo where id = 'evt_037'`)
-
-    const players = await pool.query<{ role: string; userId: string }>(
-      `select role, user_id::text as "userId"
-       from event_players
-       where event_id = 'evt_037' and role in ('batter', 'runner')
-       order by role, user_id`
+    expect(rows.map(row => row.name)).deep.equals([null, null, null, null])
+    const columns = await pool.query<{ name: string }>(
+      `select column_name as name from information_schema.columns
+       where table_name = 'live_streams' and column_name like 'x\\_%'`
     )
-    const runnerRows =
-      batter.userId < otherRunner.userId
-        ? [
-            { role: 'runner', userId: String(batter.userId) },
-            { role: 'runner', userId: String(otherRunner.userId) }
-          ]
-        : [
-            { role: 'runner', userId: String(otherRunner.userId) },
-            { role: 'runner', userId: String(batter.userId) }
-          ]
-    expect(players.rows).deep.equals([
-      { role: 'batter', userId: String(batter.userId) },
-      ...runnerRows
+    expect(columns.rows).deep.equals([])
+  })
+
+  it('turns every value the lists no longer name into import or external', async function () {
+    for (const [table, column, value] of PROVENANCE) {
+      const { rows } = await pool.query<{ value: string }>(
+        `select ${column} as value from ${table} where ${column} is not null`
+      )
+      const values = rows.map(row => row.value)
+      expect(values, `${table}.${column}`).to.include(value)
+      expect(values, `${table}.${column}`).not.to.include('legacyValue')
+    }
+  })
+
+  it('leaves the schema exactly as a fresh build has it', async function () {
+    expect(await schemaSnapshot(pool)).deep.equals(await schemaSnapshot(fresh))
+  })
+
+  it('strips a stored play of its source, and forgets two removed migrations', async function () {
+    const plays = await pool.query<{ has: boolean }>(
+      `select gumbo ? 'source' as has from events`
+    )
+    expect(plays.rows).deep.equals([{ has: false }])
+    const names = await pool.query<{ name: string }>(
+      `select name from schema_migrations where name ~ '^(016|032)'`
+    )
+    expect(names.rows).deep.equals([])
+  })
+
+  it('deletes the audit rows about the dropped tables, and the relay switch from the rest', async function () {
+    const { rows } = await pool.query<{
+      id: string
+      before: unknown
+      after: unknown
+    }>('select id, before, after from audit_log order by id')
+    expect(rows).deep.equals([
+      { id: 'aud_label', before: { label: 'Dugout' }, after: {} },
+      { id: 'aud_team', before: null, after: { name: 'Hawks' } }
     ])
+  })
+
+  it('refuses a database where two tables carry one signature, and changes nothing', async function () {
+    const name = `gamestation_twice_${stamp}`
+    await admin.query(`create database ${name}`)
+    const twice = new Pool({ connectionString: urlOf(name) })
+    try {
+      await migrateUp(twice, throughBaseline)
+      await twice.query(`
+        create table x_one (id text primary key, pending_state text);
+        create table x_two (id text primary key, pending_state text);
+      `)
+      const refused = await migrateUp(twice, migrations).then(
+        () => undefined,
+        (error: unknown) => error
+      )
+      expect(refused)
+        .instanceOf(Error)
+        .property('message')
+        .contains('More than one table carries')
+      const { rows } = await twice.query<{ count: string }>(
+        `select count(*) from schema_migrations where name = $1`,
+        [migration046ExternalCleanup.name]
+      )
+      expect(rows[0].count).equals('0')
+      const tables = await twice.query<{ name: string | null }>(
+        `select to_regclass('x_one')::text as name`
+      )
+      expect(tables.rows[0].name).equals('x_one')
+    } finally {
+      await twice.end()
+      await admin.query(`drop database if exists ${name}`)
+    }
+  })
+
+  it('changes nothing on a fresh build', async function () {
+    const name = `gamestation_noop_${stamp}`
+    await admin.query(`create database ${name}`)
+    const noop = new Pool({ connectionString: urlOf(name) })
+    try {
+      await migrateUp(noop, throughBaseline)
+      const before = await schemaSnapshot(noop)
+      await migrateUp(noop, migrations)
+      expect(await schemaSnapshot(noop)).deep.equals(before)
+    } finally {
+      await noop.end()
+      await admin.query(`drop database if exists ${name}`)
+    }
   })
 })
 
 /**
- * A game, three people, a stats row, and one double whose runners name the
- * batter twice (null→1B, 1B→2B) plus one other runner — the post-031 shape.
+ * The integration's footprint, as a database that ran it holds it, under
+ * stand-in names.
  */
-async function seedPost031(pool: Pool): Promise<void> {
-  for (const [made, name] of [
-    [batter, 'Batter'],
-    [pitcher, 'Pitcher'],
-    [otherRunner, 'Runner']
-  ] as const) {
+async function giveItHistory(pool: Pool): Promise<void> {
+  await pool.query(`
+    create table x_accounts (
+      id text primary key,
+      owner bigint references users (id) on delete cascade,
+      pending_state text
+    );
+    create table x_jobs (
+      id text primary key,
+      account_id text not null references x_accounts (id) on delete cascade,
+      cancel_requested boolean not null default false
+    );
+    create table x_targets (
+      id text primary key,
+      game_id text references games (id) on delete cascade,
+      ingest_url_cipher text not null
+    );
+    create table x_archive (
+      id text primary key,
+      media_type text,
+      payload jsonb
+    );
+    create index x_archive_media on x_archive (media_type);
+    alter table live_streams
+      add column x_target_id text references x_targets (id) on delete set null,
+      add column x_enabled boolean not null default false;
+  `)
+
+  for (const [table, column] of PROVENANCE) {
+    const { rows } = await pool.query<{ name: string; def: string }>(
+      `select k.conname as name, pg_get_constraintdef(k.oid) as def
+       from pg_constraint k
+       join pg_attribute a on a.attrelid = k.conrelid
+       where k.conrelid = $1::regclass and k.contype = 'c'
+         and a.attname = $2 and k.conkey = array[a.attnum]`,
+      [table, column]
+    )
+    const [check] = rows
+    const widened = check.def.replace(/ARRAY\[/, "ARRAY['legacyValue'::text, ")
+    await pool.query(`alter table ${table} drop constraint ${check.name}`)
     await pool.query(
-      `insert into users (id, "legacyId", display_name) values ($1, $2, $3)`,
-      [made.userId, made.legacyId, name]
+      `alter table ${table} add constraint ${check.name} ${widened}`
     )
   }
-  await pool.query(
-    `insert into teams (id, name) values
-       ('tem_home037', 'Home'), ('tem_away037', 'Away')`
-  )
-  await pool.query(
-    `insert into games (id, home_team_id, away_team_id, start_at)
-     values ('gam_037', 'tem_home037', 'tem_away037', $1)`,
-    [PLAYED]
-  )
-  await pool.query(
-    `insert into game_player_stats (id, game_id, user_id, team_id, pa, ab, h)
-     values ('gps_037', 'gam_037', $1, 'tem_away037', 3, 2, 1)`,
-    [batter.userId]
-  )
 
-  const gumbo = {
-    about: {
-      atBatIndex: 0,
-      inning: 1,
-      halfInning: 'top',
-      isScoringPlay: false
-    },
-    result: { eventType: 'double', awayScore: 0, homeScore: 0 },
-    matchup: {
-      batter: { id: batter.userId },
-      pitcher: { id: pitcher.userId }
-    },
-    runners: [
-      {
-        movement: { start: null, end: '1B', isOut: false },
-        details: {
-          eventType: 'double',
-          runner: { id: batter.userId }
-        }
-      },
-      {
-        movement: { start: '1B', end: '2B', isOut: false },
-        details: {
-          eventType: 'double',
-          runner: { id: batter.userId }
-        }
-      },
-      {
-        movement: { start: null, end: '3B', isOut: false },
-        details: {
-          eventType: 'double',
-          runner: { id: otherRunner.userId }
-        }
-      }
+  await pool.query(
+    `insert into users (id, "legacyId", display_name, avatar_source, bats_source)
+     values ($1, $2, 'Ada', 'legacyValue', 'legacyValue')`,
+    [ada.userId, ada.legacyId]
+  )
+  await pool.query(`
+    insert into leagues (id, name, logo_source)
+      values ('lea_1', 'League', 'legacyValue');
+    insert into seasons (id, league_id, name, year, logo_source)
+      values ('sea_1', 'lea_1', 'Spring', 2026, 'legacyValue');
+    insert into teams (id, name, created_from, logo_source)
+      values ('tem_1', 'Hawks', 'legacyValue', 'legacyValue');
+    insert into teams (id, name, created_from)
+      values ('tem_2', 'Rangers', 'manual');
+    insert into games (id, home_team_id, away_team_id, season_id, start_at)
+      values ('gam_1', 'tem_1', 'tem_2', 'sea_1', '2026-05-02T18:30:00Z');
+  `)
+  await pool.query(
+    `insert into user_emails (id, user_id, email, source)
+       values ('uem_1', $1, 'ada@example.com', 'legacyValue');
+     insert into season_members (id, user_id, season_id, source)
+       values ('smb_1', $1, 'sea_1', 'legacyValue');
+     insert into league_members (id, user_id, league_id, source)
+       values ('lmb_1', $1, 'lea_1', 'legacyValue');
+     insert into x_accounts (id, owner, pending_state)
+       values ('xac_live', $1, null);`.replace(/\$1/g, String(ada.userId))
+  )
+  await pool.query(
+    `insert into events (id, "gameId", "battingTeamId", gumbo, source)
+     values ('evt_1', 'gam_1', 'tem_2', $1::jsonb, 'legacyValue')`,
+    [
+      JSON.stringify({
+        about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+        result: { eventType: 'single', awayScore: 0, homeScore: 0 },
+        source: { kind: 'play' }
+      })
     ]
-  }
-
-  await pool.query(
-    `insert into events (id, "gameId", "battingTeamId", gumbo)
-     values ('evt_037', 'gam_037', 'tem_away037', $1::jsonb)`,
-    [JSON.stringify(gumbo)]
   )
+  await pool.query(`
+    insert into x_jobs (id, account_id) values ('xjb_1', 'xac_live');
+    insert into x_targets (id, game_id, ingest_url_cipher)
+      values ('xtg_1', 'gam_1', 'v1.a.b.c');
+    insert into x_archive (id, media_type, payload)
+      values ('xar_1', 'application/json', '{}');
+    insert into schema_migrations (name) values ('016x'), ('032x');
+    insert into audit_log (id, method, path, entity_type, entity_id, after)
+      values
+        ('aud_live', 'POST', '/x/account', 'xAccount', 'xac_live', '{}'),
+        ('aud_gone', 'POST', '/x/account', 'xAccount', 'xac_gone', '{}'),
+        ('aud_job', 'POST', '/x/refresh', 'xJob', 'xjb_1', null),
+        ('aud_team', 'POST', '/teams', 'team', 'tem_1', '{"name": "Hawks"}');
+    insert into audit_log (id, method, path, entity_type, entity_id, before, after)
+      values
+        ('aud_label', 'PATCH', '/x', 'liveStream', 'liv_1',
+          '{"label": "Dugout", "xEnabled": false}', '{"xEnabled": true}'),
+        ('aud_flip', 'PATCH', '/x', 'liveStream', 'liv_1',
+          '{"xEnabled": false}', '{"xEnabled": true}');
+  `)
 }
-
-const through038 = migrations.filter(migration => migration.name < '039')
-const through039 = migrations.filter(migration => migration.name < '040')
-
-/**
- * Migration 039 renames the three legacy event types in each stored play's
- * result and in the at-bat in progress, and nowhere else, and adds `sh`.
- */
-describe('migration 039gumboEventTypes', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_039_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-  const legacy = ['catcher_interference', 'placed_runner', 'manual_placement']
-  const listed = ['catcher_interf', 'runner_placed', 'gs_manual_placement']
-
-  let admin: Pool
-  let pool: Pool
-
-  const eventTypes = async (): Promise<string[]> =>
-    (
-      await pool.query<{ eventType: string }>(
-        `select "eventType" from events where "gameId" = 'gam_039'
-         order by "atBatIndex"`
-      )
-    ).rows.map(row => row.eventType)
-  const logs = async (): Promise<unknown[]> =>
-    (
-      await pool.query<{ log: unknown }>(
-        `select jsonb_build_array(gumbo->'gameStation', gumbo->'credits') as log
-         from events where "gameId" = 'gam_039' order by "atBatIndex"`
-      )
-    ).rows.map(row => row.log)
-  /** Each play's runners' event types, then the at-bat in progress's. */
-  const runnerTypes = async (): Promise<unknown> =>
-    (
-      await pool.query<{ types: unknown }>(
-        `select jsonb_path_query_array(gumbo, '$.runners[*].details.eventType')
-           as types
-         from events where "gameId" = 'gam_039'
-         union all
-         select jsonb_path_query_array(
-           "currentPlay", '$.runners[*].details.eventType')
-         from games where id = 'gam_039'`
-      )
-    ).rows.map(row => row.types)
-  const current = async (): Promise<unknown> =>
-    (
-      await pool.query<{ type: unknown }>(
-        `select "currentPlay" #> '{result,eventType}' as type
-         from games where id = 'gam_039'`
-      )
-    ).rows[0].type
-  const hasSh = async (): Promise<boolean> =>
-    (
-      await pool.query(
-        `select 1 from information_schema.columns
-         where table_name = 'game_player_stats' and column_name = 'sh'`
-      )
-    ).rows.length === 1
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through038)
-    await pool.query(
-      `insert into teams (id, name) values
-         ('tem_home039', 'Home'), ('tem_away039', 'Away')`
-    )
-    await pool.query(
-      `insert into games (id, home_team_id, away_team_id, start_at, "currentPlay")
-       values ('gam_039', 'tem_home039', 'tem_away039', $1, $2::jsonb)`,
-      [
-        PLAYED,
-        JSON.stringify({
-          about: { atBatIndex: 4, isComplete: false },
-          result: { eventType: 'catcher_interference' },
-          runners: [{ details: { eventType: 'placed_runner' } }]
-        })
-      ]
-    )
-    for (const [index, eventType] of [...legacy, 'single'].entries()) {
-      const gumbo = {
-        about: { atBatIndex: index, inning: 1, halfInning: 'top' },
-        result: { eventType, awayScore: 0, homeScore: 0 },
-        runners: [
-          { movement: { start: null, end: '1B' }, details: { eventType } },
-          { movement: { start: '1B', end: '2B' }, details: {} }
-        ],
-        credits: [{ eventType, label: `${eventType}: Ada`, credit: {} }],
-        gameStation: { actions: [{ type: 'result', eventType }] }
-      }
-      await pool.query(
-        `insert into events (id, "gameId", "battingTeamId", gumbo)
-         values ($1, 'gam_039', 'tem_away039', $2::jsonb)`,
-        [`evt_039_${index}`, JSON.stringify(gumbo)]
-      )
-    }
-    await pool.query(
-      `insert into users (id, "legacyId", display_name) values ($1, $2, 'Ada')`,
-      [batter.userId, batter.legacyId]
-    )
-    await pool.query(
-      `insert into game_player_stats (id, game_id, user_id, team_id, pa, sf)
-       values ('gps_039', 'gam_039', $1, 'tem_away039', 1, 1)`,
-      [batter.userId]
-    )
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('renames the legacy codes in results and runners only, and adds sh', async function () {
-    const before = await logs()
-    const applied = await migrateUp(pool, through039)
-    expect(applied.applied).deep.equals([migration039GumboEventTypes.name])
-
-    expect(await eventTypes()).deep.equals([...listed, 'single'])
-    expect(await current()).equals('catcher_interf')
-    expect(await runnerTypes()).deep.equals([
-      ...[...listed, 'single'].map(type => [type]),
-      ['runner_placed']
-    ])
-    // The action log and the credits keep the engine's own words.
-    expect(await logs()).deep.equals(before)
-    const credits = await pool.query<{ eventType: string }>(
-      `select "eventType" from "eventCredits" order by "eventType"`
-    )
-    expect(credits.rows.map(row => row.eventType)).deep.equals(
-      [...legacy, 'single'].sort()
-    )
-
-    expect(await hasSh()).equals(true)
-    const stats = await pool.query(
-      `select sf, sh from game_player_stats where id = 'gps_039'`
-    )
-    expect(stats.rows).deep.equals([{ sf: 1, sh: 0 }])
-  })
-
-  it('puts the legacy codes back and drops sh when rolled back', async function () {
-    const before = await logs()
-    const rolled = await migrateDown(pool, through039, 1)
-    expect(rolled).deep.equals([migration039GumboEventTypes.name])
-    expect(await eventTypes()).deep.equals([...legacy, 'single'])
-    expect(await current()).equals('catcher_interference')
-    expect(await runnerTypes()).deep.equals([
-      ...[...legacy, 'single'].map(type => [type]),
-      ['placed_runner']
-    ])
-    expect(await logs()).deep.equals(before)
-    expect(await hasSh()).equals(false)
-
-    await migrateUp(pool, through039)
-    expect(await eventTypes()).deep.equals([...listed, 'single'])
-    expect(await hasSh()).equals(true)
-  })
-})
-
-const through040 = migrations.filter(migration => migration.name < '041')
-
-/**
- * Migration 040 renames the imported codes a retired import parser stored as
- * results, logs each row it renamed, and puts exactly those back when rolled
- * back (U26).
- */
-describe('migration 040legacyEventTypes', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_040_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-  const renames: Array<[legacy: string, listed: string]> = [
-    ['runner_out', 'other_out'],
-    ['batter_out', 'field_out'],
-    ['catcher_s_interference', 'catcher_interf'],
-    ['fc_double_play', 'double_play'],
-    ['offensive_interference', 'batter_interference'],
-    ['batter_put_on_base', 'gs_manual_placement'],
-    ['inning_changed_by_scorekeeper', 'final_score']
-  ]
-  // Genuine plays already carrying a new code, which 040 never touches.
-  const genuine = ['other_out', 'field_out']
-
-  let admin: Pool
-  let pool: Pool
-  /** The stored plays before 040. */
-  let original: string[]
-
-  const eventTypes = async (): Promise<string[]> =>
-    (
-      await pool.query<{ eventType: string }>(
-        `select "eventType" from events where "gameId" = 'gam_040'
-         order by "atBatIndex"`
-      )
-    ).rows.map(row => row.eventType)
-  /** Each stored play as Postgres writes it, to compare byte for byte. */
-  const stored = async (): Promise<string[]> =>
-    (
-      await pool.query<{ gumbo: string }>(
-        `select gumbo::text as gumbo from events where "gameId" = 'gam_040'
-         order by "atBatIndex"`
-      )
-    ).rows.map(row => row.gumbo)
-  const logs = async (): Promise<unknown[]> =>
-    (
-      await pool.query<{ log: unknown }>(
-        `select jsonb_build_array(
-           gumbo->'gameStation', gumbo->'credits', gumbo->'runners') as log
-         from events where "gameId" = 'gam_040' order by "atBatIndex"`
-      )
-    ).rows.map(row => row.log)
-  const hasLog = async (): Promise<boolean> =>
-    (await pool.query(`select to_regclass('legacy_event_type_renames') as t`))
-      .rows[0].t != null
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through039)
-    await pool.query(
-      `insert into teams (id, name) values
-         ('tem_home040', 'Home'), ('tem_away040', 'Away')`
-    )
-    await pool.query(
-      `insert into games (id, home_team_id, away_team_id, start_at)
-       values ('gam_040', 'tem_home040', 'tem_away040', $1)`,
-      [PLAYED]
-    )
-    const codes = [...renames.map(([legacy]) => legacy), ...genuine]
-    for (const [index, eventType] of codes.entries()) {
-      const gumbo = {
-        about: { atBatIndex: index, inning: 1, halfInning: 'top' },
-        result: { eventType, awayScore: 0, homeScore: 0 },
-        runners: [{ movement: { start: null, end: null }, details: {} }],
-        credits: [{ eventType, label: `${eventType}: Ada`, credit: {} }],
-        gameStation: { actions: [{ type: 'result', eventType }] }
-      }
-      await pool.query(
-        `insert into events (id, "gameId", "battingTeamId", gumbo)
-         values ($1, 'gam_040', 'tem_away040', $2::jsonb)`,
-        [`evt_040_${index}`, JSON.stringify(gumbo)]
-      )
-    }
-    original = await stored()
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('renames exactly the listed result codes and logs each row', async function () {
-    const beforeLogs = await logs()
-    const applied = await migrateUp(pool, through040)
-    expect(applied.applied).deep.equals([migration040LegacyEventTypes.name])
-
-    expect(await eventTypes()).deep.equals([
-      ...renames.map(([, listed]) => listed),
-      ...genuine
-    ])
-    const logged = await pool.query(
-      `select event_id, old_event_type, new_event_type
-       from legacy_event_type_renames order by event_id`
-    )
-    expect(logged.rows).deep.equals(
-      renames.map(([legacy, listed], index) => ({
-        event_id: `evt_040_${index}`,
-        old_event_type: legacy,
-        new_event_type: listed
-      }))
-    )
-    // Only the result changes: the action log, credits and runners stay.
-    expect(await logs()).deep.equals(beforeLogs)
-    expect((await stored()).slice(renames.length)).deep.equals(
-      original.slice(renames.length)
-    )
-  })
-
-  it('puts back exactly the rows it renamed, byte for byte, when rolled back', async function () {
-    const rolled = await migrateDown(pool, through040, 1)
-    expect(rolled).deep.equals([migration040LegacyEventTypes.name])
-    expect(await hasLog()).equals(false)
-    // Every play, the genuine other_out and field_out among them, as it was.
-    expect(await stored()).deep.equals(original)
-  })
-
-  it('leaves a play whose code changed after the rename when rolled back', async function () {
-    await migrateUp(pool, through040)
-    await pool.query(
-      `update events
-       set gumbo = jsonb_set(gumbo, '{result,eventType}', '"single"')
-       where id = 'evt_040_1'`
-    )
-    await migrateDown(pool, through040, 1)
-    const types = await eventTypes()
-    expect(types[1]).equals('single')
-    expect(types.slice(2)).deep.equals([
-      ...renames.slice(2).map(([legacy]) => legacy),
-      ...genuine
-    ])
-  })
-})
-
-const through041 = migrations.filter(migration => migration.name < '042')
-
-/**
- * Migration 041 lets any caller-named system hold an external id and records
- * teams the schedule API makes, over a database that already holds both.
- */
-describe('migration 041scheduleApi', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_041_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-
-  let admin: Pool
-  let pool: Pool
-
-  const count = async (table: string): Promise<number> =>
-    Number(
-      (await pool.query(`select count(*)::int as n from ${table}`)).rows[0].n
-    )
-  const insertId = async (id: string, system: string): Promise<void> => {
-    await pool.query(
-      `insert into external_ids (id, entity_type, entity_id, system, kind, external_id)
-       values ($1, 'game', 'gam_041', $2, 'event', $1)`,
-      [id, system]
-    )
-  }
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through040)
-    await pool.query(
-      `insert into teams (id, name, created_from) values
-         ('tem_041a', 'A', 'import'), ('tem_041b', 'B', 'peertube'),
-         ('tem_041c', 'C', 'manual'), ('tem_041d', 'D', 'videoTitle')`
-    )
-    await pool.query(
-      `insert into games (id, home_team_id, away_team_id, start_at)
-       values ('gam_041', 'tem_041a', 'tem_041b', $1)`,
-      [PLAYED]
-    )
-    await insertId('ext_041_pt', 'peertube')
-    await insertId('ext_041_ex', 'external')
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('takes any short camel-case system and api teams once applied', async function () {
-    const applied = await migrateUp(pool, through041)
-    expect(applied.applied).deep.equals([migration041ScheduleApi.name])
-    expect(await count('external_ids')).equals(2)
-    expect(await count('teams')).equals(4)
-
-    await insertId('ext_041_ol', 'otherLeague')
-    let refused = ''
-    try {
-      await insertId('ext_041_bad', 'Other League')
-    } catch (error) {
-      refused = String(error)
-    }
-    expect(refused).includes('external_ids_system_check')
-    await pool.query(
-      `insert into teams (id, name, created_from) values ('tem_041e', 'E', 'api')`
-    )
-  })
-
-  it('turns api teams into manual ones and keeps other systems when rolled back', async function () {
-    const rolled = await migrateDown(pool, through041, 1)
-    expect(rolled).deep.equals([migration041ScheduleApi.name])
-    const team = await pool.query(
-      `select created_from from teams where id = 'tem_041e'`
-    )
-    expect(team.rows[0].created_from).equals('manual')
-    const kept = await pool.query(
-      `select system from external_ids where id = 'ext_041_ol'`
-    )
-    expect(kept.rows[0].system).equals('otherLeague')
-
-    const again = await migrateUp(pool, through041)
-    expect(again.applied).deep.equals([migration041ScheduleApi.name])
-    expect(await count('external_ids')).equals(3)
-  })
-})
-
-const through042 = migrations.filter(migration => migration.name < '043')
-
-/**
- * Migration 042 gives leagues, seasons and games a fence distance of their
- * own, empty on every row already there but a game with plays, which is
- * fixed at the 200-foot default, and takes it away again.
- */
-describe('migration 042fenceDistance', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_042_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-
-  let admin: Pool
-  let pool: Pool
-
-  const fences = async (): Promise<unknown[]> =>
-    (
-      await pool.query(
-        `select 'league' as level, fence_distance_ft as feet from leagues
-         union all
-         select 'season', fence_distance_ft from seasons
-         union all
-         select 'game', fence_distance_ft from games
-         order by level, feet nulls first`
-      )
-    ).rows
-  const columns = async (): Promise<string[]> =>
-    (
-      await pool.query<{ table_name: string }>(
-        `select table_name from information_schema.columns
-         where column_name = 'fence_distance_ft' order by table_name`
-      )
-    ).rows.map(row => row.table_name)
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through041)
-    await pool.query(
-      `insert into leagues (id, name) values ('lea_042', 'League')`
-    )
-    await pool.query(
-      `insert into seasons (id, league_id, name, year)
-       values ('sea_042', 'lea_042', 'Season', 2026)`
-    )
-    await pool.query(
-      `insert into teams (id, name) values ('tem_042a', 'A'), ('tem_042b', 'B')`
-    )
-    await pool.query(
-      `insert into games (id, home_team_id, away_team_id, season_id, start_at)
-       values ('gam_042', 'tem_042a', 'tem_042b', 'sea_042', $1)`,
-      [PLAYED]
-    )
-    // Plays posted to a game that was cancelled after: it has plays all
-    // the same.
-    await pool.query(
-      `insert into games (id, home_team_id, away_team_id, season_id, start_at, status)
-       values ('gam_042p', 'tem_042a', 'tem_042b', 'sea_042', $1, 'cancelled')`,
-      [PLAYED]
-    )
-    const gumbo = {
-      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
-      result: { eventType: 'single', awayScore: 0, homeScore: 0 }
-    }
-    await pool.query(
-      `insert into events (id, "gameId", "battingTeamId", gumbo)
-       values ('evt_042', 'gam_042p', 'tem_042b', $1::jsonb)`,
-      [JSON.stringify(gumbo)]
-    )
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('adds an empty fence to every level, held to 1-600 feet, and fixes a played game at 200', async function () {
-    const applied = await migrateUp(pool, through042)
-    expect(applied.applied).deep.equals([migration042FenceDistance.name])
-    expect(await columns()).deep.equals(['games', 'leagues', 'seasons'])
-    expect(await fences()).deep.equals([
-      { level: 'game', feet: null },
-      { level: 'game', feet: 200 },
-      { level: 'league', feet: null },
-      { level: 'season', feet: null }
-    ])
-    await pool.query(`update leagues set fence_distance_ft = 600`)
-    await pool.query(`update seasons set fence_distance_ft = 1`)
-    for (const [table, feet] of [
-      ['games', 0],
-      ['seasons', 601],
-      ['leagues', -1]
-    ] as const) {
-      let refused = ''
-      try {
-        await pool.query(`update ${table} set fence_distance_ft = ${feet}`)
-      } catch (error) {
-        refused = String(error)
-      }
-      expect(refused, table).includes('fence_distance_ft_check')
-    }
-  })
-
-  it('drops the fences when rolled back, and adds them again', async function () {
-    const rolled = await migrateDown(pool, through042, 1)
-    expect(rolled).deep.equals([migration042FenceDistance.name])
-    expect(await columns()).deep.equals([])
-    const again = await migrateUp(pool, through042)
-    expect(again.applied).deep.equals([migration042FenceDistance.name])
-    expect(await columns()).deep.equals(['games', 'leagues', 'seasons'])
-    expect(
-      (
-        await pool.query(
-          `select id from games where fence_distance_ft is not null`
-        )
-      ).rows
-    ).deep.equals([{ id: 'gam_042p' }])
-  })
-})
-
-const through043 = migrations.filter(migration => migration.name < '044')
-
-/**
- * Migration 043 renames `admin_roles` to `scope_roles` and lets a row hold a
- * role flag as well as `admin`: one row per person, level and role. Down
- * drops the flags and puts the table back exactly as 001 made it.
- */
-describe('migration 043roleFlags', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_043_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-  const boss = mintUserId(() => false)
-
-  let admin: Pool
-  let pool: Pool
-
-  /** Every constraint and index on the table, by name and definition. */
-  const shape = async (table: string): Promise<string[]> => {
-    const constraints = await pool.query<{ line: string }>(
-      `select conname || ' ' || pg_get_constraintdef(oid) as line
-       from pg_constraint where conrelid = $1::regclass`,
-      [table]
-    )
-    const indexes = await pool.query<{ line: string }>(
-      `select indexname || ' ' || indexdef as line
-       from pg_indexes where tablename = $1`,
-      [table]
-    )
-    return [...constraints.rows, ...indexes.rows]
-      .map(row => row.line.replaceAll(table, '<table>'))
-      .sort()
-  }
-  const roles = async (): Promise<unknown[]> =>
-    (
-      await pool.query(
-        `select scope_type, scope_id, role from scope_roles order by scope_id, role`
-      )
-    ).rows
-  let before043: string[] = []
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through042)
-    await pool.query(
-      `insert into users (id, "legacyId", display_name) values ($1, $2, 'Boss')`,
-      [boss.userId, boss.legacyId]
-    )
-    await pool.query(
-      `insert into admin_roles (id, user_id, scope_type, scope_id)
-       values ('adm_league', $1, 'league', 'lea_043'),
-              ('adm_team', $1, 'team', 'tem_043')`,
-      [boss.userId]
-    )
-    before043 = await shape('admin_roles')
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('keeps every admin row and takes one row per role', async function () {
-    const applied = await migrateUp(pool, through043)
-    expect(applied.applied).deep.equals([migration043RoleFlags.name])
-    expect(await roles()).deep.equals([
-      { scope_type: 'league', scope_id: 'lea_043', role: 'admin' },
-      { scope_type: 'team', scope_id: 'tem_043', role: 'admin' }
-    ])
-    await pool.query(
-      `insert into scope_roles (id, user_id, scope_type, scope_id, role)
-       values ('rol_coach', $1, 'team', 'tem_043', 'coach'),
-              ('rol_film', $1, 'team', 'tem_043', 'videographer')`,
-      [boss.userId]
-    )
-    const shaped = await shape('scope_roles')
-    expect(
-      shaped.some(line => line.startsWith('<table>_one_role UNIQUE'))
-    ).equals(true)
-    expect(shaped.some(line => line.startsWith('<table>_scope CREATE'))).equals(
-      true
-    )
-  })
-
-  it('refuses an unknown role and a second row for the same role', async function () {
-    let refused = ''
-    try {
-      await pool.query(
-        `insert into scope_roles (id, user_id, scope_type, scope_id, role)
-         values ('rol_umpire', $1, 'team', 'tem_043', 'umpire')`,
-        [boss.userId]
-      )
-    } catch (error) {
-      refused = String(error)
-    }
-    expect(refused).includes('scope_roles_role_check')
-    refused = ''
-    try {
-      await pool.query(
-        `insert into scope_roles (id, user_id, scope_type, scope_id, role)
-         values ('rol_coach_again', $1, 'team', 'tem_043', 'coach')`,
-        [boss.userId]
-      )
-    } catch (error) {
-      refused = String(error)
-    }
-    expect(refused).includes('scope_roles_one_role')
-  })
-
-  it('drops the flags when rolled back, restoring admin_roles as it was', async function () {
-    const rolled = await migrateDown(pool, through043, 1)
-    expect(rolled).deep.equals([migration043RoleFlags.name])
-    expect(await shape('admin_roles')).deep.equals(before043)
-    expect(
-      (
-        await pool.query(
-          `select scope_id, role from admin_roles order by scope_id`
-        )
-      ).rows
-    ).deep.equals([
-      { scope_id: 'lea_043', role: 'admin' },
-      { scope_id: 'tem_043', role: 'admin' }
-    ])
-    const again = await migrateUp(pool, through043)
-    expect(again.applied).deep.equals([migration043RoleFlags.name])
-    expect((await roles()).length).equals(2)
-  })
-})
-
-const through044 = migrations.filter(migration => migration.name < '045')
-
-/**
- * Migration 044 gives each team a default lineup and each game the marks
- * of its lineups — when its starting lineup was taken, and the digest of
- * them after its last live post — all empty, and takes them away again.
- */
-describe('migration 044teamDefaultLineup', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_044_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-
-  let admin: Pool
-  let pool: Pool
-
-  const columns = async (): Promise<string[]> =>
-    (
-      await pool.query<{ line: string }>(
-        `select table_name || '.' || column_name || ' ' || data_type as line
-         from information_schema.columns
-         where column_name in ('default_lineup', 'lineup_started_at', 'lineups_digest')
-         order by table_name, column_name`
-      )
-    ).rows.map(row => row.line)
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through043)
-    await pool.query(
-      `insert into teams (id, name) values ('tem_044a', 'A'), ('tem_044b', 'B')`
-    )
-    await pool.query(
-      `insert into games (id, home_team_id, away_team_id, start_at)
-       values ('gam_044', 'tem_044a', 'tem_044b', $1)`,
-      [PLAYED]
-    )
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('adds an empty default lineup to every team and empty marks to every game', async function () {
-    const applied = await migrateUp(pool, through044)
-    expect(applied.applied).deep.equals([migration044TeamDefaultLineup.name])
-    expect(await columns()).deep.equals([
-      'games.lineup_started_at timestamp with time zone',
-      'games.lineups_digest text',
-      'teams.default_lineup jsonb'
-    ])
-    expect(
-      (await pool.query(`select default_lineup from teams order by id`)).rows
-    ).deep.equals([{ default_lineup: null }, { default_lineup: null }])
-    expect(
-      (await pool.query(`select lineup_started_at, lineups_digest from games`))
-        .rows
-    ).deep.equals([{ lineup_started_at: null, lineups_digest: null }])
-    await pool.query(
-      `update teams set default_lineup = '{"lineup": null}'::jsonb where id = 'tem_044a'`
-    )
-  })
-
-  it('drops all three when rolled back, and adds them again', async function () {
-    const rolled = await migrateDown(pool, through044, 1)
-    expect(rolled).deep.equals([migration044TeamDefaultLineup.name])
-    expect(await columns()).deep.equals([])
-    const again = await migrateUp(pool, through044)
-    expect(again.applied).deep.equals([migration044TeamDefaultLineup.name])
-    expect(await columns()).length(3)
-  })
-})
-
-const through045 = migrations.filter(migration => migration.name < '046')
-
-/**
- * Migration 045 adds the walk-up songs table, empty, over a database that
- * already has teams and players, and drops it again.
- */
-describe('migration 045walkUpSongs', function () {
-  this.timeout(60000)
-
-  const scratchName = `gamestation_upgrade_045_${Date.now()}`
-  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-  const player = mintUserId(() => false)
-
-  let admin: Pool
-  let pool: Pool
-
-  const table = async (): Promise<string | null> =>
-    (
-      await pool.query<{ found: string | null }>(
-        `select to_regclass('walk_up_songs')::text as found`
-      )
-    ).rows[0].found
-
-  before(async function () {
-    admin = new Pool({ connectionString: adminUrl })
-    await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, through044)
-    await pool.query(`insert into teams (id, name) values ('tem_045', 'A')`)
-    await pool.query(
-      `insert into users (id, "legacyId", display_name) values ($1, $2, 'P')`,
-      [player.userId, player.legacyId]
-    )
-  })
-
-  after(async function () {
-    if (pool != null) await pool.end()
-    if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName}`)
-      await admin.end()
-    }
-  })
-
-  it('adds an empty table that takes a song', async function () {
-    const applied = await migrateUp(pool, through045)
-    expect(applied.applied).deep.equals([migration045WalkUpSongs.name])
-    expect(await table()).equals('walk_up_songs')
-    expect(
-      (await pool.query('select count(*)::int as n from walk_up_songs')).rows
-    ).deep.equals([{ n: 0 }])
-    await pool.query(
-      `insert into walk_up_songs (team_id, user_id, provider, provider_id,
-         title, artist, duration_ms, start_ms, end_ms, set_by)
-       values ('tem_045', $1, 'localFile', 'lf:0123456789abcdef', 'T', 'A',
-         90000, 0, 60000, $1)`,
-      [player.userId]
-    )
-  })
-
-  it('drops it when rolled back, and adds it again', async function () {
-    const rolled = await migrateDown(pool, through045, 1)
-    expect(rolled).deep.equals([migration045WalkUpSongs.name])
-    expect(await table()).equals(null)
-    const again = await migrateUp(pool, through045)
-    expect(again.applied).deep.equals([migration045WalkUpSongs.name])
-    expect(await table()).equals('walk_up_songs')
-  })
-})

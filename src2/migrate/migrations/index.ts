@@ -41,6 +41,7 @@ import { migration042FenceDistance } from './042fenceDistance'
 import { migration043RoleFlags } from './043roleFlags'
 import { migration044TeamDefaultLineup } from './044teamDefaultLineup'
 import { migration045WalkUpSongs } from './045walkUpSongs'
+import { migration046ExternalCleanup } from './046externalCleanup'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -85,5 +86,6 @@ export const migrations: Migration[] = [
   migration042FenceDistance,
   migration043RoleFlags,
   migration044TeamDefaultLineup,
-  migration045WalkUpSongs
+  migration045WalkUpSongs,
+  migration046ExternalCleanup
 ]
