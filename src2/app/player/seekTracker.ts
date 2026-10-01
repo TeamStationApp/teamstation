@@ -71,3 +71,21 @@ export function answersSeek(target: number | null, seekedTo: number): boolean {
   if (target == null) return false
   return Math.abs(seekedTo - target) <= SEEK_TOLERANCE
 }
+
+/**
+ * Whether a finished seek has to start the picture again.
+ *
+ * react-native-video on iOS pauses the player to seek, and while its own
+ * controls are on it then takes that pause for what the viewer wants: the
+ * seek's completion restores "paused", and a playing video stops on every
+ * ±10 s. The state change it reports is marked as seeking, so the handle
+ * never hears of it and still believes the video is playing. The seek event
+ * arrives after that pause, so resuming there undoes it whenever playback is
+ * what was wanted. On Android the player was never stopped and the resume is
+ * a no-op.
+ */
+export function shouldResumeAfterSeek(state: {
+  wantsPaused: boolean
+}): boolean {
+  return !state.wantsPaused
+}
