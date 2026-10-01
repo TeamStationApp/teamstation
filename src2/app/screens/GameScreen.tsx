@@ -1457,7 +1457,10 @@ function LineScore(props: {
       contentContainerStyle={styles.lineScoreContent}
     >
       <View style={[styles.tableRow, styles.tableHead]}>
-        <Text style={[styles.cellName, styles.cellHead]} numberOfLines={1} />
+        <Text
+          style={[styles.cellName, styles.cellHead, styles.lineScoreName]}
+          numberOfLines={1}
+        />
         {Array.from({ length: innings }, (unused, index) => (
           <Text key={index} style={[styles.cell, styles.cellHead]}>
             {index + 1}
@@ -1471,7 +1474,10 @@ function LineScore(props: {
       </View>
       {sides.map(({ name, side }) => (
         <View key={name} style={styles.tableRow}>
-          <Text style={styles.cellName} numberOfLines={1}>
+          <Text
+            style={[styles.cellName, styles.lineScoreName]}
+            numberOfLines={1}
+          >
             {name}
           </Text>
           {Array.from({ length: innings }, (unused, index) => (
@@ -2002,6 +2008,11 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     lineScoreContent: {
       flexDirection: 'column'
+    },
+    // The line score is a white card, so its pinned names are white too. The
+    // page colour `cellName` paints is for the tables that sit on the page.
+    lineScoreName: {
+      backgroundColor: theme.cardBackgroundColor
     },
     cellStrong: {
       fontFamily: theme.boldTextFont,
