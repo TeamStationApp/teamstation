@@ -17,9 +17,9 @@ import { PlayerScreen } from './PlayerScreen'
 import { rosterSubtitle, TeamScreen } from './TeamScreen'
 
 /**
- * The whole name, where the server sends one: under the short name on the
- * player's page, and as the roster row's subtitle. Everybody else reads the
- * short name alone, with nothing where the whole one would go.
+ * The whole name is never drawn: not on the player's page, not on the roster.
+ * The server no longer sends it, and these pin that the screens would not draw
+ * one even if an answer still carried it.
  */
 let root: Root | undefined
 
@@ -61,6 +61,7 @@ const text = (): string => document.body.textContent ?? ''
 const jordan = asRosterEntry({
   userId: 7,
   shortName: 'Jordan P',
+  // What an older server sent a coach. The cleaner drops it.
   fullName: 'Jordan Pujols',
   jersey: '12',
   positions: ['SS', '2B'],
@@ -164,7 +165,7 @@ function playerClient(fullName: string | null): GameStationClient {
   } as unknown as GameStationClient
 }
 
-describe('a player’s whole name', function () {
+describe('a player’s whole name is never shown', function () {
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -172,7 +173,7 @@ describe('a player’s whole name', function () {
     root = undefined
   })
 
-  it('sits under the short name for a viewer the server sends it to', async function () {
+  it('is not under the short name, even if an answer carries it', async function () {
     const moments: string[] = []
     await render(
       <PlayerScreen
@@ -185,14 +186,14 @@ describe('a player’s whole name', function () {
       />
     )
     expect(text()).includes('Jordan P')
-    expect(text()).includes('Jordan Pujols')
+    expect(text()).not.includes('Pujols')
     await press('Show more')
     expect(text()).includes('Double')
     await press('Hawks')
     expect(moments.length).equals(1)
   })
 
-  it('is left out for everybody else, and the rest of the page is the same', async function () {
+  it('is left out with no full name at all, and the rest of the page is the same', async function () {
     const filters: unknown[] = []
     await render(
       <PlayerScreen
@@ -215,15 +216,12 @@ describe('a player’s whole name', function () {
     expect(filters).deep.equals([{ seasonId: 'sea_1' }, {}])
   })
 
-  it('is the roster row’s subtitle, ahead of the positions', function () {
-    expect(rosterSubtitle(jordan)).equals('Jordan Pujols · SS · 2B')
-    expect(rosterSubtitle({ ...jordan, fullName: null })).equals('SS · 2B')
-    expect(rosterSubtitle({ ...jordan, fullName: null, positions: [] })).equals(
-      undefined
-    )
+  it('is not in the roster row’s subtitle, which is the positions alone', function () {
+    expect(rosterSubtitle(jordan)).equals('SS · 2B')
+    expect(rosterSubtitle({ ...jordan, positions: [] })).equals(undefined)
   })
 
-  it('shows on the team’s roster for a coach, and opens the player', async function () {
+  it('is not on the team’s roster, and a row still opens the player', async function () {
     const opened: number[] = []
     const froms: unknown[] = []
     const client = {
@@ -291,7 +289,8 @@ describe('a player’s whole name', function () {
         }}
       />
     )
-    expect(text()).includes('Jordan Pujols · SS · 2B')
+    expect(text()).includes('SS · 2B')
+    expect(text()).not.includes('Pujols')
     expect(text()).includes('#12')
     await press('Jordan P')
     expect(opened).deep.equals([7])

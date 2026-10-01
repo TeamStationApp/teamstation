@@ -2,7 +2,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
-import { fullName, shortName } from '../../common/names'
+import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import { asPlayerSettings } from '../../common/playerSettings'
 import { asUserId } from '../../common/userIdNumber'
@@ -11,7 +11,6 @@ import {
   canSeePerson,
   canSeePlayedFor,
   mayEditName,
-  maySeeFullName,
   roleScopes,
   visibleScopes
 } from '../access'
@@ -102,21 +101,16 @@ export function playerRoutes(
         throw notFound()
       }
 
-      // `Jordan P` for everybody. The whole name as well for a coach or an
-      // administrator of a team the player plays on, a parent, the player
-      // and a site administrator: `maySeeFullName`. Scorekeepers,
-      // songkeepers, videographers and everybody watching read the short
-      // name alone. Changing it is narrower still — `mayEditName`, behind
-      // `/name` below, which a coach does not pass.
-      const about = { isAdmin: actor.isAdmin }
-      const mayEdit = await mayEditName(db, actor.userId, userId, about)
-      const maySee =
-        mayEdit || (await maySeeFullName(db, actor.userId, userId, about))
+      // `Jordan P` for everybody, whoever is asking. The whole name is never
+      // in this answer: it is only behind `/name` below, for the person
+      // editing it, which `mayEditName` decides.
+      const mayEdit = await mayEditName(db, actor.userId, userId, {
+        isAdmin: actor.isAdmin
+      })
 
       res.json({
         userId,
         name: shortName({ ...user, id: userId }),
-        fullName: maySee ? fullName(user) : null,
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
         avatarUrl: imageUrl(media.space, user.avatarPath, PROFILE_SIZE),
@@ -472,7 +466,7 @@ export function playerRoutes(
         after: { ...before, ...body }
       })
 
-      const roster = await teamRoster(db, media.space, teamId, scopes)
+      const roster = await teamRoster(db, media.space, teamId)
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()
       res.json(entry)
