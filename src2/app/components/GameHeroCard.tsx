@@ -330,7 +330,7 @@ function ScoreLine(props: {
   // the score hard against the right, which is how a score is read.
   if (stacked) {
     return (
-      <View style={[styles.side, styles.sideStacked, styles.sideRow]}>
+      <View style={styles.sideStacked}>
         {mark}
         <View style={styles.sideRowText}>
           {nameText}
@@ -338,7 +338,13 @@ function ScoreLine(props: {
             {record == null || record === '' ? note : `${note} · ${record}`}
           </Text>
         </View>
-        <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
+        <Text
+          style={[
+            styles.sideScore,
+            styles.sideScoreStacked,
+            won && styles.sideScoreWon
+          ]}
+        >
           {score ?? '–'}
         </Text>
       </View>
@@ -461,9 +467,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.75),
     letterSpacing: theme.rem(0.04)
   },
+  // Across the card: the two sides share its width, each a column of the
+  // mark and the name, the score, and the record.
   side: {
     flex: 1,
-    // A column now: the score on top, the name and the record under it.
     flexDirection: 'column',
     alignItems: 'flex-start',
     gap: theme.rem(0.125)
@@ -484,22 +491,26 @@ const getStyles = cacheStyles((theme: Theme) => ({
   sideNameRowEnd: {
     flexDirection: 'row-reverse'
   },
-  // `flex: 1` is flex-basis 0 as well, and in a column that measures the
-  // *height*: the side would collapse to the height of the score and the name
-  // would overflow it. Stacked, each side is simply as tall as it is.
-  sideRow: {
+  // Stacked, one side per line, and a style of its own rather than `side`
+  // with overrides. `flex: 1` is a basis of 0, and React Native keeps that
+  // basis even under a later `flexBasis: 'auto'`, which it reads as unset.
+  // In the column of two sides that left each row 0 tall, clipped by the
+  // card: the phone showed the date and half a logo, and nothing else. A
+  // browser takes the override, so the web never showed it.
+  sideStacked: {
+    alignSelf: 'stretch',
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
   },
+  // The name takes what the mark and the score leave, against the row's
+  // definite width, and truncates.
   sideRowText: {
-    flexShrink: 1,
-    flexGrow: 1
+    flex: 1
   },
-  sideStacked: {
-    flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: 'auto'
+  sideScoreStacked: {
+    flexShrink: 0
   },
 
   sideName: {

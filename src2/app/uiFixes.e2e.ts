@@ -36,6 +36,8 @@ const API = (
 const SERVER_LOG = process.env.GS_E2E_SERVER_LOG ?? 'server.log'
 const SHOTS = process.env.GS_E2E_SHOTS ?? '/tmp/uiFixesShots'
 const GAME = process.env.GS_E2E_GAME ?? 'gam_SZrheufdi_E_bep0'
+/** A finished Bandits game with scores and team stats. */
+const FINAL_GAME = process.env.GS_E2E_FINAL_GAME ?? 'gam_MFhfPsp53ZiCr_d1'
 const SCORER = process.env.GS_E2E_SCORER ?? 'paul@vtex.net'
 const MEMBER = process.env.GS_E2E_MEMBER ?? 'paullinator@yahoo.com'
 
@@ -294,6 +296,123 @@ for (const size of SIZES) {
       )
       expect(await labelled(page, PILLS)).deep.equals(['Box score', 'Videos'])
       await shot(page, `A3-CH-${size.name}`)
+      await context.close()
+    })
+  })
+}
+
+/** The hero card: the first card on the game page, and what is inside it. */
+async function heroCard(page: Page): Promise<{
+  box: { x: number; y: number; width: number; height: number }
+  /** Everything the card says, nested runs included. */
+  all: string
+  texts: Array<{
+    text: string
+    x: number
+    y: number
+    right: number
+    bottom: number
+  }>
+}> {
+  return await page.evaluate(() => {
+    // The card holds the date line; its box is the nearest ancestor that is
+    // wider than the date and has a border.
+    const leaves = Array.from(document.querySelectorAll('div'))
+    const date = leaves.find(
+      node =>
+        node.children.length === 0 &&
+        /^[A-Z]{3}, [A-Z]{3} \d+$/.test(String(node.textContent))
+    )
+    if (date === undefined) throw new Error('no date line')
+    let card = date.parentElement
+    while (card !== null && getComputedStyle(card).borderTopWidth === '0px') {
+      card = card.parentElement
+    }
+    if (card === null) throw new Error('no card around the date')
+    const box = card.getBoundingClientRect()
+    const texts = Array.from(card.querySelectorAll('div'))
+      .filter(
+        node =>
+          node.children.length === 0 &&
+          node.textContent !== null &&
+          node.textContent !== ''
+      )
+      .map(node => {
+        const rect = node.getBoundingClientRect()
+        return {
+          text: String(node.textContent),
+          x: rect.x,
+          y: rect.y,
+          right: rect.right,
+          bottom: rect.bottom
+        }
+      })
+    return {
+      box: { x: box.x, y: box.y, width: box.width, height: box.height },
+      all: card.innerText,
+      texts
+    }
+  })
+}
+
+function inside(
+  hero: Awaited<ReturnType<typeof heroCard>>,
+  text: string
+): void {
+  const found = hero.texts.filter(item => item.text === text)
+  expect(found.length, `${text} in the card`).at.least(1)
+  for (const item of found) {
+    expect(item.right - item.x, `${text} has width`).greaterThan(0)
+    expect(item.bottom - item.y, `${text} has height`).greaterThan(0)
+    expect(item.x, `${text} left`).at.least(hero.box.x)
+    expect(item.right, `${text} right`).at.most(hero.box.x + hero.box.width)
+    expect(item.y, `${text} top`).at.least(hero.box.y)
+    expect(item.bottom, `${text} bottom`).at.most(hero.box.y + hero.box.height)
+  }
+}
+
+for (const size of SIZES) {
+  describe(`CH ${size.name}: hero card (B)`, function () {
+    it('B1 shows a scheduled game’s date, status, both teams and both scores', async function () {
+      const context = await contextAs(SCORER)
+      const page = await open(context, `/games/${GAME}`, size)
+      await until('the hero card', async () =>
+        (await bodyText(page)).includes('Allied Gardens') ? true : undefined
+      )
+      const hero = await heroCard(page)
+      for (const text of [
+        'SUN, OCT 4',
+        'Bandits (Ruden)',
+        'Allied Gardens',
+        'Home'
+      ]) {
+        inside(hero, text)
+      }
+      expect(hero.texts.some(item => item.text.startsWith('Away'))).equals(true)
+      expect(hero.texts.filter(item => item.text === '–')).length(2)
+      await shot(page, `B1-CH-${size.name}`)
+      await context.close()
+    })
+
+    it('B2 shows a finished game’s scores, the winner and the stat line, and opens a team', async function () {
+      const context = await contextAs(SCORER)
+      const page = await open(context, `/games/${FINAL_GAME}`, size)
+      await until('the hero card', async () =>
+        (await bodyText(page)).includes('Mission Trails') ? true : undefined
+      )
+      const hero = await heroCard(page)
+      for (const text of ['5', '14', 'Bandits (Ruden) ★', 'Mission Trails']) {
+        inside(hero, text)
+      }
+      // The stat line, a run of its own with `Def:` nested in it.
+      expect(hero.all).match(/\d+ H · \d+ BB · \d+ K · \d+ HR · Def: \d+ E/)
+      await shot(page, `B2-CH-${size.name}`)
+      const name = await page.$('[role="link"][aria-label="Bandits (Ruden)"]')
+      if (name == null) throw new Error('no link on the Bandits')
+      await name.click()
+      await until('the team page', () =>
+        page.url().includes('/teams/') ? true : undefined
+      )
       await context.close()
     })
   })
