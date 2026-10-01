@@ -23,6 +23,16 @@ create table if not exists schema_migrations (
 const MIN_SERVER_VERSION = 180000
 
 /**
+ * The migration every database with history must already have.
+ *
+ * The migrations up to it were rewritten so an empty database is built without
+ * an integration that has since left. They are right for an empty database and
+ * for one that ran them all before the rewrite, and for nothing in between, so
+ * a database part way through is refused rather than carried along.
+ */
+export const BASELINE = '045walkUpSongs'
+
+/**
  * Refuses a server older than `MIN_SERVER_VERSION` before anything runs, so an
  * old cluster stops with a message that says why rather than partway through
  * the list with a syntax error.
@@ -42,6 +52,40 @@ async function requireServerVersion(pool: Pool): Promise<void> {
 }
 
 /**
+ * Refuses a database whose history began before the rewrite and stops short
+ * of `BASELINE`, before anything runs.
+ *
+ * Every such database recorded a migration whose file is gone, so it is told
+ * apart from one the rewritten migrations built and then rolled back below the
+ * baseline, which records only names that are still here and may go on.
+ */
+async function requireBaseline(
+  pool: Pool,
+  migrations: Migration[]
+): Promise<void> {
+  if (!migrations.some(migration => migration.name === BASELINE)) return
+  const { rows: found } = await pool.query<{ name: string | null }>(
+    "select to_regclass('schema_migrations')::text as name"
+  )
+  if (found[0]?.name == null) return
+  const { rows } = await pool.query<{ name: string }>(
+    'select name from schema_migrations'
+  )
+  const recorded = rows.map(row => row.name)
+  if (recorded.includes(BASELINE)) return
+  const known = new Set(migrations.map(migration => migration.name))
+  if (recorded.every(name => known.has(name))) return
+  const { rows: named } = await pool.query<{ name: string }>(
+    'select current_database() as name'
+  )
+  throw new Error(
+    `${named[0]?.name ?? 'This database'} predates ${BASELINE}: migrations ` +
+      'before it were rewritten for empty databases; restore a production ' +
+      'dump instead'
+  )
+}
+
+/**
  * Applies whatever has not run yet, in name order, each in its own
  * transaction. A migration that throws leaves the ones before it applied and
  * itself rolled back, so a re-run picks up where it stopped.
@@ -51,6 +95,7 @@ export async function migrateUp(
   migrations: Migration[]
 ): Promise<MigrationResult> {
   await requireServerVersion(pool)
+  await requireBaseline(pool, migrations)
   await pool.query(SETUP)
   const { rows } = await pool.query<{ name: string }>(
     'select name from schema_migrations'
