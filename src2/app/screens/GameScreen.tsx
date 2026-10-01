@@ -917,6 +917,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       homeRecord={game.homeRecord}
       awayLogoUrl={game.awayLogoUrl}
       homeLogoUrl={game.homeLogoUrl}
+      awayTeamId={game.awayTeamId}
+      homeTeamId={game.homeTeamId}
       date={shortDate(game.startAt)}
       venue={game.venue ?? undefined}
       teamStats={teamStatsOf(game.linescore)}

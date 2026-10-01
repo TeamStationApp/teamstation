@@ -4,7 +4,7 @@ import { Pressable, Text, View } from 'react-native'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
-import { initialsOf } from './initials'
+import { teamInitialsOf, teamTint } from './teamTile'
 import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
@@ -61,6 +61,12 @@ export interface GameHeroCardProps {
   awayLogoUrl?: string | null
   homeLogoUrl?: string | null
   /**
+   * Each side's team, which picks the colour of its tile where it has no
+   * logo. The name picks it where there is no id.
+   */
+  awayTeamId?: string
+  homeTeamId?: string
+  /**
    * Opens a side's team, from its name and its mark.
    *
    * Nothing is drawn to say so — no colour, no chevron, no underline. Paul
@@ -115,6 +121,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     homeRecord,
     awayLogoUrl,
     homeLogoUrl,
+    awayTeamId,
+    homeTeamId,
     onOpenAwayTeam,
     onOpenHomeTeam
   } = props
@@ -168,6 +176,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             score={awayScore}
             record={awayRecord}
             logoUrl={awayLogoUrl}
+            teamId={awayTeamId}
             note="Away"
             won={winner === 'away'}
             stacked={narrow}
@@ -179,6 +188,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             score={homeScore}
             record={homeRecord}
             logoUrl={homeLogoUrl}
+            teamId={homeTeamId}
             note="Home"
             won={winner === 'home'}
             alignEnd={!narrow}
@@ -259,6 +269,8 @@ function ScoreLine(props: {
   score: number | null
   record?: string | null
   logoUrl?: string | null
+  /** Picks the tile's colour where there is no logo. */
+  teamId?: string
   note: string
   won: boolean
   alignEnd?: boolean
@@ -272,6 +284,7 @@ function ScoreLine(props: {
     score,
     record,
     logoUrl,
+    teamId,
     note,
     won,
     alignEnd = false,
@@ -279,9 +292,9 @@ function ScoreLine(props: {
     onPress
   } = props
   const styles = getStyles(useTheme())
-  // Only where there is a picture. A circle of initials beside a name that is
-  // written out in full next to it says the same thing twice, in the place a
-  // photograph would have gone.
+  // Every side has a mark: its logo, or a tile of its initials in a colour of
+  // its own where it has none, or where the logo will not load. With a mark
+  // on one side only, the two names started at different places.
   //
   // Wrapped rather than the whole row made pressable: the row is laid out two
   // ways — the mark beside the name across the card, and the mark beside a
@@ -289,12 +302,16 @@ function ScoreLine(props: {
   // around the row would take in the record on one of them and not the other.
   // The mark and the name are the two things Paul named, and they are the two
   // things wrapped, in both.
-  const emblem =
-    logoUrl == null || logoUrl === '' ? null : (
-      <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
-    )
+  const emblem = (
+    <Emblem
+      uri={logoUrl}
+      fallback={teamInitialsOf(name)}
+      tint={teamTint(teamId ?? name)}
+      size={2}
+    />
+  )
   const mark =
-    emblem == null || onPress == null ? (
+    onPress == null ? (
       emblem
     ) : (
       <Pressable
