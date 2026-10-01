@@ -13,7 +13,7 @@ import type { Role } from '../../common/roles'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
-import { mayEditName, maySeeFullName } from '../access'
+import { mayEditName } from '../access'
 import type { Database, ScopeRolesTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import type { MediaContext } from '../media/mediaContext'
@@ -389,81 +389,41 @@ describe('a player, and who may change their name', function () {
     return { status: response.status, body: await response.json() }
   }
 
-  const fullNameFor = async (viewer: number): Promise<string | null> => {
-    const answer = await get(`/players/${childId}`, viewer)
-    expect(answer.status, String(viewer)).equals(200)
-    const detail = asPlayerDetail(answer.body)
-    expect(detail.name).equals('Jensen P')
-    return detail.fullName
-  }
+  // Everybody who can see the team in this fixture, from a site admin down.
+  const everyViewer = (): number[] => [
+    teamCoachId,
+    leagueCoachId,
+    coachId,
+    childId,
+    siteAdminId,
+    scorekeeperId,
+    songkeeperId,
+    videographerId,
+    strangerId,
+    otherCoachId
+  ]
 
-  const rosterNameFor = async (viewer: number): Promise<string | null> => {
-    const answer = await get(`/teams/${teamId}/roster`, viewer)
-    expect(answer.status, String(viewer)).equals(200)
-    if (!Array.isArray(answer.body)) throw new Error('Expected roster array')
-    const child = answer.body
-      .map(asRosterEntry)
-      .find(entry => entry.userId === childId)
-    expect(child?.shortName).equals('Jensen P')
-    return child?.fullName ?? null
-  }
-
-  it('shows the whole name to a coach or an admin of the team, a parent, the player and a site admin', async function () {
-    for (const viewer of [
-      teamCoachId,
-      leagueCoachId,
-      coachId,
-      seasonAdminId,
-      parentId,
-      childId,
-      siteAdminId
-    ]) {
-      expect(
-        await maySeeFullName(db, viewer, childId, {
-          isAdmin: viewer === siteAdminId
-        }),
-        String(viewer)
-      ).equals(true)
-    }
-    for (const viewer of [teamCoachId, leagueCoachId, coachId, childId]) {
-      expect(await fullNameFor(viewer), String(viewer)).equals('Jensen Puey')
-    }
-    expect(await fullNameFor(siteAdminId)).equals('Jensen Puey')
-  })
-
-  it('shows only the short name to a scorekeeper, songkeeper, videographer, member and another team\u2019s coach', async function () {
-    for (const viewer of [
-      scorekeeperId,
-      songkeeperId,
-      videographerId,
-      strangerId,
-      otherCoachId
-    ]) {
-      expect(await maySeeFullName(db, viewer, childId, about)).equals(false)
-      expect(await fullNameFor(viewer), String(viewer)).equals(null)
+  it('never puts the whole name on the player page, for anybody', async function () {
+    for (const viewer of everyViewer()) {
+      const answer = await get(`/players/${childId}`, viewer)
+      expect(answer.status, String(viewer)).equals(200)
+      expect(asPlayerDetail(answer.body).name).equals('Jensen P')
+      expect(JSON.stringify(answer.body), String(viewer)).not.includes('Puey')
+      expect(answer.body, String(viewer)).not.have.property('fullName')
     }
   })
 
-  it('puts the whole name on the roster only for a coach or an admin of that team', async function () {
-    for (const viewer of [teamCoachId, leagueCoachId, coachId, siteAdminId]) {
-      expect(await rosterNameFor(viewer), String(viewer)).equals('Jensen Puey')
+  it('never puts the whole name on the roster, for anybody', async function () {
+    for (const viewer of everyViewer()) {
+      const answer = await get(`/teams/${teamId}/roster`, viewer)
+      expect(answer.status, String(viewer)).equals(200)
+      if (!Array.isArray(answer.body)) throw new Error('Expected roster array')
+      const child = answer.body
+        .map(asRosterEntry)
+        .find(entry => entry.userId === childId)
+      expect(child?.shortName).equals('Jensen P')
+      expect(JSON.stringify(answer.body), String(viewer)).not.includes('Puey')
     }
-    for (const viewer of [
-      scorekeeperId,
-      songkeeperId,
-      videographerId,
-      strangerId,
-      otherCoachId
-    ]) {
-      expect(await rosterNameFor(viewer), String(viewer)).equals(null)
-    }
-    // The coach reads every player's whole name, but only players': the
-    // manager's own row, which is not a player's, carries none.
-    const answer = await get(`/teams/${teamId}/roster`, teamCoachId)
-    const manager = (answer.body as unknown[])
-      .map(asRosterEntry)
-      .find(entry => entry.userId === coachId)
-    expect(manager?.fullName).equals(null)
   })
 
   it('keeps the name field from a coach, who may read the name but not change it', async function () {

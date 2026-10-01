@@ -4,9 +4,9 @@
  *
  * The full name is stored — it is what the import sent, what a parent would
  * search for, and what an admin needs to tell two children apart — but it is
- * not what gets drawn for everybody. It goes only to the people
- * `maySeeFullName` names on the server: a coach or an administrator of the
- * player's team, a parent, the player, and a site administrator.
+ * never drawn. The API sends it to nobody except whoever is editing it —
+ * `mayEditName` on the server: a parent, the player, a site administrator —
+ * through `GET /players/:userId/name`.
  */
 
 export interface NamedPerson {

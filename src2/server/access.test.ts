@@ -21,7 +21,6 @@ import {
   canSeeTeam,
   hasRole,
   mayEditName,
-  maySeeFullName,
   type RoleScopes,
   roleScopes,
   rolesOnTeam,
@@ -379,41 +378,6 @@ describe('role flags', function () {
     expect([...manager.teamIds]).deep.equals(['tem_a1'])
     const site = await adminScopes(db, idOf('siteAdmin'), true)
     expect(site.isAdmin).equals(true)
-  })
-
-  it('shows the whole name to a coach or admin of a team the player is on, a guardian, the player and a site admin', async function () {
-    const player = idOf('player')
-    const about = { isAdmin: false }
-    for (const name of [
-      'coach@tem_a2',
-      'coach@sea_a1',
-      'coach@lea_a',
-      'admin@tem_a2',
-      'admin@lea_a',
-      'guardian',
-      'player'
-    ]) {
-      expect(await maySeeFullName(db, idOf(name), player, about), name).equals(
-        true
-      )
-    }
-    expect(
-      await maySeeFullName(db, idOf('siteAdmin'), player, { isAdmin: true })
-    ).equals(true)
-    for (const name of [
-      'scorekeeper@tem_a2',
-      'songkeeper@lea_a',
-      'videographer@sea_a1',
-      'member',
-      // A coach and a manager of `tem_a1`, which shares a season with the
-      // player's team and is not it.
-      'union',
-      'manager'
-    ]) {
-      expect(await maySeeFullName(db, idOf(name), player, about), name).equals(
-        false
-      )
-    }
   })
 
   it('leaves changing the name to the player, a guardian and a site admin', async function () {
