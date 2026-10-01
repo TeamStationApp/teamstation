@@ -1,8 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { controlRects, liveRects, subtract } from './controlGeometry'
-import { angleZoneFor, zoneFor } from './zones'
+import { controlRects, edgeBars, liveRects, subtract } from './controlGeometry'
+import { angleZoneFor, gestureAction, type Zone, zoneFor } from './zones'
 
 const W = 900
 const H = 506
@@ -13,7 +13,7 @@ describe('player zones', function () {
       angleZoneFor(((col + 0.5) * W) / 3, ((row + 0.5) * H) / 3, W, H)
     expect([at(0, 0), at(1, 0), at(2, 0)]).deep.equals([
       'toggle',
-      'slowForward',
+      'toggle',
       'toggle'
     ])
     expect([at(0, 1), at(1, 1), at(2, 1)]).deep.equals([
@@ -33,7 +33,7 @@ describe('player zones', function () {
       zoneFor(((col + 0.5) * W) / 3, ((row + 0.5) * H) / 3, W, H)
     expect([at(0, 0), at(1, 0), at(2, 0)]).deep.equals([
       'toggle',
-      'slowForward',
+      'toggle',
       'toggle'
     ])
     expect([at(0, 1), at(1, 1), at(2, 1)]).deep.equals([
@@ -43,8 +43,22 @@ describe('player zones', function () {
     ])
     expect([at(0, 2), at(1, 2), at(2, 2)]).deep.equals([
       'toggle',
-      'slowBack',
+      'toggle',
       'toggle'
+    ])
+  })
+
+  it('crawls on a hold of the +10 s square, and nowhere else', function () {
+    const zones: Zone[] = ['seekBack', 'seekForward', 'toggle']
+    expect(zones.map(zone => gestureAction(zone, 'tap'))).deep.equals([
+      'seekBack',
+      'seekForward',
+      'toggle'
+    ])
+    expect(zones.map(zone => gestureAction(zone, 'hold'))).deep.equals([
+      null,
+      'slowForward',
+      null
     ])
   })
 
@@ -106,5 +120,34 @@ describe('control geometry', function () {
     expect(pieces.length).equals(4)
     const area = pieces.reduce((sum, piece) => sum + piece.w * piece.h, 0)
     expect(area).equals(100 * 100 - 20 * 20)
+  })
+})
+
+describe('how deep the player\u2019s controls run in from each edge', function () {
+  it('measures the top cluster on an iPhone, so the slow-motion words sit below it', function () {
+    const rects = controlRects(390, 219, 'avplayer')
+    const { top } = edgeBars(rects, 219)
+    expect(top).greaterThan(0)
+    // Nothing at the top runs deeper than the measurement.
+    for (const rect of rects.filter(one => one.y <= 1)) {
+      expect(rect.y + rect.h).at.most(top)
+    }
+  })
+
+  it('reads none where nothing touches an edge', function () {
+    expect(edgeBars([], 219)).deep.equals({ top: 0, bottom: 0 })
+    expect(edgeBars([{ x: 10, y: 50, w: 44, h: 44 }], 219)).deep.equals({
+      top: 0,
+      bottom: 0
+    })
+  })
+
+  it('takes the deepest of several along the top and the bottom', function () {
+    const rects = [
+      { x: 0, y: 0, w: 44, h: 44 },
+      { x: 300, y: 0, w: 90, h: 30 },
+      { x: 0, y: 170, w: 390, h: 49 }
+    ]
+    expect(edgeBars(rects, 219)).deep.equals({ top: 44, bottom: 49 })
   })
 })
