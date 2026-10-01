@@ -381,9 +381,12 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
  *
  * Narrow by Paul's instruction of 2026-09-19: a site administrator, a parent
  * — a `user_links` row of kind `guardian` or `family` — or the player
- * themselves, whose own name is their own business. A coach may read the
- * whole name (`maySeeFullName`) but not change it, and neither may a season
- * or league administrator.
+ * themselves, whose own name is their own business. Not a coach, and not a
+ * season or league administrator.
+ *
+ * This is also the only way to **read** the whole name: it is sent nowhere
+ * but `GET /players/:userId/name`, which this guards. Everything else — the
+ * roster, the player page, the box score — carries `Jordan P` alone.
  */
 export async function mayEditName(
   db: Kysely<Database>,
@@ -402,30 +405,4 @@ export async function mayEditName(
     .where('kind', 'in', ['guardian', 'family'])
     .executeTakeFirst()
   return parent != null
-}
-
-/**
- * Whether somebody may **read** a player's whole name.
- *
- * Everybody else reads `Jordan P`. The whole name goes to whoever may change
- * it, and to a coach or an administrator of a team the player plays on —
- * directly, or through its season or league — because telling two children
- * apart is part of running the team. Keeping score, keeping songs and
- * filming do not need it, and neither does watching.
- */
-export async function maySeeFullName(
-  db: Kysely<Database>,
-  actorUserId: number,
-  playerUserId: number,
-  about: { isAdmin: boolean }
-): Promise<boolean> {
-  if (await mayEditName(db, actorUserId, playerUserId, about)) return true
-  const scopes = await roleScopes(db, actorUserId, about.isAdmin)
-  const teams = await db
-    .selectFrom('memberships')
-    .select(['team_id'])
-    .where('user_id', '=', playerUserId)
-    .where('is_player', '=', true)
-    .execute()
-  return teams.some(row => canCoach(scopes, row.team_id))
 }

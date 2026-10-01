@@ -335,9 +335,6 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           />
           <View style={styles.identityText}>
             <Text style={styles.playerName}>{shown}</Text>
-            {player?.fullName != null && (
-              <Text style={styles.playerMeta}>{player.fullName}</Text>
-            )}
             {/*
               Only when there is something to say. `B: —` claims we looked and
               found nothing; a missing line claims nothing at all, which is

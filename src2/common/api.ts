@@ -397,11 +397,6 @@ export const asRosterEntry = asObject({
    * site, where a reviewer might not.
    */
   shortName: asString,
-  /**
-   * First and last name, for a viewer who coaches or administers this team,
-   * and only for its players. `null` for everybody else.
-   */
-  fullName: asOptional(asNullable(asString), null),
   avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
@@ -435,10 +430,8 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * One person, for their own page.
  *
  * `name` is **always** the short form — `Jordan P` — for everybody, on every
- * screen. `fullName` is the whole name, sent only to a coach or an
- * administrator of a team the player is on, a parent, the player and a site
- * administrator, and `null` for everybody else. The name field's own values
- * are fetched separately, by somebody who may change them.
+ * screen. The whole name is never part of it: it is fetched separately, by
+ * `playerName`, when somebody who may change it opens the name field.
  *
  * No jersey number: a number belongs to a player *on a team*, and is drawn on
  * the team's roster and in the box score, where that context exists.
@@ -454,8 +447,6 @@ export type PlayerName = ReturnType<typeof asPlayerName>
 export const asPlayerDetail = asObject({
   userId: asUserId,
   name: asString,
-  /** First and last name, for the viewers above; `null` otherwise. */
-  fullName: asOptional(asNullable(asString), null),
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
   avatarUrl: asOptional(asNullable(asString), null),
