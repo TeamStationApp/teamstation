@@ -70,6 +70,24 @@ describe('GameHeroCard', function () {
     )
   })
 
+  it('shows a live game as the red live pill on the date’s line, and nowhere between the teams', async function () {
+    const container = await render(<GameHeroCard {...oct4} live />)
+    const pill = container.querySelector<HTMLElement>('[aria-label="Live now"]')
+    if (pill == null) throw new Error('no live pill')
+    expect(pill.textContent).equals('live')
+    expect(leaf(container, 'LIVE')).equals(undefined)
+    const date = leaf(container, 'SUN, OCT 4')
+    if (date == null) throw new Error('no date')
+    const row = pill.parentElement
+    expect(row?.contains(date)).equals(true)
+  })
+
+  it('keeps the status chip for a game that is not live', async function () {
+    const container = await render(<GameHeroCard {...oct4} status="FINAL" />)
+    expect(container.querySelector('[aria-label="Live now"]')).equals(null)
+    expect(leaf(container, 'FINAL')).not.equals(undefined)
+  })
+
   it('keeps the picture for a side with a logo', async function () {
     const container = await render(<GameHeroCard {...oct4} />)
     expect(leaf(container, 'BR')).equals(undefined)

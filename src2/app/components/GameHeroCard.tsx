@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
+import { LivePill } from './LivePill'
 import { teamInitialsOf, teamTint } from './teamTile'
 import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
@@ -15,6 +16,12 @@ export interface GameHeroCardProps {
   homeScore: number | null
   /** `FINAL`, `TOP 3RD`, `SAT 10:00 AM`. */
   status: string
+  /**
+   * The game is being played now. Its status is then the red `live` pill,
+   * top right on the date's line, rather than a chip or a word between the
+   * two teams.
+   */
+  live?: boolean
   winner?: 'away' | 'home'
   /** A frame of the game's video. Absent until one has been cut. */
   posterUrl?: string | null
@@ -110,6 +117,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     awayScore,
     homeScore,
     status,
+    live = false,
     winner,
     posterUrl,
     videoUrl,
@@ -165,9 +173,13 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
                 </Text>
               )}
             </View>
-            <View style={styles.statusChip}>
-              <Text style={styles.statusChipText}>{status}</Text>
-            </View>
+            {live ? (
+              <LivePill inline />
+            ) : (
+              <View style={styles.statusChip}>
+                <Text style={styles.statusChipText}>{status}</Text>
+              </View>
+            )}
           </View>
         )}
         <View style={[styles.plain, narrow && styles.plainStacked]}>
