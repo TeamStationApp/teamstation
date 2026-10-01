@@ -2145,10 +2145,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "A team's players, coaches and followers",
           description:
-            'Names are a first name and a last initial. `fullName`, first and ' +
-            'last, is set on each player for a caller who is a coach or an ' +
-            'admin of the team, its season or its league, and null for ' +
-            'everybody else. `walkUpSong` is the WalkUpSong the person has ' +
+            'Names are a first name and a last initial, for every caller; ' +
+            'the whole name is only on `GET /players/{userId}/name`. ' +
+            '`walkUpSong` is the WalkUpSong the person has ' +
             'on this team, or null. Whether the caller may change the songs ' +
             'is `GET /me/roles`: `songkeeper` or `admin` on the team.',
           security: [{ bearer: [] }],

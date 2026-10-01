@@ -1,20 +1,18 @@
 import type { Kysely } from 'kysely'
 
 import type { RosterEntry } from '../../common/api'
-import { fullName, shortNames } from '../../common/names'
-import { canCoach, type RoleScopes } from '../access'
+import { shortNames } from '../../common/names'
 import type { Database } from '../db/database'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
 
 /**
- * Who is on a team, for one viewer.
+ * Who is on a team. Every viewer reads the same answer.
  *
- * Everybody reads short names. A coach or an administrator of this team —
- * directly, or through its season or league — also reads each player's whole
- * name, the same rule `maySeeFullName` holds the player page to; everybody
- * else gets `null` there.
+ * Everybody reads short names, coaches and administrators included. The whole
+ * name is never on a roster: it is only behind `GET /players/:userId/name`,
+ * for the person editing it.
  *
  * Each entry carries the person's walk-up song on this team, or `null`: a
  * song belongs to a player's place on a team, so the same child reads
@@ -23,10 +21,8 @@ import { teamWalkUpSongs } from '../routes/walkUpSongs'
 export async function teamRoster(
   db: Kysely<Database>,
   space: MediaContext['space'],
-  teamId: string,
-  viewer: RoleScopes
+  teamId: string
 ): Promise<RosterEntry[]> {
-  const coaches = canCoach(viewer, teamId)
   const rows = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
@@ -116,8 +112,6 @@ export async function teamRoster(
         bats: row.bats,
         throws: row.throws,
         shortName: names.get(row.userId) ?? row.displayName,
-        fullName:
-          coaches && row.isPlayer ? fullName({ ...row, id: row.userId }) : null,
         avatarUrl: imageUrl(space, row.avatarPath),
         jersey: row.jersey,
         positions: row.positions,
@@ -139,7 +133,6 @@ export async function teamRoster(
         bats: row.bats,
         throws: row.throws,
         shortName: followerNames.get(row.userId) ?? row.displayName,
-        fullName: null,
         avatarUrl: imageUrl(space, row.avatarPath),
         jersey: null,
         positions: [] as string[],

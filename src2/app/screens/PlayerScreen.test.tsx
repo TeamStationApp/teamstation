@@ -451,7 +451,7 @@ describe('a player’s Walk-up address, through the app', function () {
         : path.endsWith('/me/roles')
           ? { teams: roles }
           : path.endsWith('/players/7')
-            ? { userId: 7, name: 'Jensen P', fullName: null, teams: [] }
+            ? { userId: 7, name: 'Jensen P', teams: [] }
             : path.endsWith('/players/7/highlights')
               ? { highlights: [], nextBefore: null, withoutVideo: 0 }
               : path.endsWith('/teams/t1/roster')

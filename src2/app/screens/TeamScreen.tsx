@@ -399,16 +399,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 }
 
 /** `1st Place`, `2nd Place`, `11th Place`. */
-/**
- * The line under a roster name: the whole name, when this viewer coaches or
- * runs the team and the server sent it, then the positions.
- */
+/** The line under a roster name: the positions, if any. */
 export function rosterSubtitle(person: RosterEntry): string | undefined {
-  const parts = [
-    ...(person.fullName == null ? [] : [person.fullName]),
-    ...person.positions
-  ]
-  return parts.length > 0 ? parts.join(' · ') : undefined
+  return person.positions.length > 0 ? person.positions.join(' · ') : undefined
 }
 
 function placeLabel(place: number): string {
