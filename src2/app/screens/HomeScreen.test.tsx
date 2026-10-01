@@ -148,6 +148,8 @@ function recentGame(patch: Partial<SeasonGame> = {}): SeasonGame {
     videoCount: 2,
     durationSec: 5400,
     posterUrl: null,
+    homeLogoUrl: null,
+    awayLogoUrl: null,
     isLive: false,
     externalIds: [],
     ...patch
