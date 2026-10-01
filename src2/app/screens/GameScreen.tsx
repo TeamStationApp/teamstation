@@ -911,6 +911,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       awayScore={game.awayScore}
       homeScore={game.homeScore}
       status={gameStatusLine(game)}
+      live={game.status === 'inProgress'}
       winner={winnerOf(game)}
       compact
       awayRecord={game.awayRecord}
