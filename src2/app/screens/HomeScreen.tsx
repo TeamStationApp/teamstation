@@ -269,6 +269,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               winner={winnerOf(recent)}
               awayTeamId={recent.awayTeamId}
               homeTeamId={recent.homeTeamId}
+              awayLogoUrl={recent.awayLogoUrl}
+              homeLogoUrl={recent.homeLogoUrl}
               posterUrl={recent.posterUrl}
               videoUrl={recentUrl}
             />
