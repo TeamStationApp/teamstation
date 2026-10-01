@@ -34,6 +34,8 @@ export function connectDashboard(options: {
   /** A reconnect: whatever was in flight on the old socket is gone. */
   onOpen?: () => void
   onStop: (code: number) => void
+  /** The session, for a phone, which signs the socket in with it. */
+  token?: string
   WebSocketImpl?: SocketConstructor
   schedule?: Schedule
 }): DashboardClient {
@@ -43,6 +45,7 @@ export function connectDashboard(options: {
   }
   const socket = openReconnecting({
     url: options.url,
+    token: options.token,
     stopOn: DASHBOARD_STOP,
     WebSocketImpl: options.WebSocketImpl,
     schedule: options.schedule,

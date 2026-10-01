@@ -55,10 +55,10 @@ import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
-import { scoringEntry } from '../scoring/isUnscoredGame'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
+import { gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
@@ -925,36 +925,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   )
 
-  const showScore =
-    Platform.OS === 'web' &&
-    game.canScore &&
-    (scoringEntry(game) != null || game.scoreboard?.open === true)
   const tabs = (
     <PillTabs
-      tabs={[
-        { id: 'boxScore' as const, label: lstrings.game_box_score },
-        { id: 'watch' as const, label: lstrings.game_videos },
-        // The one scoring pill, for the people whose plays the server would
-        // take, and only while there is something behind it to use. It is a
-        // tab, like the other two: the hero stays and the choices appear
-        // under the pills.
-        ...(showScore
-          ? [{ id: 'score' as const, label: lstrings.game_score_game }]
-          : []),
-        // For a songkeeper of either team, on a phone, whatever the game's
-        // status: songs are set and played before, during and after.
-        ...(game.canDj &&
-        props.music?.available === true &&
-        props.onDjGame != null
-          ? [
-              {
-                id: 'dj' as const,
-                label: lstrings.dj_game,
-                role: 'button' as const
-              }
-            ]
-          : [])
-      ]}
+      tabs={gameTabs({ game, music: props.music, onDjGame: props.onDjGame })}
       selected={tab}
       onSelect={next => {
         if (next === 'dj') {
