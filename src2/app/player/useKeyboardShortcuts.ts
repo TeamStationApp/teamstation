@@ -54,17 +54,18 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
         event.preventDefault()
         if (seek != null) seek(STEP_SECONDS)
         else seekBy(player, STEP_SECONDS)
-      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      } else if (event.key === 'ArrowUp') {
+        // Held, it crawls forwards, as a hold on the +10 s square does.
         event.preventDefault()
         if (event.repeat || holding()) return
-        beginSlow(event.key === 'ArrowUp' ? 'slowForward' : 'slowBack')
+        beginSlow('slowForward')
       } else if (event.key === ' ' || event.key === 'k') {
         event.preventDefault()
         act('toggle')
       }
     }
     const up = (event: KeyboardEvent): void => {
-      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      if (event.key === 'ArrowUp') {
         latest.current.endSlow()
       }
     }

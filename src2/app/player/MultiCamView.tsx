@@ -32,11 +32,17 @@ import {
   tileRects
 } from './multiCam/layout'
 import { angleLabels, soundAngle } from './multiCam/takes'
-import { barHeightRem, MultiCamBar } from './MultiCamBar'
+import { MultiCamBar } from './MultiCamBar'
 import { SLOW_RATE } from './slowMotion'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { secondsAt, wallAt, type Window, windowOf } from './wallClock'
-import { type AngleZone, angleZoneFor, HOLD_MS, STEP_SECONDS } from './zones'
+import {
+  type AngleZone,
+  angleZoneFor,
+  gestureAction,
+  HOLD_MS,
+  STEP_SECONDS
+} from './zones'
 
 export interface MultiCamViewProps {
   client: GameStationClient
@@ -72,9 +78,6 @@ export interface MultiCamViewProps {
  * carry this take into four streams starving each other.
  */
 const TILE_BUFFER = { seconds: 20, megabytes: 12 }
-
-/** How often a crawl backwards moves the tiles, at most. */
-const BACK_STEP_MS = 80
 
 /** How long the bar stays up after the last touch of it. */
 const BAR_HIDE_MS = 3000
@@ -440,14 +443,13 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 
       if (toSec != null) element.currentTime = toSec
       // One that arrives in the middle of a crawl joins it at once, rather
-      // than running a frame or two at full speed with its sound on: forwards
-      // it plays slowly, backwards it waits to be stepped.
-      const crawl = crawlRate.current
-      if (crawl !== 0) {
-        element.playbackRate = crawl > 0 ? SLOW_RATE : 1
+      // than running a frame or two at full speed with its sound on.
+      const crawling = crawlRate.current !== 0
+      if (crawling) {
+        element.playbackRate = SLOW_RATE
         element.muted = true
       }
-      const run = crawl === 0 ? playing : crawl > 0
+      const run = crawling || playing
       intents.current.set(id, run)
       if (run) element.play().catch(() => undefined)
     },
@@ -879,19 +881,15 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   }, [chosen, tiles])
 
   /**
-   * A quarter speed, in both directions, by moving the clock — in silence.
+   * A quarter speed, forwards, by moving the clock — in silence.
    *
-   * Forwards, every tile plays at a quarter of its rate and the take's clock
-   * steps at the same pace; a tile is only moved when it drifts past the
-   * usual tolerance. The first version paused the tiles and seeked all four
-   * on every frame — and handed each step to an alignment that called
-   * `play()` on them because the view was playing, so between seeks they ran
-   * at full speed with their sound on and every seek pulled them back: the
-   * picture lurched forwards and backwards and the sound stuttered.
-   *
-   * Backwards has no browser support anywhere, so it is still paused and
-   * stepped, but a seek at most every `BACK_STEP_MS`: four decoders cannot
-   * finish sixty seeks a second, and piling them up is what jitters.
+   * Every tile plays at a quarter of its rate and the take's clock steps at
+   * the same pace; a tile is only moved when it drifts past the usual
+   * tolerance. The first version paused the tiles and seeked all four on every
+   * frame — and handed each step to an alignment that called `play()` on them
+   * because the view was playing, so between seeks they ran at full speed with
+   * their sound on and every seek pulled them back: the picture lurched
+   * forwards and backwards and the sound stuttered.
    */
   const slowFrame = useRef(0)
   const [slow, setSlow] = useState(0)
@@ -917,44 +915,30 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   )
 
   /** False when a crawl was already running, or there is no clock to move. */
-  const beginSlow = useCallback(
-    (direction: 'slowForward' | 'slowBack'): boolean => {
-      if (slowFrame.current !== 0 || atWallRef.current == null) return false
-      const forward = direction === 'slowForward'
-      const rate = forward ? SLOW_RATE : -SLOW_RATE
-      const elementRate = forward ? SLOW_RATE : 1
-      crawlRate.current = rate
-      setRateAll(elementRate, () => true)
-      setSlow(rate)
-      alignTo(atWallRef.current, undefined, forward)
-      let last = performance.now()
-      let lastSeek = 0
-      const step = (now: number): void => {
-        const seconds = (now - last) / 1000
-        last = now
-        const next = (atWallRef.current ?? 0) + seconds * rate * 1000
-        atWallRef.current = next
-        setAtWallMs(next)
-        // Every frame, not once at the start. A tile handed a new source
-        // mid-crawl loads at full speed, and one whose sound was switched on
-        // by the angle it was heard from changing would play out loud: set
-        // once, either lurched ahead of the others until the next seek.
-        setRateAll(elementRate, () => true)
-        if (forward) {
-          alignTo(next, undefined, true)
-        } else if (now - lastSeek >= BACK_STEP_MS) {
-          lastSeek = now
-          // A tenth of a second is nothing at full speed and four frames at
-          // a quarter of it, so a stepped tile is held far tighter.
-          alignTo(next, 0.01, false)
-        }
-        slowFrame.current = requestAnimationFrame(step)
-      }
+  const beginSlow = useCallback((): boolean => {
+    if (slowFrame.current !== 0 || atWallRef.current == null) return false
+    crawlRate.current = SLOW_RATE
+    setRateAll(SLOW_RATE, () => true)
+    setSlow(SLOW_RATE)
+    alignTo(atWallRef.current, undefined, true)
+    let last = performance.now()
+    const step = (now: number): void => {
+      const seconds = (now - last) / 1000
+      last = now
+      const next = (atWallRef.current ?? 0) + seconds * SLOW_RATE * 1000
+      atWallRef.current = next
+      setAtWallMs(next)
+      // Every frame, not once at the start. A tile handed a new source
+      // mid-crawl loads at full speed, and one whose sound was switched on by
+      // the angle it was heard from changing would play out loud: set once,
+      // either lurched ahead of the others until the next seek.
+      setRateAll(SLOW_RATE, () => true)
+      alignTo(next, undefined, true)
       slowFrame.current = requestAnimationFrame(step)
-      return true
-    },
-    [alignTo, setRateAll]
-  )
+    }
+    slowFrame.current = requestAnimationFrame(step)
+    return true
+  }, [alignTo, setRateAll])
 
   const endSlow = useCallback((): void => {
     if (slowFrame.current === 0) return
@@ -1118,7 +1102,10 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     const current = press.current
     if (current?.held === true && current.pointerId !== pointerId) return false
     if (current?.timer != null) clearTimeout(current.timer)
-    const slowZone = angleZoneFor(x, y, width, height) === 'slowForward'
+    // Only the +10 s square crawls when held (`gestureAction`).
+    const zone = angleZoneFor(x, y, width, height)
+    const slowZone =
+      zone !== 'controls' && gestureAction(zone, 'hold') === 'slowForward'
     const state: Press = {
       pointerId,
       timer: null,
@@ -1131,7 +1118,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         // Held only if this press started the crawl. One already running —
         // an arrow key held down — belongs to its key, and lifting this
         // finger must not end it.
-        state.held = beginSlow('slowForward')
+        state.held = beginSlow()
       }, HOLD_MS)
     }
     press.current = state
@@ -1217,9 +1204,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       if (zone === 'toggle') toggle()
     },
     seek: skip,
-    // Only the two zones that crawl; the hook's own type covers all five.
-    beginSlow: zone => {
-      if (zone === 'slowForward' || zone === 'slowBack') beginSlow(zone)
+    beginSlow: action => {
+      if (action === 'slowForward') beginSlow()
     },
     endSlow,
     // A crawl is running exactly while there is a frame scheduled for it.
@@ -1456,14 +1442,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       ) : null}
 
       <SeekFlashView flash={flash} />
-      <SlowMoBadge
-        rate={slow}
-        bottom={
-          landscape && barShown
-            ? theme.rem(barHeightRem(theme) + theme.spaceSmRem)
-            : undefined
-        }
-      />
+      {/* Top right, clear of the finger holding the crawl on the right. */}
+      <SlowMoBadge rate={slow} />
 
       {/* One at a time, most specific first: they share a place on the screen
           and two of them printed over each other unreadably. The swipe for

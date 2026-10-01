@@ -121,5 +121,8 @@
   "src2/app/components/contentInset.ts",
   "src2/app/components/Screen.tsx",
   "src2/app/player/seekTracker.ts",
-  "src2/app/player/nativeVideoHandle.ts"
+  "src2/app/player/nativeVideoHandle.ts",
+  "src2/app/player/zones.ts",
+  "src2/app/player/controlGeometry.ts",
+  "src2/app/player/slowMotion.ts"
 ]
