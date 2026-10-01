@@ -113,5 +113,8 @@
   "src2/app/field/useFieldSurface.ts",
   "src2/app/scoreboard/**/*.ts",
   "src2/app/scoreboard/**/*.tsx",
-  "src2/app/screens/gameTabs.ts"
+  "src2/app/screens/gameTabs.ts",
+  "src2/app/components/teamTile.ts",
+  "src2/app/components/Emblem.tsx",
+  "src2/app/components/GameHeroCard.tsx"
 ]
