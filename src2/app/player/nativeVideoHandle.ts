@@ -9,7 +9,12 @@ import type {
   VideoRef
 } from 'react-native-video'
 
-import { answersSeek, SEEK_TOLERANCE, shouldAdoptProgress } from './seekTracker'
+import {
+  answersSeek,
+  SEEK_TOLERANCE,
+  shouldAdoptProgress,
+  shouldResumeAfterSeek
+} from './seekTracker'
 import type {
   VideoEventName,
   VideoHandle,
@@ -238,6 +243,9 @@ export class NativeVideoHandle implements VideoHandle {
   handleSeek = (data: OnSeekData): void => {
     if (answersSeek(this.pendingSeekTo, data.seekTime)) {
       this.pendingSeekTo = null
+    }
+    if (shouldResumeAfterSeek({ wantsPaused: this.props.paused })) {
+      this.player?.resume()
     }
   }
 

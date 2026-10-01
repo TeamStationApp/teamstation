@@ -3,7 +3,8 @@ import { expect } from 'chai'
 import {
   answersSeek,
   SEEK_PATIENCE_MS,
-  shouldAdoptProgress
+  shouldAdoptProgress,
+  shouldResumeAfterSeek
 } from './seekTracker'
 
 describe('believing the player about the playhead', function () {
@@ -53,5 +54,12 @@ describe('believing the player about the playhead', function () {
     // target on one would let the next report undo a seek still in flight.
     expect(answersSeek(600, 12)).equals(false)
     expect(answersSeek(null, 12)).equals(false)
+  })
+})
+
+describe('shouldResumeAfterSeek', function () {
+  it('starts the picture again only when playback was wanted', function () {
+    expect(shouldResumeAfterSeek({ wantsPaused: false })).equals(true)
+    expect(shouldResumeAfterSeek({ wantsPaused: true })).equals(false)
   })
 })
