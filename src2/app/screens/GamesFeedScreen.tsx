@@ -99,6 +99,7 @@ export function GamesFeedScreen(
           ) : (
             <View style={styles.headerPillsRow}>
               <PillTabs
+                bleed={false}
                 tabs={WHEN_TABS}
                 selected={when}
                 onSelect={choose}

@@ -117,5 +117,7 @@
   "src2/app/components/teamTile.ts",
   "src2/app/components/Emblem.tsx",
   "src2/app/components/GameHeroCard.tsx",
-  "src2/app/screens/HomeScreen.tsx"
+  "src2/app/screens/HomeScreen.tsx",
+  "src2/app/components/contentInset.ts",
+  "src2/app/components/Screen.tsx"
 ]

@@ -40,6 +40,7 @@ import {
   webStyle,
   WideTable
 } from '../components'
+import { ContentInsetContext, NO_INSET } from '../components/contentInset'
 import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
 import { SHORT_WINDOW_MAX, watchLayout, type WatchMode } from '../layout/watch'
@@ -1027,6 +1028,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           }}
         >
           <PillTabs
+            bleed={false}
             tabs={[
               ...game.videos.map(item => {
                 const name = pickerNames.get(item.id) ?? item.title
@@ -1114,13 +1116,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
+  // Stacked, the pills sit in the head's padding and run back out through
+  // it to the screen's edges. In the short layout they share a column with
+  // the picture beside them, so they stay inside it.
+  const headInset = theme.rem(theme.spaceMdRem)
   const sections = (
     <View
       onLayout={event => {
         setTabsHeight(event.nativeEvent.layout.height)
       }}
     >
-      {tabs}
+      <ContentInsetContext.Provider
+        value={short ? NO_INSET : { left: headInset, right: headInset }}
+      >
+        {tabs}
+      </ContentInsetContext.Provider>
     </View>
   )
   const head = (
