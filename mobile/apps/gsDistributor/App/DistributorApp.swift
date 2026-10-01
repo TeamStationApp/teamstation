@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// GS Distributor: pulls GS Director's recordings off the iPad over the cable and stitches them
-/// with the Director's own code. Its settings and logins are kept on this Mac and on the iPad, so
+/// with the Director's own code. Its settings are kept on this Mac and on the iPad, so
 /// what needs only the Mac works with the iPad away.
 @main
 struct DistributorApp: App {

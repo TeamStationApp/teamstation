@@ -2,8 +2,8 @@
 import PackageDescription
 
 // What GS Distributor keeps on the Mac between launches: its copy of the settings, the last
-// recording list seen from each iPad, and what is still to be sent to the iPad. All of it lives in
-// one folder, ~/Library/Application Support/GS Distributor; the logins are in the Keychain.
+// recording list seen from each iPad, and when it last met each iPad. All of it lives in one
+// folder, ~/Library/Application Support/GS Distributor.
 let package = Package(
   name: "MacState",
   platforms: [ .macOS(.v15) ],
