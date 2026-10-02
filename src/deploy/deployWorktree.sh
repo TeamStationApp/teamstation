@@ -120,7 +120,17 @@ It should name \`$DB\` on the seats cluster (5434; 5433 on a laptop). Production
 is the managed cluster, and any other name is somebody else's schema. Fix the config; do not relax this check." ;;
 esac
 
+# The droplet's mirror of GitHub. Every clone on the box fetches from it, and it
+# is refreshed here first so a deploy always builds the branch as GitHub has it. See
+# src/deploy/README.md, "Where the code comes from".
+refresh_mirror() {
+  HOME=/root git -C /srv/teamstation.git fetch --prune --quiet origin ||
+    die "could not refresh /srv/teamstation.git from GitHub (deploy key, network?)"
+  chown -R teamstation:teamstation /srv/teamstation.git
+}
+
 say "Fetching $BRANCH"
+refresh_mirror
 git -C "$REPO" fetch --prune --quiet origin
 git -C "$REPO" reset --hard --quiet "origin/$BRANCH"
 git -C "$REPO" clean -fdq
