@@ -46,8 +46,7 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
 
 type Status = 'scheduled' | 'inProgress' | 'final'
@@ -169,7 +168,7 @@ describe('team records, read from the games', function () {
     app.use((req, _res, next) => {
       const id = req.header('x-test-actor')
       if (id != null) {
-        req.actor = { userId: asUserId(id), isAdmin: true, tokenId: null }
+        req.actor = { userId: asUserId(id), isAdmin: true, scopes: [] }
       }
       next()
     })

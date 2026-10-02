@@ -42,8 +42,7 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
 
 const viewer = mintUserId(() => false)
@@ -148,7 +147,7 @@ describe('the fence a game is played to', function () {
 
     const app = express()
     app.use((req, _res, next) => {
-      req.actor = { userId: viewer.userId, isAdmin: true, tokenId: null }
+      req.actor = { userId: viewer.userId, isAdmin: true, scopes: [] }
       next()
     })
     app.use('/api/v1', teamRoutes(db, media))

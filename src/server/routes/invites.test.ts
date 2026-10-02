@@ -368,7 +368,7 @@ describe('invite codes', function () {
       code: mail.code
     })
     expect(session.status).equals(200)
-    const user = session.body.user as { id: string; displayName: string }
+    const user = session.body.user as { id: number; displayName: string }
     expect(user.displayName).equals('New Parent')
 
     // Signed in, and on the team, in one step.

@@ -4,7 +4,10 @@ import { after, before, beforeEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import type { ScheduleGameResult } from '../../common/scheduleGames'
+import type {
+  ScheduleGameResult,
+  ScheduleGamesResponse
+} from '../../common/scheduleGames'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -46,10 +49,7 @@ describe('scheduling a team’s games', function () {
   const post = async (
     rows: unknown[],
     options: { teamId?: string; rights?: ScheduleRights } = {}
-  ): Promise<{
-    results: ScheduleGameResult[]
-    counts: Record<string, number>
-  }> =>
+  ): Promise<ScheduleGamesResponse> =>
     await scheduleGames(db!, {
       teamId: options.teamId ?? trosky,
       rows,

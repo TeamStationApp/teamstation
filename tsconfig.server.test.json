@@ -1,0 +1,26 @@
+{
+  // The server with its tests, which `tsconfig.server.json` leaves out
+  // because it builds `lib/` and a test is not part of the build. Checked
+  // here instead, so a test that writes to a renamed table or passes a
+  // setting the server no longer reads fails the type check rather than the
+  // run. Everything the build compiles is in here too, so this is the one
+  // server check `npm run typecheck` runs.
+  "extends": "./tsconfig.server.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/common/**/*.ts",
+    "src/migrate/**/*.ts",
+    "src/server/**/*.ts",
+    "src/test/**/*.ts"
+  ],
+  // Built on the app or on the DOM, so tsconfig.app.json checks them.
+  "exclude": [
+    "lib",
+    "node_modules",
+    "src/test/fakeScoreboardSocket.ts",
+    "src/test/scoringHelpers.ts",
+    "src/test/scoreboardServer.e2e.ts"
+  ]
+}

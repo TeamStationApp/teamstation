@@ -290,8 +290,7 @@ describe('a player, and who may change their name', function () {
         bucket: '',
         accessKeyId: '',
         secretAccessKey: ''
-      },
-      workDir: ''
+      }
     }
     const app = express()
     app.use((req, _res, next) => {

@@ -95,7 +95,6 @@ describe('a game’s stream key over the API', function () {
           port: 1936,
           app: 'live',
           segmentSeconds: 4,
-          closeAfterHours: 6,
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
@@ -119,8 +118,7 @@ describe('a game’s stream key over the API', function () {
           accessKeyId: '',
           secretAccessKey: '',
           pathStyle: false
-        },
-        workDir: '/tmp/tsLiveRoutesWork'
+        }
       })
     )
     app.use(errorHandler)
@@ -708,7 +706,6 @@ describe('a game’s stream key over the API', function () {
           port: 1936,
           app: 'live',
           segmentSeconds: 4,
-          closeAfterHours: 6,
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),

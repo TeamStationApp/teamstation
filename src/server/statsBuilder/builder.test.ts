@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { Kysely, PostgresDialect, sql } from 'kysely'
+import { Kysely, PostgresDialect, type Selectable, sql } from 'kysely'
 import { after, before, beforeEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -15,7 +15,7 @@ import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { after as played, TEAMS } from '../../test/scoringGames'
-import type { Database } from '../db/database'
+import type { Database, GamePlayerStatsTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
 import { statRows } from '../stats/rows'
@@ -32,7 +32,7 @@ function paPlay(
   pitcher: number,
   opts: {
     atBatIndex?: number
-    eventType?: string
+    eventType?: GumboPlay['result']['eventType']
     outs?: number
     awayScore?: number | null
     homeScore?: number | null
@@ -492,7 +492,7 @@ describe('statsBuilder drain', function () {
           ]
     const build = async (
       sheetPinchHitter: boolean
-    ): Promise<Map<number, Record<string, number>>> => {
+    ): Promise<Map<number, Selectable<GamePlayerStatsTable>>> => {
       let state = freshGame('g1', TEAMS, setup)
       const actions: ScoringAction[] = []
       for (const step of steps(sheetPinchHitter))
@@ -516,9 +516,7 @@ describe('statsBuilder drain', function () {
         .selectAll()
         .where('game_id', '=', gameId)
         .execute()
-      return new Map(
-        rows.map(row => [Number(row.user_id), row as Record<string, number>])
-      )
+      return new Map(rows.map(row => [Number(row.user_id), row]))
     }
 
     const e8 = await build(false)
