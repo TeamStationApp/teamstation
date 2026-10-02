@@ -110,9 +110,9 @@ export async function mergeTeams(
     eventsDiscarded: 0
   }
 
-  // Everything that names a team. The two rollups are left alone on purpose:
-  // they are derived, and rebuilding them afterwards is both simpler and the
-  // only way to be sure they agree with the games underneath.
+  // Everything that names a team. A team's record is counted from the games
+  // on every read, so it follows them here; the stat lines' team is rewritten
+  // by the stats builder, which each moved game is sent to below.
   const references: Array<[string, string]> = [
     ['season_teams', 'team_id'],
     ['memberships', 'team_id'],

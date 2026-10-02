@@ -22,6 +22,10 @@ const urlOf = (name: string): string => adminUrl.replace(/\/[^/]*$/, `/${name}`)
 const through046 = migrations.filter(
   migration => migration.name < migration047TeamStation.name
 )
+// What this file tests ends at 047; later migrations have their own tests.
+const through047 = migrations.filter(
+  migration => migration.name <= migration047TeamStation.name
+)
 
 /** A scored play as an app before TeamStation stored it. */
 const OLD_PLAY = {
@@ -58,7 +62,7 @@ describe('047: the stored names become TeamStation’s', function () {
     pool = new Pool({ connectionString: urlOf(upgradedName) })
     fresh = new Pool({ connectionString: urlOf(freshName) })
     await migrateUp(pool, through046)
-    await migrateUp(fresh, migrations)
+    await migrateUp(fresh, through047)
     await pool.query(
       `
       insert into teams (id, name) values ('tm_home', 'Home'), ('tm_away', 'Away');
@@ -100,7 +104,7 @@ describe('047: the stored names become TeamStation’s', function () {
     expect(before047.rows.map(row => row.eventType)).deep.equals([
       'gs_batter_out'
     ])
-    const result = await migrateUp(pool, migrations)
+    const result = await migrateUp(pool, through047)
     expect(result.applied).deep.equals([migration047TeamStation.name])
     expect(await schemaSnapshot(pool)).deep.equals(await schemaSnapshot(fresh))
   })
@@ -192,7 +196,7 @@ describe('047: the stored names become TeamStation’s', function () {
   })
 
   it('goes back to the old names, and forward again', async function () {
-    expect(await migrateDown(pool, migrations)).deep.equals([
+    expect(await migrateDown(pool, through047)).deep.equals([
       migration047TeamStation.name
     ])
     const back = await pool.query<{ gumbo: any; source: string }>(
@@ -212,7 +216,7 @@ describe('047: the stored names become TeamStation’s', function () {
       `select device_name from auth_sessions where id = 'ses_1'`
     )
     expect(sessions.rows[0].device_name).equals('GS Director')
-    await migrateUp(pool, migrations)
+    await migrateUp(pool, through047)
     expect(await schemaSnapshot(pool)).deep.equals(await schemaSnapshot(fresh))
   })
 })

@@ -1,10 +1,12 @@
 import type { Migration } from '../runner'
 
 /**
- * Sign-in, audit, settings, and the stat rollups.
+ * Sign-in, audit, settings, and two season caches.
  *
- * The rollups are derived from `events` and are safe to drop and recompute;
- * the plays stay the only source of truth.
+ * The caches, `player_season_stats` and `team_season_records`, were copies of
+ * what the games already say. Migration 048 drops them: a record is counted
+ * from the finished games on every read, and a player's seasons come from
+ * their stat lines. The plays stay the only source of truth.
  */
 export const migration003Operations: Migration = {
   name: '003operations',
