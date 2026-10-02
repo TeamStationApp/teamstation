@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
+import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
 import { secondsAt, wallAt, type Window, windowOf } from '../wallClock'
@@ -21,12 +22,25 @@ import {
   holdExpired,
   isFinished,
   isOurSilence,
+  JOIN_LEAD_SEC,
   liveTargetMs,
   masterOf,
+  NUDGE_MAX_SEC,
+  nudgeRate,
   type Placeable,
   WATCHDOG_MS,
   worthCorrecting
 } from './align'
+import {
+  canStart,
+  ceilingSec,
+  heldAhead,
+  isDry,
+  isReady,
+  LEAD_SEC,
+  type TileBuffer,
+  toLeaveOut
+} from './buffering'
 import {
   dragSlots,
   gridShape,
@@ -77,15 +91,16 @@ export interface MultiCamOptions {
 }
 
 /**
- * What one tile may run ahead, so four of them do not race for the line.
+ * How often a playing grid looks for a tile about to run dry.
  *
- * Twenty seconds is comfortably more than any stumble this view rides out,
- * and four tiles at 12 MB ask for less between them than a single player does
- * on its own. Left to itself hls.js grows each tile's target until it holds
- * 60 MB, and four doing that at once is what turns a connection that could
- * carry this take into four streams starving each other.
+ * Faster than the watchdog, because the point is to stop everybody *before*
+ * one of them stops on its own: at once a second a tile with half a second
+ * left has usually frozen by the next look.
  */
-export const TILE_BUFFER = { seconds: 20, megabytes: 12 }
+export const DRY_CHECK_MS = 250
+
+/** How often a joining tile looks to see whether the game has reached it. */
+const JOIN_POLL_MS = 30
 
 /** How long the bar stays up after the last touch of it. */
 const BAR_HIDE_MS = 3000
@@ -158,6 +173,8 @@ export interface MultiCam {
   readout: string[]
   ended: boolean
   waiting: boolean
+  /** The heard tile is playing without sound until the next touch. */
+  soundBlocked: boolean
   heardId: string | null
   /** Where each tile rests. */
   rects: Rect[]
@@ -205,8 +222,13 @@ export interface MultiCam {
     fromMs: number
     toMs: number
   }>
-  /** A tile has stopped drawing for long enough to say so. */
+  /**
+   * A tile has stopped drawing for long enough to say so, or is being left
+   * out until it has caught up.
+   */
   tileWaiting: (id: string) => boolean
+  /** What a browser tile's source is told about its buffer (`attachHls`). */
+  bufferFor: (id: string) => PlayIntent['buffer']
 }
 
 /**
@@ -266,6 +288,28 @@ export function useMultiCam(
   const [ended, setEnded] = useState(false)
   /** Every camera that covers this moment is stuck. */
   const [waiting, setWaiting] = useState(false)
+  /**
+   * The browser would not let the heard tile play with its sound on.
+   *
+   * iOS Safari plays a video with sound only when a touch starts it, and the
+   * grid starts its tiles once they hold enough — by when the touch that
+   * opened it no longer counts. Refused, the heard tile sat paused and the
+   * grid kept sending it to join the others, which on a phone is a black
+   * flash every two seconds. It plays without sound instead, and the next
+   * touch on the grid gives it back.
+   */
+  const [soundBlocked, setSoundBlocked] = useState(false)
+  const soundBlockedRef = useRef(false)
+  const playTile = useCallback((element: TileHandle): void => {
+    element.play().catch((error: unknown) => {
+      const refused = error instanceof Error && error.name === 'NotAllowedError'
+      if (!refused || element.muted) return
+      element.muted = true
+      soundBlockedRef.current = true
+      setSoundBlocked(true)
+      element.play().catch(() => undefined)
+    })
+  }, [])
 
   const elements = useRef(new Map<string, TileHandle>())
   /** The take's own window, readable from the watchdog. */
@@ -297,6 +341,49 @@ export function useMultiCam(
    * that follows `loadedmetadata` has happened.
    */
   const restoring = useRef(new Set<string>())
+
+  /**
+   * Whether the tiles may play: every tile the grid waits for held enough
+   * when it last started, and none has run dry since. See `buffering.ts`.
+   */
+  const flowing = useRef(false)
+  /** When each tile the grid is waiting for was first seen short of enough. */
+  const shortSince = useRef(new Map<string, number>())
+  /**
+   * Tiles the grid has stopped waiting for: one that kept the rest standing
+   * still too long, or one that arrived while the rest were already playing.
+   * Each is kept where the game is and joins in once it holds enough there.
+   */
+  const leftOut = useRef(new Set<string>())
+  /** The same, for drawing. */
+  const [outIds, setOutIds] = useState<ReadonlySet<string>>(new Set())
+  const showLeftOut = (): void => {
+    setOutIds(new Set(leftOut.current))
+  }
+  /** Tiles held on a picture just ahead of the moment, until it arrives. */
+  const joining = useRef(new Map<string, ReturnType<typeof setInterval>>())
+  const stopJoining = (id?: string): void => {
+    for (const [key, timer] of joining.current) {
+      if (id != null && key !== id) continue
+      clearInterval(timer)
+      joining.current.delete(key)
+    }
+  }
+  useEffect(
+    () => () => {
+      stopJoining()
+    },
+    []
+  )
+  /** Whether the viewer wants the grid playing, for a timer that outlives a render. */
+  const playingRef = useRef(playing)
+  playingRef.current = playing
+  /** Each browser tile's hold on how far ahead it loads. */
+  const controls = useRef(new Map<string, BufferControl>())
+  /** `gate`, for a callback made before it in the render. */
+  const gateRef = useRef<
+    ((instant: number, finished?: Map<string, boolean>) => boolean) | null
+  >(null)
 
   /**
    * The tile the sound comes out of.
@@ -471,7 +558,10 @@ export function useMultiCam(
         return
       }
 
-      if (toSec != null) element.currentTime = toSec
+      if (toSec != null) {
+        element.currentTime = toSec
+        seekedAt.current.set(id, Date.now())
+      }
       // One that arrives in the middle of a crawl joins it at once, rather
       // than running a frame or two at full speed with its sound on.
       const crawling = crawlRate.current !== 0
@@ -479,11 +569,25 @@ export function useMultiCam(
         element.playbackRate = SLOW_RATE
         element.muted = true
       }
-      const run = crawling || playing
+      // One that arrives while the rest are already playing has nothing in
+      // hand yet. Waited for, it would stop the whole grid for the seconds it
+      // takes to fill; so it fills where the game is, and joins in once it
+      // holds enough there.
+      if (!crawling && flowing.current) {
+        leftOut.current.add(id)
+        showLeftOut()
+      }
+      const run =
+        crawling || (playing && flowing.current && !leftOut.current.has(id))
       intents.current.set(id, run)
-      if (run) element.play().catch(() => undefined)
+      if (run) playTile(element)
+      else element.pause()
+      // The last tile to arrive is often the one the others were waiting for.
+      if (!crawling && !flowing.current && instant != null) {
+        gateRef.current?.(instant)
+      }
     },
-    [chosen, playing]
+    [chosen, playTile, playing]
   )
 
   /** Everything the alignment rules need to know about a tile right now. */
@@ -499,17 +603,124 @@ export function useMultiCam(
     [chosen, tiles, urls]
   )
 
+  /** The angles and the heard one, for timers that outlive a render. */
+  const chosenRef = useRef(chosen)
+  chosenRef.current = chosen
+  const heardRef = useRef(heardId)
+  heardRef.current = heardId
+
+  /**
+   * Where the game is this instant, read off a tile that is playing — the
+   * heard one where it can, since it is never moved — rather than the
+   * watchdog's clock, which is up to a second old.
+   */
+  const gameNow = (except: string): number | null => {
+    const ids = [heardRef.current, ...chosenRef.current.map(video => video.id)]
+    for (const id of ids) {
+      if (id == null || id === except || joining.current.has(id)) continue
+      const element = elements.current.get(id)
+      const video = chosenRef.current.find(one => one.id === id)
+      if (element == null || video == null || element.paused) continue
+      const there = wallAt(video, element.currentTime)
+      if (there != null) return there
+    }
+    return null
+  }
+
+  /**
+   * Sends a tile just ahead of the game and starts it on the moment the game
+   * reaches it (`JOIN_LEAD_SEC`).
+   *
+   * Started when it is *ready* there and the game has *arrived*, both, rather
+   * than after a fixed wait: a seek under four decodes can take longer than
+   * any wait chosen in advance, and a tile started before it has landed
+   * starts behind. One the game has passed before it was ready is sent
+   * further ahead and tried again.
+   */
+  const joinAhead = (
+    video: VideoSummary,
+    element: TileHandle,
+    leadSec: number
+  ): void => {
+    stopJoining(video.id)
+    const fromMs = gameNow(video.id) ?? atWallRef.current
+    const target = fromMs == null ? null : secondsAt(video, fromMs)
+    if (target == null) return
+    if (element.playbackRate !== 1) element.playbackRate = 1
+    intents.current.set(video.id, false)
+    if (!element.paused) element.pause()
+    element.currentTime = target + leadSec
+    seekedAt.current.set(video.id, Date.now() + leadSec * 1000)
+    const begun = Date.now()
+    const start = (): void => {
+      stopJoining(video.id)
+      seekedAt.current.set(video.id, Date.now())
+      const go =
+        playingRef.current && flowing.current && !leftOut.current.has(video.id)
+      intents.current.set(video.id, go)
+      if (go) playTile(element)
+    }
+    joining.current.set(
+      video.id,
+      setInterval(() => {
+        if (elements.current.get(video.id) !== element) {
+          stopJoining(video.id)
+          return
+        }
+        const now = gameNow(video.id)
+        const there = wallAt(video, element.currentTime)
+        // Nothing to follow: as good a guess as any is the lead itself.
+        if (now == null || there == null) {
+          if (Date.now() - begun >= leadSec * 1000) start()
+          return
+        }
+        if (now < there) return
+        const ready = element.seeking !== true && element.readyState >= 3
+        if (ready) {
+          start()
+        } else if (now - there > 250) {
+          joinAhead(video, element, Math.min(leadSec * 2, JOIN_LEAD_SEC * 4))
+        }
+      }, JOIN_POLL_MS)
+    )
+  }
+  /** `joinAhead`, for the alignment, which is made once per render's angles. */
+  const joinAheadRef = useRef(joinAhead)
+  joinAheadRef.current = joinAhead
+
   /** Puts every tile on one instant, and says what each of them did. */
   const alignTo = useCallback(
     (
       wallMs: number,
       toleranceSec?: number,
-      /** Whether the tiles should run; the view's own play state if left out. */
-      run: boolean = playing
+      /**
+       * Whether the tiles should run. Left out, each runs when the view is
+       * playing, the grid is letting tiles play, and it is not left out.
+       */
+      runAll?: boolean,
+      /**
+       * `exact` goes where somebody asked: every tile to the instant, now.
+       * `open` starts a held grid: every tile from where it stands, together.
+       * `settle` is the watchdog's look: a tile still landing from the last
+       * seek is left to land, one a little out is brought back by speed
+       * (`nudgeRate`), and one joining or far out is sent just ahead and
+       * started when the game reaches it (`JOIN_LEAD_SEC`).
+       */
+      mode: 'exact' | 'open' | 'settle' = 'exact'
     ): void => {
+      const settle = mode !== 'exact'
       for (const video of chosen) {
         const element = elements.current.get(video.id)
         if (element == null) continue
+        // Waiting for the game to reach it: left alone by the watchdog, and
+        // overtaken by anything somebody asked for.
+        if (joining.current.has(video.id)) {
+          if (mode === 'settle') continue
+          stopJoining(video.id)
+        }
+        const run =
+          runAll ??
+          (playing && flowing.current && !leftOut.current.has(video.id))
         const correction = correctionFor({
           wallMs,
           follower: {
@@ -542,7 +753,45 @@ export function useMultiCam(
           }))
           continue
         }
-        if (correction.kind === 'seek') {
+        // A tile a little out, while it plays, is brought back by speed: a
+        // seek costs more than the gap everywhere but Chrome (`align.ts`).
+        const target = secondsAt(video, wallMs)
+        const errorSec = target == null ? 0 : target - element.currentTime
+        // Joining — starting late, coming back, or too far out to close by
+        // speed — it is sent just ahead and started when the game gets there.
+        const joins =
+          mode === 'settle' &&
+          run &&
+          crawlRate.current === 0 &&
+          target != null &&
+          (element.paused ||
+            (Math.abs(errorSec) > NUDGE_MAX_SEC &&
+              worthCorrecting(element.readyState, errorSec)))
+        if (joins) {
+          setTiles(current =>
+            current[video.id]?.parked == null
+              ? current
+              : {
+                  ...current,
+                  [video.id]: { ...current[video.id], parked: null }
+                }
+          )
+          joinAheadRef.current(video, element, JOIN_LEAD_SEC)
+          continue
+        }
+        const nudging =
+          settle &&
+          run &&
+          crawlRate.current === 0 &&
+          target != null &&
+          Math.abs(errorSec) <= NUDGE_MAX_SEC
+        if (nudging) {
+          const rate = nudgeRate(errorSec)
+          if (element.playbackRate !== rate) element.playbackRate = rate
+        } else if (crawlRate.current === 0 && element.playbackRate !== 1) {
+          element.playbackRate = 1
+        }
+        if (correction.kind === 'seek' && !nudging) {
           // Not a tile with nothing in hand: it cannot show where it is, let
           // alone where it is moved to, and every seek would be a fresh excuse
           // for the silence that follows — which is how a starved camera used
@@ -556,15 +805,20 @@ export function useMultiCam(
           ) {
             continue
           }
-          element.currentTime = correction.toSec
-          // We moved it, so it will draw nothing for a moment: that silence is
-          // this view's own doing, for a second and a half and no longer.
-          // The baseline stays. Deleting it made the next look read as "it
-          // drew something" — because there was nothing to compare against —
-          // which wiped the stall of a tile that had drawn nothing for a
-          // minute and a half. `isOurSilence` is what forgives our own seek;
-          // the evidence does not need destroying as well.
-          seekedAt.current.set(video.id, Date.now())
+          const now = Date.now()
+          // Still landing from the last seek: judge where it landed, not
+          // where it is on the way.
+          if (!(settle && isOurSilence(now, seekedAt.current.get(video.id)))) {
+            element.currentTime = correction.toSec
+            // We moved it, so it will draw nothing for a moment: that silence
+            // is this view's own doing, for a second and a half and no longer.
+            // The baseline stays. Deleting it made the next look read as "it
+            // drew something" — because there was nothing to compare against
+            // — which wiped the stall of a tile that had drawn nothing for a
+            // minute and a half. `isOurSilence` is what forgives our own
+            // seek; the evidence does not need destroying as well.
+            seekedAt.current.set(video.id, now)
+          }
         }
         setTiles(current =>
           current[video.id]?.parked == null
@@ -576,14 +830,200 @@ export function useMultiCam(
         )
         intents.current.set(video.id, run)
         if (run && element.paused) {
-          element.play().catch(() => undefined)
+          playTile(element)
         } else if (!run && !element.paused) {
           element.pause()
         }
       }
     },
-    [playing, chosen]
+    [playing, playTile, chosen]
   )
+
+  /**
+   * The tiles the grid waits for at this instant: those that cover it, can be
+   * played, have not finished, and have not been left out.
+   */
+  const awaited = useCallback(
+    (instant: number, finished?: Map<string, boolean>): VideoSummary[] =>
+      chosen.filter(video => {
+        // An angle with no address is never coming; `undefined` is one still
+        // being asked for, which is.
+        if (urls[video.id] === null || leftOut.current.has(video.id)) {
+          return false
+        }
+        if (finished?.get(video.id) ?? tiles[video.id]?.ended) {
+          return false
+        }
+        const element = elements.current.get(video.id)
+        const correction = correctionFor({
+          wallMs: instant,
+          follower: {
+            video,
+            atSec: element?.currentTime ?? 0,
+            mediaSec: endOfTile(video, element)
+          }
+        })
+        return correction.kind !== 'park'
+      }),
+    [chosen, tiles, urls]
+  )
+
+  /**
+   * Whether anything has had a picture, which is when a hold is worth saying
+   * out loud: a grid still opening says so on each tile instead.
+   */
+  const anyPicture = useCallback(
+    (): boolean =>
+      everStarted.current.size > 0 ||
+      [...elements.current.values()].some(element => element.readyState >= 2),
+    []
+  )
+
+  /**
+   * A tile the grid waits for is about to run out of pictures — rather than
+   * settling after this view moved it.
+   *
+   * A phone's player says it is buffering for a moment after every seek, even
+   * one into what it already holds, and says nothing else about how much it
+   * holds. Read as running dry, that held the grid after every alignment, and
+   * the restart that followed moved the tiles again: a loop that kept a Pixel
+   * standing still for half a minute at a time. A browser tile says how many
+   * seconds it holds, which a seek does not fake, so it is taken at its word.
+   */
+  const runningDry = useCallback(
+    (video: VideoSummary, now: number): boolean => {
+      const buffer = bufferOf(elements.current.get(video.id))
+      if (!isDry(buffer)) return false
+      return (
+        buffer.aheadSec != null ||
+        !isOurSilence(now, seekedAt.current.get(video.id))
+      )
+    },
+    []
+  )
+
+  /** Stops every tile where it is, until they all hold enough again. */
+  const hold = useCallback((): void => {
+    flowing.current = false
+    stopJoining()
+    // The clock stops where the pictures stop: read from the tile that is
+    // heard, which is never moved, or failing that any tile still playing.
+    // The watchdog last set it up to a second ago, and starting again from
+    // there put every tile back by however far it had played since.
+    const running = chosen.filter(
+      video => elements.current.get(video.id)?.paused === false
+    )
+    const from = running.find(video => video.id === heardId) ?? running[0]
+    const fromElement = from == null ? null : elements.current.get(from.id)
+    const stoppedAt =
+      from == null || fromElement == null
+        ? null
+        : wallAt(from, fromElement.currentTime)
+    if (stoppedAt != null) {
+      atWallRef.current = stoppedAt
+      setAtWallMs(stoppedAt)
+    }
+    for (const [id, element] of elements.current) {
+      if (element.paused) continue
+      intents.current.set(id, false)
+      element.pause()
+    }
+  }, [chosen, heardId])
+
+  /**
+   * Lets the grid play from this instant if every tile it waits for holds
+   * enough there, and says whether it did.
+   *
+   * Measured where each tile is about to be put rather than where it sits,
+   * so a tile is not passed on a buffer it is about to be moved out of. One
+   * that has kept the others standing still for `LEAVE_OUT_MS`, while another
+   * was ready, is left out, and the rest go without it.
+   */
+  const gate = useCallback(
+    (instant: number, finished?: Map<string, boolean>): boolean => {
+      const now = Date.now()
+      const waits = awaited(instant, finished).map(video => {
+        const ready = isReady(
+          bufferAt(video, elements.current.get(video.id), instant)
+        )
+        if (ready) shortSince.current.delete(video.id)
+        else if (!shortSince.current.has(video.id)) {
+          shortSince.current.set(video.id, now)
+        }
+        return {
+          id: video.id,
+          ready,
+          waitingSinceMs: shortSince.current.get(video.id) ?? now
+        }
+      })
+      const out = toLeaveOut(waits, now)
+      for (const id of out) {
+        leftOut.current.add(id)
+        shortSince.current.delete(id)
+      }
+      if (out.length > 0) showLeftOut()
+      if (!waits.every(wait => wait.ready || out.includes(wait.id))) {
+        return false
+      }
+      // From where the heard tile actually is, which is never moved: starting
+      // from the clock's last reading instead moved every tile on each
+      // restart, and on a phone every move is a moment of buffering.
+      const waited = awaited(instant, finished)
+      const from = waited.find(video => video.id === heardId) ?? waited[0]
+      const fromElement = from == null ? null : elements.current.get(from.id)
+      const there =
+        from == null || fromElement == null
+          ? null
+          : wallAt(from, fromElement.currentTime)
+      const startAt =
+        there != null && Math.abs(there - instant) < 3000 ? there : instant
+      if (startAt !== instant) {
+        atWallRef.current = startAt
+        setAtWallMs(startAt)
+      }
+      flowing.current = true
+      shortSince.current.clear()
+      // A stall recorded while everybody was held is forgotten: what it
+      // measured was the hold.
+      setTiles(current => {
+        if (Object.values(current).every(tile => tile.stalledSince == null)) {
+          return current
+        }
+        const next: Record<string, TileState> = {}
+        for (const [id, tile] of Object.entries(current)) {
+          next[id] = { ...tile, stalledSince: null }
+        }
+        return next
+      })
+      frames.current.clear()
+      setWaiting(false)
+      alignTo(startAt, undefined, undefined, 'open')
+      return true
+    },
+    [alignTo, awaited, heardId]
+  )
+  gateRef.current = gate
+
+  /**
+   * Stops the grid the moment a tile it waits for is about to run dry,
+   * rather than letting that tile freeze on its own and the others play on
+   * past it.
+   */
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!playing || !flowing.current || slowFrame.current !== 0) return
+      const instant = atWallRef.current
+      if (instant == null) return
+      const now = Date.now()
+      const dry = awaited(instant).some(video => runningDry(video, now))
+      if (!dry) return
+      hold()
+      setWaiting(anyPicture())
+    }, DRY_CHECK_MS)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [anyPicture, awaited, hold, playing, runningDry])
 
   // The watchdog. Once a second, not once a frame: four tiles through Media
   // Source were measured holding to 17 ms of each other over ten minutes, so
@@ -597,7 +1037,7 @@ export function useMultiCam(
       const now = Date.now()
 
       /** What each tile is doing, for `?debug=1`. */
-      const showReadout = (clockMs: number): void => {
+      const showReadout = (clockMs: number, ceiling: number): void => {
         const lines = chosen.map(video => {
           const element = elements.current.get(video.id)
           const tile = tiles[video.id]
@@ -612,11 +1052,13 @@ export function useMultiCam(
             `ready ${element.readyState}  ` +
             `at ${element.currentTime.toFixed(1)}  ` +
             `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
-            (tile?.parked != null ? `  parked ${tile.parked}` : '')
+            (tile?.parked != null ? `  parked ${tile.parked}` : '') +
+            (leftOut.current.has(video.id) ? '  left out' : '')
           )
         })
         lines.push(
-          `clock ${((clockMs - (takeRef.current?.fromMs ?? clockMs)) / 1000).toFixed(1)}s`
+          `clock ${((clockMs - (takeRef.current?.fromMs ?? clockMs)) / 1000).toFixed(1)}s  ` +
+            `${flowing.current ? 'playing' : 'held'}  ahead ≤ ${ceiling.toFixed(0)}s`
         )
         setReadout(lines)
       }
@@ -626,6 +1068,8 @@ export function useMultiCam(
       // — and never before a tile has any pictures at all, because a tile that
       // is still opening its source has not stalled, it has not started.
       const finishedNow = new Map<string, boolean>()
+      /** Which tiles this tick found stuck, before React has re-rendered. */
+      const stuckNow = new Map<string, boolean>()
       for (const video of chosen) {
         const tileElement = elements.current.get(video.id)
         if (tileElement == null) continue
@@ -651,6 +1095,7 @@ export function useMultiCam(
             progressed,
             unchangedForMs: WATCHDOG_MS
           })
+        stuckNow.set(video.id, stalled)
         // Worked out here rather than inside the state updater below, which
         // React may run later or twice: the rest of this tick reads it.
         const finished = isFinished({
@@ -763,56 +1208,59 @@ export function useMultiCam(
         wallMs = Math.min(instant + WATCHDOG_MS, end ?? Number.MAX_SAFE_INTEGER)
       }
 
+      // How far ahead the browser tiles may load, from how full the emptiest
+      // of them is. Tiles that have been left out count most: they are the
+      // ones the line should be feeding.
+      const ceiling = ceilingSec(
+        covering
+          .filter(tile => tile.playable)
+          .map(tile => bufferOf(elements.current.get(tile.id)))
+      )
+      for (const control of controls.current.values()) {
+        control.setAheadSec(ceiling)
+      }
+
+      // A tile that was left out joins in once it holds enough where the game
+      // is now.
+      let rejoined = false
+      for (const id of [...leftOut.current]) {
+        const video = chosen.find(one => one.id === id)
+        const ready =
+          video != null &&
+          instant != null &&
+          isReady(bufferAt(video, elements.current.get(id), instant))
+        if (video != null && !ready) continue
+        leftOut.current.delete(id)
+        rejoined = true
+      }
+      if (rejoined) showLeftOut()
+
       /**
-       * Waiting: somebody's camera covers this moment and none of them is
-       * managing to draw it.
+       * Waiting: a tile the grid waits for is short of pictures, or somebody's
+       * camera covers this moment and none of them is managing to draw it.
        *
        * Said out loud, because still pictures with no explanation is the state
-       * a viewer cannot diagnose. And **held**, not merely announced: the clock
-       * has stopped, so a tile that is somehow still playing must stop with it
-       * or it walks away from the moment the bar is showing. Without the hold a
-       * mis-judged stall left a sharp picture running on half a minute past a
-       * frozen clock, with no way back but another scrub.
+       * a viewer cannot diagnose. And **held**, every tile where it is, until
+       * every one of them holds a few seconds (`buffering.ts`). Letting them
+       * go the moment each had its next frame started them with nothing in
+       * hand, so the first to run dry stopped them all again a moment later:
+       * a stutter that never settled.
        */
       const waitingNow = playing && covering.length > 0 && showing.length === 0
-      setWaiting(waitingNow)
-      // Drawn while waiting too: a grid that is stuck is exactly when the
-      // numbers are wanted.
-      if (debug && waitingNow && instant != null) showReadout(instant)
-      if (waitingNow) {
-        const backAgain = covering.every(
-          tile => (elements.current.get(tile.id)?.readyState ?? 0) >= 3
+      if (playing && instant != null) {
+        const dry = awaited(instant, finishedNow).some(video =>
+          runningDry(video, now)
         )
-        if (!backAgain) {
-          for (const tile of covering) {
-            const held = elements.current.get(tile.id)
-            if (held == null || held.paused) continue
-            intents.current.set(tile.id, false)
-            held.pause()
-          }
+        if (flowing.current && (waitingNow || dry)) hold()
+        if (!flowing.current) {
+          if (gate(instant, finishedNow)) return
+          hold()
+          setWaiting(anyPicture())
+          if (debug) showReadout(instant, ceiling)
           return
         }
-        // The pictures are back. Put them on the moment the clock stopped at
-        // and let them go, with the stall forgotten.
-        setTiles(current => {
-          const next: Record<string, TileState> = {}
-          for (const [id, tile] of Object.entries(current)) {
-            next[id] = { ...tile, stalledSince: null }
-          }
-          return next
-        })
-        frames.current.clear()
-        if (instant != null) {
-          alignTo(instant)
-          for (const tile of covering) {
-            const back = elements.current.get(tile.id)
-            if (back == null) continue
-            intents.current.set(tile.id, true)
-            back.play().catch(() => undefined)
-          }
-        }
-        return
       }
+      setWaiting(false)
 
       if (wallMs == null) return
 
@@ -825,15 +1273,35 @@ export function useMultiCam(
           (showing.length === 0 && end != null && wallMs >= end - 1000)
       )
 
-      if (debug) showReadout(wallMs)
+      if (debug) showReadout(wallMs, ceiling)
 
       setAtWallMs(wallMs)
-      alignTo(wallMs)
+      // A master that has stopped drawing is not a clock to pull everybody
+      // back to. Aligning to it put the others back a second on every tick
+      // until it was handed over — three healthy pictures jerking backwards
+      // for the one that was stuck. They play on instead, and are put back on
+      // it in one step when it moves again, or follow whoever takes over.
+      const leaderStuck = leader != null && stuckNow.get(leader) === true
+      if (!leaderStuck) alignTo(wallMs, undefined, undefined, 'settle')
     }, WATCHDOG_MS)
     return () => {
       clearInterval(timer)
     }
-  }, [alignTo, debug, heardId, names, placeables, playing, chosen, tiles])
+  }, [
+    alignTo,
+    anyPicture,
+    awaited,
+    debug,
+    gate,
+    heardId,
+    hold,
+    names,
+    placeables,
+    playing,
+    runningDry,
+    chosen,
+    tiles
+  ])
 
   /**
    * The address follows the moment, every few seconds.
@@ -857,14 +1325,27 @@ export function useMultiCam(
     }
   }, [])
 
-  /** A seek the viewer asked for: every tile, at once, to one instant. */
+  /**
+   * A seek the viewer asked for: every tile, at once, to one instant.
+   *
+   * A step within what the tiles already hold plays straight on. One beyond
+   * it holds the grid until every tile has filled at the new place, rather
+   * than starting each the moment it has a frame.
+   */
   const goTo = useCallback(
     (wallMs: number): void => {
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
+      shortSince.current.clear()
+      if (flowing.current) {
+        const held = awaited(wallMs).map(video =>
+          bufferAt(video, elements.current.get(video.id), wallMs)
+        )
+        if (!canStart(held)) flowing.current = false
+      }
       alignTo(wallMs)
     },
-    [alignTo]
+    [alignTo, awaited]
   )
 
   const toggle = useCallback((): void => {
@@ -874,13 +1355,16 @@ export function useMultiCam(
         const element = elements.current.get(video.id)
         if (element == null) continue
         if (tiles[video.id]?.parked != null) continue
-        intents.current.set(video.id, next)
-        if (next) element.play().catch(() => undefined)
+        // A grid that is still filling, or a tile left out, plays when the
+        // watchdog lets it.
+        const run = next && flowing.current && !leftOut.current.has(video.id)
+        intents.current.set(video.id, run)
+        if (run) playTile(element)
         else element.pause()
       }
       return next
     })
-  }, [chosen, tiles])
+  }, [chosen, playTile, tiles])
 
   /**
    * A quarter speed, forwards, by moving the clock — in silence.
@@ -1136,6 +1620,14 @@ export function useMultiCam(
   ): boolean => {
     const state = pressOf(pointerId)
     if (state == null) return false
+    // Inside the touch, which is the one moment iOS lets the sound back on:
+    // unmuted any other time, a playing video is paused instead.
+    if (soundBlockedRef.current) {
+      const heard = heardId == null ? null : elements.current.get(heardId)
+      if (heard != null) heard.muted = false
+      soundBlockedRef.current = false
+      setSoundBlocked(false)
+    }
     press.current = null
     if (state.timer != null) clearTimeout(state.timer)
     if (state.held) {
@@ -1247,6 +1739,21 @@ export function useMultiCam(
     onChange({ order: [...next, ...rest] })
   }
 
+  /**
+   * What a browser tile's source is told: start by loading `LEAD_SEC` ahead,
+   * and hand the watchdog the control that moves it from there.
+   */
+  const bufferFor = useCallback(
+    (id: string): PlayIntent['buffer'] => ({
+      aheadSec: LEAD_SEC,
+      onControl: control => {
+        if (control == null) controls.current.delete(id)
+        else controls.current.set(id, control)
+      }
+    }),
+    []
+  )
+
   return {
     chosen,
     names,
@@ -1257,6 +1764,7 @@ export function useMultiCam(
     readout,
     ended,
     waiting,
+    soundBlocked,
     heardId,
     rects,
     shownRects,
@@ -1296,8 +1804,10 @@ export function useMultiCam(
           (video.durationSec ?? (window.toMs - window.fromMs) / 1000) * 1000
       })),
     tileWaiting: (id: string): boolean =>
-      tiles[id]?.stalledSince != null &&
-      holdExpired(Date.now() - (tiles[id]?.stalledSince ?? 0))
+      outIds.has(id) ||
+      (tiles[id]?.stalledSince != null &&
+        holdExpired(Date.now() - (tiles[id]?.stalledSince ?? 0))),
+    bufferFor
   }
 }
 
@@ -1331,23 +1841,43 @@ function mediaLengthOf(element: TileHandle): number | null {
   return Math.min(declared, seekable)
 }
 
-/**
- * Seconds of stream ahead of where a tile is playing.
- *
- * The range it is *in*, not the furthest one buffered: a tile that has been
- * seeked holds a stretch it is nowhere near, and counting that as its lead is
- * how a starving tile looks comfortable.
- */
-function bufferAhead(element: TileHandle): number {
+/** Seconds of stream ahead of where a tile is playing (`heldAhead`). */
+function bufferAhead(element: TileHandle, at = element.currentTime): number {
   const ranges = element.buffered
   if (ranges == null) return 0
-  const at = element.currentTime
+  const held: Array<[number, number]> = []
   for (let index = 0; index < ranges.length; index++) {
-    if (ranges.start(index) <= at && at <= ranges.end(index)) {
-      return ranges.end(index) - at
-    }
+    held.push([ranges.start(index), ranges.end(index)])
   }
-  return 0
+  return heldAhead(held, at)
+}
+
+/**
+ * What a tile has in hand, measured from `atSec` — where it is playing, unless
+ * the caller is about to put it somewhere else.
+ *
+ * A tile with no element has nothing; one whose player does not say how much
+ * it holds (a phone's) answers with its `readyState` alone.
+ */
+function bufferOf(element: TileHandle | undefined, atSec?: number): TileBuffer {
+  if (element == null) return { aheadSec: 0, leftSec: null, readyState: 0 }
+  const at = atSec ?? element.currentTime
+  const end = mediaLengthOf(element)
+  return {
+    aheadSec: element.buffered == null ? null : bufferAhead(element, at),
+    leftSec: end == null ? null : Math.max(0, end - at),
+    readyState: element.readyState
+  }
+}
+
+/** What a tile holds at the place the game is, at this instant. */
+function bufferAt(
+  video: VideoSummary,
+  element: TileHandle | undefined,
+  instant: number
+): TileBuffer {
+  const target = secondsAt(video, instant)
+  return bufferOf(element, target != null && target >= 0 ? target : undefined)
 }
 
 /**

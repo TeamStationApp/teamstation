@@ -11,6 +11,8 @@ import type { VideoHandle } from '../videoHandle'
  */
 export interface TileHandle extends VideoHandle {
   readonly ended?: boolean
+  /** Still moving to where it was last sent; a browser says, a phone does not. */
+  readonly seeking?: boolean
   readonly seekable?: { length: number; end: (index: number) => number }
   readonly buffered?: {
     length: number

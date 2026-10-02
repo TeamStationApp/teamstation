@@ -87,6 +87,7 @@ export const enUs = {
   angles_unplaceable:
     'This recording has no start time, so it cannot be held in step with the others.',
   angles_waiting: 'Waiting for the pictures to catch up…',
+  angles_tap_for_sound: 'Tap for sound',
   angles_tile_loading: 'Camera loading…',
   angles_tile_catching_up: 'Camera catching up…',
   angles_close: 'Close',
