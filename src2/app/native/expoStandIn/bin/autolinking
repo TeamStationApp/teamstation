@@ -1,5 +1,0 @@
-#!/usr/bin/env node
-
-// Expo's native tooling runs `require('expo/bin/autolinking')`, and in the
-// real `expo` package this is the same one line. See src2/MOBILE.md.
-require('expo-modules-autolinking/bin/expo-modules-autolinking')

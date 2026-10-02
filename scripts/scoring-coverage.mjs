@@ -11,7 +11,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const includes = JSON.parse(
-  readFileSync('src2/test/scoringCoveragePaths.json', 'utf8')
+  readFileSync('src/test/scoringCoveragePaths.json', 'utf8')
 )
 console.log('Scoring coverage includes:', includes.join('\n'))
 const temp = resolve('coverage/tmp')
@@ -23,11 +23,11 @@ const test = spawnSync(
     '-r',
     'sucrase/register',
     '-r',
-    './src2/test/scoringDomSetup.cjs',
+    './src/test/scoringDomSetup.cjs',
     '--extension',
     'ts',
     '--spec',
-    'src2/**/*.test.ts',
+    'src/**/*.test.ts',
     '--spec',
     'lib/scoring-tests.cjs',
     '--ignore',
@@ -65,7 +65,7 @@ const report = spawnSync(
     '--exclude',
     '**/*.e2e.ts',
     '--exclude',
-    'src2/test/**',
+    'src/test/**',
     '--exclude-after-remap'
   ],
   { stdio: 'inherit' }
@@ -75,7 +75,7 @@ process.exitCode = test.status !== 0 ? (test.status ?? 1) : (report.status ?? 1)
 const summary = JSON.parse(
   readFileSync('coverage/coverage-summary.json', 'utf8')
 )
-const screen = summary[resolve('src2/app/screens/GameScreen.tsx')]
+const screen = summary[resolve('src/app/screens/GameScreen.tsx')]
 if (
   screen == null ||
   screen.functions.total === 0 ||
@@ -95,7 +95,7 @@ const { coverageSources } = createRequire(import.meta.url)(
 // Everything after it is this work.
 const base =
   process.env.GS_COVERAGE_BASE ??
-  JSON.parse(readFileSync('src2/test/scoringCoverageBase.json', 'utf8')).base
+  JSON.parse(readFileSync('src/test/scoringCoverageBase.json', 'utf8')).base
 const { paths, untracked } = coverageSources(base)
 
 let covered = 0
@@ -124,7 +124,7 @@ if (changedPercent < 90) process.exitCode = 1
 let libraryCovered = 0
 let libraryTotal = 0
 for (const [path, entry] of Object.entries(summary)) {
-  if (!path.startsWith(resolve('src2/common/scoring') + '/')) continue
+  if (!path.startsWith(resolve('src/common/scoring') + '/')) continue
   console.log(
     `  ${path.slice(resolve('.').length + 1)}: ${entry.lines.pct}% (${entry.lines.covered}/${entry.lines.total})`
   )
@@ -145,24 +145,27 @@ if (changedBase != null) {
   )
   const diff = spawnSync(
     'git',
-    [
-      'diff',
-      '--diff-filter=d',
-      '--unified=0',
-      changedBase,
-      '--',
-      'src2/app',
-      'src2/common',
-      'src2/server/stats',
-      'src2/server/statsBuilder',
-      'src2/server/dev/refoldScoredGames.ts',
-      'src2/server/dev/validateGumbo.ts'
-    ],
+    ['diff', '--diff-filter=d', '--unified=0', '--find-renames', changedBase],
     // The checked-in MLB reference files alone pass spawnSync's 1 MB default.
     { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }
   )
   if (diff.status !== 0) throw new Error(diff.stderr)
-  const changes = changedLines(diff.stdout)
+  // The whole tree with rename detection, then these roots: given only the
+  // roots, git cannot pair a moved file with its old path and would count
+  // every line of it as changed.
+  const roots = [
+    'src/app/',
+    'src/common/',
+    'src/server/stats/',
+    'src/server/statsBuilder/',
+    'src/server/dev/refoldScoredGames.ts',
+    'src/server/dev/validateGumbo.ts'
+  ]
+  const changes = Object.fromEntries(
+    Object.entries(changedLines(diff.stdout)).filter(([path]) =>
+      roots.some(root => path === root || path.startsWith(root))
+    )
+  )
   for (const path of untracked)
     changes[path] = new Set(
       readFileSync(path, 'utf8')

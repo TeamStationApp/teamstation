@@ -16,9 +16,9 @@ const client = process.env.MAESTRO_D_CLIENT_ROOT
 const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
-const { initialHitTarget } = require('../src2/app/field/trajectoryGuide')
-const { applyFieldCamera } = require('../src2/app/field/cameraModel')
-const { createPlayers } = require('../src2/app/field/fieldModel')
+const { initialHitTarget } = require('../src/app/field/trajectoryGuide')
+const { applyFieldCamera } = require('../src/app/field/cameraModel')
+const { createPlayers } = require('../src/app/field/fieldModel')
 const defender = Object.fromEntries(
   createPlayers().map(player => [player.id, player.position])
 )

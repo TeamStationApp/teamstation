@@ -1,7 +1,7 @@
 pluginManagement {
   includeBuild("../node_modules/@react-native/gradle-plugin")
   // Expo's Gradle plugins, from expo-modules-autolinking; the `expo` package
-  // is not installed (src2/MOBILE.md says why).
+  // is not installed (src/MOBILE.md says why).
   includeBuild("../node_modules/expo-modules-autolinking/android/expo-gradle-plugin")
 }
 plugins {

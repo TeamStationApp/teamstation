@@ -5,11 +5,11 @@ import { copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { lookup } from 'node:dns/promises'
 import { inflateSync } from 'node:zlib'
 
-import { NO_OVERRIDES } from '../../../../src2/common/scoreboard'
+import { NO_OVERRIDES } from '../../../../src/common/scoreboard'
 import {
   override as overrideOver,
   publish as publishOver
-} from '../../../../src2/test/scoreboardPublish.e2e'
+} from '../../../../src/test/scoreboardPublish.e2e'
 import { attach, flatten } from '../../../test/maestroD'
 
 /**

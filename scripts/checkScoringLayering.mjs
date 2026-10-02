@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
- * Holds the scoring library to its layering. Nothing under src2/common/scoring
+ * Holds the scoring library to its layering. Nothing under src/common/scoring
  * imports the app or the server, and the app imports only the parts of the
  * library that describe a game and ask about it — never the parts that change
  * one or store one: `apply`, `gumbo`, and `document`, which alone writes a
@@ -18,7 +18,7 @@ export const APP_MAY_IMPORT = [
   'rules',
   'scoreboardOf'
 ]
-const LIBRARY = 'src2/common/scoring'
+const LIBRARY = 'src/common/scoring'
 
 function sources(dir) {
   const out = []
@@ -42,8 +42,8 @@ function imports(text) {
 export function checkLayering(root) {
   const problems = []
   const library = resolve(root, LIBRARY)
-  const app = resolve(root, 'src2/app')
-  const server = resolve(root, 'src2/server')
+  const app = resolve(root, 'src/app')
+  const server = resolve(root, 'src/server')
   for (const file of sources(library)) {
     for (const spec of imports(readFileSync(file, 'utf8'))) {
       if (!spec.startsWith('.')) continue

@@ -13,7 +13,7 @@ import expo.modules.core.ModulePriorities
  * React Native.
  *
  * The `expo` package ships this class as `expo.modules.ExpoModulesPackage`.
- * That package is not installed (src2/MOBILE.md says why), so the app carries
+ * That package is not installed (src/MOBILE.md says why), so the app carries
  * the same few lines, over the list `expo-autolinking` generates for it.
  */
 class ExpoModulesPackage : ReactPackage {

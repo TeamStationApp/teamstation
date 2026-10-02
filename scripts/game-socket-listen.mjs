@@ -6,7 +6,7 @@
 //     --email m@example.com --password '...' --game gam_g2 [--game ...]
 //
 // Signs in with --email and --password (or uses --token, or GS_TOKEN), then
-// subscribes through the app's own client, `src2/common/gameSocket.ts`, so a
+// subscribes through the app's own client, `src/common/gameSocket.ts`, so a
 // dropped connection reconnects, subscribes again and prints the `resync` the
 // screens would get. --no-token connects with no credentials at all, and
 // --once exits after the first close or refusal instead of reconnecting.
@@ -21,7 +21,7 @@ import WebSocket from 'ws'
 
 const require = createRequire(import.meta.url)
 require('sucrase/register')
-const { GameSocket } = require('../src2/common/gameSocket.ts')
+const { GameSocket } = require('../src/common/gameSocket.ts')
 
 const { values } = parseArgs({
   options: {
