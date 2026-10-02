@@ -11,6 +11,7 @@ import {
 import { ThemeProvider } from '../../theme/ThemeContext'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
+import { JOIN_LEAD_SEC } from './align'
 import { tileRects } from './layout'
 import {
   type MultiCam,
@@ -31,6 +32,8 @@ class FakeTile implements TileHandle {
   videoWidth = 1920
   videoHeight = 1080
   ended = false
+  /** Left unset, the tile does not say how much it holds, as on a phone. */
+  buffered?: TileHandle['buffered']
   async play(): Promise<void> {
     this.paused = false
   }
@@ -75,10 +78,28 @@ afterEach(async function () {
   host = undefined
 })
 
+/** Says the tile holds these stretches of its recording, in seconds. */
+function fill(tile: FakeTile, ...ranges: Array<[number, number]>): void {
+  tile.buffered = {
+    length: ranges.length,
+    start: index => ranges[index][0],
+    end: index => ranges[index][1]
+  }
+}
+
+/** Lets the watchdog look this many times. */
+async function ticks(count: number): Promise<void> {
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, count * 1000 + 100))
+  })
+}
+
 /** The grid, mounted, with its two tiles handed over and placed. */
 async function grid(
   patch: Partial<MultiCamProps> = {},
-  options: Partial<MultiCamOptions> = {}
+  options: Partial<MultiCamOptions> = {},
+  /** Done to the tiles before they are handed over. */
+  before: (tiles: Record<string, FakeTile>) => void = () => undefined
 ): Promise<{
   mc: () => MultiCam
   tiles: Record<string, FakeTile>
@@ -130,6 +151,7 @@ async function grid(
     return latest
   }
   const tiles = { A: new FakeTile(), B: new FakeTile() }
+  before(tiles)
   await act(async () => {
     for (const [id, tile] of Object.entries(tiles)) {
       mc().takeElement(id)(tile)
@@ -446,5 +468,299 @@ describe('useMultiCam', function () {
       mc().pressCancel(2)
     })
     expect(tiles.A.currentTime).equals(120)
+  })
+})
+
+describe('useMultiCam buffering', function () {
+  // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
+
+  it('holds every tile until each holds five seconds, then plays them together', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 123])
+      fill(tiles.B, [60, 70])
+    })
+    expect(tiles.A.paused).equals(true)
+    expect(tiles.B.paused).equals(true)
+    await ticks(1)
+    expect(mc().waiting).equals(true)
+    expect(tiles.B.paused).equals(true)
+
+    fill(tiles.A, [120, 126])
+    await ticks(1)
+    expect(mc().waiting).equals(false)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused).equals(false)
+  })
+
+  it('stops every tile the moment one is about to run dry, and starts them once it has filled', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 180])
+      fill(tiles.B, [60, 120])
+    })
+    expect(tiles.A.paused).equals(false)
+
+    fill(tiles.B, [60, 60.3])
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400))
+    })
+    expect(tiles.A.paused).equals(true)
+    expect(tiles.B.paused).equals(true)
+    expect(mc().waiting).equals(true)
+
+    // Back to a second: still not enough to go again.
+    fill(tiles.B, [60, 61])
+    await ticks(1)
+    expect(tiles.A.paused).equals(true)
+
+    fill(tiles.B, [60, 66])
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused).equals(false)
+    expect(mc().waiting).equals(false)
+  })
+
+  it('stops the clock where the tiles stopped, and starts again from there', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 180])
+      fill(tiles.B, [60, 120])
+    })
+    // They play on past the clock's last reading before B runs short.
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    fill(tiles.B, [60, 61])
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400))
+    })
+    expect(tiles.A.paused).equals(true)
+    expect(mc().atWallMs).equals(T0 + 120_800)
+
+    fill(tiles.B, [60, 70])
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.A.currentTime).equals(120.8)
+    expect(tiles.B.currentTime).equals(60.8)
+  })
+
+  it('forgives a phone tile buffering while it joins, and no longer', async function () {
+    this.timeout(9000)
+    // Phone tiles: no `buffered`, only whether the player is ready.
+    const { mc, tiles } = await grid()
+    expect(tiles.A.paused).equals(false)
+    // Past the first look, which finds both still landing from being placed.
+    await ticks(1)
+    // B is too far out to close by speed: it is sent just ahead to wait, and
+    // its player buffers there.
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 58
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(61 + JOIN_LEAD_SEC)
+    tiles.B.readyState = 2
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400))
+    })
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
+
+    // Still buffering once it has started and had its moment: running dry.
+    await act(async () => {
+      await new Promise(resolve =>
+        setTimeout(resolve, JOIN_LEAD_SEC * 2000 + 300)
+      )
+    })
+    expect(tiles.A.paused).equals(true)
+  })
+
+  it('brings a tile a little out back by speed, and starts one far out on the moment', async function () {
+    this.timeout(8000)
+    const { tiles } = await grid()
+    await ticks(1)
+    // Half a second behind: it runs faster, and is not moved.
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 60.5
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(60.5)
+    expect(tiles.B.playbackRate).closeTo(1.1, 1e-9)
+    // The heard tile is the clock, and is never sped up.
+    expect(tiles.A.playbackRate).equals(1)
+
+    // Back on the moment: normal speed again.
+    tiles.A.currentTime = 122
+    tiles.B.currentTime = 62
+    await ticks(1)
+    expect(tiles.B.playbackRate).equals(1)
+
+    // Three seconds out is too far to close by speed: it is sent just ahead,
+    // held on that picture, and started when the game reaches it.
+    tiles.A.currentTime = 123
+    tiles.B.currentTime = 60
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(63 + JOIN_LEAD_SEC)
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.playbackRate).equals(1)
+    // Not before the game reaches its picture…
+    tiles.A.currentTime = 124
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    })
+    expect(tiles.B.paused).equals(true)
+    // …and on it once it does.
+    tiles.A.currentTime = 123 + JOIN_LEAD_SEC
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    })
+    expect(tiles.B.paused).equals(false)
+    expect(tiles.B.currentTime).equals(63 + JOIN_LEAD_SEC)
+  })
+
+  it('sends a joining tile further ahead when the game passes it before it is ready', async function () {
+    this.timeout(8000)
+    const { tiles } = await grid()
+    await ticks(1)
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 58
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(61 + JOIN_LEAD_SEC)
+    // Its player is still landing when the game gets there, and after.
+    tiles.B.readyState = 2
+    tiles.A.currentTime = 121 + JOIN_LEAD_SEC + 0.5
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    })
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).equals(
+      61 + JOIN_LEAD_SEC + 0.5 + 2 * JOIN_LEAD_SEC
+    )
+  })
+
+  it('plays the heard tile without sound when the browser refuses it, and gives it back on a tap', async function () {
+    // iOS Safari: a video with sound plays only when a touch starts it.
+    const strict = (tile: FakeTile): void => {
+      tile.play = async function (this: FakeTile) {
+        if (!this.muted) {
+          const refused = new Error('needs a gesture')
+          refused.name = 'NotAllowedError'
+          throw refused
+        }
+        this.paused = false
+      }
+    }
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      strict(tiles.A)
+      tiles.B.muted = true
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.A.muted).equals(true)
+    expect(mc().soundBlocked).equals(true)
+
+    await act(async () => {
+      mc().pressStart(1, 10, 10)
+      mc().pressEnd(1, true, 10, 10)
+    })
+    expect(tiles.A.muted).equals(false)
+    expect(mc().soundBlocked).equals(false)
+  })
+
+  it('plays a step within what the tiles hold straight on, and holds one beyond it', async function () {
+    const { tiles, mc } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 180])
+      fill(tiles.B, [60, 120])
+    })
+    await act(async () => {
+      mc().goTo(T0 + 130_000)
+    })
+    expect(tiles.A.currentTime).equals(130)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused).equals(false)
+
+    await act(async () => {
+      mc().goTo(T0 + 400_000)
+    })
+    expect(tiles.A.currentTime).equals(400)
+    expect(tiles.A.paused).equals(true)
+    expect(tiles.B.paused).equals(true)
+  })
+
+  it('leaves a tile that arrives while the others play out until it has filled', async function () {
+    this.timeout(7000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 180])
+      fill(tiles.B, [60, 120])
+    })
+    // B's player is handed a new source: it starts with nothing.
+    const fresh = new FakeTile()
+    fill(fresh)
+    await act(async () => {
+      mc().takeElement('B')(fresh)
+      mc().attached('B', fresh, mc().attaching('B'))
+    })
+    expect(fresh.paused).equals(true)
+    expect(tiles.A.paused).equals(false)
+    expect(mc().tileWaiting('B')).equals(true)
+
+    // The master plays on, as a real one does.
+    tiles.A.currentTime = 121
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    expect(fresh.paused).equals(true)
+
+    tiles.A.currentTime = 122
+    fill(fresh, [60, 70])
+    await ticks(1)
+    // It joins just ahead of the moment, and starts when the game gets there.
+    expect(mc().tileWaiting('B')).equals(false)
+    expect(fresh.currentTime).equals(62 + JOIN_LEAD_SEC)
+    expect(fresh.paused).equals(true)
+    tiles.A.currentTime = 122 + JOIN_LEAD_SEC
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    })
+    expect(fresh.paused).equals(false)
+  })
+
+  it('feeds the emptiest tile by holding the others back', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 128])
+      fill(tiles.B, [60, 100])
+    })
+    const asked: Record<string, number[]> = { A: [], B: [] }
+    await act(async () => {
+      for (const id of ['A', 'B']) {
+        mc()
+          .bufferFor(id)
+          ?.onControl?.({
+            setAheadSec: seconds => asked[id].push(seconds)
+          })
+      }
+    })
+    await ticks(1)
+    // A holds 8 s, so neither may load past 18 s: B, at 40, stops asking
+    // and the line goes to A.
+    expect(asked.A.at(-1)).equals(18)
+    expect(asked.B.at(-1)).equals(18)
+
+    fill(tiles.A, [120, 175])
+    await ticks(1)
+    expect(asked.A.at(-1)).equals(50)
+    expect(tiles.A.paused).equals(false)
+  })
+
+  it('does not pull the others back to a master that has stopped drawing', async function () {
+    this.timeout(5000)
+    const { tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 180])
+      fill(tiles.B, [60, 120])
+    })
+    await ticks(1)
+    // A, the master, is frozen at 120 s while B plays on.
+    tiles.B.currentTime = 62
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(62)
   })
 })

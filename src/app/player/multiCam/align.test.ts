@@ -12,6 +12,8 @@ import {
   isOurSilence,
   liveTargetMs,
   masterOf,
+  NUDGE_LIMIT,
+  nudgeRate,
   type Placeable,
   worthCorrecting
 } from './align'
@@ -259,5 +261,23 @@ describe('four live edges', function () {
   it('ignore tiles that have no edge to offer', function () {
     expect(liveTargetMs([null, 4000, null])).equals(4000)
     expect(liveTargetMs([null, null])).equals(null)
+  })
+})
+
+describe('bringing a phone tile back by speed', function () {
+  it('runs at normal speed within the tolerance', function () {
+    expect(nudgeRate(0)).equals(1)
+    expect(nudgeRate(0.08)).equals(1)
+    expect(nudgeRate(-0.1)).equals(1)
+  })
+
+  it('runs faster when behind and slower when ahead, in proportion', function () {
+    expect(nudgeRate(0.5)).closeTo(1.1, 1e-9)
+    expect(nudgeRate(-0.25)).closeTo(0.95, 1e-9)
+  })
+
+  it('never moves the speed further than the limit', function () {
+    expect(nudgeRate(1)).equals(1 + NUDGE_LIMIT)
+    expect(nudgeRate(-3)).equals(1 - NUDGE_LIMIT)
   })
 })

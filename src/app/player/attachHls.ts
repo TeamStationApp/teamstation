@@ -1,6 +1,7 @@
 import Hls from 'hls.js'
 
-import type { PlayIntent } from './playIntent'
+import { BEHIND_SEC } from './multiCam/buffering'
+import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
 
@@ -58,19 +59,23 @@ export function attachHls(
 
   // `maxBufferLength` is where hls.js starts, not where it stops: it loads
   // whenever the buffer is shorter than this and grows the target from there
-  // as bandwidth allows. A ceiling needs the other two as well.
+  // as bandwidth allows, up to `maxMaxBufferLength`. A ceiling is the two set
+  // to the same number.
   const limit = intent?.buffer
   const hls = new Hls({
     // A game is watched by seeking around it, not straight through, so there
     // is no point buffering minutes ahead of a position about to change.
-    maxBufferLength: limit?.seconds ?? 30,
-    ...(limit == null
-      ? {}
-      : {
-          maxMaxBufferLength: limit.seconds,
-          maxBufferSize: limit.megabytes * 1024 * 1024
-        })
+    maxBufferLength: limit?.aheadSec ?? 30,
+    ...(limit == null ? {} : { maxMaxBufferLength: limit.aheadSec }),
+    // Left to itself hls.js keeps every second already played, and a long
+    // game fills the browser's quota with the past until it refuses the
+    // future. Two steps of ten seconds back still come from memory.
+    backBufferLength: BEHIND_SEC
   })
+
+  if (limit?.onControl != null) {
+    limit.onControl(aheadControl(hls.config, limit.aheadSec))
+  }
 
   /**
    * A live game is watched while it is being written, and the writer is
@@ -181,6 +186,33 @@ export function attachHls(
     if (timer != null) clearTimeout(timer)
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
+    limit?.onControl?.(null)
     hls.destroy()
+  }
+}
+
+/**
+ * Moves a running hls.js player's limit on how far ahead it loads.
+ *
+ * hls.js reads both numbers afresh on every tick, so writing them is enough.
+ * When an append is refused for want of room, hls.js halves its own
+ * ceiling; putting the old one back on the next call would only be refused
+ * again, so a cut it made stands as the new top.
+ */
+export function aheadControl(
+  config: { maxBufferLength: number; maxMaxBufferLength: number },
+  startSec: number
+): BufferControl {
+  let roomSec = Number.POSITIVE_INFINITY
+  let askedSec = startSec
+  return {
+    setAheadSec: seconds => {
+      if (config.maxMaxBufferLength < askedSec) {
+        roomSec = config.maxMaxBufferLength
+      }
+      askedSec = Math.min(seconds, roomSec)
+      config.maxBufferLength = askedSec
+      config.maxMaxBufferLength = askedSec
+    }
   }
 }

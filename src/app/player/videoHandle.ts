@@ -96,5 +96,8 @@ export interface VideoHandle {
 /** `HAVE_METADATA`: the length is known, so a seek will land where it is told. */
 export const HAVE_METADATA = 1
 
+/** `HAVE_CURRENT_DATA`: there is a picture, and nothing behind it yet. */
+export const HAVE_CURRENT_DATA = 2
+
 /** `HAVE_ENOUGH_DATA`: there is a picture, and more behind it. */
 export const HAVE_ENOUGH_DATA = 4

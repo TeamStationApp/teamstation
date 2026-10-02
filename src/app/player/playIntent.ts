@@ -19,7 +19,7 @@ export interface PlayIntent {
    */
   wantsToPlay: () => boolean
   /**
-   * How much this player may run ahead, for a caller driving several at once.
+   * How far ahead this player may load, for a caller driving several at once.
    *
    * Left out, hls.js is allowed what it likes, which is the right answer for
    * one player: it asks for 30 seconds, then grows the target as the line
@@ -30,8 +30,18 @@ export interface PlayIntent {
    * seconds the four spend the opening minutes starving each other, which is
    * how a camera stops drawing and takes the sound down with it.
    *
-   * So a grid says what it may have, and the four together ask for less than
-   * the single player does on its own.
+   * So a grid starts each player at `aheadSec` and moves the limit itself
+   * while they play, through the control handed to `onControl`: raised as the
+   * slowest of them fills, lowered on the ones that have got ahead.
    */
-  buffer?: { seconds: number; megabytes: number }
+  buffer?: {
+    aheadSec: number
+    /** Called with the control once the player exists, and null when it goes. */
+    onControl?: (control: BufferControl | null) => void
+  }
+}
+
+/** Moves a running player's limit on how far ahead it loads. */
+export interface BufferControl {
+  setAheadSec: (seconds: number) => void
 }

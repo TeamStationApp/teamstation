@@ -82,6 +82,28 @@ describe('NativeVideoHandle', function () {
     expect(handle.readyState).equals(0)
   })
 
+  it('drops back while its player is buffering, and says when it has enough again', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    let canPlay = 0
+    handle.addEventListener('canplay', () => {
+      canPlay += 1
+    })
+    // Still opening: buffering says nothing about a picture it never had.
+    handle.handleBuffer({ isBuffering: true })
+    expect(handle.readyState).equals(0)
+    handle.handleReadyForDisplay()
+    expect(handle.readyState).equals(4)
+    canPlay = 0
+    handle.handleBuffer({ isBuffering: true })
+    expect(handle.readyState).equals(2)
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(4)
+    expect(canPlay).equals(1)
+    // Already ready: nothing to say again.
+    handle.handleBuffer({ isBuffering: false })
+    expect(canPlay).equals(1)
+  })
+
   it('has ended once it plays to the end, until it is moved back', function () {
     const handle = new NativeVideoHandle(() => undefined)
     handle.attach(fakePlayer().ref)
