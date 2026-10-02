@@ -15,6 +15,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
+import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 
 /**
@@ -186,20 +187,30 @@ export function statsRoutes(db: Kysely<Database>): Router {
         throw notFound()
       }
 
-      const rows = await db
-        .selectFrom('team_season_records')
-        .innerJoin('teams', 'teams.id', 'team_season_records.team_id')
-        .select([
-          'team_season_records.team_id as teamId',
-          'teams.name as teamName',
-          'team_season_records.w as w',
-          'team_season_records.l as l',
-          'team_season_records.t as t',
-          'team_season_records.runs_for as runsFor',
-          'team_season_records.runs_against as runsAgainst'
-        ])
-        .where('team_season_records.season_id', '=', seasonId)
-        .execute()
+      // Counted from the season's finished games on every read, so a result
+      // is in the table as soon as the game is final.
+      const records = await teamRecords(db, { seasonId })
+      const names =
+        records.length === 0
+          ? []
+          : await db
+              .selectFrom('teams')
+              .select(['id', 'name'])
+              .where(
+                'id',
+                'in',
+                records.map(record => record.teamId)
+              )
+              .execute()
+      const rows = records.map(record => ({
+        teamId: record.teamId,
+        teamName: names.find(team => team.id === record.teamId)?.name ?? '',
+        w: record.w,
+        l: record.l,
+        t: record.t,
+        runsFor: record.runsFor,
+        runsAgainst: record.runsAgainst
+      }))
 
       const table = rows
         .map(row => ({

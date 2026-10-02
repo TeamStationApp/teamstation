@@ -21,6 +21,7 @@ import {
 } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { teamRecords } from '../stats/records'
 
 /**
  * Seasons, and what is in one.
@@ -163,15 +164,11 @@ export function seasonRoutes(
       // A record and a signed logo URL, the same as `/teams` gives. Without
       // the URL the app correctly falls back to initials — it never builds an
       // image address itself — so the logos simply never appeared here.
-      const records = await db
-        .selectFrom('team_season_records')
-        .select(['team_id', 'w', 'l', 't'])
-        .where('season_id', '=', seasonId)
-        .execute()
+      const records = await teamRecords(db, { seasonId })
 
       res.json(
         teams.map(team => {
-          const record = records.find(row => row.team_id === team.id)
+          const record = records.find(row => row.teamId === team.id)
           return {
             ...team,
             logoUrl: imageUrl(media.space, team.logoPath),

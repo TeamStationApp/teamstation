@@ -5,7 +5,8 @@ import { Pool } from 'pg'
 import { mintUserId } from '../common/mintUserId'
 import { migrations } from './migrations'
 import { migration046ExternalCleanup } from './migrations/046externalCleanup'
-import { BASELINE, migrateUp } from './runner'
+import { migration048DropStatRollups } from './migrations/048dropStatRollups'
+import { BASELINE, migrateDown, migrateUp } from './runner'
 import { schemaSnapshot } from './schemaSnapshot'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -85,7 +86,8 @@ describe('046 over a database with an outside integration', function () {
     const result = await migrateUp(pool, migrations)
     expect(result.applied).deep.equals([
       migration046ExternalCleanup.name,
-      '047teamStation'
+      '047teamStation',
+      '048dropStatRollups'
     ])
   })
 
@@ -303,3 +305,102 @@ async function giveItHistory(pool: Pool): Promise<void> {
           '{"xEnabled": false}', '{"xEnabled": true}');
   `)
 }
+
+/**
+ * 048 over a database whose season caches hold rows.
+ *
+ * Both tables go, and nothing else changes: the upgraded schema is exactly a
+ * fresh build's. Rolled back, both come back empty, exactly as 047 left them.
+ */
+describe('048 over a database with filled season caches', function () {
+  this.timeout(120000)
+
+  const name = `teamstation_rollups_${stamp}`
+  const through047Name = `teamstation_rollups047_${stamp}`
+  const freshAllName = `teamstation_rollupsall_${stamp}`
+  const through047 = migrations.filter(
+    migration => migration.name < migration048DropStatRollups.name
+  )
+  const bea = mintUserId(() => false)
+
+  let admin: Pool
+  let pool: Pool
+  let fresh047: Pool
+  let freshAll: Pool
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    for (const db of [name, through047Name, freshAllName]) {
+      await admin.query(`create database ${db}`)
+    }
+    pool = new Pool({ connectionString: urlOf(name) })
+    fresh047 = new Pool({ connectionString: urlOf(through047Name) })
+    freshAll = new Pool({ connectionString: urlOf(freshAllName) })
+    await migrateUp(pool, through047)
+    await migrateUp(fresh047, through047)
+    await migrateUp(freshAll, migrations)
+    await pool.query(
+      `insert into users (id, "legacyId", display_name) values ($1, $2, 'Bea')`,
+      [bea.userId, bea.legacyId]
+    )
+    await pool.query(`
+      insert into seasons (id, name, year) values ('sea_1', 'Spring', 2026);
+      insert into teams (id, name) values ('tem_1', 'Hawks');
+      insert into team_season_records (id, team_id, season_id, w, l)
+        values ('tsr_1', 'tem_1', 'sea_1', 3, 1);
+    `)
+    await pool.query(
+      `insert into player_season_stats (id, user_id, season_id, team_id, pa)
+       values ('pss_1', $1, 'sea_1', 'tem_1', 12)`,
+      [bea.userId]
+    )
+  })
+
+  after(async function () {
+    for (const open of [pool, fresh047, freshAll]) await open?.end()
+    if (admin != null) {
+      for (const db of [name, through047Name, freshAllName]) {
+        await admin.query(`drop database if exists ${db}`)
+      }
+      await admin.end()
+    }
+  })
+
+  const tables = async (): Promise<Array<string | null>> => {
+    const { rows } = await pool.query<{ name: string | null }>(
+      `select to_regclass(name)::text as name
+       from unnest(array['team_season_records', 'player_season_stats'])
+         as t(name)`
+    )
+    return rows.map(row => row.name)
+  }
+
+  it('drops both caches, and leaves the schema a fresh build has', async function () {
+    const result = await migrateUp(pool, migrations)
+    expect(result.applied).deep.equals([migration048DropStatRollups.name])
+    expect(await tables()).deep.equals([null, null])
+    expect(await schemaSnapshot(pool)).deep.equals(
+      await schemaSnapshot(freshAll)
+    )
+  })
+
+  it('puts both back empty, exactly as 047 left them, and drops them again', async function () {
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      migration048DropStatRollups.name
+    ])
+    expect(await tables()).deep.equals([
+      'team_season_records',
+      'player_season_stats'
+    ])
+    const counts = await pool.query<{ n: string }>(
+      `select (select count(*) from team_season_records)
+            + (select count(*) from player_season_stats) as n`
+    )
+    expect(Number(counts.rows[0].n)).equals(0)
+    expect(await schemaSnapshot(pool)).deep.equals(
+      await schemaSnapshot(fresh047)
+    )
+    await migrateUp(pool, migrations)
+    expect(await tables()).deep.equals([null, null])
+  })
+})

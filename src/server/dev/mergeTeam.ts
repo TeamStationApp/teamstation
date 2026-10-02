@@ -4,7 +4,6 @@ import { Pool } from 'pg'
 import { mergeTeams } from '../admin/mergeTeams'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
-import { rebuildAll } from '../rollups'
 import { serverConfig } from '../serverConfig'
 
 /**
@@ -175,20 +174,17 @@ async function main(): Promise<void> {
       )
     }
 
-    if (apply) {
-      const counts = await rebuildAll(db)
-      console.log(
-        `\n  rollups rebuilt: ${counts.teams} team records, ${counts.players} player seasons`
-      )
-    } else {
-      console.log('\nNothing was written. Add --apply to do it.')
-    }
+    if (!apply) console.log('\nNothing was written. Add --apply to do it.')
   } finally {
     await db.destroy()
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(String(error))
-  process.exit(1)
-})
+// Run as a program only, so a test can load it without connecting.
+const entry = process.argv[1] ?? ''
+if (entry.endsWith('/mergeTeam.ts') || entry.endsWith('/mergeTeam.js')) {
+  main().catch((error: unknown) => {
+    console.error(String(error))
+    process.exit(1)
+  })
+}
