@@ -3,8 +3,7 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../db/database'
 import { videoFrameSource } from './locations'
 import type { MediaContext } from './mediaContext'
-import { mediaUrlPath } from './mediaTokens'
-import { stillSecond, warmStills } from './stills'
+import { stillUrl, warmStills } from './stills'
 
 /**
  * A frame of a game's video, for the card and the row that stand for it.
@@ -29,18 +28,13 @@ export function posterSecond(durationSec: number | null | undefined): number {
   return Math.min(POSTER_SECOND, (durationSec ?? 600) / 2)
 }
 
-/** Where a video's stills live, under the work directory. */
-export function stillDirFor(videoId: string): string {
-  return `work/stills/${videoId}`
-}
-
 /**
- * The signed URL of a game's poster, or null when there is nothing to show.
+ * The signed URL of a game's poster.
  *
  * The frame is cut lazily: the first person to open a list starts the work and
- * sees the plain plate, and everybody after that sees the picture. That is the
- * same bargain the highlight stills already make, and it keeps a list of
- * twenty games from blocking on twenty FFmpeg runs.
+ * sees the plain plate, and everybody after that sees the picture, out of the
+ * Space. That is the same bargain the highlight stills make, and it keeps a
+ * list of twenty games from blocking on twenty FFmpeg runs.
  */
 export function posterUrl(
   media: MediaContext,
@@ -48,15 +42,7 @@ export function posterUrl(
   atSec: number = POSTER_SECOND,
   now: number = Date.now()
 ): string {
-  return (
-    media.publicUrl +
-    mediaUrlPath(
-      media.mediaSecret,
-      stillDirFor(videoId),
-      `${stillSecond(atSec)}.jpg`,
-      now
-    )
-  )
+  return stillUrl(media, videoId, atSec, now)
 }
 
 export interface PosterVideo {
@@ -129,7 +115,7 @@ export async function warmPosters(
       await warmStills({
         ffmpegPath: media.ffmpegPath,
         source,
-        workDir: media.workDir,
+        space: media.space,
         videoId: poster.videoId,
         seconds: [posterSecond(poster.durationSec)]
       })

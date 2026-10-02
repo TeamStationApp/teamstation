@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { Router } from 'express'
+import { type Response, Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
@@ -26,7 +26,12 @@ import {
   spaceKey
 } from '../media/spacesHls'
 import { deleteVideoFromSpace } from '../media/spacesVideo'
-import { ensureStill } from '../media/stills'
+import {
+  ensureStill,
+  stillInSpace,
+  stillSpaceUrl,
+  stillSubject
+} from '../media/stills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -43,8 +48,7 @@ export function mediaRoutes(
   db: Kysely<Database>,
   options: MediaContext
 ): Router {
-  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, space, workDir } =
-    options
+  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, space } = options
   const router = Router()
   const playlists = new PlaylistCache({
     space,
@@ -149,30 +153,81 @@ export function mediaRoutes(
       if (video == null || video.hidden) throw notFound()
       if (!canSeeGame(scopes, video)) throw notFound()
 
-      const source = await videoFrameSource({
-        mediaRoot,
-        space,
-        storage: video.storage,
-        videoId
-      })
-      if (source == null) throw notFound()
-
-      const still = await ensureStill({
-        ffmpegPath,
-        source,
-        workDir,
-        videoId,
-        atSec
-      }).catch(() => undefined)
-      if (still == null) throw notFound()
-
-      // Stills never change for a given second, so they cache hard; the token
-      // on the URL is what limits who can ask.
-      res.setHeader('cache-control', 'private, max-age=86400')
-      res.type('image/jpeg')
-      res.sendFile(still)
+      await redirectToStill(res, video.storage, videoId, atSec)
     })
   )
+
+  /**
+   * A still a list handed out, by its signed URL.
+   *
+   * Not behind `requireActor`: an `<img>` cannot send a header, so the token
+   * in the query is the check, minted by the route that listed the video. The
+   * answer is a redirect to the still in the Space, cut and kept there first
+   * if this is the first time anybody asked for it.
+   */
+  router.get(
+    '/videos/:videoId/stills/:file',
+    withAsync(async (req, res) => {
+      const videoId = pathParam(req.params.videoId)
+      const match = /^(\d{1,6})\.jpg$/.exec(pathParam(req.params.file))
+      if (match == null) throw notFound()
+      if (!verifyQueryToken(mediaSecret, stillSubject(videoId), req.query.t)) {
+        res.status(403).end()
+        return
+      }
+      const atSec = Number(match[1])
+      if (!spaceConfigured(space)) throw notFound()
+      if (await stillInSpace(space, videoId, atSec)) {
+        sendStillRedirect(res, videoId, atSec)
+        return
+      }
+      const video = await db
+        .selectFrom('videos')
+        .select(['storage', 'hidden'])
+        .where('id', '=', videoId)
+        .executeTakeFirst()
+      if (video == null || video.hidden) throw notFound()
+      await redirectToStill(res, video.storage, videoId, atSec)
+    })
+  )
+
+  /** Cuts and keeps the still if the Space lacks it, then redirects to it. */
+  async function redirectToStill(
+    res: Response,
+    storage: 'peertube' | 'local' | 'spaces',
+    videoId: string,
+    atSec: number
+  ): Promise<void> {
+    const source = await videoFrameSource({
+      mediaRoot,
+      space,
+      storage,
+      videoId
+    })
+    if (source == null) throw notFound()
+    const kept = await ensureStill({
+      ffmpegPath,
+      source,
+      space,
+      videoId,
+      atSec
+    }).catch(() => undefined)
+    if (kept == null) throw notFound()
+    sendStillRedirect(res, videoId, atSec)
+  }
+
+  /**
+   * The redirect to a still in the Space. A still never changes for a given
+   * second, so the redirect is cached for as long as the URL it names is good.
+   */
+  function sendStillRedirect(
+    res: Response,
+    videoId: string,
+    atSec: number
+  ): void {
+    res.setHeader('cache-control', `private, max-age=${STILL_URL_TTL_SEC - 60}`)
+    res.redirect(302, stillSpaceUrl(space, videoId, atSec, STILL_URL_TTL_SEC))
+  }
 
   /**
    * The two playlists of a video that lives in the Space.
@@ -351,6 +406,9 @@ export function mediaRoutes(
 
   return router
 }
+
+/** How long the Space URL a still redirect names stays good for. */
+const STILL_URL_TTL_SEC = 60 * 60
 
 /** What an HLS token is signed against: this video's playlists, and no other. */
 function hlsSubject(videoId: string): string {

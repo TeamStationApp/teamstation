@@ -27,14 +27,13 @@ import {
 } from '../highlights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { mediaUrlPath } from '../media/mediaTokens'
 import {
   posterSecond,
   postersFor,
   posterUrl,
   warmPosters
 } from '../media/posters'
-import { stillSecond } from '../media/stills'
+import { stillUrl } from '../media/stills'
 import { warmVideoStills } from '../media/videoStills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -507,21 +506,13 @@ export function teamRoutes(
       )
       const highlights = computed.highlights
 
-      // A still is one frame of the video at the moment of the play, served
-      // from the work directory like any other media: `<sec>.jpg` under this
-      // video's own still directory, behind the same signed token.
-      const stillDir = `work/stills/${videoId}`
+      // A still is one frame of the video at the moment of the play, kept in
+      // the Space beside the video and handed out as a signed URL to the API,
+      // which redirects to it.
       const now = Date.now()
       const withStills = highlights.map(highlight => ({
         ...highlight,
-        stillUrl:
-          media.publicUrl +
-          mediaUrlPath(
-            media.mediaSecret,
-            stillDir,
-            `${stillSecond(highlight.playOffsetSec)}.jpg`,
-            now
-          )
+        stillUrl: stillUrl(media, videoId, highlight.playOffsetSec, now)
       }))
 
       res.json({

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +11,7 @@ import { after, before, describe, it } from 'mocha'
 import { serverConfig } from '../serverConfig'
 import { ffmpegEncoders, probeFfmpeg, remuxToHls } from './ffmpeg'
 import { clearFragmentCache } from './spaceFrames'
-import { ensureStill } from './stills'
+import { ensureStill, stillInSpace } from './stills'
 
 const run = promisify(execFile)
 
@@ -36,6 +36,9 @@ describe('a still from the Space', function () {
   let ready = false
   let server: Server | undefined
   let port = 0
+  /** What the stand-in Space was given, by key, and how many times. */
+  const kept = new Map<string, Buffer>()
+  let puts = 0
 
   const space = {
     endpoint: '',
@@ -92,6 +95,28 @@ describe('a still from the Space', function () {
     // directory the remux just filled, with ranges honoured.
     server = createServer((req, res) => {
       const path = new URL(req.url ?? '/', 'http://x').pathname
+      // Path style: /<bucket>/<key>.
+      const key = path.split('/').slice(2).join('/')
+      if (req.method === 'PUT') {
+        const parts: Buffer[] = []
+        req.on('data', (part: Buffer) => parts.push(part))
+        req.on('end', () => {
+          kept.set(key, Buffer.concat(parts))
+          puts += 1
+          res.writeHead(200).end()
+        })
+        return
+      }
+      const stored = kept.get(key)
+      if (stored != null) {
+        res.writeHead(200, { 'content-length': String(stored.length) })
+        res.end(stored)
+        return
+      }
+      if (key.includes('/stills/')) {
+        res.writeHead(404).end()
+        return
+      }
       const name = path.split('/').pop() ?? ''
       readFile(join(workDir, name)).then(
         body => {
@@ -125,49 +150,86 @@ describe('a still from the Space', function () {
     if (workDir !== '') await rm(workDir, { recursive: true, force: true })
   })
 
-  it('is the same picture as one cut from the file itself', async function () {
+  it('is the same picture as one cut from the file itself, and kept in the Space', async function () {
     const atSec = 20
 
     const fromFile = await ensureStill({
       ffmpegPath,
       source: { kind: 'file', path: join(workDir, 'video.mp4') },
-      workDir: join(workDir, 'local'),
+      space,
       videoId: 'vid_here',
       atSec
     })
     const fromSpace = await ensureStill({
       ffmpegPath,
       source: { kind: 'space', space, videoId: 'vid_there' },
-      workDir: join(workDir, 'remote'),
+      space,
       videoId: 'vid_there',
       atSec
     })
+    expect(fromFile).equals('videos/vid_here/stills/20.jpg')
+    expect(fromSpace).equals('videos/vid_there/stills/20.jpg')
 
-    const here = await readFile(fromFile)
-    const there = await readFile(fromSpace)
-    expect(there.length).greaterThan(0)
+    const here = kept.get(fromFile)
+    const there = kept.get(fromSpace)
+    expect(there?.length).greaterThan(0)
     // Byte for byte: the same frame, the same scale, the same encoder.
-    expect(there.equals(here)).equals(true)
+    expect(there?.equals(here ?? Buffer.alloc(0))).equals(true)
+    expect(await stillInSpace(space, 'vid_there', atSec)).equals(true)
+    expect(await stillInSpace(space, 'vid_there', 21)).equals(false)
   })
 
-  it('leaves no fragment behind once the frame is cut', async function () {
-    const frames = join(workDir, 'remote', 'frames')
-    const left = await readFile(frames).catch(() => null)
-    expect(left).equals(null)
-    const names = await import('node:fs/promises').then(
-      async fs => await fs.readdir(frames).catch((): string[] => [])
-    )
-    expect(names).deep.equals([])
+  it('cuts a still once: the next ask finds it in the Space', async function () {
+    const before = puts
+    const again = await Promise.all([
+      ensureStill({
+        ffmpegPath,
+        source: { kind: 'space', space, videoId: 'vid_there' },
+        space,
+        videoId: 'vid_there',
+        atSec: 20
+      }),
+      ensureStill({
+        ffmpegPath,
+        source: { kind: 'space', space, videoId: 'vid_there' },
+        space,
+        videoId: 'vid_there',
+        atSec: 20.3
+      })
+    ])
+    expect(again).deep.equals([
+      'videos/vid_there/stills/20.jpg',
+      'videos/vid_there/stills/20.jpg'
+    ])
+    expect(puts).equals(before)
   })
 
-  it('has nothing to offer for a moment past the end', async function () {
+  it('leaves nothing on this machine once the still is kept', async function () {
+    const names = await readdir(tmpdir())
+    expect(names.filter(name => name.startsWith('gs-still-'))).deep.equals([])
+  })
+
+  it('has nothing to offer for a moment past the end, and keeps nothing', async function () {
+    const before = puts
     const missing = await ensureStill({
       ffmpegPath,
       source: { kind: 'space', space, videoId: 'vid_there' },
-      workDir: join(workDir, 'remote'),
+      space,
       videoId: 'vid_there',
       atSec: 600
     }).catch(() => undefined)
     expect(missing).equals(undefined)
+    expect(puts).equals(before)
+  })
+
+  it('refuses to cut a still with no Space to keep it in', async function () {
+    const refused = await ensureStill({
+      ffmpegPath,
+      source: { kind: 'file', path: join(workDir, 'video.mp4') },
+      space: { ...space, bucket: '' },
+      videoId: 'vid_here',
+      atSec: 20
+    }).catch((error: unknown) => String(error))
+    expect(refused).contains('No Space is configured')
   })
 })

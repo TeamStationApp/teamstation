@@ -10,14 +10,12 @@ import type { SpaceSettings } from './spacesHls'
 export interface MediaContext {
   /** Caddy's media root: `/srv/gamestation/media` in production. */
   mediaRoot: string
-  /** Where stills are cached, under the media root as `work`. */
-  workDir: string
   /** The pinned build, used for the one frame a still needs. */
   ffmpegPath: string
   /** Signs the `/media` tokens. The same key Caddy's forward_auth checks. */
   mediaSecret: string
   /** The origin URLs are built against, e.g. `https://gamestation.co`. */
   publicUrl: string
-  /** The bucket finished videos live in. Empty until one is configured. */
+  /** The bucket finished videos and their stills live in. */
   space: SpaceSettings
 }

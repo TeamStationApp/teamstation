@@ -102,6 +102,7 @@ function routesOf(router: { stack: RouteLayer[] }): string[] {
 const UNDOCUMENTED = new Set([
   'GET /videos/{videoId}/playback',
   'GET /videos/{videoId}/still',
+  'GET /videos/{videoId}/stills/{file}',
   'GET /videos/{videoId}/hls/{file}',
   'GET /videos/{videoId}/highlights'
 ])

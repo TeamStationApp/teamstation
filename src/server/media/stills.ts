@@ -1,36 +1,32 @@
 import { execFile } from 'node:child_process'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { putObject } from './images'
+import type { MediaContext } from './mediaContext'
+import { signQueryToken } from './mediaTokens'
+import { presignGetUrl } from './presign'
 import { fetchSpaceFrame } from './spaceFrames'
-import type { SpaceSettings } from './spacesHls'
+import { spaceConfigured, spaceKey, type SpaceSettings } from './spacesHls'
 
 const run = promisify(execFile)
 
 /**
- * One frame of a video, as a small JPEG.
+ * One frame of a video, as a small JPEG, kept in the Space.
  *
- * This is the only decoding the server ever does, and it is one frame: `-ss`
- * before `-i` makes FFmpeg seek rather than decode up to the point, so it
- * reads the few byte ranges around that timestamp and nothing else. The
- * results are cached, because a highlight list asks for the same handful of
- * moments over and over.
+ * A still lives beside its video as `videos/<id>/stills/<second>.jpg`, and
+ * nowhere else: the app server keeps nothing, so any number of them can answer
+ * and any one can be replaced. A still is cut the first time it is wanted —
+ * one frame, from the few byte ranges around the moment — and uploaded; every
+ * request after that is a redirect to the Space. The frame is cut in a
+ * temporary directory that is gone before the request is answered.
  *
- * Stills are cached under the work directory, never written beside the video:
- * PeerTube's tree is read-only to us, and the Space holds only what a player
- * needs.
+ * Deleting a video from the Space takes its stills with it, since they share
+ * its prefix.
  */
 
-/**
- * Where a video's frames are read from.
- *
- * A video on this host is a path. One that has gone to the Space is named
- * rather than located, because reading a frame out of it means fetching the
- * fragment that holds it first — see `spaceFrames.ts`. Which of the two it is
- * only matters on a cache miss, so a still that has already been cut costs the
- * same either way.
- */
 export type FrameSource =
   | { kind: 'file'; path: string }
   | { kind: 'space'; space: SpaceSettings; videoId: string }
@@ -39,8 +35,8 @@ export interface StillOptions {
   ffmpegPath: string
   /** Where the frame is read from. */
   source: FrameSource
-  /** Where `stills/<videoId>/` lives. */
-  workDir: string
+  /** Where the still is kept. */
+  space: SpaceSettings
   videoId: string
   /** Seconds into the video. */
   atSec: number
@@ -53,51 +49,110 @@ export function stillSecond(atSec: number): number {
   return Math.max(0, Math.round(atSec))
 }
 
-export function stillPath(
-  workDir: string,
-  videoId: string,
-  atSec: number
-): string {
-  return join(workDir, 'stills', videoId, `${stillSecond(atSec)}.jpg`)
+/** Where a video's still for this moment is kept in the Space. */
+export function stillKey(videoId: string, atSec: number): string {
+  return spaceKey(videoId, `stills/${stillSecond(atSec)}.jpg`)
+}
+
+/** What a still URL's token is signed against: this video's stills only. */
+export function stillSubject(videoId: string): string {
+  return `stills:${videoId}`
 }
 
 /**
+ * The URL a list hands out for a still. The API answers it with a redirect
+ * to the Space, cutting the still first if the Space does not have it yet.
+ * An `<img>` cannot send a bearer token, so the permission rides in the query.
+ */
+export function stillUrl(
+  media: Pick<MediaContext, 'publicUrl' | 'mediaSecret'>,
+  videoId: string,
+  atSec: number,
+  now: number = Date.now()
+): string {
+  const token = signQueryToken(media.mediaSecret, stillSubject(videoId), now)
+  return `${media.publicUrl}/api/v1/videos/${videoId}/stills/${stillSecond(atSec)}.jpg?t=${token}`
+}
+
+/** A presigned GET for a still in the Space, good for `expiresSec`. */
+export function stillSpaceUrl(
+  space: SpaceSettings,
+  videoId: string,
+  atSec: number,
+  expiresSec: number
+): string {
+  return presignGetUrl({ ...space, key: stillKey(videoId, atSec), expiresSec })
+}
+
+/** Whether the Space already holds this still. */
+export async function stillInSpace(
+  space: SpaceSettings,
+  videoId: string,
+  atSec: number
+): Promise<boolean> {
+  try {
+    const response = await fetch(stillSpaceUrl(space, videoId, atSec, 300), {
+      headers: { range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(15000)
+    })
+    await response.body?.cancel()
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+const inFlight = new Map<string, Promise<string>>()
+
+/**
+ * Makes sure the Space holds this still, and returns its key.
+ *
  * Two requests for the same still arriving together must not both run FFmpeg.
  * The first one's promise is shared, and dropped as soon as it settles, so a
  * failure is retried rather than remembered.
  */
-const inFlight = new Map<string, Promise<string>>()
-
-/** The path to the still, generating it first if it is not already cached. */
 export async function ensureStill(options: StillOptions): Promise<string> {
-  const path = stillPath(options.workDir, options.videoId, options.atSec)
-
-  const cached = await fileSize(path)
-  if (cached != null && cached > 0) return path
-
-  const running = inFlight.get(path)
+  const { space, videoId, atSec } = options
+  if (!spaceConfigured(space)) {
+    throw new Error('No Space is configured to keep stills in')
+  }
+  const key = stillKey(videoId, atSec)
+  const running = inFlight.get(key)
   if (running != null) return await running
 
-  const work = makeStill({ ...options }, path).finally(() => {
-    inFlight.delete(path)
+  const work = (async () => {
+    if (await stillInSpace(space, videoId, atSec)) return key
+    await cutAndKeep(options, key)
+    return key
+  })().finally(() => {
+    inFlight.delete(key)
   })
-  inFlight.set(path, work)
+  inFlight.set(key, work)
   return await work
 }
 
-async function makeStill(options: StillOptions, path: string): Promise<string> {
-  const { ffmpegPath, source, atSec, width = 480 } = options
-  await mkdir(join(path, '..'), { recursive: true })
-
-  const frame = await openFrame(source, stillSecond(atSec), options.workDir)
-  if (frame == null) {
-    throw new Error(`No frame at ${atSec}s of ${options.videoId}`)
-  }
-
+async function cutAndKeep(options: StillOptions, key: string): Promise<void> {
+  const { ffmpegPath, source, space, atSec, width = 480 } = options
+  const scratch = await mkdtemp(join(tmpdir(), 'gs-still-'))
   try {
-    return await cutFrame(ffmpegPath, frame, path, width, atSec)
+    const frame = await openFrame(source, stillSecond(atSec), scratch)
+    if (frame == null) {
+      throw new Error(`No frame at ${atSec}s of ${options.videoId}`)
+    }
+    const path = join(scratch, 'still.jpg')
+    try {
+      await cutFrame(ffmpegPath, frame, path, width, atSec)
+    } finally {
+      await frame.release()
+    }
+    await putObject({
+      space,
+      key,
+      body: await readFile(path),
+      contentType: 'image/jpeg'
+    })
   } finally {
-    await frame.release()
+    await rm(scratch, { recursive: true, force: true })
   }
 }
 
@@ -111,7 +166,7 @@ async function makeStill(options: StillOptions, path: string): Promise<string> {
 async function openFrame(
   source: FrameSource,
   atSec: number,
-  workDir: string
+  scratch: string
 ): Promise<
   { path: string; seekSec: number; release: () => Promise<void> } | undefined
 > {
@@ -126,7 +181,7 @@ async function openFrame(
     space: source.space,
     videoId: source.videoId,
     atSec,
-    workDir
+    workDir: scratch
   })
 }
 
@@ -174,7 +229,7 @@ async function cutFrame(
 export interface WarmOptions {
   ffmpegPath: string
   source: FrameSource
-  workDir: string
+  space: SpaceSettings
   videoId: string
   /** The seconds to have ready, usually one per highlight. */
   seconds: number[]
