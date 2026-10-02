@@ -24,6 +24,7 @@ import type {
 } from '../../common/api'
 import {
   AnglePickerModal,
+  AnglesUnavailableModal,
   FLOATING_BOTTOM_REM,
   GameHeroCard,
   GlassView,
@@ -48,6 +49,8 @@ import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
+import { playerEngine } from '../player/engine'
+import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
@@ -366,6 +369,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     { videoId: string; sec: number; playing: boolean } | undefined
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  /** Open while saying the grid is not offered in this browser. */
+  const [anglesUnavailable, setAnglesUnavailable] = useState(false)
   /** Open while somebody is choosing which angles to watch together. */
   const [picking, setPicking] = useState(false)
 
@@ -376,7 +381,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * shell renders only the top of its stack: a pushed screen would unmount
    * this one, taking the `<video>` with it and stopping playback dead.
    */
-  const showAngles = angles != null && angles.length > 0
+  const anglesOffered = useMemo(() => multiAngleSupported(playerEngine()), [])
+  const showAngles = anglesOffered && angles != null && angles.length > 0
 
   // The card's own content goes up into the header as the card scrolls away:
   // the away team over the home team, small, with their scores beside them.
@@ -1037,7 +1043,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             selected={video?.id ?? ''}
             onSelect={id => {
               if (id === ALL_ANGLES) {
-                setPicking(true)
+                if (anglesOffered) setPicking(true)
+                else setAnglesUnavailable(true)
                 return
               }
               const item = game.videos.find(one => one.id === id)
@@ -1163,6 +1170,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           audio,
           zoom: null
         })
+      }}
+    />
+  ) : anglesUnavailable ? (
+    <AnglesUnavailableModal
+      onClose={() => {
+        setAnglesUnavailable(false)
       }}
     />
   ) : null

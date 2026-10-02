@@ -70,6 +70,9 @@ export const enUs = {
 
   // Four angles at once
   angles_open: 'All angles',
+  angles_unavailable:
+    'Multi-camera viewing is unavailable in this browser. Please switch to Brave or Chrome on desktop or Android, or the native TeamStation mobile app.',
+  angles_unavailable_ok: 'OK',
   angles_title: 'Choose up to four angles',
   angles_detail:
     'They play together, on one clock. Hold a picture for a second, then drag it to move it.',
@@ -87,6 +90,7 @@ export const enUs = {
   angles_unplaceable:
     'This recording has no start time, so it cannot be held in step with the others.',
   angles_waiting: 'Waiting for the pictures to catch up…',
+  angles_tap_for_sound: 'Tap for sound',
   angles_tile_loading: 'Camera loading…',
   angles_tile_catching_up: 'Camera catching up…',
   angles_close: 'Close',

@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Platform, StyleSheet } from 'react-native'
-import Video, { type VideoRef, ViewType } from 'react-native-video'
+import Video, {
+  BufferingStrategyType,
+  type VideoRef,
+  ViewType
+} from 'react-native-video'
 
 import { NativeVideoHandle } from './nativeVideoHandle'
 import type { VideoViewProps } from './videoViewProps'
@@ -47,7 +51,8 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
     onControlsVisible,
     muted = false,
     resizeMode = 'contain',
-    opacity = 1
+    opacity = 1,
+    buffer
   } = props
 
   // A counter, not the props object: the handle owns those and mutates them,
@@ -85,6 +90,39 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
     handle.reset()
   }, [handle, source])
 
+  // Android takes its buffer with the source, so the source is built once per
+  // address and per setting rather than on every render.
+  const aheadSec = buffer?.aheadSec
+  const startSec = buffer?.startSec
+  const behindSec = buffer?.behindSec
+  const heapShare = buffer?.heapShare
+  const videoSource = useMemo(
+    () => ({
+      uri: source ?? '',
+      bufferConfig:
+        aheadSec == null ||
+        startSec == null ||
+        behindSec == null ||
+        heapShare == null
+          ? undefined
+          : {
+              // The same number twice keeps it topping up all the time, the
+              // way hls.js does, rather than filling, draining to the lower
+              // mark and filling again.
+              minBufferMs: aheadSec * 1000,
+              maxBufferMs: aheadSec * 1000,
+              bufferForPlaybackMs: startSec * 1000,
+              bufferForPlaybackAfterRebufferMs: startSec * 1000,
+              backBufferDurationMs: behindSec * 1000,
+              // Read only under `DependingOnMemory`, below: the library builds
+              // the buffer to prefer time over size, so without it nothing
+              // but the seconds above stops a player filling the heap.
+              maxHeapAllocationPercent: heapShare
+            }
+    }),
+    [source, aheadSec, startSec, behindSec, heapShare]
+  )
+
   if (source == null || source === '') {
     return <></>
   }
@@ -92,7 +130,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
   return (
     <Video
       ref={takePlayer}
-      source={{ uri: source }}
+      source={videoSource}
       style={[StyleSheet.absoluteFill, { opacity }]}
       resizeMode={resizeMode}
       controls={controls}
@@ -112,6 +150,14 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       onProgress={handle.handleProgress}
       onSeek={handle.handleSeek}
       onPlaybackStateChanged={handle.handlePlaybackState}
+      onBuffer={handle.handleBuffer}
+      bufferingStrategy={
+        heapShare == null
+          ? BufferingStrategyType.DEFAULT
+          : BufferingStrategyType.DEPENDING_ON_MEMORY
+      }
+      // iOS's half of `buffer`; AVPlayer decides for itself when to start.
+      preferredForwardBufferDuration={aheadSec}
       onReadyForDisplay={handle.handleReadyForDisplay}
       onVideoTracks={handle.handleVideoTracks}
       onAspectRatio={handle.handleAspectRatio}

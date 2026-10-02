@@ -44,4 +44,21 @@ export interface VideoViewProps {
   resizeMode?: 'cover' | 'contain'
   /** Faded in only once there are frames, so a card never flashes empty. */
   opacity?: number
+  /**
+   * How the phone's player buffers, for a caller driving several at once.
+   *
+   * Only a phone reads this. In a browser the buffer is hls.js's, set where
+   * the source is attached (`attachHls`), and the multi-camera grid moves it
+   * while it plays. A phone's player cannot be moved once it is built, so it
+   * is told everything up front: load `aheadSec` ahead, start and restart
+   * only once it holds `startSec`, keep `behindSec` of what it has shown,
+   * and on Android stop loading at `heapShare` of the app's heap. Left out,
+   * AVPlayer and ExoPlayer use their own defaults.
+   */
+  buffer?: {
+    aheadSec: number
+    startSec: number
+    behindSec: number
+    heapShare: number
+  }
 }

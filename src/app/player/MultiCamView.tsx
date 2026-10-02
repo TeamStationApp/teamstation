@@ -14,11 +14,11 @@ import {
   beyondSlop,
   type MultiCamProps,
   REORDER_HOLD_MS,
-  TILE_BUFFER,
   type TileHandle,
   useMultiCam
 } from './multiCam/useMultiCam'
 import { MultiCamBar } from './MultiCamBar'
+import type { PlayIntent } from './playIntent'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -206,9 +206,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     ? lstrings.angles_all_ended
     : mc.waiting
       ? lstrings.angles_waiting
-      : swipeToHide
-        ? lstrings.angles_swipe_full_screen
-        : null
+      : mc.soundBlocked
+        ? lstrings.angles_tap_for_sound
+        : swipeToHide
+          ? lstrings.angles_swipe_full_screen
+          : null
 
   // Into the document's own body, not into the screen that opened it.
   //
@@ -283,10 +285,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           // Silent throughout a crawl, whichever angle is heard: the sound
           // follows the moment, and a crawl across two recordings would
           // otherwise switch one on at a quarter speed.
-          muted={mc.slow !== 0 || video.id !== mc.heardId}
+          muted={mc.slow !== 0 || video.id !== mc.heardId || mc.soundBlocked}
           onAttaching={attaching}
           onAttached={attached}
           wantsToPlay={() => mc.intents.current.get(video.id) === true}
+          buffer={mc.bufferFor(video.id)}
           rect={mc.shownRects[index] ?? { x: 0, y: 0, w: 0, h: 0 }}
           dragging={mc.drag?.index === index ? mc.drag : null}
           standingAside={mc.drag != null && mc.drag.index !== index}
@@ -377,6 +380,8 @@ function Tile(props: {
   onAttaching: (id: string) => number | null
   onAttached: (id: string, element: TileHandle, toSec: number | null) => void
   wantsToPlay: () => boolean
+  /** How far ahead its source loads, and the grid's hold on that. */
+  buffer: PlayIntent['buffer']
   rect: Rect
   dragging: { x: number; y: number } | null
   /**
@@ -460,8 +465,15 @@ function Tile(props: {
   // tile after a media error again.
   useEffect(() => {
     const node = element.current
-    const { url, videoId, onAttaching, onAttached, onGiveUp, wantsToPlay } =
-      props
+    const {
+      url,
+      videoId,
+      onAttaching,
+      onAttached,
+      onGiveUp,
+      wantsToPlay,
+      buffer
+    } = props
     if (node == null || url == null) return
     const toSec = onAttaching(videoId)
     const detach = attachHls(
@@ -470,7 +482,7 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, buffer: TILE_BUFFER }
+      { wantsToPlay, buffer }
     )
     const start = (): void => {
       onAttached(videoId, asTile(node), toSec)

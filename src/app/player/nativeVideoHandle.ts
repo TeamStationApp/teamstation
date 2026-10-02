@@ -1,4 +1,5 @@
 import type {
+  OnBufferData,
   OnLoadData,
   OnPlaybackStateChangedData,
   OnProgressData,
@@ -16,6 +17,7 @@ import {
   shouldResumeAfterSeek
 } from './seekTracker'
 import {
+  HAVE_CURRENT_DATA,
   HAVE_ENOUGH_DATA,
   type VideoEventName,
   type VideoHandle,
@@ -282,6 +284,32 @@ export class NativeVideoHandle implements VideoHandle {
     this.state = Math.max(this.state, HAVE_ENOUGH_DATA)
     this.emit('canplay')
     this.emit('loadeddata')
+  }
+
+  /**
+   * The player has run short, or has enough again.
+   *
+   * What a browser says with `readyState`, which on a phone otherwise reached
+   * `HAVE_ENOUGH_DATA` with the first picture and stayed there: a tile that
+   * had run dry looked as healthy as one with a minute in hand, so the grid
+   * kept nudging it instead of waiting for it. Buffering takes it back to a
+   * picture with nothing behind it; ready puts it back. A player still
+   * opening its source has no picture yet, and stays where it is.
+   *
+   * Android's player says ready only once it holds what it was told to start
+   * with (`bufferForPlaybackMs`); AVPlayer says it when it judges playback
+   * likely to keep up.
+   */
+  handleBuffer = (data: OnBufferData): void => {
+    if (data.isBuffering) {
+      this.state = Math.min(this.state, HAVE_CURRENT_DATA)
+      return
+    }
+    if (this.state < HAVE_CURRENT_DATA || this.state === HAVE_ENOUGH_DATA) {
+      return
+    }
+    this.state = HAVE_ENOUGH_DATA
+    this.emit('canplay')
   }
 
   handleVideoTracks = (data: OnVideoTracksData): void => {
