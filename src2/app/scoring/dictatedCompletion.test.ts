@@ -19,6 +19,9 @@ import { playerRef } from './scoringSelectors'
 import type { DictationQuestion, ScoringState } from './scoringTypes'
 
 const SS = 14
+const FIRST_BASEMAN = 12
+const SECOND_BASEMAN = 13
+const THIRD_BASEMAN = 15
 const LF = 16
 const BATTER = 1
 
@@ -81,27 +84,64 @@ function nothingToTap(state: ScoringState): void {
 }
 
 describe('a dictated sentence finishes the play', function () {
-  it('puts the batter out at first on a throw-out, crediting nobody', function () {
-    const done = completeSentence(game().session, [
-      grounder,
-      { type: 'result', eventType: 'field_out', outBy: 'throw' }
-    ])
+  it('puts the batter out at first on a throw-out, thrown by the fielder the ball went to', function () {
+    const thrown: ScoringAction = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'throw'
+    }
+    const done = completeSentence(game().session, [grounder, thrown])
     expect('actions' in done && done.actions.at(-1)).deep.equals({
+      type: 'runnerMovement',
+      runner: BATTER,
+      to: '1B',
+      out: true,
+      reason: 'Throw Out',
+      fielders: [SS, FIRST_BASEMAN]
+    })
+    const state = settle(say(game(), grounder, thrown))
+    expect(state.session.liveData.linescore.outs).equals(1)
+    const play = state.session.liveData.plays.allPlays.at(-1)
+    expect(
+      play?.runners.flatMap(runner =>
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+      )
+    ).deep.equals([`f_assist ${SS}`, `f_putout ${FIRST_BASEMAN}`])
+    nothingToTap(state)
+  })
+
+  it('credits the first baseman alone when the ball went to him, and nobody when it went to no one', function () {
+    const thrown: ScoringAction = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'throw'
+    }
+    const toFirst = completeSentence(game().session, [
+      { ...grounder, fielder: FIRST_BASEMAN },
+      thrown
+    ])
+    expect('actions' in toFirst && toFirst.actions.at(-1)).deep.include({
+      fielders: [FIRST_BASEMAN]
+    })
+    const nobody = completeSentence(game().session, [
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'ground_ball' },
+      thrown
+    ])
+    expect('actions' in nobody && nobody.actions.at(-1)).deep.equals({
       type: 'runnerMovement',
       runner: BATTER,
       to: '1B',
       out: true,
       reason: 'Throw Out'
     })
-    const state = settle(
-      say(game(), grounder, {
-        type: 'result',
-        eventType: 'field_out',
-        outBy: 'throw'
-      })
+    // An out not said to be thrown is not given a throw.
+    const unsaid = completeSentence(game().session, [
+      grounder,
+      { type: 'result', eventType: 'field_out' }
+    ])
+    expect('actions' in unsaid && unsaid.actions.at(-1)).not.to.have.property(
+      'fielders'
     )
-    expect(state.session.liveData.linescore.outs).equals(1)
-    nothingToTap(state)
   })
 
   it('puts the lone runner out on a fielder’s choice and the batter on first', function () {
@@ -1541,5 +1581,1019 @@ describe('a dictated sentence finishes the play', function () {
     expect(answerOf({ transcript: 't', question: 'q' }, { picks: [] })).equals(
       undefined
     )
+  })
+})
+
+describe('a dictated double play', function () {
+  const RUNNER = 5
+  const thrown: ScoringAction = {
+    type: 'result',
+    eventType: 'field_out',
+    outBy: 'throw'
+  }
+  const to = (fielder: number): ScoringAction => ({ ...grounder, fielder })
+  function credits(state: ScoringState): string[] {
+    // The play just dictated: still open while a runner stays on, or else
+    // the last one closed.
+    const { allPlays, currentPlay } = state.session.liveData.plays
+    const play =
+      (currentPlay?.runners.length ?? 0) > 0 ? currentPlay : allPlays.at(-1)
+    return (play?.runners ?? [])
+      .flatMap(runner =>
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+      )
+      .sort()
+  }
+  function turned(
+    transcript: string,
+    bases: { first?: number; second?: number; third?: number },
+    ...actions: ScoringAction[]
+  ): ScoringState {
+    return settle(sayAs(transcript, game(bases), ...actions))
+  }
+  /** A double play's credits, in the order `credits` lists them. */
+  const dp = (lead: number, pivot: number, end = FIRST_BASEMAN): string[] =>
+    (lead === pivot
+      ? [`f_putout ${pivot}`, `f_assist ${pivot}`, `f_putout ${end}`]
+      : [
+          `f_assist ${lead}`,
+          `f_putout ${pivot}`,
+          `f_assist ${pivot}`,
+          `f_putout ${end}`
+        ]
+    ).sort()
+
+  it('reads the position numbers said, over the fielders the model sent', function () {
+    for (const words of [
+      'Six four three double play.',
+      '6-4-3 double play.',
+      '643 double play.',
+      'Six to four to three, double play.'
+    ]) {
+      // Grok 4.3's shape: the runner's out, and the batter's left out.
+      const state = turned(
+        words,
+        { first: RUNNER },
+        to(SECOND_BASEMAN),
+        thrown,
+        {
+          type: 'runnerMovement',
+          runner: RUNNER,
+          to: '2B',
+          out: true,
+          fielders: [SS]
+        }
+      )
+      expect(state.session.liveData.linescore.outs, words).equals(2)
+      expect(bases(state), words).deep.equals([null, null, null])
+      expect(credits(state), words).deep.equals(dp(SS, SECOND_BASEMAN))
+      nothingToTap(state)
+    }
+  })
+
+  it('reads two numbers right before the double play: the shortstop unassisted, then to first', function () {
+    const state = turned(
+      'Six-three double play.',
+      { first: RUNNER },
+      to(SS),
+      thrown
+    )
+    expect(state.session.liveData.linescore.outs).equals(2)
+    expect(credits(state)).deep.equals(dp(SS, SS))
+  })
+
+  it('credits the fielders said by where the ball went, the cover at second by rule', function () {
+    for (const [fielder, pivot] of [
+      [SS, SECOND_BASEMAN],
+      [THIRD_BASEMAN, SECOND_BASEMAN],
+      [SECOND_BASEMAN, SS],
+      [10, SS]
+    ]) {
+      const state = turned(
+        'Ground ball, double play.',
+        { first: RUNNER },
+        to(fielder),
+        thrown
+      )
+      expect(state.session.liveData.linescore.outs, String(fielder)).equals(2)
+      expect(credits(state), String(fielder)).deep.equals(dp(fielder, pivot))
+    }
+    // 3-6-3: the first baseman starts it and takes the throw back.
+    const first = turned(
+      'He fields it and they turn two.',
+      { first: RUNNER },
+      to(FIRST_BASEMAN),
+      thrown
+    )
+    expect(credits(first)).deep.equals(dp(FIRST_BASEMAN, SS))
+  })
+
+  it('puts the forced runner out however Claude sent him, and keeps its chain', function () {
+    const chain = [SECOND_BASEMAN, SS, FIRST_BASEMAN]
+    for (const shape of [
+      [{ type: 'runnerMovement', runner: RUNNER, to: 'home', fielders: chain }],
+      [
+        { type: 'runnerMovement', runner: RUNNER, to: 'home', fielders: chain },
+        {
+          type: 'runnerMovement',
+          runner: BATTER,
+          to: '1B',
+          out: true,
+          fielders: chain
+        }
+      ],
+      [
+        {
+          type: 'runnerMovement',
+          runner: RUNNER,
+          to: 'home',
+          fielders: [SECOND_BASEMAN, SS]
+        },
+        {
+          type: 'runnerMovement',
+          runner: BATTER,
+          to: '1B',
+          fielders: [SECOND_BASEMAN, FIRST_BASEMAN]
+        }
+      ]
+    ] as ScoringAction[][]) {
+      const state = turned(
+        'Ground ball to second, they turn two.',
+        { first: RUNNER },
+        to(SECOND_BASEMAN),
+        thrown,
+        ...shape
+      )
+      expect(state.session.liveData.linescore.outs).equals(2)
+      expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+      expect(credits(state)).deep.equals(dp(SECOND_BASEMAN, SS))
+    }
+  })
+
+  it('replaces chains that could not be one double play', function () {
+    const out = (
+      runner: number,
+      to: '1B' | '2B',
+      fielders: number[]
+    ): ScoringAction => ({
+      type: 'runnerMovement',
+      runner,
+      to,
+      out: true,
+      fielders
+    })
+    for (const [fielder, shape, lead, pivot] of [
+      // Claude: the first baseman taking the throw at second.
+      [
+        SECOND_BASEMAN,
+        [
+          out(RUNNER, '2B', [SECOND_BASEMAN, FIRST_BASEMAN]),
+          out(BATTER, '1B', [FIRST_BASEMAN])
+        ],
+        SECOND_BASEMAN,
+        SS
+      ],
+      // Claude: the throw to first not from the pivot.
+      [
+        SECOND_BASEMAN,
+        [
+          out(RUNNER, '2B', [SECOND_BASEMAN, SS]),
+          out(BATTER, '1B', [SECOND_BASEMAN, FIRST_BASEMAN])
+        ],
+        SECOND_BASEMAN,
+        SS
+      ],
+      [
+        SS,
+        [
+          out(RUNNER, '2B', [SS, SECOND_BASEMAN]),
+          out(BATTER, '1B', [SS, FIRST_BASEMAN])
+        ],
+        SS,
+        SECOND_BASEMAN
+      ],
+      // Grok 4.3: the shortstop named on both outs.
+      [
+        SS,
+        [out(RUNNER, '2B', [SS]), out(BATTER, '1B', [SS])],
+        SS,
+        SECOND_BASEMAN
+      ],
+      // Sol: the second baseman named alone, then to first.
+      [
+        SECOND_BASEMAN,
+        [
+          out(RUNNER, '2B', [SECOND_BASEMAN]),
+          out(BATTER, '1B', [SECOND_BASEMAN, FIRST_BASEMAN])
+        ],
+        SECOND_BASEMAN,
+        SS
+      ]
+    ] as Array<[number, ScoringAction[], number, number]>) {
+      const state = turned(
+        'They turn two.',
+        { first: RUNNER },
+        to(fielder),
+        thrown,
+        ...shape
+      )
+      expect(state.session.liveData.linescore.outs).equals(2)
+      expect(credits(state), JSON.stringify(shape)).deep.equals(dp(lead, pivot))
+    }
+  })
+
+  it('reads the fielder who fielded it, sent alone on the runner’s out, as the usual double play, unless he took the base himself', function () {
+    const sent: ScoringAction = {
+      type: 'runnerMovement',
+      runner: RUNNER,
+      to: '2B',
+      out: true,
+      fielders: [SS]
+    }
+    const usual = turned(
+      'The shortstop fields it, double play.',
+      { first: RUNNER },
+      to(SS),
+      thrown,
+      sent
+    )
+    expect(credits(usual)).deep.equals(dp(SS, SECOND_BASEMAN))
+    const himself = turned(
+      'The shortstop steps on second and throws to first, double play.',
+      { first: RUNNER },
+      to(SS),
+      thrown,
+      sent
+    )
+    expect(credits(himself)).deep.equals(dp(SS, SS))
+  })
+
+  it('keeps two outs the model chained as one double play, and a run that scored', function () {
+    const chained = turned(
+      'The third baseman throws to the shortstop, who turns two.',
+      { first: RUNNER },
+      to(THIRD_BASEMAN),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '2B',
+        out: true,
+        fielders: [THIRD_BASEMAN, SS]
+      },
+      {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '1B',
+        out: true,
+        fielders: [SS, FIRST_BASEMAN]
+      }
+    )
+    expect(credits(chained)).deep.equals(dp(THIRD_BASEMAN, SS))
+    const scored = turned(
+      'Ground ball to second, they turn two, the run scores.',
+      { first: RUNNER, third: 7 },
+      to(SECOND_BASEMAN),
+      thrown,
+      { type: 'runnerMovement', runner: 7, to: 'home' }
+    )
+    expect(scored.session.liveData.linescore.outs).equals(2)
+    expect(scored.session.liveData.linescore.teams.away.runs).equals(1)
+    expect(credits(scored)).deep.equals(dp(SECOND_BASEMAN, SS))
+  })
+
+  it('takes the throw home to the catcher when the runner put out was at home', function () {
+    const state = turned(
+      'Ground ball to short, home to first, double play.',
+      { third: 7 },
+      to(SS),
+      thrown,
+      { type: 'runnerMovement', runner: 7, to: 'home', out: true }
+    )
+    expect(state.session.liveData.linescore.outs).equals(2)
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(credits(state)).deep.equals(dp(SS, 11))
+  })
+
+  it('leaves a double play the words say did not happen a fielder’s choice', function () {
+    const choiceOut: ScoringAction = {
+      type: 'runnerMovement',
+      runner: RUNNER,
+      to: '2B',
+      out: true,
+      fielders: [SS, SECOND_BASEMAN]
+    }
+    for (const words of [
+      'Ground ball to short, they couldn’t turn two, the runner is out at second and the batter is safe at first.',
+      'Force out at second, no double play.',
+      'Six four, they try to turn two but the batter beats the throw.'
+    ]) {
+      const state = turned(words, { first: RUNNER }, to(SS), choice, choiceOut)
+      expect(state.session.liveData.linescore.outs, words).equals(1)
+      expect(bases(state), words).deep.equals([BATTER, null, null])
+    }
+  })
+
+  it('makes a runner out and the batter safe, as the words say, a fielder’s choice', function () {
+    const state = turned(
+      'Force out at second, no double play.',
+      { first: RUNNER },
+      to(SS),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '2B',
+        out: true,
+        fielders: [SECOND_BASEMAN]
+      }
+    )
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(bases(state)).deep.equals([BATTER, null, null])
+  })
+
+  it('makes up no fielders the words do not name, however the model chains them', function () {
+    const state = turned(
+      'Ground ball to the first baseman, he throws to second and gets the return throw, double play.',
+      { first: RUNNER },
+      to(FIRST_BASEMAN),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '2B',
+        out: true,
+        fielders: [FIRST_BASEMAN, SECOND_BASEMAN]
+      },
+      {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '1B',
+        out: true,
+        fielders: [SECOND_BASEMAN, FIRST_BASEMAN]
+      }
+    )
+    expect(credits(state)).deep.equals(dp(FIRST_BASEMAN, SS))
+  })
+
+  it('is a double play said with "go for", "try to" or "almost beat the throw"', function () {
+    const both: ScoringAction[] = [
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '2B',
+        out: true,
+        fielders: [SS, SECOND_BASEMAN]
+      },
+      {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '1B',
+        out: true,
+        fielders: [SECOND_BASEMAN, FIRST_BASEMAN]
+      }
+    ]
+    for (const words of [
+      'Ground ball to short, they go for the double play and get it.',
+      'Ground ball to short, they try to turn two and they get both.',
+      'Six four three double play, the batter almost beat the throw.',
+      'Ground ball to short not even close double play'
+    ]) {
+      const state = turned(words, { first: RUNNER }, to(SS), thrown, ...both)
+      expect(state.session.liveData.linescore.outs, words).equals(2)
+      expect(credits(state), words).deep.equals(dp(SS, SECOND_BASEMAN))
+    }
+  })
+
+  it('does not read a runner beating the throw home as the batter safe', function () {
+    const home = turned(
+      'Fly out to center, the runner on third tags and beats the throw home, and the runner on second is thrown out at third.',
+      { second: 6, third: 7 },
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'fly_ball',
+        fielder: 17
+      },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' },
+      { type: 'runnerMovement', runner: 7, to: 'home' },
+      {
+        type: 'runnerMovement',
+        runner: 6,
+        to: '3B',
+        out: true,
+        fielders: [17, THIRD_BASEMAN]
+      }
+    )
+    expect(home.session.liveData.linescore.outs).equals(2)
+    expect(home.session.liveData.linescore.teams.away.runs).equals(1)
+  })
+
+  it('reads the chain on a chopper and a ball down the line', function () {
+    for (const [words, fielder, trajectory, lead] of [
+      ['Chopper to short, six four three double play.', SS, 'chopper', SS],
+      [
+        'Hard ground ball down the third base line, five four three double play.',
+        THIRD_BASEMAN,
+        'ground_ball',
+        THIRD_BASEMAN
+      ]
+    ] as const) {
+      const state = turned(
+        words,
+        { first: RUNNER },
+        { type: 'ballInPlay', contact: 'swing', trajectory, fielder },
+        thrown,
+        {
+          type: 'runnerMovement',
+          runner: RUNNER,
+          to: '2B',
+          out: true,
+          fielders: [FIRST_BASEMAN]
+        }
+      )
+      expect(state.session.liveData.linescore.outs, words).equals(2)
+      expect(credits(state), words).deep.equals(dp(lead, SECOND_BASEMAN))
+    }
+  })
+
+  it('credits the fielders the words name taking the throws, over the chains Claude sent', function () {
+    const out = (
+      runner: number,
+      to: '1B' | '2B',
+      fielders: number[]
+    ): ScoringAction => ({
+      type: 'runnerMovement',
+      runner,
+      to,
+      out: true,
+      fielders
+    })
+    for (const [words, fielder, shape, expected] of [
+      [
+        'Ground ball to third, he throws to the shortstop covering second, on to first, double play.',
+        THIRD_BASEMAN,
+        [
+          out(RUNNER, '2B', [SS, FIRST_BASEMAN]),
+          out(BATTER, '1B', [FIRST_BASEMAN])
+        ],
+        dp(THIRD_BASEMAN, SS)
+      ],
+      [
+        'Comebacker, he throws to the second baseman, on to first, double play.',
+        10,
+        [
+          out(RUNNER, '2B', [SECOND_BASEMAN, FIRST_BASEMAN]),
+          out(BATTER, '1B', [FIRST_BASEMAN])
+        ],
+        dp(10, SECOND_BASEMAN)
+      ],
+      [
+        'Ground ball to first, he throws to second, the pitcher covers first, double play.',
+        FIRST_BASEMAN,
+        [
+          out(RUNNER, '2B', [FIRST_BASEMAN, SECOND_BASEMAN]),
+          out(BATTER, '1B', [SECOND_BASEMAN, 10])
+        ],
+        dp(FIRST_BASEMAN, SS, 10)
+      ],
+      [
+        'Ground ball to the first baseman, he throws to the shortstop, back to the first baseman, double play.',
+        FIRST_BASEMAN,
+        [],
+        dp(FIRST_BASEMAN, SS)
+      ]
+    ] as Array<[string, number, ScoringAction[], string[]]>) {
+      const state = turned(
+        words,
+        { first: RUNNER },
+        to(fielder),
+        thrown,
+        ...shape
+      )
+      expect(state.session.liveData.linescore.outs, words).equals(2)
+      expect(credits(state), words).deep.equals(expected)
+    }
+  })
+
+  it('keeps the chain the model sent when the words account for every fielder in it', function () {
+    const out = (
+      runner: number,
+      to: '1B' | '2B',
+      fielders: number[]
+    ): ScoringAction => ({
+      type: 'runnerMovement',
+      runner,
+      to,
+      out: true,
+      fielders
+    })
+    const covering = turned(
+      'Ground ball to third, he throws to the shortstop covering second, on to first, double play.',
+      { first: RUNNER },
+      to(THIRD_BASEMAN),
+      thrown,
+      out(RUNNER, '2B', [THIRD_BASEMAN, SS]),
+      out(BATTER, '1B', [SS, FIRST_BASEMAN])
+    )
+    expect(credits(covering)).deep.equals(dp(THIRD_BASEMAN, SS))
+    const pitcher = turned(
+      'Ground ball to first, he throws to second, the pitcher covers first, double play.',
+      { first: RUNNER },
+      to(FIRST_BASEMAN),
+      thrown,
+      out(RUNNER, '2B', [FIRST_BASEMAN, SS]),
+      out(BATTER, '1B', [SS, 10])
+    )
+    expect(credits(pitcher)).deep.equals(dp(FIRST_BASEMAN, SS, 10))
+  })
+
+  it('leaves a runner who holds where he is, unless another runner was sent to his base', function () {
+    const held = turned(
+      'Ground ball to short, they turn two, the runner on second holds.',
+      { first: RUNNER, second: 6 },
+      to(SS),
+      thrown,
+      { type: 'runnerMovement', runner: 6, to: '2B' }
+    )
+    expect(bases(held)).deep.equals([null, 6, null])
+    const taken = turned(
+      'Six four three double play.',
+      { first: RUNNER, second: 6, third: 7 },
+      to(SS),
+      thrown,
+      { type: 'runnerMovement', runner: 7, to: '3B' },
+      { type: 'runnerMovement', runner: 6, to: '3B' }
+    )
+    expect(taken.dictation?.problem).equals(undefined)
+    expect(bases(taken)).deep.equals([null, null, 6])
+  })
+
+  it('puts the runner from first out at second, not at home where the model sent him', function () {
+    const state = turned(
+      'Ground ball to second, they turn two.',
+      { first: RUNNER },
+      to(SECOND_BASEMAN),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: 'home',
+        out: true,
+        fielders: [SECOND_BASEMAN, SS, FIRST_BASEMAN]
+      }
+    )
+    expect(credits(state)).deep.equals(dp(SECOND_BASEMAN, SS))
+  })
+
+  it('leaves a double play the words say failed a fielder’s choice, however it is put', function () {
+    const choiceOut: ScoringAction = {
+      type: 'runnerMovement',
+      runner: RUNNER,
+      to: '2B',
+      out: true,
+      fielders: [SS, SECOND_BASEMAN]
+    }
+    for (const words of [
+      'Ground ball to short, they try to turn two but the relay is late.',
+      'Ground ball to second, they almost turned two, the runner is out at second.',
+      'Slow roller to short, no chance for a double play, they get the force at second.',
+      'Force out at second, the relay is too late for the double play.',
+      'Ground ball to short, they go for the double play but only get the lead runner.',
+      'Ground ball to short, they try to turn two but the batter is safe.',
+      'Ground ball to short, nearly a double play, but the batter beats it out.',
+      'Ground ball to short, they get the runner at second, not in time for the double play.'
+    ]) {
+      const state = turned(words, { first: RUNNER }, to(SS), thrown, choiceOut)
+      expect(state.session.liveData.linescore.outs, words).equals(1)
+      expect(bases(state), words).deep.equals([BATTER, null, null])
+    }
+    // The runner's out sent before the result: still the lead runner out
+    // and the batter safe.
+    for (const shape of [
+      [choiceOut, choice],
+      [choiceOut, thrown]
+    ] as ScoringAction[][]) {
+      const state = turned(
+        'Ground ball to short, they try to turn two but the relay is late.',
+        { first: RUNNER },
+        to(SS),
+        ...shape
+      )
+      expect(state.dictation?.problem, JSON.stringify(shape)).equals(undefined)
+      expect(state.session.liveData.linescore.outs).equals(1)
+      expect(bases(state)).deep.equals([BATTER, null, null])
+    }
+    // The batter put out, though the words say the relay to him was late:
+    // the lead runner was the out.
+    const late = turned(
+      'Ground ball to short, they try to turn two but the relay is late.',
+      { first: RUNNER },
+      to(SS),
+      thrown,
+      { type: 'runnerMovement', runner: RUNNER, to: '2B' }
+    )
+    expect(late.session.liveData.linescore.outs).equals(1)
+    expect(bases(late)).deep.equals([BATTER, null, null])
+    // A late relay said without "but", or after a period, is the same.
+    for (const words of [
+      'Ground ball to short, they try to turn two, the relay is late.',
+      'Ground ball to short, they try to turn two. But the relay is late.',
+      'Ground ball to second, they go for the double play, too late at first.'
+    ]) {
+      for (const shape of [
+        [thrown, { type: 'runnerMovement', runner: RUNNER, to: '2B' }],
+        [thrown, choiceOut]
+      ] as ScoringAction[][]) {
+        const state = turned(words, { first: RUNNER }, to(SS), ...shape)
+        expect(state.session.liveData.linescore.outs, words).equals(1)
+        expect(bases(state), words).deep.equals([BATTER, null, null])
+      }
+    }
+    // With no runner put out, the model's one out stands: the words may say
+    // it was the batter's.
+    const batterOnly = turned(
+      'Ground ball to short, no double play, they only get the batter at first.',
+      { first: RUNNER },
+      to(SS),
+      thrown,
+      { type: 'runnerMovement', runner: RUNNER, to: '2B' }
+    )
+    expect(batterOnly.session.liveData.linescore.outs).equals(1)
+    expect(bases(batterOnly)).deep.equals([null, RUNNER, null])
+    // A real double play said with a try, and "but" for something else.
+    const real = turned(
+      'Ground ball to short, they go for the double play and get it, but the run scores.',
+      { first: RUNNER, third: 7 },
+      to(SS),
+      thrown,
+      { type: 'runnerMovement', runner: 7, to: 'home' },
+      choiceOut,
+      {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '1B',
+        out: true,
+        fielders: [SECOND_BASEMAN, FIRST_BASEMAN]
+      }
+    )
+    expect(real.session.liveData.linescore.outs).equals(2)
+    expect(real.session.liveData.linescore.teams.away.runs).equals(1)
+    // The model's own fielder's choice stands, unless numbers were said.
+    const sent = turned(
+      'Ground ball to short, double play.',
+      { first: RUNNER },
+      to(SS),
+      choice,
+      choiceOut
+    )
+    expect(sent.session.liveData.linescore.outs).equals(1)
+    const numbers = turned(
+      'Six four three double play.',
+      { first: RUNNER },
+      to(SS),
+      choice,
+      choiceOut
+    )
+    expect(numbers.session.liveData.linescore.outs).equals(2)
+  })
+
+  it('reads the pivot only from a fielder named taking or making a throw who could cover a base', function () {
+    for (const [words, fielder, lead, pivot] of [
+      [
+        'Ground ball to third, he throws to second, and the relay to the first baseman gets him, double play.',
+        THIRD_BASEMAN,
+        THIRD_BASEMAN,
+        SECOND_BASEMAN
+      ],
+      [
+        'Ground ball to short, he flips to second, and the second baseman throws to the first baseman, double play.',
+        SS,
+        SS,
+        SECOND_BASEMAN
+      ],
+      [
+        'Shortstop to second, over to the first baseman, double play.',
+        SS,
+        SS,
+        SECOND_BASEMAN
+      ],
+      [
+        'Ground ball close to the third baseman, the shortstop cuts in front and throws to second, on to first, double play.',
+        SS,
+        SS,
+        SECOND_BASEMAN
+      ]
+    ] as const) {
+      const state = turned(words, { first: RUNNER }, to(fielder), thrown)
+      expect(state.session.liveData.linescore.outs, words).equals(2)
+      expect(credits(state), words).deep.equals(dp(lead, pivot))
+    }
+  })
+
+  it('keeps the runner from second thrown out at home when the words say home', function () {
+    const state = turned(
+      'Ground ball to short, he throws home to get the runner from second, catcher to first, double play.',
+      { first: RUNNER, second: 6 },
+      to(SS),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: 6,
+        to: 'home',
+        out: true,
+        fielders: [SS, 11]
+      },
+      {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '1B',
+        out: true,
+        fielders: [11, FIRST_BASEMAN]
+      }
+    )
+    expect(state.session.liveData.linescore.outs).equals(2)
+    expect(bases(state)).deep.equals([null, RUNNER, null])
+    expect(credits(state)).deep.equals(dp(SS, 11))
+  })
+
+  it('moves every other runner the batter forced up a base', function () {
+    const second = turned(
+      'Six four three double play.',
+      { first: RUNNER, second: 6 },
+      to(SS),
+      thrown
+    )
+    expect(second.session.liveData.linescore.outs).equals(2)
+    expect(bases(second)).deep.equals([null, null, 6])
+    const loaded = turned(
+      'Six four three double play.',
+      { first: RUNNER, second: 6, third: 7 },
+      to(SS),
+      thrown
+    )
+    expect(loaded.session.liveData.linescore.teams.away.runs).equals(1)
+    expect(bases(loaded)).deep.equals([null, null, 6])
+    // "One two three": the force at home, then first.
+    const home = turned(
+      'One two three double play.',
+      { first: RUNNER, second: 6, third: 7 },
+      to(10),
+      thrown
+    )
+    expect(home.session.liveData.linescore.outs).equals(2)
+    expect(home.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(home)).deep.equals([null, RUNNER, 6])
+    expect(credits(home)).deep.equals(dp(10, 11))
+  })
+
+  it('puts the runner out at a base ahead of him, whatever base the model sent', function () {
+    const state = turned(
+      '6-4-3 double play.',
+      { first: RUNNER },
+      to(SS),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '1B',
+        out: true,
+        fielders: [SS, SECOND_BASEMAN]
+      }
+    )
+    const play = state.session.liveData.plays.allPlays.at(-1)
+    expect(
+      play?.runners.find(r => r.details.runner.id === RUNNER)?.movement.end
+    ).equals(2)
+    expect(credits(state)).deep.equals(dp(SS, SECOND_BASEMAN))
+  })
+
+  it('trusts a model chain only when it starts with the fielder who fielded it', function () {
+    const state = turned(
+      'Comebacker to the pitcher, double play.',
+      { first: RUNNER },
+      to(10),
+      thrown,
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '2B',
+        out: true,
+        fielders: [SECOND_BASEMAN]
+      }
+    )
+    expect(credits(state)).deep.equals(dp(10, SS))
+  })
+
+  it('reads the chain past a count said before it, and a chain alone', function () {
+    const counted = turned(
+      'On the two-one pitch, six three double play.',
+      { first: RUNNER },
+      to(SECOND_BASEMAN),
+      thrown
+    )
+    expect(credits(counted)).deep.equals(dp(SS, SS))
+    const alone = turned(
+      'Ground ball, six-four-three.',
+      { first: RUNNER },
+      to(SS),
+      thrown
+    )
+    expect(alone.session.liveData.linescore.outs).equals(2)
+    expect(credits(alone)).deep.equals(dp(SS, SECOND_BASEMAN))
+  })
+
+  it('leaves a ball in the air, and two outs already made, to the rules', function () {
+    const liner: ScoringAction[] = [
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'line_drive',
+        fielder: SS
+      },
+      { type: 'result', eventType: 'field_out' },
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '1B',
+        out: true,
+        fielders: [SS, FIRST_BASEMAN]
+      }
+    ]
+    expect(
+      playDefaults(
+        game({ first: RUNNER }).session,
+        liner,
+        'Line drive to short, doubled off first, double play.'
+      )
+    ).deep.equals(liner)
+    const twoOut = game({ first: RUNNER })
+    twoOut.session.liveData.linescore.outs = 2
+    expect(
+      playDefaults(
+        twoOut.session,
+        [to(SS), thrown],
+        'Six four three double play.'
+      )
+    ).deep.equals([to(SS), thrown])
+  })
+
+  it('leaves the sentence alone with nobody on first and no runner put out', function () {
+    const state = turned(
+      'Ground ball to short, double play.',
+      { second: RUNNER },
+      to(SS),
+      thrown
+    )
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(credits(state)).deep.equals([
+      `f_assist ${SS}`,
+      `f_putout ${FIRST_BASEMAN}`
+    ])
+  })
+
+  it('takes the throw to first only from an out on the same ball in play', function () {
+    const state = turned(
+      'Runner caught stealing, catcher to short. Then ground out to second.',
+      { first: RUNNER },
+      {
+        type: 'runnerMovement',
+        runner: RUNNER,
+        to: '2B',
+        out: true,
+        fielders: [11, SS]
+      },
+      to(SECOND_BASEMAN),
+      thrown
+    )
+    expect(credits(state)).to.include.members([
+      `f_assist ${SECOND_BASEMAN}`,
+      `f_putout ${FIRST_BASEMAN}`
+    ])
+    expect(credits(state)).not.to.include(`f_assist ${SS}`)
+  })
+
+  it('throws the batter out from the fielder who made the runner’s out, or credits nobody', function () {
+    const pivot = turned('said', { first: RUNNER }, to(SS), thrown, {
+      type: 'runnerMovement',
+      runner: RUNNER,
+      to: '2B',
+      out: true,
+      fielders: [SS, SECOND_BASEMAN]
+    })
+    expect(credits(pivot)).deep.equals(dp(SS, SECOND_BASEMAN))
+    const unsaid = turned('said', { first: RUNNER }, to(SS), thrown, {
+      type: 'runnerMovement',
+      runner: RUNNER,
+      to: '2B',
+      out: true
+    })
+    expect(unsaid.session.liveData.linescore.outs).equals(2)
+    expect(credits(unsaid)).deep.equals([])
+  })
+})
+
+describe('strike three in a sentence', function () {
+  it('keeps a dropped third strike, said after the pitch, for the screen to ask about', function () {
+    const state = settle(
+      sayAs(
+        'Strike three, but the catcher drops it and the batter beats the throw to first.',
+        game(),
+        { type: 'pitch', call: 'S' },
+        { type: 'pitch', call: 'S' },
+        { type: 'pitch', call: 'S' },
+        { type: 'result', eventType: 'strikeout' }
+      )
+    )
+    expect(state.dictation?.problem).equals(undefined)
+    expect(state.dictationQuestion?.question).match(/dropped third strike/)
+  })
+
+  it('is the strikeout by itself: a strikeout sent after it is dropped too', function () {
+    const state = settle(
+      sayAs(
+        'Foul ball. Swing and a miss. Called strike three.',
+        game({ second: 6 }),
+        { type: 'pitch', call: 'F' },
+        { type: 'pitch', call: 'S' },
+        { type: 'pitch', call: 'C' },
+        { type: 'result', eventType: 'strikeout' }
+      )
+    )
+    expect(state.dictation?.problem).equals(undefined)
+    expect(state.session.liveData.linescore.outs).equals(1)
+  })
+
+  it('is the strikeout by itself: an out sent after it is dropped', function () {
+    const state = settle(
+      sayAs(
+        'Foul ball. Swing and a miss. Called strike three.',
+        game(),
+        { type: 'pitch', call: 'F' },
+        { type: 'pitch', call: 'S' },
+        { type: 'pitch', call: 'C' },
+        {
+          type: 'result',
+          eventType: 'field_out',
+          outBy: 'catch',
+          foulCaught: true
+        }
+      )
+    )
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(
+      state.session.liveData.plays.allPlays.map(p => p.result.eventType)
+    ).deep.equals(['strikeout'])
+  })
+})
+
+describe('a runner who holds', function () {
+  it('stays on third on a single, which would otherwise send him home', function () {
+    const state = settle(
+      sayAs(
+        'Line drive single to left, the runner holds at third.',
+        game({ third: 6 }),
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+        { type: 'result', eventType: 'single' },
+        { type: 'runnerMovement', runner: 6, to: '3B' }
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(state)).deep.equals([BATTER, null, 6])
+    nothingToTap(state)
+  })
+
+  it('stays on third when the hold is said before the single', function () {
+    const state = settle(
+      sayAs(
+        'Single to left, the runner holds at third.',
+        game({ third: 6 }),
+        { type: 'runnerMovement', runner: 6, to: '3B' },
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+        { type: 'result', eventType: 'single' }
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(state)).deep.equals([BATTER, null, 6])
+  })
+
+  it('is not moved, and the rest of the sentence stands', function () {
+    const state = settle(
+      sayAs(
+        'Ground out to short, the runner holds.',
+        game({ second: 6 }),
+        grounder,
+        {
+          type: 'result',
+          eventType: 'field_out',
+          outBy: 'throw'
+        },
+        { type: 'runnerMovement', runner: 6, to: '2B' }
+      )
+    )
+    expect(state.dictation?.problem).equals(undefined)
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(bases(state)).deep.equals([null, 6, null])
+    nothingToTap(state)
   })
 })

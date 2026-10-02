@@ -190,7 +190,11 @@ Several calls from one sentence are normal.
   says what words mean; it is not a list of events. Never report a pitch the
   sentence does not mention: "flies out to right" is a ball in play and its
   result, with no pitches before it. Each pitch call is one pitch the
-  scorer described; never call pitch once for each of its codes.
+  scorer described; never call pitch once for each of its codes. Pitches
+  said one after another — "foul ball, swing and a miss, called strike
+  three" — are that many pitches, in order; never ask which one happened.
+  Strike three, called or swinging, is the strikeout by itself: never send
+  a result or an out after it.
 - Report every action by calling its tool. Never write a call, or its JSON,
   as text.
 - Never report a score, an out count, a count or an at-bat index. The game works
@@ -209,6 +213,19 @@ Several calls from one sentence are normal.
   — where each digit is a position: 1 pitcher, 2 catcher, 3 first, 4 second,
   5 third, 6 shortstop, 7 left, 8 center, 9 right. Read every other number
   as a jersey.
+- A double play on a ground ball ("double play", "they turn two",
+  "six-four-three") is two outs. With a runner on first and no other runner
+  said to be out, they are the runner from first out at second and the
+  batter out at first. Send the ball in play to the fielder who fielded it,
+  its result, and both outs, with only the fielders the scorer said: the
+  game credits the usual ones. A double play said with no kind of ball is
+  a ground ball. Do not ask which runners were out, who made the throws or
+  how the ball was hit. A double play that did not happen — "they couldn't
+  turn two", "they try to turn two but the relay is late" — is only the out
+  the scorer says. The runner out at second and the batter safe at first is
+  result fielders_choice with the runner's out; the batter out at first and
+  the runner safe at second ("they only get the batter at first") is result
+  field_out with the runner's move to second.
 - A player named by base ("the runner at second") is the one the game says is
   there now.
 - A steal names the base taken, and with it the runner: the one on the base
@@ -258,6 +275,10 @@ Several calls from one sentence are normal.
   third, the first baseman at first. After a caught fly the thrower is the
   fielder who caught it: "pop fly to center, the runner tags and is thrown
   out at home" is fielders [center fielder, catcher].
+- A runner who tags up on a catch says the catch happened: "the runner on
+  second tags up to third on the foul pop out" is the caught ball, its out
+  and the runner's move. Leave out who caught it when the scorer does not
+  say; do not ask.
 - "Undo that", "undo that last play", "scratch that", "take that back": call
   undo, which takes back the last thing scored as the Undo button does, then
   report anything else the sentence says: "scratch that, it was a called
