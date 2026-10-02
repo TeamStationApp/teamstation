@@ -5,14 +5,15 @@ import {
   asScheduleGameRow,
   type GameStatus,
   type ScheduleErrorCode,
-  type ScheduleExternalId,
   type ScheduleGameResult,
   type ScheduleGameRow,
   type ScheduleGamesResponse
 } from '../../common/scheduleGames'
 import { adminScopes } from '../access'
 import type { Database } from '../db/database'
+import { recordExternalId } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
+import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
 
 /**
@@ -98,8 +99,6 @@ interface HeldGame {
   status: GameStatus
   fence_distance_ft: number | null
 }
-
-type Db = Kysely<Database> | Transaction<Database>
 
 interface Context {
   teamId: string
@@ -243,7 +242,7 @@ async function applyRow(
       if (held.status === 'inProgress' || held.status === 'final') {
         return { result: 'unchanged', gameId: held.id, status: held.status }
       }
-      const idWritten = await recordExternalId(trx, held.id, externalId)
+      const idWritten = await recordExternalId(trx, 'game', held.id, externalId)
       return await updateHeld(trx, held, row, startAt, idWritten)
     }
   }
@@ -287,7 +286,7 @@ async function applyRow(
       .orderBy('created_at')
       .executeTakeFirst()
     if (twin != null) {
-      await recordExternalId(trx, twin.id, externalId)
+      await recordExternalId(trx, 'game', twin.id, externalId)
       if (twin.status === 'inProgress' || twin.status === 'final') {
         return { result: 'updated', gameId: twin.id, status: twin.status }
       }
@@ -316,7 +315,8 @@ async function applyRow(
       fence_distance_ft: row.fenceDistanceFt ?? null
     })
     .execute()
-  if (externalId != null) await recordExternalId(trx, gameId, externalId)
+  if (externalId != null)
+    await recordExternalId(trx, 'game', gameId, externalId)
   return { result: 'created', gameId, status }
 }
 
@@ -334,27 +334,6 @@ function mustMaySchedule(
     'forbidden',
     `Only an admin of this team or of ${name} may schedule games in it`
   )
-}
-
-/** Records the id under its kind, unless it is held already. */
-async function recordExternalId(
-  trx: Transaction<Database>,
-  gameId: string,
-  externalId: ScheduleExternalId
-): Promise<boolean> {
-  const inserted = await trx
-    .insertInto('external_ids')
-    .values({
-      id: makeId('externalId'),
-      entity_type: 'game',
-      entity_id: gameId,
-      system: externalId.system,
-      kind: externalId.kind,
-      external_id: externalId.id
-    })
-    .onConflict(oc => oc.columns(['system', 'kind', 'external_id']).doNothing())
-    .executeTakeFirst()
-  return Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0
 }
 
 /**
@@ -517,23 +496,6 @@ async function resolveRowOpponent(
       'conflict',
       `${opponent.name} is ${context.teamName} itself`
     )
-  }
-  return id
-}
-
-/** The team a merged team became, however many merges ago. */
-async function followMerges(db: Db, teamId: string): Promise<string> {
-  let id = teamId
-  const seen = new Set<string>()
-  while (!seen.has(id)) {
-    seen.add(id)
-    const row = await db
-      .selectFrom('teams')
-      .select(['merged_into'])
-      .where('id', '=', id)
-      .executeTakeFirst()
-    if (row?.merged_into == null) return id
-    id = row.merged_into
   }
   return id
 }
