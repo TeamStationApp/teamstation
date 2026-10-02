@@ -40,8 +40,7 @@ export function gridBox(options: {
   aspect: number
 }): Rect {
   const { width, height, count, aspect } = options
-  const columns = count <= 1 ? 1 : 2
-  const rows = count <= 2 ? 1 : 2
+  const { columns, rows } = gridShape(width, height, count)
   const wanted = (aspect * columns) / rows
 
   let w = width
@@ -86,22 +85,37 @@ export function tileRects(options: {
   }
 
   if (tiles === 1) return [box]
-  const halfWidth = box.w / 2
-  const halfHeight = box.h / 2
-  if (tiles === 2) {
-    // Side by side, filling the height: two 16:9 pictures across a 32:9 box.
-    return [
-      { x: box.x, y: box.y, w: halfWidth, h: box.h },
-      { x: box.x + halfWidth, y: box.y, w: halfWidth, h: box.h }
-    ]
-  }
-  const quadrants: Rect[] = [
-    { x: box.x, y: box.y, w: halfWidth, h: halfHeight },
-    { x: box.x + halfWidth, y: box.y, w: halfWidth, h: halfHeight },
-    { x: box.x, y: box.y + halfHeight, w: halfWidth, h: halfHeight },
-    { x: box.x + halfWidth, y: box.y + halfHeight, w: halfWidth, h: halfHeight }
-  ]
-  return quadrants.slice(0, tiles)
+  // Side by side, or one above another, filling the box: two 16:9 pictures
+  // across a 32:9 box, or down a 9:32 one.
+  const { columns, rows } = gridShape(width, height, tiles)
+  const w = box.w / columns
+  const h = box.h / rows
+  return Array.from({ length: tiles }, (unused, index) => ({
+    x: box.x + (index % columns) * w,
+    y: box.y + Math.floor(index / columns) * h,
+    w,
+    h
+  }))
+}
+
+/**
+ * How the tiles are arranged: side by side in a box wider than it is tall —
+ * two across, and two rows from a third angle on — and one above another in a
+ * box taller than it is wide.
+ *
+ * The second is a phone held upright, which is how the app is held: a two-by-
+ * two grid there used a strip across the middle of the screen, each picture a
+ * quarter of its width, with the rest black. Stacked, each picture is the
+ * screen's width.
+ */
+export function gridShape(
+  width: number,
+  height: number,
+  count: number
+): { columns: number; rows: number } {
+  if (count <= 1) return { columns: 1, rows: 1 }
+  if (height > width) return { columns: 1, rows: count }
+  return { columns: 2, rows: count <= 2 ? 1 : 2 }
 }
 
 /** Which tile a finger let go over, or null for none of them. */
@@ -123,8 +137,9 @@ export function dropTarget(rects: Rect[], at: Point): number | null {
 /**
  * Two tiles change places.
  *
- * A swap rather than an insert: four tiles are always four tiles, and sliding
- * the others along would move two pictures somebody did not touch.
+ * The grid's rule, sideways: in two rows of two there is no "along" for the
+ * others to slide, so the one dropped on takes the gap and nothing else
+ * moves. The upright column inserts instead (`move`).
  */
 export function swap<T>(order: T[], from: number, to: number): T[] {
   if (
@@ -140,4 +155,85 @@ export function swap<T>(order: T[], from: number, to: number): T[] {
   next[from] = order[to]
   next[to] = order[from]
   return next
+}
+
+/**
+ * One tile taken out and put back at `to`, the ones between moving up one.
+ *
+ * The upright column's rule: a picture dragged down a stack of four is put
+ * where it was let go and the others close up behind it, which is what a
+ * list on a phone does. Sideways, a grid swaps (`swap`).
+ */
+export function move<T>(order: T[], from: number, to: number): T[] {
+  if (
+    from === to ||
+    from < 0 ||
+    to < 0 ||
+    from >= order.length ||
+    to >= order.length
+  ) {
+    return order
+  }
+  const next = order.slice()
+  const [taken] = next.splice(from, 1)
+  next.splice(to, 0, taken)
+  return next
+}
+
+/** Where everything is while one tile is being dragged. */
+export interface DragSlots {
+  /** The slot the dragged tile lands in if it is let go now, or null. */
+  target: number | null
+  /** For each tile, the slot it is drawn in meanwhile (the dragged one's own). */
+  slots: number[]
+}
+
+/**
+ * The tiles while `index` is dragged `offset` from its slot: which slot it
+ * would land in, and where the others stand aside to show it.
+ *
+ * In one column the target is the row under the dragged tile's centre,
+ * clamped to the first and last, and the rows between slide one slot towards
+ * the gap it left — an insert, as `move` does on the drop. In a grid the
+ * target is the tile under its centre, and that one alone slides into the
+ * gap — a swap, as `swap` does. Over no tile, nothing moves.
+ */
+export function dragSlots(
+  rects: Rect[],
+  columns: number,
+  index: number,
+  offset: Point
+): DragSlots {
+  const resting = rects.map((unused, slot) => slot)
+  const rect = rects[index]
+  if (rect == null) return { target: null, slots: resting }
+  const centre = {
+    x: rect.x + rect.w / 2 + offset.x,
+    y: rect.y + rect.h / 2 + offset.y
+  }
+
+  if (columns === 1) {
+    let target = rects.findIndex(
+      one => centre.y >= one.y && centre.y < one.y + one.h
+    )
+    if (target < 0) {
+      target = centre.y < (rects[0]?.y ?? 0) ? 0 : rects.length - 1
+    }
+    // Where each tile ends up if the dragged one is put at `target`.
+    const after = move(resting, index, target)
+    const slots = resting.slice()
+    after.forEach((tile, slot) => {
+      slots[tile] = slot
+    })
+    slots[index] = index
+    return { target, slots }
+  }
+
+  const target = dropTarget(rects, centre)
+  if (target == null || target === index) {
+    return { target, slots: resting }
+  }
+  const slots = resting.slice()
+  slots[target] = index
+  return { target, slots }
 }

@@ -1,7 +1,16 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { dropTarget, gridBox, type Rect, swap, tileRects } from './layout'
+import {
+  dragSlots,
+  dropTarget,
+  gridBox,
+  gridShape,
+  move,
+  type Rect,
+  swap,
+  tileRects
+} from './layout'
 
 const area = (rect: Rect): number => rect.w * rect.h
 const round = (value: number): number => Math.round(value * 100) / 100
@@ -90,5 +99,95 @@ describe('dragging one tile onto another', function () {
     expect(swap(order, 1, 1)).equals(order)
     expect(swap(order, 1, 9)).equals(order)
     expect(swap(order, -1, 2)).equals(order)
+  })
+})
+
+describe('the grid on a phone held upright', function () {
+  it('stacks the angles in one column when the box is taller than it is wide', function () {
+    expect(gridShape(393, 760, 4)).deep.equals({ columns: 1, rows: 4 })
+    expect(gridShape(393, 760, 2)).deep.equals({ columns: 1, rows: 2 })
+    expect(gridShape(393, 760, 1)).deep.equals({ columns: 1, rows: 1 })
+    expect(gridShape(852, 393, 4)).deep.equals({ columns: 2, rows: 2 })
+    expect(gridShape(852, 393, 2)).deep.equals({ columns: 2, rows: 1 })
+  })
+
+  it('gives each of four angles a full-width row, one under another', function () {
+    const rects = tileRects({ width: 393, height: 760, count: 4 })
+    expect(rects).length(4)
+    const [first] = rects
+    for (const [index, rect] of rects.entries()) {
+      expect(rect.x).equals(first.x)
+      expect(rect.w).equals(first.w)
+      expect(rect.y).closeTo(first.y + index * first.h, 0.001)
+    }
+    // As wide as 16:9 allows in a quarter of the height, which is far more
+    // than half the width a two-by-two grid gave each one.
+    expect(first.w).greaterThan(393 / 2)
+    expect(first.w / first.h).closeTo(16 / 9, 0.001)
+  })
+})
+
+describe('moving a tile by hand', function () {
+  const column = tileRects({ width: 393, height: 760, count: 4 })
+  const grid = tileRects({ width: 1600, height: 900, count: 4 })
+  const rowH = column[0].h
+
+  it('puts one tile at a new place and closes the gap behind it', function () {
+    expect(move(['a', 'b', 'c', 'd'], 0, 2)).deep.equals(['b', 'c', 'a', 'd'])
+    expect(move(['a', 'b', 'c', 'd'], 3, 0)).deep.equals(['d', 'a', 'b', 'c'])
+    const order = ['a', 'b']
+    expect(move(order, 1, 1)).equals(order)
+    expect(move(order, 0, 5)).equals(order)
+    expect(move(order, -1, 0)).equals(order)
+  })
+
+  it('upright, slides the rows between up to make room below', function () {
+    // The first row's centre carried down into the third.
+    const { target, slots } = dragSlots(column, 1, 0, { x: 0, y: rowH * 2 })
+    expect(target).equals(2)
+    expect(slots).deep.equals([0, 0, 1, 3])
+  })
+
+  it('upright, slides the rows between down to make room above', function () {
+    const { target, slots } = dragSlots(column, 1, 3, { x: 0, y: -rowH * 2 })
+    expect(target).equals(1)
+    expect(slots).deep.equals([0, 2, 3, 3])
+  })
+
+  it('upright, holds the first or last row past either end', function () {
+    expect(dragSlots(column, 1, 1, { x: 0, y: -2000 }).target).equals(0)
+    expect(dragSlots(column, 1, 1, { x: 0, y: 2000 }).target).equals(3)
+  })
+
+  it('upright, leaves everything still over its own row', function () {
+    const { target, slots } = dragSlots(column, 1, 2, { x: 30, y: 5 })
+    expect(target).equals(2)
+    expect(slots).deep.equals([0, 1, 2, 3])
+  })
+
+  it('sideways, slides only the tile underneath into the gap', function () {
+    // The top-left tile's centre carried onto the bottom-right one.
+    const { target, slots } = dragSlots(grid, 2, 0, {
+      x: grid[3].x - grid[0].x,
+      y: grid[3].y - grid[0].y
+    })
+    expect(target).equals(3)
+    expect(slots).deep.equals([0, 1, 2, 0])
+  })
+
+  it('sideways, moves nothing over its own slot or off the grid', function () {
+    expect(dragSlots(grid, 2, 1, { x: 4, y: 4 }).slots).deep.equals([
+      0, 1, 2, 3
+    ])
+    const off = dragSlots(grid, 2, 1, { x: 5000, y: 0 })
+    expect(off.target).equals(null)
+    expect(off.slots).deep.equals([0, 1, 2, 3])
+  })
+
+  it('has nothing to say about a tile that is not there', function () {
+    expect(dragSlots(grid, 2, 7, { x: 0, y: 0 })).deep.equals({
+      target: null,
+      slots: [0, 1, 2, 3]
+    })
   })
 })
