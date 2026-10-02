@@ -357,6 +357,111 @@ describe('api client', function () {
     })
   })
 
+  it('finds, follows and unfollows teams, and reads what a fan may', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const hawks = {
+      id: 'tem_1',
+      name: 'Hawks',
+      logoUrl: null,
+      seasons: [{ id: 'sea_1', title: 'QPLL Spring 2027' }],
+      following: false
+    }
+
+    const search = client([hawks])
+    expect(await search.client.searchTeams('Haw ks')).deep.equals([hawks])
+    expect(search.calls[0].url).equals(
+      'http://x/api/v1/teams/search?q=Haw%20ks'
+    )
+
+    const follow = client({ following: true })
+    expect(await follow.client.follow('tem 1')).equals(true)
+    expect(follow.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/teams/tem%201/follow'
+    })
+
+    const unfollow = client({ following: false })
+    expect(await unfollow.client.unfollow('tem_1')).equals(false)
+    expect(unfollow.calls[0]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/teams/tem_1/follow'
+    })
+
+    const mine = client([{ ...hawks, following: true }])
+    expect((await mine.client.myFollows())[0]?.following).equals(true)
+    expect(mine.calls[0].url).equals('http://x/api/v1/me/follows')
+
+    const entry = {
+      gameId: 'gam_1',
+      startsAt: '2027-04-03T17:00:00.000Z',
+      homeTeam: { id: 'tem_1', name: 'Hawks' },
+      awayTeam: { id: 'tem_2', name: 'Owls' },
+      venue: null,
+      homeScore: 6
+    }
+    const schedule = client([entry])
+    // Anything more than the listing is dropped, a score included.
+    expect(await schedule.client.teamSchedule('tem_1')).deep.equals([
+      {
+        gameId: 'gam_1',
+        startsAt: '2027-04-03T17:00:00.000Z',
+        homeTeam: { id: 'tem_1', name: 'Hawks' },
+        awayTeam: { id: 'tem_2', name: 'Owls' },
+        venue: null
+      }
+    ])
+    expect(schedule.calls[0].url).equals('http://x/api/v1/teams/tem_1/schedule')
+
+    const staff = client([
+      { userId: 42, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
+    ])
+    expect(await staff.client.teamStaff('tem_1')).deep.equals([
+      { userId: 42, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
+    ])
+    expect(staff.calls[0].url).equals('http://x/api/v1/teams/tem_1/staff')
+  })
+
+  it('reads how a team is seen, and a list from before that was said', async function () {
+    const now = stubFetch(200, [
+      {
+        id: 'tem_1',
+        name: 'Hawks',
+        shortName: null,
+        logoPath: null,
+        record: null,
+        access: 'fan',
+        following: true,
+        onTeam: false
+      },
+      { id: 'tem_2', name: 'Owls', shortName: null, logoPath: null }
+    ])
+    const teams = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: now.fetch
+    }).teams()
+    expect(teams[0]).deep.include({
+      access: 'fan',
+      following: true,
+      onTeam: false
+    })
+    expect(teams[1]?.access).equals(undefined)
+    expect(teams[1]?.onTeam).equals(undefined)
+  })
+
   it('cleans a team list', async function () {
     const { fetch } = stubFetch(200, [
       { id: 'tem_1', name: 'Badgers', shortName: null, logoPath: null }

@@ -44,6 +44,7 @@ import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
+import { followRoutes } from './routes/follows'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -480,6 +481,7 @@ function runWorker(): void {
     eventListRoutes(db, mediaContext, { store: scoreboard.store })
   )
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
+  app.use('/api/v1', followRoutes(db, mediaContext))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(

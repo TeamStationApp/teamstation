@@ -49,6 +49,7 @@ import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { FollowTeamScreen } from './screens/FollowTeamScreen'
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { HomeScreen } from './screens/HomeScreen'
@@ -111,6 +112,8 @@ type Pushed =
   | { name: 'scoreboardOverride'; gameId: string }
   | { name: 'season'; season: SeasonSummary; tab?: string; when?: When }
   | { name: 'team'; team: TeamSummary; tab?: string }
+  /** Finding a team to follow. */
+  | { name: 'followTeam' }
   | {
       name: 'game'
       gameId: string
@@ -627,6 +630,20 @@ function Shell(props: AppProps): React.ReactElement {
     push({ name: 'team', team })
   }
   /**
+   * A team followed from the follow screen, by its id. The list is asked
+   * again, because the team the person has just followed was not in it a
+   * moment ago, and it is the list that says they see it as a fan.
+   */
+  const openFollowedTeam = (teamId: string): void => {
+    client
+      .teams()
+      .then(teams => {
+        const team = teams.find(item => item.id === teamId)
+        if (team != null) push({ name: 'team', team })
+      })
+      .catch(() => undefined)
+  }
+  /**
    * A name, from wherever it was tapped.
    *
    * `from` is why the Stats tab knows what to open on: a box score hands over
@@ -847,6 +864,9 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenTeam={openTeam}
           onOpenSeason={openSeason}
           onOpenGame={openGame}
+          onFollowTeam={() => {
+            push({ name: 'followTeam' })
+          }}
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen
@@ -954,6 +974,8 @@ function Shell(props: AppProps): React.ReactElement {
         fadeAppleMusic={walkUpSettings.fadeAppleMusic}
         onSaved={pop}
       />
+    ) : top.name === 'followTeam' ? (
+      <FollowTeamScreen client={client} onOpenTeam={openFollowedTeam} />
     ) : top.name === 'team' ? (
       <TeamScreen
         client={client}
@@ -1294,6 +1316,7 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  if (route.name === 'followTeam') return { [tab]: [{ name: 'followTeam' }] }
   if (route.name === 'player') {
     return {
       [tab]: [
@@ -1362,6 +1385,7 @@ function routeOf(
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'followTeam') return { name: 'followTeam' }
     if (top.name === 'player') {
       return {
         name: 'player',
@@ -1418,6 +1442,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
+    if (top.name === 'followTeam') return 'Follow a team'
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {
       return sprintf(lstrings.walkup_title, top.playerName)

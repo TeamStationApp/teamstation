@@ -25,6 +25,13 @@ export interface VisibleScopes {
   teamIds: Set<string>
   /** Seasons opened up to the user, by a season or a league setting. */
   seasonIds: Set<string>
+  /**
+   * Teams the user follows and does not otherwise see. Kept apart from
+   * `teamIds` on purpose: a follow shows the team's listing — its schedule,
+   * roster and staff, through `canSeeTeamListing` — and never its games,
+   * videos or stats, which every reader of `teamIds` would hand out.
+   */
+  followedTeamIds: Set<string>
   /** True for a site administrator, who sees everything. */
   isAdmin: boolean
 }
@@ -90,8 +97,15 @@ export async function visibleScopes(
     for (const row of inThose) teamIds.add(row.team_id)
   }
 
+  const followedTeamIds = await followedTeams(db, userId, teamIds)
+
   if (teamIds.size === 0) {
-    return { teamIds, seasonIds: new Set(memberSeasonIds), isAdmin }
+    return {
+      teamIds,
+      seasonIds: new Set(memberSeasonIds),
+      followedTeamIds,
+      isAdmin
+    }
   }
 
   // Seasons this user's teams play in, with the season's and league's setting.
@@ -132,7 +146,29 @@ export async function visibleScopes(
     for (const row of leagueSeasons) seasonIds.add(row.id)
   }
 
-  return { teamIds, seasonIds, isAdmin }
+  return { teamIds, seasonIds, followedTeamIds, isAdmin }
+}
+
+/**
+ * The full, unmerged teams this user follows, leaving out any they already
+ * see as one of the team's own people.
+ */
+async function followedTeams(
+  db: Kysely<Database>,
+  userId: number,
+  teamIds: Set<string>
+): Promise<Set<string>> {
+  const rows = await db
+    .selectFrom('team_follows')
+    .innerJoin('teams', 'teams.id', 'team_follows.team_id')
+    .select(['team_follows.team_id as teamId'])
+    .where('team_follows.user_id', '=', userId)
+    .where('teams.kind', '=', 'full')
+    .where('teams.merged_into', 'is', null)
+    .execute()
+  return new Set(
+    rows.map(row => row.teamId).filter(teamId => !teamIds.has(teamId))
+  )
 }
 
 /** The leagues, seasons and teams one role reaches, inherited downwards. */
@@ -339,6 +375,18 @@ export function visibleGamesWhere(
 
 export function canSeeTeam(scopes: VisibleScopes, teamId: string): boolean {
   return scopes.isAdmin || scopes.teamIds.has(teamId)
+}
+
+/**
+ * Whether a team's listing — its schedule, roster and staff — may be read:
+ * by anybody who can see the team, and by its fans. It gates those three
+ * reads and `GET /teams`, and nothing else.
+ */
+export function canSeeTeamListing(
+  scopes: VisibleScopes,
+  teamId: string
+): boolean {
+  return canSeeTeam(scopes, teamId) || scopes.followedTeamIds.has(teamId)
 }
 
 /** A team a person played for, in the season they played for it. */

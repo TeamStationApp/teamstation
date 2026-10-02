@@ -163,6 +163,7 @@ describe('addresses', function () {
       { name: 'schedule', when: 'upcoming' },
       { name: 'account' },
       { name: 'team', teamId: 'tea_1', tab: 'stats' },
+      { name: 'followTeam' },
       { name: 'season', seasonId: 'sea_1', tab: 'standings', when: 'all' },
       { name: 'league', leagueId: 'lea_1' },
       { name: 'join', code: 'demo2026' }
@@ -170,6 +171,11 @@ describe('addresses', function () {
     for (const route of routes) {
       expect(roundTrip(route), routePath(route)).deep.equals(route)
     }
+  })
+
+  it('reads and writes the follow screen at /teams/follow', function () {
+    expect(parseRoute('/teams/follow')).deep.equals({ name: 'followTeam' })
+    expect(routePath({ name: 'followTeam' })).equals('/teams/follow')
   })
 
   it('reads an invite link at the address PeerTube used', function () {

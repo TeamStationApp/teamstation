@@ -1805,7 +1805,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`season` (400 `kind needs season`).\n\n' +
             'Each team carries `externalIds`, the ids other systems know it ' +
             'by (any system or kind), sorted, and `kind`, `full` or ' +
-            '`external`. `externalId` may be repeated, and narrows the list ' +
+            '`external`.\n\n' +
+            'Without `season`, teams the caller only follows are listed too, ' +
+            'with `access: fan` and no `record`; the rest say ' +
+            '`access: member`. Each says whether the caller `following` it, ' +
+            'and whether they are `onTeam`, with a place on its roster.\n\n' +
+            '`externalId` may be repeated, and narrows the list ' +
             'to teams holding any of those ids, with what the caller may see ' +
             'unchanged; an empty one is refused.',
           security: [{ bearer: [] }],
@@ -3300,6 +3305,107 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/teams/search': {
+        get: {
+          summary: 'Find a team to follow',
+          description:
+            'Anybody signed in. `q` needs at least 2 characters (400 ' +
+            'otherwise) and matches anywhere in the name, ignoring case. At ' +
+            'most 20 full, unmerged teams, by name, each ' +
+            '`{id, name, logoUrl, seasons: [{id, title}], following}`, where ' +
+            'a season title is `<league> <season>` when it has a league.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', minLength: 2 }
+            }
+          ],
+          responses: {
+            200: { description: 'The matching teams, possibly none' },
+            400: errorResponse,
+            401: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/follow': {
+        put: {
+          summary: 'Follow a team',
+          description:
+            'Anybody signed in, with nobody’s permission. A fan sees the ' +
+            'team’s schedule, roster and staff, and nothing else of it. ' +
+            'Idempotent. A missing, external or merged team gets 404.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: '`{following: true}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Stop following a team',
+          description:
+            'Idempotent. A missing, external or merged team gets 404.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: '`{following: false}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/me/follows': {
+        get: {
+          summary: 'The teams the caller follows',
+          description:
+            'In the shape `GET /teams/search` answers, every one with ' +
+            '`following: true`.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The followed teams, by name' },
+            401: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/schedule': {
+        get: {
+          summary: "A team's games, as a fan may read them",
+          description:
+            'For anybody who can see the team or follows it. Oldest first, ' +
+            'cancelled games left out, each ' +
+            '`{gameId, startsAt, homeTeam: {id, name}, awayTeam: {id, name}, ' +
+            'venue}`, with no status, score, poster or video.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: 'The schedule' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/staff': {
+        get: {
+          summary: "A team's staff and their roles on it",
+          description:
+            'For anybody who can see the team or follows it. The people ' +
+            'with a direct `admin`, `coach`, `scorekeeper` or `songkeeper` ' +
+            'role on the team, and its owners and managers as `admin`; ' +
+            'roles on its season or league do not count. Each is ' +
+            '`{userId, shortName, avatarUrl, roles}`, administrators first.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: 'The staff' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/roster': {
         get: {
           summary: "A team's players, coaches and followers",
@@ -3308,7 +3414,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the whole name is only on `GET /players/{userId}/name`. ' +
             '`walkUpSong` is the WalkUpSong the person has ' +
             'on this team, or null. Whether the caller may change the songs ' +
-            'is `GET /me/roles`: `songkeeper` or `admin` on the team.',
+            'is `GET /me/roles`: `songkeeper` or `admin` on the team.\n\n' +
+            'A fan, who only follows the team, reads its coaches and players ' +
+            'alone, with no `walkUpSong`.',
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {

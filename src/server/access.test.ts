@@ -19,6 +19,7 @@ import {
   canScore,
   canSeeGame,
   canSeeTeam,
+  canSeeTeamListing,
   hasRole,
   mayEditName,
   type RoleScopes,
@@ -31,10 +32,12 @@ import { type Database, makeDatabase } from './db/database'
 const scopes = (
   teamIds: string[],
   seasonIds: string[],
-  isAdmin = false
+  isAdmin = false,
+  followedTeamIds: string[] = []
 ): VisibleScopes => ({
   teamIds: new Set(teamIds),
   seasonIds: new Set(seasonIds),
+  followedTeamIds: new Set(followedTeamIds),
   isAdmin
 })
 
@@ -83,6 +86,16 @@ describe('access', function () {
     )
     // Being able to watch a season's games does not make you a team member.
     expect(canSeeTeam(scopes([], ['sea_spring']), 'tem_home')).equals(false)
+  })
+
+  it('shows a fan the team listing and nothing else of the team', function () {
+    const fan = scopes([], [], false, ['tem_home'])
+    expect(canSeeTeamListing(fan, 'tem_home')).equals(true)
+    expect(canSeeTeamListing(fan, 'tem_away')).equals(false)
+    expect(canSeeTeam(fan, 'tem_home')).equals(false)
+    expect(canSeeGame(fan, game)).equals(false)
+    expect(canSeeTeamListing(scopes(['tem_away'], []), 'tem_away')).equals(true)
+    expect(canSeeTeamListing(scopes([], [], true), 'tem_any')).equals(true)
   })
 
   it('separates managing from watching', function () {

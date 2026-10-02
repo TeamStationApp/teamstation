@@ -90,6 +90,7 @@
   "src/app/screens/PlayerScreen.tsx",
   "src/app/screens/PlayerSettingsTab.tsx",
   "src/app/screens/TeamScreen.tsx",
+  "src/app/screens/FollowTeamScreen.tsx",
   "src/app/screens/AccountScreen.tsx",
   "src/app/screens/HomeScreen.tsx",
   "src/app/screens/SeasonScreen.tsx",

@@ -12,6 +12,7 @@ import {
   canScore,
   canSeeGame,
   canSeeTeam,
+  canSeeTeamListing,
   roleScopes,
   visibleScopes
 } from '../access'
@@ -155,12 +156,14 @@ export function teamRoutes(
         // A team merged into another is that team now: it has no games of
         // its own, and an id it still holds must not find it.
         .where('teams.merged_into', 'is', null)
+      // A fan's teams are listed beside the user's own, and say so below.
+      const listed = [...scopes.teamIds, ...scopes.followedTeamIds]
       if (inSeasons != null) {
         query = query.where('teams.id', 'in', inSeasons)
       } else {
         query = query.where('teams.kind', '=', 'full')
         if (!scopes.isAdmin) {
-          query = query.where('teams.id', 'in', [...scopes.teamIds])
+          query = query.where('teams.id', 'in', listed)
         }
       }
       if (externalIds != null) {
@@ -178,7 +181,7 @@ export function teamRoutes(
       const nothing =
         inSeasons != null
           ? inSeasons.length === 0
-          : !scopes.isAdmin && scopes.teamIds.size === 0
+          : !scopes.isAdmin && listed.length === 0
       const teams = nothing
         ? []
         : await query
@@ -234,6 +237,34 @@ export function teamRoutes(
           seasonYear: season?.year ?? null
         }
       })
+      // Whether the caller follows each team, and whether they are on it,
+      // so the team page knows whether to offer Follow.
+      const ids = teams.map(team => team.id)
+      const followed = new Set(
+        ids.length === 0
+          ? []
+          : (
+              await db
+                .selectFrom('team_follows')
+                .select(['team_id'])
+                .where('user_id', '=', actor.userId)
+                .where('team_id', 'in', ids)
+                .execute()
+            ).map(row => row.team_id)
+      )
+      const onTeams = new Set(
+        ids.length === 0
+          ? []
+          : (
+              await db
+                .selectFrom('memberships')
+                .select(['team_id'])
+                .where('user_id', '=', actor.userId)
+                .where('team_id', 'in', ids)
+                .execute()
+            ).map(row => row.team_id)
+      )
+
       const newest = new Map<string, (typeof records)[number]>()
       for (const row of records) {
         const held = newest.get(row.teamId)
@@ -244,7 +275,19 @@ export function teamRoutes(
 
       res.json(
         teams.map(team => {
-          const record = newest.get(team.id)
+          // A fan reads no record: it is counted from games they may not see.
+          // Asked by season, the caller may see the season, so nobody is one,
+          // and the list says nothing of how the caller stands to each team.
+          const fan = inSeasons == null && !canSeeTeam(scopes, team.id)
+          const record = fan ? undefined : newest.get(team.id)
+          const standing =
+            inSeasons != null
+              ? {}
+              : {
+                  access: fan ? 'fan' : 'member',
+                  following: followed.has(team.id),
+                  onTeam: onTeams.has(team.id)
+                }
           return {
             id: team.id,
             name: team.name,
@@ -261,7 +304,8 @@ export function teamRoutes(
                     seasonName: record.seasonName
                   },
             externalIds: team.externalIds ?? [],
-            kind: team.kind
+            kind: team.kind,
+            ...standing
           }
         })
       )
@@ -717,9 +761,11 @@ export function teamRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeTeam(scopes, teamId)) throw notFound()
+      if (!canSeeTeamListing(scopes, teamId)) throw notFound()
 
-      res.json(await teamRoster(db, media.space, teamId))
+      // Somebody who only follows the team reads less of it.
+      const view = canSeeTeam(scopes, teamId) ? 'full' : 'fan'
+      res.json(await teamRoster(db, media.space, teamId, view))
     })
   )
 

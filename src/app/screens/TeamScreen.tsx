@@ -6,12 +6,16 @@ import type {
   GameSummary,
   PitchingRow,
   RosterEntry,
+  ScheduleEntry,
+  StaffEntry,
   StandingsRow,
   TeamStationClient,
   TeamSummary
 } from '../../common/api'
+import type { Role } from '../../common/roles'
 import {
   Badge,
+  Button,
   Card,
   Emblem,
   GameRow,
@@ -91,10 +95,15 @@ type TabId = 'videos' | 'schedule' | 'team' | 'stats'
  * `roster` is taken as `team` because that is what the pill said when the
  * address was first written down, and a link somebody sent should not stop
  * working because the word on the button changed.
+ *
+ * A fan has two sections, and opens on the schedule.
  */
-function tabOf(id: string | undefined): TabId {
-  if (id === 'roster') return 'team'
-  return TABS.some(item => item.id === id) ? (id as TabId) : 'videos'
+function tabOf(id: string | undefined, fan = false): TabId {
+  const tabs = fan ? FAN_TABS : TABS
+  const asked = id === 'roster' ? 'team' : id
+  return tabs.some(item => item.id === asked)
+    ? (asked as TabId)
+    : (tabs[0]?.id ?? 'videos')
 }
 
 const TABS = [
@@ -103,6 +112,24 @@ const TABS = [
   { id: 'team' as const, label: 'Team' },
   { id: 'stats' as const, label: 'Stats' }
 ]
+
+/**
+ * What somebody who only follows the team sees: when it plays and who is on
+ * it. No videos and no stats, which are the team's own people's.
+ */
+const FAN_TABS = [
+  { id: 'schedule' as const, label: 'Schedule' },
+  { id: 'team' as const, label: 'Team' }
+]
+
+/** How a staff role reads under a name. */
+const ROLE_LABELS: Record<Role, string> = {
+  admin: 'Admin',
+  coach: 'Coach',
+  scorekeeper: 'Scorekeeper',
+  songkeeper: 'Songkeeper',
+  videographer: 'Videographer'
+}
 
 /**
  * A team: what was recorded, when they play, who is on it, and how they did.
@@ -115,6 +142,13 @@ const TABS = [
  * requests against a season's worth of rows is quicker than the spinner a
  * parent would otherwise meet on every tap, and it means switching tabs is
  * instant, which is what makes a tab strip feel like one screen.
+ *
+ * A fan — `access: 'fan'`, somebody who only follows the team — reads its
+ * schedule, roster and staff and nothing more, so their page asks for those
+ * three and never for the games, stats or standings, which would answer 404
+ * and fail the whole load. Its schedule cards open nothing.
+ *
+ * Anybody not on the team's roster gets a Follow / Following toggle.
  */
 export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const {
@@ -164,8 +198,13 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     )
   )
 
-  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
+  const fan = team.access === 'fan'
+  const [tab, setTab] = useState<TabId>(tabOf(initialTab, fan))
   const [games, setGames] = useState<GameSummary[]>([])
+  const [schedule, setSchedule] = useState<ScheduleEntry[]>([])
+  const [staff, setStaff] = useState<StaffEntry[]>([])
+  const [following, setFollowing] = useState(team.following === true)
+  const [followBusy, setFollowBusy] = useState(false)
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [pitching, setPitching] = useState<PitchingRow[]>([])
@@ -187,6 +226,18 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
+      if (fan) {
+        const [loadedSchedule, loadedRoster, loadedStaff] = await Promise.all([
+          client.teamSchedule(team.id),
+          client.roster(team.id),
+          client.teamStaff(team.id)
+        ])
+        if (cancelled) return
+        setSchedule(loadedSchedule)
+        setRoster(loadedRoster)
+        setStaff(loadedStaff)
+        return
+      }
       const loadedGames = await client.teamGames(team.id)
       if (cancelled) return
       setGames(loadedGames)
@@ -224,7 +275,23 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, team.id])
+  }, [client, fan, team.id])
+
+  const toggleFollow = (): void => {
+    setFollowBusy(true)
+    setError(undefined)
+    const next = following ? client.unfollow(team.id) : client.follow(team.id)
+    next
+      .then(answer => {
+        setFollowing(answer)
+      })
+      .catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : 'Cannot follow')
+      })
+      .finally(() => {
+        setFollowBusy(false)
+      })
+  }
 
   const withVideo = games.filter(game => game.videoCount > 0)
   // The same rule as the schedule and the season page, not a fourth copy of
@@ -255,6 +322,21 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           </View>
           {place != null && <Badge label={placeLabel(place)} tone="honour" />}
         </View>
+        {team.onTeam === false && (
+          <View style={styles.followRow}>
+            <Button
+              label={following ? 'Following' : 'Follow'}
+              kind={following ? 'secondary' : 'primary'}
+              compact
+              busy={followBusy}
+              disabled={followBusy}
+              accessibilityLabel={
+                following ? `Following ${team.name}` : `Follow ${team.name}`
+              }
+              onPress={toggleFollow}
+            />
+          </View>
+        )}
         {/*
           The bottom right corner, floated rather than laid out: in the flow
           it pushed the card taller and left a band of empty space under the
@@ -274,7 +356,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       </Card>
 
       <PillTabs
-        tabs={TABS}
+        tabs={fan ? FAN_TABS : TABS}
         selected={tab}
         onSelect={next => {
           setTab(next)
@@ -308,7 +390,73 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         </View>
       )}
 
-      {!loading && tab === 'schedule' && (
+      {!loading && fan && tab === 'schedule' && (
+        <View style={styles.section}>
+          <SectionHeader title="Schedule" note={`${schedule.length} games`} />
+          {schedule.length === 0 ? (
+            <Empty text="No games scheduled." />
+          ) : (
+            schedule.map(entry => (
+              <FanGameCard key={entry.gameId} entry={entry} teamId={team.id} />
+            ))
+          )}
+        </View>
+      )}
+
+      {!loading && fan && tab === 'team' && (
+        <>
+          {staff.length > 0 && (
+            <View style={styles.section}>
+              <SectionHeader title="Staff" note={String(staff.length)} />
+              <Card>
+                {staff.map((person, index) => (
+                  <View key={person.userId}>
+                    {index > 0 && <View style={styles.divider} />}
+                    <ListRow
+                      title={person.shortName}
+                      subtitle={staffSubtitle(person)}
+                      emblem={initialsOf(person.shortName)}
+                      emblemUri={person.avatarUrl}
+                      emblemShape="circle"
+                    />
+                  </View>
+                ))}
+              </Card>
+            </View>
+          )}
+          {roster.filter(person => person.group === 'player').length === 0 ? (
+            <Empty text="No players have been added to this team yet." />
+          ) : (
+            <View style={styles.section}>
+              <SectionHeader
+                title="Players"
+                note={String(
+                  roster.filter(person => person.group === 'player').length
+                )}
+              />
+              <Card>
+                {roster
+                  .filter(person => person.group === 'player')
+                  .map((person, index) => (
+                    <View key={person.userId}>
+                      {index > 0 && <View style={styles.divider} />}
+                      <ListRow
+                        title={person.shortName}
+                        subtitle={rosterSubtitle(person)}
+                        emblem={initialsOf(person.shortName)}
+                        emblemUri={person.avatarUrl}
+                        emblemShape="circle"
+                        trailing={jerseyOf(person)}
+                      />
+                    </View>
+                  ))}
+              </Card>
+            </View>
+          )}
+        </>
+      )}
+
+      {!loading && !fan && tab === 'schedule' && (
         <View style={styles.section}>
           <SectionHeader
             title="Schedule"
@@ -329,7 +477,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         </View>
       )}
 
-      {!loading && tab === 'team' && (
+      {!loading && !fan && tab === 'team' && (
         <>
           {roster.length === 0 && (
             <Empty text="Nobody has been added to this team yet." />
@@ -362,13 +510,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         emblem={initialsOf(person.shortName)}
                         emblemUri={person.avatarUrl}
                         emblemShape="circle"
-                        trailing={
-                          // An empty string is not a jersey number. Without
-                          // this the row reads as a bare `#`.
-                          person.jersey == null || person.jersey.trim() === ''
-                            ? undefined
-                            : `#${person.jersey.trim()}`
-                        }
+                        trailing={jerseyOf(person)}
                         onPress={
                           onOpenPlayer == null
                             ? undefined
@@ -421,12 +563,27 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   )
 }
 
-/** `1st Place`, `2nd Place`, `11th Place`. */
 /** The line under a roster name: the positions, if any. */
 export function rosterSubtitle(person: RosterEntry): string | undefined {
   return person.positions.length > 0 ? person.positions.join(' · ') : undefined
 }
 
+/**
+ * `#12`, or nothing. An empty string is not a jersey number: without this the
+ * row reads as a bare `#`.
+ */
+function jerseyOf(person: RosterEntry): string | undefined {
+  return person.jersey == null || person.jersey.trim() === ''
+    ? undefined
+    : `#${person.jersey.trim()}`
+}
+
+/** The line under a staff name: `Coach · Scorekeeper`. */
+export function staffSubtitle(person: StaffEntry): string {
+  return person.roles.map(role => ROLE_LABELS[role]).join(' · ')
+}
+
+/** `1st Place`, `2nd Place`, `11th Place`. */
 function placeLabel(place: number): string {
   const rest = place % 100
   const suffix =
@@ -487,6 +644,43 @@ function GameCard(props: {
           The plays and the reported score disagree, so highlights are withheld.
         </Text>
       )}
+    </Card>
+  )
+}
+
+/**
+ * One game on a fan's schedule: the date, the opponent and the place. It
+ * opens nothing, because the game page is the team's own people's.
+ */
+function FanGameCard(props: {
+  entry: ScheduleEntry
+  teamId: string
+}): React.ReactElement {
+  const { entry, teamId } = props
+  const narrow = useBreakpoint() === 'phone'
+  const lines = matchupLines(
+    {
+      homeTeamId: entry.homeTeam.id,
+      awayTeamId: entry.awayTeam.id,
+      homeTeamName: entry.homeTeam.name,
+      awayTeamName: entry.awayTeam.name
+    },
+    teamId
+  )
+  const detail = [
+    narrow ? shortDateNoWeekday(entry.startsAt) : shortDate(entry.startsAt),
+    shortTime(entry.startsAt)
+  ]
+    .filter(part => part !== '')
+    .join(' · ')
+  return (
+    <Card>
+      <GameRow
+        first={lines.first}
+        second={lines.second}
+        detail={detail}
+        venue={entry.venue}
+      />
     </Card>
   )
 }
@@ -636,6 +830,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '700',
     color: theme.scoreboardAccentColor
+  },
+  followRow: {
+    flexDirection: 'row'
   },
   identityText: {
     flex: 1,

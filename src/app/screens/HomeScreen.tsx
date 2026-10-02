@@ -31,6 +31,8 @@ export interface HomeScreenProps {
     title: string,
     options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
   ) => void
+  /** Find a team to follow. Without it there is no Follow a team. */
+  onFollowTeam?: () => void
 }
 
 /**
@@ -41,9 +43,12 @@ export interface HomeScreenProps {
  * thing than being allowed to watch a season, and the person opening this app
  * is usually looking for one child's team — so the teams are the first thing
  * under the thumb, and the seasons are there for the wider wander.
+ *
+ * The teams somebody only follows are among theirs, marked Following, and
+ * **Follow a team** under them finds another.
  */
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
-  const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
+  const { client, onOpenTeam, onOpenSeason, onOpenGame, onFollowTeam } = props
   const styles = getStyles(useTheme())
 
   const [teams, setTeams] = useState<TeamSummary[]>([])
@@ -326,6 +331,15 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         </View>
       )}
 
+      {onFollowTeam != null && (
+        <Button
+          label="Follow a team"
+          icon="groups"
+          kind="secondary"
+          onPress={onFollowTeam}
+        />
+      )}
+
       {seasons.length > 0 && (
         <View style={styles.section}>
           <SectionHeader title="Seasons" note="Current & past" />
@@ -383,6 +397,8 @@ function matchup(game: SeasonGame): string {
 
 /** `QPLL Spring 2026 · 12–3`, or whichever half of that we know. */
 function subtitleFor(team: TeamSummary): string | undefined {
+  // A fan reads no record, and the row says why they can see the team.
+  if (team.access === 'fan') return 'Following'
   const parts: string[] = []
   if (team.record?.seasonName != null) parts.push(team.record.seasonName)
   else if (team.shortName != null) parts.push(team.shortName)

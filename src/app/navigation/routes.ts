@@ -32,6 +32,8 @@ export type Route =
   | { name: 'schedule'; when: When }
   | { name: 'account' }
   | { name: 'team'; teamId: string; tab?: string }
+  /** Finding a team by name, to follow it. */
+  | { name: 'followTeam' }
   /**
    * One player, and what the Stats tab is narrowed to.
    *
@@ -180,6 +182,8 @@ export function parseRoute(path: string, search = ''): Route {
     }
     case 'teams':
       if (id == null) return { name: 'home' }
+      // Team ids carry a prefix, so no team is called `follow`.
+      if (id === 'follow' && parts[2] == null) return { name: 'followTeam' }
       if (parts[2] === 'manage') {
         return { name: 'manage', scopeKind: 'team', scopeId: id }
       }
@@ -274,6 +278,8 @@ export function routePath(route: Route): string {
       return '/account'
     case 'signInLink':
       return `/signin/${route.token}`
+    case 'followTeam':
+      return '/teams/follow'
     case 'team':
       return route.tab == null || route.tab === 'videos'
         ? `/teams/${route.teamId}`
