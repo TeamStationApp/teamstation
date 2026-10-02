@@ -1,7 +1,8 @@
-import { asObject, asOptional, asString, asValue } from 'cleaners'
+import { asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
+import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { adminScopes } from '../access'
 import { createEmailCode, type SignInOrigin } from '../auth/emailCodes'
@@ -47,7 +48,7 @@ import { withAsync } from '../middleware/withErrors'
  * which of the ones they tried exist is the first half of guessing one.
  */
 
-const asScopeType = asValue('league', 'season', 'team')
+const asScopeType = asLiteral('league', 'season', 'team')
 
 const asNewInvite = asObject({
   scopeType: asScopeType,

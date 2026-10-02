@@ -14,8 +14,11 @@ function plateLine(
   kind: 'name' | 'number',
   fontPx: number
 ): HTMLElement {
-  let line = node.querySelector(`[data-line="${kind}"]`)
-  if (!(line instanceof HTMLElement)) {
+  const found = node.querySelector(`[data-line="${kind}"]`)
+  let line: HTMLElement
+  if (found instanceof HTMLElement) {
+    line = found
+  } else {
     line = document.createElement('span')
     line.setAttribute('data-line', kind)
     line.style.display = 'block'

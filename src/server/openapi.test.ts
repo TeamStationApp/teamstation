@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import type { Router } from 'express'
 import type { Kysely } from 'kysely'
 import { describe, it } from 'mocha'
 
@@ -18,7 +19,7 @@ import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
-import { liveRoutes } from './routes/live'
+import { type LiveRouteOptions, liveRoutes } from './routes/live'
 import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
@@ -56,17 +57,16 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
-const live = {
+const live: LiveRouteOptions = {
   live: {
     enabled: true,
     bindHost: '127.0.0.1',
     port: 1936,
     app: 'live',
     segmentSeconds: 4,
-    closeAfterHours: 6
+    freeDiskFloorGb: 10
   },
   sessionSecret: 'secret',
   host: '127.0.0.1'
@@ -77,9 +77,11 @@ interface RouteLayer {
 }
 
 /** Every `METHOD /path` a router answers, in the document's spelling. */
-function routesOf(router: { stack: RouteLayer[] }): string[] {
+function routesOf(router: Router): string[] {
+  // Express keeps its layers on the router without declaring them.
+  const { stack } = router as unknown as { stack: RouteLayer[] }
   const out: string[] = []
-  for (const layer of router.stack) {
+  for (const layer of stack) {
     const route = layer.route
     if (route == null) continue
     // Express writes `:gameId`; OpenAPI writes `{gameId}`.

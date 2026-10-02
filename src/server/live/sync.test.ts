@@ -10,6 +10,7 @@ import { Pool } from 'pg'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { addPerson } from '../../test/scoreboardKit'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -79,7 +80,6 @@ describe('what the ingest is told', function () {
         port: 19_362,
         app: 'live',
         segmentSeconds: 4,
-        closeAfterHours: 6,
         freeDiskFloorGb: 1
       },
       ffmpegPath: '/does/not/matter',
@@ -130,12 +130,15 @@ describe('what the ingest is told', function () {
         updated_at: now
       })
       .execute()
+    // A key publishes video as somebody.
+    const owner = await addPerson(db, 'owner')
     await db
       .insertInto('live_streams')
       .values({
         id: 'liv_1',
         game_id: 'gam_1',
         team_id: 'tem_home',
+        user_id: owner.userId,
         key_hash: hashToken(FIRST_KEY),
         key_prefix: FIRST_KEY.slice(0, 8),
         key_cipher: sealSecret(SECRET, FIRST_KEY),

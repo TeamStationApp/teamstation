@@ -1,6 +1,7 @@
-import { asObject, asOptional, asString, asValue, type Cleaner } from 'cleaners'
+import { asObject, asOptional, asString, type Cleaner } from 'cleaners'
 
 import type { TeamLineups } from './api'
+import { asLiteral } from './asLiteral'
 import type { WalkUpSong } from './walkUpSong'
 
 /**
@@ -150,10 +151,10 @@ const asReplyHead = asObject({
 })
 
 const asErrorReply = asObject({
-  type: asValue('error'),
+  type: asLiteral('error'),
   id: asOptional(asString),
   gameId: asOptional(asString),
-  code: asValue(
+  code: asLiteral(
     'notFound',
     'malformed',
     'tooMany',
@@ -163,9 +164,9 @@ const asErrorReply = asObject({
 })
 
 const asChangeHead = asObject({
-  type: asValue('change'),
+  type: asLiteral('change'),
   gameId: asString,
-  kind: asValue(
+  kind: asLiteral(
     'plays',
     'lineups',
     'walkUpSong',

@@ -16,6 +16,12 @@
   "include": [
     "src/app/**/*.ts",
     "src/app/**/*.tsx",
-    "src/common/**/*.ts"
+    "src/common/**/*.ts",
+    // The test helpers built on the app, and the e2e test that drives a
+    // browser page with the DOM's types. The rest of src/test is the
+    // server's, in tsconfig.server.test.json.
+    "src/test/fakeScoreboardSocket.ts",
+    "src/test/scoringHelpers.ts",
+    "src/test/scoreboardServer.e2e.ts"
   ]
 }

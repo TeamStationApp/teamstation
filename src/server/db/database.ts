@@ -575,7 +575,7 @@ export interface GameStatsStateTable {
   detail: string | null
   attempts: Generated<number>
   retry_at: Timestamp | null
-  requested_at: Generated<Timestamp>
+  requested_at: Timestamp
   built_at: Timestamp | null
 }
 

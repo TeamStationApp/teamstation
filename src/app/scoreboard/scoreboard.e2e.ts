@@ -692,8 +692,8 @@ describe('the scoreboard pages', function () {
           const boxes = await page.evaluate(() => {
             const box = (name: string): number[] => {
               const node = document.querySelector(`[data-scoreboard="${name}"]`)
-              const team = node == null ? null : node.parentElement
-              if (team == null) return []
+              const team = node?.parentElement
+              if (node == null || team == null) return []
               const rect = team.getBoundingClientRect()
               const text = node.getBoundingClientRect()
               return [rect.width, rect.x, text.width]

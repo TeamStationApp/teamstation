@@ -80,11 +80,20 @@ describe('the brand', function () {
       execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
     try {
       git('init', '-q', '-b', 'master')
-      writeFileSync(join(dir, 'clean.ts'), 'export const name = "TeamStation"\n')
+      writeFileSync(
+        join(dir, 'clean.ts'),
+        'export const name = "TeamStation"\n'
+      )
       git('add', '.')
       expect(oldNameHits(dir)).deep.equals([])
-      writeFileSync(join(dir, 'stray.ts'), 'export const name = "GameStation"\n')
-      writeFileSync(join(dir, 'host.md'), 'PeerTube is at tube2.gamestation.co\n')
+      writeFileSync(
+        join(dir, 'stray.ts'),
+        'export const name = "GameStation"\n'
+      )
+      writeFileSync(
+        join(dir, 'host.md'),
+        'PeerTube is at tube2.gamestation.co\n'
+      )
       git('add', '.')
       expect(oldNameHits(dir)).deep.equals([
         'stray.ts:1:export const name = "GameStation"'

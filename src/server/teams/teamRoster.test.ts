@@ -195,7 +195,6 @@ describe('scoring roster HTTP contract', function () {
     app.use(
       teamRoutes(db, {
         mediaRoot: '',
-        workDir: '',
         ffmpegPath: '',
         mediaSecret: 'test',
         publicUrl: 'http://localhost',

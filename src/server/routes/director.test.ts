@@ -47,8 +47,7 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_director_${Date.now()}`
@@ -117,7 +116,6 @@ describe('what TS Director is offered', function () {
           port: 1936,
           app: 'live',
           segmentSeconds: 4,
-          closeAfterHours: 6,
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),

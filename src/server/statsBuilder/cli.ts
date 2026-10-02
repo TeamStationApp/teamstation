@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises'
+
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
 import { owedCount } from './builder'
@@ -25,7 +27,7 @@ export function parseArgs(argv: string[]): CliArgs {
       args.wait = wait
     }
   }
-  if (args.wait == null) args.wait = 120
+  args.wait ??= 120
   return args
 }
 
@@ -63,7 +65,9 @@ export async function summarizeStatuses(
   }
   summary.incompleteReasons = [...reasons.entries()]
     .map(([detail, count]) => ({ detail, count }))
-    .sort((a, b) => b.count - a.count || a.detail.localeCompare(b.detail))
+    .sort((a, b) =>
+      b.count !== a.count ? b.count - a.count : a.detail.localeCompare(b.detail)
+    )
   return summary
 }
 
@@ -85,9 +89,12 @@ export async function runStatsRequest(
     sleep?: (ms: number) => Promise<void>
   } = {}
 ): Promise<StatusSummary | null> {
-  const log = options.log ?? (line => console.log(line))
-  const sleep =
-    options.sleep ?? ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)))
+  const log =
+    options.log ??
+    (line => {
+      console.log(line)
+    })
+  const sleep = options.sleep ?? delay
   if (args.game == null && args.all !== true) {
     throw new Error('Pass --game <gameId> or --all')
   }
@@ -122,7 +129,7 @@ export async function runCliMain(argv: string[]): Promise<void> {
 
 /* c8 ignore start */
 if (require.main === module) {
-  runCliMain(process.argv.slice(2)).catch(error => {
+  runCliMain(process.argv.slice(2)).catch((error: unknown) => {
     console.error(error)
     process.exit(1)
   })

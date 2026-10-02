@@ -1,7 +1,6 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { gumboViolations } from '../gumbo/validate'
 import {
   after,
   ball,
@@ -17,6 +16,8 @@ import {
   strikeout,
   walk
 } from '../../test/scoringGames'
+import { gumboViolations } from '../gumbo/validate'
+import type { GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
 import { documentOf } from './document'
@@ -46,6 +47,14 @@ const result = (
   eventType: Extract<ScoringAction, { type: 'result' }>['eventType'],
   extra: Partial<Extract<ScoringAction, { type: 'result' }>> = {}
 ): ScoringAction => ({ type: 'result', eventType, ...extra })
+
+interface StoredRunner {
+  movement: { end: string | null }
+  details: { runner: { fullName: string }; movementReason: string | null }
+}
+function runnersOf(play: GumboPlay): StoredRunner[] {
+  return (play.runners ?? []) as unknown as StoredRunner[]
+}
 
 function twoOuts(state: GameState): GameState {
   return strikeout(strikeout(state))
@@ -117,11 +126,16 @@ describe('runners on a hit', function () {
   })
 
   it('still auto-advances an unforced multi-base runner on a double', function () {
-    const state = after(single(game()), close, {
-      type: 'ballInPlay',
-      contact: 'swing',
-      fielder: F.CF
-    }, result('double'))
+    const state = after(
+      single(game()),
+      close,
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: F.CF
+      },
+      result('double')
+    )
     expect(bases(state)).deep.equals([null, 2, 1])
   })
 
@@ -215,7 +229,10 @@ describe('runners on a hit', function () {
   })
 
   it('stores auto-advance and undo plays without Gumbo violations', function () {
-    const stamp = { setupBefore: setupOf(game()), actions: [] as ScoringAction[] }
+    const stamp = {
+      setupBefore: setupOf(game()),
+      actions: [] as ScoringAction[]
+    }
     let advanced = after(single(game()), close, {
       type: 'baseRunning',
       kind: 'steal',
@@ -229,7 +246,7 @@ describe('runners on a hit', function () {
     )
     expect(gumboViolations(advancedPlay)).deep.equals([])
     expect(
-      advancedPlay.runners.some(
+      runnersOf(advancedPlay).some(
         r =>
           r.details.runner.fullName === 'Player 1' &&
           r.movement.end === '3B' &&
@@ -250,9 +267,8 @@ describe('runners on a hit', function () {
     )
     expect(gumboViolations(undonePlay)).deep.equals([])
     expect(
-      undonePlay.runners.some(
-        r =>
-          r.details.runner.fullName === 'Player 1' && r.movement.end === '3B'
+      runnersOf(undonePlay).some(
+        r => r.details.runner.fullName === 'Player 1' && r.movement.end === '3B'
       )
     ).equals(false)
   })

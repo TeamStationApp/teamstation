@@ -60,8 +60,10 @@ function line(
   return { userId, teamId, ...emptyFigures(), ...figures }
 }
 
+type EventType = GumboPlay['result']['eventType']
+
 function paPlay(
-  eventType: string,
+  eventType: EventType,
   opts: {
     atBatIndex?: number
     inning?: number
@@ -139,7 +141,7 @@ describe('gameStatLines', function () {
 
   it('counts each figures-table event type', function () {
     const cases: Array<{
-      eventType: string
+      eventType: EventType
       batter?: Partial<Omit<PlayerGameLine, 'userId' | 'teamId'>>
       pitcher?: Partial<Omit<PlayerGameLine, 'userId' | 'teamId'>>
       play?: GumboPlay
@@ -575,33 +577,32 @@ describe('gameStatLines', function () {
     // Batter 1 singles off 11. Batter 2 bats to 16 after a change: 1 is
     // caught stealing at event 1, and 2 strikes out at event 5.
     const single = paPlay('single', { pitcher: 11 })
-    const changedAt = (change: number, atBatIndex = 1): GumboPlay =>
-      ({
-        ...paPlay('strikeout', { atBatIndex, batter: 2, pitcher: 16, outs: 2 }),
-        runners: [
-          {
-            movement: { start: '1B', end: null, isOut: true },
-            details: {
-              eventType: 'caught_stealing_2b',
-              runner: { id: 1 },
-              playIndex: 1
-            }
-          },
-          {
-            movement: { start: null, end: null, isOut: true },
-            details: { eventType: 'strikeout', runner: { id: 2 }, playIndex: 5 }
+    const changedAt = (change: number, atBatIndex = 1): GumboPlay => ({
+      ...paPlay('strikeout', { atBatIndex, batter: 2, pitcher: 16, outs: 2 }),
+      runners: [
+        {
+          movement: { start: '1B', end: null, isOut: true },
+          details: {
+            eventType: 'caught_stealing_2b',
+            runner: { id: 1 },
+            playIndex: 1
           }
-        ],
-        playEvents: [
-          {
-            index: change,
-            isPitch: false,
-            type: 'action',
-            details: { eventType: 'pitching_substitution' },
-            player: { id: 16 }
-          }
-        ]
-      }) as unknown as GumboPlay
+        },
+        {
+          movement: { start: null, end: null, isOut: true },
+          details: { eventType: 'strikeout', runner: { id: 2 }, playIndex: 5 }
+        }
+      ],
+      playEvents: [
+        {
+          index: change,
+          isPitch: false,
+          type: 'action',
+          details: { eventType: 'pitching_substitution' },
+          player: { id: 16 }
+        }
+      ]
+    })
     const outs = (plays: GumboPlay[]): number[][] => {
       const result = gameStatLines(plays, teams, known)
       if (result.kind !== 'lines') throw new Error(result.detail)
@@ -1107,7 +1108,7 @@ describe('gameStatLines', function () {
   })
 
   it('checks runs against the final score', function () {
-    const short = [
+    const short: GumboPlay[] = [
       paPlay('home_run', {
         end: 'score',
         awayScore: 1,
@@ -1128,7 +1129,7 @@ describe('gameStatLines', function () {
         'runs from runners (away 1, home 0) do not match the score (away 6, home 3)'
     })
 
-    const corrected = [
+    const corrected: GumboPlay[] = [
       paPlay('home_run', {
         end: 'score',
         awayScore: 1,
@@ -1167,7 +1168,7 @@ describe('gameStatLines', function () {
   })
 
   it('counts every base-running type for its runners and outs, never as a PA', function () {
-    const types = [
+    const types: EventType[] = [
       'stolen_base',
       'stolen_base_2b',
       'stolen_base_3b',
@@ -1249,7 +1250,7 @@ describe('gameStatLines', function () {
       'game_advisory',
       'final_score',
       'score_correction'
-    ]) {
+    ] as const) {
       const play = paPlay(eventType, { end: 'score' })
       expect(gameStatLines([play], teams, known), eventType).deep.equals({
         kind: 'lines',

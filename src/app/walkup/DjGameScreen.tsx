@@ -536,7 +536,7 @@ function patchSong(
             batter.userId === userId ? { ...batter, walkUpSong: song } : batter
           )
         }
-  return { away: side(game.away), home: side(game.home) }
+  return { ...game, away: side(game.away), home: side(game.home) }
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

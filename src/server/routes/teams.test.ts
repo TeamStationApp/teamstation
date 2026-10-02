@@ -175,7 +175,6 @@ describe('teams by external id, and making one', function () {
 
     const media: MediaContext = {
       mediaRoot: '/tmp',
-      workDir: '/tmp',
       ffmpegPath: 'ffmpeg',
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',

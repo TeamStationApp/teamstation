@@ -13,6 +13,7 @@ import { Pool } from 'pg'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { addPerson } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -112,7 +113,6 @@ describe('the end of a live stream', function () {
         port: 1936,
         app: 'live',
         segmentSeconds: 2,
-        closeAfterHours: 6,
         freeDiskFloorGb: 1
       },
       ffmpegPath: FFMPEG,
@@ -177,12 +177,15 @@ describe('the end of a live stream', function () {
         updated_at: now
       })
       .execute()
+    // A key publishes video as somebody.
+    const owner = await addPerson(db!, `owner_${options.id}`)
     await db
       ?.insertInto('live_streams')
       .values({
         id: options.id,
         game_id: `gam_${options.id}`,
         team_id: `tem_home_${options.id}`,
+        user_id: owner.userId,
         key_hash: `hash_${options.id}`,
         key_prefix: 'ts_demo',
         key_cipher: 'v1.x.y.z',

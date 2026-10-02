@@ -4,10 +4,10 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
 
+import { asLiteral } from './asLiteral'
 import { isFenceDistance } from './fenceDistance'
 import {
   type GumboEventType,
@@ -127,7 +127,7 @@ const asGumboPlayShape = asObject({
   about: asObject({
     atBatIndex: asCount,
     inning: asNullable(asCount),
-    halfInning: asNullable(asValue('top', 'bottom')),
+    halfInning: asNullable(asLiteral('top', 'bottom')),
     halfOuts: asAbsentOr(asCount),
     isScoringPlay: asAbsentOr(asBoolean),
     startTime: asNullable(asIsoTime),
@@ -168,9 +168,24 @@ const asGumboPlayShape = asObject({
   )
 }).withRest
 
+/**
+ * A play as it is stored: every object keeps the keys it was sent, and a
+ * field the cleaner lets be absent may be left out rather than set to
+ * `undefined`.
+ */
+type Stored<T> =
+  T extends ReadonlyArray<infer E>
+    ? Array<Stored<E>>
+    : T extends object
+      ? {
+          [K in keyof T as undefined extends T[K] ? K : never]?: Stored<T[K]>
+        } & {
+          [K in keyof T as undefined extends T[K] ? never : K]: Stored<T[K]>
+        } & Record<string, unknown>
+      : T
+
 /** The checked fields, and whatever else the sender put in the document. */
-export type GumboPlay = ReturnType<typeof asGumboPlayShape> &
-  Record<string, unknown>
+export type GumboPlay = Stored<ReturnType<typeof asGumboPlayShape>>
 
 /** Checks one play, and names it by its `about.atBatIndex` when it fails. */
 export function asGumboPlay(raw: unknown): GumboPlay {
@@ -201,13 +216,13 @@ const asCurrentPlayShape = asObject({
   about: asObject({
     atBatIndex: asCount,
     inning: asNullable(asCount),
-    halfInning: asNullable(asValue('top', 'bottom')),
-    isComplete: asValue(false)
+    halfInning: asNullable(asLiteral('top', 'bottom')),
+    isComplete: asLiteral(false)
   }).withRest
 }).withRest
 
-export type CurrentPlay = ReturnType<typeof asCurrentPlayShape> &
-  Record<string, unknown>
+/** The at-bat in progress, stored the same way as a completed play. */
+export type CurrentPlay = Stored<ReturnType<typeof asCurrentPlayShape>>
 
 export function asCurrentPlay(raw: unknown): CurrentPlay {
   try {
@@ -231,7 +246,7 @@ const asPostEventsShape = asObject({
    * the plays sent are written in place, and only the indexes in `remove`
    * are deleted.
    */
-  mode: asOptional(asValue('replace', 'live'), 'replace'),
+  mode: asOptional(asLiteral('replace', 'live'), 'replace'),
   remove: asOptional(asArray(asCount)),
   /** On a live post: the at-bat in progress, or null when there is none. */
   currentPlay: (raw: unknown): CurrentPlay | null | undefined =>

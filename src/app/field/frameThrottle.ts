@@ -50,7 +50,7 @@ export function frameThrottle<T>(
 function nextFrame(run: () => void): number {
   return typeof requestAnimationFrame === 'function'
     ? requestAnimationFrame(run)
-    : (setTimeout(run, 16) as unknown as number)
+    : setTimeout(run, 16)
 }
 function cancelFrame(handle: number): void {
   if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(handle)

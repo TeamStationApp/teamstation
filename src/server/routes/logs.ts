@@ -1,13 +1,7 @@
-import {
-  asArray,
-  asObject,
-  asOptional,
-  asString,
-  asUnknown,
-  asValue
-} from 'cleaners'
+import { asArray, asObject, asOptional, asString, asUnknown } from 'cleaners'
 import { Router } from 'express'
 
+import { asLiteral } from '../../common/asLiteral'
 import { badRequest } from '../../common/errors'
 import { skipAudit } from '../middleware/withAudit'
 import { withAsync } from '../middleware/withErrors'
@@ -28,7 +22,7 @@ export const MAX_LINES = 200
 /** Where one line's text and data, together, are cut. */
 export const MAX_LINE = 2000
 
-const asLevel = asValue('debug', 'info', 'warn', 'error')
+const asLevel = asLiteral('debug', 'info', 'warn', 'error')
 
 const asLogLine = asObject({
   at: asString,
