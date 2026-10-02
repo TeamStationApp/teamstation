@@ -30,7 +30,7 @@ const device = required('WALKUP_DEVICE_UDID')
 const artifacts = resolve(required('WALKUP_ARTIFACT_DIR'))
 const serverLog = process.env.WALKUP_SERVER_LOG
 const fixture = resolve('src/test/fixtures/walkup-fixture.mp3')
-const appId = 'co.gamestation.app'
+const appId = 'app.teamstation.app'
 const permission = 'android.permission.READ_MEDIA_AUDIO'
 
 const adb = (...args) =>

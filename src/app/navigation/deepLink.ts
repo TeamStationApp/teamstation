@@ -5,18 +5,18 @@ import { parseRoute, type Route } from './routes'
  *
  * Three forms reach an installed app and all three mean the same place:
  * `https://app.teamstation.app/games/g1?t=30`, which is what people paste to each
- * other and what the sign-in mail carries; `gamestation://games/g1?t=30`, the
+ * other and what the sign-in mail carries; `teamstation://games/g1?t=30`, the
  * app's own scheme; and occasionally a bare path.
  *
  * Split by hand, and deliberately not with `URL`. React Native's `URL` is a
  * set of regular expressions over `https?://` and nothing else: handed
- * `gamestation://games/g1` it returns an empty `host`, an empty `pathname` and
+ * `teamstation://games/g1` it returns an empty `host`, an empty `pathname` and
  * an empty `search`, so every deep link through the app's own scheme would
  * arrive as the home screen with no error anywhere to say why. Four lines of
  * string handling cannot be wrong in that way.
  *
  * The scheme form has no authority between the slashes, so its first segment
- * is a path segment and not a host — `gamestation://games/g1` and
+ * is a path segment and not a host — `teamstation://games/g1` and
  * `https://app.teamstation.app/games/g1` both have to come out as `/games/g1`.
  */
 export function routeOfUrl(url: string): Route {

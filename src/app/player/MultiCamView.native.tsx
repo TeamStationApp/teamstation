@@ -52,10 +52,10 @@ interface Touch {
   armed: boolean
 }
 
-/** Android's `GSOrientation`, which iOS has no need of. */
+/** Android's `TSOrientation`, which iOS has no need of. */
 const rotation = orientationLock(
   Platform.OS,
-  NativeModules.GSOrientation as NativeOrientation | undefined
+  NativeModules.TSOrientation as NativeOrientation | undefined
 )
 
 function shuffle(): void {

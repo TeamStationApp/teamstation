@@ -244,7 +244,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     // itself with a squircle at a radius larger than half its height, which
     // pulls the ends in and points them, while this border drew a true
     // capsule. Two shapes, nearly aligned, reading as two pills. With the
-    // material clamped to a real capsule (`GSGlassView.mm`) the two coincide
+    // material clamped to a real capsule (`TSGlassView.mm`) the two coincide
     // and the hairline does what it was always for.
     ...Platform.select({
       ios: { borderWidth: 1, borderColor: theme.glassBorderColor },

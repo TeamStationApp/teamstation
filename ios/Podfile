@@ -32,7 +32,7 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
-target 'GameStation' do
+target 'TeamStation' do
   use_expo_modules!
   config = use_native_modules!
 

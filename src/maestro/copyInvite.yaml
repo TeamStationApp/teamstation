@@ -20,9 +20,9 @@
 # The team must already have an invite link — this reads one rather than
 # creating one, because it runs against real data and a smoke test has no
 # business leaving invite codes behind.
-appId: co.gamestation.app
+appId: app.teamstation.app
 ---
-- openLink: gamestation://teams/${TEAM_ID}/manage
+- openLink: teamstation://teams/${TEAM_ID}/manage
 - runFlow: openConfirm.yaml
 - extendedWaitUntil:
     visible: 'WHO CAN WATCH'

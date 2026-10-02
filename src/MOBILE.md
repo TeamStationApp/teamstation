@@ -160,7 +160,7 @@ And the three pieces of native glue the `expo` package would otherwise own:
 | | |
 |---|---|
 | `ios/Podfile` | `use_expo_modules!`, defined in place from `expo-modules-autolinking` (what `expo/scripts/autolinking.rb` does) |
-| `ios/TeamStation/GSExpoModules.mm` | installs the Expo modules into each JavaScript runtime, as `EXReactNativeFactory` does — a category on `RCTReactNativeFactory`, which overrides nothing |
+| `ios/TeamStation/TSExpoModules.mm` | installs the Expo modules into each JavaScript runtime, as `EXReactNativeFactory` does — a category on `RCTReactNativeFactory`, which overrides nothing |
 | `android/settings.gradle`, `build.gradle`, `app/build.gradle` | the `expo-autolinking-settings` plugin and `useExpoModules()`, `expo-root-project`, and `expo-autolinking` applied to the app |
 | `android/.../ExpoModulesPackage.kt` | the `expo` package's `ExpoModulesPackage`, over the list `expo-autolinking` generates, added in `MainApplication` |
 
@@ -227,7 +227,7 @@ cd android
 TS_API_BASE_URL=http://<lan-ip>:9120/api/v1 ./gradlew assembleLocalRelease --console=plain \
   | grep createBundle        # no UP-TO-DATE after a URL change
 adb install -r app/build/outputs/apk/localRelease/app-localRelease.apk
-adb pull "$(adb shell pm path co.gamestation.app | sed -n 's/^package://p' | head -1)" installed.apk
+adb pull "$(adb shell pm path app.teamstation.app | sed -n 's/^package://p' | head -1)" installed.apk
 unzip -p installed.apk assets/index.android.bundle | grep -ao 'http://[0-9.]*:[0-9]*/api/v1' | sort -u
 ```
 
@@ -242,14 +242,14 @@ can.
 
 `WalkUpMusic` is the one native module the app writes itself. Its spec is
 `src/app/walkup/NativeWalkUpMusic.ts`, which `codegenConfig` in
-`package.json` names `GameStationWalkUpMusicSpec`; the screens use it through
+`package.json` names `TeamStationWalkUpMusicSpec`; the screens use it through
 `walkUpMusic.native.ts`, which is one call to the shared `makeWalkUpMusic.ts`.
 
 - **iOS** (`ios/TeamStation/WalkUpMusic/`): `RCTWalkUpMusic.mm` over
   `WalkUpMusic.swift` (MusicKit) and `SystemVolume.swift` (the fades).
   `codegenConfig.ios.modulesProvider` maps the name to the class, so a new
   spec needs `pod install`. Catalog search and playback need the **MusicKit
-  App Service** enabled on the `co.gamestation.app` App ID, and playback an
+  App Service** enabled on the `app.teamstation.app` App ID, and playback an
   Apple Music subscription on the phone; without them a search fails with
   Apple's own words, which the picker shows. The library search is only
   asked with media-library access: MediaPlayer crashes without it.
@@ -318,7 +318,7 @@ and is what stops the picture riding out over the stream panel.
 
 ## Liquid Glass
 
-`ios/TeamStation/GSGlassView.mm`, a legacy `RCTViewManager` that React Native
+`ios/TeamStation/TSGlassView.mm`, a legacy `RCTViewManager` that React Native
 0.87 still mounts under Fabric and finds by name. iOS 26 draws `UIGlassEffect`,
 which refracts and highlights what passes beneath it; earlier versions draw
 `systemThinMaterial`, which is what the CSS `backdrop-filter` was imitating.
@@ -464,7 +464,7 @@ because they were written down as facts once already:
 
 Signing needs nothing set up: the Mac has one team, **`G5LQ7MERPK`**, and its
 `iOS Team Provisioning Profile: *` is a wildcard that already covers
-`co.gamestation.app` and already lists the phones. So the team is the only
+`app.teamstation.app` and already lists the phones. So the team is the only
 thing the build has to be told.
 
 ```sh
@@ -567,8 +567,8 @@ A null result from a tap there is worthless.
 app has an address:
 
 ```sh
-xcrun simctl openurl <udid> "gamestation://teams/<id>/manage"
-xcrun simctl openurl <udid> "gamestation://games/<id>?tab=boxScore"
+xcrun simctl openurl <udid> "teamstation://teams/<id>/manage"
+xcrun simctl openurl <udid> "teamstation://games/<id>?tab=boxScore"
 ```
 
 That reaches every screen, tab and filter without a press, and it is how the
@@ -647,7 +647,7 @@ instead` is below the fold, so the flow scrolls to it.
   emulator and is not a thing to put on a phone somebody else owns; iOS has no
   `DEVELOPMENT_TEAM` at all. Both want Paul's accounts, and the App Links and
   universal links below want the same two facts.
-- **Universal links and App Links are not live.** The custom `gamestation://`
+- **Universal links and App Links are not live.** The custom `teamstation://`
   scheme works on both platforms and the `https://` intent filters are
   declared; Apple's `apple-app-site-association` needs a team ID and Android's
   `assetlinks.json` needs the release signing fingerprint.

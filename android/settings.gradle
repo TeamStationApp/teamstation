@@ -12,7 +12,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autoli
 // Adds expo-modules-core and expo-gl as projects; `app/build.gradle` applies
 // `expo-autolinking`, which depends on them and lists their modules.
 expoAutolinking.useExpoModules()
-rootProject.name = 'GameStation'
+rootProject.name = 'TeamStation'
 expoAutolinking.useExpoVersionCatalog()
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')

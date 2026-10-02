@@ -3,7 +3,7 @@
 # The password path rather than the e-mail code, because a code needs a
 # mailbox. The screen offers the code first and keeps the password behind a
 # link, exactly as the web app does.
-appId: co.gamestation.app
+appId: app.teamstation.app
 ---
 - launchApp:
     clearState: true

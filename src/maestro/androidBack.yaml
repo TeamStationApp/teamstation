@@ -6,7 +6,7 @@
 # addresses, and reproducing it is the point.
 #
 #     maestro --device <emulator> test maestro/androidBack.yaml
-appId: co.gamestation.app
+appId: app.teamstation.app
 ---
 - runFlow: home.yaml
 - tapOn: 'Watch'

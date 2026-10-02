@@ -2,7 +2,7 @@
   "applinks": {
     "details": [
       {
-        "appIDs": ["TEAMID.co.gamestation.app"],
+        "appIDs": ["TEAMID.app.teamstation.app"],
         "components": [
           {
             "/": "/signin/*",
