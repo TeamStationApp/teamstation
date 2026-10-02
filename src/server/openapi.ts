@@ -1812,6 +1812,164 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/teams/{teamId}/adults': {
+        post: {
+          summary: "Add a team's parents, followers and staff by external id",
+          description:
+            'Adds 1 to 200 adults in one call, in one transaction, and ' +
+            'answers each row in order. Nobody is mailed, and nothing is ' +
+            'ever taken away. Add the players first, so guardian links find ' +
+            'them.\n\n' +
+            '**Who may call:** an administrator of the team (set on the ' +
+            'team, its season or its league, or its owner or manager) or a ' +
+            'site administrator. Anyone else gets 403; a team the caller ' +
+            'cannot see gets 404.\n\n' +
+            '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
+            'characters, either may be empty), `email` (optional; trimmed, ' +
+            'lower-cased, with an `@`), `externalId` `{system, kind, id}`, ' +
+            "`guardianOf` (the players' external ids, possibly none) and " +
+            '`staff` (true or false). One malformed row refuses the call with ' +
+            'a 400 naming it.\n\n' +
+            '**Who a row is:** the user holding the external id (merged ' +
+            'accounts followed); otherwise the user holding the address, ' +
+            'who then gets the external id only when the caller is a site ' +
+            'administrator (otherwise the row says `externalIdNotAttached`); ' +
+            'otherwise a new user, named ' +
+            '`first last` or `Unknown adult`, who may sign in by e-mail code ' +
+            "when there is an address. An existing user's sign-in setting is " +
+            'never changed.\n\n' +
+            '**The address:** already theirs, nothing changes. Held by ' +
+            'nobody, it is attached, as their primary address, to an account ' +
+            'this call made; to an account already here only when the ' +
+            'caller is a site administrator and the account has no address ' +
+            'at all. Otherwise it is left off and the row says ' +
+            '`emailNotAttached`. Held by somebody else, it stays there and ' +
+            'the row says `emailHeldElsewhere`.\n\n' +
+            '**What a row gains:** a membership of the team when they have ' +
+            'none, as a `member` and a spectator unless they are staff who ' +
+            'guard nobody (an existing membership only gains the spectator ' +
+            'flag, and its role is never raised); a guardian link, which ' +
+            'may manage, to each `guardianOf` player of this team (an id ' +
+            'naming no player here is counted in `guardiansMissing`); and, ' +
+            'for staff, the `coach` and `scorekeeper` roles on the team. ' +
+            'Roles are only ever added, and `admin` never is.\n\n' +
+            '**Answers:** `result` is `created` (a new user), `matched` (an ' +
+            'existing user who gained something here), `unchanged` or ' +
+            '`error`. `counts.guardianLinks` is the links this call made, and ' +
+            '`counts.staff` the adults who gained a role in it; posting the ' +
+            'same body again answers both as 0.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['adults'],
+                  properties: {
+                    adults: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['externalId'],
+                        properties: {
+                          ...personNames,
+                          email: { type: 'string', maxLength: 254 },
+                          externalId: memberExternalId,
+                          guardianOf: {
+                            type: 'array',
+                            maxItems: 50,
+                            items: memberExternalId
+                          },
+                          staff: { type: 'boolean', default: false }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'One answer per row, in order, and the counts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['results', 'counts'],
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: [
+                            'index',
+                            'result',
+                            'joined',
+                            'guardianLinks',
+                            'guardiansMissing',
+                            'rolesAdded'
+                          ],
+                          properties: {
+                            index: { type: 'integer' },
+                            result: {
+                              type: 'string',
+                              enum: ['created', 'matched', 'unchanged', 'error']
+                            },
+                            userId: { type: 'integer' },
+                            joined: { type: 'boolean' },
+                            guardianLinks: { type: 'integer' },
+                            guardiansMissing: { type: 'integer' },
+                            rolesAdded: {
+                              type: 'array',
+                              items: {
+                                type: 'string',
+                                enum: ['coach', 'scorekeeper']
+                              }
+                            },
+                            emailHeldElsewhere: {
+                              type: 'boolean',
+                              enum: [true]
+                            },
+                            emailNotAttached: {
+                              type: 'boolean',
+                              enum: [true]
+                            },
+                            externalIdNotAttached: {
+                              type: 'boolean',
+                              enum: [true]
+                            },
+                            error: memberRowError
+                          }
+                        }
+                      },
+                      counts: {
+                        type: 'object',
+                        properties: {
+                          created: { type: 'integer' },
+                          matched: { type: 'integer' },
+                          unchanged: { type: 'integer' },
+                          error: { type: 'integer' },
+                          guardianLinks: { type: 'integer' },
+                          staff: { type: 'integer' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}': {
         get: {
           summary: 'One game and its videos',

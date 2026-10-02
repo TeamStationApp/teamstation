@@ -2,7 +2,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { forbidden, notFound, unauthorized } from '../../common/errors'
-import { asTeamPlayersBody } from '../../common/teamMembers'
+import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
 import {
   adminScopes,
   canManageTeam,
@@ -15,6 +15,7 @@ import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { addAdults } from '../teams/addAdults'
 import { addPlayers } from '../teams/addPlayers'
 
 /**
@@ -64,6 +65,32 @@ export function teamMemberRoutes(db: Kysely<Database>): Router {
         entityType: 'team',
         entityId: teamId,
         after: { players: answer.counts }
+      })
+      res.json(answer)
+    })
+  )
+
+  /**
+   * Parents, followers and staff, by external id or address: made users
+   * where nobody holds either, with sign-in by e-mail code where there is an
+   * address, and nobody mailed. Players come first, so guardian links find
+   * them.
+   */
+  router.post(
+    '/teams/:teamId/adults',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const teamId = pathParam(req.params.teamId)
+      await mustManage(actor, teamId)
+      const body = cleanBody(asTeamAdultsBody, req.body)
+
+      const answer = await addAdults(db, teamId, body.adults, actor)
+      setAudit(res.locals, {
+        entityType: 'team',
+        entityId: teamId,
+        after: { adults: answer.counts }
       })
       res.json(answer)
     })

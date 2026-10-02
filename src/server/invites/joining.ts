@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely'
 
 import { mintUserId } from '../../common/mintUserId'
 import { addEmail, findUserByEmail } from '../auth/emails'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { findInviteById, redeemInvite } from './invites'
 
@@ -59,42 +60,46 @@ export async function settleInviteSignIn(
   if (invite == null) return undefined
 
   const email = options.email.trim().toLowerCase()
-  const existing = await findUserByEmail(db, email)
+  // Under the address's lock, the one a roster import takes, so the two
+  // cannot both find it free and both attach it.
+  const settled = await db.transaction().execute(async trx => {
+    await lockKeys(trx, [`email:${email}`])
+    const existing = await findUserByEmail(trx, email)
+    if (existing != null) {
+      return {
+        userId: existing.id,
+        displayName: existing.displayName,
+        createdAccount: false
+      }
+    }
 
-  let userId = existing?.id
-  let displayName = existing?.displayName ?? ''
-  let createdAccount = false
-
-  if (userId == null) {
     const wanted = (options.displayName ?? '').trim()
-    displayName = wanted === '' ? nameFromEmail(email) : wanted
+    const displayName = wanted === '' ? nameFromEmail(email) : wanted
     const held = new Set(
-      (await db.selectFrom('users').select('id').execute()).map(row => row.id)
+      (await trx.selectFrom('users').select('id').execute()).map(row => row.id)
     )
     const minted = mintUserId(id => held.has(id))
-    userId = minted.userId
-    createdAccount = true
-    await db.transaction().execute(async trx => {
-      await trx
-        .insertInto('users')
-        .values({
-          id: minted.userId,
-          legacyId: minted.legacyId,
-          display_name: displayName,
-          // By e-mail code, like everybody who arrived from PeerTube without
-          // a password. A password can be set later; nothing here needs one.
-          login_enabled: true,
-          is_admin: false
-        })
-        .execute()
-      await addEmail(trx, minted.userId, email, {
-        isPrimary: true,
-        source: 'manual',
-        // Verified by the very code or link that got us here.
-        verifiedAt: new Date()
+    await trx
+      .insertInto('users')
+      .values({
+        id: minted.userId,
+        legacyId: minted.legacyId,
+        display_name: displayName,
+        // By e-mail code, like everybody who arrived from PeerTube without
+        // a password. A password can be set later; nothing here needs one.
+        login_enabled: true,
+        is_admin: false
       })
+      .execute()
+    await addEmail(trx, minted.userId, email, {
+      isPrimary: true,
+      source: 'manual',
+      // Verified by the very code or link that got us here.
+      verifiedAt: new Date()
     })
-  }
+    return { userId: minted.userId, displayName, createdAccount: true }
+  })
+  const { userId, displayName, createdAccount } = settled
 
   const redemption = await redeemInvite(db, invite, userId, { createdAccount })
   return {
