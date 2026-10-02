@@ -318,6 +318,28 @@ describe('the scoreboard hub', function () {
     expect(watching.messages).has.length(cleared)
   })
 
+  it('logs a pitch-speed zero it could not write', async function () {
+    const worker = await startWorker({ speedHoldMs: 80 })
+    // Only the hold's zero fails, so the 91 goes through whenever the hold
+    // runs out.
+    const merge = worker.store.mergeWatcher
+    worker.store.mergeWatcher = async (gameId, update, startAt) => {
+      if (update.pitchSpeed === 0) throw new Error('the zero went nowhere')
+      return await merge(gameId, update, startAt)
+    }
+    const gameId = await newGame()
+    const watching = viewer(worker, gameId)
+    await heard(watching, 1)
+    const phone = publisher(worker, gameId, runner)
+    await phone.opened
+    send(phone, { pitchSpeed: 91 })
+    await until('91 mph', () => last(watching)?.pitchSpeed === 91)
+    await until('the failed zero to be logged', () =>
+      logged.some(line => line.includes(`scoreboard ${gameId}: pitch speed: `))
+    )
+    expect(last(watching).pitchSpeed).equals(91)
+  })
+
   it('delivers a burst of 50 to viewers on two workers, all of them, in order', async function () {
     const a = await startWorker()
     const b = await startWorker()
@@ -568,7 +590,8 @@ describe('the scoreboard hub', function () {
     const probe = viewer(a, gameId)
     await heard(probe, 1)
     const name = `${prefix.replace(':', '-')}-0`
-    const id = (await a.client.sendCommand(['CLIENT', 'LIST']))
+    const list = await a.client.sendCommand(['CLIENT', 'LIST'])
+    const id = (typeof list === 'string' ? list : '')
       .split('\n')
       .find(line => line.includes(` name=${name} `))
       ?.match(/^id=(\d+)/)?.[1]

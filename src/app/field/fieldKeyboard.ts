@@ -132,8 +132,7 @@ export function fieldKey(
       if (projection == null) return false
       const from = player.runnerBase ?? (player.batting === true ? 0 : 1)
       const start = BASES[from % 4]
-      const canRetreat =
-        policy?.retreatIds?.includes(player.id) === true
+      const canRetreat = policy?.retreatIds?.includes(player.id) === true
       const canAdvance =
         policy?.advanceIds == null || policy.advanceIds.includes(player.id)
       // Signed progress: +forward toward the next base, −back when retreat
