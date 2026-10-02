@@ -266,6 +266,158 @@ export type IncludedAdult = ReturnType<typeof asIncludedAdult>
 export const asChatRead = asObject({ userId: asUserId, seq: asNumber })
 export type ChatRead = ReturnType<typeof asChatRead>
 
+/** A chat device platform. */
+export const asChatPlatform = asLiteral('web', 'ios', 'android')
+export type ChatPlatform = ReturnType<typeof asChatPlatform>
+
+/**
+ * One of the caller's chat devices, from `GET /chat/devices`. Keys are
+ * base64url. `linked`: holds the current per-user key generation and is not
+ * revoked; `current`: bound to this session.
+ */
+export const asChatDevice = asObject({
+  id: asString,
+  name: asString,
+  platform: asChatPlatform,
+  boxPublicKey: asString,
+  signPublicKey: asString,
+  createdAt: asString,
+  lastSeenAt: asString,
+  revokedAt: asNullable(asString),
+  linked: asBoolean,
+  current: asBoolean
+})
+export type ChatDevice = ReturnType<typeof asChatDevice>
+
+/** What a new device registers: its name, platform and public keys (base64url). */
+export interface ChatDeviceRegistration {
+  name: string
+  platform: ChatPlatform
+  boxPublicKey: string
+  signPublicKey: string
+}
+
+/** A nonce to sign, with the session it binds to. */
+export const asChatResumeChallenge = asObject({
+  nonce: asString,
+  sessionId: asString,
+  expiresAt: asString
+})
+export type ChatResumeChallenge = ReturnType<typeof asChatResumeChallenge>
+
+/**
+ * A new identity (enrolment or reset): its device-made `cid_` id, public key,
+ * and PUK generation 1 with the identity's signature and this device's box.
+ * Bytes are base64url.
+ */
+export interface ChatIdentityPublication {
+  identityId: string
+  identityPublicKey: string
+  pukPublicKey: string
+  pukSignature: string
+  box: string
+}
+
+export const asChatEnrolment = asObject({
+  identityId: asString,
+  generation: asNumber,
+  grantRequests: asNumber
+})
+export type ChatEnrolment = ReturnType<typeof asChatEnrolment>
+
+export const asChatReset = asObject({
+  identityId: asString,
+  generation: asNumber,
+  revokedDeviceIds: asArray(asString)
+})
+export type ChatReset = ReturnType<typeof asChatReset>
+
+/** PUK generation n+1, boxed to exactly the linked devices. Bytes are base64url. */
+export interface ChatPukPublication {
+  generation: number
+  publicKey: string
+  signature: string
+  previousKeysBox: string
+  boxes: Array<{ deviceId: string; box: string }>
+}
+
+const asChatIdentityKey = asObject({
+  id: asString,
+  publicKey: asString,
+  createdAt: asString
+})
+
+/** `GET /chat/me/keys`: the caller's identity, generations and this device's boxes. */
+export const asChatMyKeys = asObject({
+  deviceId: asNullable(asString),
+  linked: asBoolean,
+  identity: asNullable(asChatIdentityKey),
+  generations: asArray(
+    asObject({
+      generation: asNumber,
+      publicKey: asString,
+      signature: asString,
+      previousKeysBox: asNullable(asString),
+      box: asNullable(asString)
+    })
+  ),
+  pukNeedsRotation: asBoolean
+})
+export type ChatMyKeys = ReturnType<typeof asChatMyKeys>
+
+/** `GET /chat/users/:userId/keys`: another user's current identity and PUK. */
+export const asChatUserKeys = asObject({
+  userId: asUserId,
+  identity: asNullable(asChatIdentityKey),
+  puk: asNullable(
+    asObject({ generation: asNumber, publicKey: asString, signature: asString })
+  )
+})
+export type ChatUserKeys = ReturnType<typeof asChatUserKeys>
+
+/** `GET /chat/identities/:identityId`: any identity, current or replaced. */
+export const asChatIdentity = asObject({
+  id: asString,
+  userId: asUserId,
+  publicKey: asString,
+  createdAt: asString,
+  replacedAt: asNullable(asString)
+})
+export type ChatIdentity = ReturnType<typeof asChatIdentity>
+
+/** A link request as the new device sees it; `box` once approved. */
+export const asChatLink = asObject({
+  id: asString,
+  newDeviceId: asString,
+  createdAt: asString,
+  expiresAt: asString,
+  approved: asBoolean,
+  expired: asBoolean,
+  approvedByDeviceId: asNullable(asString),
+  box: asNullable(asString)
+})
+export type ChatLink = ReturnType<typeof asChatLink>
+
+/** An open link request as the user's linked devices see it. */
+export const asChatPendingLink = asObject({
+  id: asString,
+  newDevice: asObject({
+    id: asString,
+    name: asString,
+    platform: asChatPlatform,
+    boxPublicKey: asString
+  }),
+  createdAt: asString,
+  expiresAt: asString
+})
+export type ChatPendingLink = ReturnType<typeof asChatPendingLink>
+
+/** The approval: the identity key boxed to the new device, and every PUK generation. */
+export interface ChatLinkApproval {
+  box: string
+  pukBoxes: Array<{ generation: number; box: string }>
+}
+
 export const asGameSummary = asObject({
   id: asString,
   homeTeamId: asString,
@@ -2136,6 +2288,141 @@ export class TeamStationClient {
       asObject({ closed: asBoolean })
     )
     return { closed: answer.closed }
+  }
+
+  /** Registers this device for chat and binds it to the session. */
+  async registerChatDevice(
+    device: ChatDeviceRegistration
+  ): Promise<ChatDevice> {
+    return await this.request('POST', '/chat/devices', asChatDevice, device)
+  }
+
+  /** Every chat device of the caller's, revoked ones included. */
+  async chatDevices(): Promise<ChatDevice[]> {
+    return await this.request('GET', '/chat/devices', asArray(asChatDevice))
+  }
+
+  /** Revokes one of the caller's devices (this one, to sign out). */
+  async revokeChatDevice(deviceId: string): Promise<ChatDevice> {
+    return await this.request(
+      'DELETE',
+      `/chat/devices/${encodeURIComponent(deviceId)}`,
+      asChatDevice
+    )
+  }
+
+  /** A nonce for this device to sign, to bind it to the current session. */
+  async chatResumeChallenge(deviceId: string): Promise<ChatResumeChallenge> {
+    return await this.request(
+      'POST',
+      `/chat/devices/${encodeURIComponent(deviceId)}/resume-challenge`,
+      asChatResumeChallenge
+    )
+  }
+
+  /**
+   * Binds a device to the current session with its signature over the
+   * challenge. A refusal carries `deviceRevoked` or `unknownDevice`.
+   */
+  async resumeChatDevice(
+    deviceId: string,
+    proof: { nonce: string; signature: string }
+  ): Promise<ChatDevice> {
+    return await this.request(
+      'POST',
+      `/chat/devices/${encodeURIComponent(deviceId)}/resume`,
+      asChatDevice,
+      proof
+    )
+  }
+
+  /** Publishes the user's first identity and PUK from this device. */
+  async enrolChat(identity: ChatIdentityPublication): Promise<ChatEnrolment> {
+    return await this.request(
+      'PUT',
+      '/chat/identity',
+      asChatEnrolment,
+      identity
+    )
+  }
+
+  /** Replaces the user's identity from this device; the others are revoked. */
+  async resetChatIdentity(
+    identity: ChatIdentityPublication
+  ): Promise<ChatReset> {
+    return await this.request(
+      'POST',
+      '/chat/identity/reset',
+      asChatReset,
+      identity
+    )
+  }
+
+  /** Posts the next PUK generation. */
+  async postChatPuk(
+    puk: ChatPukPublication
+  ): Promise<{ generation: number; grantRequests: number }> {
+    return await this.request(
+      'POST',
+      '/chat/puk',
+      asObject({ generation: asNumber, grantRequests: asNumber }),
+      puk
+    )
+  }
+
+  /** The caller's identity, PUK generations and this device's boxes. */
+  async myChatKeys(): Promise<ChatMyKeys> {
+    return await this.request('GET', '/chat/me/keys', asChatMyKeys)
+  }
+
+  /** Another user's current identity and PUK. */
+  async chatUserKeys(userId: number): Promise<ChatUserKeys> {
+    return await this.request(
+      'GET',
+      `/chat/users/${encodeURIComponent(userId)}/keys`,
+      asChatUserKeys
+    )
+  }
+
+  /** An identity by id, current or replaced. */
+  async chatIdentity(identityId: string): Promise<ChatIdentity> {
+    return await this.request(
+      'GET',
+      `/chat/identities/${encodeURIComponent(identityId)}`,
+      asChatIdentity
+    )
+  }
+
+  /** Asks the user's linked devices to link this one. */
+  async requestChatLink(): Promise<ChatLink> {
+    return await this.request('POST', '/chat/links', asChatLink)
+  }
+
+  /** The open link requests a linked device may approve. */
+  async chatLinks(): Promise<ChatPendingLink[]> {
+    return await this.request('GET', '/chat/links', asArray(asChatPendingLink))
+  }
+
+  /** One link request, with its box once approved. */
+  async chatLink(linkId: string): Promise<ChatLink> {
+    return await this.request(
+      'GET',
+      `/chat/links/${encodeURIComponent(linkId)}`,
+      asChatLink
+    )
+  }
+
+  /** Approves a link from this (linked) device. */
+  async approveChatLink(
+    linkId: string,
+    approval: ChatLinkApproval
+  ): Promise<ChatLink> {
+    return await this.request(
+      'POST',
+      `/chat/links/${encodeURIComponent(linkId)}/approve`,
+      asChatLink,
+      approval
+    )
   }
 
   /** One person: their picture, their name, their handedness, their teams. */
