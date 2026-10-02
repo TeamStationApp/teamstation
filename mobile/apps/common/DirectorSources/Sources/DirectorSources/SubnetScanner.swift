@@ -265,7 +265,7 @@ public final class SubnetScanner: @unchecked Sendable {
           finish(false)
         default:
           // `.waiting` is how an iPhone RTSP listener starts. Treating it as closed is why a
-          // subnet scan found NearStream boxes and never GS Cameraman.
+          // subnet scan found NearStream boxes and never TS Cameraman.
           break
         }
       }
@@ -275,7 +275,7 @@ public final class SubnetScanner: @unchecked Sendable {
   }
 
   private static let probeQueue = DispatchQueue(
-    label: "co.gamestation.director.rtsp.scan",
+    label: "app.teamstation.director.rtsp.scan",
     attributes: .concurrent
   )
 

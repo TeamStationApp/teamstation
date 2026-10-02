@@ -73,7 +73,7 @@ public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
   /// offer to go back to following the camera after an operator rename.
   public var advertisedName: String?
   /// Last `CNAME` this camera presented. SDP/RTCP identity for cameras that do not publish
-  /// `_awx_service._tcp` TXT — GS Cameraman puts its UUID here.
+  /// `_awx_service._tcp` TXT — TS Cameraman puts its UUID here.
   public var lastKnownCNAME: String?
   /// Address this camera answered on in the current session. Never persisted: IP is not identity.
   public var lastKnownHost: String
@@ -322,7 +322,7 @@ public enum CameraIdentityRules {
 
   /// Which Bonjour advertisement describes which endpoint.
   ///
-  /// A GS Cameraman advertisement carries the phone's UUID, and the phone repeats that UUID as the
+  /// A TS Cameraman advertisement carries the phone's UUID, and the phone repeats that UUID as the
   /// SDP/RTCP `CNAME` of the socket it serves, so the pairing is checked against what the socket says
   /// about itself. Once an endpoint has presented a CNAME, only the advertisement with that uuid
   /// describes it. Before then, an advertisement describes only the endpoint it announced. It never
@@ -360,7 +360,7 @@ public enum CameraIdentityRules {
     return paired
   }
 
-  /// The UUID a GS Cameraman sends as its CNAME (RFC 7022's persistent form), lower-cased. Nil for any
+  /// The UUID a TS Cameraman sends as its CNAME (RFC 7022's persistent form), lower-cased. Nil for any
   /// other CNAME — including the VM33's firmware string, which every unit sends alike and which
   /// therefore identifies none of them.
   public static func cameramanUUID(fromCNAME cname: String?) -> String? {
@@ -610,7 +610,7 @@ public enum CameraIdentityRules {
         apply(claim, to: records[position].id, in: &records)
         continue
       }
-      // GS Cameraman's Bonjour TXT uuid is stored as hardwareID `uuid:…` before DESCRIBE supplies
+      // TS Cameraman's Bonjour TXT uuid is stored as hardwareID `uuid:…` before DESCRIBE supplies
       // the same string as a CNAME. Matching here keeps one record instead of minting a second.
       if let position = records.firstIndex(where: {
         $0.hardwareID == CameraAdvertisement.uniqueID(modelName: nil, wlanMAC: nil, uuid: cname)
@@ -819,7 +819,7 @@ public enum CameraIdentityRules {
 
 /// `UserDefaults` persistence for the named-camera cache.
 public struct CameraRecordStore: Sendable {
-  private static let key = "co.gamestation.director.cameras"
+  private static let key = "app.teamstation.director.cameras"
   private let store: ConfigStore
 
   public init(store: ConfigStore = ConfigStore()) {

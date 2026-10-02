@@ -1,0 +1,20 @@
+# Opens Settings and the Test Thermal Visuals confirmation dialog.
+appId: app.teamstation.director
+---
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-save'
+    timeout: 8000
+- scrollUntilVisible:
+    element:
+      id: 'settings-test-thermal'
+    direction: DOWN
+    visibilityPercentage: 40
+    timeout: 20000
+- tapOn:
+    id: 'settings-test-thermal'
+- extendedWaitUntil:
+    visible: 'Hot'
+    timeout: 8000

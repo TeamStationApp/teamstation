@@ -42,7 +42,7 @@
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.DEFAULT" />
             <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="gamestation" />
+            <data android:scheme="teamstation" />
         </intent-filter>
 
         <!--
@@ -55,8 +55,7 @@
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.DEFAULT" />
             <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" android:host="gamestation.co" />
-            <data android:scheme="https" android:host="www.gamestation.co" />
+            <data android:scheme="https" android:host="app.teamstation.app" />
         </intent-filter>
       </activity>
     </application>

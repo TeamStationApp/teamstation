@@ -1,0 +1,41 @@
+# The preset pills come from the hardware and tapping one moves the zoom.
+#
+# The labels are not asserted literally: they are derived from the handset's own lens set, so a flow
+# that expected "0.5x / 1x / 3x" would pass on an iPhone and fail on every Pixel. What is asserted is
+# the shape — a row of pills, a live readout, and a readout that changes when a pill is tapped.
+appId: app.teamstation.cameraman
+---
+- launchApp:
+    appId: app.teamstation.cameraman
+    arguments:
+      uiTest: true
+
+- assertVisible:
+    id: "zoom-scale"
+- assertVisible:
+    id: "zoom-label"
+- assertVisible:
+    id: "zoom-preset-1x"
+
+# 1x is where the app starts: the wide lens, not the ultra-wide, because 1x is what an operator
+# pointing a phone at a field expects to see.
+- assertVisible:
+    text: "1x"
+
+- tapOn:
+    id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-label"
+
+# Flipping to the front camera changes the lens set, so the preset row has to change with it rather
+# than keeping the back camera's pills.
+- tapOn:
+    id: "flip-button"
+- assertVisible:
+    id: "zoom-scale"
+- assertVisible:
+    id: "camera-screen"
+- tapOn:
+    id: "flip-button"
+- assertVisible:
+    id: "zoom-scale"

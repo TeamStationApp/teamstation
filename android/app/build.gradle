@@ -57,12 +57,12 @@ react {
     autolinkLibrariesWithApp()
 }
 
-// Babel inlines GS_API_BASE_URL into the bundle (babel.config.js), but the
+// Babel inlines TS_API_BASE_URL into the bundle (babel.config.js), but the
 // variable is not one of the bundle task's inputs, so Gradle called a bundle
 // made for another URL up to date and packed it again. Declared here, a new
 // value rebuilds the bundle and the same value does not.
 tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
-    inputs.property("GS_API_BASE_URL", providers.environmentVariable("GS_API_BASE_URL").orElse(""))
+    inputs.property("TS_API_BASE_URL", providers.environmentVariable("TS_API_BASE_URL").orElse(""))
 }
 
 /**
@@ -88,9 +88,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "co.gamestation.app"
+    namespace "app.teamstation.app"
     defaultConfig {
-        applicationId "co.gamestation.app"
+        applicationId "app.teamstation.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -150,12 +150,12 @@ dependencies {
  * '500'` and `'600'` — which the theme uses throughout — would both round to
  * regular and the app would lose two of its four weights.
  */
-def gsFontRes = layout.buildDirectory.dir("generated/gsFonts/res")
-def gsFontSource = file("$rootDir/../src2/app/assets/fonts")
+def tsFontRes = layout.buildDirectory.dir("generated/tsFonts/res")
+def tsFontSource = file("$rootDir/../src/app/assets/fonts")
 
-tasks.register('gsFonts', Copy) {
+tasks.register('tsFonts', Copy) {
     description = 'Copies the shared fonts into a generated resource directory'
-    from(gsFontSource) {
+    from(tsFontSource) {
         include '*.ttf'
         rename { name ->
             name.replaceAll(/([a-z0-9])([A-Z])/, '$1_$2')
@@ -163,7 +163,7 @@ tasks.register('gsFonts', Copy) {
                 .toLowerCase()
         }
     }
-    into gsFontRes.map { it.dir("font") }
+    into tsFontRes.map { it.dir("font") }
     doLast {
         // Both namespaces, and that is not belt and braces. `addCustomFont`
         // reads this through `ResourcesCompat.getFont`, whose compat parser
@@ -174,7 +174,7 @@ tasks.register('gsFonts', Copy) {
             "    <font android:fontStyle=\"normal\" android:fontWeight=\"$weight\" android:font=\"@font/$file\"" +
             " app:fontStyle=\"normal\" app:fontWeight=\"$weight\" app:font=\"@font/$file\" />"
         }
-        gsFontRes.get().dir("font").file("space_grotesk.xml").asFile.text = """<?xml version="1.0" encoding="utf-8"?>
+        tsFontRes.get().dir("font").file("space_grotesk.xml").asFile.text = """<?xml version="1.0" encoding="utf-8"?>
 <font-family xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 ${familyFile('space_grotesk_regular', 400)}
@@ -186,5 +186,5 @@ ${familyFile('space_grotesk_bold', 700)}
     }
 }
 
-android.sourceSets.main.res.srcDirs += gsFontRes
-tasks.named('preBuild') { dependsOn('gsFonts') }
+android.sourceSets.main.res.srcDirs += tsFontRes
+tasks.named('preBuild') { dependsOn('tsFonts') }

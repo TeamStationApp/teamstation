@@ -69,7 +69,7 @@ public struct SQLiteRow: Sendable {
 /// needs about a dozen statements and nothing here should grow into an ORM.
 public final class SQLiteStore: @unchecked Sendable {
   private var handle: OpaquePointer?
-  private let queue = DispatchQueue(label: "co.gamestation.director.sqlite")
+  private let queue = DispatchQueue(label: "app.teamstation.director.sqlite")
 
   public let url: URL
 

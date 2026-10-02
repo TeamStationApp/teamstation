@@ -4,7 +4,7 @@ public enum StreamCodec: String, Sendable, Codable, Equatable, CaseIterable {
   case h264
   case hevc
 
-  /// The SDP encoding name. `H265` rather than `HEVC` because that is what GS Producer's
+  /// The SDP encoding name. `H265` rather than `HEVC` because that is what TS Director's
   /// `SDPDescription.videoCodec` matches first, and what ffmpeg and VLC expect.
   public var sdpEncodingName: String {
     switch self {

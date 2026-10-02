@@ -56,7 +56,7 @@ public struct RTSPEndpointProbe: Sendable {
           finish(nil)
         default:
           // `.waiting` is how iOS-to-iOS Local Network / peer-to-peer RTSP starts. Aborting here
-          // made GS Cameraman disappear while NearStream boxes, which go straight to `.ready`,
+          // made TS Cameraman disappear while NearStream boxes, which go straight to `.ready`,
           // still confirmed.
           break
         }
@@ -113,7 +113,7 @@ public struct RTSPEndpointProbe: Sendable {
   }
 
   private static let queue = DispatchQueue(
-    label: "co.gamestation.director.rtsp.probe",
+    label: "app.teamstation.director.rtsp.probe",
     attributes: .concurrent
   )
 }

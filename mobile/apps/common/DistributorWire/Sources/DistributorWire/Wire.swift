@@ -2,11 +2,11 @@ import DirectorCore
 import DirectorExport
 import Foundation
 
-/// The messages GS Director and GS Distributor exchange over the cable. Everything is JSON over
+/// The messages TS Director and TS Distributor exchange over the cable. Everything is JSON over
 /// HTTP/1.1 except file bodies, which are the files' own bytes.
 public enum DistributorProtocol {
   public static let version = 1
-  /// GS Director's listener, on loopback; the Mac reaches it through usbmuxd.
+  /// TS Director's listener, on loopback; the Mac reaches it through usbmuxd.
   public static let port: UInt16 = 8770
   /// What `/v1/recordings/{id}/still?camera=` takes for the primary output rather than a camera.
   public static let primaryStillCamera = "primary"
@@ -16,12 +16,12 @@ public struct Hello: Codable, Equatable, Sendable {
   public var deviceName: String
   public var directorVersion: String
   public var protocolVersion: Int
-  /// Stable per install of GS Director.
+  /// Stable per install of TS Director.
   public var directorID: UUID
   public var isRecording: Bool
-  /// Streaming, like recording, keeps GS Distributor from exporting.
+  /// Streaming, like recording, keeps TS Distributor from exporting.
   public var isStreaming: Bool
-  /// New every time GS Director launches. A different one means the Director restarted, and any
+  /// New every time TS Director launches. A different one means the Director restarted, and any
   /// job the Mac handed it is gone.
   public var sessionID: UUID
 
@@ -57,7 +57,7 @@ public struct Hello: Codable, Equatable, Sendable {
   }
 }
 
-/// GS Director's promise to record and stream nothing while GS Distributor exports, until the Mac
+/// TS Director's promise to record and stream nothing while TS Distributor exports, until the Mac
 /// hands it back or goes away.
 public struct ExportLockGranted: Codable, Equatable, Sendable {
   public var lockID: UUID

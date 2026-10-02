@@ -4,7 +4,7 @@ import DirectorExport
 import Testing
 
 /// A take remembers what its cameras were called, so a camera the Director has since forgotten is
-/// still shown by name, and GS Distributor can key what it remembers by that name.
+/// still shown by name, and TS Distributor can key what it remembers by that name.
 @Suite("Recorded camera names")
 struct RecordedCameraNameTests {
   private static let home = SourceID("6F1C2A0E-0000-4000-8000-000000000001")

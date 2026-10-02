@@ -1,0 +1,12 @@
+{
+  "comment": "The one FFmpeg build TeamStation runs, pinned by hash. These flags are version-sensitive, so the build is dated and verified rather than taken from a distribution. TS never calls the system ffmpeg. Upgrading means changing this file, running the contract suite, and installing the new release side by side with the old.",
+  "release": "9.0.1",
+  "buildVersion": "n9.0.1-30-g9258bacca5-20260915",
+  "source": "BtbN/FFmpeg-Builds",
+  "tag": "autobuild-2026-09-15-13-18",
+  "asset": "ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz",
+  "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-15-13-18/ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz",
+  "sha256": "adb2d107287cdace0c5d00dd986cd3674c1e86776501640bff3b5cf7d2cf2e71",
+  "installDir": "/var/app/ffmpeg-9.0.1",
+  "installedOn": "2026-09-16"
+}

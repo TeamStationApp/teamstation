@@ -1,0 +1,18 @@
+appId: app.teamstation.preview
+---
+- launchApp:
+    clearState: true
+    arguments:
+      uiTest: true
+      syntheticCameras: "00001 3rd,00001 1st"
+- runFlow: shared/allow-local-network.yaml
+- assertVisible:
+    id: preview-tile-1
+- assertVisible:
+    id: preview-tile-name-1
+    text: "00001 3rd"
+- assertVisible:
+    id: preview-tile-2
+- assertVisible:
+    id: preview-tile-name-2
+    text: "00001 1st"

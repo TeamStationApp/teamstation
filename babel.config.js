@@ -15,12 +15,12 @@ module.exports = {
     // One variable, inlined at build time. Metro does not read the
     // environment on its own — `process.env.ANYTHING` is simply undefined in a
     // bundle — so without this the override documented in
-    // `src2/app/native/config.ts` would be a comment describing something that
+    // `src/app/native/config.ts` would be a comment describing something that
     // cannot happen. Named explicitly rather than inlining the whole
     // environment, which would bake whatever is in the shell into the app.
     [
       'transform-inline-environment-variables',
-      { include: ['GS_API_BASE_URL'] }
+      { include: ['TS_API_BASE_URL'] }
     ],
     // three.js, which the scoring field draws with, declares static blocks
     // inside its classes, and neither React Native's preset nor Hermes

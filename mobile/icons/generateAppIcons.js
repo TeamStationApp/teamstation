@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Compose GS Director, GS Cameraman and GS Preview app icons
- * from the canonical GameStation logo plus a per-app wireframe glyph.
+ * Compose the operator apps' icons from the TeamStation mark plus a per-app
+ * wireframe glyph.
  *
- * Source of truth for the G: `src/client/assets/images/gs_logo.png`.
+ * Source of truth for the mark: `mobile/icons/tsLogo.png`, the mark from
+ * `src/app/assets/teamStationMark.svg` on the cream canvas.
  *
  * Layout: cream canvas (sampled from the logo). The glyph leads, centered and
- * as large as an equal margin on every side allows. A small G signs the
- * lower-right corner at that same margin; where the two meet the G sits on
+ * as large as an equal margin on every side allows. A small mark signs the
+ * lower-right corner at that same margin; where the two meet the mark sits on
  * top, with a cream halo so it stays readable.
  *
  * Requires ImageMagick (`magick`) and librsvg (`rsvg-convert`) on PATH.
@@ -25,7 +26,7 @@ const { execFileSync } = require('child_process')
 
 const iconsDir = __dirname
 const repoRoot = path.resolve(iconsDir, '..', '..')
-const SRC_LOGO = path.join(repoRoot, 'src', 'client', 'assets', 'images', 'gs_logo.png')
+const SRC_LOGO = path.join(iconsDir, 'tsLogo.png')
 
 const CANVAS = 1024
 const MARGIN = Math.round(CANVAS * 0.125)
@@ -41,7 +42,7 @@ const APPS = [
     svg: path.join(iconsDir, 'clapboard.svg'),
     out: path.join(
       repoRoot,
-      'mobile/apps/gsDirector/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+      'mobile/apps/tsDirector/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     )
   },
   {
@@ -49,13 +50,13 @@ const APPS = [
     svg: path.join(iconsDir, 'cineCamera.svg'),
     out: path.join(
       repoRoot,
-      'mobile/apps/gsCameraman/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+      'mobile/apps/tsCameraman/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     ),
     // The Android build wears the same mark. Two apps that stream from the same operator's pocket
     // should not be told apart by their icons.
     androidRes: path.join(
       repoRoot,
-      'mobile/apps/gsCameramanAndroid/app/src/main/res'
+      'mobile/apps/tsCameramanAndroid/app/src/main/res'
     )
   },
   {
@@ -63,7 +64,7 @@ const APPS = [
     svg: path.join(iconsDir, 'monitors.svg'),
     out: path.join(
       repoRoot,
-      'mobile/apps/gsPreview/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+      'mobile/apps/tsPreview/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     )
   }
 ]
@@ -117,7 +118,16 @@ function sampleCream(logoPath) {
 function rasterizeSvg(svgPath, sizePx, dest) {
   execFileSync(
     RSVG,
-    ['-w', String(sizePx), '-h', String(sizePx), '--background-color=none', svgPath, '-o', dest],
+    [
+      '-w',
+      String(sizePx),
+      '-h',
+      String(sizePx),
+      '--background-color=none',
+      svgPath,
+      '-o',
+      dest
+    ],
     { stdio: ['ignore', 'pipe', 'inherit'] }
   )
 }
@@ -157,9 +167,9 @@ function addCreamHalo(imagePath, cream, dest) {
   )
 }
 
-// The trimmed G at signature size, its convex hull filled with cream so glyph lines stop at the
-// G's outline instead of showing through its counter, then haloed. The border leaves the halo
-// room to grow past the G's own box.
+// The trimmed mark at signature size, its convex hull filled with cream so glyph lines stop at
+// the mark's outline instead of showing through its middle, then haloed. The border leaves the
+// halo room to grow past the mark's own box.
 function prepareSignature(trimmedLogo, cream, dest) {
   const keyed = `${dest}.keyed.png`
   const filled = `${dest}.filled.png`
@@ -246,7 +256,14 @@ function writeAndroidMipmaps(name, composedPng, resDir) {
     const adaptiveCanvasPx = Math.round(ADAPTIVE_DP * scale)
     const adaptiveSafePx = Math.round(ADAPTIVE_SAFE_DP * scale)
     const legacyPx = Math.round(LEGACY_DP * scale)
-    magick(composedPng, '-resize', `${legacyPx}x${legacyPx}`, '-depth', '8', path.join(outDir, 'ic_launcher.png'))
+    magick(
+      composedPng,
+      '-resize',
+      `${legacyPx}x${legacyPx}`,
+      '-depth',
+      '8',
+      path.join(outDir, 'ic_launcher.png')
+    )
     magick(
       composedPng,
       '-resize',
@@ -301,7 +318,7 @@ function main() {
       console.log(
         `[icons] ${app.name}: ${path.relative(repoRoot, app.out)} ` +
           `(canvas ${CANVAS}, glyph fits ${GLYPH_BOX} centered, ` +
-          `G ${SIGNATURE_SIZE} SE margin ${MARGIN}, cream ${cream})`
+          `mark ${SIGNATURE_SIZE} SE margin ${MARGIN}, cream ${cream})`
       )
       if (app.androidRes) {
         writeAndroidMipmaps(app.name, app.out, app.androidRes)

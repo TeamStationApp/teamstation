@@ -51,7 +51,7 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// for as long as that wait had left to run — five seconds, when a camera had stopped being
   /// discoverable and the wait never returned early. Results reach the UI through the change
   /// handler either way, so nothing needs the answer in hand.
-  private let searchQueue = DispatchQueue(label: "co.gamestation.director.ndi.search")
+  private let searchQueue = DispatchQueue(label: "app.teamstation.director.ndi.search")
   private let makeSourceFor: @Sendable (DiscoveredSource, NDISource) throws -> FrameSource
 
   private let lock = NSLock()
@@ -127,7 +127,7 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
     // A thread rather than a Task: the body parks in a blocking SDK call for seconds at a time,
     // and a suspended cooperative thread pool is how a whole app stops scheduling.
     let thread = Thread { [weak self] in self?.watch() }
-    thread.name = "co.gamestation.director.ndi.find"
+    thread.name = "app.teamstation.director.ndi.find"
     thread.qualityOfService = .utility
     lock.lock()
     self.thread = thread

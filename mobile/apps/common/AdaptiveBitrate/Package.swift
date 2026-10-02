@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// The adaptive bitrate controller, shared by GS Cameraman's RTSP server and GS Director's RTMP stream:
+// The adaptive bitrate controller, shared by TS Cameraman's RTSP server and TS Director's RTMP stream:
 // both send over TCP with nothing coming back from the receiver, so both judge the link by their own
 // send queue.
 let package = Package(

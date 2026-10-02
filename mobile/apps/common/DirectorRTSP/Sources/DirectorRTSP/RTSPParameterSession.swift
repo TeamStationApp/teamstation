@@ -25,7 +25,7 @@ public final class RTSPParameterSession: ParameterTransport, @unchecked Sendable
       host: String,
       port: Int = 554,
       path: String = "/live/mainstream",
-      userAgent: String = "GS Director/1.0",
+      userAgent: String = "TS Director/1.0",
       requestTimeout: Duration = .seconds(3)
     ) {
       self.host = host
@@ -57,10 +57,10 @@ public final class RTSPParameterSession: ParameterTransport, @unchecked Sendable
   public init(configuration: Configuration) {
     self.configuration = configuration
     builder = RTSPRequestBuilder(userAgent: configuration.userAgent)
-    queue = DispatchQueue(label: "co.gamestation.director.rtsp.params.\(configuration.host)")
+    queue = DispatchQueue(label: "app.teamstation.director.rtsp.params.\(configuration.host)")
   }
 
-  public convenience init(host: String, port: Int, path: String = "/live/mainstream", userAgent: String = "GS Director/1.0") {
+  public convenience init(host: String, port: Int, path: String = "/live/mainstream", userAgent: String = "TS Director/1.0") {
     self.init(configuration: Configuration(host: host, port: port, path: path, userAgent: userAgent))
   }
 

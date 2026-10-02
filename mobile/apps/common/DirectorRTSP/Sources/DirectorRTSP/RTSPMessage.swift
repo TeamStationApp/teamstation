@@ -189,7 +189,7 @@ public struct RTSPRequestBuilder: Sendable {
   public var authorization: String?
   private var nextCSeq = 1
 
-  public init(userAgent: String = "GS Director/1.0") {
+  public init(userAgent: String = "TS Director/1.0") {
     self.userAgent = userAgent
   }
 

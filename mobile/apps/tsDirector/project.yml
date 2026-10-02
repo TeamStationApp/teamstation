@@ -1,0 +1,247 @@
+name: Director
+
+options:
+  bundleIdPrefix: app.teamstation
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+  groupSortPosition: top
+  minimumXcodeGenVersion: "2.40.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    # D5: iPad only.
+    TARGETED_DEVICE_FAMILY: "2"
+    DEVELOPMENT_TEAM: G5LQ7MERPK
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    ENABLE_MODULE_VERIFIER: NO
+
+packages:
+  # The stream's bitrate controller, shared with TS Cameraman.
+  AdaptiveBitrate:
+    path: ../common/AdaptiveBitrate
+  DirectorCore:
+    path: ../common/DirectorCore
+  # The archive index and the export that stitches segments into finished files, shared with
+  # TS Distributor on the Mac.
+  DirectorExport:
+    path: ../common/DirectorExport
+  DirectorSources:
+    path: ../common/DirectorSources
+  DirectorPipeline:
+    path: Packages/DirectorPipeline
+  DirectorDVR:
+    path: Packages/DirectorDVR
+  DirectorRTSP:
+    path: ../common/DirectorRTSP
+  DirectorNDI:
+    path: ../common/DirectorNDI
+  # Cameraman's pure types and its operating screen, shared so Director can show the thermal pill
+  # and, for a Cameraman source, the phone's own control screen.
+  CameramanCore:
+    path: ../common/CameramanCore
+  CameramanControlUI:
+    path: ../common/CameramanControlUI
+  CameramanRemote:
+    path: ../common/CameramanRemote
+  DirectorRTMP:
+    path: Packages/DirectorRTMP
+  TeamStationKit:
+    path: ../common/TeamStationKit
+  DirectorUI:
+    path: Packages/DirectorUI
+  DirectorTestHarness:
+    path: Packages/DirectorTestHarness
+  # TS Distributor: the loopback server the Mac reaches over the cable, and the types both share.
+  DirectorLink:
+    path: Packages/DirectorLink
+  DistributorWire:
+    path: ../common/DistributorWire
+  # Only the unit tests name it: they drive DirectorLink's routes with its request and response.
+  LoopbackHTTP:
+    path: ../common/LoopbackHTTP
+
+targets:
+  Director:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.director
+        PRODUCT_NAME: TS Director
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorPipeline
+        product: DirectorPipeline
+      - package: DirectorDVR
+        product: DirectorDVR
+      - package: DirectorRTSP
+        product: DirectorRTSP
+      - package: DirectorNDI
+        product: DirectorNDI
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
+      - package: CameramanRemote
+        product: CameramanRemote
+      - package: DirectorRTMP
+        product: DirectorRTMP
+      - package: DirectorUI
+        product: DirectorUI
+      - package: TeamStationKit
+        product: TeamStationKit
+      - package: DirectorTestHarness
+        product: DirectorTestHarness
+
+  # Nothing of Director's is linked here on purpose. See `tsNdiProbe/App/Probe.swift`.
+  NDIProbe:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../tsNdiProbe/App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.ndiprobe
+        PRODUCT_NAME: NDI Probe
+        INFOPLIST_FILE: ../tsNdiProbe/App/Info.plist
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: DirectorNDI
+        product: CNDI
+
+  DirectorUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/DirectorUnitTests
+        # Captured camera output, read from disk by the parser suites. Listing it as a source would
+        # put it in a build phase that has no idea what to do with an .sdp file.
+        excludes:
+          - Fixtures/**
+      # The export's own tests live in the shared package so `swift test` runs them on the Mac;
+      # compiling them here too runs the same tests on the iPad.
+      - path: ../common/DirectorExport/Tests/DirectorExportTests
+    dependencies:
+      - target: Director
+      - package: AdaptiveBitrate
+        product: AdaptiveBitrate
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorExport
+        product: DirectorExport
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorPipeline
+        product: DirectorPipeline
+      - package: DirectorDVR
+        product: DirectorDVR
+      - package: DirectorRTSP
+        product: DirectorRTSP
+      - package: DirectorNDI
+        product: DirectorNDI
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
+      - package: CameramanRemote
+        product: CameramanRemote
+      - package: DirectorRTMP
+        product: DirectorRTMP
+      - package: DirectorTestHarness
+        product: DirectorTestHarness
+      - package: DirectorUI
+        product: DirectorUI
+      - package: TeamStationKit
+        product: TeamStationKit
+      - package: DirectorLink
+        product: DirectorLink
+      - package: DistributorWire
+        product: DistributorWire
+      - package: LoopbackHTTP
+        product: LoopbackHTTP
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.director.unittests
+        GENERATE_INFOPLIST_FILE: YES
+        # XcodeGen derives the test host from the target name, which is `Director`, but the app's
+        # PRODUCT_NAME is `TS Director`. Without this the host path points at an app that is never
+        # built and the whole scheme fails before a single test runs.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/TS Director.app/TS Director
+        BUNDLE_LOADER: $(TEST_HOST)
+
+  DirectorIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/DirectorIntegrationTests
+    dependencies:
+      - target: Director
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorPipeline
+        product: DirectorPipeline
+      - package: DirectorDVR
+        product: DirectorDVR
+      - package: DirectorTestHarness
+        product: DirectorTestHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.director.integrationtests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/TS Director.app/TS Director
+        BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  NDIProbe:
+    build:
+      targets:
+        NDIProbe: all
+    run:
+      config: Debug
+
+  Director:
+    build:
+      targets:
+        Director: all
+        DirectorUnitTests: [ test ]
+        DirectorIntegrationTests: [ test ]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - DirectorUnitTests
+        - DirectorIntegrationTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

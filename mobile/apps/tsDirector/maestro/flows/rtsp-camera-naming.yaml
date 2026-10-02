@@ -1,0 +1,47 @@
+# Naming a camera, and the name coming back by itself at the next launch.
+#
+# Unique id is `_awx_service._tcp` TXT (modelname, else wlanmac). The operator's name is a label on
+# that record, so a DHCP change does not lose it.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: rtsp
+
+- runFlow: shared/allow-local-network.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 60000
+- runFlow: shared/settle-source-list.yaml
+
+- extendedWaitUntil:
+    visible: 'origin=autoByIdentity'
+    timeout: 60000
+
+- tapOn:
+    id: 'source-name-1'
+- eraseText
+- inputText: 'Third Base'
+- pressKey: Enter
+
+- extendedWaitUntil:
+    visible: 'name=Third Base .*origin=autoByIdentity'
+    timeout: 10000
+
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      uiTest: true
+      debugHUD: true
+      sourceProfile: rtsp
+
+- runFlow: shared/allow-local-network.yaml
+- extendedWaitUntil:
+    visible: 'name=Third Base .*origin=autoByIdentity'
+    timeout: 60000

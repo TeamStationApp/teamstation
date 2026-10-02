@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.app.teamstation.app"],
+        "components": [
+          {
+            "/": "/signin/*",
+            "comment": "the sign-in link from the e-mail"
+          }
+        ]
+      }
+    ]
+  }
+}

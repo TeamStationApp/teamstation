@@ -3,7 +3,7 @@ const path = require('path')
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
 
 /**
- * Metro bundles `src2/app/` and `src2/common/` — the same sources the web
+ * Metro bundles `src/app/` and `src/common/` — the same sources the web
  * build uses. Its project root is the repository root, because that is where
  * the package is.
  *
@@ -12,13 +12,12 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
  *
  * The block list keeps Metro out of the parts of the repository that are not
  * the app: the server's build output, the web bundle, the two native build
- * directories — thousands of files that change on every compile — and the two
- * trees that have nothing to do with this app, GameStation 1.0 in `src/` and
- * the separate native apps in `mobile/`.
+ * directories — thousands of files that change on every compile — and the
+ * separate native apps in `mobile/`, which have nothing to do with this app.
  *
  * `expo-asset` and `expo-file-system` resolve to one stand-in: Fiber's native
  * entry imports them, and the app installs no Expo package beyond
- * `expo-modules-core` and `expo-gl` (see `src2/MOBILE.md`).
+ * `expo-modules-core` and `expo-gl` (see `src/MOBILE.md`).
  *
  * `three` resolves to its ES module. Babel turns every `import` into a
  * `require`, so Metro asks for the `require` export, and three's CommonJS
@@ -26,7 +25,7 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
  *
  * A `node_modules` directory next to the app sources is closer to those
  * files than the repository install, so hierarchical lookup would load a
- * second React for `src2/app` while React Native's renderer keeps the
+ * second React for `src/app` while React Native's renderer keeps the
  * repository copy. The renderer installs the hook dispatcher on its own
  * copy, and the app's first `useState` then reads null and the phone
  * quits on launch. A resolution that lands in that nearer directory is
@@ -34,9 +33,9 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
  */
 const expoStandIn = path.resolve(
   __dirname,
-  'src2/app/native/expoStandIn/assets.js'
+  'src/app/native/expoStandIn/assets.js'
 )
-const strayModules = path.resolve(__dirname, 'src2', 'node_modules') + path.sep
+const strayModules = path.resolve(__dirname, 'src', 'node_modules') + path.sep
 const repositoryOrigin = path.join(__dirname, 'package.json')
 const config = {
   resolver: {
@@ -60,7 +59,6 @@ const config = {
     },
     blockList: [
       new RegExp(`^${escape(strayModules)}.*$`),
-      new RegExp(`^${escape(path.resolve(__dirname, 'src'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'mobile'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'lib'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'dist'))}/.*$`),

@@ -1,0 +1,27 @@
+# What Android's system Back does, which no other platform has a button for.
+#
+# It walks the **address**, not the screen stack: which half of a game you are
+# reading is on the address, so the first press returns to the video and the
+# second leaves the game. That is what a browser does with the same two
+# addresses, and reproducing it is the point.
+#
+#     maestro --device <emulator> test maestro/androidBack.yaml
+appId: app.teamstation.app
+---
+- runFlow: home.yaml
+- tapOn: 'Watch'
+- extendedWaitUntil:
+    visible: 'Highlights'
+    timeout: 30000
+- tapOn: 'Box score'
+- extendedWaitUntil:
+    visible: 'Batting.*'
+    timeout: 20000
+- back
+- extendedWaitUntil:
+    visible: 'Highlights'
+    timeout: 20000
+- back
+- extendedWaitUntil:
+    visible: 'Your Home'
+    timeout: 20000

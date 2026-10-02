@@ -88,11 +88,11 @@ public struct DeviceIdentity: Sendable, Equatable, Codable {
 ///
 /// `store` is where the identity lives — a file in the app's own storage. `legacy` is where builds
 /// before the file kept it, read only while the file has no UUID, so a phone that updates is still
-/// the camera GS Director already knows. A store that exists but cannot be read is never written
+/// the camera TS Director already knows. A store that exists but cannot be read is never written
 /// over, since it still holds the real UUID; that launch runs on a stand-in kept for the process.
 public struct DeviceIdentityProvider: Sendable {
-  public static let uuidKey = "co.gamestation.cameraman.identity.uuid"
-  public static let nameKey = "co.gamestation.cameraman.identity.name"
+  public static let uuidKey = "app.teamstation.cameraman.identity.uuid"
+  public static let nameKey = "app.teamstation.cameraman.identity.name"
 
   private let store: IdentityStore
   private let legacy: IdentityStore?
@@ -138,7 +138,7 @@ public struct DeviceIdentityProvider: Sendable {
   }
 
   /// A UUID that survived a corrupt or truncated write must be rejected, because a malformed CNAME
-  /// would make GS Producer bind two different phones to one record.
+  /// would make TS Director bind two different phones to one record.
   public static func isWellFormed(uuid: String) -> Bool {
     guard uuid.count == 36, uuid == uuid.lowercased() else { return false }
     return UUID(uuidString: uuid) != nil
@@ -226,7 +226,7 @@ public final class FileIdentityStore: IdentityStore, @unchecked Sendable {
 public struct LegacyKeychainIdentityStore: IdentityStore {
   private let service: String
 
-  public init(service: String = "co.gamestation.cameraman.identity") {
+  public init(service: String = "app.teamstation.cameraman.identity") {
     self.service = service
   }
 

@@ -1,0 +1,62 @@
+# Signs the Director in to TeamStation, against a development seat.
+#
+# The code arrives by e-mail, which a test cannot read, so this waits at the
+# code screen long enough for whoever is running it to put a known code on
+# the request — `update email_codes set code_hash = sha256('414243') …` for
+# the newest unconsumed row — and then types that. Against a real server the
+# wait is where a person types what they were sent instead.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+- extendedWaitUntil:
+    visible:
+      id: 'start-directing'
+    timeout: 30000
+- tapOn:
+    id: 'start-directing'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-button'
+    timeout: 30000
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-teamstation-account'
+    timeout: 20000
+- tapOn:
+    id: 'settings-teamstation-account'
+- extendedWaitUntil:
+    visible:
+      id: 'teamstation-email'
+    timeout: 20000
+- tapOn:
+    id: 'teamstation-email'
+- inputText: 'paul@vtex.net'
+- hideKeyboard
+- tapOn:
+    id: 'teamstation-send-code'
+- extendedWaitUntil:
+    visible:
+      id: 'teamstation-code'
+    timeout: 30000
+- takeScreenshot: shot-awaiting-code
+
+# The window in which the code is put on the request.
+- swipe:
+    start: 50%, 50%
+    end: 50%, 50%
+    duration: 40000
+
+- tapOn:
+    id: 'teamstation-code'
+- inputText: '414243'
+- hideKeyboard
+- tapOn:
+    id: 'teamstation-submit-code'
+- extendedWaitUntil:
+    visible:
+      id: 'teamstation-sign-out'
+    timeout: 30000
+- takeScreenshot: shot-signed-in

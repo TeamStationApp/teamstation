@@ -1,0 +1,41 @@
+# The app opens, the camera runs, and the server is listening on the port it says it is.
+#
+# Permissions are granted by scripts/install.sh with `pm grant` rather than tapped: the system
+# dialogs belong to the system UI, not to this app, so Maestro cannot see them at all.
+appId: app.teamstation.cameraman
+---
+- launchApp:
+    appId: app.teamstation.cameraman
+    clearState: false
+    arguments:
+      uiTest: true
+
+# The camera screen, not the diagnostic one — which is what a denied camera permission would show.
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "camera-name"
+- assertVisible:
+    id: "zoom-scale"
+- assertVisible:
+    id: "settings-button"
+- assertVisible:
+    id: "flip-button"
+
+- tapOn:
+    id: "settings-button"
+# The stream card sits at the foot of the right column, below the lenses, as on the iPhone. The
+# screen is one scroll, so a swipe that starts on the right column moves that scroll.
+- scrollUntilVisible:
+    element:
+      id: "settings-url"
+    direction: UP
+# The address is read off the app rather than assumed.
+- assertVisible:
+    id: "settings-url"
+- assertVisible:
+    id: "settings-advertising"
+- tapOn:
+    id: "settings-done"
+- assertVisible:
+    id: "camera-screen"

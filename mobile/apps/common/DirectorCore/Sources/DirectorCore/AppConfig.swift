@@ -42,7 +42,7 @@ public struct ProgramResolution: Hashable, Sendable, Codable {
 public enum StreamDestination: String, Codable, Sendable, CaseIterable {
   /// The RTMP URL the operator typed. What every Director did before events existed.
   case url
-  /// A game picked from GameStation, whose stream URL the app holds and never shows.
+  /// A game picked from TeamStation, whose stream URL the app holds and never shows.
   case event
 }
 
@@ -134,7 +134,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// Which of the two destinations the Stream button publishes to.
   ///
   /// Defaults to the typed URL, so every Director that already has one keeps behaving exactly as
-  /// it did. Choosing a GameStation event is the other way, and the app never shows that URL: the
+  /// it did. Choosing a TeamStation event is the other way, and the app never shows that URL: the
   /// event *is* the destination, and its key lives in the keychain with the account.
   public var streamDestination: StreamDestination
   /// Sweep a different /24 for cameras instead of this iPad's own, for a bench where the cameras sit
@@ -488,7 +488,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
 /// `UserDefaults` is thread-safe but not annotated as `Sendable`.
 public struct ConfigStore: @unchecked Sendable {
   private let defaults: UserDefaults
-  private static let configKey = "co.gamestation.director.config"
+  private static let configKey = "app.teamstation.director.config"
 
   public init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
