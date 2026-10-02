@@ -624,7 +624,16 @@ export function openApiDocument(version: string): OpenApiDocument {
             database: { type: 'string', enum: ['ok', 'unreachable'] },
             migrations: { type: 'integer' },
             uptimeSec: { type: 'integer' },
-            pid: { type: 'integer' }
+            pid: { type: 'integer' },
+            dictation: {
+              type: 'boolean',
+              description: 'Whether dictation is configured on this server'
+            },
+            dictationModels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'The LLMs dictation has a key for on this server'
+            }
           }
         },
         User: {

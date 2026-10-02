@@ -93,9 +93,7 @@ describe('ScoreboardPage', function () {
       'wss://gamestation.co/api/v1/scoreboard/g1/socket'
     )
     expect(board()?.dataset.drawn).equals('false')
-    expect(document.querySelector('[data-scoreboard="marker"]')).not.equals(
-      null
-    )
+    expect(board()?.children).length(0)
     await act(async () => {
       sockets.latest().open()
       sockets.latest().receive({ ...SAMPLE_SCOREBOARD, balls: 3 })
@@ -147,7 +145,7 @@ describe('ScoreboardPage', function () {
       sockets.latest().drop(4404)
     })
     expect(board()?.dataset.drawn).equals('false')
-    expect(board()?.children).length(1)
+    expect(board()?.children).length(0)
     expect(signUp()).equals(null)
     clock.advance(60_000)
     expect(sockets.sockets).length(1)

@@ -16,7 +16,8 @@ import {
   ControlBackdrop,
   ControlFace,
   controlFrame,
-  ControlIcon
+  ControlIcon,
+  DICTATION_LOG_HEIGHT
 } from '../scoring/ScoringControlAppearance'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
 import { useTheme } from '../theme/ThemeContext'
@@ -48,6 +49,8 @@ export interface BaseballScreenProps {
   onUndo: () => void
   onPitch: (kind: (typeof PITCH_CONTROLS)[number]['kind']) => void
   historyLabel?: string
+  /** The last play in two lines, shown in place of the label and the hint. */
+  historyDetail?: { primary: string; secondary?: string }
   canPitch: boolean
   remainingMs?: number
   instruction?: string
@@ -67,6 +70,10 @@ export interface BaseballScreenProps {
    * More starts. Only a phone passes one.
    */
   walkUpControl?: React.ReactNode
+  /** Sits directly above the column that holds Bunt and Swing. */
+  dictationControl?: React.ReactNode
+  /** Sits in the top-left corner, ending left of the menu button. */
+  dictationLog?: React.ReactNode
   onDismissHint?: () => void
 }
 /** Immersive scoring surface, with one fixed responsive camera. */
@@ -136,6 +143,19 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           >
             {props.summary}
           </Text>
+          {props.dictationLog != null && (
+            <View
+              pointerEvents="box-none"
+              style={{ flex: 1, minWidth: 0, height: 48, marginRight: 8 }}
+            >
+              <View
+                pointerEvents="box-none"
+                style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
+              >
+                {props.dictationLog}
+              </View>
+            </View>
+          )}
           <GlassView
             radius={24}
             interactive
@@ -180,6 +200,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           bounds={toastBounds}
           compact={compact}
           minTop={toastTopBelow(menuButton)}
+          below={props.dictationLog == null ? 0 : DICTATION_LOG_HEIGHT + 8}
         />
         {props.onDismissHint != null && (
           <SwitchHitterHint bounds={bounds} onDismiss={props.onDismissHint} />
@@ -322,7 +343,10 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                           fontWeight: '900'
                         }}
                       >
-                        {props.historyLabel ?? lstrings.scoring_no_plays}
+                        {props.historyLabel == null
+                          ? lstrings.scoring_no_plays
+                          : (props.historyDetail?.primary ??
+                            props.historyLabel)}
                       </Text>
                       <Text
                         selectable={false}
@@ -335,7 +359,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                       >
                         {props.historyLabel == null
                           ? lstrings.scoring_history_hint
-                          : lstrings.scoring_undo_hint}
+                          : props.historyDetail == null
+                            ? lstrings.scoring_undo_hint
+                            : (props.historyDetail.secondary ?? '')}
                       </Text>
                     </View>
                   </Pressable>
@@ -369,6 +395,19 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
               </View>
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
+              {props.dictationControl != null && (
+                <View
+                  pointerEvents="box-none"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    bottom: CONTROL_DECK_HEIGHT + CONTROL_GAP
+                  }}
+                >
+                  {props.dictationControl}
+                </View>
+              )}
               {props.ballInPlayControl ?? (
                 <Pressable
                   accessibilityRole="button"

@@ -231,7 +231,7 @@ describe('local scoring sessions', function () {
     ])
       session = applyAction(session, action).state
     // Resume into the correction window with motions already settled.
-    let state: ScoringState = {
+    const state: ScoringState = {
       ...initialScoringState(session),
       phase: 'correctionWindow',
       presentation: null,
@@ -251,8 +251,8 @@ describe('local scoring sessions', function () {
     })
     expect(baseIds(retreated.session)).deep.equals([2, 1, null])
     expect(
-      retreated.session.liveData.plays.currentPlay!.runners
-        .filter(r => r.details.movementReason === 'Single')
+      retreated.session.liveData.plays
+        .currentPlay!.runners.filter(r => r.details.movementReason === 'Single')
         .map(r => r.details.runner.id)
     ).deep.equals([2])
   })
@@ -512,6 +512,18 @@ describe('local scoring sessions', function () {
     })
     expect(await unavailable.read('one')).deep.equals({ help: true, shown: 0 })
     await unavailable.write('one', { help: false, shown: 3 })
+    // A dictation model is kept only when it is one this app knows.
+    await preferences.write('one', {
+      help: true,
+      shown: 0,
+      dictationModel: 'gpt-6-sol'
+    })
+    expect((await preferences.read('one')).dictationModel).equals('gpt-6-sol')
+    items.set(
+      'gamestation:scoring:one:switch-hitter',
+      '{"help":true,"shown":0,"dictationModel":"gpt-4"}'
+    )
+    expect(await preferences.read('one')).deep.equals({ help: true, shown: 0 })
   })
 })
 

@@ -124,6 +124,19 @@ describe('scoring shell and exit', function () {
     expect(document.querySelector('[aria-label="Schedule"]')).equals(null)
     await click('Ball')
     expect(document.querySelector('[aria-label="Undo Ball"]')).not.equals(null)
+    // The Undo control describes the play: one line, no hint below it.
+    const undo = document.querySelector('[aria-label="Undo Ball"]')!
+    expect(
+      undo.querySelector('[data-testid="scoring-control-label"]')?.textContent
+    ).equals('Ball')
+    expect(undo.textContent).not.includes('Undo last action')
+    await click('Called Strike')
+    expect(
+      document
+        .querySelector('[aria-label="Undo Called Strike"]')
+        ?.querySelector('[data-testid="scoring-control-label"]')?.textContent
+    ).equals('Called strike')
+    await click('Undo Called Strike')
     await click('Undo Ball')
     await click('Open scoring menu')
     // Below ☰, as the web draws it, so ☰ is never under the menu.

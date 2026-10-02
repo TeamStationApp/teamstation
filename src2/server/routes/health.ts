@@ -11,13 +11,21 @@ export interface HealthBody {
   migrations: number
   uptimeSec: number
   pid: number
+  /** Whether dictation is configured. Never the key. */
+  dictation: boolean
+  /** The LLMs dictation has a key for. */
+  dictationModels: string[]
 }
 
 /**
  * Answers without authentication, because a load balancer has no token. It
  * reports what the process can see and never leaks a connection string.
  */
-export function healthRoutes(db: Kysely<Database>, version: string): Router {
+export function healthRoutes(
+  db: Kysely<Database>,
+  version: string,
+  options: { dictation?: boolean; dictationModels?: readonly string[] } = {}
+): Router {
   const router = Router()
 
   router.get(
@@ -41,7 +49,9 @@ export function healthRoutes(db: Kysely<Database>, version: string): Router {
         database,
         migrations,
         uptimeSec: Math.round(process.uptime()),
-        pid: process.pid
+        pid: process.pid,
+        dictation: options.dictation ?? false,
+        dictationModels: [...(options.dictationModels ?? [])]
       }
       res.status(database === 'ok' ? 200 : 503).json(body)
     })

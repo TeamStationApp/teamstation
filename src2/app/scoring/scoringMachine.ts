@@ -1,3 +1,4 @@
+import type { ScoringAction } from '../../common/scoring/actions'
 import { completesHitOffer, undoesHitOffer } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { copyGame, setupOf } from '../../common/scoring/state'
@@ -7,6 +8,16 @@ import {
   placeFielder,
   placeLanding
 } from './battedBall'
+import {
+  answerOf,
+  completeSentence,
+  leadRunnersFirst,
+  playDefaults,
+  sentenceQuestion,
+  settleBetween,
+  stealsByBase
+} from './dictatedCompletion'
+import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreReducer } from './moreActions'
 import {
   accepted,
@@ -229,7 +240,7 @@ function replay(
  * game back, so the newest and the one before it always hold one.
  */
 function gameAt(
-  state: ScoringState,
+  state: Pick<ScoringState, 'log' | 'checkpoints'>,
   logLength: number
 ): { session: ScoringSessionState; checkpoints: GameCheckpoint[] } {
   const checkpoints = state.checkpoints.filter(
@@ -293,6 +304,21 @@ function restoreTo(
 }
 
 /** Closes the decided play: the game moves on to the next batter. */
+/**
+ * The game when the log was `logLength` long: rebuilt from the checkpoints,
+ * or, before the first of them — a game picked up with its log already
+ * played — from `opening`, the game before the whole log.
+ */
+export function sessionAt(
+  state: Pick<ScoringState, 'log' | 'checkpoints'>,
+  logLength: number,
+  opening: () => ScoringSessionState
+): ScoringSessionState {
+  if (state.checkpoints.some(checkpoint => checkpoint.logLength <= logLength))
+    return gameAt(state, logLength).session
+  return replay(copyGame(opening()), state.log, 0, logLength)
+}
+
 export function closePlay(state: ScoringState): ScoringState {
   if (state.phase !== 'correctionWindow') return state
   const next = {
@@ -385,6 +411,24 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  let next = reduce(state, event)
+  // A sentence that came back while the last one was shown applies once the
+  // screen is at rest again.
+  while (
+    next.queuedDictation != null &&
+    next.queuedDictation.length > 0 &&
+    next.reel == null &&
+    atRest(next)
+  ) {
+    const [first, ...rest] = next.queuedDictation
+    const waiting: ScoringState = { ...next }
+    if (rest.length > 0) waiting.queuedDictation = rest
+    else delete waiting.queuedDictation
+    next = dictated(waiting, first)
+  }
+  return next
+}
+function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
   if (event.type === 'PRESENTATION')
     return state.presentationEnabled === event.enabled
       ? state
@@ -428,6 +472,12 @@ export function scoringReducer(
       checkpoints: state.checkpoints,
       presentation: null
     }
+    // A dictated picture shows what the sentence already recorded.
+    if (sequence.dictated === true) {
+      advanceReel(next)
+      settleRunners(next)
+      return next
+    }
     if (sequence.kind === 'throw') {
       completeDefense(next, sequence)
       if (sequence.stage === 'tag' && next.runnerDraft != null) {
@@ -464,6 +514,24 @@ export function scoringReducer(
     }
     settleRunners(next)
     return next
+  }
+  // Above the presentation guard, so a sentence spoken mid-animation is told
+  // why rather than swallowed.
+  if (event.type === 'DICTATED') return dictated(state, event)
+  if (event.type === 'DICTATION_ANSWER') {
+    const question = state.dictationQuestion
+    const actions = question == null ? undefined : answerOf(question, event)
+    if (question == null || actions == null) return state
+    return dictated(state, {
+      transcript: question.transcript,
+      actions,
+      answered: true
+    })
+  }
+  if (event.type === 'DICTATION_DISMISS') {
+    if (state.dictationQuestion == null) return state
+    const { dictationQuestion: _dropped, ...rest } = state
+    return rest
   }
   if (
     state.presentation != null &&
@@ -510,12 +578,16 @@ export function scoringReducer(
   if (event.type === 'UNDO') {
     const last = state.past.at(-1)
     if (last == null || state.readOnly === true) return state
-    const next = {
+    const next: ScoringState = {
       ...restoreTo(state, last, state.past.length - 1),
       presentation: null,
       celebration: null,
       generation: state.generation + 1
     }
+    delete next.dictation
+    delete next.reel
+    delete next.queuedDictation
+    delete next.dictationQuestion
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
       next.correctionWindow = {
@@ -785,4 +857,129 @@ export function scoringScreenReducer(
     return { ...model, savedUndos: model.savedUndos + 1 }
   const next = scoringReducer(scoring, event)
   return next === scoring ? model : { ...model, scoring: next }
+}
+
+/** The steps a dictated sentence may land on: nothing drawn, nothing moving. */
+const AT_REST: ReadonlyArray<ScoringState['phase']> = [
+  'ready',
+  'awaitingBatter',
+  'correctionWindow'
+]
+
+/**
+ * Whether the screen is at rest: on a step where a dictated sentence may land,
+ * with nothing being drafted and nothing animating.
+ */
+export function atRest(state: ScoringState): boolean {
+  return (
+    AT_REST.includes(state.phase) &&
+    state.runnerDraft == null &&
+    state.moreDraft == null &&
+    state.presentation == null &&
+    state.reel == null
+  )
+}
+
+/**
+ * A dictated sentence. It is one edit: every action applies, as one entry in
+ * Undo labelled with what was said, or none does and the reason is kept for
+ * the screen. The rules engine decides, through `act`, exactly as for a tap.
+ */
+function dictated(
+  state: ScoringState,
+  event: {
+    transcript: string
+    actions: readonly ScoringAction[]
+    /** The whole sentence an answer came to: not asked about again. */
+    answered?: boolean
+  }
+): ScoringState {
+  const { transcript } = event
+  if (event.actions.length === 0) return state
+  // What was left to be assumed is filled in, a steal is the runner's on the
+  // base before the one taken, and runners who move together go lead runner
+  // first, however they were said.
+  const between = settleBetween(
+    state.session,
+    leadRunnersFirst(
+      state.session,
+      stealsByBase(
+        state.session,
+        playDefaults(state.session, event.actions, transcript),
+        transcript
+      )
+    )
+  )
+  const { actions } = between
+  const { dictation: _last, dictationQuestion: _asked, ...current } = state
+  const refused = (message: string): ScoringState => ({
+    ...current,
+    dictation: { transcript, problem: { code: 'notNow', message } }
+  })
+  // `act` throws before it reaches the rules engine here, so a dry run
+  // cannot see it.
+  if (state.readOnly === true) return refused('Scoring is read-only')
+  // The last sentence is still being shown. The game already holds it, so
+  // this one was spoken about the game as it is: it waits its turn.
+  if (state.reel != null)
+    return {
+      ...state,
+      queuedDictation: [
+        ...(state.queuedDictation ?? []),
+        { transcript, actions: [...actions] }
+      ]
+    }
+  if (!atRest(state))
+    return refused('Finish what is on screen, then say it again')
+  // What the sentence leaves the screen unable to settle is asked first.
+  const asked = sentenceQuestion(
+    state.session,
+    transcript,
+    actions,
+    event.answered === true
+  )
+  if (asked != null)
+    return { ...current, dictationQuestion: { transcript, ...asked } }
+  // What a first play needs answered before the rest of the sentence.
+  if (between.question != null)
+    return {
+      ...current,
+      dictationQuestion: { transcript, ...between.question }
+    }
+  let game = state.session
+  for (const action of actions) {
+    const applied = applyAction(game, action)
+    if (applied.problems.length > 0)
+      return {
+        ...current,
+        dictation: { transcript, problem: applied.problems[0] }
+      }
+    game = applied.state
+  }
+  // Whatever the play is left waiting on is finished, or asked.
+  const done = completeSentence(state.session, actions)
+  if ('question' in done)
+    return { ...current, dictationQuestion: { transcript, ...done.question } }
+  const sentence = done.actions
+  const reel = new ReelBuilder(state.presentationEnabled === true)
+  const next = accepted(current, transcript, edit => {
+    sentence.forEach((action, index) => {
+      reel.before(edit, action, sentence.slice(index + 1))
+      const known = new Set(edit.motions.map(motion => motion.id))
+      act(edit, action)
+      reel.after(edit.motions.filter(motion => !known.has(motion.id)))
+      edit.motions = edit.motions.filter(motion => known.has(motion.id))
+    })
+    if (reel.homeRunKind != null)
+      edit.celebration = {
+        id: `${edit.generation}:${edit.session.meta.sequence}:home-run`,
+        generation: edit.generation,
+        kind: reel.homeRunKind
+      }
+    beginReel(edit, reel.finish(edit))
+    settleRunners(edit)
+  })
+  // The dry run and `act` consult the same rules, so this is only a guard.
+  if (next === current) return refused('The game would not take that')
+  return { ...next, dictation: { transcript } }
 }
