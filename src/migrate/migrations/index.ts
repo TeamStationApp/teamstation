@@ -47,15 +47,20 @@ import { migration048DropStatRollups } from './048dropStatRollups'
 import { migration049ExpandedStats } from './049expandedStats'
 import { migration050CreationHierarchy } from './050creationHierarchy'
 import { migration050OAuth } from './050oauth'
+import { migration050TeamFollows } from './050teamFollows'
 import { migration051EventTags } from './051eventTags'
+import { migration051GuardiansAndAccounts } from './051guardiansAndAccounts'
 import { migration051PersonalRequests } from './051personalRequests'
+import { migration052Chat } from './052chat'
 import { migration052SeasonGameRefinements } from './052seasonGameRefinements'
 import { migration052SignOutMergedAccounts } from './052signOutMergedAccounts'
+import { migration053ChatPreferences } from './053chatPreferences'
 import { migration053Follows } from './053follows'
 import { migration054AppOrigin } from './054appOrigin'
 import { migration054AssistantRole } from './054assistantRole'
 import { migration055GuardianRequests } from './055guardianRequests'
 import { migration056OneMemberKind } from './056oneMemberKind'
+import { migration057ChatMasterCompatibility } from './057chatMasterCompatibility'
 import { migration057EventInfo } from './057eventInfo'
 import { migration058EventDetails } from './058eventDetails'
 import { migration059AccountMail } from './059accountMail'
@@ -128,6 +133,10 @@ export const migrations: Migration[] = [
   migration047TeamStation,
   migration048DropStatRollups,
   migration049ExpandedStats,
+  migration050TeamFollows,
+  migration051GuardiansAndAccounts,
+  migration052Chat,
+  migration053ChatPreferences,
   migration050CreationHierarchy,
   migration050OAuth,
   migration051EventTags,
@@ -139,6 +148,7 @@ export const migrations: Migration[] = [
   migration054AssistantRole,
   migration055GuardianRequests,
   migration056OneMemberKind,
+  migration057ChatMasterCompatibility,
   migration057EventInfo,
   migration058EventDetails,
   migration059AccountMail,

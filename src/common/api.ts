@@ -7,6 +7,7 @@ import {
   asOptional,
   asString,
   asTuple,
+  asValue,
   type Cleaner
 } from 'cleaners'
 
@@ -212,9 +213,529 @@ export const asTeamSummary = asObject({
     'unscheduled'
   ),
   canViewPrivate: asOptional(asBoolean, false),
+  /** Optional compatibility fields sent by older team-list servers. */
+  access: asOptional(asLiteral('member', 'fan')),
+  following: asOptional(asBoolean),
+  onTeam: asOptional(asBoolean),
   kind: asOptional(asEither(asLiteral('full'), asLiteral('external')), 'full')
 })
-export type TeamSummary = ReturnType<typeof asTeamSummary>
+type TeamSummaryFromList = ReturnType<typeof asTeamSummary>
+export type TeamSummary = Omit<
+  TeamSummaryFromList,
+  'access' | 'following' | 'onTeam'
+> &
+  Partial<Pick<TeamSummaryFromList, 'access' | 'following' | 'onTeam'>>
+
+/** A team somebody may follow, from `GET /teams/search` or `/me/follows`. */
+export const asFollowableTeam = asObject({
+  id: asString,
+  name: asString,
+  logoUrl: asNullable(asString),
+  /** The seasons it plays in, each titled `<league> <season>`. */
+  seasons: asArray(asObject({ id: asString, title: asString })),
+  following: asBoolean
+})
+export type FollowableTeam = ReturnType<typeof asFollowableTeam>
+
+/**
+ * One game on a team's schedule, as a fan may read it: when, who, where.
+ * Never a status, a score, a poster or a video.
+ */
+export const asScheduleEntry = asObject({
+  gameId: asString,
+  startsAt: asString,
+  homeTeam: asObject({ id: asString, name: asString }),
+  awayTeam: asObject({ id: asString, name: asString }),
+  venue: asNullable(asString)
+})
+export type ScheduleEntry = ReturnType<typeof asScheduleEntry>
+
+/** One of a team's staff, with the roles they hold directly on the team. */
+export const asStaffEntry = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asNullable(asString),
+  roles: asArray(asRole)
+})
+export type StaffEntry = ReturnType<typeof asStaffEntry>
+
+/** The audience a chat is kept to, or `dm`. */
+export const asChatKind = asLiteral(
+  'teamStaff',
+  'teamMembers',
+  'teamFans',
+  'seasonStaff',
+  'seasonAllStaff',
+  'seasonAnnouncements',
+  'leagueOrg',
+  'dm'
+)
+export type ChatKindName = ReturnType<typeof asChatKind>
+
+/**
+ * Somebody else who was in a DM with the caller, for its name: a current
+ * member, or one who left (`left`) while the caller was in it.
+ */
+export const asChatDmPerson = asObject({
+  userId: asUserId,
+  shortName: asString,
+  left: asBoolean
+})
+export type ChatDmPerson = ReturnType<typeof asChatDmPerson>
+
+/**
+ * One chat the caller is in, from `GET /chat/conversations`. `title` is null
+ * for a DM, which the app names from its members. `locked`: the caller holds
+ * no key for the latest epoch; `noHolder`: no current member does.
+ */
+export const asChatPreferences = asObject({
+  pinned: asOptional(asBoolean, false),
+  muted: asOptional(asBoolean, false),
+  manualUnread: asOptional(asBoolean, false),
+  manualUnreadRevision: asOptional(asNumber, 0)
+})
+export type ChatPreferences = ReturnType<typeof asChatPreferences>
+export const asChatPin = asObject({ messageId: asString, pinnedAt: asString })
+export type ChatPin = ReturnType<typeof asChatPin>
+
+export const asChatConversation = asObject({
+  id: asString,
+  kind: asChatKind,
+  title: asNullable(asString),
+  scope: asNullable(
+    asObject({ type: asLiteral('team', 'season', 'league'), id: asString })
+  ),
+  /**
+   * The scope's own name, as its chats are titled (a team, a season title,
+   * a league); null for a DM. The list groups chats by it.
+   */
+  scopeName: asNullable(asString),
+  lastSeq: asNumber,
+  /** When the newest message was posted, ISO; null before the first. */
+  lastMessageAt: asNullable(asString),
+  lastPostAt: asOptional(asNullable(asString), null),
+  lastPostId: asOptional(asNullable(asString), null),
+  lastPostSeq: asOptional(asNumber, 0),
+  preferences: asOptional(asChatPreferences, {
+    pinned: false,
+    muted: false,
+    manualUnread: false,
+    manualUnreadRevision: 0
+  }),
+  unread: asNumber,
+  canPost: asBoolean,
+  canModerate: asBoolean,
+  locked: asBoolean,
+  noHolder: asBoolean,
+  closed: asBoolean,
+  memberCount: asNumber,
+  /**
+   * For a DM, everyone else who was ever in it with the caller, current and
+   * former, so the app can still name it once the others have all left;
+   * empty for a scope chat.
+   */
+  people: asOptional(asArray(asChatDmPerson), [])
+})
+export type ChatConversation = ReturnType<typeof asChatConversation>
+
+/** One member of a chat, from `GET /chat/conversations/:id/members`. */
+export const asChatMember = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asNullable(asString),
+  /** How they stand in the chat, such as "Coach · Guardian". */
+  label: asString,
+  isModerator: asBoolean,
+  isApprover: asBoolean,
+  /** Has an identity and is not waiting for reset approval here. */
+  eligible: asBoolean,
+  hasIdentity: asBoolean,
+  /** Their current identity public key, base64url. */
+  identityKey: asNullable(asString),
+  /** Their current per-user key generation. */
+  generation: asNullable(asNumber)
+})
+export type ChatMember = ReturnType<typeof asChatMember>
+
+/**
+ * One row of a chat's hash-chained membership log. `prevHash` and `hash` are
+ * base64url; `at` is the milliseconds the hash covers.
+ */
+export const asChatLogRow = asObject({
+  seq: asNumber,
+  event: asLiteral('join', 'leave', 'identityReset', 'closed'),
+  userId: asUserId,
+  actorUserId: asNullable(asUserId),
+  reason: asNullable(asString),
+  prevHash: asString,
+  hash: asString,
+  at: asNumber
+})
+export type ChatLogRow = ReturnType<typeof asChatLogRow>
+
+/** Somebody the caller may name in a DM, from `GET /chat/dm-candidates`. */
+export const asChatPerson = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asNullable(asString)
+})
+export type ChatPerson = ReturnType<typeof asChatPerson>
+
+/**
+ * An adult who may be included beside a player, from `GET
+ * /chat/included-adults`, with a label such as "Guardian" or "Coach · Hawks".
+ */
+export const asIncludedAdult = asObject({
+  userId: asUserId,
+  shortName: asString,
+  label: asString
+})
+export type IncludedAdult = ReturnType<typeof asIncludedAdult>
+
+/** How far one member has read, from `GET /chat/conversations/:id/reads`. */
+export const asChatRead = asObject({ userId: asUserId, seq: asNumber })
+export type ChatRead = ReturnType<typeof asChatRead>
+
+/** A chat device platform. */
+export const asChatPlatform = asLiteral('web', 'ios', 'android')
+export type ChatPlatform = ReturnType<typeof asChatPlatform>
+
+/**
+ * One of the caller's chat devices, from `GET /chat/devices`. Keys are
+ * base64url. `linked`: holds the current per-user key generation and is not
+ * revoked; `current`: bound to this session.
+ */
+export const asChatDevice = asObject({
+  id: asString,
+  name: asString,
+  platform: asChatPlatform,
+  boxPublicKey: asString,
+  signPublicKey: asString,
+  createdAt: asString,
+  lastSeenAt: asString,
+  revokedAt: asNullable(asString),
+  linked: asBoolean,
+  current: asBoolean
+})
+export type ChatDevice = ReturnType<typeof asChatDevice>
+
+/** What a new device registers: its name, platform and public keys (base64url). */
+export interface ChatDeviceRegistration {
+  name: string
+  platform: ChatPlatform
+  boxPublicKey: string
+  signPublicKey: string
+}
+
+/** A nonce to sign, with the session it binds to. */
+export const asChatResumeChallenge = asObject({
+  nonce: asString,
+  sessionId: asString,
+  expiresAt: asString
+})
+export type ChatResumeChallenge = ReturnType<typeof asChatResumeChallenge>
+
+/**
+ * A new identity (enrolment or reset): its device-made `cid_` id, public key,
+ * and PUK generation 1 with the identity's signature and this device's box.
+ * Bytes are base64url.
+ */
+export interface ChatIdentityPublication {
+  identityId: string
+  identityPublicKey: string
+  pukPublicKey: string
+  pukSignature: string
+  box: string
+}
+
+export const asChatEnrolment = asObject({
+  identityId: asString,
+  generation: asNumber,
+  grantRequests: asNumber
+})
+export type ChatEnrolment = ReturnType<typeof asChatEnrolment>
+
+export const asChatReset = asObject({
+  identityId: asString,
+  generation: asNumber,
+  revokedDeviceIds: asArray(asString)
+})
+export type ChatReset = ReturnType<typeof asChatReset>
+
+/** PUK generation n+1, boxed to exactly the linked devices. Bytes are base64url. */
+export interface ChatPukPublication {
+  generation: number
+  publicKey: string
+  signature: string
+  previousKeysBox: string
+  boxes: Array<{ deviceId: string; box: string }>
+}
+
+const asChatIdentityKey = asObject({
+  id: asString,
+  publicKey: asString,
+  createdAt: asString
+})
+
+/** `GET /chat/me/keys`: the caller's identity, generations and this device's boxes. */
+export const asChatMyKeys = asObject({
+  deviceId: asNullable(asString),
+  linked: asBoolean,
+  identity: asNullable(asChatIdentityKey),
+  generations: asArray(
+    asObject({
+      generation: asNumber,
+      publicKey: asString,
+      signature: asString,
+      previousKeysBox: asNullable(asString),
+      box: asNullable(asString)
+    })
+  ),
+  pukNeedsRotation: asBoolean
+})
+export type ChatMyKeys = ReturnType<typeof asChatMyKeys>
+
+/** `GET /chat/users/:userId/keys`: another user's current identity and PUK. */
+export const asChatUserKeys = asObject({
+  userId: asUserId,
+  identity: asNullable(asChatIdentityKey),
+  puk: asNullable(
+    asObject({ generation: asNumber, publicKey: asString, signature: asString })
+  )
+})
+export type ChatUserKeys = ReturnType<typeof asChatUserKeys>
+
+/** `GET /chat/identities/:identityId`: any identity, current or replaced. */
+export const asChatIdentity = asObject({
+  id: asString,
+  userId: asUserId,
+  publicKey: asString,
+  createdAt: asString,
+  replacedAt: asNullable(asString)
+})
+export type ChatIdentity = ReturnType<typeof asChatIdentity>
+
+/** A link request as the new device sees it; `box` once approved. */
+export const asChatLink = asObject({
+  id: asString,
+  newDeviceId: asString,
+  createdAt: asString,
+  expiresAt: asString,
+  approved: asBoolean,
+  expired: asBoolean,
+  approvedByDeviceId: asNullable(asString),
+  box: asNullable(asString)
+})
+export type ChatLink = ReturnType<typeof asChatLink>
+
+/** An open link request as the user's linked devices see it. */
+export const asChatPendingLink = asObject({
+  id: asString,
+  newDevice: asObject({
+    id: asString,
+    name: asString,
+    platform: asChatPlatform,
+    boxPublicKey: asString
+  }),
+  createdAt: asString,
+  expiresAt: asString
+})
+export type ChatPendingLink = ReturnType<typeof asChatPendingLink>
+
+/** The approval: the identity key boxed to the new device, and every PUK generation. */
+export interface ChatLinkApproval {
+  box: string
+  pukBoxes: Array<{ generation: number; box: string }>
+}
+
+/** One epoch of a chat, from `GET /chat/conversations/:id/epochs`. */
+export const asChatEpoch = asObject({
+  epoch: asNumber,
+  createdByUserId: asUserId,
+  identityId: asString,
+  previousKeyBox: asNullable(asString),
+  chainBreak: asBoolean,
+  signature: asString,
+  createdAt: asString
+})
+export type ChatEpoch = ReturnType<typeof asChatEpoch>
+
+/** A chat's epochs after `after`, and the caller's boxes from `after` on. */
+export const asChatEpochs = asObject({
+  latest: asNumber,
+  needsRotation: asBoolean,
+  noHolder: asBoolean,
+  epochs: asArray(asChatEpoch),
+  boxes: asArray(
+    asObject({
+      epoch: asNumber,
+      identityId: asString,
+      pukGeneration: asNumber,
+      box: asString,
+      grantedByUserId: asNullable(asUserId)
+    })
+  )
+})
+export type ChatEpochs = ReturnType<typeof asChatEpochs>
+
+/** Epoch n+1, signed, boxed to the eligible members. Bytes are base64url. */
+export interface ChatEpochPublication {
+  epoch: number
+  previousKeyBox: string | null
+  signature: string
+  boxes: Array<{ userId: number; pukGeneration: number; box: string }>
+}
+
+export const asChatEpochMade = asObject({
+  epoch: asNumber,
+  chainBreak: asBoolean,
+  boxed: asNumber,
+  grantRequests: asNumber
+})
+export type ChatEpochMade = ReturnType<typeof asChatEpochMade>
+
+/** An open grant request, from `GET /chat/grants`. */
+export const asChatGrantRequest = asObject({
+  id: asNumber,
+  conversationId: asString,
+  epoch: asNumber,
+  userId: asUserId,
+  identityId: asString,
+  identityKey: asString,
+  pukGeneration: asNumber,
+  pukPublicKey: asString,
+  pukSignature: asString,
+  identityReset: asBoolean,
+  canApprove: asBoolean,
+  openedAt: asString
+})
+export type ChatGrantRequest = ReturnType<typeof asChatGrantRequest>
+
+/** One box filling a grant request: the latest epoch's key (HPKE `grant`). */
+export interface ChatGrantBox {
+  conversationId: string
+  epoch: number
+  userId: number
+  identityId: string
+  pukGeneration: number
+  box: string
+}
+
+export const asChatGrantsPosted = asObject({
+  filled: asNumber,
+  skipped: asArray(
+    asObject({
+      conversationId: asString,
+      userId: asUserId,
+      identityId: asString,
+      pukGeneration: asNumber,
+      reason: asLiteral('notOpen', 'staleEpoch')
+    })
+  )
+})
+export type ChatGrantsPosted = ReturnType<typeof asChatGrantsPosted>
+
+/** What the server sees of a message: its envelope `kind`. */
+export const asChatEnvelopeKind = asLiteral(
+  'post',
+  'reaction',
+  'edit',
+  'delete',
+  'moderatorDelete'
+)
+export type ChatEnvelopeKind = ReturnType<typeof asChatEnvelopeKind>
+
+/** One message, from `GET …/messages`; `ciphertext` is empty once cleared. */
+export const asChatMessage = asObject({
+  id: asString,
+  conversationId: asString,
+  seq: asNumber,
+  epoch: asNumber,
+  senderUserId: asUserId,
+  senderIdentityId: asString,
+  kind: asChatEnvelopeKind,
+  targetIds: asNullable(asArray(asString)),
+  nonce: asString,
+  ciphertext: asString,
+  signature: asString,
+  attachmentIds: asArray(asString),
+  clearedAt: asNullable(asString),
+  createdAt: asString
+})
+export type ChatMessage = ReturnType<typeof asChatMessage>
+
+/**
+ * An encrypted attachment still arriving (`completed: false`, with the parts
+ * `missing`, numbered from 0, each `partSize` bytes but the last), or a
+ * finished one (`completed: true`; `url`, a presigned GET good for 10
+ * minutes, and `expiresAt` only when read). `digest` is the blob's SHA-256,
+ * base64url.
+ */
+export const asChatAttachment = asEither(
+  asObject({
+    id: asString,
+    conversationId: asString,
+    size: asNumber,
+    completed: asValue(false),
+    partSize: asNumber,
+    parts: asNumber,
+    missing: asArray(asNumber)
+  }),
+  asObject({
+    id: asString,
+    conversationId: asString,
+    size: asNumber,
+    digest: asString,
+    completed: asValue(true),
+    url: asOptional(asString),
+    expiresAt: asOptional(asString)
+  })
+)
+export type ChatAttachment = ReturnType<typeof asChatAttachment>
+
+/** What a part's upload answers: how many have landed, and what is left. */
+export const asChatAttachmentParts = asObject({
+  received: asNumber,
+  parts: asNumber,
+  missing: asArray(asNumber)
+})
+export type ChatAttachmentParts = ReturnType<typeof asChatAttachmentParts>
+
+/**
+ * A message to post, sealed and signed by the device. `targetIds` only on
+ * the two deletes, `attachmentIds` only on posts. Bytes are base64url.
+ */
+export interface ChatMessageEnvelope {
+  id: string
+  epoch: number
+  kind: ChatEnvelopeKind
+  senderIdentityId: string
+  targetIds?: string[]
+  attachmentIds?: string[]
+  nonce: string
+  ciphertext: string
+  signature: string
+}
+
+/** A reported message, as site administrators see it. */
+export const asChatReport = asObject({
+  id: asString,
+  conversation: asObject({
+    id: asString,
+    kind: asChatKind,
+    title: asNullable(asString)
+  }),
+  messageId: asString,
+  reporter: asObject({ userId: asUserId, shortName: asString }),
+  sender: asObject({ userId: asUserId, shortName: asString }),
+  kind: asChatEnvelopeKind,
+  sentAt: asString,
+  plaintext: asString,
+  verified: asBoolean,
+  createdAt: asString,
+  resolvedAt: asNullable(asString)
+})
+export type ChatReport = ReturnType<typeof asChatReport>
 
 export const asGameSummary = withEventMetadata(
   asObject({
@@ -811,6 +1332,12 @@ export const asPlayerDetail = asObject({
   avatarUrl: asOptional(asNullable(asString), null),
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),
+  /**
+   * `YYYY-MM`, or null when nobody has set it. Absent for anybody who may
+   * not set it: only the team's administrators and coaches and the
+   * player's guardians see it.
+   */
+  birthMonth: asOptional(asNullable(asString)),
   teams: asArray(asPlayerTeam)
 })
 export type PlayerDetail = ReturnType<typeof asPlayerDetail>
@@ -822,6 +1349,30 @@ export const asPersonSettingsAnswer = asObject({
   throws: asThrows
 })
 export type PersonSettingsAnswer = ReturnType<typeof asPersonSettingsAnswer>
+
+/** A player's guardian or adult family member. */
+export const asGuardian = asObject({
+  userId: asUserId,
+  name: asString,
+  email: asNullable(asString),
+  kind: asLiteral('guardian', 'family')
+})
+export type Guardian = ReturnType<typeof asGuardian>
+export type RelativeKind = Guardian['kind']
+
+/** What linking a relative answers: the list now, and any invitation sent. */
+export const asAddedGuardian = asObject({
+  guardians: asArray(asGuardian),
+  invited: asOptional(
+    asObject({
+      inviteId: asString,
+      email: asString,
+      code: asString,
+      invitedAt: asString
+    })
+  )
+})
+export type AddedGuardian = ReturnType<typeof asAddedGuardian>
 
 /**
  * One highlight of one player, for their own page.
@@ -1260,7 +1811,10 @@ export const asScopeGrant = asObject({
   role: asString,
   isPlayer: asOptional(asBoolean, false)
 })
-export type ScopeGrant = ReturnType<typeof asScopeGrant>
+/** `isPlayer` optional, so a season's or league's grant is one too. */
+export type ScopeGrant = Omit<ReturnType<typeof asScopeGrant>, 'isPlayer'> & {
+  isPlayer?: boolean
+}
 
 export const asNamed = asObject({ id: asString, name: asString })
 
@@ -1311,7 +1865,15 @@ export const asScopePerson = asObject({
   lastSignInAt: asNullable(asString),
   lastSeenAt: asNullable(asString)
 })
-export type ScopePerson = ReturnType<typeof asScopePerson>
+type ScopePersonFromPage = ReturnType<typeof asScopePerson>
+export type ScopePerson = Omit<
+  ScopePersonFromPage,
+  'teams' | 'seasons' | 'leagues'
+> & {
+  teams: ScopeGrant[]
+  seasons: ScopeGrant[]
+  leagues: ScopeGrant[]
+}
 
 /** Every role one person holds on one level, from `ScopePerson.grants`. */
 export function grantsOf(person: ScopePerson): RoleGrant[] {
@@ -1421,7 +1983,12 @@ export const asManagePage = asObject({
   scope: asObject({
     kind: asLiteral('league', 'season', 'team'),
     id: asString,
-    name: asString
+    name: asString,
+    /**
+     * A league only: whether it is a SafeSport Local Affiliated
+     * Organization, which binds it to the MAAPP.
+     */
+    safesportLao: asOptional(asBoolean)
   }),
   /** The levels around this one, named, so a tick can say which it is. */
   tree: asObject({
@@ -1433,7 +2000,13 @@ export const asManagePage = asObject({
   pending: asArray(asPendingPerson),
   invites: asArray(asInvite)
 })
-export type ManagePage = ReturnType<typeof asManagePage>
+type ManagePageFromServer = ReturnType<typeof asManagePage>
+export type ManagePage = Omit<ManagePageFromServer, 'scope' | 'people'> & {
+  scope: Omit<ManagePageFromServer['scope'], 'safesportLao'> & {
+    safesportLao?: boolean
+  }
+  people: ScopePerson[]
+}
 
 export const asAddedPerson = asObject({
   added: asBoolean,
@@ -3470,6 +4043,65 @@ export class TeamStationClient {
     return storedGameOf(stored)
   }
 
+  /**
+   * Full teams whose name holds `query`, at most 20, for somebody looking for
+   * one to follow. The server needs two characters at least.
+   */
+  async searchTeams(query: string): Promise<FollowableTeam[]> {
+    return await this.request(
+      'GET',
+      `/teams/search?q=${encodeURIComponent(query)}`,
+      asArray(asFollowableTeam)
+    )
+  }
+
+  /** Follows a team. Following one already followed changes nothing. */
+  async followTeam(teamId: string): Promise<boolean> {
+    const answer = await this.request(
+      'PUT',
+      `/teams/${encodeURIComponent(teamId)}/follow`,
+      asObject({ following: asBoolean })
+    )
+    return answer.following
+  }
+
+  /** Stops following a team. Unfollowing one not followed changes nothing. */
+  async unfollowTeam(teamId: string): Promise<boolean> {
+    const answer = await this.request(
+      'DELETE',
+      `/teams/${encodeURIComponent(teamId)}/follow`,
+      asObject({ following: asBoolean })
+    )
+    return answer.following
+  }
+
+  /** The teams this person follows. */
+  async myFollows(): Promise<FollowableTeam[]> {
+    return await this.request(
+      'GET',
+      '/me/team-follows',
+      asArray(asFollowableTeam)
+    )
+  }
+
+  /** A team's games, as anybody who can read its listing may see them. */
+  async teamSchedule(teamId: string): Promise<ScheduleEntry[]> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/schedule`,
+      asArray(asScheduleEntry)
+    )
+  }
+
+  /** A team's staff, with their roles on it. */
+  async teamStaff(teamId: string): Promise<StaffEntry[]> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/staff`,
+      asArray(asStaffEntry)
+    )
+  }
+
   async roster(
     teamId: string,
     options: { includeFullNames?: boolean } = {}
@@ -3575,6 +4207,519 @@ export class TeamStationClient {
   /** Removes a player's walk-up song on one team. Removing none is fine. */
   async clearWalkUpSong(teamId: string, userId: string): Promise<void> {
     await this.request('DELETE', walkUpSongPath(teamId, userId), asUnknownOk)
+  }
+
+  /** A player's guardians and adult family members, guardians first. */
+  async guardians(
+    teamId: string,
+    userId: number | string
+  ): Promise<Guardian[]> {
+    return await this.request(
+      'GET',
+      guardiansPath(teamId, userId),
+      asArray(asGuardian)
+    )
+  }
+
+  /**
+   * Links a guardian or adult family member, by account or by address. An
+   * address with no account is sent an invitation only it can redeem.
+   */
+  async addGuardian(
+    teamId: string,
+    userId: number | string,
+    who: { userId: number } | { email: string },
+    kind: RelativeKind = 'guardian'
+  ): Promise<AddedGuardian> {
+    return await this.request(
+      'POST',
+      guardiansPath(teamId, userId),
+      asAddedGuardian,
+      'userId' in who
+        ? { userId: String(who.userId), kind }
+        : { email: who.email, kind }
+    )
+  }
+
+  /** Unlinks a guardian or family member, with what the link granted. */
+  async removeGuardian(
+    teamId: string,
+    userId: number | string,
+    guardianId: number
+  ): Promise<boolean> {
+    const answer = await this.request(
+      'DELETE',
+      `${guardiansPath(teamId, userId)}/${encodeURIComponent(guardianId)}`,
+      asObject({ removed: asBoolean })
+    )
+    return answer.removed
+  }
+
+  /**
+   * Sets a player's year and month of birth, never a day, or clears it with
+   * null. Answers the month as `YYYY-MM`, or null.
+   */
+  async setBirthMonth(
+    userId: number | string,
+    birth: { year: number; month: number } | null
+  ): Promise<string | null> {
+    const answer = await this.request(
+      'PUT',
+      `/players/${encodeURIComponent(userId)}/birth-month`,
+      asObject({ birthMonth: asNullable(asString) }),
+      birth ?? { year: null, month: null }
+    )
+    return answer.birthMonth
+  }
+
+  /** Says whether a league is a SafeSport Local Affiliated Organization. */
+  async setSafesport(leagueId: string, lao: boolean): Promise<boolean> {
+    const answer = await this.request(
+      'PUT',
+      `/manage/league/${encodeURIComponent(leagueId)}/safesport`,
+      asObject({ safesportLao: asBoolean }),
+      { lao }
+    )
+    return answer.safesportLao
+  }
+
+  /** Every chat the caller is in. */
+  async chatConversations(): Promise<ChatConversation[]> {
+    return await this.request(
+      'GET',
+      '/chat/conversations',
+      asArray(asChatConversation)
+    )
+  }
+
+  async updateChatPreferences(
+    conversationId: string,
+    patch: Partial<Pick<ChatPreferences, 'pinned' | 'muted' | 'manualUnread'>>
+  ): Promise<ChatPreferences> {
+    return await this.request(
+      'PATCH',
+      `${chatPath(conversationId)}/preferences`,
+      asChatPreferences,
+      patch
+    )
+  }
+
+  async chatPins(conversationId: string): Promise<ChatPin[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/pins`,
+      asArray(asChatPin)
+    )
+  }
+
+  async pinChatMessage(
+    conversationId: string,
+    messageId: string,
+    pinned: boolean
+  ): Promise<ChatPin[]> {
+    return await this.request(
+      pinned ? 'PUT' : 'DELETE',
+      `${chatPath(conversationId)}/pins/${encodeURIComponent(messageId)}`,
+      asArray(asChatPin)
+    )
+  }
+
+  /** A chat's current members. */
+  async chatMembers(conversationId: string): Promise<ChatMember[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/members`,
+      asArray(asChatMember)
+    )
+  }
+
+  /** Every member's read cursor in a chat. */
+  async chatReads(conversationId: string): Promise<ChatRead[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/reads`,
+      asArray(asChatRead)
+    )
+  }
+
+  /** A chat's membership log after `after` (0 for all of it). */
+  async chatLog(conversationId: string, after = 0): Promise<ChatLogRow[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/log?after=${encodeURIComponent(after)}`,
+      asArray(asChatLogRow)
+    )
+  }
+
+  /** The people the caller may start a DM with, matching `query`. */
+  async dmCandidates(query = ''): Promise<ChatPerson[]> {
+    return await this.request(
+      'GET',
+      `/chat/dm-candidates?q=${encodeURIComponent(query)}`,
+      asArray(asChatPerson)
+    )
+  }
+
+  /**
+   * Adults who may be included beside these players, as SafeSport's MAAPP
+   * asks: suggestions without a query, every match with one.
+   */
+  async includedAdults(
+    playerIds: number[],
+    query = ''
+  ): Promise<IncludedAdult[]> {
+    const ids = playerIds.map(id => encodeURIComponent(id)).join(',')
+    return await this.request(
+      'GET',
+      `/chat/included-adults?playerIds=${ids}&q=${encodeURIComponent(query)}`,
+      asArray(asIncludedAdult)
+    )
+  }
+
+  /**
+   * Starts a DM with these people, or answers the open one-to-one already
+   * there. A refusal carries `details.reason`: `notCandidate`, or
+   * `adultRequired` with `playerIds`.
+   */
+  async createDm(userIds: number[]): Promise<ChatConversation> {
+    return await this.request('POST', '/chat/dms', asChatConversation, {
+      userIds
+    })
+  }
+
+  /** Adds people to a DM the caller is in; answers who was added. */
+  async addDmMembers(
+    conversationId: string,
+    userIds: number[]
+  ): Promise<number[]> {
+    const answer = await this.request(
+      'POST',
+      `/chat/dms/${encodeURIComponent(conversationId)}/members`,
+      asObject({ added: asArray(asUserId) }),
+      { userIds }
+    )
+    return answer.added
+  }
+
+  /** Leaves a DM; answers whether leaving closed it. */
+  async leaveDm(conversationId: string): Promise<{ closed: boolean }> {
+    const answer = await this.request(
+      'DELETE',
+      `/chat/dms/${encodeURIComponent(conversationId)}/members/me`,
+      asObject({ closed: asBoolean })
+    )
+    return { closed: answer.closed }
+  }
+
+  /** Registers this device for chat and binds it to the session. */
+  async registerChatDevice(
+    device: ChatDeviceRegistration
+  ): Promise<ChatDevice> {
+    return await this.request('POST', '/chat/devices', asChatDevice, device)
+  }
+
+  /** Every chat device of the caller's, revoked ones included. */
+  async chatDevices(): Promise<ChatDevice[]> {
+    return await this.request('GET', '/chat/devices', asArray(asChatDevice))
+  }
+
+  /** Revokes one of the caller's devices (this one, to sign out). */
+  async revokeChatDevice(deviceId: string): Promise<ChatDevice> {
+    return await this.request(
+      'DELETE',
+      `/chat/devices/${encodeURIComponent(deviceId)}`,
+      asChatDevice
+    )
+  }
+
+  /** A nonce for this device to sign, to bind it to the current session. */
+  async chatResumeChallenge(deviceId: string): Promise<ChatResumeChallenge> {
+    return await this.request(
+      'POST',
+      `/chat/devices/${encodeURIComponent(deviceId)}/resume-challenge`,
+      asChatResumeChallenge
+    )
+  }
+
+  /**
+   * Binds a device to the current session with its signature over the
+   * challenge. A refusal carries `deviceRevoked` or `unknownDevice`.
+   */
+  async resumeChatDevice(
+    deviceId: string,
+    proof: { nonce: string; signature: string }
+  ): Promise<ChatDevice> {
+    return await this.request(
+      'POST',
+      `/chat/devices/${encodeURIComponent(deviceId)}/resume`,
+      asChatDevice,
+      proof
+    )
+  }
+
+  /** Publishes the user's first identity and PUK from this device. */
+  async enrolChat(identity: ChatIdentityPublication): Promise<ChatEnrolment> {
+    return await this.request(
+      'PUT',
+      '/chat/identity',
+      asChatEnrolment,
+      identity
+    )
+  }
+
+  /** Replaces the user's identity from this device; the others are revoked. */
+  async resetChatIdentity(
+    identity: ChatIdentityPublication
+  ): Promise<ChatReset> {
+    return await this.request(
+      'POST',
+      '/chat/identity/reset',
+      asChatReset,
+      identity
+    )
+  }
+
+  /** Posts the next PUK generation. */
+  async postChatPuk(
+    puk: ChatPukPublication
+  ): Promise<{ generation: number; grantRequests: number }> {
+    return await this.request(
+      'POST',
+      '/chat/puk',
+      asObject({ generation: asNumber, grantRequests: asNumber }),
+      puk
+    )
+  }
+
+  /** The caller's identity, PUK generations and this device's boxes. */
+  async myChatKeys(): Promise<ChatMyKeys> {
+    return await this.request('GET', '/chat/me/keys', asChatMyKeys)
+  }
+
+  /** Another user's current identity and PUK. */
+  async chatUserKeys(userId: number): Promise<ChatUserKeys> {
+    return await this.request(
+      'GET',
+      `/chat/users/${encodeURIComponent(userId)}/keys`,
+      asChatUserKeys
+    )
+  }
+
+  /** An identity by id, current or replaced. */
+  async chatIdentity(identityId: string): Promise<ChatIdentity> {
+    return await this.request(
+      'GET',
+      `/chat/identities/${encodeURIComponent(identityId)}`,
+      asChatIdentity
+    )
+  }
+
+  /** Asks the user's linked devices to link this one. */
+  async requestChatLink(): Promise<ChatLink> {
+    return await this.request('POST', '/chat/links', asChatLink)
+  }
+
+  /** The open link requests a linked device may approve. */
+  async chatLinks(): Promise<ChatPendingLink[]> {
+    return await this.request('GET', '/chat/links', asArray(asChatPendingLink))
+  }
+
+  /** One link request, with its box once approved. */
+  async chatLink(linkId: string): Promise<ChatLink> {
+    return await this.request(
+      'GET',
+      `/chat/links/${encodeURIComponent(linkId)}`,
+      asChatLink
+    )
+  }
+
+  /** Approves a link from this (linked) device. */
+  async approveChatLink(
+    linkId: string,
+    approval: ChatLinkApproval
+  ): Promise<ChatLink> {
+    return await this.request(
+      'POST',
+      `/chat/links/${encodeURIComponent(linkId)}/approve`,
+      asChatLink,
+      approval
+    )
+  }
+
+  /** A chat's epochs after `after` (0 for all), and the caller's boxes. */
+  async chatEpochs(conversationId: string, after = 0): Promise<ChatEpochs> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/epochs?after=${encodeURIComponent(after)}`,
+      asChatEpochs
+    )
+  }
+
+  /** Makes a chat's next epoch from this (linked) device. */
+  async postChatEpoch(
+    conversationId: string,
+    epoch: ChatEpochPublication
+  ): Promise<ChatEpochMade> {
+    return await this.request(
+      'POST',
+      `${chatPath(conversationId)}/epochs`,
+      asChatEpochMade,
+      epoch
+    )
+  }
+
+  /** The open grant requests in the caller's chats. */
+  async chatGrants(): Promise<ChatGrantRequest[]> {
+    return await this.request(
+      'GET',
+      '/chat/grants',
+      asArray(asChatGrantRequest)
+    )
+  }
+
+  /** Fills grant requests, at most 500 boxes at once. */
+  async postChatGrants(boxes: ChatGrantBox[]): Promise<ChatGrantsPosted> {
+    return await this.request('POST', '/chat/grants', asChatGrantsPosted, {
+      boxes
+    })
+  }
+
+  /** Posts a sealed message; a repeat of its id answers the stored one. */
+  async postChatMessage(
+    conversationId: string,
+    envelope: ChatMessageEnvelope
+  ): Promise<ChatMessage> {
+    return await this.request(
+      'POST',
+      `${chatPath(conversationId)}/messages`,
+      asChatMessage,
+      envelope
+    )
+  }
+
+  /**
+   * A page of a chat's messages, oldest first: after `after`, or the last
+   * ones before `before`.
+   */
+  async chatMessages(
+    conversationId: string,
+    page: { after?: number; before?: number; limit?: number } = {}
+  ): Promise<ChatMessage[]> {
+    const query = (['after', 'before', 'limit'] as const)
+      .flatMap(name =>
+        page[name] == null
+          ? []
+          : [`${name}=${encodeURIComponent(page[name] ?? 0)}`]
+      )
+      .join('&')
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/messages${query === '' ? '' : `?${query}`}`,
+      asArray(asChatMessage)
+    )
+  }
+
+  /** Moves the caller's read cursor on to `seq`; it never moves back. */
+  async markChatRead(
+    conversationId: string,
+    seq: number,
+    clearManualUnreadRevision?: number
+  ): Promise<{ seq: number }> {
+    return await this.request(
+      'PUT',
+      `${chatPath(conversationId)}/read`,
+      asObject({ seq: asNumber }),
+      {
+        seq,
+        ...(clearManualUnreadRevision == null
+          ? {}
+          : { clearManualUnreadRevision })
+      }
+    )
+  }
+
+  /** Reports one message, disclosing its text and its own key. */
+  async reportChatMessage(report: {
+    messageId: string
+    plaintext: string
+    messageKey: string
+  }): Promise<{ id: string; verified: boolean }> {
+    return await this.request(
+      'POST',
+      '/chat/reports',
+      asObject({ id: asString, verified: asBoolean }),
+      report
+    )
+  }
+
+  /**
+   * Opens an attachment upload: the sealed blob's size in bytes and its
+   * SHA-256 (base64url), in a chat the caller may post in.
+   */
+  async createChatAttachment(upload: {
+    conversationId: string
+    size: number
+    digest: string
+  }): Promise<ChatAttachment> {
+    return await this.request(
+      'POST',
+      '/chat/attachments',
+      asChatAttachment,
+      upload
+    )
+  }
+
+  /** Sends part `index` (from 0) of an attachment; again is harmless. */
+  async putChatAttachmentPart(
+    attachmentId: string,
+    index: number,
+    bytes: Uint8Array
+  ): Promise<ChatAttachmentParts> {
+    return await this.request(
+      'PUT',
+      `${attachmentPath(attachmentId)}/parts/${index}`,
+      asChatAttachmentParts,
+      bytes
+    )
+  }
+
+  /** Every part sent: the server checks the digest and keeps the blob. */
+  async completeChatAttachment(attachmentId: string): Promise<ChatAttachment> {
+    return await this.request(
+      'POST',
+      `${attachmentPath(attachmentId)}/complete`,
+      asChatAttachment
+    )
+  }
+
+  /**
+   * A finished attachment with a presigned URL to fetch its blob, or, to its
+   * uploader, an unfinished one with the parts still missing.
+   */
+  async chatAttachment(attachmentId: string): Promise<ChatAttachment> {
+    return await this.request(
+      'GET',
+      attachmentPath(attachmentId),
+      asChatAttachment
+    )
+  }
+
+  /** Reported messages (site administrators); only unresolved with `open`. */
+  async chatReports(open = false): Promise<ChatReport[]> {
+    return await this.request(
+      'GET',
+      `/admin/chat/reports${open ? '?open=true' : ''}`,
+      asArray(asChatReport)
+    )
+  }
+
+  /** Marks a report resolved (site administrators). */
+  async resolveChatReport(reportId: string): Promise<ChatReport> {
+    return await this.request(
+      'PUT',
+      `/admin/chat/reports/${encodeURIComponent(reportId)}/resolve`,
+      asChatReport
+    )
   }
 
   /** One person: their picture, their name, their handedness, their teams. */
@@ -3972,7 +5117,12 @@ export class TeamStationClient {
       ...options.headers,
       accept: 'application/json'
     }
-    if (body !== undefined) headers['content-type'] = 'application/json'
+    // Bytes (an attachment's part) go as they are; anything else as JSON.
+    const bytes = body instanceof Uint8Array ? body : undefined
+    if (body !== undefined) {
+      headers['content-type'] =
+        bytes != null ? 'application/octet-stream' : 'application/json'
+    }
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
     // `fetch` rejects with a bare TypeError when the request never leaves the
@@ -3991,7 +5141,12 @@ export class TeamStationClient {
         // it when the app and the API are different origins, as they are in
         // development.
         credentials: 'include',
-        body: body === undefined ? undefined : JSON.stringify(body)
+        body:
+          bytes != null
+            ? new Uint8Array(bytes)
+            : body === undefined
+              ? undefined
+              : JSON.stringify(body)
       })
     } catch (caught: unknown) {
       this.offline = true
@@ -4041,6 +5196,10 @@ export class TeamStationClient {
   }
 }
 
+function guardiansPath(teamId: string, userId: string): string {
+  return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/guardians`
+}
+
 function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
 }
@@ -4051,7 +5210,15 @@ function revisionOf(response: Response): string | null {
   return headers == null ? null : headers.get(REVISION_HEADER)
 }
 
+function attachmentPath(attachmentId: string): string {
+  return `/chat/attachments/${encodeURIComponent(attachmentId)}`
+}
+
 /** For the endpoints whose body carries nothing a caller needs. */
+function chatPath(conversationId: string): string {
+  return `/chat/conversations/${encodeURIComponent(conversationId)}`
+}
+
 const asUnknownOk: Cleaner<null> = () => null
 
 /**
