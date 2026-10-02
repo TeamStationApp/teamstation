@@ -292,18 +292,50 @@ both problems: the input is a commit, and the build happens where it runs.
 
 ## First-time setup
 
-After `provision.sh`, which also installs `teamstation.service`:
-
-The organisation does not allow deploy keys, so the box holds no GitHub
-credential. Deploys come from its own bare repository, which a person pushes
-to, and the clone fetches from it:
+After `provision.sh`, which also installs `teamstation.service` and the
+GitHub mirror (below), add the key it printed to the repository as a
+**read-only** deploy key, then clone and deploy:
 
 ```sh
-git push ssh://root@app.teamstation.app/srv/teamstation.git <branch>
+gh api repos/TeamStationApp/teamstation/keys -X POST -F read_only=true \
+  -f title='app.teamstation.app droplet (read-only)' \
+  -f key="$(ssh root@app.teamstation.app cat /root/.ssh/github_teamstation.pub)"
 ssh root@app.teamstation.app '
+  git -C /srv/teamstation.git fetch --prune origin
   git clone /srv/teamstation.git /srv/teamstation/repo   # once
   TS_DEPLOY_BRANCH=<branch> /srv/teamstation/repo/src/deploy/deploy.sh'
 ```
+
+## Where the code comes from
+
+GitHub is the only source. The droplet reads it with a **read-only deploy
+key** (`/root/.ssh/github_teamstation`, named for `github.com` in
+`/root/.ssh/config`; GitHub's host key is pinned to its published
+fingerprint). Deploy keys must be allowed in the organisation's settings
+(Member privileges → Deploy keys).
+
+`/srv/teamstation.git` is a **mirror** of the repository: every branch and tag,
+force-updated and pruned to match GitHub. Nothing refreshes it on a schedule:
+whoever deploys refreshes it, and `deploy.sh`, `deployWorktree.sh` and
+`deployDev2.sh` do so before they fetch, so a deploy always builds the branch
+as it is on GitHub. To refresh it without deploying:
+
+```sh
+ssh root@app.teamstation.app 'git -C /srv/teamstation.git fetch --prune origin &&
+  chown -R teamstation:teamstation /srv/teamstation.git'
+```
+Production's clone (`/srv/teamstation/repo`) and every seat's clone
+(`/srv/TeamStation_<name>/repo`) fetch from the mirror, never from GitHub
+directly, so only root holds the key.
+
+So a branch reaches the droplet by being pushed **to GitHub**. Nothing is
+pushed to the droplet: anything pushed straight into the mirror is overwritten
+or pruned by the next refresh. The key is read-only, so the droplet cannot
+push anything back.
+
+To replace the key: make a new one on the droplet, add it as above, check
+that the refresh above succeeds, then delete the old key
+from the repository's deploy keys.
 
 The database is created once, as `doadmin`, from the droplet:
 `create database teamstation owner teamstation`.
