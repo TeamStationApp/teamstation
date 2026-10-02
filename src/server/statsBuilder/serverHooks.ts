@@ -72,11 +72,12 @@ export function forceStop(
         timer.unref()
       }
     })
+    const leave = (): void => {
+      exit(code)
+    }
     Promise.race([
       builder.stop('SIGKILL').catch((_error: unknown) => undefined),
       timedOut
-    ]).finally(() => {
-      exit(code)
-    })
+    ]).then(leave, leave)
   }
 }

@@ -208,8 +208,10 @@ function toIso(value: Date | string | null): string | null {
  * `GET /events` signs them into the `homeLogoUrl`/`awayLogoUrl` it answers
  * with.
  */
-export interface ScheduleRow
-  extends Omit<SeasonGame, 'homeLogoUrl' | 'awayLogoUrl'> {
+export interface ScheduleRow extends Omit<
+  SeasonGame,
+  'homeLogoUrl' | 'awayLogoUrl'
+> {
   homeLogoPath: string | null
   awayLogoPath: string | null
 }

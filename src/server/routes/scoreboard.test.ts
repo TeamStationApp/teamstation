@@ -65,8 +65,7 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
 
 describe('the scoreboard over HTTP', function () {
@@ -394,17 +393,17 @@ describe('the scoreboard over HTTP', function () {
       })
       .execute()
     await db
-      .insertInto('admin_roles')
+      .insertInto('scope_roles')
       .values([
         {
-          id: makeId('adminRole'),
+          id: makeId('scopeRole'),
           user_id: seasonAdmin.userId,
           scope_type: 'season',
           scope_id: season,
           granted_at: new Date()
         },
         {
-          id: makeId('adminRole'),
+          id: makeId('scopeRole'),
           user_id: leagueAdmin.userId,
           scope_type: 'league',
           scope_id: league,

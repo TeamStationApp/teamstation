@@ -96,7 +96,6 @@ describe('the highlight routes', function () {
     const mediaRoot = mkdtempSync(join(tmpdir(), 'tsHighlightRoutes-'))
     const media: MediaContext = {
       mediaRoot,
-      workDir: mediaRoot,
       ffmpegPath: 'ffmpeg',
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',

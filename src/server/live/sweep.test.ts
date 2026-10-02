@@ -110,7 +110,6 @@ describe('the live sweep', function () {
         port: 1936,
         app: 'live',
         segmentSeconds: 4,
-        closeAfterHours: 6,
         freeDiskFloorGb: 10
       },
       ffmpegPath: process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg',

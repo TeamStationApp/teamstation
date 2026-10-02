@@ -10,8 +10,8 @@ import {
   type StatRow
 } from './stats'
 
-const ROBIN = 'usr_robin'
-const SAM = 'usr_sam'
+const ROBIN = 1
+const SAM = 2
 const TEAM = 'tem_one'
 
 /** One game's stored line, with only the figures a test is about. */
@@ -33,6 +33,7 @@ function game(over: Partial<StatRow> = {}): StatRow {
     hbp: 0,
     ci: 0,
     sf: 0,
+    sh: 0,
     sb: 0,
     cs: 0,
     pitchBf: 0,

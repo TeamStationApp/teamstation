@@ -28,7 +28,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
-import { replaceGameEvents } from '../events/eventWrite'
+import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
@@ -819,8 +819,8 @@ describe('posting and reading plays', function () {
       atBatIndex: number,
       inning: number,
       halfInning: 'top' | 'bottom',
-      extra: Record<string, unknown>
-    ): { gumbo: Record<string, unknown>; source: string } => ({
+      extra: Partial<GumboPlay>
+    ): PlayWrite => ({
       gumbo: {
         about: { atBatIndex, inning, halfInning, isScoringPlay: false },
         result: { eventType: 'field_out', awayScore: 0, homeScore: 0 },

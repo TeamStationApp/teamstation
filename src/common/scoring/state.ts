@@ -7,9 +7,10 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
+
+import { asLiteral } from '../asLiteral'
 
 /**
  * A game as the scoring library holds it: GUMBO's own `gameData` and
@@ -48,12 +49,12 @@ export type PlayerRef = ReturnType<typeof asPlayerRef>
 const asCount = asObject({ balls: asNumber, strikes: asNumber, outs: asNumber })
 const asCredit = asObject({
   player: asPlayerRef,
-  credit: asValue(
-    'f_assist' as const,
-    'f_putout' as const,
-    'f_fielded_ball' as const,
-    'f_fielding_error' as const,
-    'f_throwing_error' as const
+  credit: asLiteral(
+    'f_assist',
+    'f_putout',
+    'f_fielded_ball',
+    'f_fielding_error',
+    'f_throwing_error'
   ),
   position: asString
 })
@@ -169,7 +170,7 @@ export const asGamePlay = asObject({
   about: asObject({
     atBatIndex: asSessionId,
     inning: asNumber,
-    halfInning: asValue('top' as const, 'bottom' as const),
+    halfInning: asLiteral('top', 'bottom'),
     isComplete: asBoolean
   }),
   result: asObject({
@@ -184,7 +185,7 @@ export const asGamePlay = asObject({
   matchup: asObject({
     batter: asPlayerRef,
     pitcher: asPlayerRef,
-    batSide: asObject({ code: asValue('R' as const, 'L' as const) })
+    batSide: asObject({ code: asLiteral('R', 'L') })
   }),
   runners: asArray(
     asObject({
@@ -244,16 +245,14 @@ export const asGamePlay = asObject({
     })
   ),
   source: asObject({
-    system: asValue('teamstation' as const),
+    system: asLiteral('teamstation'),
     teamstation: asObject({
-      version: asValue('estimated-v1' as const),
+      version: asLiteral('estimated-v1'),
       outcome: asString,
       outSubtype: asOptional(asString),
-      contactKind: asOptional(asValue('swing' as const, 'bunt' as const)),
+      contactKind: asOptional(asLiteral('swing', 'bunt')),
       foulCaught: asOptional(asBoolean),
-      homeRunKind: asOptional(
-        asValue('out-of-park' as const, 'in-park' as const)
-      ),
+      homeRunKind: asOptional(asLiteral('out-of-park', 'in-park')),
       landingHeight: asOptional(asNumber),
       /**
        * The trajectory the scorer chose, in the action's own terms
@@ -588,8 +587,8 @@ const asPlayer = asObject({
   firstName: asOptional(asString),
   lastName: asOptional(asString),
   jersey: asString,
-  bats: asValue('left' as const, 'right' as const, 'switch' as const),
-  throws: asEither(asNull, asValue('left' as const, 'right' as const)),
+  bats: asLiteral('left', 'right', 'switch'),
+  throws: asEither(asNull, asLiteral('left', 'right')),
   positions: asArray(asString),
   local: asBoolean
 })
@@ -639,7 +638,7 @@ const asMovement = asObject({
   to: asNumber,
   offeredTo: asOptional(asNumber),
   force: asBoolean,
-  decision: asValue('pending' as const, 'safe' as const, 'out' as const),
+  decision: asLiteral('pending', 'safe', 'out'),
   resolved: asOptional(asBoolean)
 })
 const asRef = asEither(asNull, asPlayerRef)
@@ -683,7 +682,7 @@ export const asGameState: Cleaner<GameState> = exactly(
       linescore: asObject({
         currentInning: asNumber,
         currentInningOrdinal: asString,
-        inningState: asValue('Top' as const, 'Bottom' as const),
+        inningState: asLiteral('Top', 'Bottom'),
         isTopInning: asBoolean,
         balls: asNumber,
         strikes: asNumber,
@@ -721,12 +720,10 @@ export const asGameState: Cleaner<GameState> = exactly(
       asNull,
       asObject({
         outcome: asString as Cleaner<ResolutionOutcome>,
-        contactKind: asOptional(asValue('swing' as const, 'bunt' as const)),
+        contactKind: asOptional(asLiteral('swing', 'bunt')),
         automaticAward: asOptional(asBoolean),
         errorPending: asOptional(asBoolean),
-        homeRunKind: asOptional(
-          asValue('out-of-park' as const, 'in-park' as const)
-        ),
+        homeRunKind: asOptional(asLiteral('out-of-park', 'in-park')),
         sameAppearance: asOptional(asBoolean),
         choiceApplied: asOptional(asBoolean),
         fielder: asOptional(asSessionId),
@@ -752,7 +749,7 @@ export const asGameState: Cleaner<GameState> = exactly(
     ),
     final: asBoolean,
     meta: asObject({
-      source: asOptional(asValue('local-development' as const, 'api' as const)),
+      source: asOptional(asLiteral('local-development', 'api')),
       sequence: asNumber,
       identities: asIdentities,
       derived: asOptional(asBoolean)

@@ -61,7 +61,7 @@ export function mapScorebookFixture(
   for (let i = 0; i < 10; i++) idMap.set(i + 1, awayPlayers[i].userId)
   for (let i = 0; i < 9; i++) idMap.set(i + 11, homePlayers[i].userId)
 
-  let plays = structuredClone(fixture.plays) as GumboPlay[]
+  let plays = structuredClone(fixture.plays)
   if (options.innings != null) {
     plays = plays.filter(
       play =>
@@ -87,7 +87,7 @@ export function mapScorebookFixture(
     }
     const play = plays.find(p => p.about?.atBatIndex === index)
     if (play == null) throw new Error(`No play at atBatIndex ${index}`)
-    dropPath(play as unknown as Record<string, unknown>, path)
+    dropPath(play, path)
   }
 
   remapIds(plays, idMap)
@@ -113,19 +113,21 @@ function dropPath(root: Record<string, unknown>, path: string): void {
   let cursor: unknown = root
   for (let i = 0; i < parts.length - 1; i++) {
     if (cursor == null || typeof cursor !== 'object' || Array.isArray(cursor)) {
-      throw new Error(`Cannot drop ${path}: missing ${parts.slice(0, i + 1).join('.')}`)
+      throw new Error(
+        `Cannot drop ${path}: missing ${parts.slice(0, i + 1).join('.')}`
+      )
     }
     cursor = (cursor as Record<string, unknown>)[parts[i]]
   }
   if (cursor == null || typeof cursor !== 'object' || Array.isArray(cursor)) {
     throw new Error(`Cannot drop ${path}`)
   }
-  delete (cursor as Record<string, unknown>)[parts[parts.length - 1]]
+  Reflect.deleteProperty(cursor, parts[parts.length - 1])
 }
 
 function remapIds(plays: GumboPlay[], idMap: Map<number, number>): void {
   const remapPlayer = (player: { id?: number | null } | undefined): void => {
-    if (player == null || player.id == null) return
+    if (player?.id == null) return
     if (player.id === 20) {
       delete player.id
       return
@@ -182,8 +184,7 @@ export function parseFixtureArgs(argv: string[]): {
         throw new Error('--innings must be a positive integer')
       }
       options.innings = innings
-    }
-    else if (arg === '--no-scores') options.noScores = true
+    } else if (arg === '--no-scores') options.noScores = true
     else if (arg === '--drop') options.drop = argv[++i]
   }
   if (game == null || url == null || cookie == null) {
@@ -214,7 +215,9 @@ export async function postStatsFixture(input: {
     headers
   })
   if (!gameRes.ok) {
-    throw new Error(`GET game failed: ${gameRes.status} ${await gameRes.text()}`)
+    throw new Error(
+      `GET game failed: ${gameRes.status} ${await gameRes.text()}`
+    )
   }
   const game = (await gameRes.json()) as {
     homeTeamId: string
@@ -267,7 +270,10 @@ async function fetchRoster(
   if (!res.ok) {
     throw new Error(`GET roster failed: ${res.status} ${await res.text()}`)
   }
-  const rows = (await res.json()) as Array<{ userId: number; isPlayer: boolean }>
+  const rows = (await res.json()) as Array<{
+    userId: number
+    isPlayer: boolean
+  }>
   return rows.map(row => ({ userId: row.userId, isPlayer: row.isPlayer }))
 }
 
@@ -283,7 +289,7 @@ export async function runFixtureMain(argv: string[]): Promise<void> {
 
 /* c8 ignore start */
 if (require.main === module) {
-  runFixtureMain(process.argv.slice(2)).catch(error => {
+  runFixtureMain(process.argv.slice(2)).catch((error: unknown) => {
     console.error(error)
     process.exit(1)
   })

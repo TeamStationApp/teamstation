@@ -6,7 +6,6 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
 import {
@@ -18,6 +17,7 @@ import {
   SocketClosedUnexpectedlyError
 } from 'redis'
 
+import { asLiteral } from '../../common/asLiteral'
 import {
   asDashboardOverrides,
   asScoreboardUpdate,
@@ -202,7 +202,7 @@ export interface ScoreboardMessage extends ScoreboardHash {
 const asScoreboardMessage = asObject({
   gameId: asString,
   version: asStamp,
-  field: asValue('game' as const, 'watcher' as const, 'overrides' as const),
+  field: asLiteral('game', 'watcher', 'overrides'),
   game: asOptional(asStoredSource),
   watcher: asOptional(asStoredSource),
   overrides: asOptional(asDashboardOverrides)

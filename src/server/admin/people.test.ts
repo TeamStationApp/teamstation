@@ -318,29 +318,30 @@ describe('one person, however many rows', function () {
     // `Wesley`, and three rows of `Wesley Boren`. Only one of the Borens ever
     // played a game beside Wesley; taking the whole group apart made one boy
     // into three.
+    const [wesley, borenAllStars, borenTrosky, borenSox] = [1, 2, 3, 4]
     const people = splitByClash(
       [
-        { userId: 'wesley', weight: 219 },
-        { userId: 'borenAllStars', weight: 84 },
-        { userId: 'borenTrosky', weight: 24 },
-        { userId: 'borenSox', weight: 4 }
+        { userId: wesley, weight: 219 },
+        { userId: borenAllStars, weight: 84 },
+        { userId: borenTrosky, weight: 24 },
+        { userId: borenSox, weight: 4 }
       ],
-      new Set(['wesley|borenSox', 'borenSox|wesley'])
+      new Set([`${wesley}|${borenSox}`, `${borenSox}|${wesley}`])
     )
     expect(people.length).equals(2)
-    expect(people[0]).deep.equals(['wesley', 'borenAllStars', 'borenTrosky'])
-    expect(people[1]).deep.equals(['borenSox'])
+    expect(people[0]).deep.equals([wesley, borenAllStars, borenTrosky])
+    expect(people[1]).deep.equals([borenSox])
   })
 
   it('leaves a group that clashes nowhere as one person', function () {
     const people = splitByClash(
       [
-        { userId: 'a', weight: 5 },
-        { userId: 'b', weight: 1 }
+        { userId: 1, weight: 5 },
+        { userId: 2, weight: 1 }
       ],
       new Set()
     )
-    expect(people).deep.equals([['a', 'b']])
+    expect(people).deep.equals([[1, 2]])
   })
 
   it('moves what an earlier merge left behind', async function () {

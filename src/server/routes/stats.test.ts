@@ -176,7 +176,7 @@ describe('one player’s figures', function () {
     app.use((req, _res, next) => {
       const id = req.header('x-test-actor')
       if (id != null) {
-        req.actor = { userId: asUserId(id), isAdmin: false, tokenId: null }
+        req.actor = { userId: asUserId(id), isAdmin: false, scopes: [] }
       }
       next()
     })

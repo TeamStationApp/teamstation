@@ -484,6 +484,27 @@ describe('DJ Game on the socket (U29)', function () {
     expect(names()[1]).includes('No walk-up song')
   })
 
+  it('keeps the batter outlined through a song change', async function () {
+    const socket = new FakeSocket()
+    const client = djClient([{ ...game(), atBat: { side: 'away', userId: 1 } }])
+    await render({ client, socket })
+    await socket.emit('g1', {
+      type: 'change',
+      gameId: 'g1',
+      kind: 'walkUpSong',
+      at: '',
+      data: { teamId: 'tem_t', userId: 2, song: walk }
+    })
+    await act(async () => {
+      await delay(AT_BAT_FADE_MS * 2 + 40)
+    })
+    expect(client.reads).equals(1)
+    expect(
+      document.querySelector('[data-testid="DJ at bat"]')?.parentElement
+        ?.textContent
+    ).includes('Otto')
+  })
+
   it('polls only while the socket is down', async function () {
     clock = pollClock(40)
     const socket = new FakeSocket()

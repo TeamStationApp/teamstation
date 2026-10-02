@@ -1,6 +1,5 @@
-import { EventEmitter } from 'events'
-
 import { expect } from 'chai'
+import { EventEmitter } from 'events'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
@@ -11,6 +10,7 @@ import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { until } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -176,8 +176,9 @@ describe('statsBuilder main', function () {
       expect(delay).equals(5_000)
 
       await handle.stop('SIGTERM')
-      expect(logs.some(line => line.includes('stats builder: stopped on SIGTERM')))
-        .equals(true)
+      expect(
+        logs.some(line => line.includes('stats builder: stopped on SIGTERM'))
+      ).equals(true)
       handle = undefined
 
       // SIGINT, double-stop, and listen error with an injected signal bus.
@@ -226,19 +227,15 @@ describe('statsBuilder main', function () {
         }
       })
       await requestGameStats(db, gameId)
-      const holdDeadline = Date.now() + 2000
-      while (afterReadCalls < 1 && Date.now() < holdDeadline) {
-        await new Promise(resolve => setTimeout(resolve, 20))
-      }
+      await until('the first read', () => afterReadCalls >= 1, 2000)
       expect(afterReadCalls).equals(1)
       await requestGameStats(db, gameId)
       await new Promise(resolve => setTimeout(resolve, 50))
       releaseHold!()
-      const pokeDeadline = Date.now() + 2000
-      while (afterReadCalls < 2 && Date.now() < pokeDeadline) {
-        await new Promise(resolve => setTimeout(resolve, 20))
-      }
-      expect(afterReadCalls).greaterThanOrEqual(2)
+      await until('the poked read', () => afterReadCalls >= 2, 2000)
+      // Stopping waits out the game in hand, so its build has committed.
+      await handle.stop('SIGTERM')
+      handle = undefined
       expect(
         (
           await db
@@ -248,8 +245,6 @@ describe('statsBuilder main', function () {
             .executeTakeFirstOrThrow()
         ).status
       ).equals('built')
-      await handle.stop('SIGTERM')
-      handle = undefined
 
       // Listen client error with an injected signal bus (no process.exit).
       handle = await runStatsBuilder({

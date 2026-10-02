@@ -52,8 +52,7 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
 
 async function freePort(): Promise<number> {
@@ -139,6 +138,8 @@ describe('a worker’s scoreboard while Redis is away', function () {
       await fetch(`http://${base}${path}`, {
         headers: { authorization: `Bearer ${runner.token}` }
       })
+    const fieldsOf = async (res: Response): Promise<Record<string, unknown>> =>
+      (await res.json()) as Record<string, unknown>
     const view = async (): Promise<{ code?: number; state?: any }> =>
       await new Promise(resolve => {
         const socket = new WebSocket(`ws://${base}/scoreboard/${gameId}/socket`)
@@ -158,7 +159,7 @@ describe('a worker’s scoreboard while Redis is away', function () {
       expect(await view()).deep.equals({ code: 1011 })
       const detail = await get(`/games/${gameId}`)
       expect(detail.status).equals(200)
-      expect((await detail.json()).scoreboard).equals(null)
+      expect((await fieldsOf(detail)).scoreboard).equals(null)
       scoreboard.onGameWritten(gameId)
       await until('the hook to log', () =>
         logged.some(line => line.includes('not written'))
@@ -177,10 +178,13 @@ describe('a worker’s scoreboard while Redis is away', function () {
       )
       const answer = await get(`/scoreboard/${gameId}`)
       expect(answer.status).equals(200)
-      expect((await answer.json()).state).includes({ balls: 2, inGame: true })
+      expect((await fieldsOf(answer)).state).includes({
+        balls: 2,
+        inGame: true
+      })
       expect((await view()).state).includes({ balls: 2 })
       expect(
-        (await (await get(`/games/${gameId}`)).json()).scoreboard
+        (await fieldsOf(await get(`/games/${gameId}`))).scoreboard
       ).deep.equals({ open: true, mayOverride: true })
     } finally {
       await closeScoreboard()

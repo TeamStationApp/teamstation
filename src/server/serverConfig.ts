@@ -240,7 +240,6 @@ export const asServerConfig = asObject({
       app: asOptional(asString, 'live'),
       /** Segment length. A multiple of the encoder's keyframe interval. */
       segmentSeconds: asOptional(asNumber, 4),
-      /** How long after a game's start its key stops working. */
       /**
        * How much room must be left before a new stream is allowed to start.
        *

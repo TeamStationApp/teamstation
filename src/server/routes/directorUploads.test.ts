@@ -99,8 +99,7 @@ describe('a Director sending a recording in', function () {
           region: 'sfo3',
           endpoint: 'https://sfo3.example',
           accessKeyId: 'k',
-          secretAccessKey: 's',
-          publicBase: 'https://cdn.example'
+          secretAccessKey: 's'
         }
       })
     )

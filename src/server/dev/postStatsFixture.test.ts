@@ -1,7 +1,7 @@
+import { mkdtempSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
-import { mkdtempSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { expect } from 'chai'
 import express from 'express'
@@ -35,6 +35,12 @@ const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_stats_fix_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const TOKEN = 'tok_fixture_000000000000000000000000'
+
+/** The address a `fetch` was asked for, however it was given. */
+function urlOf(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === 'string') return input
+  return input instanceof URL ? input.href : input.url
+}
 
 describe('postStatsFixture', function () {
   this.timeout(120000)
@@ -174,7 +180,6 @@ describe('postStatsFixture', function () {
     const mediaRoot = mkdtempSync(join(tmpdir(), 'tsStatsFixture-'))
     const media: MediaContext = {
       mediaRoot,
-      workDir: mediaRoot,
       ffmpegPath: 'ffmpeg',
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',
@@ -194,7 +199,9 @@ describe('postStatsFixture', function () {
     app.use('/api/v1', eventRoutes(db))
     app.use(errorHandler)
     await new Promise<void>(resolve => {
-      server = app.listen(0, '127.0.0.1', () => resolve())
+      server = app.listen(0, '127.0.0.1', () => {
+        resolve()
+      })
     })
     const addr = server!.address() as AddressInfo
     base = `http://127.0.0.1:${addr.port}`
@@ -203,7 +210,10 @@ describe('postStatsFixture', function () {
   after(async function () {
     if (server != null) {
       await new Promise<void>((resolve, reject) => {
-        server!.close(err => (err != null ? reject(err) : resolve()))
+        server!.close(err => {
+          if (err != null) reject(err)
+          else resolve()
+        })
       })
     }
     if (db != null) await db.destroy()
@@ -256,8 +266,8 @@ describe('postStatsFixture', function () {
     })
     expect(mapped.idMap.size).equals(19)
     expect([...mapped.idMap.values()].includes(shared.userId)).equals(true)
-    const homeIds = [11, 12, 13, 14, 15, 16, 17, 18, 19].map(
-      n => mapped.idMap.get(n)!
+    const homeIds = [11, 12, 13, 14, 15, 16, 17, 18, 19].map(n =>
+      mapped.idMap.get(n)!
     )
     expect(homeIds.includes(shared.userId)).equals(false)
     expect(homeIds.length).equals(9)
@@ -271,12 +281,11 @@ describe('postStatsFixture', function () {
     }
     expect(oppIndexes.length).greaterThan(0)
     for (const i of oppIndexes) {
-      expect(/"fullName"\s*:\s*"Opp"/.test(JSON.stringify(mapped.plays[i]))).equals(
-        true
-      )
+      expect(
+        /"fullName"\s*:\s*"Opp"/.test(JSON.stringify(mapped.plays[i]))
+      ).equals(true)
       const batter = mapped.plays[i].matchup?.batter as
-        | { id?: number; fullName?: string }
-        | undefined
+        { id?: number; fullName?: string } | undefined
       if (batter?.fullName === 'Opp') {
         expect(batter.id).equals(undefined)
       }
@@ -347,8 +356,7 @@ describe('postStatsFixture', function () {
     })
     expect(
       innings.plays.every(
-        play =>
-          typeof play.about.inning === 'number' && play.about.inning <= 3
+        play => typeof play.about.inning === 'number' && play.about.inning <= 3
       )
     ).equals(true)
 
@@ -367,8 +375,7 @@ describe('postStatsFixture', function () {
     })
     expect(
       noScores.plays.every(
-        play =>
-          play.result?.awayScore == null && play.result?.homeScore == null
+        play => play.result?.awayScore == null && play.result?.homeScore == null
       )
     ).equals(true)
 
@@ -451,6 +458,15 @@ describe('postStatsFixture', function () {
         awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
         homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
         { awayTeamId: away, homeTeamId: home },
+        { drop: 'nowhere.at.all@5' }
+      )
+    ).throws(/Cannot drop nowhere\.at\.all: missing nowhere\.at/)
+    expect(() =>
+      mapScorebookFixture(
+        fixture,
+        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        { awayTeamId: away, homeTeamId: home },
         { drop: 'matchup.missing.deep@0' }
       )
     ).throws(/Cannot drop/)
@@ -504,11 +520,11 @@ describe('postStatsFixture', function () {
       })
     )
     const failFetch: typeof fetch = async (input, init) => {
-      const url = String(input)
+      const url = urlOf(input)
       if (url.includes('/roster')) {
         return new Response('nope', { status: 500 })
       }
-      return fetch(input, init)
+      return await fetch(input, init)
     }
     await expectFail(
       postStatsFixture({
@@ -521,11 +537,11 @@ describe('postStatsFixture', function () {
       })
     )
     const failPost: typeof fetch = async (input, init) => {
-      const url = String(input)
+      const url = urlOf(input)
       if (url.endsWith('/events') && init?.method === 'POST') {
         return new Response('nope', { status: 500 })
       }
-      return fetch(input, init)
+      return await fetch(input, init)
     }
     await db!
       .updateTable('games')

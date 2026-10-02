@@ -68,8 +68,8 @@ export async function runStatsBuilder(
     stopped = true
     clearTimer()
     process.exitCode = 1
-    void listen.end().catch(() => undefined)
-    void db.destroy().catch(() => undefined)
+    listen.end().catch(() => undefined)
+    db.destroy().catch(() => undefined)
     /* c8 ignore next */
     if (options.signals == null) process.exit(1)
   }
@@ -89,12 +89,12 @@ export async function runStatsBuilder(
     }
     lastTimerMs = waitMs
     timer = setTimer(() => {
-      void runDrain().catch(error => {
+      runDrain().catch((error: unknown) => {
         failHard('drain error', error)
       })
-    }, waitMs) as ReturnType<typeof setTimeout>
+    }, waitMs)
     if (typeof timer === 'object' && timer != null && 'unref' in timer) {
-      ;(timer as NodeJS.Timeout).unref()
+      timer.unref()
     }
   }
 
@@ -109,6 +109,7 @@ export async function runStatsBuilder(
       do {
         pokedDuringDrain = false
         await drain(db, clock, options.afterRead, () => stopped)
+        // eslint-disable-next-line no-unmodified-loop-condition -- stop() sets it while drain() is awaited
       } while (pokedDuringDrain && !stopped)
     } finally {
       draining = false
@@ -117,7 +118,7 @@ export async function runStatsBuilder(
   }
 
   listen.on('notification', () => {
-    void runDrain().catch(error => {
+    runDrain().catch((error: unknown) => {
       failHard('drain error', error)
     })
   })
@@ -126,12 +127,16 @@ export async function runStatsBuilder(
   })
 
   const stop = async (signal: NodeJS.Signals = 'SIGTERM'): Promise<void> => {
-    if (stopping != null) return await stopping
+    if (stopping != null) {
+      await stopping
+      return
+    }
     stopping = (async () => {
       stopped = true
       clearTimer()
       // Wait out the game in hand. drain() returns once that game commits
       // because it checks stopped between games.
+      // eslint-disable-next-line no-unmodified-loop-condition -- runDrain() clears it when the game in hand commits
       while (draining) {
         await new Promise(resolve => setTimeout(resolve, 10))
       }
@@ -142,36 +147,25 @@ export async function runStatsBuilder(
       }
       console.log(`stats builder: stopped on ${signal}`)
     })()
-    return await stopping
+    await stopping
   }
 
   const bus = options.signals ?? process
-  const onTerm = (): void => {
-    void stop('SIGTERM')
+  const onSignal = (signal: NodeJS.Signals) => (): void => {
+    stop(signal)
       .then(() => {
         /* c8 ignore next */
         if (options.signals == null) process.exit(0)
       })
-      .catch(error => {
+      .catch((error: unknown) => {
         console.error('stats builder: stop failed', error)
         process.exitCode = 1
         /* c8 ignore next */
         if (options.signals == null) process.exit(1)
       })
   }
-  const onInt = (): void => {
-    void stop('SIGINT')
-      .then(() => {
-        /* c8 ignore next */
-        if (options.signals == null) process.exit(0)
-      })
-      .catch(error => {
-        console.error('stats builder: stop failed', error)
-        process.exitCode = 1
-        /* c8 ignore next */
-        if (options.signals == null) process.exit(1)
-      })
-  }
+  const onTerm = onSignal('SIGTERM')
+  const onInt = onSignal('SIGINT')
   bus.on('SIGTERM', onTerm)
   bus.on('SIGINT', onInt)
 
@@ -196,7 +190,7 @@ export async function runMain(
 
 /* c8 ignore start */
 if (require.main === module) {
-  runMain().catch(error => {
+  runMain().catch((error: unknown) => {
     console.error('stats builder:', error)
     process.exit(1)
   })

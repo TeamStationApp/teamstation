@@ -90,6 +90,21 @@ const home = (runner: number, reason?: 'Wild Pitch'): ScoringAction =>
         advances: [{ runner, to: 'home' }]
       }
 
+/** A stored play's events, which its cleaner keeps without checking. */
+interface StoredEvent {
+  index: number
+  isSubstitution?: boolean
+  player?: { id?: number }
+  replacedPlayer?: { id?: number }
+  position?: { abbreviation?: string }
+  battingOrder?: string
+  count?: Record<string, number>
+  details: { eventType?: string; description?: string }
+  [key: string]: unknown
+}
+function eventsOf(play: Record<string, unknown>): StoredEvent[] {
+  return (play.playEvents ?? []) as StoredEvent[]
+}
 describe('a game scored in TeamStation builds stats (U10)', function () {
   it('a single, a run on a double, and a strikeout', function () {
     const plays = scored(
@@ -208,7 +223,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
       ...strikeout
     )
     const changes = plays.map(play =>
-      (play.playEvents ?? [])
+      eventsOf(play)
         .filter(event => event.isSubstitution === true)
         .map(event => `${event.index} ${String(event.details.eventType)}`)
     )
@@ -320,7 +335,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
       foldPlay(state, play, { setupBefore: setupOf(state), actions })
     )
     const changes = plays.map(play =>
-      (play.playEvents ?? [])
+      eventsOf(play)
         .filter(event => event.isSubstitution === true)
         .map(
           event =>
@@ -657,20 +672,19 @@ describe('when each lineup change is announced', function () {
         ? []
         : [foldCurrentPlay(state, state.liveData.plays.currentPlay, stamp)]
       const substitutions = [...plays, ...open].flatMap(play =>
-        (play.playEvents ?? [])
+        eventsOf(play)
           .filter(event => event.isSubstitution === true)
           .map(event => ({ play, event }))
       )
       const written = substitutions.map(({ play, event }) => {
-        const { balls, strikes, outs } = event.count as Record<string, number>
+        const { balls, strikes, outs } = event.count!
         const id = (person: unknown): string =>
           String((person as { id?: number } | undefined)?.id ?? '-')
         return [
           `#${play.about.atBatIndex}[${String(event.index)}]`,
           event.details.eventType,
           id(event.player),
-          (event.position as { abbreviation?: string } | undefined)
-            ?.abbreviation ?? '-',
+          event.position?.abbreviation ?? '-',
           event.battingOrder ?? '-',
           id(event.replacedPlayer),
           `c=${balls}-${strikes}-${outs}`
@@ -1682,8 +1696,8 @@ describe('when each lineup change is announced', function () {
       foldPlay(state, play, stamp)
     )
     const [, second] = plays
-    const events = (second.playEvents ?? []).map(event => {
-      const who = (event.player as { id?: number } | undefined)?.id
+    const events = eventsOf(second).map(event => {
+      const who = event.player?.id
       return `${String(event.index)} ${String(event.details.eventType)} ${String(who)}`
     })
     expect(events).deep.equals([
@@ -1693,11 +1707,11 @@ describe('when each lineup change is announced', function () {
       '3 undefined 210',
       '4 undefined 210'
     ])
-    expect(second.playEvents![1]).deep.include({
+    expect(eventsOf(second)[1]).deep.include({
       battingOrder: '101',
       replacedPlayer: { id: 101, fullName: '101' }
     })
-    expect(second.playEvents![1].details.description).equals(
+    expect(eventsOf(second)[1].details.description).equals(
       'Offensive Substitution: Pinch-runner 111 replaces 101.'
     )
     const runners = (second.runners ?? []) as unknown as Array<{
