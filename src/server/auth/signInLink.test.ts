@@ -3,34 +3,23 @@ import { readFileSync } from 'fs'
 import { describe, it } from 'mocha'
 import { join } from 'path'
 
+import { signInLink } from './emailCodes'
+
 /**
  * The sign-in link, read from the source.
  *
  * These rules are the ones that make the difference between a convenience and
  * a way to hand somebody's account to a robot, and each has a reason that is
- * easy to forget and expensive to rediscover. The database work they describe
- * needs a live Postgres, which this suite does not have, so what is asserted
- * here is that the decisions are still where they were put.
+ * easy to forget and expensive to rediscover. What is asserted here is that
+ * the decisions are still where they were put; spending a sign-in once, and
+ * only once when two claims race, is tested against Postgres in
+ * emailCodes.test.ts.
  */
 describe('sign-in link', function () {
   const routes = readFileSync(join(__dirname, '../routes/auth.ts'), 'utf8')
   const codes = readFileSync(join(__dirname, 'emailCodes.ts'), 'utf8')
+  const invites = readFileSync(join(__dirname, '../routes/invites.ts'), 'utf8')
   const mail = readFileSync(join(__dirname, '../email/sendMail.ts'), 'utf8')
-  const screen = readFileSync(
-    join(__dirname, '../../app/screens/SignInLinkScreen.tsx'),
-    'utf8'
-  )
-  // Where the "did this visitor ask for it" flag is kept. Two files, because
-  // a browser and an app remember for different lengths of time and each has
-  // to be the right length.
-  const onceWeb = readFileSync(
-    join(__dirname, '../../app/platform/onceStore.ts'),
-    'utf8'
-  )
-  const onceNative = readFileSync(
-    join(__dirname, '../../app/platform/onceStore.native.ts'),
-    'utf8'
-  )
 
   it('never spends the link on a GET', function () {
     // Mail scanners follow links before anybody reads them. A `GET` that
@@ -64,12 +53,13 @@ describe('sign-in link', function () {
   })
 
   it('mails an https address on our own domain, never a scheme of our own', function () {
-    const link = routes.slice(routes.indexOf('function signInLink'))
-    // Written out rather than interpolated: this is the shape of the line in
-    // the source, not a link being built.
-    expect(link).contains('/signin/')
-    expect(link).contains('?r=')
+    expect(signInLink('https://app.teamstation.app/', 'tok123')).equals(
+      'https://app.teamstation.app/signin/tok123'
+    )
+    // Read where the links are built, and where they are mailed from.
+    expect(codes).not.contains('teamstation://')
     expect(routes).not.contains('teamstation://')
+    expect(invites).not.contains('teamstation://')
   })
 
   it('prints the address as text beside the button', function () {
@@ -77,16 +67,6 @@ describe('sign-in link', function () {
     // than an ugly one.
     expect(mail).contains('Or paste this address')
     expect(mail).contains('bgcolor="#334423"')
-  })
-
-  it('spends the token without a second tap only where a person asked', function () {
-    expect(screen).contains('askedHere(requestId)')
-    // For this visit and no longer, on either platform. A browser's session
-    // storage lasts as long as the tab; an app's memory lasts as long as the
-    // process. Anything more durable would spend a link somebody was sent
-    // weeks ago the moment they opened it.
-    expect(onceWeb).contains('sessionStorage')
-    expect(onceNative).not.contains('AsyncStorage')
   })
 
   it('lets the machine that asked finish a sign-in done elsewhere', function () {

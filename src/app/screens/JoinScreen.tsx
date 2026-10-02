@@ -10,7 +10,6 @@ import type {
 import { Button, Card, Screen, TextField } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { rememberRequest } from './SignInLinkScreen'
 
 export interface JoinScreenProps {
   client: TeamStationClient
@@ -98,9 +97,6 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
         displayName: name.trim() === '' ? undefined : name.trim()
       })
       waiting.current = wait
-      // A request this browser made is a request a person made, so the link
-      // in the mail is one tap when it is opened here.
-      rememberRequest(wait.requestId)
       setCodeSent(true)
     })
   }

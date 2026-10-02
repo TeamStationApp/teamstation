@@ -3386,8 +3386,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Spend the link from the e-mail',
           description:
             'Never reached by a bare page load: the address opens the app, ' +
-            'which asks for this once it can tell a person is behind the ' +
-            'request. A mail scanner follows links and runs no scripts.',
+            'which asks for this once it is running, so a mail scanner that ' +
+            'follows links without running scripts cannot spend it.',
           requestBody: {
             required: true,
             content: {
