@@ -17,9 +17,9 @@ import type { Migration } from '../runner'
  * a sum of these rows, and a box score is these rows. There is nowhere for the
  * three to disagree.
  *
- * `player_season_stats` beside this is an imported season rollup, kept for the
- * figures we do not count. This table is ours, derived, and safe to
- * throw away and rebuild: a re-ingest replaces the game's rows outright.
+ * This table is ours, derived, and safe to throw away and rebuild: a re-ingest
+ * replaces the game's rows outright. The season cache that once sat beside it,
+ * `player_season_stats`, is gone since migration 048.
  */
 export const migration023GameStats: Migration = {
   name: '023gameStats',
