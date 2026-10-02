@@ -38,9 +38,13 @@ describe('routeOfUrl', function () {
   })
 
   it('takes a sign-in link out of the mail', function () {
+    expect(routeOfUrl('https://app.teamstation.app/signin/tok123')).deep.equals(
+      { name: 'signInLink', token: 'tok123' }
+    )
+    // Links mailed before the request id was dropped still open.
     expect(
       routeOfUrl('https://app.teamstation.app/signin/tok123?r=req9')
-    ).deep.equals({ name: 'signInLink', token: 'tok123', requestId: 'req9' })
+    ).deep.equals({ name: 'signInLink', token: 'tok123' })
   })
 
   it('takes an invite link in either form', function () {

@@ -75,7 +75,7 @@ sibling is for. What exists twice:
 | `components/Gradient` | a CSS gradient there; two SVG stops here |
 | `components/GlassView` | `backdrop-filter` there; `UIGlassEffect` here |
 | `components/useHandoff` | `getBoundingClientRect` there; `measure` on the animation thread here |
-| `platform/clipboard`, `onceStore`, `sessionStore`, `safeArea`, `nativeDriver` | what a browser gets for free |
+| `platform/clipboard`, `sessionStore`, `safeArea`, `nativeDriver` | what a browser gets for free |
 | `player/VideoView`, `attachHls`, `engine` | a `<video>` and `hls.js` there; `react-native-video` here |
 | `player/useKeyboardShortcuts` | arrow keys there; nothing to bind here |
 | `screens/GameWatchLayout` | the one forked **region**, below |
