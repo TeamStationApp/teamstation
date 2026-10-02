@@ -17,6 +17,7 @@ import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
 import { chatRoutes } from './routes/chat'
+import { chatKeyRoutes } from './routes/chatKeys'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
@@ -145,6 +146,7 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(followRoutes(db, media)),
       ...routesOf(chatRoutes(db, media)),
+      ...routesOf(chatKeyRoutes(db)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
@@ -190,6 +192,7 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(followRoutes(db, media)),
       ...routesOf(chatRoutes(db, media)),
+      ...routesOf(chatKeyRoutes(db)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),

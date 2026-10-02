@@ -8,7 +8,8 @@ import type { Migration } from '../runner'
  * or resumed it. A user's identity (`chat_identities`, at most one current,
  * the rest `replaced_at`) signs their per-user keys (`chat_user_keys`, by
  * generation), which are boxed to each linked device (`chat_user_key_boxes`).
- * `chat_links` carries the identity from a linked device to a new one.
+ * `chat_links` carries the identity from a linked device to a new one, and
+ * `chat_resume_challenges` the single-use nonces a device signs to resume.
  *
  * **Conversations.** A scope chat is one per `(kind, scope_id)`; a DM has no
  * scope. `last_seq` and `last_log_seq` count the messages and the membership
@@ -57,6 +58,16 @@ create table chat_devices (
 );
 create index chat_devices_user on chat_devices (user_id);
 create index chat_devices_session on chat_devices (session_id);
+
+-- A resume challenge: a random nonce a device signs to prove itself to a new
+-- session. Single use (deleted when tried) and short-lived.
+create table chat_resume_challenges (
+  nonce      bytea       primary key check (octet_length(nonce) = 32),
+  device_id  text        not null references chat_devices (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index chat_resume_challenges_device on chat_resume_challenges (device_id);
 
 create table chat_identities (
   id                  text        primary key,
@@ -472,6 +483,7 @@ drop table chat_links;
 drop table chat_user_key_boxes;
 drop table chat_user_keys;
 drop table chat_identities;
+drop table chat_resume_challenges;
 drop table chat_devices;
 `
 }
