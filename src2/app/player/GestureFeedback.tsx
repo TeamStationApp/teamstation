@@ -49,7 +49,7 @@ const FLASH_LEFT = {
 } as const
 
 /** How long the arrow takes to fade away. */
-const FLASH_MS = 1000
+export const FLASH_MS = 1000
 
 /**
  * What a tap on the picture just did, drawn over it for a second.
@@ -120,15 +120,21 @@ export function SeekFlashView(props: {
 export function SlowMoBadge(props: {
   rate: number
   top?: number
+  /** How far in from the right edge, past whatever else is in the corner. */
+  right?: number
 }): React.ReactElement | null {
-  const { rate, top } = props
+  const { rate, top, right } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   if (rate === 0) return null
   return (
     <View
       pointerEvents="none"
-      style={[styles.slowMo, top != null ? { top } : null]}
+      style={[
+        styles.slowMo,
+        top != null ? { top } : null,
+        right != null ? { right } : null
+      ]}
     >
       <Text style={styles.slowMoText}>{lstrings.player_slow_mo}</Text>
     </View>

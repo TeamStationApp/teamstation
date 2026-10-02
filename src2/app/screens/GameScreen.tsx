@@ -1203,7 +1203,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // shared the pictures with the taps that play, pause and skip, and
       // fought them. An address that still names one is ignored.
       zoomedId={null}
-      title={`${game.awayTeamName} @ ${game.homeTeamName}`}
       atMs={
         takeWindow != null && startAtSec != null && startAtSec > 0
           ? takeWindow.fromMs + startAtSec * 1000
