@@ -95,12 +95,12 @@ export type Route =
   /**
    * The link from the sign-in e-mail.
    *
-   * Loading it does nothing on its own: the page comes up and the app decides
-   * whether to spend the token, which is what keeps a mail scanner — which
+   * Loading it does nothing on its own: the page comes up and the app spends
+   * the token once it is running, which is what keeps a mail scanner — which
    * follows links and runs no scripts — from burning a sign-in before it is
    * read.
    */
-  | { name: 'signInLink'; token: string; requestId?: string }
+  | { name: 'signInLink'; token: string }
 
 const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
@@ -140,11 +140,7 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'join', code: parts[2] }
     case 'signin':
       if (id == null) return { name: 'signIn' }
-      return {
-        name: 'signInLink',
-        token: id,
-        requestId: query.get('r') ?? undefined
-      }
+      return { name: 'signInLink', token: id }
     case 'players': {
       if (id == null) return { name: 'home' }
       const onTeam = query.get('onTeam') ?? undefined

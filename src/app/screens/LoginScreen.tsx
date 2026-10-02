@@ -4,7 +4,6 @@ import { Platform, Text, View } from 'react-native'
 import type { Session, SignInWait, TeamStationClient } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { rememberRequest } from './SignInLinkScreen'
 
 export interface LoginScreenProps {
   client: TeamStationClient
@@ -73,9 +72,6 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
         origin: 'web'
       })
       waiting.current = wait
-      // So that the link in the mail, opened in this browser, is one tap: a
-      // request this browser made is a request a person made.
-      rememberRequest(wait.requestId)
       setCodeSent(true)
     })
   }

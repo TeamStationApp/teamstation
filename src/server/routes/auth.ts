@@ -6,10 +6,11 @@ import { badRequest, unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userIdNumber'
 import {
+  asSignInOrigin,
   claimApprovedRequest,
   claimSignInLink,
   createEmailCode,
-  type SignInOrigin,
+  signInLink,
   type SignInRequest,
   verifyEmailCode
 } from '../auth/emailCodes'
@@ -84,30 +85,6 @@ function sessionOptionsFor(deviceName: string | undefined): {
   return { days: DEVICE_SESSION_DAYS, deviceName: deviceName.trim() }
 }
 
-/** One of the three places a sign-in can start. */
-function asSignInOrigin(raw: unknown): SignInOrigin {
-  if (raw === 'ios' || raw === 'android' || raw === 'web') return raw
-  throw new TypeError('Expected web, ios or android')
-}
-
-/**
- * The address in the e-mail.
- *
- * Always an ordinary `https://` link on our own domain, never a scheme of our
- * own: mail clients hide or strip what they do not know, and a link that
- * cannot open on a laptop is a dead end. With the app installed the operating
- * system hands this same address to it; without, it opens the browser, which
- * is the right answer in both cases.
- */
-function signInLink(
-  publicUrl: string | undefined,
-  token: string,
-  requestId: string
-): string {
-  const base = (publicUrl ?? '').replace(/\/$/, '')
-  return `${base}/signin/${token}?r=${requestId}`
-}
-
 /** What a successful sign-in returns. Cleaned on the way out as well as in. */
 const asSession = asObject({
   token: asString,
@@ -148,6 +125,12 @@ export interface AuthOptions {
  * The numbers are set where a real person will not meet them: five codes in a
  * quarter of an hour is already more than anyone needs, and ten wrong
  * passwords is a bad memory rather than an attack.
+ *
+ * A link counts apart from a typed code from the same client. Opening a link
+ * spends it with no tap, so every old e-mail opened again is a refusal;
+ * counted against the per-client budget for codes, a club's shared network
+ * could lock everybody on it out of typing a right one. The per-token rule
+ * only stops one dead link being hammered; guessing is bounded per client.
  */
 const LIMITS = {
   codeByAddress: { scope: 'emailCode.address', limit: 5, windowSec: 900 },
@@ -155,7 +138,9 @@ const LIMITS = {
   passwordByAddress: { scope: 'password.address', limit: 10, windowSec: 900 },
   passwordByClient: { scope: 'password.ip', limit: 50, windowSec: 3600 },
   verifyByAddress: { scope: 'verify.address', limit: 10, windowSec: 900 },
-  verifyByClient: { scope: 'verify.ip', limit: 50, windowSec: 3600 }
+  verifyByClient: { scope: 'verify.ip', limit: 50, windowSec: 3600 },
+  linkByToken: { scope: 'link.token', limit: 10, windowSec: 900 },
+  linkByClient: { scope: 'link.ip', limit: 50, windowSec: 3600 }
 }
 
 /** The rules for one attempt: always by address, and by client when known. */
@@ -335,7 +320,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         await options.sendCode(
           email,
           request.code,
-          signInLink(options.publicUrl, request.token, request.id)
+          signInLink(options.publicUrl, request.token)
         )
       }
       res.status(202).json({
@@ -399,7 +384,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
    * Spend the link from the e-mail.
    *
    * A `POST`, and never a `GET`: the address in the e-mail loads the app, and
-   * the app asks for this once a person is behind it. Mail scanners follow
+   * the app asks for this once it is running. Mail scanners follow
    * links and run no scripts, so a sign-in cannot be burnt before it is read.
    */
   router.post(
@@ -407,8 +392,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
     withAsync(async (req, res) => {
       const body = cleanBody(asLinkLogin, req.body)
       const rules = rulesFor(
-        LIMITS.verifyByAddress,
-        LIMITS.verifyByClient,
+        LIMITS.linkByToken,
+        LIMITS.linkByClient,
         body.token.slice(0, 16),
         clientIp(req)
       )

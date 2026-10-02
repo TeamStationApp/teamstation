@@ -662,8 +662,9 @@ function Shell(props: AppProps): React.ReactElement {
       )
     }
     // A link from the sign-in e-mail lands here, signed out, which is the
-    // whole point of it. It spends the token only when it can tell a person is
-    // behind the request.
+    // whole point of it. A link that is no longer good goes on to the form,
+    // replacing its own address so Back does not return to the dead link; one
+    // that may still work stays behind it in the history.
     return (
       <View style={styles.app}>
         <AppHeader
@@ -685,10 +686,15 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : route.name === 'signInLink' ? (
           <SignInLinkScreen
+            key={route.token}
             client={client}
             token={route.token}
-            requestId={route.requestId}
             onSignedIn={rememberSession}
+            onSignInAgain={linkSpent => {
+              const destination: Route = { name: 'signIn' }
+              goToRoute(destination)
+              showRoute(destination, linkSpent)
+            }}
           />
         ) : (
           <LoginScreen client={client} onSignedIn={signedIn} />
