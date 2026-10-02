@@ -172,6 +172,117 @@ export const asStaffEntry = asObject({
 })
 export type StaffEntry = ReturnType<typeof asStaffEntry>
 
+/** The audience a chat is kept to, or `dm`. */
+export const asChatKind = asLiteral(
+  'teamStaff',
+  'teamMembers',
+  'teamFans',
+  'seasonStaff',
+  'seasonAllStaff',
+  'seasonAnnouncements',
+  'leagueOrg',
+  'dm'
+)
+export type ChatKindName = ReturnType<typeof asChatKind>
+
+/**
+ * Somebody else who was in a DM with the caller, for its name: a current
+ * member, or one who left (`left`) while the caller was in it.
+ */
+export const asChatDmPerson = asObject({
+  userId: asUserId,
+  shortName: asString,
+  left: asBoolean
+})
+export type ChatDmPerson = ReturnType<typeof asChatDmPerson>
+
+/**
+ * One chat the caller is in, from `GET /chat/conversations`. `title` is null
+ * for a DM, which the app names from its members. `locked`: the caller holds
+ * no key for the latest epoch; `noHolder`: no current member does.
+ */
+export const asChatConversation = asObject({
+  id: asString,
+  kind: asChatKind,
+  title: asNullable(asString),
+  scope: asNullable(
+    asObject({ type: asLiteral('team', 'season', 'league'), id: asString })
+  ),
+  lastSeq: asNumber,
+  unread: asNumber,
+  canPost: asBoolean,
+  canModerate: asBoolean,
+  locked: asBoolean,
+  noHolder: asBoolean,
+  closed: asBoolean,
+  memberCount: asNumber,
+  /**
+   * For a DM, everyone else who was ever in it with the caller, current and
+   * former, so the app can still name it once the others have all left;
+   * empty for a scope chat.
+   */
+  people: asOptional(asArray(asChatDmPerson), [])
+})
+export type ChatConversation = ReturnType<typeof asChatConversation>
+
+/** One member of a chat, from `GET /chat/conversations/:id/members`. */
+export const asChatMember = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asNullable(asString),
+  /** How they stand in the chat, such as "Coach · Guardian". */
+  label: asString,
+  isModerator: asBoolean,
+  isApprover: asBoolean,
+  /** Has an identity and is not waiting for reset approval here. */
+  eligible: asBoolean,
+  hasIdentity: asBoolean,
+  /** Their current identity public key, base64url. */
+  identityKey: asNullable(asString),
+  /** Their current per-user key generation. */
+  generation: asNullable(asNumber)
+})
+export type ChatMember = ReturnType<typeof asChatMember>
+
+/**
+ * One row of a chat's hash-chained membership log. `prevHash` and `hash` are
+ * base64url; `at` is the milliseconds the hash covers.
+ */
+export const asChatLogRow = asObject({
+  seq: asNumber,
+  event: asLiteral('join', 'leave', 'identityReset', 'closed'),
+  userId: asUserId,
+  actorUserId: asNullable(asUserId),
+  reason: asNullable(asString),
+  prevHash: asString,
+  hash: asString,
+  at: asNumber
+})
+export type ChatLogRow = ReturnType<typeof asChatLogRow>
+
+/** Somebody the caller may name in a DM, from `GET /chat/dm-candidates`. */
+export const asChatPerson = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asNullable(asString)
+})
+export type ChatPerson = ReturnType<typeof asChatPerson>
+
+/**
+ * An adult who may be included beside a player, from `GET
+ * /chat/included-adults`, with a label such as "Guardian" or "Coach · Hawks".
+ */
+export const asIncludedAdult = asObject({
+  userId: asUserId,
+  shortName: asString,
+  label: asString
+})
+export type IncludedAdult = ReturnType<typeof asIncludedAdult>
+
+/** How far one member has read, from `GET /chat/conversations/:id/reads`. */
+export const asChatRead = asObject({ userId: asUserId, seq: asNumber })
+export type ChatRead = ReturnType<typeof asChatRead>
+
 export const asGameSummary = asObject({
   id: asString,
   homeTeamId: asString,
@@ -2689,6 +2800,102 @@ export class TeamStationClient {
     return answer.safesportLao
   }
 
+  /** Every chat the caller is in. */
+  async chatConversations(): Promise<ChatConversation[]> {
+    return await this.request(
+      'GET',
+      '/chat/conversations',
+      asArray(asChatConversation)
+    )
+  }
+
+  /** A chat's current members. */
+  async chatMembers(conversationId: string): Promise<ChatMember[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/members`,
+      asArray(asChatMember)
+    )
+  }
+
+  /** Every member's read cursor in a chat. */
+  async chatReads(conversationId: string): Promise<ChatRead[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/reads`,
+      asArray(asChatRead)
+    )
+  }
+
+  /** A chat's membership log after `after` (0 for all of it). */
+  async chatLog(conversationId: string, after = 0): Promise<ChatLogRow[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/log?after=${encodeURIComponent(after)}`,
+      asArray(asChatLogRow)
+    )
+  }
+
+  /** The people the caller may start a DM with, matching `query`. */
+  async dmCandidates(query = ''): Promise<ChatPerson[]> {
+    return await this.request(
+      'GET',
+      `/chat/dm-candidates?q=${encodeURIComponent(query)}`,
+      asArray(asChatPerson)
+    )
+  }
+
+  /**
+   * Adults who may be included beside these players, as SafeSport's MAAPP
+   * asks: suggestions without a query, every match with one.
+   */
+  async includedAdults(
+    playerIds: number[],
+    query = ''
+  ): Promise<IncludedAdult[]> {
+    const ids = playerIds.map(id => encodeURIComponent(id)).join(',')
+    return await this.request(
+      'GET',
+      `/chat/included-adults?playerIds=${ids}&q=${encodeURIComponent(query)}`,
+      asArray(asIncludedAdult)
+    )
+  }
+
+  /**
+   * Starts a DM with these people, or answers the open one-to-one already
+   * there. A refusal carries `details.reason`: `notCandidate`, or
+   * `adultRequired` with `playerIds`.
+   */
+  async createDm(userIds: number[]): Promise<ChatConversation> {
+    return await this.request('POST', '/chat/dms', asChatConversation, {
+      userIds
+    })
+  }
+
+  /** Adds people to a DM the caller is in; answers who was added. */
+  async addDmMembers(
+    conversationId: string,
+    userIds: number[]
+  ): Promise<number[]> {
+    const answer = await this.request(
+      'POST',
+      `/chat/dms/${encodeURIComponent(conversationId)}/members`,
+      asObject({ added: asArray(asUserId) }),
+      { userIds }
+    )
+    return answer.added
+  }
+
+  /** Leaves a DM; answers whether leaving closed it. */
+  async leaveDm(conversationId: string): Promise<{ closed: boolean }> {
+    const answer = await this.request(
+      'DELETE',
+      `/chat/dms/${encodeURIComponent(conversationId)}/members/me`,
+      asObject({ closed: asBoolean })
+    )
+    return { closed: answer.closed }
+  }
+
   /** One person: their picture, their name, their handedness, their teams. */
   async player(userId: string): Promise<PlayerDetail> {
     return await this.request(
@@ -3118,6 +3325,10 @@ function walkUpSongPath(teamId: string, userId: number | string): string {
 }
 
 /** For the endpoints whose body carries nothing a caller needs. */
+function chatPath(conversationId: string): string {
+  return `/chat/conversations/${encodeURIComponent(conversationId)}`
+}
+
 const asUnknownOk: Cleaner<null> = () => null
 
 /**

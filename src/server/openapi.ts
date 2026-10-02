@@ -502,6 +502,28 @@ const userIdParam = {
   schema: { type: 'string' }
 }
 
+const conversationIdParam = {
+  name: 'conversationId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
+const userIdsBody = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['userIds'],
+        properties: {
+          userIds: { type: 'array', items: { type: ['integer', 'string'] } }
+        }
+      }
+    }
+  }
+}
+
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -4618,6 +4640,196 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: '`{userId, birthMonth}`' },
             400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations': {
+        get: {
+          summary: 'The chats the caller is in',
+          description:
+            'Scope chats (Staff, Members and Fans of a team; Staff, All Staff ' +
+            'and Announcements of a season; a league’s Org) and DMs, each ' +
+            '`{id, kind, title, scope, lastSeq, unread, canPost, ' +
+            'canModerate, locked, noHolder, closed, memberCount, people}`. ' +
+            '`title` is null for a DM; `people` lists, for a DM, everybody ' +
+            'else who was in it with the caller as `{userId, shortName, ' +
+            'left}` (current members, and those who left after the caller ' +
+            'joined), and is empty for a scope chat. Somebody who is not an account, or is under ' +
+            '13 by birth month, is in none.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The chats' },
+            401: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/members': {
+        get: {
+          summary: "A chat's members",
+          description:
+            'For members only; anybody else gets 404. Each is `{userId, ' +
+            'shortName, avatarUrl, label, isModerator, isApprover, eligible, ' +
+            'hasIdentity, identityKey, generation}`.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: 'The members' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/reads': {
+        get: {
+          summary: "Every member's read cursor",
+          description:
+            'For members only. `[{userId, seq}]` for every member with a ' +
+            'cursor.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: 'The cursors' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/log': {
+        get: {
+          summary: "A chat's membership log",
+          description:
+            'For members only. The hash-chained rows after `after` (0 for ' +
+            'all), oldest first, at most 1,000: `{seq, event, userId, ' +
+            'actorUserId, reason, prevHash, hash, at}`, the hashes in ' +
+            'base64url and `at` in milliseconds.',
+          security: [{ bearer: [] }],
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'after',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          responses: {
+            200: { description: 'The rows' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/dm-candidates': {
+        get: {
+          summary: 'The people the caller may start a DM with',
+          description:
+            'Exactly those the DM rules let the caller name, whose name holds ' +
+            '`q`, at most 50: `{userId, shortName, avatarUrl}`. Empty for ' +
+            'somebody whose only tie is following a team.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The candidates' },
+            401: errorResponse
+          }
+        }
+      },
+      '/chat/included-adults': {
+        get: {
+          summary: 'Adults to include beside players (MAAPP)',
+          description:
+            'For players the caller may name (comma-separated `playerIds`); ' +
+            'otherwise 403 `notCandidate`. Without `q`: their guardians, ' +
+            'adult family members and immediate coaches; with `q`: every ' +
+            'included adult (guardians, family, adult team, season and ' +
+            'league staff) whose name holds it. Never the caller. Each is ' +
+            '`{userId, shortName, label}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'playerIds',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            },
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The adults' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/dms': {
+        post: {
+          summary: 'Start a DM',
+          description:
+            '`{userIds}`: 1 to 19 others (400 `dmSize` otherwise). Each must ' +
+            'be somebody the caller may name, and the DM must keep the pair ' +
+            'rule (403 `notCandidate` with `userIds` or `playerIds`) and, in ' +
+            'a SafeSport LAO league, the MAAPP rule (409 `adultRequired` with ' +
+            '`playerIds`). An open one-to-one between the same two is ' +
+            'answered 200 instead of a new one (201). Answers the chat as ' +
+            '`GET /chat/conversations` lists it. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: userIdsBody,
+          responses: {
+            200: { description: 'The open one-to-one already there' },
+            201: { description: 'The new DM' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/dms/{conversationId}/members': {
+        post: {
+          summary: 'Add people to a DM',
+          description:
+            'For a member of the DM; anybody else gets 404. The same rules ' +
+            'as starting one, and never past 20 members. A closed DM is 409 ' +
+            '`closed`. Answers `{added}`. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: userIdsBody,
+          responses: {
+            200: { description: '`{added}`' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/dms/{conversationId}/members/me': {
+        delete: {
+          summary: 'Leave a DM',
+          description:
+            'Always allowed for a member. When those left break the pair ' +
+            'rule or the MAAPP rule, the DM closes. Answers `{left, ' +
+            'closed}`. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: '`{left, closed}`' },
             401: errorResponse,
             404: errorResponse
           }

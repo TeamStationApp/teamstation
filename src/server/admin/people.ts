@@ -3,6 +3,7 @@ import { type Kysely, sql, type Transaction } from 'kysely'
 import { conflict } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import { signOutEverywhere } from '../auth/sessions'
+import { mergeChats } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
@@ -362,6 +363,9 @@ async function moveAndClose(
   await moveSignIns(db, closing, keeping)
   await moveFollows(db, closing, keeping)
   await keepTheFullerName(db, closing, keeping)
+  // Keys never move between user ids: the closed row's sessions and chat
+  // devices are revoked, and the survivor takes its place in its open DMs.
+  await mergeChats(db, closing, keeping)
 
   await db
     .updateTable('users')

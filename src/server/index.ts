@@ -11,6 +11,7 @@ import express from 'express'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
+import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
@@ -45,6 +46,7 @@ import { adminRoutes } from './routes/admin'
 import { appLinkRoutes } from './routes/appLinks'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
+import { chatRoutes } from './routes/chat'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
@@ -322,6 +324,7 @@ function runPrimary(workerCount: number): void {
   startLive(liveDb)
   reopenInterrupted(liveDb)
   startPurge(liveDb)
+  startChatReconciler(liveDb, serverConfig.databaseUrl)
   const builder = startStatsBuilder({
     enabled: serverConfig.statsBuilder,
     supervise: () =>
@@ -503,6 +506,7 @@ function runWorker(): void {
     eventListRoutes(db, mediaContext, { store: scoreboard.store })
   )
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
+  app.use('/api/v1', chatRoutes(db, mediaContext))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
@@ -626,6 +630,7 @@ function runWorker(): void {
     startLive(db)
     reopenInterrupted(db)
     startPurge(db)
+    startChatReconciler(db, serverConfig.databaseUrl)
     builder = startStatsBuilder({
       enabled: serverConfig.statsBuilder,
       supervise: () =>
