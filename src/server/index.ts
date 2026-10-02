@@ -451,11 +451,12 @@ function runWorker(): void {
 
   app.set('trust proxy', 'loopback')
   app.disable('x-powered-by')
-  app.use(jsonBody)
   app.use(withCors(serverConfig.corsOrigins))
 
-  // Who is calling, then what they changed, then the routes themselves.
+  // Who is calling, then their body, which for a picture is read only when
+  // somebody is signed in, then what they changed, then the routes.
   app.use(withActor(db))
+  app.use(jsonBody)
   app.use(withAudit(db))
 
   app.get('/api/v1/openapi.json', (req, res) => {
@@ -486,7 +487,7 @@ function runWorker(): void {
   )
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
   app.use('/api/v1', scheduleRoutes(db))
-  app.use('/api/v1', teamMemberRoutes(db))
+  app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
     '/api/v1',
     eventRoutes(db, { onGameWritten: scoreboard.onGameWritten })

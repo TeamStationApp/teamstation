@@ -1,4 +1,10 @@
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 import express from 'express'
@@ -30,12 +36,17 @@ import { userRoutes } from './users'
 
 /**
  * Adding a team's people by the ids another system has for them:
- * `POST /teams/:teamId/players` and `POST /teams/:teamId/adults`.
+ * `POST /teams/:teamId/players` and `POST /teams/:teamId/adults`; and the
+ * team's logo and its players' headshots, stored in a stand-in Space.
  */
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_team_members_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+const run = promisify(execFile)
+const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+const BUCKET = 'example-media-bkt'
 
 const ADMIN = 'tok_members_admin_000000000000000000'
 const TEAM_ADMIN = 'tok_members_teamadmin_00000000000000'
@@ -43,6 +54,14 @@ const MEMBER = 'tok_members_member_00000000000000000'
 const SEASON_ADMIN = 'tok_members_seasonadmin_000000000000'
 const LEAGUE_ADMIN = 'tok_members_leagueadmin_000000000000'
 const STRANGER = 'tok_members_stranger_000000000000000'
+
+/** The eight bytes every PNG begins with. */
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
+])
+
+/** A 16 px purple square as lossless WebP, which FFmpeg can read. */
+const WEBP = 'UklGRhwAAABXRUJQVlA4TBAAAAAvD8ADAAcQ/etf/wMR0f8A'
 
 interface Answer {
   status: number
@@ -85,6 +104,14 @@ describe('a team’s people by external id', function () {
   const stranger = person()
 
   const mail: Array<{ to: string; code?: string }> = []
+  /** What the stand-in Space was sent, by path, and every PUT in order. */
+  const objects = new Map<string, Buffer>()
+  const puts: string[] = []
+  /** While set, the stand-in Space refuses every upload with a 500. */
+  let refusing = false
+  /** While set, the next upload is held until `release` settles. */
+  let holdNext: { arrived: () => void; release: Promise<void> } | undefined
+  let space: Server | undefined
 
   const database = (): Kysely<Database> => {
     if (db == null) throw new Error('no database')
@@ -227,27 +254,82 @@ describe('a team’s people by external id', function () {
       })
       .execute()
 
+    // A Space that keeps what it is sent and hands it back.
+    space = createServer((req, res) => {
+      const path = new URL(req.url ?? '/', 'http://space.test').pathname
+      if (req.method === 'GET') {
+        const held = objects.get(path)
+        res.statusCode = held == null ? 404 : 200
+        res.end(held)
+        return
+      }
+      if (req.method !== 'PUT') {
+        res.statusCode = 405
+        res.end()
+        return
+      }
+      const chunks: Buffer[] = []
+      req.on('data', chunk => chunks.push(chunk as Buffer))
+      req.on('end', () => {
+        if (refusing) {
+          res.statusCode = 500
+          res.end('<Error><Code>InternalError</Code></Error>')
+          return
+        }
+        const keep = (): void => {
+          puts.push(path)
+          objects.set(path, Buffer.concat(chunks))
+          res.statusCode = 200
+          res.end()
+        }
+        const hold = holdNext
+        if (hold == null) {
+          keep()
+          return
+        }
+        holdNext = undefined
+        hold.arrived()
+        hold.release.then(keep, () => {})
+      })
+    })
+    await new Promise<void>(resolve => {
+      space?.listen(0, '127.0.0.1', resolve)
+    })
+    const spacePort = (space.address() as AddressInfo).port
+    const noSpace = {
+      endpoint: '',
+      region: '',
+      bucket: '',
+      accessKeyId: '',
+      secretAccessKey: '',
+      pathStyle: true
+    }
     const media: MediaContext = {
       mediaRoot: '/tmp',
-      ffmpegPath: 'ffmpeg',
+      ffmpegPath: FFMPEG,
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',
       space: {
-        endpoint: '',
-        region: '',
-        bucket: '',
-        accessKeyId: '',
-        secretAccessKey: '',
+        endpoint: `http://127.0.0.1:${spacePort}`,
+        region: 'sfo3',
+        bucket: BUCKET,
+        accessKeyId: 'AKIAEXAMPLE000000000',
+        secretAccessKey: 'secret',
         pathStyle: true
       }
     }
     const app = express()
-    app.use(jsonBody)
     app.use(withActor(db))
+    app.use(jsonBody)
     app.use(withAudit(db))
     app.use('/api/v1', teamRoutes(db, media))
     app.use('/api/v1', userRoutes(db))
-    app.use('/api/v1', teamMemberRoutes(db))
+    app.use('/api/v1', teamMemberRoutes(db, media))
+    // The same routes on a server with no Space configured.
+    app.use(
+      '/bare/api/v1',
+      teamMemberRoutes(db, { ffmpegPath: FFMPEG, space: noSpace })
+    )
     // Mail doubles: the adults route must never send anything, and the
     // sign-in cases read their codes from here.
     app.use(
@@ -271,11 +353,12 @@ describe('a team’s people by external id', function () {
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   })
 
   after(async function () {
     server?.close()
+    space?.close()
     if (db != null) await db.destroy()
     if (adminPool != null) {
       await adminPool.query(
@@ -289,9 +372,10 @@ describe('a team’s people by external id', function () {
     method: string,
     path: string,
     token: string | null,
-    body?: unknown
+    body?: unknown,
+    prefix = '/api/v1'
   ): Promise<Answer> {
-    const response = await fetch(`${base}${path}`, {
+    const response = await fetch(`${base}${prefix}${path}`, {
       method,
       headers: {
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
@@ -2025,6 +2109,477 @@ describe('a team’s people by external id', function () {
         const teams = await ask('GET', '/teams', session.body.token)
         expect(teams.body.map((team: any) => team.id)).includes(one.teamId)
       }
+    })
+  })
+
+  describe('PUT /teams/:teamId/logo and /teams/:teamId/players/:userId/avatar', function () {
+    let dir = ''
+    let red = ''
+    let blue = ''
+    let green = ''
+    let jpeg = ''
+
+    before(async function () {
+      dir = await mkdtemp(join(tmpdir(), 'tsTeamPictures-'))
+      red = await picture('red', 'png', 320, 180)
+      blue = await picture('blue', 'png', 200, 200)
+      green = await picture('green', 'png', 64, 64)
+      jpeg = await picture('orange', 'jpg', 300, 300)
+    })
+
+    after(async function () {
+      await rm(dir, { recursive: true, force: true })
+    })
+
+    /** A flat square of one colour, as base64. */
+    async function picture(
+      colour: string,
+      extension: 'png' | 'jpg',
+      width: number,
+      height: number
+    ): Promise<string> {
+      const path = join(dir, `${colour}.${extension}`)
+      await run(FFMPEG, [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        `color=c=${colour}:size=${width}x${height}`,
+        '-frames:v',
+        '1',
+        path
+      ])
+      return (await readFile(path)).toString('base64')
+    }
+
+    const body = (
+      base64: string,
+      source: 'import' | 'upload' = 'import',
+      contentType = 'image/png'
+    ): unknown => ({ image: { contentType, base64 }, source })
+
+    const logo = async (
+      teamId: string,
+      sent: unknown,
+      token: string | null = ADMIN
+    ): Promise<Answer> => await ask('PUT', `/teams/${teamId}/logo`, token, sent)
+
+    const avatar = async (
+      teamId: string,
+      userId: number | string,
+      sent: unknown,
+      token: string | null = ADMIN
+    ): Promise<Answer> =>
+      await ask('PUT', `/teams/${teamId}/players/${userId}/avatar`, token, sent)
+
+    /** A team with one player on it, by external id. */
+    async function teamWithPlayer(
+      name: string
+    ): Promise<{ teamId: string; userId: number }> {
+      const teamId = await newTeam(name)
+      const answer = await ask('POST', `/teams/${teamId}/players`, ADMIN, {
+        players: [
+          { firstName: 'Pic', lastName: name, externalId: ext(`pic-${teamId}`) }
+        ]
+      })
+      return { teamId, userId: answer.body.results[0].userId }
+    }
+
+    /** Width and height, read back out of the PNG header. */
+    const pngSize = (bytes: Buffer): { width: number; height: number } => ({
+      width: bytes.readUInt32BE(16),
+      height: bytes.readUInt32BE(20)
+    })
+
+    it('stores a logo at both sizes and writes its row', async function () {
+      const teamId = await newTeam('Logo')
+      const before = puts.length
+      const answer = await logo(teamId, body(red))
+      expect(answer.status).equals(200)
+      expect(answer.body.stored).equals(true)
+      const row = await database()
+        .selectFrom('teams')
+        .select(['logo_path', 'logo_sha256', 'logo_source', 'logo_updated_at'])
+        .where('id', '=', teamId)
+        .executeTakeFirstOrThrow()
+      expect(row.logo_path).matches(
+        new RegExp(`^images/team/${teamId}/[0-9a-f]{8}$`)
+      )
+      expect(row.logo_sha256).matches(/^[0-9a-f]{64}$/)
+      expect(row.logo_source).equals('import')
+      expect(row.logo_updated_at).not.equals(null)
+      expect(puts.slice(before).sort((a, b) => a.localeCompare(b))).deep.equals(
+        [
+          `/${BUCKET}/${row.logo_path}-192.png`,
+          `/${BUCKET}/${row.logo_path}-96.png`
+        ]
+      )
+
+      // The URL is the signed 192 px rendition, and it is one.
+      expect(answer.body.url).includes(`${row.logo_path}-192.png`)
+      expect(answer.body.url).includes('X-Amz-Signature=')
+      const drawn = await fetch(answer.body.url)
+      expect(drawn.status).equals(200)
+      expect(pngSize(Buffer.from(await drawn.arrayBuffer()))).deep.equals({
+        width: 192,
+        height: 192
+      })
+
+      const teams = await ask('GET', '/teams', ADMIN)
+      const listed = teams.body.find((team: any) => team.id === teamId)
+      expect(listed.logoUrl).to.be.a('string')
+    })
+
+    it('stores a headshot and the roster shows it', async function () {
+      const { teamId, userId } = await teamWithPlayer('Avatar')
+      const answer = await avatar(
+        teamId,
+        userId,
+        body(jpeg, 'import', 'image/jpeg')
+      )
+      expect(answer.status).equals(200)
+      expect(answer.body.stored).equals(true)
+      const row = await database()
+        .selectFrom('users')
+        .select([
+          'avatar_path',
+          'avatar_sha256',
+          'avatar_source',
+          'avatar_updated_at'
+        ])
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow()
+      expect(row.avatar_path).matches(
+        new RegExp(`^images/user/${userId}/[0-9a-f]{8}$`)
+      )
+      expect(row.avatar_sha256).matches(/^[0-9a-f]{64}$/)
+      expect(row.avatar_source).equals('import')
+      expect(row.avatar_updated_at).not.equals(null)
+      expect(answer.body.url).includes(`${row.avatar_path}-192.png`)
+      const roster = await ask('GET', `/teams/${teamId}/roster`, ADMIN)
+      expect(roster.body[0].avatarUrl).to.be.a('string')
+    })
+
+    it('uploads nothing for the picture it already holds', async function () {
+      const { teamId, userId } = await teamWithPlayer('Same')
+      expect((await logo(teamId, body(blue))).body.stored).equals(true)
+      expect((await avatar(teamId, userId, body(blue))).body.stored).equals(
+        true
+      )
+      const before = puts.length
+      expect((await logo(teamId, body(blue))).body).deep.equals({
+        stored: false
+      })
+      expect((await avatar(teamId, userId, body(blue))).body).deep.equals({
+        stored: false
+      })
+      expect(puts.length).equals(before)
+    })
+
+    it('never lets an import replace an upload, and lets an upload replace an import', async function () {
+      const uploaded = await newTeam('Uploaded')
+      expect((await logo(uploaded, body(red, 'upload'))).body.stored).equals(
+        true
+      )
+      expect((await logo(uploaded, body(blue, 'import'))).body).deep.equals({
+        stored: false,
+        kept: 'upload'
+      })
+
+      const imported = await newTeam('Imported')
+      expect((await logo(imported, body(red, 'import'))).body.stored).equals(
+        true
+      )
+      expect((await logo(imported, body(blue, 'upload'))).body.stored).equals(
+        true
+      )
+      const row = await database()
+        .selectFrom('teams')
+        .select(['logo_source'])
+        .where('id', '=', imported)
+        .executeTakeFirstOrThrow()
+      expect(row.logo_source).equals('upload')
+    })
+
+    it('lets only a site administrator upload over an uploaded headshot, and any administrator over an uploaded logo', async function () {
+      const { teamId, userId } = await teamWithPlayer('Uploaded faces')
+      expect(
+        (await avatar(teamId, userId, body(red, 'upload'), SEASON_ADMIN)).body
+          .stored
+      ).equals(true)
+      expect(
+        (await avatar(teamId, userId, body(blue, 'upload'), SEASON_ADMIN)).body
+      ).deep.equals({ stored: false, kept: 'upload' })
+      const kept = await database()
+        .selectFrom('users')
+        .select(['avatar_sha256'])
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow()
+      expect(
+        (await avatar(teamId, userId, body(blue, 'upload'))).body.stored
+      ).equals(true)
+      const replaced = await database()
+        .selectFrom('users')
+        .select(['avatar_sha256'])
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow()
+      expect(replaced.avatar_sha256).not.equals(kept.avatar_sha256)
+
+      expect(
+        (await logo(teamId, body(red, 'upload'), SEASON_ADMIN)).body.stored
+      ).equals(true)
+      expect(
+        (await logo(teamId, body(blue, 'upload'), SEASON_ADMIN)).body.stored
+      ).equals(true)
+    })
+
+    it('keeps an upload that lands while an import is being stored', async function () {
+      const { teamId, userId } = await teamWithPlayer('Raced pictures')
+      const cases = [
+        {
+          send: async (sent: unknown) => await logo(teamId, sent),
+          source: async () =>
+            await database()
+              .selectFrom('teams')
+              .select(['logo_source as source', 'logo_sha256 as sha256'])
+              .where('id', '=', teamId)
+              .executeTakeFirstOrThrow()
+        },
+        {
+          send: async (sent: unknown) => await avatar(teamId, userId, sent),
+          source: async () =>
+            await database()
+              .selectFrom('users')
+              .select(['avatar_source as source', 'avatar_sha256 as sha256'])
+              .where('id', '=', userId)
+              .executeTakeFirstOrThrow()
+        }
+      ]
+      for (const { send, source } of cases) {
+        let release = (): void => {}
+        let arrived = (): void => {}
+        const waiting = new Promise<void>(resolve => {
+          arrived = resolve
+        })
+        holdNext = {
+          arrived,
+          release: new Promise<void>(resolve => {
+            release = resolve
+          })
+        }
+        // The import has read the row and is storing its picture...
+        const importing = send(body(red, 'import'))
+        await waiting
+        // ...when an upload lands.
+        const uploaded = await send(body(blue, 'upload'))
+        expect(uploaded.body.stored).equals(true)
+        const after = await source()
+        release()
+        expect((await importing).body).deep.equals({
+          stored: false,
+          kept: 'upload'
+        })
+        expect(await source()).deep.equals(after)
+        expect(after.source).equals('upload')
+      }
+    })
+
+    it('makes an import its uploader’s own when the same picture is uploaded', async function () {
+      const { teamId, userId } = await teamWithPlayer('Claimed')
+      await avatar(teamId, userId, body(green, 'import'))
+      expect(
+        (await avatar(teamId, userId, body(green, 'upload'))).body
+      ).deep.equals({
+        stored: false
+      })
+      expect(
+        (await avatar(teamId, userId, body(red, 'import'))).body
+      ).deep.equals({
+        stored: false,
+        kept: 'upload'
+      })
+    })
+
+    it('refuses what is not a picture it can take', async function () {
+      const teamId = await newTeam('Refusals')
+      const gif = await logo(teamId, body(red, 'import', 'image/gif'))
+      expect(gif.status).equals(415)
+      expect(gif.body.code).equals('unsupportedMedia')
+
+      // Ten MiB and three bytes of zeros, as base64.
+      const over = 'A'.repeat(4 * Math.ceil((10 * 1024 * 1024 + 3) / 3))
+      const heavy = await logo(teamId, body(over))
+      expect(heavy.status).equals(413)
+      expect(heavy.body.code).equals('tooLarge')
+      // Exactly ten MiB: read to the end and handed to FFmpeg, which finds
+      // no picture behind a PNG signature and zeros. Never a 500 for the
+      // length of the string.
+      const under = Buffer.alloc(10 * 1024 * 1024)
+      PNG_SIGNATURE.copy(under)
+      const zeros = await logo(teamId, body(under.toString('base64')))
+      expect(zeros.status).equals(415)
+      expect(zeros.body.message).equals(
+        'That is not a picture TeamStation can read'
+      )
+
+      for (const base64 of [
+        '',
+        'not base64!',
+        'abcde',
+        'ab=c',
+        '====',
+        'a==='
+      ]) {
+        const answer = await logo(teamId, body(base64))
+        expect(answer.status, base64).equals(400)
+        expect(answer.body.message).equals('image.base64 is not base64')
+      }
+
+      const text = Buffer.from('this is a text file, not a picture')
+      const untyped = await logo(teamId, body(text.toString('base64')))
+      expect(untyped.status).equals(415)
+      expect(untyped.body.message).equals(
+        'The picture is not the type it says it is'
+      )
+      const unreadable = await logo(
+        teamId,
+        body(Buffer.concat([PNG_SIGNATURE, text]).toString('base64'))
+      )
+      expect(unreadable.status).equals(415)
+      expect(unreadable.body).deep.equals({
+        code: 'unsupportedMedia',
+        message: 'That is not a picture TeamStation can read'
+      })
+
+      expect((await logo(teamId, { image: body(red) })).status).equals(400)
+      expect(
+        (await logo(teamId, { source: 'import', image: 'x' })).status
+      ).equals(400)
+      expect((await logo(teamId, null)).status).equals(400)
+    })
+
+    it('refuses a picture that is not the type it says it is', async function () {
+      const teamId = await newTeam('Mislabelled')
+      for (const [base64, contentType] of [
+        [red, 'image/jpeg'],
+        [red, 'image/webp'],
+        [jpeg, 'image/png'],
+        [WEBP, 'image/png'],
+        // RIFF, but not WebP inside it.
+        [
+          Buffer.from('RIFF\x10\x00\x00\x00WAVEfmt ').toString('base64'),
+          'image/webp'
+        ]
+      ]) {
+        const answer = await logo(teamId, body(base64, 'import', contentType))
+        expect(answer.status, contentType).equals(415)
+        expect(answer.body).deep.equals({
+          code: 'unsupportedMedia',
+          message: 'The picture is not the type it says it is'
+        })
+      }
+      const row = await database()
+        .selectFrom('teams')
+        .select(['logo_path'])
+        .where('id', '=', teamId)
+        .executeTakeFirstOrThrow()
+      expect(row.logo_path).equals(null)
+    })
+
+    it('takes a JPEG, a PNG and a WebP that are what they say', async function () {
+      for (const [base64, contentType] of [
+        [jpeg, 'image/jpeg'],
+        [red, 'image/png'],
+        [WEBP, 'image/webp']
+      ]) {
+        const teamId = await newTeam(`Typed ${contentType}`)
+        const answer = await logo(teamId, body(base64, 'import', contentType))
+        expect(answer.status, contentType).equals(200)
+        expect(answer.body.stored, contentType).equals(true)
+      }
+    })
+
+    it('answers 404 for a headshot of somebody who does not play for the team', async function () {
+      const { teamId } = await teamWithPlayer('Not a player')
+      expect((await avatar(teamId, member.userId, body(red))).status).equals(
+        404
+      )
+      expect((await avatar(teamId, 'nobody', body(red))).status).equals(404)
+    })
+
+    it('answers 503 with no Space, and when the Space refuses the upload', async function () {
+      const { teamId, userId } = await teamWithPlayer('Unavailable')
+      const bare = await ask(
+        'PUT',
+        `/teams/${teamId}/logo`,
+        ADMIN,
+        body(red),
+        '/bare/api/v1'
+      )
+      expect(bare.status).equals(503)
+      expect(bare.body.code).equals('unavailable')
+
+      refusing = true
+      try {
+        const refused = await avatar(teamId, userId, body(red))
+        expect(refused.status).equals(503)
+        expect(refused.body).deep.equals({
+          code: 'unavailable',
+          message: 'The picture store did not answer'
+        })
+      } finally {
+        refusing = false
+      }
+    })
+
+    it('answers 401, 403 and 404 as the roster routes do', async function () {
+      const { userId } = await teamWithPlayer('Guarded')
+      expect((await logo(hawks, body(red), null)).status).equals(401)
+      expect((await logo(hawks, body(red), MEMBER)).status).equals(403)
+      expect((await logo(hawks, body(red), STRANGER)).status).equals(404)
+      expect((await avatar(hawks, userId, body(red), MEMBER)).status).equals(
+        403
+      )
+      expect((await avatar(hawks, userId, body(red), STRANGER)).status).equals(
+        404
+      )
+      expect((await logo('tem_nothere', body(red))).status).equals(404)
+    })
+
+    it('lets an administrator of the team’s season or league store its pictures', async function () {
+      const { teamId, userId } = await teamWithPlayer('Season pictures')
+      const bySeason = await logo(teamId, body(blue), SEASON_ADMIN)
+      expect(bySeason.status).equals(200)
+      expect(bySeason.body.stored).equals(true)
+      const byLeague = await avatar(teamId, userId, body(blue), LEAGUE_ADMIN)
+      expect(byLeague.status).equals(200)
+      expect(byLeague.body.stored).equals(true)
+    })
+
+    it('parses a 2 MB picture body, and answers 413 to one anywhere else', async function () {
+      const teamId = await newTeam('Big bodies')
+      const twoMegabytes = 'A'.repeat(2_100_000)
+      // Parsed and read: zeros are no PNG.
+      const parsed = await logo(teamId, body(twoMegabytes))
+      expect(parsed.status).equals(415)
+      const elsewhere = await ask(
+        'PUT',
+        `/teams/${teamId}/roster`,
+        ADMIN,
+        body(twoMegabytes)
+      )
+      expect(elsewhere.status).equals(413)
+      expect(elsewhere.body.code).equals('tooLarge')
+      const posted = await ask(
+        'POST',
+        `/teams/${teamId}/logo`,
+        ADMIN,
+        body(twoMegabytes)
+      )
+      expect(posted.status).equals(413)
     })
   })
 })
