@@ -11,6 +11,22 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
 import { SectionHeader } from './SectionHeader'
+import { TextField } from './TextField'
+
+/** How long a camera name may be, counted after trimming. */
+const CAMERA_NAME_MAX = 80
+
+/** The split the angle strip uses. A name that contains it would be cut. */
+const CAMERA_NAME_SEPARATOR = ' — '
+
+/** The name a create sends, or nothing when the field cannot be used. */
+function cameraNameToSend(raw: string): string | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') return undefined
+  if (trimmed.length > CAMERA_NAME_MAX) return undefined
+  if (trimmed.includes(CAMERA_NAME_SEPARATOR)) return undefined
+  return trimmed
+}
 
 export interface StreamPanelProps {
   client: TeamStationClient
@@ -56,6 +72,7 @@ export function StreamPanel(
    * to lose, and they act at once.
    */
   const [armed, setArmed] = useState<string | undefined>(undefined)
+  const [cameraName, setCameraName] = useState('')
 
   const reload = useCallback(async (): Promise<void> => {
     setStreams(await client.liveStreams(gameId))
@@ -373,18 +390,32 @@ export function StreamPanel(
       ))}
 
       {streams != null && streams.canAdd > 0 && (
-        <Button
-          label={
-            streams.mine.length === 0 ? 'Create a stream URL' : 'Add a camera'
-          }
-          kind="secondary"
-          disabled={busy}
-          onPress={() => {
-            run(async () => await client.addLiveStream(gameId)).catch(
-              () => undefined
-            )
-          }}
-        />
+        <>
+          <TextField
+            label="Camera name"
+            value={cameraName}
+            onChangeText={setCameraName}
+            placeholder="First base"
+          />
+          <Button
+            label={
+              streams.mine.length === 0 ? 'Create a stream URL' : 'Add a camera'
+            }
+            kind="secondary"
+            disabled={busy || cameraNameToSend(cameraName) == null}
+            onPress={() => {
+              const label = cameraNameToSend(cameraName)
+              if (label == null) return
+              run(async () => {
+                await client.addLiveStream(gameId, label)
+                setCameraName('')
+                // The key stays masked until it is asked for. The reply
+                // carries it, and keeping that reply would print it.
+                return undefined
+              }).catch(() => undefined)
+            }}
+          />
+        </>
       )}
 
       {streams != null && streams.mine.length > 0 && streams.canAdd === 0 && (
