@@ -575,33 +575,32 @@ describe('gameStatLines', function () {
     // Batter 1 singles off 11. Batter 2 bats to 16 after a change: 1 is
     // caught stealing at event 1, and 2 strikes out at event 5.
     const single = paPlay('single', { pitcher: 11 })
-    const changedAt = (change: number, atBatIndex = 1): GumboPlay =>
-      ({
-        ...paPlay('strikeout', { atBatIndex, batter: 2, pitcher: 16, outs: 2 }),
-        runners: [
-          {
-            movement: { start: '1B', end: null, isOut: true },
-            details: {
-              eventType: 'caught_stealing_2b',
-              runner: { id: 1 },
-              playIndex: 1
-            }
-          },
-          {
-            movement: { start: null, end: null, isOut: true },
-            details: { eventType: 'strikeout', runner: { id: 2 }, playIndex: 5 }
+    const changedAt = (change: number, atBatIndex = 1): GumboPlay => ({
+      ...paPlay('strikeout', { atBatIndex, batter: 2, pitcher: 16, outs: 2 }),
+      runners: [
+        {
+          movement: { start: '1B', end: null, isOut: true },
+          details: {
+            eventType: 'caught_stealing_2b',
+            runner: { id: 1 },
+            playIndex: 1
           }
-        ],
-        playEvents: [
-          {
-            index: change,
-            isPitch: false,
-            type: 'action',
-            details: { eventType: 'pitching_substitution' },
-            player: { id: 16 }
-          }
-        ]
-      }) as unknown as GumboPlay
+        },
+        {
+          movement: { start: null, end: null, isOut: true },
+          details: { eventType: 'strikeout', runner: { id: 2 }, playIndex: 5 }
+        }
+      ],
+      playEvents: [
+        {
+          index: change,
+          isPitch: false,
+          type: 'action',
+          details: { eventType: 'pitching_substitution' },
+          player: { id: 16 }
+        }
+      ]
+    })
     const outs = (plays: GumboPlay[]): number[][] => {
       const result = gameStatLines(plays, teams, known)
       if (result.kind !== 'lines') throw new Error(result.detail)

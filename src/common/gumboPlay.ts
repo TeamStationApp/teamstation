@@ -168,9 +168,24 @@ const asGumboPlayShape = asObject({
   )
 }).withRest
 
+/**
+ * A play as it is stored: every object keeps the keys it was sent, and a
+ * field the cleaner lets be absent may be left out rather than set to
+ * `undefined`.
+ */
+type Stored<T> =
+  T extends ReadonlyArray<infer E>
+    ? Array<Stored<E>>
+    : T extends object
+      ? {
+          [K in keyof T as undefined extends T[K] ? K : never]?: Stored<T[K]>
+        } & {
+          [K in keyof T as undefined extends T[K] ? never : K]: Stored<T[K]>
+        } & Record<string, unknown>
+      : T
+
 /** The checked fields, and whatever else the sender put in the document. */
-export type GumboPlay = ReturnType<typeof asGumboPlayShape> &
-  Record<string, unknown>
+export type GumboPlay = Stored<ReturnType<typeof asGumboPlayShape>>
 
 /** Checks one play, and names it by its `about.atBatIndex` when it fails. */
 export function asGumboPlay(raw: unknown): GumboPlay {
@@ -206,8 +221,8 @@ const asCurrentPlayShape = asObject({
   }).withRest
 }).withRest
 
-export type CurrentPlay = ReturnType<typeof asCurrentPlayShape> &
-  Record<string, unknown>
+/** The at-bat in progress, stored the same way as a completed play. */
+export type CurrentPlay = Stored<ReturnType<typeof asCurrentPlayShape>>
 
 export function asCurrentPlay(raw: unknown): CurrentPlay {
   try {
