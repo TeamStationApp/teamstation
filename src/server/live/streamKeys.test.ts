@@ -17,7 +17,7 @@ const LIVE = {
   port: 1936,
   app: 'live',
   segmentSeconds: 4,
-  closeAfterHours: 6
+  freeDiskFloorGb: 10
 }
 
 describe('stream keys', function () {

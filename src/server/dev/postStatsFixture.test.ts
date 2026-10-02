@@ -180,7 +180,6 @@ describe('postStatsFixture', function () {
     const mediaRoot = mkdtempSync(join(tmpdir(), 'tsStatsFixture-'))
     const media: MediaContext = {
       mediaRoot,
-      workDir: mediaRoot,
       ffmpegPath: 'ffmpeg',
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',

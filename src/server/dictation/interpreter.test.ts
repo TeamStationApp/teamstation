@@ -24,6 +24,7 @@ interface Sent {
     temperature: number
     parallel_tool_calls: boolean
     tool_choice: string
+    prompt_cache_key?: string
     tools: Array<{ function: { name: string } }>
     messages: Array<{
       role: string
@@ -653,7 +654,7 @@ describe('dictation interpreter, a ball in play sent without its result', functi
       'ctx',
       'Ground ball, the runner goes to second.'
     ).start()
-    const told = gpt.sent[1].body.messages.at(-1).content!
+    const told = gpt.sent[1].body.messages.at(-1)!.content!
     expect(told).match(/^Recorded\. So far, in order: /)
     expect(told).includes('The ball in play has no result.')
   })

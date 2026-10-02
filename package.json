@@ -62,7 +62,7 @@
     "stats-fixture": "node -r sucrase/register src/server/dev/postStatsFixture.ts",
     "stats-request": "node -r sucrase/register src/server/statsBuilder/cli.ts",
     "test": "node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
-    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json",
     "typecheck.native": "tsc -p tsconfig.native.json",
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts"
   },

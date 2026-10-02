@@ -252,7 +252,6 @@ describe('every game somebody can see', function () {
 
     const media: MediaContext = {
       mediaRoot: '/tmp',
-      workDir: '/tmp',
       ffmpegPath: 'ffmpeg',
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',
@@ -404,11 +403,11 @@ describe('every game somebody can see', function () {
     const recent = async (
       token: string
     ): Promise<Array<{ id: string; homeScore?: number | null }>> =>
-      await (
+      (await (
         await fetch(`${base}/events?played=1&limit=1`, {
           headers: { authorization: `Bearer ${token}` }
         })
-      ).json()
+      ).json()) as Array<{ id: string; homeScore?: number | null }>
     expect((await recent(ADMIN))[0]).deep.include({
       id: crowsGame,
       homeScore: 3
@@ -572,8 +571,7 @@ describe('whether a viewer may score a game', function () {
         bucket: '',
         accessKeyId: '',
         secretAccessKey: ''
-      },
-      workDir: ''
+      }
     } satisfies MediaContext
     const app = express()
     app.use(jsonBody)

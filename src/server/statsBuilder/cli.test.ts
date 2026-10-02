@@ -3,6 +3,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
@@ -195,8 +196,8 @@ describe('statsBuilder cli', function () {
       ])
       .execute()
 
-    const play = {
-      about: { atBatIndex: 0, inning: 1, halfInning: 'top' as const },
+    const play: GumboPlay = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
       result: { eventType: 'single', awayScore: 0, homeScore: 0 },
       count: { outs: 0 },
       matchup: {
@@ -205,7 +206,7 @@ describe('statsBuilder cli', function () {
       },
       runners: [
         {
-          movement: { start: null, end: '1B' as const, isOut: false },
+          movement: { start: null, end: '1B', isOut: false },
           details: {
             eventType: 'single',
             runner: { id: batter.userId }
@@ -219,12 +220,12 @@ describe('statsBuilder cli', function () {
       awayTeamId: away,
       plays: [{ gumbo: play, source: 'manual' }]
     })
-    const incomplete = { ...play, matchup: undefined }
+    const incomplete: GumboPlay = { ...play, matchup: undefined }
     await replaceGameEvents(db, {
       gameId: bad,
       homeTeamId: home,
       awayTeamId: away,
-      plays: [{ gumbo: incomplete as typeof play, source: 'manual' }]
+      plays: [{ gumbo: incomplete, source: 'manual' }]
     })
 
     await runStatsRequest({ game: good, wait: 1 }, { databaseUrl: scratchUrl })

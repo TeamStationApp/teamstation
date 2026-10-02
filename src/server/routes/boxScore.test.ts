@@ -51,8 +51,7 @@ const media: MediaContext = {
     accessKeyId: '',
     secretAccessKey: '',
     pathStyle: false
-  },
-  workDir: '/tmp'
+  }
 }
 
 describe('GET /games/:gameId/box-score stats', function () {
@@ -165,7 +164,7 @@ describe('GET /games/:gameId/box-score stats', function () {
         req.actor = {
           userId: asUserId(id),
           isAdmin: asUserId(id) === viewer,
-          tokenId: null
+          scopes: []
         }
       }
       next()
@@ -231,7 +230,7 @@ describe('GET /games/:gameId/box-score stats', function () {
 
   it('returns pending, built, incomplete with detail, and failed', async function () {
     await setState('pending')
-    expect((await ask()).stats.status).equals('pending')
+    expect((await ask()).stats?.status).equals('pending')
 
     const builtAt = new Date('2026-09-25T12:00:00.000Z')
     await setState('built', null, builtAt)
