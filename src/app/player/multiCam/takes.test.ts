@@ -97,6 +97,13 @@ describe('what to call each angle', function () {
     expect(names.get('primary')).equals('Primary')
   })
 
+  it('reads the camera name a named live stream stores', function () {
+    const stored = video('cam', 'Demo Away at Demo Home — First Base', {
+      status: 'processing'
+    })
+    expect(angleLabels([stored])[0].name).equals('First Base')
+  })
+
   it('keeps the name a live stream already carries', function () {
     const live = [
       video('a', '2026-09-13 Badgers vs Cedar Lakes — Behind the plate', {

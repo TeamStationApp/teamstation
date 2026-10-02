@@ -14,6 +14,7 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import {
+  cameraLabelOf,
   createLiveStream,
   freeSlot,
   labelFor,
@@ -24,6 +25,7 @@ import {
   myLiveStreams,
   revealKey,
   rotateLiveStreamKey,
+  setCameraName,
   streamUrlFor
 } from '../live/streamKeys'
 import { setAudit } from '../middleware/withAudit'
@@ -170,6 +172,8 @@ export function liveRoutes(
       }
 
       const body = cleanBody(asNewStream, req.body)
+      // Blank is the same as omitted: the slot's own name, not an empty one.
+      const named = cameraLabelOf(body.label)
       const mine = await myLiveStreams(db, game.id, actor.userId)
       const slot = freeSlot(mine)
       if (slot == null) {
@@ -186,7 +190,7 @@ export function liveRoutes(
           startAt: game.startAt,
           userId: actor.userId,
           slot,
-          label: body.label,
+          label: named ?? undefined,
           live,
           sessionSecret,
           videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
@@ -296,24 +300,18 @@ export function liveRoutes(
         pathParam(req.params.streamId)
       )
       const body = cleanBody(asStreamChange, req.body)
-      const now = new Date()
-
-      await db
-        .updateTable('live_streams')
-        .set({
-          ...(body.label == null
-            ? {}
-            : { label: body.label.trim() === '' ? null : body.label.trim() }),
-          updated_at: now
-        })
-        .where('id', '=', row.id)
-        .execute()
+      const named = cameraLabelOf(body.label)
+      // Absent leaves the stored name. Present writes the label and the
+      // video title together, including a blank, which clears it.
+      if (named !== undefined) {
+        await setCameraName(db, row.id, named)
+      }
 
       setAudit(res.locals, {
         entityType: 'liveStream',
         entityId: row.id,
         before: { label: row.label },
-        after: { label: body.label }
+        after: { label: named === undefined ? row.label : named }
       })
       const fresh = (await liveStreamById(db, row.id)) ?? row
       res.json(await summaryOf(db, fresh, actor.userId))

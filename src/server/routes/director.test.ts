@@ -119,7 +119,8 @@ describe('what TS Director is offered', function () {
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
-        host: 'live.example'
+        host: 'live.example',
+        deviceLabel: 'TS Director'
       })
     )
     app.use(errorHandler)
@@ -546,4 +547,141 @@ describe('what TS Director is offered', function () {
     )
     expect(claimed.status).equals(404)
   })
+
+  it('names the camera it claims, and a later name keeps the key', async function () {
+    if (db == null) this.skip()
+    const first = await claim('gam_sixth', { cameraName: '  Center Field  ' })
+    expect(first.status).equals(200)
+    const url = String(first.body.url)
+    let stored = await cameraOf('gam_sixth')
+    expect(stored.label).equals('Center Field')
+    expect(stored.title.endsWith(' — Center Field')).equals(true)
+
+    const again = await claim('gam_sixth', { cameraName: 'Left Field' })
+    expect(String(again.body.url)).equals(url)
+    stored = await cameraOf('gam_sixth')
+    expect(stored.label).equals('Left Field')
+    expect(stored.title.endsWith(' — Left Field')).equals(true)
+    expect(stored.title.startsWith('Titan at Ravens — ')).equals(true)
+
+    const blank = await claim('gam_sixth', { cameraName: '' })
+    expect(String(blank.body.url)).equals(url)
+    stored = await cameraOf('gam_sixth')
+    expect(stored.label).equals('Left Field')
+    expect(stored.title.endsWith(' — Left Field')).equals(true)
+
+    const empty = await claim('gam_sixth')
+    expect(String(empty.body.url)).equals(url)
+    stored = await cameraOf('gam_sixth')
+    expect(stored.label).equals('Left Field')
+    expect(stored.title.endsWith(' — Left Field')).equals(true)
+  })
+
+  it('refuses a camera name that is too long or contains the angle separator', async function () {
+    if (db == null) this.skip()
+    const tooLong = 'C'.repeat(81)
+    const refused = await claim('gam_seventh', { cameraName: tooLong })
+    expect(refused.status).equals(400)
+    expect(String(refused.body.message)).equals(
+      'A camera name can be at most 80 characters.'
+    )
+    expect(await cameraCount('gam_seventh')).equals(0)
+
+    const made = await claim('gam_seventh', { cameraName: 'Center Field' })
+    expect(made.status).equals(200)
+
+    const stillLong = await claim('gam_seventh', { cameraName: ` ${tooLong} ` })
+    expect(stillLong.status).equals(400)
+    expect(String(stillLong.body.message)).equals(
+      'A camera name can be at most 80 characters.'
+    )
+    let stored = await cameraOf('gam_seventh')
+    expect(stored.label).equals('Center Field')
+    expect(stored.title.endsWith(' — Center Field')).equals(true)
+
+    const split = await claim('gam_seventh', { cameraName: 'Home — Plate' })
+    expect(split.status).equals(400)
+    expect(String(split.body.message)).equals(
+      'A camera name cannot contain " — ".'
+    )
+    stored = await cameraOf('gam_seventh')
+    expect(stored.label).equals('Center Field')
+    expect(stored.title.endsWith(' — Center Field')).equals(true)
+  })
+
+  it('labels a new stream TS Director when the claim sends no name', async function () {
+    if (db == null) this.skip()
+    const first = await claim('gam_eighth', { cameraName: '   ' })
+    expect(first.status).equals(200)
+    let stored = await cameraOf('gam_eighth')
+    expect(stored.label).equals('TS Director')
+    expect(stored.title.endsWith(' — TS Director')).equals(true)
+
+    const again = await claim('gam_eighth')
+    expect(again.status).equals(200)
+    stored = await cameraOf('gam_eighth')
+    expect(stored.label).equals('TS Director')
+    expect(stored.title.endsWith(' — TS Director')).equals(true)
+  })
+
+  it('stores a camera name of exactly 80 characters', async function () {
+    if (db == null) this.skip()
+    const name = 'N'.repeat(80)
+    const made = await claim('gam_ninth', { cameraName: ` ${name} ` })
+    expect(made.status).equals(200)
+    const stored = await cameraOf('gam_ninth')
+    expect(stored.label).equals(name)
+    expect(stored.title.endsWith(` — ${name}`)).equals(true)
+  })
+
+  it('refuses a camera name containing the separator before a stream exists', async function () {
+    if (db == null) this.skip()
+    const refused = await claim('gam_tenth', { cameraName: 'A — B' })
+    expect(refused.status).equals(400)
+    expect(String(refused.body.message)).equals(
+      'A camera name cannot contain " — ".'
+    )
+    expect(await cameraCount('gam_tenth')).equals(0)
+  })
+
+  async function claim(
+    gameId: string,
+    body?: unknown
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${base}/director/events/${gameId}/claim`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${COACH}`,
+        'content-type': 'application/json'
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    })
+    const text = await response.text()
+    return {
+      status: response.status,
+      body: text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
+    }
+  }
+
+  async function cameraOf(
+    gameId: string
+  ): Promise<{ label: string | null; title: string }> {
+    const row = await db
+      ?.selectFrom('live_streams')
+      .innerJoin('videos', 'videos.id', 'live_streams.video_id')
+      .select(['live_streams.label as label', 'videos.title as title'])
+      .where('live_streams.game_id', '=', gameId)
+      .executeTakeFirst()
+    if (row == null) throw new Error(`no camera on ${gameId}`)
+    return { label: row.label, title: row.title }
+  }
+
+  async function cameraCount(gameId: string): Promise<number> {
+    const rows = await db
+      ?.selectFrom('live_streams')
+      .select(['id'])
+      .where('game_id', '=', gameId)
+      .execute()
+    return rows?.length ?? 0
+  }
 })
