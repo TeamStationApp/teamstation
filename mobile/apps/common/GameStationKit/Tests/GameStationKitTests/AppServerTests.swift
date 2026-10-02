@@ -25,7 +25,7 @@ struct AppServerTests {
   @Test("Swift and TypeScript name the same host")
   func theTwoCopiesAgree() throws {
     let source = try String(
-      contentsOf: Self.repositoryRoot.appending(path: "src2/common/primaryUrl.ts"),
+      contentsOf: Self.repositoryRoot.appending(path: "src/common/primaryUrl.ts"),
       encoding: .utf8
     )
     let pattern = #"PRIMARY_HOST = '([^']+)'"#

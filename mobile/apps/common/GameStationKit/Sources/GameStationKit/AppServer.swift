@@ -2,7 +2,7 @@ import Foundation
 
 /// Where the app server is.
 ///
-/// One name, written down once — in `src2/common/primaryUrl.ts` for everything
+/// One name, written down once — in `src/common/primaryUrl.ts` for everything
 /// on the TypeScript side, and here for the apps — and read by everything that
 /// needs it. `AppServerTests` checks the two copies say the same thing, so
 /// they cannot quietly drift apart.
@@ -56,7 +56,7 @@ public enum AppServer {
   /// trailing slash are dropped rather than refused, because this is typed by
   /// hand and `https://develop2.gamestation.co/` is what a person pastes.
   ///
-  /// The twin of `asAuthority` in `src2/common/primaryUrl.ts`.
+  /// The twin of `asAuthority` in `src/common/primaryUrl.ts`.
   static func asHost(_ written: String) -> String {
     var text = written.trimmingCharacters(in: .whitespacesAndNewlines)
     if let range = text.range(of: "^[a-z][a-z0-9+.-]*://", options: [.regularExpression, .caseInsensitive]) {

@@ -17,13 +17,13 @@ const client = process.env.MAESTRO_D_CLIENT_ROOT
 const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
-const { applyFieldCamera } = require('../src2/app/field/cameraModel.ts')
-const { BASES, createPlayers } = require('../src2/app/field/fieldModel.ts')
+const { applyFieldCamera } = require('../src/app/field/cameraModel.ts')
+const { BASES, createPlayers } = require('../src/app/field/fieldModel.ts')
 const defender = Object.fromEntries(
   createPlayers().map(player => [player.id, player.position])
 )
-const { TERRAIN } = require('../src2/app/field/terrain.ts')
-const { runnerTargets } = require('../src2/app/scoring/runnerDrag.ts')
+const { TERRAIN } = require('../src/app/field/terrain.ts')
+const { runnerTargets } = require('../src/app/scoring/runnerDrag.ts')
 const required = key => {
   assert(process.env[key], `${key} is required`)
   return process.env[key]

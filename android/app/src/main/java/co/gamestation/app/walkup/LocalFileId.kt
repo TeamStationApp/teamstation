@@ -8,10 +8,10 @@ import java.util.Locale
  * A local file's walk-up `providerId`: `lf:` and the first 16 hex characters
  * of sha256(normalised title, NUL, normalised artist, NUL, whole seconds).
  *
- * The same function as `src2/app/walkup/localFileId.ts`, normalisation and
+ * The same function as `src/app/walkup/localFileId.ts`, normalisation and
  * all (`normaliseSongText` in `songMatch.ts`), so a song saved on one Android
  * phone is found on another holding the same recording. Both are held to
- * `src2/app/walkup/localFileId.fixtures.json` by `LocalFileIdTest` and
+ * `src/app/walkup/localFileId.fixtures.json` by `LocalFileIdTest` and
  * `localFileId.test.ts`; change one, change the other and the fixtures.
  */
 object LocalFileId {

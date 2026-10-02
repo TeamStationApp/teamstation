@@ -7,15 +7,15 @@
     // its `exports` map, which Node10 resolution ignores, so every
     // `from 'react-native'` was an implicit any. It passed anyway on machines
     // that happened to have an older react-native in the repository root, and
-    // failed on a fresh clone — src2 reaching outside itself again.
+    // failed on a fresh clone — src reaching outside itself again.
     "moduleResolution": "bundler",
     // The app runs in a browser, so it gets the DOM as well as the language
     // library. The server config deliberately does not.
     "lib": ["es2023", "dom", "dom.iterable"]
   },
   "include": [
-    "src2/app/**/*.ts",
-    "src2/app/**/*.tsx",
-    "src2/common/**/*.ts"
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/common/**/*.ts"
   ]
 }

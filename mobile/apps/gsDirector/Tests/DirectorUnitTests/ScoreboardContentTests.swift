@@ -155,7 +155,7 @@ struct ScoreboardContentTests {
   }
 
   @Test func assumesBoardSizeB() {
-    // SCOREBOARD_BOARD_SIZE in src2/common/scoreboard.ts: 1.0's board drawn
+    // SCOREBOARD_BOARD_SIZE in src/common/scoreboard.ts: 1.0's board drawn
     // with the sample in a 1920 × 1080 window, 606.53 × 247, rounded up.
     #expect(ScoreboardOverlaySource.boardSize == CGSize(width: 607, height: 247))
   }

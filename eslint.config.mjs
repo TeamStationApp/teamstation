@@ -22,7 +22,7 @@ export default [
   // on three casts that are load-bearing — `--fix` removed them and broke the
   // build.
   {
-    files: ['src2/app/**/*.ts', 'src2/app/**/*.tsx', 'src2/common/**/*.ts'],
+    files: ['src/app/**/*.ts', 'src/app/**/*.tsx', 'src/common/**/*.ts'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.app.json' }
     }

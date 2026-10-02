@@ -25,7 +25,7 @@ NS_ASSUME_NONNULL_END
 
 /**
  * The `WalkUpMusic` TurboModule on iOS: the codegen spec
- * (`src2/app/walkup/NativeWalkUpMusic.ts`) over `GSWalkUpMusic`, where
+ * (`src/app/walkup/NativeWalkUpMusic.ts`) over `GSWalkUpMusic`, where
  * MusicKit is, since MusicKit is Swift and a TurboModule is Objective-C++.
  * `codegenConfig.ios.modulesProvider` in package.json maps the name to this
  * class.

@@ -1,8 +1,8 @@
 {
-  // The 2.0 tree is `src2/`; this file, the package and the lockfile sit at
+  // The 2.0 tree is `src/`; this file, the package and the lockfile sit at
   // the repository root, which is also exactly how a deploy lays a version
   // out. That matters more than it looks: this config used to live *inside*
-  // `src2` and inherit from a tsconfig one directory above the package, and
+  // `src` and inherit from a tsconfig one directory above the package, and
   // the server deployed that directory alone — so the parent was absent and
   // TypeScript silently fell back to its defaults. `strict` went off with it,
   // and Kysely decides which columns may be omitted from an insert by asking
@@ -11,8 +11,8 @@
   // failed on eighteen files at once, none of which were the problem.
   //
   // The rule that prevents a repeat is now the deploy's, not this file's:
-  // `deploy/deploy.sh` ships the root configuration *with* `src2`, so what is
-  // built on the server is the same tree as here. Nothing in `src2` may reach
+  // `deploy/deploy.sh` ships the root configuration *with* `src`, so what is
+  // built on the server is the same tree as here. Nothing in `src` may reach
   // above the root.
 
   "compilerOptions": {
@@ -22,7 +22,7 @@
     "module": "esnext",
     "moduleResolution": "node",
     "outDir": "lib",
-    "rootDir": "src2",
+    "rootDir": "src",
 
     // Kysely's optional-column inference rests on this one. Turning it off does
     // not loosen a check here, it breaks a type.
@@ -39,6 +39,6 @@
     "noEmit": false,
     "jsx": "react-jsx"
   },
-  "include": ["src2/**/*.ts", "src2/**/*.tsx"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["lib", "node_modules"]
 }

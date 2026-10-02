@@ -5,7 +5,7 @@ import { build } from 'esbuild'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
-const files = globSync('src2/**/*.test.tsx')
+const files = globSync('src/**/*.test.tsx')
 await build({
   ...webSettings,
   stdin: {

@@ -151,7 +151,7 @@ dependencies {
  * regular and the app would lose two of its four weights.
  */
 def gsFontRes = layout.buildDirectory.dir("generated/gsFonts/res")
-def gsFontSource = file("$rootDir/../src2/app/assets/fonts")
+def gsFontSource = file("$rootDir/../src/app/assets/fonts")
 
 tasks.register('gsFonts', Copy) {
     description = 'Copies the shared fonts into a generated resource directory'

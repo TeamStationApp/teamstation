@@ -14,7 +14,7 @@ import org.junit.Test
 class LocalFileIdTest {
   private val fixtures: JSONArray by lazy {
     // Gradle runs unit tests from the module directory, android/app.
-    JSONArray(File("../../src2/app/walkup/localFileId.fixtures.json").readText())
+    JSONArray(File("../../src/app/walkup/localFileId.fixtures.json").readText())
   }
 
   @Test

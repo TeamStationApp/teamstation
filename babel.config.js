@@ -15,7 +15,7 @@ module.exports = {
     // One variable, inlined at build time. Metro does not read the
     // environment on its own — `process.env.ANYTHING` is simply undefined in a
     // bundle — so without this the override documented in
-    // `src2/app/native/config.ts` would be a comment describing something that
+    // `src/app/native/config.ts` would be a comment describing something that
     // cannot happen. Named explicitly rather than inlining the whole
     // environment, which would bake whatever is in the shell into the app.
     [

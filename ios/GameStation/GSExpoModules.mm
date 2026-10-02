@@ -2,7 +2,7 @@
 // each new JavaScript runtime.
 //
 // The `expo` package does this from `EXReactNativeFactory`, its subclass of
-// `RCTReactNativeFactory`. That package is not installed (src2/MOBILE.md says
+// `RCTReactNativeFactory`. That package is not installed (src/MOBILE.md says
 // why), so the same callback is added to the factory the app already uses.
 // `RCTReactNativeFactory` is the `RCTHost`'s delegate and does not implement
 // `host:didInitializeRuntime:` itself, so this category overrides nothing.

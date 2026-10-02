@@ -1,0 +1,7 @@
+{
+  "name": "expo",
+  "version": "58.0.0",
+  "private": true,
+  "description": "Stands in for the expo package, which expo-gl names as a peer: its import of expo-modules-core, the autolinking entry Expo's Podfile and Gradle tooling require, and the expo-asset and expo-file-system that @react-three/fiber/native imports. See src/MOBILE.md.",
+  "main": "index.js"
+}
