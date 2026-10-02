@@ -1,6 +1,7 @@
-import { asArray, asNumber, asObject, asOptional, asValue } from 'cleaners'
+import { asArray, asNumber, asObject, asOptional } from 'cleaners'
 
 import { asDirectorEvent } from './api'
+import { asLiteral } from './asLiteral'
 import { asDashboardOverrides, asScoreboardState } from './scoreboard'
 
 /**
@@ -37,5 +38,5 @@ export type ScoreboardDashboard = ReturnType<typeof asScoreboardDashboard>
 /** The same, as the dashboard socket sends it on open and on every change. */
 export const asScoreboardDashboardMessage = asObject({
   ...asScoreboardDashboard.shape,
-  type: asValue('state' as const)
+  type: asLiteral('state')
 })

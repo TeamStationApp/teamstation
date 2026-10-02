@@ -1,7 +1,8 @@
-import { asBoolean, asObject, asOptional, asString, asValue } from 'cleaners'
+import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
+import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { asRoleFlags, type RoleFlag } from '../../common/roles'
@@ -48,7 +49,7 @@ import { inviteUrl } from './invites'
  * nothing.
  */
 
-const asScopeType = asValue('league', 'season', 'team')
+const asScopeType = asLiteral('league', 'season', 'team')
 
 const asPersonByEmail = asObject({
   email: asString,
@@ -57,7 +58,7 @@ const asPersonByEmail = asObject({
 })
 
 const asRoleChange = asObject({
-  role: asValue('admin', 'member')
+  role: asLiteral('admin', 'member')
 })
 
 const asRolesChange = asObject({

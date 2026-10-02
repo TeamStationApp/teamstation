@@ -1,5 +1,6 @@
-import { asArray, asObject, asUnknown, asValue, type Cleaner } from 'cleaners'
+import { asArray, asObject, asUnknown, type Cleaner } from 'cleaners'
 
+import { asLiteral } from '../asLiteral'
 import { eventTypeName } from '../gumboEventTypes'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import { cleanAction, type Problem, type ScoringAction } from './actions'
@@ -50,7 +51,7 @@ export interface TeamStationRecord {
 }
 
 const asRecord: Cleaner<TeamStationRecord> = asObject({
-  version: asValue(1),
+  version: asLiteral(1),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   detail: asUnknown

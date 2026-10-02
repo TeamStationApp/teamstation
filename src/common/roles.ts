@@ -1,4 +1,6 @@
-import { asArray, asValue, type Cleaner } from 'cleaners'
+import { asArray, type Cleaner } from 'cleaners'
+
+import { asLiteral } from './asLiteral'
 
 /**
  * What somebody may do on a league, a season or a team, besides watch.
@@ -27,8 +29,8 @@ export type Role = 'admin' | RoleFlag
 /** Every role, administrator first, in the order the app lists them. */
 export const ROLES: readonly Role[] = ['admin', ...ROLE_FLAGS]
 
-export const asRoleFlag: Cleaner<RoleFlag> = asValue(...ROLE_FLAGS)
-export const asRole: Cleaner<Role> = asValue('admin', ...ROLE_FLAGS)
+export const asRoleFlag: Cleaner<RoleFlag> = asLiteral(...ROLE_FLAGS)
+export const asRole: Cleaner<Role> = asLiteral('admin', ...ROLE_FLAGS)
 
 /**
  * A list of flags, each once, in `ROLE_FLAGS` order.

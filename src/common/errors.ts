@@ -1,11 +1,6 @@
-import {
-  asObject,
-  asOptional,
-  asString,
-  asUnknown,
-  asValue,
-  uncleaner
-} from 'cleaners'
+import { asObject, asOptional, asString, asUnknown, uncleaner } from 'cleaners'
+
+import { asLiteral } from './asLiteral'
 
 /**
  * Every failure this API returns uses one shape, so a client never has to
@@ -13,7 +8,7 @@ import {
  * and is safe to show. `details` carries field-level problems when a cleaner
  * rejects a request body, and is absent otherwise.
  */
-export const asErrorCode = asValue(
+export const asErrorCode = asLiteral(
   /**
    * The request never left the device. Not a server answer at all — no server
    * can send this — but it travels as one so a caller has a single shape to
