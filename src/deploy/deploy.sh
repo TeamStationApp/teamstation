@@ -96,10 +96,20 @@ if [ "${1:-}" = "--rollback" ]; then
   exit 0
 fi
 
+# The droplet's mirror of GitHub. Every clone on the box fetches from it, and it
+# is refreshed here first so a deploy always builds the branch as GitHub has it. See
+# src/deploy/README.md, "Where the code comes from".
+refresh_mirror() {
+  HOME=/root git -C /srv/teamstation.git fetch --prune --quiet origin ||
+    die "could not refresh /srv/teamstation.git from GitHub (deploy key, network?)"
+  chown -R teamstation:teamstation /srv/teamstation.git
+}
+
 # ---- 1. Fetch ----------------------------------------------------------------
 
 say "Fetching $BRANCH"
 [ -d "$REPO/.git" ] || die "no clone at $REPO — see src/deploy/README.md"
+refresh_mirror
 git -C "$REPO" fetch --prune --quiet origin
 REF="${1:-origin/$BRANCH}"
 git -C "$REPO" reset --hard --quiet "$REF"
