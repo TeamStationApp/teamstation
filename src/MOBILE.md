@@ -238,6 +238,42 @@ WDA on the iPhone can report the phone as landscape while it is upright; a
 point tap then lands at the transposed position. Tap by text wherever you
 can.
 
+## The chat crypto bench build
+
+Chat's crypto (`src/common/chatCrypto/`) is one set of constructions on a
+`primitives` twin: `primitives.ts` is `@noble` (web, server, Node) and
+`primitives.native.ts` is `react-native-quick-crypto` (OpenSSL over JSI, with
+`react-native-nitro-modules` and `react-native-quick-base64`), because Hermes
+has no JIT and ran the pure-JS ciphers at 0.9 MB/s. XChaCha20-Poly1305 there
+is an HChaCha20 subkey (`@noble/ciphers`' `hchacha`) plus the native IETF
+ChaCha20-Poly1305. `react-native-libsodium` was tried first and does not
+compile on 0.87 (it installs through the removed `RCTCxxBridge`). Hermes has
+no `crypto.getRandomValues` of its own either, so `index.js` imports
+`react-native-get-random-values` before anything else.
+
+`/dev/chat-bench` (`src/app/dev/ChatBenchScreen.tsx`) first runs every frozen
+vector (`chatCrypto/vectors.ts`) through the phone's primitives and shows
+`vectors ok`, then times them: 20 MiB sealed and opened through `stream.ts`,
+and 1,000 HPKE wraps. The route
+exists only in a build made with `TS_CHAT_BENCH=1`
+(`src/app/dev/chatBench.native.ts`; the web twin is always off). It is drawn
+before the session check and needs no server, so build it with no
+`TS_API_BASE_URL`:
+
+```sh
+cd ios
+TS_CHAT_BENCH=1 xcodebuild -workspace TeamStation.xcworkspace -scheme TeamStation \
+  -configuration Release -sdk iphonesimulator -destination 'id=<udid>' -derivedDataPath build-sim
+xcrun simctl install <udid> build-sim/Build/Products/Release-iphonesimulator/TeamStation.app
+```
+
+then run `src/app/dev/chatBenchPhones.e2e.ts` (maestro-d; start its daemon
+from `$HOME` with `MAESTRO_RUNNER_HOME=$HOME/.maestro-d`, or it looks for
+WebDriverAgent under the working directory) and compare with
+`node scripts/chatCryptoBench.mjs`. Like `TS_API_BASE_URL`, the variable is an
+input of Gradle's bundle task, and `metro.config.js` keys Metro's cache on
+both, so a transform made for the bench is never reused by another build.
+
 ## Walk-up music: the app's own TurboModule
 
 `WalkUpMusic` is the one native module the app writes itself. Its spec is

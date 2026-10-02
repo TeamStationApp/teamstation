@@ -26,6 +26,7 @@ import {
 } from './components'
 import { errorScreen } from './components/ErrorFallback'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
+import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { lstrings, sprintf } from './locales/strings'
@@ -431,7 +432,10 @@ function Shell(props: AppProps): React.ReactElement {
       .catch(() => undefined)
   }
 
-  const needsSession = props.fieldPreview !== true
+  // The chat crypto bench, in a phone build made for it, needs no account and
+  // no server, so it never asks who is signed in.
+  const benching = route.name === 'chatBench'
+  const needsSession = props.fieldPreview !== true && !benching
 
   /**
    * The roles the signed-in person holds, refreshed after permission changes.
@@ -1108,6 +1112,16 @@ function Shell(props: AppProps): React.ReactElement {
             showRoute(destination)
           }}
         />
+      </View>
+    )
+  }
+
+  // Before the session check, as the field preview is: the bench build is
+  // never signed in to anything.
+  if (benching && ChatBench != null) {
+    return (
+      <View style={styles.app}>
+        <ChatBench />
       </View>
     )
   }

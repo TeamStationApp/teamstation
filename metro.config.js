@@ -45,7 +45,8 @@ const config = {
   cacheVersion: JSON.stringify([
     process.env.TS_API_BASE_URL ?? 'production',
     appOrigin(),
-    process.env.TS_CREATION_NATIVE_LOCATION_FAILURE ?? 'provider'
+    process.env.TS_CREATION_NATIVE_LOCATION_FAILURE ?? 'provider',
+    process.env.TS_CHAT_BENCH ?? ''
   ]),
   resolver: {
     resolveRequest: (context, moduleName, platform) => {

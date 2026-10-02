@@ -84,6 +84,7 @@ tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
     inputs.property("TS_API_BASE_URL", providers.environmentVariable("TS_API_BASE_URL").orElse(""))
     inputs.property("TS_SENTRY_DSN", providers.environmentVariable("TS_SENTRY_DSN").orElse(""))
     inputs.property("TS_BUILD_INFO", providers.environmentVariable("TS_BUILD_INFO").orElse(""))
+    inputs.property("TS_CHAT_BENCH", providers.environmentVariable("TS_CHAT_BENCH").orElse(""))
 }
 
 /**
