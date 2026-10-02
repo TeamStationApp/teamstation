@@ -1,0 +1,16 @@
+appId: app.teamstation.preview
+---
+- launchApp:
+    clearState: true
+    arguments:
+      uiTest: true
+      syntheticCameras: "00D9D 3rd,00D9D 1st,00D9D mound"
+- runFlow: shared/allow-local-network.yaml
+- setOrientation: LANDSCAPE_LEFT
+- assertVisible:
+    id: preview-tile-1
+- swipe:
+    direction: UP
+    duration: 400
+- assertVisible:
+    id: "preview-tile-.*"

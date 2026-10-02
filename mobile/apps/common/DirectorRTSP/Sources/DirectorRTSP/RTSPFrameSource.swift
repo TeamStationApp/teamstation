@@ -114,7 +114,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// What this camera is actually sending, measured from its own RTP timestamps. Nothing in RTSP
   /// states it, and replay pacing depends on it.
   private var frameRateEstimator = FrameRateEstimator()
-  /// The rate the camera says it is set to. It outranks the measurement: a GS Cameraman states its
+  /// The rate the camera says it is set to. It outranks the measurement: a TS Cameraman states its
   /// frame rate over its control channel, and a stated rate is exact from the first picture, where a
   /// measurement needs a window of pictures and can be thrown by a stall.
   private var announcedFrameRate: Double?
@@ -184,7 +184,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     playout = PlayoutController(
       seedMilliseconds: coordinator?.seedMilliseconds(for: sourceID) ?? Self.defaultSeedMilliseconds
     )
-    queue = DispatchQueue(label: "co.gamestation.director.rtsp-source.\(sourceID.slug)")
+    queue = DispatchQueue(label: "app.teamstation.director.rtsp-source.\(sourceID.slug)")
   }
 
   /// What a camera nobody has measured yet starts at. From the three VM33s on the bench, whose

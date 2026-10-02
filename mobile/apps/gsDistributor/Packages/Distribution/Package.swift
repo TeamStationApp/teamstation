@@ -14,7 +14,7 @@ let package = Package(
     .package(path: "../../../common/DirectorExport"),
     .package(path: "../../../common/DistributorWire"),
     // Tests only: the Mac's stitch is checked against a real server and the iPad's own export.
-    .package(path: "../../../gsDirector/Packages/DirectorLink")
+    .package(path: "../../../tsDirector/Packages/DirectorLink")
   ],
   targets: [
     .target(

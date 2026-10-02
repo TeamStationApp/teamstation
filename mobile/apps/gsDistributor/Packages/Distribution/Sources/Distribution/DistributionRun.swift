@@ -11,7 +11,7 @@ import Observation
 /// file, all on the same game.
 ///
 /// The sending itself is handed in rather than done here: it is
-/// `UploadService` in `GameStationKit`, which GS Director uses for exactly the
+/// `UploadService` in `TeamStationKit`, which GS Director uses for exactly the
 /// same job. One implementation of "send a recording in parts, ask what landed,
 /// carry on where it stopped" — two apps calling it — because two of them
 /// would drift, and the half that drifted would be the resume.

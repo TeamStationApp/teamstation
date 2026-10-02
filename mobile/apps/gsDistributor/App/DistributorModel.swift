@@ -3,7 +3,7 @@ import DirectorCore
 import Distribution
 import DistributorWire
 import Foundation
-import GameStationKit
+import TeamStationKit
 import MacState
 import Observation
 import UsbMux
@@ -83,12 +83,12 @@ final class DistributorModel {
   /// in, listing the games an account runs, and holding the token — under this
   /// app's own keychain service, because the Mac and the iPad are two devices
   /// and each holds its own session.
-  let gameStation: GameStationAccount
+  let gameStation: TeamStationAccount
 
   init(state: MacState = MacState()) {
     self.state = state
     self.settings = state.settings()
-    self.gameStation = GameStationAccount(
+    self.gameStation = TeamStationAccount(
       serverURL: AppServer.url,
       deviceName: Host.current().localizedName ?? "Mac",
       keychain: KeychainStore(service: "\(MacState.keychainPrefix).gameStation")

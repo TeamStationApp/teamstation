@@ -3,9 +3,9 @@ import Network
 import Darwin
 import DirectorSources
 
-/// Live snapshot of `_rtsp._tcp` instances — GS Cameraman, and any other phone that advertises RTSP.
+/// Live snapshot of `_rtsp._tcp` instances — TS Cameraman, and any other phone that advertises RTSP.
 ///
-/// The SRV port is the media port (8554 on every GS Cameraman). Identity is TXT `uuid`.
+/// The SRV port is the media port (8554 on every TS Cameraman). Identity is TXT `uuid`.
 /// Resolving uses a TCP connection to the Bonjour endpoint rather than a raw IP: iOS will not
 /// accept unsolicited LAN TCP the way a NearStream box does, which is why a subnet scan finds the
 /// VM33s and misses the iPhone.

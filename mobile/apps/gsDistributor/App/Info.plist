@@ -7,7 +7,7 @@
     the source. A host with no scheme; empty — which is every build that does
     not say otherwise — means `AppServer.defaultHost`.
 
-        GS_PRIMARY_HOST=develop.gamestation.co scripts/build.sh
+        TS_PRIMARY_HOST=develop.gamestation.co scripts/build.sh
 
     From the environment rather than from a tracked file, so a development build
     is not one stray commit away from shipping its address to everybody. The
@@ -18,7 +18,7 @@
     Everything else in this app's Info.plist is still generated from the build
     settings; this file only adds what they cannot express.
   -->
-  <key>GSPrimaryHost</key>
-  <string>$(GS_PRIMARY_HOST)</string>
+  <key>TSPrimaryHost</key>
+  <string>$(TS_PRIMARY_HOST)</string>
 </dict>
 </plist>

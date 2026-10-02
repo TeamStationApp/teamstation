@@ -10,13 +10,13 @@ import DirectorSources
 /// rather than a discovery bug.
 public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   public struct Configuration: Sendable {
-    /// GS Cameraman's RTSP port on iOS and Android alike. Android will not let an app bind below
+    /// TS Cameraman's RTSP port on iOS and Android alike. Android will not let an app bind below
     /// 1024, so the phones share 8554 rather than NearStream's 554.
     public static let cameramanPort = 8554
 
     public var port: Int
     /// Every port the sweep asks each address about: the configured port (NearStream's 554) and
-    /// GS Cameraman's.
+    /// TS Cameraman's.
     public var sweepPorts: [Int]
     public var path: String
     /// Hosts entered by the operator or passed by a launch argument. A first-class input, not a
@@ -124,7 +124,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     }
   }
 
-  /// What a socket said about itself at the sweep's `DESCRIBE`, kept only when its CNAME is a GS
+  /// What a socket said about itself at the sweep's `DESCRIBE`, kept only when its CNAME is a TS
   /// Cameraman UUID. A VM33 sends its firmware string as its CNAME, the same on every unit, so taking
   /// that on every sweep would put one VM33's name on another; theirs stays with their TXT identity.
   public static func sweepClaim(from description: SDPDescription) -> StreamAdvertisement {
@@ -275,13 +275,13 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
 
     // Manual hosts and Bonjour-resolved cameras are merged in before confirmation so they go
     // through the same check as scanned ones — a mistyped address should not become a permanently
-    // broken tile. GS Cameraman is found on `_rtsp._tcp` TXT (`ip=`, `port=`, `uuid`), not the
+    // broken tile. TS Cameraman is found on `_rtsp._tcp` TXT (`ip=`, `port=`, `uuid`), not the
     // subnet scan: iOS does not answer unsolicited TCP to :554 the way a NearStream box does.
     let rawAds = advertisementBrowser.advertisements
     var seen = Set<CameraEndpoint>()
     var candidates: [CameraEndpoint] = []
     for host in scan?.openHosts ?? [] {
-      // Every port that answered is its own candidate: NearStream on 554, GS Cameraman on 8554.
+      // Every port that answered is its own candidate: NearStream on 554, TS Cameraman on 8554.
       let answered = scan?.portsByHost[host].map { $0.sorted() } ?? []
       for port in answered.isEmpty ? [ configuration.port ] : answered {
         let endpoint = CameraEndpoint(host: host, port: port, path: configuration.path)
@@ -317,7 +317,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
         if !claim.isEmpty { claims[endpoint] = claim }
         continue
       }
-      // GS Cameraman often fails a 2–5s DESCRIBE probe from another iOS device even when Bonjour
+      // TS Cameraman often fails a 2–5s DESCRIBE probe from another iOS device even when Bonjour
       // published a LAN IPv4. Listing it from the advertisement is how the operator can enable it;
       // the session then has peer-to-peer TCP and does not abort on `.waiting`.
       if rawAds.contains(where: { $0.endpoint == endpoint && $0.uuid != nil && $0.hasUsableMediaHost }) {

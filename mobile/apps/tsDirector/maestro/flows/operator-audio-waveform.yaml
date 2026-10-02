@@ -1,0 +1,54 @@
+# A17/F5: each camera row has a tappable native-audio oscilloscope and a 0–100% input fader.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 2
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+
+- tapOn:
+    id: 'source-toggle-1'
+
+- assertVisible:
+    id: 'source-waveform-1'
+- tapOn:
+    id: 'source-waveform-1'
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-waveform-detail'
+    timeout: 5000
+- assertVisible: 'input volume'
+- assertVisible:
+    id: 'source-gain-value'
+- assertVisible:
+    id: 'source-gain-slider'
+- assertVisible:
+    id: 'source-gain-reset'
+
+- swipe:
+    from:
+      id: 'source-gain-slider'
+    direction: UP
+
+- tapOn:
+    id: 'source-gain-reset'
+- assertVisible:
+    id: 'source-gain-value'
+    text: '50%'
+
+- tapOn:
+    id: 'source-waveform-close'
+- assertVisible:
+    id: 'source-waveform-1'

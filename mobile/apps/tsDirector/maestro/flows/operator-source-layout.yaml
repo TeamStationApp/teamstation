@@ -1,0 +1,78 @@
+# B12/B13/B14: source tiles are labelled "source N: name"; long-press order is by source
+# number, Output can be parked in any corner, and both survive a relaunch. The drag paths are
+# unit-tested geometry; this flow checks the nameplate and that the same store the gestures
+# write is restored.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 3
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible: 'source=3 state=live.*'
+    timeout: 15000
+
+- assertVisible: '1: CAM1'
+- assertVisible: '2: CAM2'
+- assertVisible: '3: CAM3'
+# B12: the on-air tile is marked by its green outline alone. Anchored, so the Output tile's own
+# "Output" label cannot satisfy this by accident.
+- assertNotVisible: '^OUT$'
+- assertVisible: 'order=1,2,3,4,5'
+
+- openLink: 'tsdirector://test/source-layout?order=5,1,2,3,4'
+- extendedWaitUntil:
+    visible: 'order=5,1,2,3,4'
+    timeout: 8000
+- assertVisible: '1: CAM1'
+- assertVisible: '5: —'
+- assertVisible: 'corner=topLeading'
+
+# B14: Output parks bottom-right; the order set above is kept.
+- openLink: 'tsdirector://test/source-layout?order=5,1,2,3,4&corner=bottomTrailing'
+- extendedWaitUntil:
+    visible: 'corner=bottomTrailing'
+    timeout: 8000
+- assertVisible: 'order=5,1,2,3,4'
+
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: false
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+- tapOn:
+    id: 'start-directing'
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: 'output'
+    timeout: 20000
+- assertVisible: 'order=5,1,2,3,4'
+- assertVisible: 'corner=bottomTrailing'
+- assertVisible: '1: CAM1'
+- assertVisible: 'output src=CAM3 .*'

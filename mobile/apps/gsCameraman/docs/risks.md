@@ -130,7 +130,7 @@ No sustained-stream run has been done yet, so nothing is known about how long th
 before throttling, or what 4K30 costs. One data point from the 2026-09-09 link bring-up: a handset
 capturing 1080p60 for HDMI with **no** client playing — so no compression at all — still sat at
 `system.thermal: serious` on a warm bench, charging through the adapter. Capture and the display
-path alone are not free. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
+path alone are not free. Unlike the iPad in `../tsDirector/docs/risks.md`, this handset
 is not sitting on a Peltier cooler.
 
 ### Mirroring when clean HDMI is off — verified on a cable, 2026-09-09

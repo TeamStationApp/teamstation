@@ -1,5 +1,5 @@
 import AppKit
-import GameStationKit
+import TeamStationKit
 import SwiftUI
 
 /// Signing this Mac in to GameStation.

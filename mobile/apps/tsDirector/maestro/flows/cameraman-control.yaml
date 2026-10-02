@@ -1,0 +1,161 @@
+# G10: controlling a TS Cameraman from its tile.
+#
+# Runs against a real phone running TS Cameraman on the same LAN (the default), or against the
+# Node fake with `-e CAMERA_NAME="Phone 1"` after starting
+# `node scripts/fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman`.
+#
+# Every assertion after a tap reads the camera's own answer back through the control screen's
+# poll (dump-state `cameraControl`), so a control that drew the right thing without reaching the
+# phone fails here.
+# The zoom rail is built from the camera's own mapping, so its stops differ per handset: a 13 Pro
+# offers 3x, a 17 Pro does not. 0.5x is the ultra-wide stop every multi-lens back camera here has;
+# override both together for a camera without one.
+appId: app.teamstation.director
+env:
+  CAMERA_NAME: iPhone17
+  ZOOM_PRESET: 0.5x
+  ZOOM_VALUE: "0.5"
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: rtsp
+
+- runFlow: shared/allow-local-network.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 60000
+- runFlow: shared/settle-source-list.yaml
+- extendedWaitUntil:
+    visible: '${CAMERA_NAME}'
+    timeout: 60000
+
+# Which row the camera landed on depends on what else is answering RTSP here, and a camera that
+# has moved address leaves a stale row with the same name, so ask the app for the row that has an
+# endpoint and advertises the control verbs rather than assuming row 1.
+- runScript:
+    file: ../../scripts/findCameraRow.js
+    env:
+      CAMERA_NAME: ${CAMERA_NAME}
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-1'
+    timeout: 30000
+- extendedWaitUntil:
+    visible: 'source=1 .*state=live.*'
+    timeout: 60000
+
+# The tile carries the phone's own pills and the three-dot button.
+- extendedWaitUntil:
+    visible:
+      id: 'source-1-camera-menu'
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: 'source-1-camera-battery'
+    timeout: 20000
+- assertVisible:
+    id: 'source-1-camera-thermal'
+
+# Tapping the dots opens the phone's own screen over the live grid.
+- tapOn:
+    id: 'source-1-camera-menu'
+- extendedWaitUntil:
+    visible:
+      id: 'camera-screen'
+    timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: 'zoom-preset-${ZOOM_PRESET}'
+    timeout: 15000
+- assertVisible:
+    id: 'zoom-label'
+- assertVisible:
+    id: 'camera-thermal'
+- assertVisible:
+    id: 'camera-battery'
+- assertVisible:
+    id: 'camera-close'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_RESPONDING: 'true'
+
+# A zoom preset reaches the camera, and the camera's own answer comes back at that stop.
+- tapOn:
+    id: 'zoom-preset-${ZOOM_PRESET}'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_ZOOM: ${ZOOM_VALUE}
+
+# Flip: the camera reports the front position, and the rail redraws for the front lens set.
+- tapOn:
+    id: 'flip-button'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_POSITION: 'front'
+- tapOn:
+    id: 'flip-button'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_POSITION: 'back'
+
+# Settings on Done reach the camera as one change. Restored to HEVC afterwards so a real phone is
+# left as it was found.
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-codec'
+    timeout: 8000
+- tapOn:
+    id: 'settings-codec'
+- tapOn: 'H.264'
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: 'settings-done'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_CODEC: 'H264'
+
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-codec'
+    timeout: 8000
+- tapOn:
+    id: 'settings-codec'
+- tapOn: 'HEVC'
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: 'settings-done'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_CODEC: 'H265'
+
+- tapOn:
+    id: 'camera-close'
+- extendedWaitUntil:
+    visible:
+      id: 'source-1-camera-menu'
+    timeout: 8000
+- assertNotVisible:
+    id: 'camera-screen'

@@ -1,4 +1,4 @@
-# GameStation's native apps
+# TeamStation's native apps
 
 Each app has its own README, build scripts and tests:
 
@@ -6,12 +6,12 @@ Each app has its own README, build scripts and tests:
 mobile/
   apps/
     common/               Swift packages shared by the apps
-    gsCameraman/          GS Cameraman, iPhone
-    gsCameramanAndroid/   GS Cameraman, Android
-    gsDirector/           GS Director, iPad
-    gsDistributor/        GS Distributor, Mac
-    gsNdiProbe/           an NDI receive probe
-    gsPreview/            GS Preview
+    tsCameraman/          TS Cameraman, iPhone
+    tsCameramanAndroid/   TS Cameraman, Android
+    tsDirector/           TS Director, iPad
+    tsDistributor/        TS Distributor, Mac
+    tsNdiProbe/           an NDI receive probe
+    tsPreview/            TS Preview
   icons/                  the app icons' sources and their generator
   test/                   the maestro-d client the apps' e2e tests share
   tools/                  bench tools

@@ -13,7 +13,7 @@ let package = Package(
     .package(path: "../../../common/DirectorExport"),
     .package(path: "../../../common/DistributorWire"),
     // Tests only: the client is exercised against the server GS Director actually runs.
-    .package(path: "../../../gsDirector/Packages/DirectorLink"),
+    .package(path: "../../../tsDirector/Packages/DirectorLink"),
   ],
   targets: [
     .target(

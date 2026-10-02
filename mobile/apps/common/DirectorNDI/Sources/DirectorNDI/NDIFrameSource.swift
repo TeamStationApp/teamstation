@@ -158,7 +158,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private var failedAttempts = 0
   /// Silence measured across reconnects; see `SilenceClock`.
   private var silence = SilenceClock()
-  private let supervisionQueue = DispatchQueue(label: "co.gamestation.director.ndi.supervise")
+  private let supervisionQueue = DispatchQueue(label: "app.teamstation.director.ndi.supervise")
   private var sinks = FrameSinks()
 
   /// Nothing is encoded until the router says an archive is reading. Four idle preview tiles
@@ -240,7 +240,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       seedMilliseconds: coordinator?.seedMilliseconds(for: sourceID) ?? Self.defaultSeedMilliseconds
     )
     self.playoutQueue = DispatchQueue(
-      label: "co.gamestation.director.ndi.playout.\(sourceID.slug)",
+      label: "app.teamstation.director.ndi.playout.\(sourceID.slug)",
       qos: .userInitiated
     )
     self.sourceID = sourceID
@@ -253,7 +253,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     self.clock = clock
     self.receiveClock = NDIReceiveClock(clock: clock)
     self.encodeQueue = DispatchQueue(
-      label: "co.gamestation.director.ndi.encode.\(sourceID.slug)",
+      label: "app.teamstation.director.ndi.encode.\(sourceID.slug)",
       qos: .userInitiated
     )
   }
@@ -351,7 +351,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private func openReceiver() throws {
     let created: NDIlib_recv_instance_t? = ndiName.withCString { name in
       ndiURL.withCString { address in
-      "GS Director".withCString { receiverName in
+      "TS Director".withCString { receiverName in
         var source = NDIlib_source_t()
         source.p_ndi_name = name
         source.p_url_address = ndiURL.isEmpty ? nil : address
@@ -399,8 +399,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // working out why a camera has three connections.
     var product = NDIlib_metadata_frame_t()
     let identity = """
-      <ndi_product long_name="GS Director" short_name="GS Director" \
-      manufacturer="GameStation" model_name="Director" />
+      <ndi_product long_name="TS Director" short_name="TS Director" \
+      manufacturer="TeamStation" model_name="Director" />
       """
     identity.withCString { pointer in
       product.p_data = UnsafeMutablePointer(mutating: pointer)
@@ -420,14 +420,14 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       defer { group.leave() }
       self?.receiveVideo()
     }
-    video.name = "co.gamestation.director.ndi.video.\(sourceID.slug)"
+    video.name = "app.teamstation.director.ndi.video.\(sourceID.slug)"
     video.qualityOfService = .userInitiated
 
     let audio = Thread { [weak self] in
       defer { group.leave() }
       self?.receiveAudio()
     }
-    audio.name = "co.gamestation.director.ndi.audio.\(sourceID.slug)"
+    audio.name = "app.teamstation.director.ndi.audio.\(sourceID.slug)"
     audio.qualityOfService = .userInitiated
 
     captureThreads.enter()

@@ -1,7 +1,7 @@
 import DirectorCore
 import Distribution
 import DistributorWire
-import GameStationKit
+import TeamStationKit
 import SwiftUI
 
 /// Before an export that uploads: which game it belongs to and which files go

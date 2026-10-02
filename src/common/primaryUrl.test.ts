@@ -29,7 +29,7 @@ describe('the primary address', function () {
     const swift = readFileSync(
       path.join(
         __dirname,
-        '../../mobile/apps/common/GameStationKit/Sources/GameStationKit/AppServer.swift'
+        '../../mobile/apps/common/TeamStationKit/Sources/TeamStationKit/AppServer.swift'
       ),
       'utf8'
     )

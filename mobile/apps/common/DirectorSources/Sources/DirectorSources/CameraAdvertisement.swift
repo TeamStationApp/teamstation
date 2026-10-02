@@ -3,7 +3,7 @@ import Foundation
 /// What a camera published about itself on Bonjour.
 ///
 /// NearStream (`_awx_service._tcp`) uses TXT `modelname` / `wlanmac` for identity; its SRV port is
-/// closed and media stays RTSP `:554`. GS Cameraman (`_rtsp._tcp`) puts the UUID in TXT `uuid` and
+/// closed and media stays RTSP `:554`. TS Cameraman (`_rtsp._tcp`) puts the UUID in TXT `uuid` and
 /// the media port, 8554 on iPhone and Android alike, in the SRV record.
 public struct CameraAdvertisement: Hashable, Sendable {
   public var host: String
@@ -11,13 +11,13 @@ public struct CameraAdvertisement: Hashable, Sendable {
   public var modelName: String?
   public var wlanMAC: String?
   public var isBusy: Bool
-  /// Media port. 554 for NearStream; the `_rtsp._tcp` SRV port for GS Cameraman.
+  /// Media port. 554 for NearStream; the `_rtsp._tcp` SRV port for TS Cameraman.
   public var port: Int
-  /// RTSP path. NearStream and GS Cameraman both use `/live/mainstream` unless TXT `path` says otherwise.
+  /// RTSP path. NearStream and TS Cameraman both use `/live/mainstream` unless TXT `path` says otherwise.
   public var path: String
-  /// GS Cameraman TXT `uuid` — the same string as the SDP/RTCP CNAME.
+  /// TS Cameraman TXT `uuid` — the same string as the SDP/RTCP CNAME.
   public var uuid: String?
-  /// GS Cameraman TXT `control`: `params/1` when the phone answers RTSP `GET_PARAMETER` /
+  /// TS Cameraman TXT `control`: `params/1` when the phone answers RTSP `GET_PARAMETER` /
   /// `SET_PARAMETER` with the camera vocabulary. Absent on older builds and on NearStream.
   public var controlVersion: String?
 
@@ -46,7 +46,7 @@ public struct CameraAdvertisement: Hashable, Sendable {
   /// The version this client speaks. A camera advertising anything else gets no control screen.
   public static let supportedControlVersion = "params/1"
 
-  /// A GS Cameraman whose parameters this client can drive: it has a UUID and speaks our version.
+  /// A TS Cameraman whose parameters this client can drive: it has a UUID and speaks our version.
   public var isControllable: Bool {
     uuid != nil && controlVersion == Self.supportedControlVersion
   }

@@ -76,7 +76,7 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
     self.clock = clock
     self.palette = Self.palettes[paletteIndex % Self.palettes.count]
     self.queue = DispatchQueue(
-      label: "co.gamestation.director.synthetic.\(sourceID.slug)",
+      label: "app.teamstation.director.synthetic.\(sourceID.slug)",
       qos: .userInitiated
     )
   }

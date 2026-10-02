@@ -1,0 +1,14 @@
+# Completes the slide-to-stop popup after STREAMING or RECORDING was tapped.
+# Device is passed to the runner, not named here.
+# Direction-from-id only flicks the track center and never reaches 80% travel. The track sits
+# under STREAM/RECORD in the upper right; start on the knob and drag through the trailing end.
+appId: app.teamstation.director
+---
+- extendedWaitUntil:
+    visible:
+      id: 'slide-to-stop-track'
+    timeout: 8000
+- swipe:
+    start: '79%, 12%'
+    end: '96%, 12%'
+    duration: 1200

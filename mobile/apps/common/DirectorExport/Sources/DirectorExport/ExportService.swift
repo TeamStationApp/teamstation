@@ -30,7 +30,7 @@ public struct ExportService: Sendable {
   private let fallbackEncoding: @Sendable () -> TakeEncoding
 
   /// `fallbackEncoding` is asked, at the time of each export, for the encoding of a take that has
-  /// none of its own: GS Director answers with its settings as they are then, GS Distributor with the
+  /// none of its own: TS Director answers with its settings as they are then, TS Distributor with the
   /// defaults.
   public init(
     index: ArchiveIndex,

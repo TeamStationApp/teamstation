@@ -18,7 +18,7 @@ PACKAGES=(
   "$APPS/common/DistributorWire"
   "$APPS/common/LoopbackHTTP"
   "$APPS/common/DirectorExport"
-  "$APPS/gsDirector/Packages/DirectorLink"
+  "$APPS/tsDirector/Packages/DirectorLink"
 )
 
 FAILED=()

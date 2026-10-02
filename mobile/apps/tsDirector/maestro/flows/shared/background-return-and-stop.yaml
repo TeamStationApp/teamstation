@@ -1,0 +1,17 @@
+# Returns to a Director that was backgrounded while recording. stopApp: false is load-bearing:
+# a relaunch would kill the keep-alive session this flow exists to check.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    stopApp: false
+- extendedWaitUntil:
+    visible: 'rec=1'
+    timeout: 15000
+- tapOn:
+    id: 'record-button'
+- runFlow: slide-to-stop.yaml
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 60000
+- takeScreenshot: background-record-stopped

@@ -1,0 +1,16 @@
+# Spends one touch on something inert before the flow taps a control that matters.
+#
+# The source rows appear as discovery merges each camera in, and `extendedWaitUntil` is satisfied by
+# the row's accessibility element existing — which happens before SwiftUI has its gesture recognisers
+# attached. A tap that lands in that window is accepted by WebDriverAgent, reported as a success, and
+# changes nothing, so the flow carries on with no sources enabled and fails several steps later at
+# "the tile never went live". Intermittent, and it cost an evening to pin down; hence a shared step
+# rather than a comment in each flow.
+#
+# The picker copy is the target because it does nothing when tapped and exists only on the cameras
+# sheet. "TS DIRECTOR" is also the grid title; tapping it dismisses the sheet as a tap outside.
+appId: app.teamstation.director
+---
+- tapOn: 'Choose up to five cameras for the director grid, and whose audio to mix.'
+- waitForAnimationToEnd:
+    timeout: 3000
