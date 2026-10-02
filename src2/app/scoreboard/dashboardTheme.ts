@@ -3,7 +3,7 @@ import { Dimensions } from 'react-native'
 import { fonts } from '../theme/fonts'
 
 /**
- * 1.0's dark GameStation theme, `src/client/themes/gsDark.ts`, exactly, for
+ * 1.0's dark GameStation theme, `src/client/themes/gsDark.ts` at 25f9496e, exactly, for
  * the override dashboard alone.
  *
  * The dashboard is 1.0's, and so are its colours: the summer greens of the
@@ -38,7 +38,7 @@ const palette = {
 }
 
 /**
- * 1.0's `src/client/themes/scaling.ts`: sizes grow with the window's height,
+ * 1.0's `src/client/themes/scaling.ts` at 25f9496e: sizes grow with the window's height,
  * measured once, against a 568-point phone.
  */
 const guidelineBaseHeight = 568

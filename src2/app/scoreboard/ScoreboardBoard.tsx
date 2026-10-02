@@ -10,7 +10,7 @@ import { type ScoreboardTheme, scoreboardTheme } from './scoreboardTheme'
 
 /**
  * The scoreboard as OBS and GS Director draw it over video: 1.0's
- * `src/client/Scoreboard.tsx`, copied. The same React Native components,
+ * `src/client/Scoreboard.tsx` at 25f9496e, copied. The same React Native components,
  * drawn on the web by react-native-web as 1.0's were, with 1.0's style
  * sheet, fonts and gradients unchanged, and its theme values copied into
  * `scoreboardTheme`.

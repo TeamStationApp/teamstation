@@ -132,9 +132,8 @@ trap 'rm -rf "${TARGET:?}"' ERR
 # here — silently stopped applying. Shipping the root configuration *with*
 # `src2` is what stops that being possible again.
 #
-# `src/` is GameStation 1.0, frozen at `v1.0.0` and not part of this: naming
-# what ships rather than excluding what does not means a new directory has to
-# be asked for before it can reach the server.
+# Naming what ships rather than excluding what does not means a new directory
+# has to be asked for before it can reach the server.
 git -C "$REPO" archive HEAD \
   package.json package-lock.json .npmrc \
   tsconfig.json tsconfig.app.json tsconfig.server.json \

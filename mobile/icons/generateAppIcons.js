@@ -3,7 +3,7 @@
  * Compose GS Director, GS Cameraman and GS Preview app icons
  * from the canonical GameStation logo plus a per-app wireframe glyph.
  *
- * Source of truth for the G: `src/client/assets/images/gs_logo.png`.
+ * Source of truth for the G: `mobile/icons/gsLogo.png`.
  *
  * Layout: cream canvas (sampled from the logo). The glyph leads, centered and
  * as large as an equal margin on every side allows. A small G signs the
@@ -25,7 +25,7 @@ const { execFileSync } = require('child_process')
 
 const iconsDir = __dirname
 const repoRoot = path.resolve(iconsDir, '..', '..')
-const SRC_LOGO = path.join(repoRoot, 'src', 'client', 'assets', 'images', 'gs_logo.png')
+const SRC_LOGO = path.join(iconsDir, 'gsLogo.png')
 
 const CANVAS = 1024
 const MARGIN = Math.round(CANVAS * 0.125)
@@ -117,7 +117,16 @@ function sampleCream(logoPath) {
 function rasterizeSvg(svgPath, sizePx, dest) {
   execFileSync(
     RSVG,
-    ['-w', String(sizePx), '-h', String(sizePx), '--background-color=none', svgPath, '-o', dest],
+    [
+      '-w',
+      String(sizePx),
+      '-h',
+      String(sizePx),
+      '--background-color=none',
+      svgPath,
+      '-o',
+      dest
+    ],
     { stdio: ['ignore', 'pipe', 'inherit'] }
   )
 }
@@ -246,7 +255,14 @@ function writeAndroidMipmaps(name, composedPng, resDir) {
     const adaptiveCanvasPx = Math.round(ADAPTIVE_DP * scale)
     const adaptiveSafePx = Math.round(ADAPTIVE_SAFE_DP * scale)
     const legacyPx = Math.round(LEGACY_DP * scale)
-    magick(composedPng, '-resize', `${legacyPx}x${legacyPx}`, '-depth', '8', path.join(outDir, 'ic_launcher.png'))
+    magick(
+      composedPng,
+      '-resize',
+      `${legacyPx}x${legacyPx}`,
+      '-depth',
+      '8',
+      path.join(outDir, 'ic_launcher.png')
+    )
     magick(
       composedPng,
       '-resize',

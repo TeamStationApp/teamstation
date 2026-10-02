@@ -6,10 +6,7 @@ server reads its database and media in place. Plan:
 `~/.cursor/plans/202609150848-gameStationApp.md`.
 
 **The source is `src2/`, and it is the only thing built here.** One
-`package.json` at this level, one lockfile, one set of tsconfigs. `src/` is
-GameStation 1.0 — the scoreboard widget — frozen at the tag `v1.0.0` and kept
-for reference; it has no build configuration on this branch, and anything
-further to do with it belongs on `paul/gameStation1`.
+`package.json` at this level, one lockfile, one set of tsconfigs.
 
 ## Layout
 
@@ -21,7 +18,6 @@ further to do with it belongs on `paul/gameStation1`.
 | `src2/app/` | The client. `react-native-web` renders it in a browser; `ios/` and `android/` render the same files on a phone — see `src2/MOBILE.md`. |
 | `ios/`, `android/` | The native projects, beside the package because that is where React Native takes its project root from. A deploy does not archive them. |
 | `src2/maestro/` | Flows that walk every screen on a phone, run at every gate. |
-| `src/` | GameStation 1.0, frozen. Not built. |
 
 ## Where the site's address lives
 

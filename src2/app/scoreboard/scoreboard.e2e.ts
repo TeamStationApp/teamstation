@@ -12,14 +12,9 @@ import puppeteer, {
 } from 'puppeteer'
 import { WebSocket } from 'ws'
 
-import {
-  NO_OVERRIDES,
-  SAMPLE_SCOREBOARD,
-  SCOREBOARD_BOARD_SIZE
-} from '../../common/scoreboard'
+import { NO_OVERRIDES, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { makeDatabase } from '../../server/db/database'
 import { override, scoreboardSocketUrl } from '../../test/scoreboardPublish.e2e'
-import { scoreboardV1Html } from '../../test/scoreboardV1Page.e2e'
 import {
   OTHER_EMAIL,
   RUNNER_EMAIL,
@@ -73,6 +68,7 @@ const PREFIX =
   process.env.GS_E2E_REDIS_KEY ??
   `gs:${new URL(DATABASE_URL).pathname.slice(1)}`
 const SHOTS = process.env.GS_E2E_SHOTS ?? '/tmp/nsbShots'
+const FIXTURES = join(__dirname, 'fixtures')
 
 /**
  * E7.5 and E8 change the game's row, its Redis key and its overrides
@@ -515,27 +511,22 @@ describe('the scoreboard pages', function () {
     await shot(page, 'sample')
     await page.close()
 
-    // 1.0's component, drawn from `src/client/Scoreboard.tsx` with the same
-    // state in the same browser, in the 1920 × 1080 window B was measured in
-    // (1.0's sizes grow with the window; the port's do not).
+    // 1.0's component, recorded from 1.0's `Scoreboard.tsx` (at 25f9496e) with
+    // the same state in the same browser, in the 1920 × 1080 window B was
+    // measured in (1.0's sizes grow with the window; the port's do not).
     const window = { width: 1920, height: 1080 }
-    const v1 = await anonymous.newPage()
-    await v1.setViewport(window)
-    await v1.setContent(await scoreboardV1Html(SAMPLE_SCOREBOARD), {
-      waitUntil: 'load'
-    })
     const ported = await open(anonymous, '/scoreboard-sample', window)
     await boardShows(ported, 'the sample', one => one.drawn)
-    const v1Layout = await layoutOf(v1)
+    const v1Layout: Layout = JSON.parse(
+      readFileSync(join(FIXTURES, 'scoreboardV1Layout.json'), 'utf8')
+    )
     const portedLayout = await layoutOf(ported)
-    console.log(`      1.0: ${JSON.stringify(v1Layout)}`)
     expect(portedLayout, 'every part where 1.0 put it').deep.equals(v1Layout)
     expect(Math.ceil(v1Layout.face[2])).equals(SCOREBOARD_BOARD_SIZE.width)
     expect(Math.ceil(v1Layout.face[3])).equals(SCOREBOARD_BOARD_SIZE.height)
     const clip = { x: 0, y: 0, ...SCOREBOARD_BOARD_SIZE }
-    const v1Png = await v1.screenshot({ clip, omitBackground: true })
+    const v1Png = readFileSync(join(FIXTURES, 'scoreboardV1.png'))
     const portedPng = await ported.screenshot({ clip, omitBackground: true })
-    await v1.screenshot({ clip, path: join(SHOTS, 'sample-v1.png') })
     await ported.screenshot({ clip, path: join(SHOTS, 'sample-ported.png') })
     const differing = await pixelsDiffering(browser, v1Png, portedPng)
     console.log(
@@ -544,7 +535,6 @@ describe('the scoreboard pages', function () {
     // Antialiasing on the turned bases and round dots differs from one
     // drawing of 1.0 to the next by about 200 pixels; layout does not.
     expect(differing).lessThan((clip.width * clip.height) / 100)
-    await v1.close()
     await ported.close()
   })
 

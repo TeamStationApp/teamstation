@@ -13,8 +13,7 @@
   // The rule that prevents a repeat is now the deploy's, not this file's:
   // `deploy/deploy.sh` ships the root configuration *with* `src2`, so what is
   // built on the server is the same tree as here. Nothing in `src2` may reach
-  // above the root, and `src/` — frozen 1.0, kept for reference — is not part
-  // of this project.
+  // above the root.
 
   "compilerOptions": {
     "target": "es2022",

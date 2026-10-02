@@ -2,7 +2,7 @@
  * The GameStation mark, as path data.
  *
  * Traced from the only artwork that exists — the 407x381 raster in
- * `src/client/assets/images/` — because no vector of this mark has ever been in
+ * `src/client/assets/images/` at 25f9496e — because no vector of this mark has ever been in
  * the repository. Two sets: the ring with the blade of grass, and the body of
  * the G. The cream is not here at all, which is what makes the background, the
  * counter of the G and the blade holes rather than shapes.

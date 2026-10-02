@@ -3,7 +3,7 @@ import type { Theme } from './types'
 
 /**
  * GameStation's dark theme, carried over from the v1 scoreboard and dashboard
- * (`src/client/themes/gsDark.ts`) so the new app looks like the one Paul
+ * (`src/client/themes/gsDark.ts` at 25f9496e) so the new app looks like the one Paul
  * already uses. The palette is the same; what is new are the component names
  * the watch path needs.
  *

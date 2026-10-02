@@ -310,7 +310,7 @@ export const SAMPLE_SCOREBOARD: ScoreboardState = {
 /**
  * Board size B: the CSS px box every scoreboard page occupies, drawn or not.
  *
- * It is the size 1.0's scoreboard (`src/client/Scoreboard.tsx`) drew
+ * It is the size 1.0's scoreboard (`src/client/Scoreboard.tsx` at 25f9496e) drew
  * `SAMPLE_SCOREBOARD` at in a 1920 × 1080 window, 606.53 × 247, rounded up
  * as Director's measure rounds it. GS Director assumes it when it first
  * places a scoreboard (`ScoreboardOverlaySource.boardSize`), and measures it

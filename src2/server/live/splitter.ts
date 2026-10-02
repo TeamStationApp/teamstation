@@ -11,7 +11,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'fs'
  * ever re-encoded and whatever the Director sent is what everybody receives.
  *
  * The process handling here is the splitter GameStation 1.0 has been running
- * for a year (`src/server/rtmp/splitter.ts`), brought across deliberately
+ * for a year (`src/server/rtmp/splitter.ts` at 25f9496e), brought across deliberately
  * unchanged in the parts that look strange. Every one of them is a production
  * failure that was paid for once: ffmpeg children Node reports as exited while
  * the OS still has them, publishers whose TCP peer died without a FIN so the
