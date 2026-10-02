@@ -817,6 +817,14 @@ export interface ChatDevicesTable {
   revoked_at: Timestamp | null
 }
 
+/** A nonce a device signs to bind itself to a new session; used once. */
+export interface ChatResumeChallengesTable {
+  nonce: Bytes
+  device_id: string
+  created_at: Generated<Date>
+  expires_at: Timestamp
+}
+
 /** A user's identity key; at most one per user is not `replaced_at`. */
 export interface ChatIdentitiesTable {
   id: string
@@ -1042,6 +1050,7 @@ export interface Database {
   chat_messages: ChatMessagesTable
   chat_read_cursors: ChatReadCursorsTable
   chat_reports: ChatReportsTable
+  chat_resume_challenges: ChatResumeChallengesTable
   chat_user_key_boxes: ChatUserKeyBoxesTable
   chat_user_keys: ChatUserKeysTable
   email_codes: EmailCodesTable

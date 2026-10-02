@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { chatRoutes } from './routes/chat'
+import { chatKeyRoutes } from './routes/chatKeys'
 import { directorRoutes } from './routes/director'
 import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
@@ -157,6 +158,7 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(followRoutes(db, media)),
       ...routesOf(chatRoutes(db, media)),
+      ...routesOf(chatKeyRoutes(db)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
@@ -212,6 +214,7 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(followRoutes(db, media)),
       ...routesOf(chatRoutes(db, media)),
+      ...routesOf(chatKeyRoutes(db)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
