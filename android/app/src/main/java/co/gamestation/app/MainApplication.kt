@@ -2,6 +2,7 @@ package co.gamestation.app
 
 import android.app.Application
 import co.gamestation.app.glass.GlassPackage
+import co.gamestation.app.orientation.OrientationPackage
 import co.gamestation.app.walkup.WalkUpMusicPackage
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
@@ -24,6 +25,8 @@ class MainApplication : Application(), ReactApplication {
           add(WalkUpMusicPackage())
           // The backdrop blur under the scoring menu button.
           add(GlassPackage())
+          // Lets the multi-camera view turn sideways in an upright app.
+          add(OrientationPackage())
         },
     )
   }
