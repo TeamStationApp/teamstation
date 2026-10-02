@@ -1,7 +1,7 @@
 import { type PerspectiveCamera, Vector3 } from 'three'
 
-import { fonts } from '../theme/fonts'
 import type { FieldPlayer } from './fieldModel'
+import { inkWidth } from './inkWidth'
 import { TERRAIN } from './terrain'
 
 export const PLAYER_SCALE = 3.2 * 1.15
@@ -37,18 +37,6 @@ export function nameplateLabel(player: FieldPlayer): NameplateLabel {
     name: `${ball}${player.displayName}`,
     number: jersey === '' ? '' : `#${jersey}`
   }
-}
-let inkContext: CanvasRenderingContext2D | null = null
-function inkWidth(text: string, fontPx: number): number {
-  if (text === '') return 0
-  if (inkContext == null && typeof document !== 'undefined') {
-    inkContext = document.createElement('canvas').getContext('2d')
-  }
-  if (inkContext != null) {
-    inkContext.font = `400 ${fontPx}px ${fonts.spaceGrotesk}`
-    return Math.ceil(inkContext.measureText(text).width)
-  }
-  return Math.ceil(text.length * fontPx * 0.56)
 }
 export function nameplateSize(label: NameplateLabel): {
   width: number
