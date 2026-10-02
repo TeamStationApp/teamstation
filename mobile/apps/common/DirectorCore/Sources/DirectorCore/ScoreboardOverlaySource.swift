@@ -9,7 +9,7 @@ import Foundation
 /// Otherwise the chosen event's live board, and with no event, nothing.
 public enum ScoreboardOverlaySource {
   /// Board size B: the CSS px box every scoreboard page measures, whatever it
-  /// draws (`SCOREBOARD_BOARD_SIZE` in `src2/common/scoreboard.ts`). It is
+  /// draws (`SCOREBOARD_BOARD_SIZE` in `src/common/scoreboard.ts`). It is
   /// the size 1.0's scoreboard drew the sample at in a 1920 × 1080 window.
   public static let boardSize = CGSize(width: 607, height: 247)
 

@@ -5,7 +5,7 @@ import Foundation
 public enum DirectorPaths {
   public static var applicationSupport: URL {
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    return base.appendingPathComponent("GSDirector", isDirectory: true)
+    return base.appendingPathComponent("TSDirector", isDirectory: true)
   }
 
   public static var documents: URL {
@@ -46,7 +46,7 @@ public enum DirectorPaths {
   /// SQLite wall-clock index shared by the archive and the proxy store.
   public static var indexDatabase: URL { applicationSupport.appendingPathComponent("index.sqlite") }
 
-  /// Telemetry JSON written by `gsdirector://test/dump-state`, read by scripts/verifyArchive.js.
+  /// Telemetry JSON written by `tsdirector://test/dump-state`, read by scripts/verifyArchive.js.
   public static var telemetryDump: URL { documents.appendingPathComponent("telemetry.json") }
 
   public static func archiveDirectory(for source: SourceID) -> URL {

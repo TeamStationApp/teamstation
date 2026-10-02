@@ -1,0 +1,71 @@
+# B1–B4: tap any live camera to put it on PROGRAM. Exactly one program at a time.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 3
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- assertVisible: '3/5 enabled'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible: 'source=3 state=live.*'
+    timeout: 15000
+
+- assertVisible: 'output src=CAM3 .*'
+- assertVisible: 'source=3 .*onair=1'
+- assertVisible: 'source=1 .*onair=0'
+- assertVisible: 'source=2 .*onair=0'
+- extendedWaitUntil:
+    visible: 'output src=CAM3 .*composed=[1-9]'
+    timeout: 15000
+
+- tapOn:
+    id: 'source-2'
+- extendedWaitUntil:
+    visible: 'output src=CAM2 .*'
+    timeout: 8000
+- assertVisible: 'source=2 .*onair=1'
+- assertVisible: 'source=1 .*onair=0'
+
+- tapOn:
+    id: 'source-3'
+- extendedWaitUntil:
+    visible: 'output src=CAM3 .*'
+    timeout: 8000
+- assertVisible: 'source=3 .*onair=1'
+
+- tapOn:
+    id: 'source-3'
+- assertVisible: 'output src=CAM3 .*'
+- assertVisible: 'source=3 .*onair=1'
+
+- tapOn:
+    id: 'source-1'
+- extendedWaitUntil:
+    visible: 'output src=CAM1 .*'
+    timeout: 8000
+- assertVisible: 'source=1 .*onair=1'
+- assertVisible: 'source=2 .*onair=0'
+- assertVisible: 'source=3 .*onair=0'

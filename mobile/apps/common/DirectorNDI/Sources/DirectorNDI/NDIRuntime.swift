@@ -33,7 +33,7 @@ public final class NDIRuntime: @unchecked Sendable {
   /// Reliable UDP is NDI's default receive transport, and it is where this SDK crashes. Three
   /// 1080p60 receivers reliably take the app down with a NULL write inside
   /// `ndi::reference::recv::tcp_udp_stream::push`, on the SDK's own QUIC worker thread — measured
-  /// at 27 seconds, and reproduced in `gsNdiProbe`, an app that links the SDK and does nothing but
+  /// at 27 seconds, and reproduced in `tsNdiProbe`, an app that links the SDK and does nothing but
   /// capture a frame and free it. Nothing of ours is required to reach it, so nothing of ours can
   /// fix it. Turning the transport off avoids the code path: the same three receivers then ran
   /// nineteen minutes and 28,000 frames each without incident.

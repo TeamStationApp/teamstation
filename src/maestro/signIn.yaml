@@ -1,0 +1,116 @@
+# Sign in as the review account, which is where every other flow starts.
+#
+# The password path rather than the e-mail code, because a code needs a
+# mailbox. The screen offers the code first and keeps the password behind a
+# link, exactly as the web app does.
+appId: app.teamstation.app
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: 'Sign in to TeamStation'
+    timeout: 30000
+# By its label, not by its placeholder. The field is no longer focused on
+# arrival — a keyboard over `Use a password instead` made a password sign-in
+# impossible to finish on iOS — and an unfocused, empty text field does not
+# publish its placeholder as text for Maestro to find. `below:` is how the
+# password field below is already reached, so the two now read the same.
+- tapOn:
+    below: 'E-MAIL ADDRESS'
+- inputText: 'review@teamstation.local'
+# Put the keyboard away before reaching for anything behind it.
+#
+# Android's Back key, because on this emulator the keyboard sometimes opens
+# *fullscreen* — the IME's extract editor, which covers the card completely.
+# The flow used to tap the heading to dismiss it, and a heading that is not
+# on screen cannot be tapped: the run died at `Element not found: Sign in to
+# TeamStation` having already typed the address into a field it could no
+# longer see. Back closes the keyboard whether it is inline or fullscreen.
+#
+# iOS has no Back key and does not do this, so it keeps the tap.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: Back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: 'Sign in to TeamStation'
+# Scrolled to rather than tapped blind: held sideways, a phone puts this
+# below the fold, and the card scrolls to reach it. That it scrolls at all is
+# the point of `centreContent` in `Screen` — before that the column was
+# exactly the height of the scroll view and this link was unreachable in
+# landscape.
+- scrollUntilVisible:
+    element:
+      text: 'Use a password instead'
+    direction: DOWN
+    timeout: 10000
+- tapOn: 'Use a password instead'
+- tapOn:
+    below: 'PASSWORD'
+- inputText: 'ReviewOnly123'
+# Put the keyboard away before reaching for anything behind it.
+#
+# Android's Back key, because on this emulator the keyboard sometimes opens
+# *fullscreen* — the IME's extract editor, which covers the card completely.
+# The flow used to tap the heading to dismiss it, and a heading that is not
+# on screen cannot be tapped: the run died at `Element not found: Sign in to
+# TeamStation` having already typed the address into a field it could no
+# longer see. Back closes the keyboard whether it is inline or fullscreen.
+#
+# iOS has no Back key and does not do this, so it keeps the tap.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: Back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: 'Sign in to TeamStation'
+# The second one: the header of a signed-out app also says `Sign in`, and the
+# first match is that.
+- tapOn:
+    text: 'Sign in'
+    index: 1
+# iOS offers to keep the password the moment the form is submitted, and its
+# dialog covers the screen this is about to assert on.
+#
+# Tapped by position, which looks crude and is the only thing that works.
+# Maestro cannot see a system alert on these simulators *at all* — with the
+# `Save Password?` sheet up, the hierarchy is the status bar and nothing else,
+# so `when: visible: 'Not Now'` never fires however long it waits. It can
+# still *tap* it, which is what this does.
+#
+# Guarded twice so it cannot misfire: only on iOS, and only when the home
+# screen is not already showing. Without the second guard this would tap the
+# middle of `Your Home` — the hero video — on every run that had no dialog.
+- waitForAnimationToEnd:
+    timeout: 5000
+- runFlow:
+    when:
+      platform: iOS
+      notVisible: 'YOUR TEAMS'
+    commands:
+      - tapOn:
+          point: '43%,57%'
+      - waitForAnimationToEnd:
+          timeout: 3000
+# And say so plainly if it is still there, rather than waiting out the clock
+# on `Your Home` and reporting that the home screen never appeared.
+#
+# This sheet is the one thing that can wedge an iOS run: it re-presents on
+# every launch until it is answered, and once it is up nothing in Maestro's
+# reach will clear it — not `tapOn` by name, not a point tap at its measured
+# centre, and it survives `simctl terminate` and `launch`. **What does clear
+# it is `xcrun simctl shutdown` followed by `boot`.** That is the recovery,
+# and it is written here because the failure it causes looks nothing like its
+# cause.
+- assertVisible: 'YOUR TEAMS'
+- extendedWaitUntil:
+    visible: 'Your Home'
+    timeout: 30000

@@ -4,8 +4,8 @@ import SwiftUI
 /// The operating screen: full-bleed picture, pinch to zoom, chrome in the corners, zoom on the right.
 ///
 /// Generic over the thing it controls and the thing it draws. On the phone the picture is the
-/// `AVCaptureVideoPreviewLayer` and the model is the app's own environment; in GS Director and
-/// GS Preview the picture is their decoded stream and the model talks to the phone over RTSP. The
+/// `AVCaptureVideoPreviewLayer` and the model is the app's own environment; in TS Director and
+/// TS Preview the picture is their decoded stream and the model talks to the phone over RTSP. The
 /// SwiftUI is the same either way, which is the point: an operator who knows the phone's screen
 /// already knows the remote one.
 public struct CameraView<Model: CameraControlling, Picture: View>: View {

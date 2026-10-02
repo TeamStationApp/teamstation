@@ -101,6 +101,16 @@ function countsFor(args, topLevel, paths, cwd) {
   return counts
 }
 
+// Whether a repository-relative path lies under one of the pathspecs, which
+// `resolveSpecs` has already made repository-relative.
+function underSpecs(specs) {
+  const roots = specs.map(spec => spec.replace(/\/+$/, ''))
+  return path =>
+    roots.some(
+      root => root === '.' || path === root || path.startsWith(`${root}/`)
+    )
+}
+
 // Runs the gate; returns the exit code. `run(file, args)` returns a
 // command's stdout, so a test can hand it canned git output.
 function main(argv, { run, log, cwd = process.cwd() }) {
@@ -115,28 +125,32 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   const base = run('git', ['merge-base', 'origin/master', 'HEAD']).trim()
   const specs = resolveSpecs(topLevel, args.specs, cwd)
   const range = `${base}...HEAD`
+  // The whole tree is diffed and the pathspecs applied afterwards: git pairs a
+  // rename only when it can see both sides, so a pathspec that names just the
+  // new location would report a moved file as added, every line of it new.
+  const within = underSpecs(specs)
   const diff = run('git', [
     '-C',
     topLevel,
     'diff',
     '--unified=0',
-    range,
-    '--',
-    ...specs
+    '--find-renames',
+    range
   ])
   const added = run('git', [
     '-C',
     topLevel,
     'diff',
     '--name-only',
+    '--find-renames',
     '--diff-filter=A',
-    range,
-    '--',
-    ...specs
+    range
   ])
     .split('\n')
-    .filter(path => path !== '')
-  const all = changedLines(diff)
+    .filter(path => path !== '' && within(path))
+  const all = Object.fromEntries(
+    Object.entries(changedLines(diff)).filter(([path]) => within(path))
+  )
   if (Object.keys(all).length === 0) {
     log(`nothing changed under ${specs.join(' ')} since ${base}`)
     return args.allowEmpty ? 0 : 1
@@ -170,7 +184,7 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   return report.pass ? 0 : 1
 }
 
-module.exports = { executableFile, globPattern, main }
+module.exports = { executableFile, globPattern, main, underSpecs }
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2), {

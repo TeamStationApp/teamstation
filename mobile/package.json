@@ -1,7 +1,7 @@
 {
-  "name": "gamestationMobile",
+  "name": "teamstationMobile",
   "version": "1.0.0",
-  "description": "GameStation's native apps; each app's package.json holds its own scripts",
+  "description": "TeamStation's native apps; each app's package.json holds its own scripts",
   "private": true,
   "workspaces": [
     "apps/*"

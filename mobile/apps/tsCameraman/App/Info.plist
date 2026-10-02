@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Where this build signs in. A host with no scheme; empty — which is every
+    build that does not say otherwise — means app.teamstation.app.
+
+        TS_PRIMARY_HOST=develop3.teamstation.app xcodebuild …
+  -->
+  <key>TSPrimaryHost</key>
+  <string>$(TS_PRIMARY_HOST)</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>TS Cameraman</string>
+  <key>CFBundleExecutable</key>
+  <string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>$(PRODUCT_NAME)</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>LSRequiresIPhoneOS</key>
+  <true/>
+
+  <!-- Test control channel. Commands are ignored unless the app was launched with uiTest. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>app.teamstation.cameraman.control</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>tscameraman</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>TS Cameraman connects to a TAG One radar for pitch, exit, and battery when radar is enabled.</string>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>bluetooth-central</string>
+  </array>
+  <key>NSCameraUsageDescription</key>
+  <string>TS Cameraman streams this camera to your production over RTSP.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>TS Cameraman streams this microphone alongside the camera.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>TS Cameraman serves an RTSP stream to TS Director on your local network.</string>
+  <!-- Measured 2026-08-19: without this, advertising _rtsp._tcp fails with -65555
+       kDNSServiceErr_NoAuth and takes the whole NWListener down with it. The usage description
+       above is not sufficient on its own. `_awx_service._tcp` is the type NearStream uses and
+       TS Director actually browses across a split 2.4/5 GHz LAN. -->
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_rtsp._tcp</string>
+    <string>_awx_service._tcp</string>
+  </array>
+
+  <!-- Multiple scenes only so a USB-C display gets its own scene; an iPhone still opens exactly one
+       app window. The external-display scene shows the encoder's picture with no chrome
+       (CleanFeedController); with clean HDMI off no window is put on it and iOS mirrors. -->
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key>
+    <true/>
+    <key>UISceneConfigurations</key>
+    <dict>
+      <key>UIWindowSceneSessionRoleExternalDisplayNonInteractive</key>
+      <array>
+        <dict>
+          <key>UISceneConfigurationName</key>
+          <string>Clean Feed</string>
+          <key>UISceneDelegateClassName</key>
+          <string>CameramanUI.ExternalDisplaySceneDelegate</string>
+        </dict>
+      </array>
+    </dict>
+  </dict>
+  <key>UILaunchScreen</key>
+  <dict/>
+  <key>UIStatusBarHidden</key>
+  <true/>
+  <key>UIInterfaceOrientation</key>
+  <string>UIInterfaceOrientationLandscapeRight</string>
+  <key>UIUserInterfaceStyle</key>
+  <string>Dark</string>
+  <key>UIRequiresFullScreen</key>
+  <true/>
+  <!-- The camera window stays landscape. Portrait is listed so Settings can
+       turn; the app delegate withholds it until that sheet is up. -->
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+
+  <!-- The control channel and any RTSP client are plain HTTP/RTSP on the LAN. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>

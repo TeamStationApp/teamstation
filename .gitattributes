@@ -1,13 +1,13 @@
 # What a deploy does not need.
 #
-# `src2/deploy/deploy.sh` names what a version is built from — the package, the
-# lockfile, the tsconfigs and `src2` — so `ios/` and `android/` are left out by
-# not being named at all. `src2` travels whole, though, and `export-ignore` is
+# `src/deploy/deploy.sh` names what a version is built from — the package, the
+# lockfile, the tsconfigs and `src` — so `ios/` and `android/` are left out by
+# not being named at all. `src` travels whole, though, and `export-ignore` is
 # what keeps the parts of it only a Mac has any use for off the droplet.
 #
 # The **packages** they need are a different question and cannot be solved
 # here: `deploy.sh` runs a plain `npm ci`, and it has to, because the server
 # starts through `sucrase` from `devDependencies`. So the native packages do
-# install on the droplet. See `src2/MOBILE.md` for what that costs.
-src2/maestro   export-ignore
-src2/tools     export-ignore
+# install on the droplet. See `src/MOBILE.md` for what that costs.
+src/maestro   export-ignore
+src/tools     export-ignore

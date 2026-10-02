@@ -1,0 +1,22 @@
+appId: app.teamstation.cameraman
+---
+# Camera, then microphone, then local network — in the order the app asks for them.
+#
+# These are system alerts, and on a physical device they sit outside the app's accessibility
+# hierarchy: `tapOn: "Allow"` finds nothing while the dialog is plainly on screen. They have to be
+# tapped by coordinate. Percentages measured on an iPhone 13 Pro in landscape on 2026-08-19.
+#
+# A tap that lands with no dialog present hits the read-only status screen behind it, which is
+# harmless, so the flow does not need to know how many prompts are actually outstanding.
+- tapOn:
+    point: "59%,71%"
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    point: "59%,71%"
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    point: "60%,82%"
+- waitForAnimationToEnd:
+    timeout: 2000

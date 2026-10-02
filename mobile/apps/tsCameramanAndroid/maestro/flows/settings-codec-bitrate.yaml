@@ -1,0 +1,41 @@
+# Codec and bitrate survive leaving the settings screen.
+#
+# Only Done applies, and only when something actually changed — opening settings to copy the URL must
+# not restart the encoder, because a reconfigure that fires for that would look like the camera
+# glitching.
+appId: app.teamstation.cameraman
+---
+- launchApp:
+    appId: app.teamstation.cameraman
+    arguments:
+      uiTest: true
+
+- tapOn:
+    id: "settings-button"
+# HEVC is the default: the same picture at two thirds the rate, which is what lets four cameras
+# share a match-day Wi-Fi.
+- assertVisible:
+    text: "Bitrate  2.0–4.0 Mbps"
+
+- tapOn:
+    id: "settings-codec-h264"
+# Switching codec carries the matching default rate across: 6 Mbps for H.264, 4 for HEVC.
+- assertVisible:
+    text: "Bitrate  6.0 Mbps"
+
+- tapOn:
+    id: "settings-done"
+- assertVisible:
+    id: "camera-screen"
+
+# Back in: the choice is still there rather than having been reverted by the round trip.
+- tapOn:
+    id: "settings-button"
+- assertVisible:
+    text: "Bitrate  6.0 Mbps"
+- tapOn:
+    id: "settings-codec-hevc"
+- assertVisible:
+    text: "Bitrate  2.0–4.0 Mbps"
+- tapOn:
+    id: "settings-done"

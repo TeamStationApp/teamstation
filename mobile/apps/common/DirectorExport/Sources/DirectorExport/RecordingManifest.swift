@@ -4,7 +4,7 @@ import DirectorCore
 /// What an export of one recording reads from the index, in a form that can travel to another
 /// machine.
 ///
-/// GS Distributor stitches some of an export's files on the Mac with the same `ExportService` the
+/// TS Distributor stitches some of an export's files on the Mac with the same `ExportService` the
 /// iPad runs. The Mac does not get a copy of `index.sqlite`: a copy taken without its WAL is a
 /// stale snapshot, and it would carry every other take along with it. It gets this instead: the
 /// recording's own row, the segment rows of the cameras it is stitching, and the programme's

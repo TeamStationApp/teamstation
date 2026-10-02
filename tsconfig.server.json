@@ -6,9 +6,9 @@
     "noEmit": false
   },
   "include": [
-    "src2/common/**/*.ts",
-    "src2/migrate/**/*.ts",
-    "src2/server/**/*.ts"
+    "src/common/**/*.ts",
+    "src/migrate/**/*.ts",
+    "src/server/**/*.ts"
   ],
   "exclude": ["**/*.test.ts", "lib", "node_modules"]
 }

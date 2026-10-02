@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Where this build talks to, for a build that is not pointed at the address
+    in the source. A host with no scheme; empty — which is every build that
+    does not say otherwise — means `AppServer.defaultHost`.
+
+        TS_PRIMARY_HOST=develop2.teamstation.app xcodebuild …
+
+    From the environment rather than from a tracked file, so a development
+    build is not one stray commit away from shipping its address to everybody.
+  -->
+  <key>TSPrimaryHost</key>
+  <string>$(TS_PRIMARY_HOST)</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>TS Director</string>
+  <key>CFBundleExecutable</key>
+  <string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>$(PRODUCT_NAME)</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>LSRequiresIPhoneOS</key>
+  <true/>
+
+  <!-- Test control channel. Commands are ignored unless the app was launched with uiTest. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>app.teamstation.director.control</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>tsdirector</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>TS Director discovers cameras on your local network.</string>
+  <!--
+    Browsing for a service iOS 14+ has not been told about fails with -65555 (NoAuth) and takes the
+    NWBrowser down with it. NearStream identity is `_awx_service._tcp`; TS Cameraman and many
+    phones publish `_rtsp._tcp`.
+  -->
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_awx_service._tcp</string>
+    <string>_rtsp._tcp</string>
+    <!-- NDI cameras and the SDK's own finder. The SDK documentation requires this entry for NDI
+         discovery to work at all on iOS 14 and later. -->
+    <string>_ndi._tcp</string>
+  </array>
+  <key>NSCameraUsageDescription</key>
+  <string>TS Director does not use the built-in camera; video comes from cameras on the network.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>TS Director places photos you choose as graphics on the programme output.</string>
+
+  <!-- Keep the pipeline alive while programme audio is playing (record / stream). -->
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>audio</string>
+  </array>
+
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+  </dict>
+  <key>UILaunchScreen</key>
+  <dict>
+    <key>UIColorName</key>
+    <string>LaunchBackground</string>
+  </dict>
+  <key>UIStatusBarHidden</key>
+  <false/>
+  <key>UIStatusBarStyle</key>
+  <string>UIStatusBarStyleLightContent</string>
+  <key>UIUserInterfaceStyle</key>
+  <string>Dark</string>
+  <!-- iPadOS 26 puts apps that opt out of multitasking with UIRequiresFullScreen into a scaled
+       legacy window, so the grid is sized by the scene instead. -->
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+
+  <!-- Overlay pages on the LAN or localhost may use plain HTTP. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,201 @@
+import { expect } from 'chai'
+import { afterEach, describe, it } from 'mocha'
+import React, { act, useState } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
+
+import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
+import { createDevelopmentSession } from './developmentSession'
+import { gameFixture } from './isUnscoredGame.test'
+import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
+import { clampPlayerCount, countAtOffset } from './playerCount'
+import { PlayerCountPicker } from './PlayerCountPicker'
+import { PlayerCountPicker as NativePicker } from './PlayerCountPicker.native'
+import { RosterEditor } from './RosterEditor'
+import { initialScoringState } from './scoringMachine'
+
+let root: Root | undefined
+const node = (label: string): HTMLElement =>
+  document.querySelector(`[aria-label="${label}"]`)!
+async function click(label: string): Promise<void> {
+  await act(async () => {
+    node(label).click()
+  })
+}
+async function mount(child: React.ReactNode): Promise<void> {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => {
+    root!.render(<ThemeProvider>{child}</ThemeProvider>)
+  })
+}
+describe('placeholder count sheet and platform adapters', function () {
+  const platform = Platform.OS
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+      changeTheme(tsBallpark)
+    })
+    root = undefined
+    Platform.OS = platform
+  })
+  it('keeps the placeholder text action green in dark mode', async function () {
+    await act(async () => {
+      changeTheme(tsDark)
+    })
+    await mount(
+      <RosterEditor
+        state={initialScoringState(
+          createDevelopmentSession(gameFixture, [], [])
+        )}
+        onSave={() => undefined}
+      />
+    )
+    expect(
+      (node('Add Placeholder Players').firstChild as HTMLElement).style.color
+    ).equals('rgb(122, 152, 96)')
+  })
+  it('clamps rows and commits the currently scrolled selection exactly once', async function () {
+    expect(
+      [NaN, Infinity, -1, 0, 1, 2.7, 16, 99].map(clampPlayerCount)
+    ).deep.equals([1, 1, 1, 1, 1, 3, 16, 16])
+    expect([-50, 0, 19, 21, 600, 900].map(countAtOffset)).deep.equals([
+      1, 1, 1, 2, 16, 16
+    ])
+    const counts: number[] = []
+    let closes = 0
+    await mount(
+      <PlaceholderPlayersSheet
+        onAdd={n => counts.push(n)}
+        onClose={() => {
+          closes++
+        }}
+      />
+    )
+    const wheel = node('Number of placeholder players')
+    expect(node('Player count 1').getAttribute('aria-selected')).equals('true')
+    await act(async () => {
+      wheel.scrollTop = 600
+      wheel.dispatchEvent(new window.Event('scroll'))
+    })
+    expect(node('Player count 16').getAttribute('aria-selected')).equals('true')
+    await click('Add')
+    await click('Add')
+    expect(counts).deep.equals([16])
+    expect(closes).equals(1)
+  })
+  it('supports click, arrows, endpoints, external values and cancellation', async function () {
+    let selected = 0
+    let update: (n: number) => void = () => undefined
+    function Harness(): React.ReactElement {
+      const [value, setValue] = useState(4)
+      update = setValue
+      return (
+        <PlayerCountPicker
+          value={value}
+          onChange={n => {
+            selected = n
+            setValue(n)
+          }}
+        />
+      )
+    }
+    await mount(<Harness />)
+    const wheel = node('Number of placeholder players')
+    expect(wheel.scrollTop).equals(120)
+    await click('Player count 3')
+    expect(selected).equals(3)
+    for (const [key, count] of [
+      ['ArrowDown', 4],
+      ['ArrowUp', 3],
+      ['End', 16],
+      ['Home', 1],
+      ['Enter', 1]
+    ] as const) {
+      await act(async () => {
+        wheel.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
+      expect(selected).equals(count)
+    }
+    await act(async () => {
+      update(7)
+    })
+    expect(wheel.scrollTop).equals(240)
+    let added = 0
+    let closed = 0
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <PlaceholderPlayersSheet
+            onAdd={() => {
+              added++
+            }}
+            onClose={() => {
+              closed++
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('Cancel')
+    expect(added).equals(0)
+    expect(closed).equals(1)
+  })
+  it('uses the iOS Picker adapter and the Android snapping scroll adapter', async function () {
+    let selected = 0
+    Platform.OS = 'ios'
+    await mount(
+      <NativePicker
+        value={3}
+        onChange={n => {
+          selected = n
+        }}
+      />
+    )
+    const picker = document.querySelector('select')!
+    expect(picker).not.equals(null)
+    await act(async () => {
+      picker.value = '16'
+      picker.dispatchEvent(new window.Event('change', { bubbles: true }))
+    })
+    expect(selected).equals(16)
+    Platform.OS = 'android'
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <NativePicker
+            value={1}
+            onChange={n => {
+              selected = n
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('Player count 4')
+    expect(selected).equals(4)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <NativePicker
+            value={16}
+            onChange={n => {
+              selected = n
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    const wheel = node('Number of placeholder players')
+    expect(wheel).not.equals(null)
+    await act(async () => {
+      wheel.scrollTop = 80
+      wheel.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    })
+  })
+})

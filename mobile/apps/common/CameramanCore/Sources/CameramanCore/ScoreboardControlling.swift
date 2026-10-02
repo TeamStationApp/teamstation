@@ -24,7 +24,7 @@ public struct ScoreboardSnapshot: Equatable, Sendable {
   public var apiServer: String
   public var v1EventId: String
   public var accountServer: String
-  /// Bare host, for the line under sign-in when this build is not gamestation.co.
+  /// Bare host, for the line under sign-in when this build is not app.teamstation.app.
   public var accountHost: String
   public var gameTitle: String
   /// The chosen event's start, in the same words as the event list. Empty when none is chosen.

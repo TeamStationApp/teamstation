@@ -5,7 +5,7 @@ import { build } from 'esbuild'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
-const files = globSync('src2/**/*.test.tsx')
+const files = globSync('src/**/*.test.tsx')
 await build({
   ...webSettings,
   stdin: {
@@ -31,7 +31,7 @@ await build({
   sourcemap: true,
   define: {
     __DEV__: 'true',
-    GS_API_BASE_URL: JSON.stringify('/api/v1'),
+    TS_API_BASE_URL: JSON.stringify('/api/v1'),
     'process.env.NODE_ENV': JSON.stringify('test')
   },
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }

@@ -1,0 +1,56 @@
+# Turning "Simulated cameras" off, and getting real cameras.
+#
+# This switch is the operator's only route from the demo patterns to the cameras in the venue: an app
+# opened from the home screen carries no launch arguments, so nothing else chooses a profile. A
+# profile that a device cannot fill leaves the source list spinning with no way back from the UI,
+# which is why the switch is asserted here rather than only in a unit test.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+
+- extendedWaitUntil:
+    visible: 'profile=synthetic4'
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 20000
+
+# The cameras sheet covers the grid toolbar. DONE dismisses it so Settings is actually reachable.
+- tapOn:
+    id: 'start-directing'
+
+- tapOn:
+    id: 'settings-button'
+# Simulated cameras sits above Diagnostics. Scroll to the toggle itself, then hit the switch
+# knob — a tap on the identifier lands in the label, which does not flip a UIKit switch.
+- scrollUntilVisible:
+    element:
+      id: 'settings-simulated-cameras'
+    direction: DOWN
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn:
+    point: '83%,70%'
+- tapOn:
+    id: 'settings-save'
+
+- runFlow: shared/allow-local-network.yaml
+
+- extendedWaitUntil:
+    visible: 'profile=rtsp'
+    timeout: 20000
+
+# A search that finds cameras, not merely a profile change: the generated rows are gone and the list
+# has refilled from the network.
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 90000
+- assertNotVisible: 'CAM1'

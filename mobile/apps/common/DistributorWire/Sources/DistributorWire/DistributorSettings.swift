@@ -1,6 +1,6 @@
 import Foundation
 
-/// Everything GS Distributor remembers. The Mac keeps a copy and GS Director keeps one on the
+/// Everything TS Distributor remembers. The Mac keeps a copy and TS Director keeps one on the
 /// iPad; `reconciled(with:)` brings the two together whenever the iPad is attached, so the
 /// Distributor works with the iPad away and nothing edited meanwhile is lost.
 ///

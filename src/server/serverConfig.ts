@@ -2,107 +2,287 @@ import { makeConfig } from 'cleaner-config'
 import {
   asArray,
   asBoolean,
-  asEither,
   asNumber,
   asObject,
   asOptional,
-  asString,
-  asValue
+  asString
 } from 'cleaners'
-import { asCouchCredentials } from 'edge-server-tools'
 
-const configPath = './serverConfig.json'
+import {
+  asAuthority,
+  type Authority,
+  hostOf,
+  httpOrigin,
+  PRIMARY_HOST
+} from '../common/primaryUrl'
 
-const asServerConfig = asObject({
-  // HTTP server options:
-  listenHost: asOptional(asString, 'localhost'),
-  listenPort: asOptional(asNumber, 8008),
+export const asServerConfig = asObject({
+  /** Where the API listens. Caddy proxies app.teamstation.app to this. */
+  listenHost: asOptional(asString, '127.0.0.1'),
+  listenPort: asOptional(asNumber, 9100),
 
   /**
-   * RTMP splitter ingress server. The RTMP splitter accepts incoming RTMP
-   * publishes at `{splitterUrl}/split/{eventId}` and pass-through forwards
-   * the encoded stream to two configured destinations (no transcoding).
+   * How many worker processes to fork. Zero means one per CPU, which is what
+   * production wants; set it to 1 when debugging so breakpoints behave.
+   */
+  clusterWorkers: asOptional(asNumber, 0),
+
+  /**
+   * Whether this process forks and supervises the stats builder.
    *
-   * - `rtmpHost` is the local bind address for the RTMP socket.
-   * - `rtmpPort` is the local listen port.
-   * - `splitterUrl` is the publicly-reachable base URL (scheme + host +
-   *   port) shown to operators in the UI and used as the publish target
-   *   from OBS / encoders. It must NOT include a trailing slash or any
-   *   path; the application appends `/split/{eventId}` automatically.
-   *   Examples:
-   *     "rtmp://app.gamestation.co:1935"
-   *     "rtmps://app.gamestation.co:1935"   (if fronted by a TLS proxy)
-   *   When empty, falls back to `rtmp://{listenHost}:{rtmpPort}` which
-   *   is only useful in single-host dev setups. A server cannot reliably
-   *   detect its own public DNS name (reverse-DNS PTRs frequently don't
-   *   match the public name, and proxied / load-balanced deployments
-   *   hide the real hostname entirely), so this MUST be configured
-   *   explicitly in production.
+   * On by default. Only for debugging: switch it off to run `stats-builder`
+   * by hand beside the server. Every seat and production leave it on.
    */
-  rtmpHost: asOptional(asString, '0.0.0.0'),
-  rtmpPort: asOptional(asNumber, 1935),
-  splitterUrl: asOptional(asString, ''),
+  statsBuilder: asOptional(asBoolean, true),
 
-  // Databases:
-  /**
-   * Used by the primary app engine to connect to couchdb. In production this should
-   * connect to the localhost caddy loadbalancer that routes to the different cluster
-   * machines
-   */
-  couchUri: asOptional(asString, `http://admin:admin@localhost:5984`),
-
-
-  apiServer: asOptional(asString, 'ws://localhost:8008'),
-  eventId: asOptional(asString, ''),
-
-  /**
-   * The cluster defintions are used by setupDatabases to create the databases and setup
-   * replications.
-   */
-  couchMainCluster: asOptional(asString, 'wusa'),
-  couchUris: asOptional(asCouchCredentials, () => ({
-    wusa: {
-      url: 'https://lwsbalancerdb-wusa1.edge.app:6984',
-      username: 'admin',
-      password: 'admin'
-    },
-    eusa: {
-      url: 'https://lwsbalancerdb-eusa1.edge.app:6984',
-      username: 'admin',
-      password: 'admin'
-    }
-  })),
-
-  xaiApiKey: asOptional(asString, 'xxxxx'),
-  nanogptApiKey: asOptional(asString, 'xxxxx'),
-  minimaxApiKey: asOptional(asString, 'xxxxx'),
-
-  /**
-   * When true, only the pitcher and batter crops are uploaded for OCR
-   * (pitcher name + pitch count, batter name + hits/at-bats).
-   * All other image analysis (inning, scores, bases, count, etc.) is skipped.
-   */
-  rosterOnly: asOptional(asBoolean, false),
-
-  scanMethod: asOptional(
-    asValue('screenshot', 'viewHierarchy'),
-    'viewHierarchy'
+  /** Postgres for TeamStation's own data. */
+  databaseUrl: asOptional(
+    asString,
+    'postgres://localhost:5432/teamstation_dev'
   ),
 
   /**
-   * OCR models for image analysis. Can be a single string or an array.
-   * Load is distributed round-robin across models, with failover to
-   * the next model on error. Supported prefixes:
-   * - "xai/" - XAI's Grok models
-   * - "ollama/" - Local Ollama models
-   * - "nanogpt/" - NanoGPT models
-   * - "minimax/" - MiniMax direct API
+   * PeerTube's database, read-only, used only by the importer. Empty until
+   * the `teamstation_peertube_ro` role exists on the production host.
    */
-  ocrModels: asOptional(
-    asEither(asArray(asString), (raw: any) => [asString(raw)]),
-    ['nanogpt/minimax/minimax-01']
-  )
-}).withRest
+  peertubeDatabaseUrl: asOptional(asString, ''),
 
+  /** Where uploads and live streams are remuxed before they go to the Space. */
+  workDir: asOptional(asString, '/mnt/datadrive/work'),
+
+  /** Finished HLS, served from here until it is verified in the Space. */
+  mediaDir: asOptional(asString, '/mnt/datadrive/media'),
+  /**
+   * Where a Director's upload waits while its parts arrive.
+   *
+   * Its own setting rather than a corner of `mediaDir`, because the two are
+   * different kinds of thing: media is what the site serves and may be shared
+   * with another deployment read-only, while this is scratch — gigabytes of
+   * parts that exist for an hour and are deleted. A development clone that
+   * reads production's media cannot write beside it, which is exactly what
+   * `ProtectSystem=strict` says.
+   *
+   * Empty means `<mediaDir>/uploads`, which is right for production.
+   */
+  uploadsDir: asOptional(asString, ''),
+
+  /** PeerTube's HLS, mounted read-only and served in place until cutover. */
+  peertubeMediaDir: asOptional(asString, ''),
+
+  /** The pinned build. The FFmpeg contract tests refuse to run on another. */
+  ffmpegPath: asOptional(asString, '/opt/homebrew/bin/ffmpeg'),
+  ffmpegVersion: asOptional(asString, '9.0.1'),
+
+  /** DigitalOcean Space holding finished HLS. */
+  space: asOptional(
+    asObject({
+      endpoint: asOptional(asString, 'https://sfo3.digitaloceanspaces.com'),
+      region: asOptional(asString, 'sfo3'),
+      bucket: asOptional(asString, 'app-teamstation-app--media'),
+      accessKeyId: asOptional(asString, ''),
+      secretAccessKey: asOptional(asString, ''),
+      pathStyle: asOptional(asBoolean, false)
+    }),
+    {
+      endpoint: 'https://sfo3.digitaloceanspaces.com',
+      region: 'sfo3',
+      bucket: 'app-teamstation-app--media',
+      accessKeyId: '',
+      secretAccessKey: '',
+      pathStyle: false
+    }
+  ),
+
+  /**
+   * Where sign-in codes are sent from. Empty means nothing is sent, and the
+   * code is only written to the log — which is fine in development and is a
+   * locked door in production, since 34 of the migrated accounts have no
+   * password and a code is their only way in.
+   */
+  smtp: asOptional(
+    asObject({
+      host: asOptional(asString, ''),
+      port: asOptional(asNumber, 587),
+      secure: asOptional(asBoolean, false),
+      user: asOptional(asString, ''),
+      password: asOptional(asString, ''),
+      fromAddress: asOptional(asString, ''),
+      fromName: asOptional(asString, 'TeamStation')
+    }),
+    {
+      host: '',
+      port: 587,
+      secure: false,
+      user: '',
+      password: '',
+      fromAddress: '',
+      fromName: 'TeamStation'
+    }
+  ),
+
+  /** Signing key for session tokens. Generated on first run if left empty. */
+  sessionSecret: asOptional(asString, ''),
+
+  /** Signs `/media` playback tokens. Caddy checks them through forward_auth. */
+  mediaSecret: asOptional(asString, ''),
+
+  /**
+   * What this deployment is called, where that is not `PRIMARY_HOST`.
+   *
+   * A **host**, with no scheme: `develop2.teamstation.app`, `127.0.0.1:9100`.
+   * `https` is implied, except for an IP address or `localhost`, which imply
+   * `http`; the stream URL is built from the same name. Every link this
+   * server hands out — playback, invites, sign-in, RTMP — is built from it.
+   *
+   * Empty is production, which is the whole point of it being empty: the one
+   * deployment that runs at the address in the source says nothing, and the
+   * development clones each say their own name once, here, instead of a
+   * branch editing a tracked file it must then remember not to land.
+   */
+  primaryUrlOverride: asOptional(asString, ''),
+
+  /**
+   * Serve `/media` from Node. **Development only**: in production Caddy serves
+   * those bytes, and turning this on would put every segment of every video
+   * through the API.
+   */
+  serveMediaLocally: asOptional(asBoolean, false),
+
+  /**
+   * Whether this deployment deletes recordings an upload replaced, once their
+   * month is up.
+   *
+   * **Off by default, and it has to be, because the Space is shared.** Every
+   * development seat is seeded from a copy of production's database, so it
+   * holds production's rows under production's video ids, and the objects
+   * those ids name are the ones production is serving. A seat that swept
+   * would delete the bytes off the live site. The deletion is real and
+   * irreversible, so it is opt-in per deployment rather than something a
+   * branch can switch on by being deployed.
+   */
+  purgeReplacedRecordings: asOptional(asBoolean, false),
+
+  /** Origins the app may call the API from. */
+  corsOrigins: asOptional(asArray(asString), [
+    'http://localhost:8080',
+    'http://127.0.0.1:8080'
+  ]),
+
+  /**
+   * Redis, which holds every game's scoreboard and carries its changes from
+   * worker to worker. Empty `prefix` means `ts:<database name>`, so seats
+   * that share one Redis, each with its own database, never meet.
+   *
+   * `caFile` is the certificate authority to check TLS against: the managed
+   * Valkey's CA in production, beside the URL's `rediss://`. Empty for a
+   * local Redis.
+   */
+  redis: asOptional(
+    asObject({
+      url: asOptional(asString, 'redis://127.0.0.1:6379'),
+      prefix: asOptional(asString, ''),
+      caFile: asOptional(asString, '')
+    }),
+    { url: 'redis://127.0.0.1:6379', prefix: '', caFile: '' }
+  ),
+
+  /**
+   * Dictation on the scoring screen: xAI's dictation model for speech to text
+   * and an LLM for the tool calls — xAI's by default, OpenAI's or Anthropic's
+   * when their keys are here and the scorer picks one. Absent, the route is not mounted and
+   * `/health` says so, which is how the client knows not to show the button.
+   * `baseUrl` and `sttUrl` exist so a test can point either somewhere else.
+   */
+  dictation: asOptional(
+    asObject({
+      apiKey: asString,
+      baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
+      sttUrl: asOptional(asString, 'wss://api.x.ai/v1/stt'),
+      sttModel: asOptional(asString, 'grok-voice-transcribe-2.0'),
+      model: asOptional(asString, 'grok-4.3'),
+      /** Keys for the GPT and Claude models; without one, those are not offered. */
+      openai: asOptional(
+        asObject({
+          apiKey: asString,
+          baseUrl: asOptional(asString, 'https://api.openai.com/v1')
+        })
+      ),
+      anthropic: asOptional(
+        asObject({
+          apiKey: asString,
+          baseUrl: asOptional(asString, 'https://api.anthropic.com/v1')
+        })
+      )
+    })
+  ),
+
+  /** Log every request. Noisy, but useful while the server is still new. */
+  logRequests: asOptional(asBoolean, true),
+
+  /**
+   * Live streaming in: the RTMP ingest, and the URL people are given for it.
+   *
+   * `bindHost` is what the ingest listens on; what a stream URL is *printed*
+   * as comes from `primaryUrlOverride` above, because the name an encoder on
+   * somebody's laptop reaches this machine by is the same name a browser
+   * reaches it by, and there is no reason for a deployment to say it twice.
+   *
+   * The port is 1936 while PeerTube still holds 1935. Moving it changes every
+   * URL shown from then on; keys already issued keep working, since the key is
+   * not tied to the port.
+   */
+  live: asOptional(
+    asObject({
+      enabled: asOptional(asBoolean, true),
+      bindHost: asOptional(asString, '0.0.0.0'),
+      port: asOptional(asNumber, 1936),
+      /** The RTMP application name: `rtmp://host:port/<app>/<key>`. */
+      app: asOptional(asString, 'live'),
+      /** Segment length. A multiple of the encoder's keyframe interval. */
+      segmentSeconds: asOptional(asNumber, 4),
+      /** How long after a game's start its key stops working. */
+      /**
+       * How much room must be left before a new stream is allowed to start.
+       *
+       * A game writes steadily for hours; a volume that fills mid-game kills
+       * ffmpeg and looks to an operator like a stream that stopped for no
+       * reason. Refusing to start costs a sentence, which is cheaper.
+       */
+      freeDiskFloorGb: asOptional(asNumber, 10)
+    }),
+    {
+      enabled: true,
+      bindHost: '0.0.0.0',
+      port: 1936,
+      app: 'live',
+      segmentSeconds: 4,
+      freeDiskFloorGb: 10
+    }
+  )
+})
 export type ServerConfig = ReturnType<typeof asServerConfig>
-export const serverConfig: ServerConfig = makeConfig(asServerConfig, configPath)
+export type SmtpSettings = ServerConfig['smtp']
+export type LiveSettings = ServerConfig['live']
+
+export const serverConfig: ServerConfig = makeConfig(
+  asServerConfig,
+  './serverConfig.json'
+)
+
+/**
+ * What this server is called: a host, with a port only where it has one.
+ *
+ * The override when a deployment sets one, and otherwise the name in the
+ * source, which is what production runs on. Resolved once, here, so no caller
+ * has to remember which of the two it is.
+ */
+export const primaryAuthority: Authority =
+  serverConfig.primaryUrlOverride === ''
+    ? PRIMARY_HOST
+    : asAuthority(serverConfig.primaryUrlOverride)
+
+/** The same name with the scheme it implies: the origin links are built on. */
+export const publicUrl: string = httpOrigin(primaryAuthority)
+
+/** The same name again with no port, which is what a stream URL names. */
+export const primaryHost: string = hostOf(primaryAuthority)

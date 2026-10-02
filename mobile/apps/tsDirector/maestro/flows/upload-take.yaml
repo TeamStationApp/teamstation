@@ -1,0 +1,50 @@
+# Uploads the newest take's `home` camera to its game, the primary output
+# having already gone. Deletes nothing: no `clearState`, and nowhere near
+# Select All, Delete, or the per-row circles that mark a take for deletion.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+- extendedWaitUntil:
+    visible:
+      id: 'start-directing'
+    timeout: 30000
+- tapOn:
+    id: 'start-directing'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-button'
+    timeout: 30000
+- tapOn:
+    id: 'recordings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-dates'
+    timeout: 25000
+
+# Off: the primary output (already uploaded) and the two side cameras.
+- tapOn:
+    point: '96%,13.5%'
+- waitForAnimationToEnd:
+    timeout: 1500
+- tapOn:
+    point: '96%,20%'
+- waitForAnimationToEnd:
+    timeout: 1500
+- tapOn:
+    point: '96%,26%'
+- waitForAnimationToEnd:
+    timeout: 1500
+- takeScreenshot: shot-chosen
+
+- tapOn:
+    id: 'recordings-upload'
+- extendedWaitUntil:
+    visible:
+      id: 'upload-event-gam_MFhfPsp53ZiCr_d1'
+    timeout: 40000
+- tapOn:
+    id: 'upload-event-gam_MFhfPsp53ZiCr_d1'
+- waitForAnimationToEnd:
+    timeout: 10000
+- takeScreenshot: shot-started

@@ -1,0 +1,125 @@
+# Linking a picture to a phone: an NDI capture of a Cameraman's HDMI output takes the phone's
+# telemetry and controls, and the phone streams nothing.
+#
+# Runs against the bench: a Cameraman (default iPhone15) whose clean HDMI feeds the Cosmo C2, and the
+# C2's NDI stream (default NDI HX3_A_994079). Every control assertion reads the phone's own answer
+# back through the control screen's poll, so a link that drew the right pills without reaching the
+# phone fails here.
+#
+# No `debugHUD`: it is drawn across the top of the grid, over the very tile chrome this flow is
+# here to find — the battery and thermal pills and the three-dot button.
+appId: app.teamstation.director
+env:
+  VIDEO_NAME: NDI HX3_A_994079
+  CONTROL_NAME: iPhone15
+  CONTROL_HOST: 10.10.7.151
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      sourceProfile: rtsp
+
+- runFlow: shared/allow-local-network.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 60000
+- runFlow: shared/settle-source-list.yaml
+- extendedWaitUntil:
+    visible: '${VIDEO_NAME}'
+    timeout: 60000
+- extendedWaitUntil:
+    visible: '${CONTROL_NAME}'
+    timeout: 60000
+
+# The chain lives on the picture's row; the picker names the phone with its address.
+- runScript:
+    file: ../../scripts/findLinkRows.js
+    env:
+      VIDEO_NAME: ${VIDEO_NAME}
+      CONTROL_NAME: ${CONTROL_NAME}
+- tapOn:
+    id: 'source-link-${output.videoRow}'
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn: '${CONTROL_NAME} · ${CONTROL_HOST}'
+- extendedWaitUntil:
+    visible: 'Linked for remote control'
+    timeout: 10000
+
+# The phone now sits directly under the picture, off the grid, and says so in its row value.
+- runScript:
+    file: ../../scripts/findLinkRows.js
+    env:
+      VIDEO_NAME: ${VIDEO_NAME}
+      CONTROL_NAME: ${CONTROL_NAME}
+- assertVisible: 'name=${CONTROL_NAME} on=0 .*link=control:${output.videoRow}'
+- assertVisible: 'name=${VIDEO_NAME} .*link=video:${output.controlRow}'
+- assertVisible:
+    id: 'source-unlink-${output.controlRow}'
+- assertNotVisible:
+    id: 'source-toggle-${output.controlRow}'
+
+# Put the picture on the grid and go directing.
+- tapOn:
+    id: 'source-toggle-${output.videoRow}'
+- extendedWaitUntil:
+    visible: 'name=${VIDEO_NAME} on=1 .*'
+    timeout: 10000
+- tapOn:
+    id: 'start-directing'
+- extendedWaitUntil:
+    visible:
+      id: 'source-1'
+    timeout: 30000
+- runScript:
+    file: ../../scripts/assertTileLive.js
+    env:
+      SOURCE: '1'
+
+# The NDI tile wears the phone's pills and three-dot button, through the link.
+- extendedWaitUntil:
+    visible:
+      id: 'source-1-camera-menu'
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: 'source-1-camera-battery'
+    timeout: 20000
+- assertVisible:
+    id: 'source-1-camera-thermal'
+
+# The phone's own screen opens over the NDI picture, and a flip reaches the phone and comes back.
+- tapOn:
+    id: 'source-1-camera-menu'
+- extendedWaitUntil:
+    visible:
+      id: 'camera-screen'
+    timeout: 10000
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_RESPONDING: 'true'
+- takeScreenshot: linked-control-open
+- tapOn:
+    id: 'flip-button'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_POSITION: 'front'
+- takeScreenshot: linked-flipped
+- tapOn:
+    id: 'flip-button'
+- runScript:
+    file: ../../scripts/assertCameraControl.js
+    env:
+      EXPECT_POSITION: 'back'
+- tapOn:
+    id: 'camera-close'
+- extendedWaitUntil:
+    visible:
+      id: 'source-1-camera-menu'
+    timeout: 8000

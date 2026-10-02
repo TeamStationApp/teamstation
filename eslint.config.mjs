@@ -22,7 +22,7 @@ export default [
   // on three casts that are load-bearing — `--fix` removed them and broke the
   // build.
   {
-    files: ['src2/app/**/*.ts', 'src2/app/**/*.tsx', 'src2/common/**/*.ts'],
+    files: ['src/app/**/*.ts', 'src/app/**/*.tsx', 'src/common/**/*.ts'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.app.json' }
     }
@@ -34,11 +34,6 @@ export default [
       '**/lib/**',
       '**/dist/**',
       '.cursor/**',
-      // GameStation 1.0, frozen. It is kept for reference and has no build
-      // configuration on this branch any more, so there is no tsconfig that
-      // names its files and the typed rules cannot run over them. Its own
-      // lint, with its own package, is on `paul/gameStation1` at `v1.0.0`.
-      'src/**',
       'tools/**',
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that

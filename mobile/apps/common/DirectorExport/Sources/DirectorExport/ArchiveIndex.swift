@@ -243,7 +243,7 @@ public final class ArchiveIndex: @unchecked Sendable {
       """)
     // The camera's name when it joined the take, rewritten if it was renamed during it. A source id
     // is a camera's UUID, so a camera the Director has since forgotten would otherwise come back as
-    // that UUID; the name is what the operator, and GS Distributor, know it by.
+    // that UUID; the name is what the operator, and TS Distributor, know it by.
     try? store.execute("ALTER TABLE recording_sources ADD COLUMN camera_name TEXT;")
     // Where the programme was in real time, sampled as it was written.
     //
@@ -328,7 +328,7 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   /// Writes down the game a take is of.
   ///
-  /// Called when a take starts with a GameStation event chosen, and when an
+  /// Called when a take starts with a TeamStation event chosen, and when an
   /// event is picked while a take is recording. Written only over a take with
   /// no game, or over `replacing`: the event picker passes the game it linked
   /// the same take to earlier, so correcting a wrong pick moves the take,
@@ -1060,7 +1060,7 @@ public final class ArchiveIndex: @unchecked Sendable {
   }
 
   /// Just enough of a grid entry to read a camera's name back out of a take's snapshot. The keys
-  /// are those of GS Director's `SourceSelection`, which wrote it.
+  /// are those of TS Director's `SourceSelection`, which wrote it.
   private struct RecordedSelection: Decodable {
     var id: SourceID
     var advertisedName: String?

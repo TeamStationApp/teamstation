@@ -5,8 +5,8 @@
 //   node scripts/game-socket-listen.mjs --api http://127.0.0.1:9120/api/v1 \
 //     --email m@example.com --password '...' --game gam_g2 [--game ...]
 //
-// Signs in with --email and --password (or uses --token, or GS_TOKEN), then
-// subscribes through the app's own client, `src2/common/gameSocket.ts`, so a
+// Signs in with --email and --password (or uses --token, or TS_TOKEN), then
+// subscribes through the app's own client, `src/common/gameSocket.ts`, so a
 // dropped connection reconnects, subscribes again and prints the `resync` the
 // screens would get. --no-token connects with no credentials at all, and
 // --once exits after the first close or refusal instead of reconnecting.
@@ -21,7 +21,7 @@ import WebSocket from 'ws'
 
 const require = createRequire(import.meta.url)
 require('sucrase/register')
-const { GameSocket } = require('../src2/common/gameSocket.ts')
+const { GameSocket } = require('../src/common/gameSocket.ts')
 
 const { values } = parseArgs({
   options: {
@@ -41,7 +41,7 @@ const print = line => {
 
 async function signIn() {
   if (values['no-token']) return undefined
-  const token = values.token ?? process.env.GS_TOKEN
+  const token = values.token ?? process.env.TS_TOKEN
   if (token != null) return token
   if (values.email == null || values.password == null) {
     throw new Error('Give --email and --password, --token, or --no-token')

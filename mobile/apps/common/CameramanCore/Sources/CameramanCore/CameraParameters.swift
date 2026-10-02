@@ -1,6 +1,6 @@
 import Foundation
 
-// The wire vocabulary a GS Cameraman phone answers over RTSP `GET_PARAMETER` / `SET_PARAMETER`
+// The wire vocabulary a TS Cameraman phone answers over RTSP `GET_PARAMETER` / `SET_PARAMETER`
 // (RFC 2326 §10.8–10.9) with `text/parameters` bodies.
 //
 // Names follow ONVIF Media2 / PTZ configuration names (`videoEncoder.encoding`,

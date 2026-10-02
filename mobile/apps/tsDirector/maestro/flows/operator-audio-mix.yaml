@@ -1,0 +1,47 @@
+# A5/F2/F4/B8: AUDIO is independent of VIDEO and of which tile is program.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 3
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- tapOn:
+    id: 'source-audio-toggle-2'
+
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible:
+      id: 'output'
+    timeout: 20000
+
+- extendedWaitUntil:
+    visible: 'output src=CAM3 mix=2 .*'
+    timeout: 30000
+
+- tapOn:
+    id: 'source-1'
+- extendedWaitUntil:
+    visible: 'output src=CAM1 mix=2 .*'
+    timeout: 10000
+- assertVisible: 'source=1 .*onair=1'
+- assertVisible: 'source=3 .*onair=0'

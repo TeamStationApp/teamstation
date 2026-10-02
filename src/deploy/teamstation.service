@@ -1,0 +1,30 @@
+# TeamStation's API, installed by provision.sh as
+# /etc/systemd/system/teamstation.service.
+[Unit]
+Description=TeamStation API
+Documentation=https://app.teamstation.app/api/v1/openapi.json
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=teamstation
+Group=teamstation
+WorkingDirectory=/srv/teamstation/current
+EnvironmentFile=-/srv/teamstation/.env
+ExecStart=/srv/teamstation/node-v24/bin/node lib/server/index.js
+Restart=on-failure
+RestartSec=5
+
+# It needs to write the volume and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/mnt/datadrive
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

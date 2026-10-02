@@ -432,7 +432,7 @@ public protocol FrameSource: AnyObject, Sendable {
   /// Default is a no-op, so only sources that encode need to care.
   func setArchiving(_ isArchiving: Bool)
 
-  /// The frame rate the camera says it is set to, when it says: a GS Cameraman states its rate over
+  /// The frame rate the camera says it is set to, when it says: a TS Cameraman states its rate over
   /// its control channel. Nil when it does not. Only a source that otherwise has to measure its rate
   /// cares; the default ignores it.
   func setAnnouncedFrameRate(_ rate: Double?)

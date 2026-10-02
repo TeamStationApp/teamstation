@@ -1,4 +1,4 @@
-# Agent guidelines for gamestation
+# Agent guidelines for teamstation
 
 ## Push your work
 
@@ -14,9 +14,9 @@ files. Work that is not pushed is work he cannot review.
 
 If a change is not ready to push, it is not finished; say so rather than leaving it on disk.
 
-## GS Director: pass the device UDID
+## TS Director: pass the device UDID
 
-Whenever Paul asks to **fix, change, or finish** GS Director (`mobile/apps/gsDirector`), treat
+Whenever Paul asks to **fix, change, or finish** TS Director (`mobile/apps/tsDirector`), treat
 verification as part of the work — not an optional follow-up.
 
 ### Device
@@ -46,21 +46,21 @@ Quote the line that names the UDID. Fix failures before handing back.
 
 Retention sweeps the camera archive at app launch. Check the build's retention settings before
 running anything against an iPad with an unrecovered take on it — a six-hour window once deleted
-all 3,617 segments of a 109-minute game. See `mobile/apps/gsDirector/docs/sync-alignment-handoff.md`.
+all 3,617 segments of a 109-minute game. See `mobile/apps/tsDirector/docs/sync-alignment-handoff.md`.
 
 ## UI and device tests: maestro-d in TypeScript
 
 Every UI, simulator, emulator and device test is driven by **maestro-d** and written in
 **TypeScript** against its JavaScript client (`import { MaestroD } from 'maestro-d'`, or the
 client under `MAESTRO_D_CLIENT_ROOT` as `scripts/scoring-feedback-safari.mjs` loads it). This
-applies to every app in the repository: GS Director, GS Cameraman, GS Watcher, GS Distributor and
+applies to every app in the repository: TS Director, TS Cameraman, TS Watcher, TS Distributor and
 the web app in a mobile browser.
 
 - **No new Maestro YAML flows.** Do not add `.yaml` flows, and do not use `maestro-runner test` or
   `scripts/run-maestro.js` as the test for new work. The YAML flows that already exist stay until
   someone migrates them; they are not the standard, and they are not required for handing back.
 - Write a test as a `.ts` file beside the app it drives (for example
-  `mobile/apps/gsDirector/e2e/<name>.e2e.ts`), run with `node -r sucrase/register <file>`.
+  `mobile/apps/tsDirector/e2e/<name>.e2e.ts`), run with `node -r sucrase/register <file>`.
 - Each agent uses its own daemon name (`MAESTRO_D=<name>`); daemons are not shared. Run
   `maestro-d ps` before attaching, and always pin the device with `device:`.
 - The maestro-d docs are in `~/git/maestro-d/docs/daemon/` (`js.md`, `rest.md`, `cli.md`,

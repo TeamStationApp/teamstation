@@ -1,0 +1,183 @@
+# TeamStation's Caddy configuration, installed on the droplet app.teamstation.app
+# by `src/deploy/provision.sh` as /etc/caddy/Caddyfile.
+#
+#   app.teamstation.app             production, port 9100
+#   develop1–4.teamstation.app      the branch seats, ports 9201–9204
+#   gamestation.co and its hosts    the old addresses: the old apps' API and
+#                                   media calls are served in place, and
+#                                   every page URL moves to app.teamstation.app
+#
+# app.teamstation.app is the primary address; teamstation.app sends every link
+# to the same path there.
+#
+# Until the gamestation.co records point at this droplet,
+# Caddy cannot get certificates for those names; it keeps retrying in the
+# background and serves everything else normally.
+
+# The application behind one host: the API, its game socket, signed media
+# straight off the volume, and the single-page bundle.
+#   {args[0]}  the server's loopback port
+#   {args[1]}  the directory holding the current bundle
+(teamstation) {
+	# `handle` blocks, not bare directives: Caddy runs `try_files` before
+	# `reverse_proxy`, so a bare layout rewrites /api/... to index.html before
+	# the proxy matcher ever sees it. Handle blocks are ordered and exclusive.
+
+	# Media: the API checks the token, then Caddy streams the bytes itself with
+	# Range support, so video never passes through Node.
+	@media path_regexp media ^/media/([0-9]+)/([A-Za-z0-9_-]+)/(.+)$
+	handle @media {
+		# `route`, because Caddy sorts directives by its own precedence and
+		# `rewrite` outranks `forward_auth`: without it the token is stripped
+		# from the URI before the auth check sees it.
+		route {
+			forward_auth 127.0.0.1:{args[0]} {
+				uri /internal/media-auth
+			}
+			rewrite * /{re.media.3}
+			# `/*.m3u8` matches one path segment only, so it would never match a
+			# playlist nested under a video's directory.
+			@playlist path *.m3u8
+			header @playlist Content-Type application/vnd.apple.mpegurl
+			# A live playlist is rewritten every few seconds for hours; a cached
+			# copy runs the player out of segments.
+			header @playlist Cache-Control "no-store"
+			# Segments never change once written, and they are the big files.
+			@segment not path *.m3u8
+			header @segment Cache-Control "private, max-age=3600"
+			# hls.js reads segments cross-origin when a page is served under
+			# another name. The bytes are behind the signed token forward_auth
+			# checked above, so this grants nothing the URL did not carry.
+			header Access-Control-Allow-Origin "*"
+			root * /mnt/datadrive/media
+			file_server
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:{args[0]}
+	}
+
+	# The game socket: WebSocket upgrades at /socket go to the same server as
+	# the API, and reverse_proxy passes the upgrade through as it is.
+	handle /socket {
+		reverse_proxy 127.0.0.1:{args[0]}
+	}
+
+	# /internal/* is for Caddy's own forward_auth over the loopback.
+	handle /internal/* {
+		respond 404
+	}
+
+	# The app: a single-page bundle, so anything unknown is index.html.
+	handle {
+		root * {args[1]}
+		route {
+			# The bundle carries a content hash, so it can be kept for ever.
+			@hashed path /app-*.js /app-*.js.map
+			header @hashed Cache-Control "public, max-age=31536000, immutable"
+			# Everything else is, or becomes, index.html, which names the
+			# current bundle and must be revalidated every time.
+			@page not path /app-*.js /app-*.js.map
+			header @page Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}
+
+# An old gamestation.co address. The installed GameStation apps keep calling
+# its API, socket and media, so those are served in place; a browser asking
+# for a page is sent to the same path under the new host.
+#   {args[0]}  the server's loopback port
+#   {args[1]}  the new host
+(oldAddress) {
+	@service path_regexp ^/(api/|socket$|internal/|media/)
+	handle @service {
+		reverse_proxy 127.0.0.1:{args[0]}
+	}
+	handle {
+		redir https://{args[1]}{uri} permanent
+	}
+}
+
+app.teamstation.app {
+	log {
+		output file /var/log/caddy/app.teamstation.app.log
+		format json
+	}
+
+	# Builds for direct download, on the volume rather than in a version
+	# directory, so a deploy never removes them:
+	#   /builds/     any build, listed
+	#   /downloads/  fixed download links
+	#   /install/    over-the-air install pages
+	handle /builds/* {
+		root * /mnt/datadrive/app
+		@package path *.ipa *.apk *.dmg *.zip
+		header @package Content-Type application/octet-stream
+		header Cache-Control "no-cache"
+		file_server browse
+	}
+	handle /downloads/* {
+		root * /mnt/datadrive/app
+		@ipa path *.ipa
+		header @ipa Content-Type application/octet-stream
+		file_server
+	}
+	handle /install/* {
+		root * /mnt/datadrive/app
+		@plist path *.plist
+		header @plist Content-Type text/xml
+		@ipa path *.ipa
+		header @ipa Content-Type application/octet-stream
+		header Cache-Control "no-cache"
+		file_server
+	}
+
+	import teamstation 9100 /srv/teamstation/current/dist
+}
+
+develop1.teamstation.app {
+	import teamstation 9201 /srv/develop1/current/dist
+}
+
+develop2.teamstation.app {
+	import teamstation 9202 /srv/develop2/current/dist
+}
+
+develop3.teamstation.app {
+	import teamstation 9203 /srv/develop3/current/dist
+}
+
+develop4.teamstation.app {
+	import teamstation 9204 /srv/develop4/current/dist
+}
+
+gamestation.co, www.gamestation.co, tube.gamestation.co {
+	import oldAddress 9100 app.teamstation.app
+}
+
+develop.gamestation.co {
+	import oldAddress 9201 develop1.teamstation.app
+}
+
+develop2.gamestation.co {
+	import oldAddress 9202 develop2.teamstation.app
+}
+
+develop3.gamestation.co {
+	import oldAddress 9203 develop3.teamstation.app
+}
+
+develop4.gamestation.co {
+	import oldAddress 9204 develop4.teamstation.app
+}
+
+teamstation.app {
+	redir https://app.teamstation.app{uri} permanent
+}
+
+npll.edge.app {
+	redir https://app.teamstation.app{uri} permanent
+}
