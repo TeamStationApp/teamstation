@@ -551,6 +551,65 @@ const userIdParam = {
   schema: userIdSchema
 }
 
+const conversationIdParam = {
+  name: 'conversationId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
+const pathParam = (name: string): Record<string, unknown> => ({
+  name,
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+})
+
+/** A JSON body whose fields are all base64url strings unless typed. */
+const keyBody = (
+  properties: Record<string, unknown>,
+  required: string[] = Object.keys(properties)
+): Record<string, unknown> => ({
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required,
+        properties
+      }
+    }
+  }
+})
+
+const b64 = { type: 'string', description: 'base64url' }
+
+const identityBody = keyBody({
+  identityId: {
+    type: 'string',
+    description: '`cid_` and 16 base64url characters, made by the device'
+  },
+  identityPublicKey: b64,
+  pukPublicKey: b64,
+  pukSignature: b64,
+  box: b64
+})
+
+const userIdsBody = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['userIds'],
+        properties: {
+          userIds: { type: 'array', items: { type: ['integer', 'string'] } }
+        }
+      }
+    }
+  }
+}
+
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -2334,7 +2393,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               properties: {
                 kind: { type: 'string', enum: ['league', 'season', 'team'] },
                 id: { type: 'string' },
-                name: { type: 'string' }
+                name: { type: 'string' },
+                safesportLao: {
+                  type: 'boolean',
+                  description:
+                    'A league only: whether it is a SafeSport Local ' +
+                    'Affiliated Organization, bound by the MAAPP'
+                }
               }
             },
             tree: {
@@ -5830,6 +5895,107 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/teams/search': {
+        get: {
+          summary: 'Find a team to follow',
+          description:
+            'Anybody signed in. `q` needs at least 2 characters (400 ' +
+            'otherwise) and matches anywhere in the name, ignoring case. At ' +
+            'most 20 full, unmerged teams, by name, each ' +
+            '`{id, name, logoUrl, seasons: [{id, title}], following}`, where ' +
+            'a season title is `<league> <season>` when it has a league.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', minLength: 2 }
+            }
+          ],
+          responses: {
+            200: { description: 'The matching teams, possibly none' },
+            400: errorResponse,
+            401: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/follow': {
+        put: {
+          summary: 'Follow a team',
+          description:
+            'Anybody signed in, with nobody’s permission. A fan sees the ' +
+            'team’s public listing and eligible fan chat, with no private access. ' +
+            'Idempotent. A missing, external or merged team gets 404.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: '`{following: true}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Stop following a team',
+          description:
+            'Idempotent. A missing, external or merged team gets 404.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: '`{following: false}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/me/team-follows': {
+        get: {
+          summary: 'The teams the caller follows',
+          description:
+            'In the shape `GET /teams/search` answers, every one with ' +
+            '`following: true`.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The followed teams, by name' },
+            401: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/schedule': {
+        get: {
+          summary: "A team's games, as a fan may read them",
+          description:
+            'For anybody who can see the team or follows it. Oldest first, ' +
+            'cancelled games left out, each ' +
+            '`{gameId, startsAt, homeTeam: {id, name}, awayTeam: {id, name}, ' +
+            'venue}`, with no status, score, poster or video.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: 'The schedule' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/staff': {
+        get: {
+          summary: "A team's staff and their roles on it",
+          description:
+            'For anybody who can see the team or follows it. The people ' +
+            'with a direct `admin`, `coach`, `assistant`, `scorekeeper` or `songkeeper` ' +
+            'role on the team, and its owners and managers as `admin`; ' +
+            'roles on its season or league do not count. Each is ' +
+            '`{userId, shortName, avatarUrl, roles}`, administrators first.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: 'The staff' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/roster': {
         get: {
           summary:
@@ -5962,6 +6128,1125 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             400: errorResponse,
             401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/guardians': {
+        get: {
+          summary: "A player's guardians and adult family members",
+          description:
+            'For the team’s administrators and coaches (inherited roles ' +
+            'count), the player, and the player’s guardians; anybody else, ' +
+            'and a user who is not a player on the team, gets 404. Each is ' +
+            '`{userId, name, email, kind}`, `kind` `guardian` or `family`, ' +
+            'guardians first.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          responses: {
+            200: { description: 'The guardians and family' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Link a guardian or adult family member',
+          description:
+            'For the team’s administrators and coaches. The body is ' +
+            '`{userId}` or `{email}`, with `kind` `guardian` (the default) ' +
+            'or `family`. A `userId` must be on a team the caller can see. ' +
+            'An address with an account links it at once; any other address ' +
+            'is sent an invitation that only that address can redeem. A ' +
+            'guardian is put on the team as a member, by the link; a family ' +
+            'link grants nothing. Somebody with no way to sign in is 400 with ' +
+            '`details.reason` `guardianNeedsAccount`. Audited. Answers 201 ' +
+            '`{guardians, invited?}`.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    userId: { type: 'string' },
+                    email: { type: 'string' },
+                    kind: { type: 'string', enum: ['guardian', 'family'] }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: { description: 'The guardians now, and any invitation sent' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/guardians/{guardianId}': {
+        delete: {
+          summary: 'Unlink a guardian or adult family member',
+          description:
+            'For the team’s administrators and coaches, and the guardian ' +
+            'themselves. The membership the link granted goes too, unless ' +
+            'they guard another player on the team, whose link then holds ' +
+            'it. Audited. Answers `{removed}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            teamIdParam,
+            userIdParam,
+            {
+              name: 'guardianId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: '`{removed}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/birth-month': {
+        put: {
+          summary: "Set or clear a player's birth month",
+          description:
+            'A year and a month, never a day: `{year, month}`, or ' +
+            '`{year: null, month: null}` to clear it. Any other field is 400. ' +
+            'For administrators and coaches of a team the player plays on, ' +
+            'and the player’s guardians; they alone see it, as `birthMonth` ' +
+            '`YYYY-MM` on `GET /players/{userId}`. Anybody else gets 404. ' +
+            'Audited. Answers `{userId, birthMonth}`.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['year', 'month'],
+                  additionalProperties: false,
+                  properties: {
+                    year: { type: ['integer', 'null'] },
+                    month: {
+                      type: ['integer', 'null'],
+                      minimum: 1,
+                      maximum: 12
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: '`{userId, birthMonth}`' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations': {
+        get: {
+          summary: 'The chats the caller is in',
+          description:
+            'Scope chats (Staff, Members and Fans of a team; Staff, All Staff ' +
+            'and Announcements of a season; a league’s Org) and DMs, each ' +
+            '`{id, kind, title, scope, scopeName, lastSeq, lastMessageAt, ' +
+            'unread, canPost, canModerate, locked, noHolder, closed, ' +
+            'memberCount, people}`. `title` and `scopeName` are null for a ' +
+            'DM; `people` lists, for a DM, everybody else who was in it ' +
+            'with the caller as `{userId, shortName, left}` (current ' +
+            'members, and those who left after the caller joined), and is ' +
+            'empty for a scope chat. `lastMessageAt` is null before the ' +
+            'first message. Somebody who is not an account, or is under ' +
+            '13 by birth month, is in none. Additive `preferences` describes ' +
+            'only the caller: `{pinned, muted, manualUnread, manualUnreadRevision}`. ' +
+            '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
+            'including a deleted post; edits, reactions and preferences do not change post recency.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The chats' },
+            401: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/preferences': {
+        patch: {
+          summary: 'Update personal conversation preferences',
+          description:
+            'Current members only. Accepts one or more boolean fields: pinned, muted, manualUnread. Never changes membership, message timestamps or public read receipts. Setting manualUnread increments its revision. Only the caller and their signed-in clients see these preferences.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  minProperties: 1,
+                  properties: {
+                    pinned: { type: 'boolean' },
+                    muted: { type: 'boolean' },
+                    manualUnread: { type: 'boolean' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Personal preferences and unread revision' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/pins': {
+        get: {
+          summary: 'List personal message pins',
+          description:
+            'Current members only. Returns only the caller’s [{messageId, pinnedAt}], newest pin first. Contains no decrypted message content.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: 'Personal pin references' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/pins/{messageId}': {
+        put: {
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'messageId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          summary: 'Pin a message personally',
+          description:
+            'Current members only; the target is an uncleared post in this conversation. Idempotent. Returns the caller’s complete personal pin list; not a shared conversation pin.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Personal pin references' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'messageId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          summary: 'Unpin a message personally',
+          description:
+            'Current members only. Idempotent. Returns the caller’s complete personal pin list.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Personal pin references' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/members': {
+        get: {
+          summary: "A chat's members",
+          description:
+            'For members only; anybody else gets 404. Each is `{userId, ' +
+            'shortName, avatarUrl, label, isModerator, isApprover, eligible, ' +
+            'hasIdentity, identityKey, generation}`.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: 'The members' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/reads': {
+        get: {
+          summary: "Every member's read cursor",
+          description:
+            'For members only. `[{userId, seq}]` for every member with a ' +
+            'cursor.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: 'The cursors' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/log': {
+        get: {
+          summary: "A chat's membership log",
+          description:
+            'For members only. The hash-chained rows after `after` (0 for ' +
+            'all), oldest first, at most 1,000: `{seq, event, userId, ' +
+            'actorUserId, reason, prevHash, hash, at}`, the hashes in ' +
+            'base64url and `at` in milliseconds.',
+          security: [{ bearer: [] }],
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'after',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          responses: {
+            200: { description: 'The rows' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/dm-candidates': {
+        get: {
+          summary: 'The people the caller may start a DM with',
+          description:
+            'Exactly those the DM rules let the caller name, whose name holds ' +
+            '`q`, at most 50: `{userId, shortName, avatarUrl}`. Empty for ' +
+            'somebody whose only tie is following a team.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The candidates' },
+            401: errorResponse
+          }
+        }
+      },
+      '/chat/included-adults': {
+        get: {
+          summary: 'Adults to include beside players (MAAPP)',
+          description:
+            'For players the caller may name (comma-separated `playerIds`); ' +
+            'otherwise 403 `notCandidate`. Without `q`: their guardians, ' +
+            'adult family members and immediate coaches; with `q`: every ' +
+            'included adult (guardians, family, adult team, season and ' +
+            'league staff) whose name holds it. Never the caller. Each is ' +
+            '`{userId, shortName, label}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'playerIds',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            },
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The adults' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/dms': {
+        post: {
+          summary: 'Start a DM',
+          description:
+            '`{userIds}`: 1 to 19 others (400 `dmSize` otherwise). Each must ' +
+            'be somebody the caller may name, and the DM must keep the pair ' +
+            'rule (403 `notCandidate` with `userIds` or `playerIds`) and, in ' +
+            'a SafeSport LAO league, the MAAPP rule (409 `adultRequired` with ' +
+            '`playerIds`). An open one-to-one between the same two is ' +
+            'answered 200 instead of a new one (201). Answers the chat as ' +
+            '`GET /chat/conversations` lists it. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: userIdsBody,
+          responses: {
+            200: { description: 'The open one-to-one already there' },
+            201: { description: 'The new DM' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/dms/{conversationId}/members': {
+        post: {
+          summary: 'Add people to a DM',
+          description:
+            'For a member of the DM; anybody else gets 404. The same rules ' +
+            'as starting one, and never past 20 members. A closed DM is 409 ' +
+            '`closed`. Answers `{added}`. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: userIdsBody,
+          responses: {
+            200: { description: '`{added}`' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/dms/{conversationId}/members/me': {
+        delete: {
+          summary: 'Leave a DM',
+          description:
+            'Always allowed for a member. When those left break the pair ' +
+            'rule or the MAAPP rule, the DM closes. Answers `{left, ' +
+            'closed}`. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: '`{left, closed}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/devices': {
+        post: {
+          summary: 'Register this device for chat',
+          description:
+            '`{name, platform, boxPublicKey, signPublicKey}` (X25519 and ' +
+            'Ed25519 public keys, base64url). The device is bound to the ' +
+            'session (taking the binding from any other device on it) and ' +
+            'holds no keys until it enrols, is linked or resets. A machine ' +
+            'token is refused (403 `sessionRequired`), on every chat key ' +
+            'route. Answers the device as `GET /chat/devices` lists it. ' +
+            'Notifies `{u, k: devices}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            name: { type: 'string' },
+            platform: { type: 'string', enum: ['web', 'ios', 'android'] },
+            boxPublicKey: b64,
+            signPublicKey: b64
+          }),
+          responses: {
+            201: { description: 'The device' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        get: {
+          summary: "The caller's chat devices",
+          description:
+            'Revoked ones included, oldest first: `{id, name, platform, ' +
+            'boxPublicKey, signPublicKey, createdAt, lastSeenAt, revokedAt, ' +
+            'linked, current}`. `linked`: holds the current per-user key ' +
+            'generation and is not revoked; `current`: bound to this session.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The devices' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/devices/{deviceId}': {
+        delete: {
+          summary: 'Revoke a chat device',
+          description:
+            "One of the caller's devices, from a linked device or from the " +
+            'device itself (signing out); otherwise 403 `notHolder`. Its ' +
+            'session is ended. When it held the current identity, every chat ' +
+            'of the user is flagged for a new epoch and `GET /chat/me/keys` ' +
+            'reports `pukNeedsRotation`. Revoking again changes nothing. ' +
+            'Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('deviceId')],
+          responses: {
+            200: { description: 'The device' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/devices/{deviceId}/resume-challenge': {
+        post: {
+          summary: 'A nonce to resume a device with',
+          description:
+            '`{nonce, sessionId, expiresAt}`: 32 random bytes, good once and ' +
+            'for two minutes, and the session the signature must name. 403 ' +
+            '`unknownDevice` for a device the server does not have or that is ' +
+            "another user's, `deviceRevoked` for a revoked one.",
+          security: [{ bearer: [] }],
+          parameters: [pathParam('deviceId')],
+          responses: {
+            200: { description: 'The challenge' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/devices/{deviceId}/resume': {
+        post: {
+          summary: 'Bind a device to this session again',
+          description:
+            "`{nonce, signature}`: the device's Ed25519 signature over " +
+            '`lp(nonce) ‖ lp(deviceId) ‖ lp(sessionId)`. The nonce is spent ' +
+            'by the attempt. 403 `badChallenge` (unknown, used or expired ' +
+            'nonce), `badSignature`, `unknownDevice` or `deviceRevoked`. ' +
+            'Answers the device. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('deviceId')],
+          requestBody: keyBody({ nonce: b64, signature: b64 }),
+          responses: {
+            200: { description: 'The device' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/identity': {
+        put: {
+          summary: 'Enrol: publish the first identity',
+          description:
+            "The identity's id and public key, PUK generation 1's public key " +
+            "with the identity's signature over `u64(userId) ‖ u64(1) ‖ " +
+            "lp(publicKey)`, and the PUK private key boxed to this session's " +
+            'device (HPKE `puk`), which is then linked. 409 ' +
+            '`identityExists` the second time, `idTaken` for a used id; 400 ' +
+            '`badSignature`; 403 `noDevice` without a registered device. ' +
+            'Opens a grant request (notifying `grant`) in every chat of the ' +
+            "user's that has an epoch. Answers `{identityId, generation, " +
+            'grantRequests}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: identityBody,
+          responses: {
+            201: { description: 'Enrolled' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/identity/reset': {
+        post: {
+          summary: 'Replace the identity from the device in hand',
+          description:
+            'The same body as enrolling. The old identity is replaced; every ' +
+            "other device of the user's is revoked and its session ended; in " +
+            'every chat of the user an `identityReset` row is logged, a new ' +
+            'epoch flagged, and a grant request only an approver may fill ' +
+            'opened where there is an epoch. 409 `noIdentity` with nothing ' +
+            'to reset. Answers `{identityId, generation, revokedDeviceIds}`. ' +
+            'Audited.',
+          security: [{ bearer: [] }],
+          requestBody: identityBody,
+          responses: {
+            201: { description: 'Reset' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/puk': {
+        post: {
+          summary: 'Post the next per-user key generation',
+          description:
+            'From a linked device (403 `notHolder` otherwise): `{generation, ' +
+            'publicKey, signature, previousKeysBox, boxes: [{deviceId, ' +
+            'box}]}`. `generation` must be the current one plus 1 (409 ' +
+            '`generationTaken`), signed by the current identity (400 ' +
+            '`badSignature`), and boxed to exactly the linked devices at the ' +
+            'current generation (400 `boxSet`). Flags every chat of the user ' +
+            'for a new epoch and opens grant requests at the new generation. ' +
+            'Answers `{generation, grantRequests}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            generation: { type: 'integer', minimum: 2 },
+            publicKey: b64,
+            signature: b64,
+            previousKeysBox: b64,
+            boxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { deviceId: { type: 'string' }, box: b64 }
+              }
+            }
+          }),
+          responses: {
+            201: { description: 'Posted' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/me/keys': {
+        get: {
+          summary: "The caller's keys, as this device holds them",
+          description:
+            '`{deviceId, linked, identity: {id, publicKey, createdAt} | ' +
+            'null, generations: [{generation, publicKey, signature, ' +
+            'previousKeysBox, box}], pukNeedsRotation}`: every generation of ' +
+            "the current identity with this session's device's box of it.",
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The keys' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/users/{userId}/keys': {
+        get: {
+          summary: "Somebody's current identity and per-user key",
+          description:
+            'For a user who is or was a member of a chat the caller is in ' +
+            'now (or the caller); 404 otherwise. `{userId, identity: {id, ' +
+            'publicKey, createdAt} | null, puk: {generation, publicKey, ' +
+            'signature} | null}`.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          responses: {
+            200: { description: 'The keys' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/identities/{identityId}': {
+        get: {
+          summary: 'An identity, current or replaced',
+          description:
+            '`{id, userId, publicKey, createdAt, replacedAt}`, with the same ' +
+            'reach as a user’s keys; 404 otherwise.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('identityId')],
+          responses: {
+            200: { description: 'The identity' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/links': {
+        post: {
+          summary: 'Ask to link this device',
+          description:
+            "This session's device, not yet linked (409 `alreadyLinked`), " +
+            "asks the user's linked devices for the identity. 409 " +
+            '`noIdentity` or `noLinkedDevice` (reset instead), 403 ' +
+            '`noDevice`. Lasts ten minutes. Answers `{id, newDeviceId, ' +
+            'createdAt, expiresAt, approved, expired, approvedByDeviceId, ' +
+            'box}`. Notifies `{u, k: link}`. Audited.',
+          security: [{ bearer: [] }],
+          responses: {
+            201: { description: 'The link' },
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        },
+        get: {
+          summary: 'Open link requests',
+          description:
+            "The user's unapproved, unexpired requests from unrevoked " +
+            'devices: `{id, newDevice: {id, name, platform, boxPublicKey}, ' +
+            'createdAt, expiresAt}`. Both screens show the six digits of ' +
+            '`linkCode(boxPublicKey, id)`.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The requests' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/links/{linkId}': {
+        get: {
+          summary: 'One link request',
+          description:
+            "One of the user's links, with `box` once approved; 404 " +
+            'otherwise. The new device polls it.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('linkId')],
+          responses: {
+            200: { description: 'The link' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/links/{linkId}/approve': {
+        post: {
+          summary: 'Approve a link',
+          description:
+            'From a linked device of the same user (403 `notHolder`): `{box, ' +
+            'pukBoxes: [{generation, box}]}`, the identity private key boxed ' +
+            'to the new device (HPKE `link`) and one PUK box per generation ' +
+            '(HPKE `puk`; 400 `boxSet` otherwise). 409 `linkExpired`, ' +
+            '`linkApproved`; 403 `deviceRevoked` for a revoked new device. ' +
+            'Answers the link. Notifies `{u, k: link}`. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('linkId')],
+          requestBody: keyBody({
+            box: b64,
+            pukBoxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { generation: { type: 'integer' }, box: b64 }
+              }
+            }
+          }),
+          responses: {
+            200: { description: 'The approved link' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/epochs': {
+        get: {
+          summary: "A chat's epochs and the caller's boxes",
+          description:
+            'For members only. `{latest, needsRotation, noHolder, epochs, ' +
+            'boxes}`: `epochs` after `after` (0 for all), oldest first, each ' +
+            '`{epoch, createdByUserId, identityId, previousKeyBox, ' +
+            'chainBreak, signature, createdAt}`; `boxes` are the caller’s ' +
+            'epoch keys under their current identity, from epoch `after` on, ' +
+            'each `{epoch, identityId, pukGeneration, box, grantedByUserId}` ' +
+            '(HPKE `epoch`, or `grant` when `grantedByUserId` is set). Bytes ' +
+            'are base64url.',
+          security: [{ bearer: [] }],
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'after',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          responses: {
+            200: { description: 'The epochs and boxes' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Make the next epoch',
+          description:
+            'From a member’s linked device (403 `notHolder` otherwise): ' +
+            '`{epoch, previousKeyBox, signature, boxes: [{userId, ' +
+            'pukGeneration, box}]}`. `epoch` is the latest plus 1 (409 ' +
+            '`epochTaken` when somebody made it first; 400 `epochGap` past ' +
+            'it). Epoch 1 has no `previousKeyBox` and may come from any ' +
+            'eligible member. A later one needs a creator holding the latest ' +
+            'epoch and its `previousKeyBox` (403 `notHolder`), unless no ' +
+            'current member holds it: then any member with an identity makes ' +
+            'it with no `previousKeyBox`, as a chain break, which supersedes ' +
+            'every open grant request. The signature is the creator’s current ' +
+            'identity’s (400 `badSignature`). The boxes name exactly the ' +
+            'eligible members (at a chain break, every member with an ' +
+            'identity) at their current generations (400 `boxSet`). Clears ' +
+            '`needs_rotation`, fills the boxed members’ requests, opens ' +
+            'requests for the rest, notifies `epoch`. A closed chat is 409 ' +
+            '`closed`. Answers `{epoch, chainBreak, boxed, grantRequests}`. ' +
+            'Audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: keyBody({
+            epoch: { type: 'integer', minimum: 1 },
+            previousKeyBox: { ...b64, nullable: true },
+            signature: b64,
+            boxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  userId: { type: 'integer' },
+                  pukGeneration: { type: 'integer' },
+                  box: b64
+                }
+              }
+            }
+          }),
+          responses: {
+            201: { description: 'Made' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/grants': {
+        get: {
+          summary: 'Open grant requests in the caller’s chats',
+          description:
+            'Every open request of a current member in a chat the caller is ' +
+            'in, oldest first: `{id, conversationId, epoch, userId, ' +
+            'identityId, identityKey, pukGeneration, pukPublicKey, ' +
+            'pukSignature, identityReset, canApprove, openedAt}`. `epoch` is ' +
+            'the latest, the one to box; `identityReset` marks an identity ' +
+            'that replaced one the chat had seen, which only an approver ' +
+            '(`canApprove`) may fill; `canApprove` is false on the caller’s ' +
+            'own reset request.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The requests' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        post: {
+          summary: 'Fill grant requests',
+          description:
+            'From a linked device (403 `notHolder`): `{boxes: [{conversationId, ' +
+            'epoch, userId, identityId, pukGeneration, box}]}`, 1 to 500 (400 ' +
+            'otherwise), each the latest epoch’s key boxed (HPKE `grant`) to ' +
+            'an open request. The caller must be a member holding the latest ' +
+            'epoch of each chat named (404, 403 `notHolder`) and an approver ' +
+            'for a reset identity other than their own (403 `notApprover`); ' +
+            'any refusal refuses the ' +
+            'whole batch. A box for an older epoch or a request no longer ' +
+            'open is skipped. Closes each request it fills and notifies ' +
+            '`grant`. Answers `{filled, skipped: [{conversationId, userId, ' +
+            'identityId, pukGeneration, reason}]}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            boxes: {
+              type: 'array',
+              maxItems: 500,
+              items: {
+                type: 'object',
+                properties: {
+                  conversationId: { type: 'string' },
+                  epoch: { type: 'integer' },
+                  userId: { type: 'integer' },
+                  identityId: { type: 'string' },
+                  pukGeneration: { type: 'integer' },
+                  box: b64
+                }
+              }
+            }
+          }),
+          responses: {
+            200: { description: 'Filled' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/messages': {
+        get: {
+          summary: "A chat's messages",
+          description:
+            'For members only, oldest first: the first `limit` (default ' +
+            '100, at most 500) with `seq` after `after`, or, given only ' +
+            '`before`, the last `limit` before it. Each is `{id, ' +
+            'conversationId, seq, epoch, senderUserId, senderIdentityId, ' +
+            'kind, targetIds, nonce, ciphertext, signature, attachmentIds, ' +
+            'clearedAt, createdAt}`; a cleared message has an empty ' +
+            '`ciphertext`. Bytes are base64url.',
+          security: [{ bearer: [] }],
+          parameters: [
+            conversationIdParam,
+            ...['after', 'before', 'limit'].map(name => ({
+              name,
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 0 }
+            }))
+          ],
+          responses: {
+            200: { description: 'The messages' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Post a message',
+          description:
+            'From a member’s linked device (403 `notHolder`): `{id, epoch, ' +
+            'kind, senderIdentityId, targetIds?, attachmentIds?, nonce, ' +
+            'ciphertext, signature}`. `id` is the client’s `msg_` id: a ' +
+            'repeat by the same sender in the same chat answers 200 with the ' +
+            'stored row, the id anywhere else is 409 `idTaken`. `kind` is ' +
+            '`post`, `reaction`, `edit`, `delete` or `moderatorDelete`; ' +
+            '`targetIds` come with the two deletes and nothing else, ' +
+            '`attachmentIds` (completed uploads by the sender in this chat, ' +
+            '400 `attachment`) with posts only (400 otherwise). The ' +
+            'ciphertext is at most 64 KiB. 409: `closed`, `staleIdentity` ' +
+            '(not the sender’s current identity), `staleEpoch` (not the ' +
+            'latest epoch), `locked` (no box for it). In Announcements only ' +
+            'season staff post, edit and delete (403 `notStaff`); anybody ' +
+            'reacts. `delete` targets the sender’s own messages (403 ' +
+            '`notYours`), `moderatorDelete` needs a moderator (403 ' +
+            '`notModerator`); targets are posts, edits or reactions in this ' +
+            'chat (400 `target`). Both clear their targets and delete the ' +
+            'attachments only those referenced. The signature is the ' +
+            'sender identity’s (400 `badSignature`). Notifies `message` with ' +
+            'the `seq`. Answers 201 with the message. Not audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: keyBody({
+            id: { type: 'string', pattern: '^msg_[a-z2-7]{26}$' },
+            epoch: { type: 'integer', minimum: 1 },
+            kind: {
+              type: 'string',
+              enum: ['post', 'reaction', 'edit', 'delete', 'moderatorDelete']
+            },
+            senderIdentityId: { type: 'string' },
+            nonce: b64,
+            ciphertext: b64,
+            signature: b64
+          }),
+          responses: {
+            200: { description: 'The stored message, for a repeat' },
+            201: { description: 'Posted' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/read': {
+        put: {
+          summary: 'Move the read cursor',
+          description:
+            'For members only: `{seq}`, at most the chat’s last `seq` (400 ' +
+            '`seq`). The cursor never moves back; a move notifies `read`. ' +
+            'Optional `clearManualUnreadRevision` clears personal manual unread only ' +
+            'when it matches the current revision, so an older in-flight read cannot ' +
+            'clear a later Mark unread. Answers `{seq}` as the cursor stands. Not audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: keyBody(
+            {
+              seq: { type: 'integer', minimum: 0 },
+              clearManualUnreadRevision: { type: 'integer', minimum: 0 }
+            },
+            ['seq']
+          ),
+          responses: {
+            200: { description: 'The cursor' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/reports': {
+        post: {
+          summary: 'Report a message',
+          description:
+            'By a member of its chat (404 otherwise): `{messageId, ' +
+            'plaintext, messageKey}`, the message’s own key (base64url, 32 ' +
+            'bytes), never the epoch’s. The server copies the message into ' +
+            'the report and stores it `verified` when the sender’s signature ' +
+            'holds and opening the ciphertext with the key gives exactly the ' +
+            'plaintext. A deleted message is 409 `cleared`. Answers 201 ' +
+            '`{id, verified}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            messageId: { type: 'string' },
+            plaintext: { type: 'string' },
+            messageKey: b64
+          }),
+          responses: {
+            201: { description: 'Reported' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/attachments': {
+        post: {
+          summary: 'Open an encrypted attachment upload',
+          description:
+            'In a chat the caller may post in (404 for a non-member, 403 ' +
+            '`readOnly` for an Announcements reader or a closed chat): ' +
+            '`{conversationId, size, digest}`, the sealed blob’s length (1 ' +
+            'to what a 100 MiB file seals to) and its SHA-256 (base64url, ' +
+            '32 bytes). Answers 201 `{id, conversationId, size, completed: ' +
+            'false, partSize, parts, missing}`: send `parts` parts of ' +
+            '`partSize` (8 MiB) bytes, the last short. 400 `noSpace` when ' +
+            'the server has no Space. Needs a signed-in session. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            conversationId: { type: 'string' },
+            size: { type: 'integer', minimum: 1 },
+            digest: b64
+          }),
+          responses: {
+            201: { description: 'Opened' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/attachments/{attachmentId}': {
+        get: {
+          summary: 'An encrypted attachment',
+          description:
+            'For a member of its chat: a finished attachment as `{id, ' +
+            'conversationId, size, digest, completed: true, url, ' +
+            'expiresAt}`, `url` a presigned GET of the blob good for 10 ' +
+            'minutes. To its uploader, an unfinished one as `{…, completed: ' +
+            'false, partSize, parts, missing}`, so an interrupted upload ' +
+            'sends only what is missing. Anybody else gets 404.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('attachmentId')],
+          responses: {
+            200: { description: 'The attachment' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/attachments/{attachmentId}/parts/{index}': {
+        put: {
+          summary: 'One part of an attachment',
+          description:
+            'The uploader’s, while unfinished: the raw bytes of part ' +
+            '`index` (from 0), exactly `partSize` bytes but the last. ' +
+            'Sending one again replaces it. Answers `{received, parts, ' +
+            'missing}`. 400 `part` for a wrong index or length, 413 `part` ' +
+            'over 9 MiB, 409 `completed` once finished. Not audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('attachmentId'), pathParam('index')],
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Stored' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse,
+            413: errorResponse
+          }
+        }
+      },
+      '/chat/attachments/{attachmentId}/complete': {
+        post: {
+          summary: 'Finish an attachment',
+          description:
+            'The uploader’s, with every part sent (409 `partsMissing` with ' +
+            '`missing` otherwise): the parts are joined and must hash to the ' +
+            'declared digest (400 `digestMismatch`, and the parts are ' +
+            'dropped), then the blob goes to the Space at ' +
+            '`chat/<conversationId>/<attachmentId>`. Answers `{id, ' +
+            'conversationId, size, digest, completed: true}`; again, the ' +
+            'same. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('attachmentId')],
+          responses: {
+            200: { description: 'Finished' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/admin/chat/reports': {
+        get: {
+          summary: 'Reported messages',
+          description:
+            'Site administrators only. Newest first, at most 500; only the ' +
+            'unresolved with `open=true`. Each is `{id, conversation: {id, ' +
+            'kind, title}, messageId, reporter: {userId, shortName}, sender: ' +
+            '{userId, shortName}, kind, sentAt, plaintext, verified, ' +
+            'createdAt, resolvedAt}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'open',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean' }
+            }
+          ],
+          responses: {
+            200: { description: 'The reports' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/admin/chat/reports/{reportId}/resolve': {
+        put: {
+          summary: 'Resolve a report',
+          description:
+            'Site administrators only. Marks the report resolved (once) and ' +
+            'answers it as the list shows it. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('reportId')],
+          responses: {
+            200: { description: 'The report' },
+            401: errorResponse,
+            403: errorResponse,
             404: errorResponse
           }
         }
@@ -6526,6 +7811,43 @@ export function openApiDocument(version: string): OpenApiDocument {
                 }
               }
             },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/league/{leagueId}/safesport': {
+        put: {
+          summary: 'Say whether a league is a SafeSport LAO',
+          description:
+            'For the league’s own administrators and site admins; anybody ' +
+            'else, a season admin included, gets 404. `{lao: true}` marks the ' +
+            'league as a SafeSport Local Affiliated Organization, which binds ' +
+            'it to the MAAPP. Audited. Answers `{leagueId, safesportLao}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'leagueId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['lao'],
+                  properties: { lao: { type: 'boolean' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: '`{leagueId, safesportLao}`' },
+            400: errorResponse,
             401: errorResponse,
             404: errorResponse
           }
