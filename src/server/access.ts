@@ -1251,3 +1251,18 @@ export async function mayEditName(
     .executeTakeFirst()
   return plays != null
 }
+
+/** Legacy team-follow listing, separate from private team visibility. */
+export async function canReadFollowedTeam(
+  db: Kysely<Database>,
+  userId: number,
+  teamId: string
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('team_follows')
+    .select('team_id')
+    .where('user_id', '=', userId)
+    .where('team_id', '=', teamId)
+    .executeTakeFirst()
+  return row != null
+}
