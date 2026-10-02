@@ -57,7 +57,7 @@ describe('the pills across a game', function () {
       status: 'final',
       homeScore: 3,
       awayScore: 4,
-      scoringOwner: 'gamestation'
+      scoringOwner: 'teamstation'
     })
     expect(ids(gameTabs({ game }))).includes('score')
   })

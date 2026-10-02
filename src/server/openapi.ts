@@ -121,17 +121,17 @@ const gumboEventType = {
   description:
     "MLB's event types (`statsapi.mlb.com/api/v1/eventTypes`) and " +
     "TeamStation's extensions: `final_score` and `score_correction` (an " +
-    'import), `gs_manual_placement` (a batter the scorer put ' +
-    'on base by hand), `gs_batter_out` (a batter out on a play MLB has no ' +
-    'code for) and `gs_batting_order` (a change of batting order). A post ' +
+    'import), `ts_manual_placement` (a batter the scorer put ' +
+    'on base by hand), `ts_batter_out` (a batter out on a play MLB has no ' +
+    'code for) and `ts_batting_order` (a change of batting order). A post ' +
     'may still send `catcher_interference`, `placed_runner` or ' +
     '`manual_placement`; they are stored as `catcher_interf`, ' +
-    '`runner_placed` and `gs_manual_placement`. It may also send the ' +
+    '`runner_placed` and `ts_manual_placement`. It may also send the ' +
     "names older imports used, each stored as MLB's or " +
     "TeamStation's code: `runner_out` as `other_out`, `batter_out` as " +
     '`field_out`, `catcher_s_interference` as `catcher_interf`, ' +
     '`fc_double_play` as `double_play`, `offensive_interference` as ' +
-    '`batter_interference`, `batter_put_on_base` as `gs_manual_placement` ' +
+    '`batter_interference`, `batter_put_on_base` as `ts_manual_placement` ' +
     'and `inning_changed_by_scorekeeper` as `final_score`.'
 }
 const gumboPosition = {
@@ -164,7 +164,7 @@ const gumboSchemas = {
       'One play as MLB’s live feed writes it (`liveData.plays.allPlays[]`), ' +
       'with its codes on the MLB lists checked in under ' +
       '`src/common/gumbo/reference/`. `npm run validate-gumbo` checks every ' +
-      'stored play against them. TeamStation adds only the `gameStation` ' +
+      'stored play against them. TeamStation adds only the `teamStation` ' +
       'record, the `ts_` event types and `about.halfOuts`. A play another ' +
       'service posted carries what that service knew; the stats builder ' +
       'needs the fields the events route lists.',
@@ -266,7 +266,7 @@ const gumboSchemas = {
           'are what highlights and a player’s plays are read from.',
         items: { type: 'object' }
       },
-      gameStation: { $ref: '#/components/schemas/GameStationRecord' }
+      teamStation: { $ref: '#/components/schemas/TeamStationRecord' }
     }
   },
   GumboRunner: {
@@ -424,7 +424,7 @@ const gumboSchemas = {
           '`GET /games/{gameId}`, 200 feet unless the game, its season or ' +
           'its league says otherwise). TeamStation writes no speed; a ' +
           'dictated angle, the untouched default, or one estimated from a ' +
-          'trajectory alone stays in the `gameStation` record.',
+          'trajectory alone stays in the `teamStation` record.',
         properties: {
           launchAngle: {
             type: 'number',
@@ -476,12 +476,12 @@ const gumboSchemas = {
         description:
           'Present, and true, on a lineup change: `offensive_substitution`, ' +
           '`defensive_substitution`, `defensive_switch`, ' +
-          "`pitching_substitution` or `gs_batting_order`. As in MLB's feed, " +
+          "`pitching_substitution` or `ts_batting_order`. As in MLB's feed, " +
           "a side's changes to its fielders from when it leaves the field " +
           'to its first pitch back in it are written as their net change at ' +
           'the start of the first play it fields. A pinch hitter is written ' +
           'at the start of the first play he bats in, and a pinch runner ' +
-          'where he takes the base. A `gs_batting_order` names only players ' +
+          'where he takes the base. A `ts_batting_order` names only players ' +
           'who have appeared in play.'
       },
       type: { type: 'string', enum: ['action'] },
@@ -519,7 +519,7 @@ const gumboSchemas = {
       '`GumboPlay` with `about.isComplete` false and no `result`, since it ' +
       'has no outcome yet. When the batter due is already on base (the ' +
       'inning ended on a runner) it carries only its place in the game and ' +
-      'the `gameStation` record.',
+      'the `teamStation` record.',
     required: ['about'],
     properties: {
       about: {
@@ -550,10 +550,10 @@ const gumboSchemas = {
           ]
         }
       },
-      gameStation: { $ref: '#/components/schemas/GameStationRecord' }
+      teamStation: { $ref: '#/components/schemas/TeamStationRecord' }
     }
   },
-  GameStationRecord: {
+  TeamStationRecord: {
     type: 'object',
     description:
       'TeamStation extension, on every play it scored and on the at-bat in ' +
@@ -877,7 +877,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'defensive_substitution',
                 'defensive_switch',
                 'pitching_substitution',
-                'gs_batting_order'
+                'ts_batting_order'
               ]
             },
             player: { $ref: '#/components/schemas/LineupPerson' },
@@ -1602,9 +1602,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'not in the body is deleted, including a legacy line-score-only ' +
             '`final_score` play, at index 9999 or, in a game with no other ' +
             'plays, at index 0. `source.system` names the sender: ' +
-            '`gamestation`, `manual`, or an outside system spelled as an ' +
+            '`teamstation`, `manual`, or an outside system spelled as an ' +
             "external id's system is, and a post with no `source` or no " +
-            '`source.system` counts as an outside one. `gamestation` sets ' +
+            '`source.system` counts as an outside one. `teamstation` sets ' +
             '`scoringOwner`. An outside post is stored as `external`, is ' +
             'rejected once that owner is set, and its ' +
             "plays' `result.description` and `playEvents[].description` are " +

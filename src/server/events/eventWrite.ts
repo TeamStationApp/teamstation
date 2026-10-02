@@ -44,10 +44,10 @@ export function teamIdsOnCredits<T extends { teamId?: string | null }>(
 }
 
 /**
- * Who wrote a play: `gamestation` for TeamStation's own scoring, `manual` for a
+ * Who wrote a play: `teamstation` for TeamStation's own scoring, `manual` for a
  * person typing it in, and `external` for any outside scorer.
  */
-export type PlaySource = 'external' | 'manual' | 'gamestation'
+export type PlaySource = 'external' | 'manual' | 'teamstation'
 
 export interface PlayWrite {
   gumbo: GumboPlay
@@ -92,7 +92,7 @@ function withKeptCredits(gumbo: GumboPlay, previous: unknown): GumboPlay {
  * Gumbo's descriptions — `result.description` and each `playEvents[]` one —
  * are dropped from a play an outside scorer sent (`external`): they are that
  * service's words, and TeamStation shows a play in its own reading of the
- * type and credits, written when it is shown. A `manual` or `gamestation`
+ * type and credits, written when it is shown. A `manual` or `teamstation`
  * play keeps them, because they are a person's or TeamStation's own words,
  * and the document is otherwise stored as it was sent.
  */

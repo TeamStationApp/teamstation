@@ -18,7 +18,7 @@ import {
  * runner has the feed's runner shape: the keys it carries are the feed's, and
  * each holds the feed's type of value.
  *
- * A play TeamStation scored (it carries a `gameStation` record) is written
+ * A play TeamStation scored (it carries a `teamStation` record) is written
  * whole by `scoring/document.ts`, so its runners carry every key and its
  * events every detail. A play another service posted carries what that
  * service knew, so only the keys it has are held to the feed's shape.
@@ -203,7 +203,7 @@ export function gumboViolations(play: unknown): GumboViolation[] {
     add('about', '', `expected a play, got ${show(play)}`)
     return found
   }
-  const whole = play.gameStation !== undefined
+  const whole = play.teamStation !== undefined
 
   const about = play.about
   if (isRecord(about) && about.halfOuts !== undefined) {

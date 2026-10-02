@@ -158,7 +158,7 @@ describe('More local scoring actions', function () {
           )
           expect(play.playEvents.at(-1)!.isPitch).equals(false)
           expect(
-            play.source.gamestation.runnerActions!.at(-1)!.pitchReference
+            play.source.teamstation.runnerActions!.at(-1)!.pitchReference
           ).deep.equals(pitch ? start.session.recentPitch : undefined)
           expect(scoringReducer(final, { type: 'UNDO' }).session).deep.equals(
             start.session
@@ -215,7 +215,7 @@ describe('More local scoring actions', function () {
         4
       )
       const record =
-        state.session.liveData.plays.currentPlay!.source.gamestation.runnerActions!.at(
+        state.session.liveData.plays.currentPlay!.source.teamstation.runnerActions!.at(
           -1
         )!
       expect(record.reason).equals(action)

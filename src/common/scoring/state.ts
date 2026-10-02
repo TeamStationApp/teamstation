@@ -244,8 +244,8 @@ export const asGamePlay = asObject({
     })
   ),
   source: asObject({
-    system: asValue('gamestation' as const),
-    gamestation: asObject({
+    system: asValue('teamstation' as const),
+    teamstation: asObject({
       version: asValue('estimated-v1' as const),
       outcome: asString,
       outSubtype: asOptional(asString),

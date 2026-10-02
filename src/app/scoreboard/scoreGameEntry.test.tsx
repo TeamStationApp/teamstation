@@ -105,7 +105,7 @@ describe('the Score Game pill', function () {
     ],
     [
       'a game TeamStation is scoring',
-      { canScore: true, scoringOwner: 'gamestation' as const, homeScore: 1 }
+      { canScore: true, scoringOwner: 'teamstation' as const, homeScore: 1 }
     ]
   ] as const) {
     it(`shows, labelled Score Game, for ${label}`, async function () {

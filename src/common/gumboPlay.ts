@@ -102,7 +102,7 @@ function asCreditPerson(raw: unknown): unknown {
 }
 
 /**
- * Who sent a post: `gamestation`, `manual`, or an outside system's own short
+ * Who sent a post: `teamstation`, `manual`, or an outside system's own short
  * name, spelled as an external id's system is.
  */
 function asSourceSystem(raw: unknown): string {
@@ -262,7 +262,7 @@ function listedIn(holder: Record<string, unknown>): Record<string, unknown> {
 /**
  * The document with a legacy event type renamed to its listed code in its
  * result and in each runner's details, or the document itself when there is
- * nothing to rename. Only those fields change: the `gameStation` record keeps
+ * nothing to rename. Only those fields change: the `teamStation` record keeps
  * the engine's own vocabulary, and the credits keep theirs.
  */
 function withListedEventType<T extends Record<string, unknown>>(play: T): T {
@@ -290,7 +290,9 @@ function withListedEventType<T extends Record<string, unknown>>(play: T): T {
  * current play stored carries a listed code.
  */
 export function asPostEventsBody(raw: unknown): PostEventsBody {
-  const body = withListedEventTypes(asPostEventsShape(raw))
+  const body = withListedEventTypes(
+    asPostEventsShape(withTeamStationNames(raw))
+  )
   if (body.mode === 'replace') {
     if (body.remove !== undefined)
       throw new TypeError('remove is for a live post')
@@ -301,6 +303,30 @@ export function asPostEventsBody(raw: unknown): PostEventsBody {
   if ((body.remove ?? []).some(index => posted.has(index)))
     throw new TypeError('A play is both posted and removed')
   return body
+}
+
+/**
+ * A post from an app built before TeamStation, in TeamStation's words: the
+ * three extension codes as `ts_`, the engine's record as `teamStation`, and
+ * the scoring system as `teamstation`, wherever in the post they appear. It
+ * is the same rewrite migration 047 made to the plays already stored, so a
+ * play from an old app is stored exactly as a migrated one is.
+ */
+export function withTeamStationNames(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object') return raw
+  const text = JSON.stringify(raw)
+  if (
+    !/"(gs_manual_placement|gs_batter_out|gs_batting_order|gameStation|gamestation)"/.test(
+      text
+    )
+  )
+    return raw
+  return JSON.parse(
+    text
+      .replace(/"gs_(manual_placement|batter_out|batting_order)"/g, '"ts_$1"')
+      .replace(/"gameStation"/g, '"teamStation"')
+      .replace(/"gamestation"/g, '"teamstation"')
+  ) as unknown
 }
 
 function withListedEventTypes(body: PostEventsBody): PostEventsBody {

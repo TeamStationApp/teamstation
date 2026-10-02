@@ -210,8 +210,8 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
   })
   countRbi(play)
   const runner = play.runners[play.runners.length - 1]
-  play.source.gamestation.runnerActions ??= []
-  play.source.gamestation.runnerActions.push({
+  play.source.teamstation.runnerActions ??= []
+  play.source.teamstation.runnerActions.push({
     runner: runner.details.runner,
     origin: movement.from,
     destination: movement.to,
@@ -846,7 +846,7 @@ function finishOut(ctx: Ctx, call: OutCall): void {
         record.details.teamUnearned = false
       }
       countRbi(play)
-      for (const record of (play.source.gamestation.runnerActions ?? []).slice(
+      for (const record of (play.source.teamstation.runnerActions ?? []).slice(
         pending.originalRunnerRecordCount
       ))
         record.runScored = false
@@ -895,7 +895,7 @@ function pitch(ctx: Ctx, action: PitchAction): void {
     play.result.event = walk ? 'Walk' : 'Strikeout'
     play.result.eventType = walk ? 'walk' : 'strikeout'
     play.result.description = play.result.event
-    play.source.gamestation.outcome = play.result.event
+    play.source.teamstation.outcome = play.result.event
     if (walk) {
       let carry: number | null = play.matchup.batter.id
       for (let base = 1; base <= 3 && carry != null; base++) {
@@ -976,9 +976,9 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
       call: 'X',
       pitcher: play.matchup.pitcher.id
     })
-  } else if (play.source.gamestation.contactKind !== action.contact)
+  } else if (play.source.teamstation.contactKind !== action.contact)
     refuse('illegal', 'The ball is already in play as a different contact')
-  play.source.gamestation.contactKind = action.contact
+  play.source.teamstation.contactKind = action.contact
   // The pitch the batter hit, which a second ball in play says more of.
   const pitchData = pitchDataOf(play, action)
   const hit = play.playEvents.findLast(event => event.details.isInPlay === true)
@@ -1015,7 +1015,7 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
           : positionOf(ctx.state, action.fielder)
     })
     // The scorer's own pick, which the label and MLB's list both lose.
-    const detail = play.source.gamestation
+    const detail = play.source.teamstation
     if (angle == null) {
       delete detail.trajectory
       delete detail.launchAngle
@@ -1031,9 +1031,9 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
   const kind =
     action.homeRunKind ??
     (action.location == null ? undefined : homeRunKind(action.location))
-  if (kind != null) play.source.gamestation.homeRunKind = kind
+  if (kind != null) play.source.teamstation.homeRunKind = kind
   if (action.landingHeight != null)
-    play.source.gamestation.landingHeight = action.landingHeight
+    play.source.teamstation.landingHeight = action.landingHeight
 }
 
 function isFielder(ctx: Ctx, id: number): boolean {
@@ -1083,7 +1083,7 @@ function result(ctx: Ctx, action: ResultAction): void {
     play.result.event = 'Strikeout'
     play.result.eventType = 'strikeout'
     play.result.description = 'Dropped Third Strike'
-    play.source.gamestation.outcome = 'Dropped Third Strike'
+    play.source.teamstation.outcome = 'Dropped Third Strike'
     line(ctx).strikes = 3
     play.count.strikes = 3
     ctx.state.pending = newResolution(ctx, 'Dropped Third Strike')
@@ -1095,7 +1095,7 @@ function result(ctx: Ctx, action: ResultAction): void {
     play.result.event = 'Batter Out — Other'
     play.result.eventType = 'other_out'
     play.result.description = 'Batter Out — Other'
-    play.source.gamestation.outcome = 'Batter Out — Other'
+    play.source.teamstation.outcome = 'Batter Out — Other'
     ctx.state.pending = newResolution(ctx, 'Batter Out — Other')
     return
   }
@@ -1155,7 +1155,7 @@ function result(ctx: Ctx, action: ResultAction): void {
   play.result.event = label
   play.result.eventType = type
   play.result.description = label
-  play.source.gamestation.outcome = label
+  play.source.teamstation.outcome = label
   ctx.state.pending.movements = movements
   applyAwardMovements(ctx, label)
 }
@@ -1167,7 +1167,7 @@ function battedResult(
 ): void {
   const play = current(ctx)
   if (!inPlay(play)) ballInPlay(ctx, { type: 'ballInPlay', contact: 'swing' })
-  const contact = play.source.gamestation.contactKind ?? 'swing'
+  const contact = play.source.teamstation.contactKind ?? 'swing'
   if (contact === 'bunt' && outcome === 'Home Run')
     refuse('illegal', 'A bunt cannot be a home run')
   if (
@@ -1176,7 +1176,7 @@ function battedResult(
   )
     refuse('illegal', "A fielder's choice needs a runner on base")
   const fielder = play.hitData?.fielder?.id
-  const kind = play.source.gamestation.homeRunKind
+  const kind = play.source.teamstation.homeRunKind
   ctx.state.pending = newResolution(ctx, outcome, {
     contactKind: contact,
     fielder,
@@ -1186,21 +1186,21 @@ function battedResult(
   play.result.event = outcome
   play.result.eventType = action.eventType
   play.result.description = outcome
-  play.source.gamestation.outcome = outcome
+  play.source.teamstation.outcome = outcome
   if (outcome === 'Throw Out' || outcome === 'Ball Caught')
-    play.source.gamestation.outSubtype = outcome
+    play.source.teamstation.outSubtype = outcome
   if (outcome === 'Home Run')
-    play.source.gamestation.homeRunKind = kind ?? 'in-park'
+    play.source.teamstation.homeRunKind = kind ?? 'in-park'
   else {
-    delete play.source.gamestation.homeRunKind
-    delete play.source.gamestation.landingHeight
+    delete play.source.teamstation.homeRunKind
+    delete play.source.teamstation.landingHeight
   }
   const landed = play.hitData?.coordinates
   const foul =
     action.foulCaught ??
     (landed != null && play.hitData?.fielder != null && !isFair(landed))
   if (foul && outcome === 'Ball Caught') {
-    play.source.gamestation.foulCaught = true
+    play.source.teamstation.foulCaught = true
     play.result.description = 'Foul ball caught'
   }
   prepareHit(ctx)
@@ -1217,7 +1217,7 @@ function fieldingPlay(ctx: Ctx, action: FieldingPlayAction): void {
     if (!isFielder(ctx, id))
       refuse('unknownPlayer', 'That player is not in the field')
   const play = current(ctx)
-  play.source.gamestation.errorCredit = {
+  play.source.teamstation.errorCredit = {
     player: playerRef(ctx.state, action.error),
     defensiveRoute: action.fielders.map((id, i) => ({
       player: playerRef(ctx.state, id),
@@ -1440,7 +1440,7 @@ function undoHitOffer(
       row.movement.start === start
     ) {
       play.runners.splice(i, 1)
-      const actions = play.source.gamestation.runnerActions
+      const actions = play.source.teamstation.runnerActions
       if (actions != null) {
         for (let j = actions.length - 1; j >= 0; j--) {
           if (
@@ -1653,7 +1653,7 @@ function lineup(ctx: Ctx, action: LineupAction): void {
         'The batter can change sides only before the first pitch'
       )
     play.matchup.batSide.code = side
-    play.source.gamestation.lineupChanged = true
+    play.source.teamstation.lineupChanged = true
     return
   }
   const setup = action.setup ?? setupOf(state)
@@ -1714,7 +1714,7 @@ function lineup(ctx: Ctx, action: LineupAction): void {
   })
   const play = ctx.state.liveData.plays.currentPlay
   if (play != null) {
-    play.source.gamestation.lineupChanged = true
+    play.source.teamstation.lineupChanged = true
     for (const change of lineupChanges(state, ctx.state, applied.takers))
       play.playEvents.push(
         withoutUndefined({
@@ -1763,7 +1763,7 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
       play != null &&
       (play.playEvents.some(event => event.isSubstitution !== true) ||
         play.runners.length > 0 ||
-        play.source.gamestation.lineupChanged === true)
+        play.source.teamstation.lineupChanged === true)
     )
       refuse('notNow', 'Finish the at-bat first')
     state.final = true

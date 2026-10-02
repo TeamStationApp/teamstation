@@ -308,7 +308,7 @@ export async function scoreDirectly(
         asPostEventsBody({
           ...change,
           mode: 'live',
-          source: { system: 'gamestation' }
+          source: { system: 'teamstation' }
         })
       )
       return await load(id)

@@ -248,9 +248,9 @@ describe('the API document', function () {
     expect(play.properties.result.properties.eventType.enum).includes.members([
       'final_score',
       'score_correction',
-      'gs_manual_placement',
-      'gs_batter_out',
-      'gs_batting_order'
+      'ts_manual_placement',
+      'ts_batter_out',
+      'ts_batting_order'
     ])
     expect(runner.details.properties.eventType.enum).deep.equals(
       sorted(STORED_EVENT_TYPES)
@@ -284,8 +284,8 @@ describe('the API document', function () {
     expect(play.properties.about.properties.halfOuts.description).includes(
       'TeamStation extension'
     )
-    expect(play.properties.gameStation.$ref).equals(
-      '#/components/schemas/GameStationRecord'
+    expect(play.properties.teamStation.$ref).equals(
+      '#/components/schemas/TeamStationRecord'
     )
 
     const paths = document.paths as Record<string, any>

@@ -99,9 +99,9 @@ export const EVENT_CLASS: Record<
   other_out: { countable: true },
   final_score: { countable: false },
   score_correction: { countable: false },
-  gs_manual_placement: { countable: true },
-  gs_batter_out: { countable: true },
-  gs_batting_order: { countable: false }
+  ts_manual_placement: { countable: true },
+  ts_batter_out: { countable: true },
+  ts_batting_order: { countable: false }
 }
 
 function classOf(

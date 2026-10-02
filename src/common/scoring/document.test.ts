@@ -506,16 +506,16 @@ describe('the stored runner document (U8)', function () {
       eventType: 'manual_placement',
       base: '2B'
     })
-    expect(stored(placed).result.eventType).equals('gs_manual_placement')
+    expect(stored(placed).result.eventType).equals('ts_manual_placement')
     // The batter's own other out is ours; a runner's between pitches is MLB's.
     const batterOut = after(
       game(),
       { type: 'result', eventType: 'other_out' },
       out(1, '1B', [F.C])
     )
-    expect(stored(batterOut).result.eventType).equals('gs_batter_out')
+    expect(stored(batterOut).result.eventType).equals('ts_batter_out')
     expect(reasons(stored(batterOut))).deep.equals([
-      'batter null gs_batter_out'
+      'batter null ts_batter_out'
     ])
     let third = after(single(game()), close)
     third = after(
@@ -1030,7 +1030,7 @@ describe('action events (U12)', function () {
           eventType: 'manual_placement',
           base: '2B'
         }),
-        eventType: 'gs_manual_placement',
+        eventType: 'ts_manual_placement',
         description: 'Away 1 is placed on base.',
         isBaseRunningPlay: false
       },
@@ -1041,7 +1041,7 @@ describe('action events (U12)', function () {
           { type: 'result', eventType: 'other_out' },
           out(1, 'batter', [F.C])
         ),
-        eventType: 'gs_batter_out',
+        eventType: 'ts_batter_out',
         description: 'Out, Away 1.',
         isBaseRunningPlay: false,
         isOut: true
@@ -1376,13 +1376,13 @@ describe('hit data (U17)', function () {
         { hitData?: Record<string, unknown> } | undefined
     )?.hitData
   const detailOf = (play: GumboPlay): Record<string, unknown> =>
-    (play.gameStation as { detail: Record<string, unknown> }).detail
+    (play.teamStation as { detail: Record<string, unknown> }).detail
   /** Every key anywhere in the stored play outside its record. */
   const keysOf = (value: unknown): string[] =>
     value == null || typeof value !== 'object'
       ? []
       : Object.entries(value).flatMap(([key, item]) =>
-          key === 'gameStation' ? [] : [key, ...keysOf(item)]
+          key === 'teamStation' ? [] : [key, ...keysOf(item)]
         )
 
   it('sits on the in-play pitch, not on the play', function () {
@@ -1979,7 +1979,7 @@ describe('substitutions (U19)', function () {
     })
   })
 
-  it('writes a pinch runner for a man on base, and a new batting order as gs_batting_order', function () {
+  it('writes a pinch runner for a man on base, and a new batting order as ts_batting_order', function () {
     const ran = roster(benched(), setup => {
       setup.sides.away.battingOrder[0] = 19
     })
@@ -1993,12 +1993,12 @@ describe('substitutions (U19)', function () {
     const [event] = substitutions(stored(reordered))
     expect(event).not.have.property('position')
     expect(event.details).deep.include({
-      eventType: 'gs_batting_order',
+      eventType: 'ts_batting_order',
       event: 'Batting Order Change',
       description: 'Batting order change: Away 4 bats 3rd, Away 3 bats 4th.'
     })
     expect(event.player).deep.equals({ id: 104, fullName: 'Away 4' })
-    expect(STORED_EVENT_TYPES.has('gs_batting_order')).equals(true)
+    expect(STORED_EVENT_TYPES.has('ts_batting_order')).equals(true)
   })
 
   it('writes nothing for the lineups a game starts with, a new roster player or the batter changing sides', function () {

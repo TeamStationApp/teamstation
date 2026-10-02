@@ -547,9 +547,9 @@ describe('a scoring session', function () {
     for (const action of [strike, strike, strike, ball]) theirs.apply(action)
     await theirs.flush()
     const first = store.plays.get(0)!.play as unknown as {
-      gameStation: { actions: unknown[] }
+      teamStation: { actions: unknown[] }
     }
-    first.gameStation.actions.unshift({
+    first.teamStation.actions.unshift({
       type: 'fieldingPlay',
       fielders: [F.SS],
       error: F.SS
@@ -972,9 +972,9 @@ describe('a scoring session', function () {
     session.apply(ball)
     await session.flush()
     const broken = JSON.parse(JSON.stringify(store.current)) as {
-      gameStation: { actions: unknown[] }
+      teamStation: { actions: unknown[] }
     }
-    broken.gameStation.actions.push({
+    broken.teamStation.actions.push({
       type: 'fieldingPlay',
       fielders: [F.SS],
       error: F.SS
@@ -995,9 +995,9 @@ describe('a scoring session', function () {
     // The first play's log now holds an action that no longer applies, so
     // neither it nor anything after it can be read back.
     const first = store.plays.get(0)!.play as unknown as {
-      gameStation: { actions: unknown[] }
+      teamStation: { actions: unknown[] }
     }
-    first.gameStation.actions.unshift({
+    first.teamStation.actions.unshift({
       type: 'fieldingPlay',
       fielders: [F.SS],
       error: F.SS

@@ -13,7 +13,7 @@ import {
 const SPACE = {
   endpoint: 'https://sfo3.digitaloceanspaces.com',
   region: 'sfo3',
-  bucket: 'gamestation',
+  bucket: 'teamstation',
   accessKeyId: 'key',
   secretAccessKey: 'secret',
   pathStyle: false

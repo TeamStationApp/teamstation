@@ -37,8 +37,8 @@ const PLATE_APPEARANCE = new Set([
   'sac_fly_double_play',
   'sac_bunt',
   'sac_bunt_double_play',
-  'gs_batter_out',
-  'gs_manual_placement'
+  'ts_batter_out',
+  'ts_manual_placement'
 ])
 
 /** Not a plate appearance: only the runners, their runs and the outs count. */
@@ -82,7 +82,7 @@ const NON_AB = new Set([
   'sac_fly_double_play',
   'sac_bunt',
   'sac_bunt_double_play',
-  'gs_manual_placement'
+  'ts_manual_placement'
 ])
 
 const HIT_TYPES = new Set(['single', 'double', 'triple', 'home_run'])

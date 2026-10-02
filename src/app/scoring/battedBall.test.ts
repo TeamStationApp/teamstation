@@ -159,7 +159,7 @@ describe('contextual batted-ball choices', function () {
       state: ReturnType<typeof initialScoringState>
     ): Record<string, unknown> => {
       const play = state.session.liveData.plays.currentPlay!
-      const detail = play.source.gamestation
+      const detail = play.source.teamstation
       return {
         trajectory: detail.trajectory,
         ...(detail.launchAngleSet === true

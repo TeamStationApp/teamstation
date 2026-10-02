@@ -48,7 +48,7 @@ function demoPlays(homeTeamId: string, batters: number[]): PlayWrite[] {
       credits:
         batter == null ? [] : [{ teamId: homeTeamId, creditUserId: batter }]
     }),
-    source: 'gamestation'
+    source: 'teamstation'
   })
   return [
     play(0, 'top', 'strikeout', 0, null, 'The leadoff batter strikes out'),
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
         status: 'final',
         away_score: 0,
         home_score: 2,
-        scoringOwner: 'gamestation'
+        scoringOwner: 'teamstation'
       })
       .execute()
     await replaceGameEvents(db, {

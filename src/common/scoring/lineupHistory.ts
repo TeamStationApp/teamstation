@@ -50,7 +50,7 @@ export const SUBSTITUTION_TYPES = [
   'defensive_substitution',
   'defensive_switch',
   'pitching_substitution',
-  'gs_batting_order'
+  'ts_batting_order'
 ] as const
 export type SubstitutionType = (typeof SUBSTITUTION_TYPES)[number]
 

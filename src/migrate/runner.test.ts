@@ -124,7 +124,11 @@ describe('migrations', function () {
   })
 
   it('migrates up again after rolling back below the baseline', async function () {
-    const rolledBack = await migrateDown(pool, migrations, 2)
+    const rolledBack = await migrateDown(
+      pool,
+      migrations,
+      migrations.filter(migration => migration.name >= BASELINE).length
+    )
     expect(rolledBack[rolledBack.length - 1]).equals(BASELINE)
     const again = await migrateUp(pool, migrations)
     expect(again.applied).deep.equals([...rolledBack].reverse())

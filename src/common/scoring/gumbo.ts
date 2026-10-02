@@ -39,7 +39,7 @@ import {
  * it — so the game can be rebuilt exactly as it was scored.
  */
 
-export interface GameStationRecord {
+export interface TeamStationRecord {
   version: 1
   /** The rosters and lineups as they stood before this play's first action. */
   setupBefore: GameSetup
@@ -49,31 +49,31 @@ export interface GameStationRecord {
   detail?: unknown
 }
 
-const asRecord: Cleaner<GameStationRecord> = asObject({
+const asRecord: Cleaner<TeamStationRecord> = asObject({
   version: asValue(1),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   detail: asUnknown
-}) as Cleaner<GameStationRecord>
+}) as Cleaner<TeamStationRecord>
 
 /**
  * Each stored record, as `recordOf` read it. A save reads the game's lineups,
  * which reads every record and then replays them, reading each again;
  * cleaning a record's setup was half of what that cost.
  */
-const readRecords = new WeakMap<object, GameStationRecord | null>()
+const readRecords = new WeakMap<object, TeamStationRecord | null>()
 
 /** The record on a stored play, or null for one TeamStation did not score. */
-export function recordOf(play: unknown): GameStationRecord | null {
+export function recordOf(play: unknown): TeamStationRecord | null {
   if (play == null || typeof play !== 'object') return null
-  const raw = (play as { gameStation?: unknown }).gameStation
+  const raw = (play as { teamStation?: unknown }).teamStation
   if (raw == null) return null
   if (typeof raw !== 'object') return cleanRecord(raw)
   if (!readRecords.has(raw)) readRecords.set(raw, cleanRecord(raw))
   return readRecords.get(raw) ?? null
 }
 
-function cleanRecord(raw: unknown): GameStationRecord | null {
+function cleanRecord(raw: unknown): TeamStationRecord | null {
   try {
     const record = asRecord(raw)
     const actions: ScoringAction[] = []
@@ -221,7 +221,7 @@ export function replayPlays(
   const base = state
   const segments: Replayed['segments'] = []
   const problems: Problem[] = []
-  const logged: Array<{ atBatIndex: number; record: GameStationRecord }> = []
+  const logged: Array<{ atBatIndex: number; record: TeamStationRecord }> = []
   if (firstLogged >= 0)
     plays.slice(firstLogged).forEach((play, i) => {
       const record = records[firstLogged + i]
@@ -305,8 +305,8 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
       runners: [],
       playEvents: [],
       source: {
-        system: 'gamestation',
-        gamestation: { version: 'estimated-v1', outcome: '' }
+        system: 'teamstation',
+        teamstation: { version: 'estimated-v1', outcome: '' }
       }
     })
   for (const doc of plays) {
@@ -329,7 +329,7 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
     }
     // Only TeamStation's documents list every runner; an imported play's
     // runners are left for the scorer to place by hand.
-    const runners = 'gameStation' in doc ? (doc.runners ?? []) : []
+    const runners = 'teamStation' in doc ? (doc.runners ?? []) : []
     for (const runner of runners) {
       const id = sessionId(state, runner.details?.runner)
       if (id == null) continue

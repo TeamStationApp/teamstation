@@ -50,7 +50,7 @@ export async function postGamePlays(
   // a post that names none, is an outside scorer: the least trusted one.
   const sent = body.source?.system
   const system: PlaySource =
-    sent === 'gamestation' || sent === 'manual' ? sent : 'external'
+    sent === 'teamstation' || sent === 'manual' ? sent : 'external'
   const indexes = body.plays.map(play => play.about.atBatIndex)
   if (new Set(indexes).size !== indexes.length) {
     throw badRequest('Two plays share an about.atBatIndex')
@@ -60,7 +60,7 @@ export async function postGamePlays(
   )
   if (unread != null)
     throw badRequest(
-      `Play ${unread.about.atBatIndex}: gameStation.version must be 1`
+      `Play ${unread.about.atBatIndex}: teamStation.version must be 1`
     )
   const prepared = withHalfOuts(body.plays)
 
@@ -97,14 +97,14 @@ export async function postGamePlays(
         game.status === 'final' &&
         !(
           live &&
-          system === 'gamestation' &&
-          game.scoringOwner === 'gamestation'
+          system === 'teamstation' &&
+          game.scoringOwner === 'teamstation'
         )
       ) {
         throw conflict('This game is final')
       }
       if (authorize != null) await authorize(trx, game)
-      if (system === 'external' && game.scoringOwner === 'gamestation') {
+      if (system === 'external' && game.scoringOwner === 'teamstation') {
         throw conflict('This game is scored in TeamStation')
       }
 
@@ -125,10 +125,10 @@ export async function postGamePlays(
         source: system
       }))
 
-      if (system === 'gamestation') {
+      if (system === 'teamstation') {
         await trx
           .updateTable('games')
-          .set({ scoringOwner: 'gamestation' })
+          .set({ scoringOwner: 'teamstation' })
           .where('id', '=', gameId)
           .execute()
       }
@@ -172,7 +172,7 @@ export async function postGamePlays(
               lineup_started_at: game.lineup_started_at
             },
             storedLineupGame(stored, currentPlay),
-            system === 'gamestation',
+            system === 'teamstation',
             new Date()
           )
         : {}
@@ -232,7 +232,7 @@ export async function postGamePlays(
  * back. A play with no record is read from its document.
  */
 function readableVersion(play: object): boolean {
-  const record = (play as { gameStation?: unknown }).gameStation
+  const record = (play as { teamStation?: unknown }).teamStation
   if (record == null) return true
   const version =
     typeof record === 'object'

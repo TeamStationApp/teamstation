@@ -161,9 +161,9 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
-  /** `gamestation` once TeamStation scores the game, and nothing else may. */
+  /** `teamstation` once TeamStation scores the game, and nothing else may. */
   scoringOwner: asOptional(
-    asNullable(asValue('external' as const, 'gamestation' as const)),
+    asNullable(asValue('external' as const, 'teamstation' as const)),
     null
   ),
   /** Each side's record in this game's season, `12–3`. */
@@ -1408,7 +1408,7 @@ export class TeamStationClient {
       asStoredGame,
       {
         mode: 'live',
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         plays: change.plays,
         remove: change.remove,
         ...(change.currentPlay === undefined

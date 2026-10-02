@@ -215,7 +215,7 @@ describe('the game socket (U14)', function () {
         },
         body: JSON.stringify({
           mode: 'live',
-          source: { system: 'gamestation' },
+          source: { system: 'teamstation' },
           plays: change.plays,
           remove: change.remove,
           ...(change.currentPlay === undefined

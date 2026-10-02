@@ -406,7 +406,7 @@ describe('outs and the third out', function () {
       [F['1B'], 'f_putout']
     ])
     const action =
-      state.liveData.plays.currentPlay!.source.gamestation.runnerActions!.at(
+      state.liveData.plays.currentPlay!.source.teamstation.runnerActions!.at(
         -1
       )!
     expect(action.defensiveRoute).length(5)
@@ -602,7 +602,7 @@ describe('the batter on a ball in play', function () {
     })
     expect(state.liveData.linescore.teams.home.errors).equals(1)
     const credit =
-      state.liveData.plays.currentPlay!.source.gamestation.errorCredit!
+      state.liveData.plays.currentPlay!.source.teamstation.errorCredit!
     expect(credit.player.id).equals(F['1B'])
     expect(credit.defensiveRoute.map(hop => hop.location)).deep.equals([
       { x: 1, z: -30 },
@@ -733,7 +733,7 @@ describe('runners between pitches', function () {
       advances: [{ runner: 1, to: '2B' }]
     })
     const action =
-      state.liveData.plays.currentPlay!.source.gamestation.runnerActions!.at(
+      state.liveData.plays.currentPlay!.source.teamstation.runnerActions!.at(
         -1
       )!
     expect(action.reason).equals('Wild Pitch')

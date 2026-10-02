@@ -466,12 +466,12 @@ describe('scoring actions', function () {
     for (const type of PRODUCED_EVENT_TYPES)
       expect(stored, type).to.include(storedEventType(type))
     expect(storedEventType('catcher_interference')).equals('catcher_interf')
-    expect(storedEventType('manual_placement')).equals('gs_manual_placement')
+    expect(storedEventType('manual_placement')).equals('ts_manual_placement')
     expect(storedEventType('placed_runner')).equals('runner_placed')
     // Other out is a runner's between pitches, and the batter's own is ours.
     expect(storedEventType('other_out')).equals('other_out')
     expect(storedEventType('other_out', 'Batter Out — Other')).equals(
-      'gs_batter_out'
+      'ts_batter_out'
     )
   })
 })

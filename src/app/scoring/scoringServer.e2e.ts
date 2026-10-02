@@ -576,9 +576,9 @@ describe('scoring into the server', function () {
       })
     ).json()) as GameDetail
     const first = read.plays[0].gumbo as {
-      gameStation: { setupBefore: GameSetup }
+      teamStation: { setupBefore: GameSetup }
     }
-    const setup = first.gameStation.setupBefore
+    const setup = first.teamStation.setupBefore
     const teams = teamsOf(detail)
 
     // The fixture names the players of a game built from empty rosters; the
@@ -610,8 +610,8 @@ describe('scoring into the server', function () {
       ...(read.currentPlay == null ? [] : [{ gumbo: read.currentPlay }])
     ].flatMap(
       row =>
-        (row.gumbo as { gameStation?: { actions: ScoringAction[] } })
-          .gameStation?.actions ?? []
+        (row.gumbo as { teamStation?: { actions: ScoringAction[] } })
+          .teamStation?.actions ?? []
     )
     const placed = tappedActions.filter(
       action =>
@@ -705,12 +705,12 @@ describe('scoring into the server', function () {
       const current = middle.currentPlay as {
         about: { isComplete: boolean; atBatIndex: number }
         playEvents: unknown[]
-        gameStation: { actions: Array<{ type: string }> }
+        teamStation: { actions: Array<{ type: string }> }
       }
       expect(current.about).deep.include({ isComplete: false, atBatIndex: 0 })
       expect(current.playEvents).length(2)
       expect(
-        current.gameStation.actions.map(action => action.type)
+        current.teamStation.actions.map(action => action.type)
       ).deep.equals(['lineup', 'pitch', 'pitch'])
       expect(
         sql(`select count(*) from events where "gameId"='${gameId}'`)

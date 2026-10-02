@@ -99,7 +99,7 @@ describe('the end of a live stream', function () {
     const settings: SpaceSettings = {
       endpoint: `http://127.0.0.1:${port}`,
       region: 'sfo3',
-      bucket: 'gamestation',
+      bucket: 'teamstation',
       accessKeyId: 'AKIAEXAMPLE000000000',
       secretAccessKey: 'secret',
       pathStyle: true

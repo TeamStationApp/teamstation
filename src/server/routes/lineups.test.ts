@@ -260,7 +260,7 @@ describe('the lineup routes (U11)', function () {
             gameId,
             asPostEventsBody({
               mode: 'live',
-              source: { system: 'gamestation' },
+              source: { system: 'teamstation' },
               plays: change.plays,
               remove: change.remove,
               currentPlay: change.currentPlay

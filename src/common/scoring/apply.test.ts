@@ -196,7 +196,7 @@ describe('applying plate-appearance results', function () {
     )
     expect(runs(state)).equals(2)
     const hr = state.liveData.plays.allPlays[1]
-    expect(hr.source.gamestation.homeRunKind).equals('out-of-park')
+    expect(hr.source.teamstation.homeRunKind).equals('out-of-park')
     expect(hr.result.rbi).equals(2)
     expect(bases(state)).deep.equals([null, null, null])
   })
@@ -215,7 +215,7 @@ describe('applying plate-appearance results', function () {
       { type: 'result', eventType: 'home_run' },
       close
     )
-    expect(inside.liveData.plays.allPlays[0].source.gamestation).includes({
+    expect(inside.liveData.plays.allPlays[0].source.teamstation).includes({
       homeRunKind: 'in-park',
       landingHeight: 2
     })
@@ -231,7 +231,7 @@ describe('applying plate-appearance results', function () {
       { type: 'result', eventType: 'double' }
     )
     expect(
-      hit.liveData.plays.currentPlay!.source.gamestation
+      hit.liveData.plays.currentPlay!.source.teamstation
     ).not.to.have.any.keys('homeRunKind', 'landingHeight')
   })
 
@@ -259,7 +259,7 @@ describe('applying plate-appearance results', function () {
     )
     expect(outs(state)).equals(1)
     const caught = state.liveData.plays.allPlays[0]
-    expect(caught.source.gamestation).includes({
+    expect(caught.source.teamstation).includes({
       outSubtype: 'Ball Caught',
       foulCaught: true
     })

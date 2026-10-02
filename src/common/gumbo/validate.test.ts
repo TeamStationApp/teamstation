@@ -392,7 +392,7 @@ describe('the reference validator (U22)', function () {
     inPlay.hitData = 'far'
     expect(named(hit)).deep.equals(['hitData playEvents[0].hitData'])
     // Another service's measured ball is its own.
-    delete hit.gameStation
+    delete hit.teamStation
     inPlay.hitData = { location: '78', launchAngle: 15 }
     expect(named(hit)).deep.equals([])
   })
@@ -436,7 +436,7 @@ describe('the reference validator (U22)', function () {
     ])
     // Another service's measured pitch is its own.
     const theirs = copy(pitched)
-    delete theirs.gameStation
+    delete theirs.teamStation
     theirs.playEvents[at].pitchData = {
       startSpeed: 95.1,
       zone: 11,

@@ -241,7 +241,7 @@ export interface GamesTable {
   gumbo_game_data: Json | null
   linescore: Json | null
   boxscore: Json | null
-  /** `gamestation` when a post from that system owns the plays. */
+  /** `teamstation` when a post from that system owns the plays. */
   scoringOwner: ColumnType<
     string | null,
     string | null | undefined,
@@ -362,7 +362,7 @@ export interface EventsTable {
    * hold nothing worth watching, which is dropped.
    */
   creditsLookedAt: Generated<boolean>
-  source: Generated<'external' | 'manual' | 'gamestation'>
+  source: Generated<'external' | 'manual' | 'teamstation'>
   hidden: Generated<boolean>
   titleOverride: string | null
   timeNudgeSec: Generated<number>

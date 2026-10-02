@@ -119,7 +119,7 @@ describe('outcome names by event type', function () {
   it('reads a legacy code as the one it is stored as', function () {
     for (const [legacy, listed] of [
       ['catcher_interference', 'catcher_interf'],
-      ['manual_placement', 'gs_manual_placement'],
+      ['manual_placement', 'ts_manual_placement'],
       ['placed_runner', 'runner_placed']
     ]) {
       const named = (eventType: string): string =>

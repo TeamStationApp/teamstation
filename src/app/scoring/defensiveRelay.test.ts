@@ -130,7 +130,7 @@ describe('defensive relay draft', function () {
       state = done(state)
       expect(state.session.liveData.linescore.outs).equals(1)
       const record =
-        state.session.liveData.plays.currentPlay!.source.gamestation.runnerActions!.at(
+        state.session.liveData.plays.currentPlay!.source.teamstation.runnerActions!.at(
           -1
         )!
       expect(record.defensiveRoute!.map(h => h.player.id)).deep.equals([

@@ -37,7 +37,7 @@ import {
  * and vocabulary. Nothing else writes one. The engine keeps numeric bases,
  * its reason labels and its own result types; this is where they become
  * `'1B'`, `r_adv_force` and `catcher_interf`. What Gumbo has no field for
- * stays in the `gameStation` record beside it.
+ * stays in the `teamStation` record beside it.
  */
 
 export interface PlayStamp {
@@ -52,7 +52,7 @@ export interface PlayStamp {
 /** The engine's result types MLB writes under another code. */
 const LISTED_TYPES: Record<string, string> = {
   catcher_interference: 'catcher_interf',
-  manual_placement: 'gs_manual_placement',
+  manual_placement: 'ts_manual_placement',
   placed_runner: 'runner_placed'
 }
 const BATTER_OUT_OTHER = 'Batter Out — Other'
@@ -60,16 +60,16 @@ const BATTER_OUT_OTHER = 'Batter Out — Other'
 /**
  * The event type a stored play carries for the engine's `type`. `other_out`
  * is MLB's runner out between pitches; the batter's own out of that kind, a
- * completed plate appearance, is `gs_batter_out`.
+ * completed plate appearance, is `ts_batter_out`.
  */
 export function storedEventType(type: string, outcome?: string): string {
   if (type === 'other_out' && outcome === BATTER_OUT_OTHER)
-    return 'gs_batter_out'
+    return 'ts_batter_out'
   return LISTED_TYPES[type] ?? type
 }
 
 function playEventType(play: GamePlay): string {
-  return storedEventType(play.result.eventType, play.source.gamestation.outcome)
+  return storedEventType(play.result.eventType, play.source.teamstation.outcome)
 }
 
 /**
@@ -79,7 +79,7 @@ function playEventType(play: GamePlay): string {
  */
 function eventName(type: string, play: GamePlay): string {
   if (type !== 'field_out') return mlbEventName(type)
-  const detail = play.source.gamestation
+  const detail = play.source.teamstation
   const bunt = detail.contactKind === 'bunt' ? 'Bunt ' : ''
   if (detail.outSubtype === 'Throw Out') return `${bunt}Groundout`
   if (detail.outSubtype !== 'Ball Caught') return mlbEventName(type)
@@ -331,15 +331,15 @@ const PLAY_ACTION_TYPES: Record<string, string> = {
   placed_runner: 'runner_placed',
   intent_walk: 'intent_walk',
   catcher_interference: 'catcher_interf',
-  manual_placement: 'gs_manual_placement',
-  other_out: 'gs_batter_out'
+  manual_placement: 'ts_manual_placement',
+  other_out: 'ts_batter_out'
 }
 /** Awarded to the batter with no pitch: the sentence is about him. */
 const BATTER_ACTIONS: ReadonlySet<string> = new Set([
   'intent_walk',
   'catcher_interf',
-  'gs_manual_placement',
-  'gs_batter_out'
+  'ts_manual_placement',
+  'ts_batter_out'
 ])
 /** The pitcher's doing: the sentence names him. */
 const PITCHER_ACTIONS: ReadonlySet<string> = new Set(['balk', 'wild_pitch'])
@@ -544,7 +544,7 @@ interface HitData {
 function hitDataOf(play: GamePlay, fenceDistanceFt: number): HitData | null {
   const hit = play.hitData
   if (hit == null) return null
-  const detail = play.source.gamestation
+  const detail = play.source.teamstation
   const picked =
     detail.trajectory ??
     (hit.launchAngle == null ? undefined : trajectoryOf(hit.launchAngle))
@@ -1241,7 +1241,7 @@ function eventsOfPlay(
           ? entered(state, setup, cast, play, event)
           : FIELDING_CHANGES.has(code)
             ? fielded(state, setup, cast, event)
-            : code === 'gs_batting_order'
+            : code === 'ts_batting_order'
               ? reordered(state, setup, cast, event)
               : event
       if (written != null) kept.push(written)
@@ -1339,7 +1339,7 @@ const ORDERED_SUBSTITUTIONS: ReadonlySet<string> = new Set([
  * position, and the announcement. A pinch hitter and a defensive switch also
  * carry the player's place in the order and the player he replaced; a
  * pitching change and a defensive substitution carry neither, as in the feed.
- * A change of batting order alone is TeamStation's own `gs_batting_order`.
+ * A change of batting order alone is TeamStation's own `ts_batting_order`.
  * A change to a side's fielders made while it bats is written where the feed
  * writes it, as the net change at the start of the first play that side
  * fields (`takingTheField`), and a man put in the order where he first
@@ -1412,7 +1412,7 @@ export const HIGHLIGHT_CREDITED = {
     'intent_walk',
     'hit_by_pitch',
     'catcher_interf',
-    'gs_manual_placement',
+    'ts_manual_placement',
     'sac_fly',
     'sac_fly_double_play',
     'sac_bunt',
@@ -1428,7 +1428,7 @@ export const HIGHLIGHT_CREDITED = {
     'force_out',
     'fielders_choice_out',
     'other_out',
-    'gs_batter_out',
+    'ts_batter_out',
     'double_play',
     'grounded_into_double_play',
     'grounded_into_triple_play',
@@ -1460,7 +1460,7 @@ export const HIGHLIGHT_CREDITED = {
     'offensive_substitution',
     'defensive_substitution',
     'defensive_switch',
-    'gs_batting_order',
+    'ts_batting_order',
     'final_score'
   ])
 } as const satisfies Record<string, ReadonlySet<string>>
@@ -1591,11 +1591,11 @@ function documentBody(
       .filter(event => event.isPitch !== true)
       .map(event => event.index),
     runnerIndex: runners.map((runner, i) => i),
-    gameStation: {
+    teamStation: {
       version: 1,
       setupBefore: stamp.setupBefore,
       actions: stamp.actions,
-      detail: play.source.gamestation
+      detail: play.source.teamstation
     }
   }
 }
@@ -1627,20 +1627,20 @@ const cleanSetups = new WeakMap<GameSetup, GameSetup>()
  * plate appearances in.
  */
 function folded(document: Record<string, unknown>): Record<string, unknown> {
-  const stamp = document.gameStation as
+  const stamp = document.teamStation as
     { setupBefore?: GameSetup; [key: string]: unknown } | undefined
   const setup = stamp?.setupBefore
   if (stamp == null || setup == null) return withoutUndefined(document)
   const out = withoutUndefined({
     ...document,
-    gameStation: { ...stamp, setupBefore: null }
+    teamStation: { ...stamp, setupBefore: null }
   })
   let clean = cleanSetups.get(setup)
   if (clean == null) {
     clean = withoutUndefined(setup)
     cleanSetups.set(setup, clean)
   }
-  ;(out.gameStation as Record<string, unknown>).setupBefore = clean
+  ;(out.teamStation as Record<string, unknown>).setupBefore = clean
   return out
 }
 
@@ -1723,7 +1723,7 @@ export class PlayFolder {
           hasOut: false,
           hasReview: false
         },
-        gameStation: {
+        teamStation: {
           version: 1,
           setupBefore: stamp.setupBefore,
           actions: stamp.actions
@@ -1849,7 +1849,7 @@ export function finalDocumentOf(state: GameState, stamp: PlayStamp): GumboPlay {
     actionIndex: [],
     runnerIndex: [],
     credits: [],
-    gameStation: {
+    teamStation: {
       version: 1,
       setupBefore: stamp.setupBefore,
       actions: stamp.actions

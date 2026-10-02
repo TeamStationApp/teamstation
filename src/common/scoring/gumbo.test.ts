@@ -379,9 +379,9 @@ describe('reading a game back', function () {
     expect(replayed.state).deep.equals(scored.state)
     const play = replayed.state.liveData.plays.allPlays[0]
     expect(play.hitData).not.have.property('launchAngle')
-    expect(play.source.gamestation).not.have.property('launchAngle')
-    expect(play.source.gamestation).not.have.property('launchAngleSet')
-    expect(play.source.gamestation).not.have.property('trajectory')
+    expect(play.source.teamstation).not.have.property('launchAngle')
+    expect(play.source.teamstation).not.have.property('launchAngleSet')
+    expect(play.source.teamstation).not.have.property('trajectory')
   })
 
   it('replays a saved pitch whose speed or zone is out of range, without it', function () {
@@ -421,8 +421,8 @@ describe('reading a game back', function () {
     const play = scored.plays[0]
     expect(recordOf(play)).not.equals(null)
     expect(recordOf(play)).equals(recordOf(play))
-    expect(recordOf({ ...play, gameStation: 'version 1' })).equals(null)
-    expect(recordOf({ ...play, gameStation: { version: 2 } })).equals(null)
+    expect(recordOf({ ...play, teamStation: 'version 1' })).equals(null)
+    expect(recordOf({ ...play, teamStation: { version: 2 } })).equals(null)
   })
 
   it('takes what the server writes on a play in its stride', function () {
@@ -488,7 +488,7 @@ describe('reading a game back', function () {
     })
     // A TeamStation document whose record cannot be replayed still lists
     // every runner, with Gumbo's bases or the numbers older ones stored.
-    const documents = (gameStation: boolean): GumboPlay[] => {
+    const documents = (teamStation: boolean): GumboPlay[] => {
       const doc = (
         atBatIndex: number,
         batter: number,
@@ -506,7 +506,7 @@ describe('reading a game back', function () {
             details: { runner: { id: runner.id } },
             movement: { end: runner.end, isOut: runner.isOut ?? false }
           })),
-          ...(gameStation ? { gameStation: { version: 1 } } : {})
+          ...(teamStation ? { teamStation: { version: 1 } } : {})
         })
       return [
         doc(0, 7000, 'single', 0, [{ id: 7000, end: '1B' }]),
@@ -594,9 +594,9 @@ describe('reading a game back', function () {
   it('stops at an action that no longer applies', function () {
     const scored = score(game(), [{ type: 'pitch', call: 'B' }])
     const broken = copyState(scored.current) as unknown as {
-      gameStation: { actions: unknown[] }
+      teamStation: { actions: unknown[] }
     }
-    broken.gameStation.actions.push({
+    broken.teamStation.actions.push({
       type: 'fieldingPlay',
       fielders: [F.SS],
       error: F.SS
@@ -614,10 +614,10 @@ describe('reading a game back', function () {
   it('ignores a record it cannot read', function () {
     expect(recordOf(null)).equals(null)
     expect(recordOf({})).equals(null)
-    expect(recordOf({ gameStation: { version: 2 } })).equals(null)
+    expect(recordOf({ teamStation: { version: 2 } })).equals(null)
     expect(
       recordOf({
-        gameStation: {
+        teamStation: {
           version: 1,
           setupBefore: setupOf(game()),
           actions: [{ type: 'nope' }]
@@ -811,7 +811,7 @@ describe('the line score from documents', function () {
       // The top of the 1st as an import sends it: no record.
       const imported = plays.map(play =>
         play.about.inning === 1 && play.about.halfInning === 'top'
-          ? (({ gameStation: _, ...rest }) => rest)(play)
+          ? (({ teamStation: _, ...rest }) => rest)(play)
           : play
       )
       const line = lineOf(imported)
