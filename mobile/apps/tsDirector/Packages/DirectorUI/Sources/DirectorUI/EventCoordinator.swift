@@ -41,6 +41,9 @@ public final class EventCoordinator {
   private let events: any TeamStationEventService
   private let linker: any GameLinker
   private let currentTake: () -> Int64?
+  /// The name the next claim sends. Read at the moment of the claim, so a name
+  /// typed in Settings and then used to pick an event is the one that goes.
+  private let cameraName: () -> String
   /// The one link this coordinator made for a take, which a later pick during
   /// that same take may move.
   private var linked: (take: Int64, gameId: String)?
@@ -48,18 +51,24 @@ public final class EventCoordinator {
   public init(
     events: any TeamStationEventService,
     linker: any GameLinker,
-    currentTake: @escaping () -> Int64?
+    currentTake: @escaping () -> Int64?,
+    cameraName: @escaping () -> String
   ) {
     self.events = events
     self.linker = linker
     self.currentTake = currentTake
+    self.cameraName = cameraName
   }
 
   /// Chooses an event, claiming it only when the stream goes to it, and files
   /// the take now recording, if there is one, under it.
   @discardableResult
   public func pick(event: TeamStationEvent, destination: StreamDestination) async -> Bool {
-    guard await events.choose(event: event, claim: destination == .event) else {
+    guard await events.choose(
+      event: event,
+      claim: destination == .event,
+      cameraName: cameraName()
+    ) else {
       return false
     }
     if let take = currentTake() { link(take) }
@@ -78,7 +87,7 @@ public final class EventCoordinator {
       let chosen = events.chosen,
       chosen.streamURL == nil
     else { return }
-    await events.claimChosen()
+    await events.claimChosen(cameraName: cameraName())
   }
 
   /**
@@ -95,13 +104,13 @@ public final class EventCoordinator {
       throw EventStreamError.refused("Pick a TeamStation event in Settings first")
     }
     if events.chosen?.streamURL == nil {
-      guard await events.claimChosen() else {
+      guard await events.claimChosen(cameraName: cameraName()) else {
         throw EventStreamError.refused(
           events.lastError ?? "TeamStation would not give this event a stream"
         )
       }
     } else {
-      await events.refreshChosen()
+      await events.refreshChosen(cameraName: cameraName())
     }
     guard let url = events.chosen?.streamURL else {
       throw EventStreamError.refused("Pick a TeamStation event in Settings first")
