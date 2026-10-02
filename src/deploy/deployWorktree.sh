@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GameStation 2.0: deploy one development seat.
+# TeamStation: deploy one development seat.
 #
-#   /srv/GameStation_<name>/repo/src/deploy/deployWorktree.sh
+#   /srv/TeamStation_<name>/repo/src/deploy/deployWorktree.sh
 #
 # A seat is a branch, a worktree, a database and a service that all carry the
 # same name — see the worktree-branch-database-naming rule. There is no seat
@@ -15,9 +15,9 @@ set -euo pipefail
 # drifted from the first.
 #
 #   branch     paul/<name>
-#   worktree   /srv/GameStation_<name>/repo
-#   database   GameStation_<name>      on 5433, or on the scoring cluster, 5434
-#   service    gamestation-<name>
+#   worktree   /srv/TeamStation_<name>/repo
+#   database   TeamStation_<name>      on the droplet's seats cluster, 5434
+#   service    teamstation-<name>
 #   port       whatever this seat's serverConfig.json says
 #
 # It migrates, which is the difference between a seat and production. That is
@@ -25,43 +25,43 @@ set -euo pipefail
 # below is what keeps it that way.
 
 # Which seat this is, worked out from where the script lives:
-#   /srv/GameStation_<name>/repo/src/deploy/deployWorktree.sh
+#   /srv/TeamStation_<name>/repo/src/deploy/deployWorktree.sh
 #
 # Resolved *before* the re-exec below, and carried across in the environment,
 # because the copy that actually runs lives in /tmp and could not answer the
 # question from its own path.
-if [ -z "${GS_SEAT_REPO:-}" ]; then
+if [ -z "${TS_SEAT_REPO:-}" ]; then
   # src/deploy -> src -> the worktree root.
-  GS_SEAT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  export GS_SEAT_REPO
+  TS_SEAT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  export TS_SEAT_REPO
 fi
 
 # The deploy replaces the very tree it is running from, so it runs from a copy.
-SELF_COPY=/tmp/gsDeployWorktree.running.sh
-if [ "${GS_DEPLOY_REEXEC:-}" != "1" ]; then
+SELF_COPY=/tmp/tsDeployWorktree.running.sh
+if [ "${TS_DEPLOY_REEXEC:-}" != "1" ]; then
   install -m 0755 "$0" "$SELF_COPY"
-  GS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
+  TS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
 fi
 
-REPO="$GS_SEAT_REPO"
+REPO="$TS_SEAT_REPO"
 ROOT="$(dirname "$REPO")"
 SEAT="$(basename "$ROOT")"
-NAME="${SEAT#GameStation_}"
+NAME="${SEAT#TeamStation_}"
 
 BRANCH="paul/$NAME"
-DB="GameStation_$NAME"
-SERVICE="gamestation-$NAME"
+DB="TeamStation_$NAME"
+SERVICE="teamstation-$NAME"
 VERSIONS="$ROOT/versions"
 CURRENT="$ROOT/current"
-APP_USER=gamestation
+APP_USER=teamstation
 KEEP=3
 
-export PATH="/srv/gamestation/node-v24/bin:$PATH"
+export PATH="/srv/teamstation/node-v24/bin:$PATH"
 
 say() { printf '\n== %s\n' "$*"; }
 die() { printf '\n!! %s\n' "$*" >&2; exit 1; }
 
-[ "$SEAT" != "$NAME" ] || die "not a seat: $ROOT is not named GameStation_<name>"
+[ "$SEAT" != "$NAME" ] || die "not a seat: $ROOT is not named TeamStation_<name>"
 
 PORT="$(node -p "require('$ROOT/serverConfig.json').listenPort" 2>/dev/null || true)"
 [ -n "$PORT" ] || die "no listenPort in $ROOT/serverConfig.json"
@@ -116,8 +116,8 @@ case "$SEAT_DB" in
   *:5433/"$DB"|*:5434/"$DB") ;;
   *) die "this seat's databaseUrl is not its own database:
 ${SEAT_DB:-<unset>}
-It should name \`$DB\` on 5433 or 5434. 5432 is production, and any other name
-is somebody else's schema. Fix the config; do not relax this check." ;;
+It should name \`$DB\` on the seats cluster (5434; 5433 on a laptop). Production
+is the managed cluster, and any other name is somebody else's schema. Fix the config; do not relax this check." ;;
 esac
 
 say "Fetching $BRANCH"

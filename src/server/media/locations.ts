@@ -73,7 +73,7 @@ export async function locateVideoFile(
 export type VideoStorage = 'peertube' | 'local' | 'spaces'
 
 export interface LocateOptions {
-  /** Caddy's media root: `/srv/gamestation/media` in production. */
+  /** Caddy's media root: `/mnt/datadrive/media` in production. */
   mediaRoot: string
   storage: VideoStorage
   videoId: string

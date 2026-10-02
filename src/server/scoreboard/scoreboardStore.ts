@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import {
   asEither,
   asNumber,
@@ -58,6 +60,27 @@ const writeScoreboardScript = defineScript({
 })
 
 /**
+ * How to open the connection, when it needs more than the URL says: with a
+ * CA file, TLS checked against that authority. DigitalOcean's managed Valkey
+ * is reached as `rediss://` and signs with its own CA, which Node's store does
+ * not hold. Empty means the URL alone decides, as it does for a local Redis.
+ */
+export function redisSocketOptions(
+  caFile: string
+): { tls: true; ca: string } | undefined {
+  if (caFile === '') return undefined
+  let ca: string
+  try {
+    ca = readFileSync(caFile, 'utf8')
+  } catch (error) {
+    throw new Error(
+      `redis.caFile ${caFile} cannot be read: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  return { tls: true, ca }
+}
+
+/**
  * The command client, which fails a command at once rather than queueing it
  * while Redis is away, so a request answers 503 instead of hanging. Its
  * `error` listener logs once each time the connection goes, and node-redis
@@ -66,18 +89,20 @@ const writeScoreboardScript = defineScript({
 export function makeScoreboardClient(
   url: string,
   log: (message: string) => void,
-  name = 'scoreboard'
+  name = 'scoreboard',
+  caFile = ''
 ): ScoreboardClient {
-  const client = newClient(url)
+  const client = newClient(url, redisSocketOptions(caFile))
   watchConnection(client, log, name)
   return client
 }
 
 // The client's type carries its script, as node-redis infers it.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function newClient(url: string) {
+function newClient(url: string, socket?: { tls: true; ca: string }) {
   return createClient({
     url,
+    ...(socket == null ? {} : { socket }),
     disableOfflineQueue: true,
     scripts: { writeScoreboard: writeScoreboardScript }
   })

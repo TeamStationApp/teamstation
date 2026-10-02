@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GameStation 2.0: sync the deploy branch and rebuild.
+# TeamStation: sync the deploy branch and rebuild.
 #
-#   ssh root@gamestation.co /srv/gamestation/repo/src/deploy/deploy.sh
+#   ssh root@app.teamstation.app /srv/teamstation/repo/src/deploy/deploy.sh
 #
 # Nothing is copied from a laptop. The previous way was an rsync of a built
 # tree, which went wrong twice in the same way: `--delete` is needed so a
@@ -35,19 +35,19 @@ set -euo pipefail
 #
 # Copying and re-execing costs nothing and makes the running script immutable
 # for the rest of the run.
-SELF_COPY=/tmp/gsDeploy.running.sh
-if [ "${GS_DEPLOY_REEXEC:-}" != "1" ]; then
+SELF_COPY=/tmp/tsDeploy.running.sh
+if [ "${TS_DEPLOY_REEXEC:-}" != "1" ]; then
   install -m 0755 "$0" "$SELF_COPY"
-  GS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
+  TS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
 fi
 
-BRANCH="${GS_DEPLOY_BRANCH:-deploy}"
-ROOT=/srv/gamestation
+BRANCH="${TS_DEPLOY_BRANCH:-deploy}"
+ROOT=/srv/teamstation
 REPO="$ROOT/repo"
 VERSIONS="$ROOT/versions"
 CURRENT="$ROOT/current"
-APP_USER=gamestation
-SERVICE=gamestation
+APP_USER=teamstation
+SERVICE=teamstation
 HEALTH=http://127.0.0.1:9100/api/v1/health
 # How many builds to keep. Enough to go back more than once; six had piled up
 # under the old way, because nothing ever removed them.

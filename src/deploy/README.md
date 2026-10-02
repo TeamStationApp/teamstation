@@ -1,11 +1,53 @@
-# Deploying GameStation 2.0
+# Deploying TeamStation
 
 The server fetches a branch and builds it. Nothing is copied from a laptop, so
 a deploy depends on a commit and not on the state of whoever ran it.
 
 ```sh
-ssh root@gamestation.co /srv/gamestation/repo/src/deploy/deploy.sh
+ssh root@app.teamstation.app /srv/teamstation/repo/src/deploy/deploy.sh
 ```
+
+## The droplet and what it uses
+
+Everything is in DigitalOcean's `sfo3`, named after the droplet's DNS name:
+
+| What | Name | Where it is reached |
+| --- | --- | --- |
+| Droplet | `app.teamstation.app` | `ssh root@app.teamstation.app` |
+| Volume, 50 GB | `app-teamstation-app--volume` | `/mnt/datadrive` |
+| Managed Postgres 18 | `app-teamstation-app--postgres` | its private host, port 25060 |
+| Managed Valkey | `app-teamstation-app--redis` | its private host, port 25061, `rediss://` |
+| Space | `app-teamstation-app--media` | `sfo3.digitaloceanspaces.com` |
+
+**Production's data is not on the droplet.** Finished videos and their
+stills live in the Space (a still beside its video, as
+`videos/<id>/stills/<second>.jpg`), so the droplet can be rebuilt or
+multiplied without losing anything. The `teamstation` database lives
+in the managed Postgres and the scoreboards in the managed Valkey. Both trust
+the droplet and nothing else, so anything that reads them — a `pg_dump`, a
+`redis-cli` — runs on the droplet. The server checks both certificates against
+DigitalOcean's CA: `databaseUrl` ends
+`?sslmode=verify-full&sslrootcert=/srv/teamstation/do-ca.crt`. The managed
+Valkey presents a Let's Encrypt certificate, which Node's own store checks, so
+`redis.caFile` stays empty.
+
+The droplet's own Postgres is the `seats` cluster on 5434, and it holds only the
+development seats' databases, `TeamStation_<name>`, which are disposable.
+
+The volume holds the server's working files and the builds people download:
+
+```
+/mnt/datadrive/work      scratch: remuxes, and a frame while its still is cut
+/mnt/datadrive/uploads   Director uploads while their parts arrive
+/mnt/datadrive/media     live recordings until they reach the Space (mediaDir)
+/mnt/datadrive/app       builds/     https://app.teamstation.app/builds/, listed
+                         downloads/  fixed download links
+                         install/    over-the-air install pages
+```
+
+`src/deploy/provision.sh` makes a fresh Ubuntu 24.04 droplet into this one, and
+installs `src/deploy/Caddyfile` as Caddy's configuration — the Caddyfile lives
+in the repository, and the box's copy is installed from it.
 
 ## The deploy branch
 
@@ -14,7 +56,7 @@ Moving it is the act of deploying:
 
 ```sh
 git push --force-with-lease origin <your-branch>:deploy
-ssh root@gamestation.co /srv/gamestation/repo/src/deploy/deploy.sh
+ssh root@app.teamstation.app /srv/teamstation/repo/src/deploy/deploy.sh
 ```
 
 Keeping it separate from the working branch means a push to the branch you are
@@ -33,14 +75,14 @@ time rather than accumulating everybody's. **Ask Paul who holds it before
 pushing.** The commit that is live is the answer to who had it last:
 
 ```sh
-ssh root@gamestation.co git -C /srv/gamestation/repo log --oneline -1
+ssh root@app.teamstation.app git -C /srv/teamstation/repo log --oneline -1
 ```
 
 ## What a deploy does
 
-1. Fetches and hard-resets the clone at `/srv/gamestation/repo` to the branch.
-2. Builds into a **new** `/srv/gamestation/versions/<version>-<date>-<sha>`.
-3. Symlinks `serverConfig.json` in from `/srv/gamestation/`, which is the only
+1. Fetches and hard-resets the clone at `/srv/teamstation/repo` to the branch.
+2. Builds into a **new** `/srv/teamstation/versions/<version>-<date>-<sha>`.
+3. Symlinks `serverConfig.json` in from `/srv/teamstation/`, which is the only
    copy and is never inside a version.
 4. Runs migrations, before the swap, so the new code never meets a database it
    is ahead of.
@@ -53,7 +95,7 @@ ssh root@gamestation.co git -C /srv/gamestation/repo log --oneline -1
 
 The game socket (`server/socket/gameSocket.ts`) answers WebSocket upgrades at
 `/socket`, in every worker. Caddy sends only `/api/*` to the Node server, so
-every Caddyfile that fronts a GameStation server needs a second rule, next to
+every Caddyfile that fronts a TeamStation server needs a second rule, next to
 the `/api/*` one, sending `/socket` to the **same upstream**:
 
 ```caddyfile
@@ -114,7 +156,7 @@ The rule the bucket wants, against the names the app is served on:
 
 | | |
 | --- | --- |
-| Origins | `https://gamestation.co`, `https://www.gamestation.co`, `https://tube.gamestation.co` |
+| Origins | `https://app.teamstation.app`, `https://app.teamstation.app`, `https://app.teamstation.app` |
 | Methods | `GET`, `HEAD` |
 | Allowed headers | `*` — `Range` is the one that matters, and a preflight asks for it by name |
 | Max age | 3600 |
@@ -168,39 +210,27 @@ about the systemd unit. It is off entirely when `live.enabled` is false.
 Every game's scoreboard lives in Redis, not Postgres: one hash per game, which
 expires two hours after its last write (never more than three days after the
 game's start), and one pub/sub channel that carries each write to every
-worker's sockets. `redis-server` is installed on the droplet and **stopped**;
-enabling it is a change to the shared machine, so it waits for Paul's
-go-ahead, and then it is done once:
+worker's sockets. Production and the seats share the managed Valkey,
+`app-teamstation-app--redis`, whose eviction policy is `noeviction`: a board is
+never dropped to make room, it expires.
 
-```sh
-sudo systemctl enable --now redis-server
-```
-
-and in `/etc/redis/redis.conf`, then `sudo systemctl restart redis-server`:
-
-```
-bind 127.0.0.1 ::1
-maxmemory 256mb
-maxmemory-policy volatile-ttl
-```
-
-keeping the default RDB snapshots. Every key the server writes has an expiry,
-so `volatile-ttl` may evict any of them under memory pressure, and the
-scoreboard's `version` rule means a board that loses its key, or comes back
-from an older snapshot, still moves forward.
-
-The server's side is one block of `serverConfig.json`, and the defaults are
-right for the droplet:
+The server's side is one block of `serverConfig.json`:
 
 ```json
-{ "redis": { "url": "redis://127.0.0.1:6379", "prefix": "" } }
+{
+  "redis": {
+    "url": "rediss://default:<password>@<private host>:25061",
+    "prefix": "",
+    "caFile": ""
+  }
+}
 ```
 
-An empty `prefix` is `gs:<database name>`, so production and every seat —
-each with its own database — share the one Redis without seeing each other's
-keys. With Redis stopped the API still comes up: the scoreboard routes answer
+An empty `prefix` is `ts:<database name>`, so production and every seat —
+each with its own database — share the one Valkey without seeing each other's
+keys. With Valkey away the API still comes up: the scoreboard routes answer
 503, its sockets close with 1011, a game's Score Game screen shows its
-Scoreboard option as unavailable, and everything recovers on its own when Redis
+Scoreboard option as unavailable, and everything recovers on its own when it
 is back.
 
 ## What this deployment is called
@@ -208,7 +238,7 @@ is back.
 One name is written down, in `src/common/primaryUrl.ts`:
 
 ```ts
-export const PRIMARY_HOST = 'gamestation.co'
+export const PRIMARY_HOST = 'app.teamstation.app'
 ```
 
 Every URL this server hands out is built from it — playback, invites, sign-in
@@ -221,7 +251,7 @@ A deployment that is **not** production says its own name once, in its own
 `serverConfig.json`:
 
 ```json
-{ "primaryUrlOverride": "develop2.gamestation.co" }
+{ "primaryUrlOverride": "develop2.teamstation.app" }
 ```
 
 Production leaves it empty, because production is the address in the source.
@@ -238,13 +268,13 @@ Director spent a day asking PeerTube for its games.
 ## Going back
 
 ```sh
-ssh root@gamestation.co /srv/gamestation/repo/src/deploy/deploy.sh --rollback
+ssh root@app.teamstation.app /srv/teamstation/repo/src/deploy/deploy.sh --rollback
 ```
 
 Or deploy any commit by name:
 
 ```sh
-ssh root@gamestation.co /srv/gamestation/repo/src/deploy/deploy.sh 6c38532a
+ssh root@app.teamstation.app /srv/teamstation/repo/src/deploy/deploy.sh 6c38532a
 ```
 
 A rollback only moves the symlink; it does not undo a migration. Migrations are
@@ -262,23 +292,18 @@ both problems: the input is a commit, and the build happens where it runs.
 
 ## First-time setup
 
-Done once, on 2026-09-17. Recorded here because the next box will need it.
+After `provision.sh`, which also installs `teamstation.service`:
+
+The organisation does not allow deploy keys, so the box holds no GitHub
+credential. Deploys come from its own bare repository, which a person pushes
+to, and the clone fetches from it:
 
 ```sh
-# A key for this repo alone, read-only.
-ssh-keygen -t ed25519 -f /root/.ssh/gamestation_deploy -N '' -C 'tube2 deploy'
-# Add the public half to the repo as a read-only deploy key.
-
-cat >> /root/.ssh/config <<'CONF'
-Host github.com
-  IdentityFile /root/.ssh/gamestation_deploy
-  IdentitiesOnly yes
-CONF
-
-git clone --branch deploy \
-  git@github.com:paullinator/gamestation.git /srv/gamestation/repo
+git push ssh://root@app.teamstation.app/srv/teamstation.git <branch>
+ssh root@app.teamstation.app '
+  git clone /srv/teamstation.git /srv/teamstation/repo   # once
+  TS_DEPLOY_BRANCH=<branch> /srv/teamstation/repo/src/deploy/deploy.sh'
 ```
 
-The key is read-only and scoped to this one repository, so the box can fetch
-what it runs and nothing else — it cannot push, and it cannot reach anything
-else Paul owns.
+The database is created once, as `doadmin`, from the droplet:
+`create database teamstation owner teamstation`.

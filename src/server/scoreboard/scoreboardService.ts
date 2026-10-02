@@ -29,7 +29,7 @@ export interface ScoreboardService {
  */
 export function startScoreboard(options: {
   db: Kysely<Database>
-  redis: { url: string; prefix: string }
+  redis: { url: string; prefix: string; caFile?: string }
   databaseUrl: string
   log: (message: string) => void
   now?: () => number
@@ -37,7 +37,12 @@ export function startScoreboard(options: {
   pingMs?: number
 }): ScoreboardService {
   const { db, log } = options
-  const client = makeScoreboardClient(options.redis.url, log)
+  const client = makeScoreboardClient(
+    options.redis.url,
+    log,
+    'scoreboard',
+    options.redis.caFile
+  )
   const subscriber = makeScoreboardSubscriber(client, log)
   const connect = (name: string, run: () => Promise<unknown>): void => {
     run().catch((error: unknown) => {

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GameStation 2.0: the *second* development clone, beside production
+# TeamStation: the *second* development clone, beside production
 # and the first one on the same box.
 #
-#   ssh root@gamestation.co /srv/gamestation-dev/repo/src/deploy/deployDev2.sh
+#   ssh root@app.teamstation.app /srv/teamstation-dev/repo/src/deploy/deployDev2.sh
 #
 # Same shape as deploy.sh — fetch a branch, build it into its own directory,
 # swap a symlink, health-check, go back if it does not answer — with three
@@ -21,26 +21,26 @@ set -euo pipefail
 #
 # The address this clone answers on is not set here and is not in the branch.
 # It is `primaryUrlOverride` in this clone's own `serverConfig.json`, which
-# says develop2.gamestation.co — so a branch deployed here changes no tracked
+# says develop2.teamstation.app — so a branch deployed here changes no tracked
 # file, and nothing has to be put back before it lands.
 
-SELF_COPY=/tmp/gsDeployDev2.running.sh
-if [ "${GS_DEPLOY_REEXEC:-}" != "1" ]; then
+SELF_COPY=/tmp/tsDeployDev2.running.sh
+if [ "${TS_DEPLOY_REEXEC:-}" != "1" ]; then
   install -m 0755 "$0" "$SELF_COPY"
-  GS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
+  TS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
 fi
 
-BRANCH="${GS_DEV_BRANCH:-paul/mobileApp}"
-ROOT=/srv/gamestation-dev2
+BRANCH="${TS_DEV_BRANCH:-paul/mobileApp}"
+ROOT=/srv/teamstation-dev2
 REPO="$ROOT/repo"
 VERSIONS="$ROOT/versions"
 CURRENT="$ROOT/current"
-APP_USER=gamestation
-SERVICE=gamestation-dev2
+APP_USER=teamstation
+SERVICE=teamstation-dev2
 HEALTH=http://127.0.0.1:9300/api/v1/health
 KEEP=3
 
-export PATH="/srv/gamestation/node-v24/bin:$PATH"
+export PATH="/srv/teamstation/node-v24/bin:$PATH"
 
 say() { printf '\n== %s\n' "$*"; }
 die() { printf '\n!! %s\n' "$*" >&2; exit 1; }
@@ -91,7 +91,7 @@ say "At $SHA — $(git -C "$REPO" log -1 --pretty=%s)"
 # The production clone is the yardstick for what the live database has already
 # had done to it. A branch carrying a migration production has not seen would
 # change the live site's schema the moment this ran, so it stops instead.
-PROD_MIGRATIONS="$(ls -1 /srv/gamestation/repo/src/migrate/migrations | sort)"
+PROD_MIGRATIONS="$(ls -1 /srv/teamstation/repo/src/migrate/migrations | sort)"
 DEV_MIGRATIONS="$(ls -1 "$REPO/src/migrate/migrations" | sort)"
 EXTRA="$(comm -13 <(echo "$PROD_MIGRATIONS") <(echo "$DEV_MIGRATIONS"))"
 [ -z "$EXTRA" ] || die "this branch adds migrations the live database has not seen:
@@ -152,4 +152,4 @@ ls -1 "$VERSIONS" | sort -r | tail -n +$((KEEP + 1)) | while read -r old; do
   rm -rf "${VERSIONS:?}/$old"
 done
 
-say "Deployed $VERSION ($SHA) to develop2.gamestation.co"
+say "Deployed $VERSION ($SHA) to develop2.teamstation.app"

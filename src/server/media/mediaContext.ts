@@ -8,7 +8,7 @@ import type { SpaceSettings } from './spacesHls'
  * still URL in another have to be signed by the same key to be worth anything.
  */
 export interface MediaContext {
-  /** Caddy's media root: `/srv/gamestation/media` in production. */
+  /** Caddy's media root: `/mnt/datadrive/media` in production. */
   mediaRoot: string
   /** The pinned build, used for the one frame a still needs. */
   ffmpegPath: string
