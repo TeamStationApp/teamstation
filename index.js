@@ -5,6 +5,11 @@
  * name it literally; everything it pulls in is TypeScript. The work is in
  * `src/app/native/index.tsx`, the native twin of `src/app/web/index.tsx`.
  */
+// First, before React Native and before anything that could make a key:
+// Hermes has no `crypto.getRandomValues` of its own, and chat's keys and
+// nonces (`src/common/chatCrypto/random.ts`) come from nowhere else.
+import 'react-native-get-random-values'
+
 import { AppRegistry } from 'react-native'
 
 import { name as appName } from './app.json'

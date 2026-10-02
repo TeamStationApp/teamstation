@@ -11,6 +11,8 @@
  * read but not written is a Back button that goes somewhere else.
  */
 
+import { chatBenchPath } from '../dev/chatBench'
+
 export type When = 'upcoming' | 'past' | 'all'
 
 export type Route =
@@ -105,6 +107,12 @@ export type Route =
    * read.
    */
   | { name: 'signInLink'; token: string }
+  /**
+   * The chat crypto bench. Only a phone build made with `TS_CHAT_BENCH=1` has
+   * an address for it (`/dev/chat-bench`, from `dev/chatBench.native.ts`);
+   * everywhere else that address is home.
+   */
+  | { name: 'chatBench' }
 
 const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
@@ -248,9 +256,25 @@ export function parseRoute(path: string, search = ''): Route {
         ...(angles.length > 0 && zoom != null ? { zoom } : {})
       }
     }
+    case 'dev':
+      return parseDevRoute(parts)
     default:
       return { name: 'home' }
   }
+}
+
+/**
+ * `/dev/…`: the bench where the build has one, and home otherwise. The path
+ * comes from the build's `chatBench` twin, so the web bundle does not even
+ * hold it.
+ */
+export function parseDevRoute(
+  parts: string[],
+  benchPath: string | undefined = chatBenchPath
+): Route {
+  return benchPath != null && `/${parts.join('/')}` === benchPath
+    ? { name: 'chatBench' }
+    : { name: 'home' }
 }
 
 /** The address of a route, ready for the history. */
@@ -343,6 +367,8 @@ export function routePath(route: Route): string {
     }
     case 'join':
       return `/i/${route.code}`
+    case 'chatBench':
+      return chatBenchPath ?? '/'
     case 'signIn':
       return route.next == null
         ? '/sign-in'

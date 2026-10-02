@@ -60,3 +60,6 @@ coverage/
 /fastlane/report.xml
 /fastlane/README.md
 /fastlane/Preview.html
+
+# The simulator build in src/MOBILE.md and the chat crypto bench.
+ios/build-sim/
