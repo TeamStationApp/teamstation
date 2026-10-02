@@ -112,9 +112,12 @@ export interface Theme {
    * cannot blur has to be a different, opaque colour — a tint that reads well
    * over a blur is unreadable over a photograph.
    */
-  /** The mark's two fills: the ring and blade, and the body of the G. */
-  markArcColor: string
-  markBodyColor: string
+  /**
+   * The mark's gradient, from its top-left corner to its bottom-right: the
+   * two colours the strokes of the square and its arcs run between.
+   */
+  markGradientStart: string
+  markGradientEnd: string
   glassBackgroundColor: string
   glassFallbackColor: string
   glassBorderColor: string

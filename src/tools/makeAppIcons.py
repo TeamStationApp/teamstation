@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
-"""Draws the app icon for both platforms from the mark's own path data.
+"""Draws the phone app's icon for both platforms from the mark's own path data.
 
-    python3 -m venv /tmp/gsIcons && /tmp/gsIcons/bin/pip install cairosvg
-    /tmp/gsIcons/bin/python tools/makeAppIcons.py
+    python3 -m venv /tmp/tsIcons && /tmp/tsIcons/bin/pip install cairosvg
+    /tmp/tsIcons/bin/python src/tools/makeAppIcons.py
 
-There was no icon at all: a fresh React Native project ships a blank tile on
-iOS and a green Android robot on Android, and the only raster of the
-GameStation mark in the repository is 96×90 — a tenth of the size an icon
-needs and nothing an upscale can rescue.
+It is drawn rather than resized: `src/app/components/tsMarkPaths.ts` is the
+vector the app puts in its own header, and the gradient's two colours come
+from the theme, so the icon is the same mark in the same colours and cannot
+drift from what the header draws.
 
-So it is drawn rather than resized. `app/components/gsMarkPaths.ts` is the
-vector the app already puts in its own header, and the two fills come from the
-theme, so the icon is the same mark in the same colours and cannot drift from
-what the header draws.
-
-The one difference is the background. In the app the mark is *cut out* — the
-counter of the G and the blade of grass are holes, so the header's glass shows
-through them. An icon has nothing behind it, so the holes are filled with the
-app's own canvas colour, which is what the header would have shown anyway.
+The one difference is the background. In the app the mark is strokes over
+nothing, so the header's glass shows through its middle. An icon has nothing
+behind it, so it sits on the app's own canvas colour.
 """
 
 from __future__ import annotations
@@ -30,9 +24,9 @@ from pathlib import Path
 import cairosvg
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
-PATHS = ROOT / "app" / "components" / "gsMarkPaths.ts"
-THEME = ROOT / "app" / "theme" / "gsBallpark.ts"
+ROOT = HERE.parent.parent
+PATHS = ROOT / "src" / "app" / "components" / "tsMarkPaths.ts"
+THEME = ROOT / "src" / "app" / "theme" / "gsBallpark.ts"
 IOS_ICONS = ROOT / "ios" / "GameStation" / "Images.xcassets" / "AppIcon.appiconset"
 ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
 
@@ -77,12 +71,34 @@ def colour(name: str) -> str:
     return match.group(1)
 
 
+def number(name: str) -> float:
+    """One `export const NAME = <number>` out of the paths module."""
+    match = re.search(rf"{name} = ([0-9.]+)", PATHS.read_text())
+    if match is None:
+        raise SystemExit(f"No {name} in {PATHS}")
+    return float(match.group(1))
+
+
+def gradient() -> tuple[dict[str, float], list[float]]:
+    """The gradient's line and its two stops, as the paths module writes them."""
+    text = PATHS.read_text()
+    line = re.search(r"MARK_GRADIENT = \{([^}]*)\}", text)
+    stops = re.search(r"MARK_GRADIENT_STOPS[^=]*= \[([^\]]*)\]", text)
+    if line is None or stops is None:
+        raise SystemExit(f"No MARK_GRADIENT in {PATHS}")
+    points = {
+        key: float(value)
+        for key, value in re.findall(r"(\w+): ([0-9.]+)", line.group(1))
+    }
+    return points, [float(n) for n in stops.group(1).split(",")]
+
+
 def svg(size: int, scale: float, background: str | None) -> bytes:
     """The mark, centred on a square, at `scale` of the square's width."""
     box = read("MARK_VIEW_BOX", PATHS).split()
     view_x, view_y, view_w, view_h = (float(n) for n in box)
-    transform = read("MARK_TRANSFORM", PATHS)
-    arc, body = colour("markArcColor"), colour("markBodyColor")
+    start, end = colour("markGradientStart"), colour("markGradientEnd")
+    points, (stop_start, stop_end) = gradient()
 
     drawn = size * scale
     offset = (size - drawn) / 2
@@ -91,21 +107,22 @@ def svg(size: int, scale: float, background: str | None) -> bytes:
         if background is not None
         else ""
     )
-    paths = "".join(
-        f'<g fill="{shade}">'
-        + "".join(f'<path d="{d}"/>' for d in group)
-        + "</g>"
-        for shade, group in (
-            (arc, read_list("MARK_ARC_PATHS")),
-            (body, read_list("MARK_BODY_PATHS")),
-        )
-    )
+    paths = "".join(f'<path d="{d}"/>' for d in read_list("MARK_PATHS"))
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" '
         f'height="{size}" viewBox="0 0 {size} {size}">{fill}'
         f'<svg x="{offset}" y="{offset}" width="{drawn}" height="{drawn}" '
         f'viewBox="{view_x} {view_y} {view_w} {view_h}">'
-        f"<g transform=\"{transform}\">{paths}</g></svg></svg>"
+        f'<defs><linearGradient id="mark" gradientUnits="userSpaceOnUse" '
+        f'x1="{points["x1"]}" y1="{points["y1"]}" '
+        f'x2="{points["x2"]}" y2="{points["y2"]}">'
+        f'<stop offset="{stop_start}" stop-color="{start}"/>'
+        f'<stop offset="{stop_end}" stop-color="{end}"/>'
+        f"</linearGradient></defs>"
+        f'<g fill="none" stroke="url(#mark)" '
+        f'stroke-width="{number("MARK_STROKE_WIDTH")}" '
+        f'stroke-linecap="round" stroke-linejoin="round">{paths}</g>'
+        f"</svg></svg>"
     ).encode()
 
 

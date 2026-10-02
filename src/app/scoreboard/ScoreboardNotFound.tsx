@@ -1,7 +1,7 @@
 import React from 'react'
 import { Image, Text, View } from 'react-native'
 
-import { gsLogoSource } from '../assets'
+import { tsLogoSource } from '../assets'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -25,7 +25,7 @@ export function ScoreboardNotFound(): React.ReactElement {
         accessibilityIgnoresInvertColors
         accessibilityLabel="GameStation"
         resizeMode="contain"
-        source={gsLogoSource}
+        source={tsLogoSource}
         style={styles.logo}
       />
       <Text accessibilityRole="header" style={styles.title}>

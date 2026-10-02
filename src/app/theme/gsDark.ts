@@ -126,10 +126,10 @@ export const gsDark: Theme = {
   headerBorderColor: palette.gsDarkOlive,
   headerTextColor: palette.gsBeige,
   navBackgroundColor: palette.gsVeryDarkGreen,
-  markArcColor: '#8FB35C',
-  // The cream, not a darker green: `#334423` against this header is a mark
-  // with a hole where the body of the G should be.
-  markBodyColor: '#E6E5D5',
+  markGradientStart: '#8FB35C',
+  // The cream, not the dark green: `#182e16` against this header is half a
+  // mark.
+  markGradientEnd: '#E6E5D5',
   glassBackgroundColor: 'rgba(31, 36, 24, 0.55)',
   glassFallbackColor: palette.gsVeryDarkGreen,
   glassBorderColor: 'rgba(216, 214, 191, 0.14)',

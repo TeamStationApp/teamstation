@@ -6,8 +6,8 @@ import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
 import { GlassView } from './GlassView'
-import { GsMark } from './GsMark'
 import { Icon } from './Icon'
+import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface AppHeaderProps {
@@ -121,7 +121,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         )}
         {showMark && (
           <View style={[styles.mark, wide && styles.markWide]}>
-            <GsMark size={1.75} />
+            <TsMark size={1.75} />
           </View>
         )}
         {handoff != null ? (

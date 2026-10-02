@@ -13,7 +13,7 @@ import {
 import { GameSocket } from '../common/gameSocket'
 import { coachesTeam, keepsSongs } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
-import { gsLogoSource } from './assets'
+import { tsLogoSource } from './assets'
 import {
   AppHeader,
   AppNav,
@@ -645,7 +645,7 @@ function Shell(props: AppProps): React.ReactElement {
           <Image
             accessibilityIgnoresInvertColors
             accessibilityLabel="GameStation"
-            source={gsLogoSource}
+            source={tsLogoSource}
             style={styles.bootMark}
           />
           <ActivityIndicator color={theme.secondaryTextColor} />

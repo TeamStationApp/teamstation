@@ -1,6 +1,6 @@
 import type { ImageSourcePropType } from 'react-native'
 
-import gsLogo from './gsLogo.png'
+import tsLogo from './tsLogo.png'
 
 /**
  * The mark, as something `Image` will take.
@@ -10,4 +10,4 @@ import gsLogo from './gsLogo.png'
  * platform and meaningless on the other. Both sides of that are here, in the
  * two files, rather than at the one place in the app that draws it.
  */
-export const gsLogoSource: ImageSourcePropType = { uri: gsLogo }
+export const tsLogoSource: ImageSourcePropType = { uri: tsLogo }

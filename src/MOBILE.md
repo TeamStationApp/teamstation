@@ -71,7 +71,7 @@ sibling is for. What exists twice:
 | `navigation/useAddressBar` | `window.history` there; a history array and Android's Back here |
 | `theme/fonts` | a CSS font stack there; one family name here |
 | `assets/index` | a data URL there; a Metro asset here |
-| `components/GsMark` | inline `<svg>` there; `react-native-svg` here |
+| `components/TsMark` | inline `<svg>` there; `react-native-svg` here |
 | `components/Gradient` | a CSS gradient there; two SVG stops here |
 | `components/GlassView` | `backdrop-filter` there; `UIGlassEffect` here |
 | `components/useHandoff` | `getBoundingClientRect` there; `measure` on the animation thread here |
