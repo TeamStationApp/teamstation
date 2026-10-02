@@ -43,7 +43,7 @@ import {
 import { ContentInsetContext, NO_INSET } from '../components/contentInset'
 import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
-import { SHORT_WINDOW_MAX, watchLayout, type WatchMode } from '../layout/watch'
+import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
@@ -397,13 +397,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const [tabsHeight, setTabsHeight] = useState(0)
   /**
-   * The hero and the pills, measured, so the picture leaves room for them.
-   *
-   * They stay on the page while the section under them changes, so the
-   * picture can no longer assume the whole window under the header is its.
-   */
-  const [sectionChrome, setSectionChrome] = useState(0)
-  /**
    * How tall the camera-angle buttons are, so the picture can leave room.
    *
    * Measured rather than guessed at, because it is nothing at all on the games
@@ -461,16 +454,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // nothing left over for a black bar to fill. Until the browser knows, 16:9.
   const aspect = useVideoAspect(playerRef, video?.id)
   const mode = useRef<WatchMode>('stacked')
-  // Tall enough that the score card stays above the picture. Below this the
-  // card is not drawn there at all, so it must not be subtracted from the
-  // picture — doing both is how the two fight and the card flickers.
-  const cardStays = height - headerHeight > SHORT_WINDOW_MAX
   const layout = watchLayout({
     // The width the content actually gets, not the width of the screen.
     width: width - insets.left - insets.right,
     height,
-    // The header, and — where the card stays put — the card and the pills.
-    chromeHeight: headerHeight + (cardStays ? sectionChrome : 0),
+    // The header alone: the card and the pills scroll away above the picture,
+    // which then pegs under the header with the whole window below it.
+    chromeHeight: headerHeight,
     // The camera-angle buttons are pegged with the picture and have to stay
     // on the screen with it. Twice the small space as well: `onLayout`
     // measures the card and not the margin above it, and the second keeps the
@@ -1227,20 +1217,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   ) : null
 
-  // One hero and one pill row for every section. Videos used to pad them one
-  // way and Box score another, so switching moved the card. The row stays
-  // mounted here, and only the pane under it changes.
-  const chrome = cardStays ? (
-    <View
-      style={styles.head}
-      onLayout={event => {
-        const next = event.nativeEvent.layout.height
-        setSectionChrome(current => (current === next ? current : next))
-      }}
-    >
-      {head}
-    </View>
-  ) : null
   const below = (
     <View style={styles.tabBody}>
       {tab === 'score' ? (
@@ -1263,12 +1239,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      <View style={[styles.watch, cardStays && { paddingTop: headerHeight }]}>
-        {chrome}
-        <View style={styles.tabPane}>
+      {/*
+        The card and the pills scroll with every section, from the same place
+        at the top of each, so switching sections does not move them. On
+        Videos they scroll away above the picture, which pegs under the
+        header while the highlights scroll on under it and its angle buttons.
+      */}
+      <View style={styles.watch}>
+        <View style={styles.tabPane} testID="gameSection">
           {tab === 'watch' ? (
             <GameWatchLayout
-              head={cardStays ? null : head}
+              head={head}
               player={player}
               description={description}
               sections={sections}
@@ -1286,8 +1267,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               layout={layout}
               short={short}
               sideBySide={sideBySide}
-              headerHeight={cardStays ? 0 : headerHeight}
-              tabsHeight={cardStays ? 0 : tabsHeight}
+              headerHeight={headerHeight}
+              tabsHeight={tabsHeight}
               height={height}
               onScroll={handleWatchScroll}
               style={styles.tabPane}
@@ -1304,11 +1285,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               style={styles.tabPane}
               onScroll={handleWatchScroll}
               scrollEventThrottle={16}
-              contentContainerStyle={
-                cardStays ? undefined : { paddingTop: headerHeight }
-              }
+              contentContainerStyle={{ paddingTop: headerHeight }}
             >
-              {cardStays ? null : <View style={styles.head}>{head}</View>}
+              <View style={styles.head}>{head}</View>
               {below}
             </ScrollView>
           )}
@@ -1883,8 +1862,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       flex: 1,
       backgroundColor: theme.backgroundColor
     },
-    // The section under the pills. It fills whatever the hero and the pills
-    // have not taken, so those two stay where they are while this swaps.
+    // The section's own scroller, which the card and the pills scroll in.
     tabPane: {
       flex: 1
     },
