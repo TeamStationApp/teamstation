@@ -224,12 +224,17 @@ export function ScoreGameOptions(
   )
 }
 
+interface SiteScope {
+  window?: { location?: { origin?: string } }
+}
+
 /**
  * The site this page is on: `window.location.origin` in a browser, and the
  * primary site on a phone, which has a window and no location.
  */
 export function siteOrigin(
-  scope: { window?: { location?: { origin?: string } } } = globalThis
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- only with the DOM's types: a phone's global has no `window`, and tsconfig.native.json refuses it bare
+  scope: SiteScope = globalThis as SiteScope
 ): string {
   return scope.window?.location?.origin ?? httpOrigin(PRIMARY_HOST)
 }
