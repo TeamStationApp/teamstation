@@ -23,6 +23,17 @@
  * The watchdog stays anyway, at 1 Hz, because the paths nobody has measured —
  * WebKit, a phone, a live tile that gets throttled — are exactly the ones
  * where a player can be moved somewhere the view never asked for.
+ *
+ * **A small gap is the exception to the second rule**, because outside
+ * Chrome a seek is what costs. Measured with four 1080p HEVC tiles: on a
+ * Pixel 10 a seek took 0.6–1.9 s to land, and in WebKit — Safari, on a Mac
+ * and an iPhone — about 0.4 s, decoding from the keyframe before the target.
+ * Either way the tile landed that far behind, was moved again at the next
+ * look, and hitched every couple of seconds for as long as it played. A
+ * player changes speed without a hitch, and a tile that is not heard makes no
+ * sound doing it, so a gap under `NUDGE_MAX_SEC` is closed by speed
+ * (`nudgeRate`) and only a larger one by a seek. In Chrome tiles stay within
+ * the tolerance of each other, so this rarely moves a rate there at all.
  */
 
 import { type AngleVideo, secondsAt, startMs } from '../wallClock'
@@ -92,6 +103,46 @@ export function isOurSilence(
 ): boolean {
   if (seekedAtMs == null) return false
   return nowMs - seekedAtMs < SEEK_GRACE_MS
+}
+
+/**
+ * How far ahead of the moment a tile joining the others is sent, and held.
+ *
+ * A tile told to play from the moment starts behind it by however long its
+ * player takes to decode from the keyframe before it — about 0.4 s in WebKit,
+ * up to 1.9 s on a Pixel 10 — and in WebKit no change of speed closes that
+ * afterwards. So a camera starting late, a tile coming back, or one too far
+ * out to close by speed is sent this far ahead and kept on that still picture
+ * until the game reaches it: the decoding happens while it waits, and it
+ * starts on the moment.
+ */
+export const JOIN_LEAD_SEC = 1.5
+
+/** The largest gap a tile closes by speed rather than by a seek. */
+export const NUDGE_MAX_SEC = 1
+
+/** How much faster or slower a tile runs per second it is out. */
+export const NUDGE_GAIN = 0.2
+
+/** The most a tile's speed is moved from normal, either way. */
+export const NUDGE_LIMIT = 0.15
+
+/**
+ * The speed that brings a tile back to the moment, from how far out it
+ * is (`errorSec`, positive when behind). Normal speed within the tolerance;
+ * otherwise in proportion to the gap, so it slows as it closes and does not
+ * overshoot.
+ */
+export function nudgeRate(
+  errorSec: number,
+  toleranceSec: number = TOLERANCE_SEC
+): number {
+  if (Math.abs(errorSec) <= toleranceSec) return 1
+  const change = Math.max(
+    -NUDGE_LIMIT,
+    Math.min(NUDGE_LIMIT, errorSec * NUDGE_GAIN)
+  )
+  return 1 + change
 }
 
 /**

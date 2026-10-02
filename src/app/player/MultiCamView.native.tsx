@@ -18,6 +18,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import { ExitButton, exitClearance } from './multiCam/barParts'
+import { TILE_BUFFER } from './multiCam/buffering'
 import type { Rect } from './multiCam/layout'
 import {
   type NativeOrientation,
@@ -263,7 +264,7 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
             unavailable={mc.urls[video.id] === null}
             onGiveUp={askAgain}
             // Silent throughout a crawl, whichever angle is heard.
-            muted={mc.slow !== 0 || video.id !== mc.heardId}
+            muted={mc.slow !== 0 || video.id !== mc.heardId || mc.soundBlocked}
             onAttaching={attaching}
             onAttached={attached}
             wantsToPlay={() => mc.intents.current.get(video.id) === true}
@@ -441,7 +442,12 @@ function Tile(props: {
       ]}
       pointerEvents="none"
     >
-      <VideoView source={url} onHandle={takeHandle} resizeMode="contain" />
+      <VideoView
+        source={url}
+        onHandle={takeHandle}
+        resizeMode="contain"
+        buffer={TILE_BUFFER}
+      />
       {armed ? <View style={styles.tileArmed} /> : null}
       <View style={styles.tileName}>
         <Text style={styles.tileNameText} numberOfLines={1}>

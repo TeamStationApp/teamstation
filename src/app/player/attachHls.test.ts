@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { aheadControl } from './attachHls'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 
 /**
@@ -55,5 +56,31 @@ describe('coming back from a stumble', function () {
         paused: true
       })
     ).equals(false)
+  })
+})
+
+describe('how far ahead a grid tile loads', function () {
+  it('moves both of hls.js’s limits together', function () {
+    const config = { maxBufferLength: 10, maxMaxBufferLength: 10 }
+    const control = aheadControl(config, 10)
+    control.setAheadSec(40)
+    expect(config).deep.equals({ maxBufferLength: 40, maxMaxBufferLength: 40 })
+    control.setAheadSec(15)
+    expect(config).deep.equals({ maxBufferLength: 15, maxMaxBufferLength: 15 })
+  })
+
+  it('keeps under a cut hls.js made when the browser ran out of room', function () {
+    const config = { maxBufferLength: 60, maxMaxBufferLength: 60 }
+    const control = aheadControl(config, 60)
+    // A refused append: hls.js halves its own ceiling.
+    config.maxMaxBufferLength = 30
+    control.setAheadSec(60)
+    expect(config.maxMaxBufferLength).equals(30)
+    expect(config.maxBufferLength).equals(30)
+    // Lower still is always allowed.
+    control.setAheadSec(20)
+    expect(config.maxMaxBufferLength).equals(20)
+    control.setAheadSec(60)
+    expect(config.maxMaxBufferLength).equals(30)
   })
 })
