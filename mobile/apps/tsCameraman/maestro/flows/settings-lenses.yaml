@@ -1,0 +1,70 @@
+appId: app.teamstation.cameraman
+---
+# Lenses are detected on the handset, one toggle per row. The millimetre labels are measured
+# from field of view, so this flow asserts presence rather than a hardcoded 13/24/48/77 set.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+- tapOn:
+    id: "settings-done"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "zoom-preset-0.5x"
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "settings-lens-back-0.5x"
+- assertVisible:
+    id: "settings-lens-back-1x"
+- assertVisible:
+    id: "settings-lens-back-2x"
+    optional: true
+- assertVisible:
+    id: "settings-lens-back-3x"
+    optional: true
+- assertVisible:
+    id: "settings-lens-front-1x"
+- takeScreenshot: settings-lenses-detected
+
+# Turn the ultra-wide off. Done has to apply it; a setting that reverts on dismiss is the same
+# as one that was never applied. The 0.5x preset disappearing is the capture proof — the toggle
+# row staying on screen after reopen only proves the sheet still lists the lens.
+- tapOn:
+    id: "settings-lens-back-0.5x"
+- takeScreenshot: settings-lenses-uw-off
+- tapOn:
+    id: "settings-done"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertNotVisible:
+    id: "zoom-preset-0.5x"
+- takeScreenshot: camera-uw-disabled
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "settings-lens-back-0.5x"
+- assertVisible:
+    id: "settings-lens-back-1x"
+
+# Leave the ultra-wide on so a non-uiTest launch does not persist a one-lens lock from this flow.
+- tapOn:
+    id: "settings-lens-back-0.5x"
+- tapOn:
+    id: "settings-done"

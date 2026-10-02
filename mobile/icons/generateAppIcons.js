@@ -50,13 +50,13 @@ const APPS = [
     svg: path.join(iconsDir, 'cineCamera.svg'),
     out: path.join(
       repoRoot,
-      'mobile/apps/gsCameraman/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+      'mobile/apps/tsCameraman/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     ),
     // The Android build wears the same mark. Two apps that stream from the same operator's pocket
     // should not be told apart by their icons.
     androidRes: path.join(
       repoRoot,
-      'mobile/apps/gsCameramanAndroid/app/src/main/res'
+      'mobile/apps/tsCameramanAndroid/app/src/main/res'
     )
   },
   {

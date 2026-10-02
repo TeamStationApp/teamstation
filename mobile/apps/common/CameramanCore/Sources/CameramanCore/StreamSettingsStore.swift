@@ -3,7 +3,7 @@ import Foundation
 /// Where the operator's stream settings are kept between launches.
 ///
 /// Separate from `IdentityStore` because the identity has a different job: it is who this phone is to
-/// GS Director, kept in its own file, while settings are ordinary preferences.
+/// TS Director, kept in its own file, while settings are ordinary preferences.
 public protocol SettingsStore: Sendable {
   func string(forKey key: String) -> String?
   func setString(_ value: String, forKey key: String)
@@ -51,10 +51,10 @@ public final class InMemorySettingsStore: SettingsStore, @unchecked Sendable {
 /// `@unchecked` for the same reason as `UserDefaultsSettingsStore`: the legacy handle is a
 /// thread-safe `UserDefaults` that is not marked `Sendable`.
 public struct StreamSettingsStore: @unchecked Sendable {
-  public static let settingsKey = "co.gamestation.cameraman.streamSettings"
+  public static let settingsKey = "app.teamstation.cameraman.streamSettings"
   /// The build that persisted lens choices and nothing else used this key. Read when no full set has
   /// been saved yet, so upgrading does not silently switch a disabled lens back on.
-  public static let legacyDisabledLensesKey = "co.gamestation.cameraman.disabledLensIDs"
+  public static let legacyDisabledLensesKey = "app.teamstation.cameraman.disabledLensIDs"
 
   private let store: SettingsStore
   private let legacyDefaults: UserDefaults?

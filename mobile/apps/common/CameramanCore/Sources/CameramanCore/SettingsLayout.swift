@@ -2,7 +2,7 @@ import Foundation
 
 /// How many columns the Settings sheet lays its five cards out in.
 ///
-/// Cameraman is landscape-only on a phone and has always used two columns. GS Preview rotates, and
+/// Cameraman is landscape-only on a phone and has always used two columns. TS Preview rotates, and
 /// a phone in portrait cannot fit two cards side by side, so it stacks them. Pure, so the rule is
 /// unit-tested for the sizes that matter rather than eyeballed on each device.
 public enum SettingsLayout {

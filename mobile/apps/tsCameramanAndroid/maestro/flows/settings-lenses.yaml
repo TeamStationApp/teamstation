@@ -1,0 +1,40 @@
+# One toggle per lens the handset actually has, and the last one cannot be turned off.
+#
+# The labels are millimetres derived from the optics, so this flow asserts the *shape* — a row per
+# lens, a switch on each — rather than "14 mm", which would pass on one handset and fail on the next.
+appId: app.teamstation.cameraman
+---
+- launchApp:
+    appId: app.teamstation.cameraman
+    arguments:
+      uiTest: true
+
+- tapOn:
+    id: "settings-button"
+
+# A Pixel 10 reports three back lenses and two front. Asserting the back wide is enough to know the
+# catalogue was read from the device rather than left empty.
+- assertVisible:
+    id: "settings-lens-back-1x"
+
+- tapOn:
+    id: "settings-lens-back-0.6x"
+- tapOn:
+    id: "settings-done"
+
+# The zoom rail loses the pill for a lens that was switched off — that is the whole point of the
+# setting, and the only place an operator sees it took effect.
+- assertVisible:
+    id: "camera-screen"
+- assertNotVisible:
+    id: "zoom-preset-0.6x"
+
+# Back on, and the pill returns.
+- tapOn:
+    id: "settings-button"
+- tapOn:
+    id: "settings-lens-back-0.6x"
+- tapOn:
+    id: "settings-done"
+- assertVisible:
+    id: "zoom-preset-0.6x"

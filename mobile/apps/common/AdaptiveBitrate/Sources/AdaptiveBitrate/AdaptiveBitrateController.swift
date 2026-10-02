@@ -104,7 +104,7 @@ public struct AdaptiveBitrateController: Sendable {
 
     public init() {}
 
-    /// GS Director's RTMP stream, which has seconds of room where a camera has a fraction of one.
+    /// TS Director's RTMP stream, which has seconds of room where a camera has a fraction of one.
     ///
     /// Nobody watches the stream against the field: a platform's player sits 5–20 s behind, so the
     /// RTMP client holds `RTMPClient.sendBufferSeconds` (8 s) of stream before it sheds anything, and
