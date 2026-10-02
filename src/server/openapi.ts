@@ -1291,10 +1291,156 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/teams': {
         get: {
           summary: 'The teams this person belongs to',
+          description:
+            'Full teams only, never an opponent from outside a season. A ' +
+            'site administrator gets every team; anybody else the teams they ' +
+            'may see. Each team carries `externalIds`, the ids other systems ' +
+            'know it by (any system or kind), sorted.\n\n' +
+            '`externalId` may be repeated, and narrows the list to teams ' +
+            'holding any of those ids, with what the caller may see ' +
+            'unchanged; an empty one is refused.',
           security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'externalId',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: "Another service's ids for the team"
+            }
+          ],
           responses: {
             200: { description: 'Their teams, which may be an empty list' },
+            400: errorResponse,
             401: errorResponse
+          }
+        },
+        post: {
+          summary: 'Make a team, in a season, known by external ids',
+          description:
+            'Site administrators only; anybody else gets 403.\n\n' +
+            '**The body:** `name` is trimmed and 1-100 characters. `season` ' +
+            'is `{id}`, an existing season (404 when there is none), or ' +
+            '`{name, year}`: the season with that name in that year, ignoring ' +
+            'case and outer spaces, else a new one in no league. `name` is ' +
+            '1-100 characters after trimming and `year` a whole year from ' +
+            '1900 to 2200. `externalIds` is optional, at most 20 of ' +
+            '`{system, id, kind}`, with `system` matching ' +
+            '`^[a-z][a-zA-Z0-9]{0,31}$` and `id` and `kind` non-empty.\n\n' +
+            '**What it does:** when any of the external ids (the same ' +
+            'system, kind and id) already names a team, nothing is made and ' +
+            'the answer is 200 with that team (the one it was merged into, ' +
+            'if it was) and `season: null`. An id already on something ' +
+            'other than a team is 409. Otherwise, in one transaction, a full ' +
+            'team is made, put in the season, and given the ids, and the ' +
+            'answer is 201 with the season and whether this call made it.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['name', 'season'],
+                  properties: {
+                    name: { type: 'string', minLength: 1, maxLength: 100 },
+                    season: {
+                      oneOf: [
+                        {
+                          type: 'object',
+                          required: ['id'],
+                          properties: { id: { type: 'string' } }
+                        },
+                        {
+                          type: 'object',
+                          required: ['name', 'year'],
+                          properties: {
+                            name: {
+                              type: 'string',
+                              minLength: 1,
+                              maxLength: 100
+                            },
+                            year: {
+                              type: 'integer',
+                              minimum: 1900,
+                              maximum: 2200
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    externalIds: {
+                      type: 'array',
+                      maxItems: 20,
+                      items: {
+                        type: 'object',
+                        required: ['system', 'id', 'kind'],
+                        properties: {
+                          system: {
+                            type: 'string',
+                            pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                          },
+                          id: { type: 'string', minLength: 1 },
+                          kind: { type: 'string', minLength: 1 }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description:
+                'An external id already named this team; nothing was made',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['id', 'name', 'created', 'season'],
+                    properties: {
+                      id: { type: 'string' },
+                      name: { type: 'string' },
+                      created: { type: 'boolean', enum: [false] },
+                      season: { type: 'null' }
+                    }
+                  }
+                }
+              }
+            },
+            201: {
+              description: 'The team was made, in this season',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['id', 'name', 'created', 'season'],
+                    properties: {
+                      id: { type: 'string' },
+                      name: { type: 'string' },
+                      created: { type: 'boolean', enum: [true] },
+                      season: {
+                        type: 'object',
+                        required: ['id', 'name', 'year', 'created'],
+                        properties: {
+                          id: { type: 'string' },
+                          name: { type: 'string' },
+                          year: { type: 'integer' },
+                          created: { type: 'boolean' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
