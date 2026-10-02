@@ -155,6 +155,39 @@ export const asTeamSummary = asObject({
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
 
+/** A team somebody may follow, from `GET /teams/search` or `/me/follows`. */
+export const asFollowableTeam = asObject({
+  id: asString,
+  name: asString,
+  logoUrl: asNullable(asString),
+  /** The seasons it plays in, each titled `<league> <season>`. */
+  seasons: asArray(asObject({ id: asString, title: asString })),
+  following: asBoolean
+})
+export type FollowableTeam = ReturnType<typeof asFollowableTeam>
+
+/**
+ * One game on a team's schedule, as a fan may read it: when, who, where.
+ * Never a status, a score, a poster or a video.
+ */
+export const asScheduleEntry = asObject({
+  gameId: asString,
+  startsAt: asString,
+  homeTeam: asObject({ id: asString, name: asString }),
+  awayTeam: asObject({ id: asString, name: asString }),
+  venue: asNullable(asString)
+})
+export type ScheduleEntry = ReturnType<typeof asScheduleEntry>
+
+/** One of a team's staff, with the roles they hold directly on the team. */
+export const asStaffEntry = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asNullable(asString),
+  roles: asArray(asRole)
+})
+export type StaffEntry = ReturnType<typeof asStaffEntry>
+
 export const asGameSummary = withEventMetadata(
   asObject({
     id: asString,
@@ -2519,6 +2552,61 @@ export class TeamStationClient {
       plays: stored.plays.map(row => row.gumbo),
       currentPlay: stored.currentPlay
     }
+  }
+
+  /**
+   * Full teams whose name holds `query`, at most 20, for somebody looking for
+   * one to follow. The server needs two characters at least.
+   */
+  async searchTeams(query: string): Promise<FollowableTeam[]> {
+    return await this.request(
+      'GET',
+      `/teams/search?q=${encodeURIComponent(query)}`,
+      asArray(asFollowableTeam)
+    )
+  }
+
+  /** Follows a team. Following one already followed changes nothing. */
+  async followTeam(teamId: string): Promise<boolean> {
+    const answer = await this.request(
+      'PUT',
+      `/teams/${encodeURIComponent(teamId)}/follow`,
+      asObject({ following: asBoolean })
+    )
+    return answer.following
+  }
+
+  /** Stops following a team. Unfollowing one not followed changes nothing. */
+  async unfollowTeam(teamId: string): Promise<boolean> {
+    const answer = await this.request(
+      'DELETE',
+      `/teams/${encodeURIComponent(teamId)}/follow`,
+      asObject({ following: asBoolean })
+    )
+    return answer.following
+  }
+
+  /** The teams this person follows. */
+  async myFollows(): Promise<FollowableTeam[]> {
+    return await this.request('GET', '/me/team-follows', asArray(asFollowableTeam))
+  }
+
+  /** A team's games, as anybody who can read its listing may see them. */
+  async teamSchedule(teamId: string): Promise<ScheduleEntry[]> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/schedule`,
+      asArray(asScheduleEntry)
+    )
+  }
+
+  /** A team's staff, with their roles on it. */
+  async teamStaff(teamId: string): Promise<StaffEntry[]> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/staff`,
+      asArray(asStaffEntry)
+    )
   }
 
   async roster(

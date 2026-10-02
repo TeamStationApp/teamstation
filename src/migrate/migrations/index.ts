@@ -60,6 +60,8 @@ import { migration057EventInfo } from './057eventInfo'
 import { migration058EventDetails } from './058eventDetails'
 import { migration059AccountMail } from './059accountMail'
 
+import { migration050TeamFollows } from './050teamFollows'
+
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
   migration001Identity,
@@ -108,6 +110,7 @@ export const migrations: Migration[] = [
   migration047TeamStation,
   migration048DropStatRollups,
   migration049ExpandedStats,
+  migration050TeamFollows,
   migration050CreationHierarchy,
   migration050OAuth,
   migration051EventTags,
