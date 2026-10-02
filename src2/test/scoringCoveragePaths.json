@@ -124,5 +124,7 @@
   "src2/app/player/nativeVideoHandle.ts",
   "src2/app/player/zones.ts",
   "src2/app/player/controlGeometry.ts",
-  "src2/app/player/slowMotion.ts"
+  "src2/app/player/slowMotion.ts",
+  "src2/app/player/multiCam/useMultiCam.ts",
+  "src2/app/player/multiCam/barParts.tsx"
 ]

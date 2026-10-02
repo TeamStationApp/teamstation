@@ -80,7 +80,6 @@ export const enUs = {
   angles_column_sound: 'Sound',
   angles_sound_from_label: 'Hear %s',
   angles_cancel: 'Cancel',
-  angles_rotate: 'Turn your phone sideways to watch all the angles.',
   angles_swipe_full_screen: 'Swipe up for full screen',
   angles_not_recording_yet: 'Not recording yet',
   angles_stopped: 'Stopped recording',

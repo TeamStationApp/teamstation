@@ -1,47 +1,30 @@
 import React, { useRef } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
-import { lstrings } from '../locales/strings'
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import type { Window } from './wallClock'
+import { useTheme } from '../theme/ThemeContext'
+import {
+  type BarAngle,
+  barHeightRem,
+  clock,
+  getBarStyles,
+  type MultiCamBarProps as SharedBarProps,
+  TRACK_HIT_PX,
+  TrackStrips,
+  TransportButtons
+} from './multiCam/barParts'
+import { TAP_SLOP_PX } from './multiCam/useMultiCam'
 
-/** The height a finger can grab the track by, in CSS pixels. */
-const TRACK_HIT_PX = 72
+export { barHeightRem, type BarAngle }
 
-/** Each button's height and least width, which sets the bar's own height. */
-const BUTTON_REM = 2.75
-
-/**
- * How tall the bar stands, in rems: a button and the padding above and below
- * it. Anything that has to sit clear of the bar reads it here.
- */
-export function barHeightRem(theme: Theme): number {
-  return BUTTON_REM + 2 * theme.spaceXsRem
-}
-
-export interface BarAngle {
-  id: string
-  name: string
-  /** The stretch of wall-clock time this camera actually covers. */
-  fromMs: number
-  toMs: number
-}
-
-export interface MultiCamBarProps {
-  window: Window
-  atMs: number
-  playing: boolean
-  angles: BarAngle[]
-  onTogglePlay: () => void
-  onSkip: (deltaSec: number) => void
-  onScrub: (wallMs: number) => void
-  onClose: () => void
-  /** Any press or drag on the bar, which keeps it from hiding under a finger. */
-  onInteract: () => void
-  /** Faded in when true, faded out and untouchable when false. */
-  visible: boolean
+export interface MultiCamBarProps extends SharedBarProps {
   /** The bar's own element, so the view can move the keyboard's focus in. */
   rootRef?: React.Ref<HTMLDivElement>
+  /**
+   * An upward swipe is wanted by the page — Safari's bars are showing and a
+   * swipe is the only thing that hides them — so the track lets a vertical
+   * drag through and scrubs only on a sideways drag or a tap.
+   */
+  panPage?: boolean
 }
 
 /**
@@ -73,16 +56,13 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
     onTogglePlay,
     onSkip,
     onScrub,
-    onClose,
     onInteract,
     visible,
-    rootRef
+    rootRef,
+    panPage = false
   } = props
-  const theme = useTheme()
-  const styles = getStyles(theme)
+  const styles = getBarStyles(useTheme())
   const span = Math.max(1, take.toMs - take.fromMs)
-  const fraction = (ms: number): number =>
-    Math.min(1, Math.max(0, (ms - take.fromMs) / span))
 
   /**
    * Where in the take a press on the track landed.
@@ -93,6 +73,11 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
    */
   const trackRef = useRef<HTMLDivElement | null>(null)
   const scrubbing = useRef(false)
+  /**
+   * Where a finger came down on the track while the page wants vertical
+   * swipes: nothing is scrubbed until it is clear the finger is not one.
+   */
+  const pending = useRef<{ x: number; y: number; id: number } | null>(null)
   const scrubTo = (clientX: number): void => {
     const node = trackRef.current
     if (node == null) return
@@ -130,24 +115,10 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
       onFocusCapture={onInteract}
     >
       <View style={styles.bar}>
-        <BarButton
-          label="⏴⏴"
-          hint={lstrings.angles_back_ten}
-          onPress={() => {
-            onSkip(-10)
-          }}
-        />
-        <BarButton
-          label={playing ? '❚❚' : '▶'}
-          hint={playing ? lstrings.angles_pause : lstrings.angles_play}
-          onPress={onTogglePlay}
-        />
-        <BarButton
-          label="⏵⏵"
-          hint={lstrings.angles_forward_ten}
-          onPress={() => {
-            onSkip(10)
-          }}
+        <TransportButtons
+          playing={playing}
+          onTogglePlay={onTogglePlay}
+          onSkip={onSkip}
         />
         <Text style={styles.time}>{clock(atMs - take.fromMs)}</Text>
         {/* A raw div, for the same reason the tiles use one: this needs the
@@ -177,135 +148,60 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
             paddingBottom: (TRACK_HIT_PX - 24) * 0.25,
             display: 'flex',
             alignItems: 'flex-end',
-            touchAction: 'none',
+            // While the page wants a swipe up, a vertical drag that starts on
+            // the track is that swipe: the bar sits at the bottom, which is
+            // exactly where a thumb starts one, and a track that kept every
+            // drag for itself scrubbed the game instead of hiding the bars.
+            touchAction: panPage ? 'pan-y' : 'none',
             cursor: 'pointer'
           }}
           onPointerDown={event => {
+            if (panPage) {
+              pending.current = {
+                x: event.clientX,
+                y: event.clientY,
+                id: event.pointerId
+              }
+              return
+            }
             scrubbing.current = true
             ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
             scrubTo(event.clientX)
           }}
           onPointerMove={event => {
+            const from = pending.current
+            if (from?.id === event.pointerId) {
+              // Sideways is a scrub; the browser takes a vertical drag itself
+              // and cancels the pointer.
+              const dx = Math.abs(event.clientX - from.x)
+              const dy = Math.abs(event.clientY - from.y)
+              if (dx < TAP_SLOP_PX || dx <= dy) return
+              pending.current = null
+              scrubbing.current = true
+              ;(event.target as HTMLElement).setPointerCapture?.(
+                event.pointerId
+              )
+            }
             if (scrubbing.current) scrubTo(event.clientX)
           }}
-          onPointerUp={() => {
+          onPointerUp={event => {
+            // A tap that never became a drag still seeks, as it always has.
+            if (pending.current?.id === event.pointerId) scrubTo(event.clientX)
+            pending.current = null
+            scrubbing.current = false
+          }}
+          // The browser took the drag for the page: nothing was scrubbed.
+          onPointerCancel={() => {
+            pending.current = null
             scrubbing.current = false
           }}
         >
           <div style={{ position: 'relative', width: '100%', height: 24 }}>
-            {/* One strip per camera, so what each was there for is visible
-              rather than discovered by scrubbing into an empty tile. */}
-            {angles.map((angle, index) => (
-              <View
-                key={angle.id}
-                style={[
-                  styles.coverage,
-                  {
-                    top: index * theme.rem(0.3125),
-                    left: `${fraction(angle.fromMs) * 100}%`,
-                    width: `${(fraction(angle.toMs) - fraction(angle.fromMs)) * 100}%`
-                  }
-                ]}
-              />
-            ))}
-            <View
-              style={[styles.played, { width: `${fraction(atMs) * 100}%` }]}
-            />
-            <View style={[styles.head, { left: `${fraction(atMs) * 100}%` }]} />
+            <TrackStrips take={take} atMs={atMs} angles={angles} />
           </div>
         </div>
         <Text style={styles.time}>{clock(take.toMs - take.fromMs)}</Text>
-        <BarButton label="✕" hint={lstrings.angles_close} onPress={onClose} />
       </View>
     </div>
   )
 }
-
-function BarButton(props: {
-  label: string
-  hint: string
-  onPress: () => void
-}): React.ReactElement {
-  const styles = getStyles(useTheme())
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={props.hint}
-      style={styles.button}
-      onPress={props.onPress}
-    >
-      <Text style={styles.buttonText}>{props.label}</Text>
-    </Pressable>
-  )
-}
-
-/** `1:04:11` into the take, counted from when the first camera started. */
-function clock(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000))
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const seconds = total % 60
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return hours > 0
-    ? `${hours}:${pad(minutes)}:${pad(seconds)}`
-    : `${minutes}:${pad(seconds)}`
-}
-
-const getStyles = cacheStyles((theme: Theme) => ({
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(theme.spaceXsRem),
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(theme.spaceXsRem),
-    // Dark enough to read a white clock against a sunlit outfield. At 55% the
-    // times and the coverage strips vanished wherever a bright picture ran
-    // underneath them, which on a four-up grid is most of the width.
-    backgroundColor: 'rgba(0, 0, 0, 0.82)'
-  },
-  time: {
-    color: '#ffffff',
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.75),
-    minWidth: theme.rem(3.5),
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.9)',
-    textShadowRadius: 3
-  },
-  coverage: {
-    position: 'absolute',
-    height: theme.rem(0.1875),
-    borderRadius: theme.rem(0.125),
-    backgroundColor: 'rgba(255, 255, 255, 0.55)'
-  },
-  played: {
-    position: 'absolute',
-    bottom: theme.rem(0.25),
-    height: theme.rem(0.25),
-    borderRadius: theme.rem(0.125),
-    backgroundColor: theme.activeColor
-  },
-  head: {
-    position: 'absolute',
-    bottom: 0,
-    width: theme.rem(0.75),
-    height: theme.rem(0.75),
-    marginLeft: theme.rem(-0.375),
-    borderRadius: theme.rem(0.375),
-    backgroundColor: '#ffffff'
-  },
-  button: {
-    minWidth: theme.rem(BUTTON_REM),
-    height: theme.rem(BUTTON_REM),
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: theme.rem(BUTTON_REM / 2),
-    paddingHorizontal: theme.rem(theme.spaceXsRem),
-    backgroundColor: 'rgba(255, 255, 255, 0.12)'
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375)
-  }
-}))
