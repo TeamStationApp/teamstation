@@ -226,7 +226,9 @@ describe('field keyboard policy', function () {
         gestures: ['place']
       },
       runnerSafeError: (_id, to) =>
-        to === 2 ? 'That base is occupied. Move the lead runner first.' : undefined,
+        to === 2
+          ? 'That base is occupied. Move the lead runner first.'
+          : undefined,
       onRunnerDrop: (...args) => {
         calls.push(args)
       }

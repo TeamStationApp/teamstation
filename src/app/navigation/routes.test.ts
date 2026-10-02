@@ -21,16 +21,16 @@ describe('addresses', function () {
       gameId: 'g1',
       tab: 'score'
     })
-    expect(
-      routePath({ name: 'game', gameId: 'g1', tab: 'score' })
-    ).equals('/games/g1/score-game')
-    expect(
-      roundTrip({ name: 'game', gameId: 'g1', tab: 'score' })
-    ).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
-    })
+    expect(routePath({ name: 'game', gameId: 'g1', tab: 'score' })).equals(
+      '/games/g1/score-game'
+    )
+    expect(roundTrip({ name: 'game', gameId: 'g1', tab: 'score' })).deep.equals(
+      {
+        name: 'game',
+        gameId: 'g1',
+        tab: 'score'
+      }
+    )
     expect(parseRoute('/games/g1/score')).deep.equals({
       name: 'scoreGame',
       gameId: 'g1'

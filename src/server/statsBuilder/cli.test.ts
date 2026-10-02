@@ -180,8 +180,18 @@ describe('statsBuilder cli', function () {
     await db
       .insertInto('games')
       .values([
-        { id: good, home_team_id: home, away_team_id: away, start_at: new Date() },
-        { id: bad, home_team_id: home, away_team_id: away, start_at: new Date() }
+        {
+          id: good,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        },
+        {
+          id: bad,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        }
       ])
       .execute()
 
@@ -217,10 +227,7 @@ describe('statsBuilder cli', function () {
       plays: [{ gumbo: incomplete as typeof play, source: 'manual' }]
     })
 
-    await runStatsRequest(
-      { game: good, wait: 1 },
-      { databaseUrl: scratchUrl }
-    )
+    await runStatsRequest({ game: good, wait: 1 }, { databaseUrl: scratchUrl })
     expect(
       Number(
         (

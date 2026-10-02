@@ -91,9 +91,7 @@ export function runnerDragView(
 ): RunnerDragView {
   const start = BASES[from % 4]
   const forward = BASES[(from + 1) % 4]
-  const forwardProgress = canAdvance
-    ? runnerProgress(start, forward, point)
-    : 0
+  const forwardProgress = canAdvance ? runnerProgress(start, forward, point) : 0
   if (canRetreat && from > 1) {
     const back = BASES[(from - 1) % 4]
     const backProgress = runnerProgress(start, back, point)
@@ -111,7 +109,12 @@ export function runnerDragView(
           z: start.z + (back.z - start.z) * backProgress
         },
         hovered: 'safe',
-        ...runnerTargets(project(BASES[(from - 1) % 4]), width, height, from - 1)
+        ...runnerTargets(
+          project(BASES[(from - 1) % 4]),
+          width,
+          height,
+          from - 1
+        )
       }
     }
   }

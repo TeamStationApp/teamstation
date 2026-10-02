@@ -132,12 +132,12 @@ export function makeScoreboardHub(
     clearSpeedHold(gameId)
     const timer = setTimeout(() => {
       speedHolds.delete(gameId)
-      void store.mergeWatcher(gameId, { pitchSpeed: 0 }, startAt).catch(
-        (error: unknown) => {
+      store
+        .mergeWatcher(gameId, { pitchSpeed: 0 }, startAt)
+        .catch((error: unknown) => {
           if (error instanceof ScoreboardUnavailable) return
           log(`scoreboard ${gameId}: pitch speed: ${describe(error)}`)
-        }
-      )
+        })
     }, speedHoldMs)
     speedHolds.set(gameId, timer)
   }
@@ -378,7 +378,8 @@ export function makeScoreboardHub(
     try {
       if (member.kind === 'publisher') {
         const update = asScoreboardUpdate(raw)
-        if (typeof update.pitchSpeed === 'number') pitchSpeed = update.pitchSpeed
+        if (typeof update.pitchSpeed === 'number')
+          pitchSpeed = update.pitchSpeed
         write = async () =>
           await store.mergeWatcher(room.gameId, update, room.record.startAt)
       } else {
