@@ -12,7 +12,7 @@ import { testDatabaseUrl } from './testDatabase'
  * required; a closed port fails the suite.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_test_${Date.now()}`
+const scratchName = `teamstation_test_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 describe('migrations', function () {
@@ -134,7 +134,7 @@ describe('migrations', function () {
 describe('the baseline', function () {
   this.timeout(60000)
 
-  const name = `gamestation_baseline_${Date.now()}`
+  const name = `teamstation_baseline_${Date.now()}`
   let admin: Pool
   let pool: Pool
 

@@ -34,7 +34,7 @@ import { teamRoutes } from './teams'
  * gate that had quietly opened would stay open.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_players_${Date.now()}`
+const scratchName = `teamstation_players_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const legacyOf = new Map<number, string>()

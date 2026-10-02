@@ -214,7 +214,7 @@ async function main(): Promise<void> {
   if (!spaceConfigured(space)) throw new Error('no Space is configured')
 
   const videoId = makeId('video')
-  const work = await mkdtemp(join(tmpdir(), `gsImport-${videoId}-`))
+  const work = await mkdtemp(join(tmpdir(), `tsImport-${videoId}-`))
   const db = makeDatabase(args.databaseUrl)
   try {
     // Before anything is moved. The row is written at the end, and a database

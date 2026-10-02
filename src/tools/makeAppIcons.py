@@ -26,8 +26,8 @@ import cairosvg
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 PATHS = ROOT / "src" / "app" / "components" / "tsMarkPaths.ts"
-THEME = ROOT / "src" / "app" / "theme" / "gsBallpark.ts"
-IOS_ICONS = ROOT / "ios" / "GameStation" / "Images.xcassets" / "AppIcon.appiconset"
+THEME = ROOT / "src" / "app" / "theme" / "tsBallpark.ts"
+IOS_ICONS = ROOT / "ios" / "TeamStation" / "Images.xcassets" / "AppIcon.appiconset"
 ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
 
 # Android's launcher crops an adaptive icon to whatever shape the phone's

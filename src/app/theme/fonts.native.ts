@@ -9,7 +9,7 @@ import { Platform } from 'react-native'
  * anywhere to say so.
  *
  * `Space Grotesk` and `Material Symbols Outlined` are carried in the app;
- * `app/assets/fonts/README.md` says how. The two families `gsDark` names are
+ * `app/assets/fonts/README.md` says how. The two families `tsDark` names are
  * not, so they resolve to the system font rather than to nothing.
  */
 export const fonts = {

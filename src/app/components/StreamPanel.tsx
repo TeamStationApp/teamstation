@@ -3,8 +3,8 @@ import { Pressable, Text, View } from 'react-native'
 
 import type {
   GameLiveStreams,
-  GameStationClient,
-  LiveStream
+  LiveStream,
+  TeamStationClient
 } from '../../common/api'
 import { copyToClipboard } from '../platform/clipboard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -13,7 +13,7 @@ import { Card } from './Card'
 import { SectionHeader } from './SectionHeader'
 
 export interface StreamPanelProps {
-  client: GameStationClient
+  client: TeamStationClient
   gameId: string
 }
 
@@ -188,7 +188,7 @@ export function StreamPanel(
         <Card>
           <Text style={styles.muted}>
             Give yourself a stream URL, then paste it into streaming software or
-            pick the game in GS Director.
+            pick the game in TS Director.
           </Text>
         </Card>
       )}
@@ -211,7 +211,7 @@ export function StreamPanel(
               </Text>
               {stream.status.outputs.map(output => (
                 <Text key={output.label} style={styles.leg}>
-                  {output.kind === 'hls' ? 'GameStation' : 'Relay'}
+                  {output.kind === 'hls' ? 'TeamStation' : 'Relay'}
                   {' · '}
                   {output.state === 'connected'
                     ? output.recordedSec == null

@@ -9,7 +9,7 @@ import {
   asSeasonGame,
   asSeasonSummary,
   asTeamSummary,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -74,9 +74,9 @@ interface Opened {
 }
 
 async function renderHome(
-  setup: (client: GameStationClient) => void = () => undefined
+  setup: (client: TeamStationClient) => void = () => undefined
 ): Promise<{ container: HTMLElement; opened: Opened }> {
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.teams = async () => [team]
   client.seasons = async () => [season]
   client.liveNow = async () => []

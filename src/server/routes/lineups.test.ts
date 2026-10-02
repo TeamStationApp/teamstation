@@ -25,7 +25,7 @@ import { errorHandler } from '../middleware/withErrors'
 import { lineupRoutes } from './lineups'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_lineups_route_${Date.now()}`
+const scratchName = `teamstation_lineups_route_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const MEMBER = 'tok_lineups_member_000000000000000'
@@ -299,7 +299,7 @@ describe('the lineup routes (U11)', function () {
     await session.flush()
     expect(session.problem).equals(null)
 
-    // An imported game: a substitution and nothing GameStation recorded.
+    // An imported game: a substitution and nothing TeamStation recorded.
     await postGamePlays(
       db,
       imported,

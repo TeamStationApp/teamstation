@@ -29,24 +29,24 @@ import { createDevelopmentSession, teamsOf } from './developmentSession'
  * play it scores is posted to the server, read back, and checked in the
  * database.
  *
- *   GS_SCORER_PASSWORD=… GS_VIEWER_PASSWORD=… \
+ *   TS_SCORER_PASSWORD=… TS_VIEWER_PASSWORD=… \
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 120000 src/app/scoring/scoringServer.e2e.ts
  *
  * Needs the API (`npm start`), the web app built against it (`npm run
- * start.web`, `GS_API_BASE_URL` pointing at the API), a scorer made with
+ * start.web`, `TS_API_BASE_URL` pointing at the API), a scorer made with
  * `npm run seed`, and `npm run scoring-game` for fresh games.
  */
-const APP = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
-const API = process.env.GS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
-const DATABASE = process.env.GS_E2E_DATABASE ?? 'GameStation_scoringCore'
+const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
+const DATABASE = process.env.TS_E2E_DATABASE ?? 'TeamStation_scoringCore'
 const SCORER = {
-  email: process.env.GS_SCORER_EMAIL ?? 'scoring@gamestation.local',
-  password: process.env.GS_SCORER_PASSWORD ?? ''
+  email: process.env.TS_SCORER_EMAIL ?? 'scoring@teamstation.local',
+  password: process.env.TS_SCORER_PASSWORD ?? ''
 }
 const VIEWER = {
-  email: process.env.GS_VIEWER_EMAIL ?? 'viewer@gamestation.local',
-  password: process.env.GS_VIEWER_PASSWORD ?? ''
+  email: process.env.TS_VIEWER_EMAIL ?? 'viewer@teamstation.local',
+  password: process.env.TS_VIEWER_PASSWORD ?? ''
 }
 
 interface Fixture {
@@ -98,7 +98,7 @@ async function signIn(who: {
   })
   expect(response.status, `sign in ${who.email}`).equals(200)
   const cookie = response.headers.get('set-cookie') ?? ''
-  const match = /gs_session=([^;]+)/.exec(cookie)
+  const match = /ts_session=([^;]+)/.exec(cookie)
   if (match == null) throw new Error('No session cookie')
   return decodeURIComponent(match[1])
 }
@@ -108,7 +108,7 @@ interface Stored {
 }
 async function stored(token: string, gameId: string): Promise<Stored> {
   const response = await fetch(`${API}/games/${gameId}/events`, {
-    headers: { cookie: `gs_session=${encodeURIComponent(token)}` }
+    headers: { cookie: `ts_session=${encodeURIComponent(token)}` }
   })
   return (await response.json()) as Stored
 }
@@ -129,7 +129,7 @@ async function openAs(
   })
   await page.setViewport({ width: 1200, height: 900 })
   await (context ?? browser.defaultBrowserContext()).setCookie({
-    name: 'gs_session',
+    name: 'ts_session',
     value: encodeURIComponent(token),
     domain: '127.0.0.1',
     path: '/'
@@ -356,13 +356,13 @@ describe('scoring into the server', function () {
   this.timeout(180000)
   before(async function () {
     if (SCORER.password === '' || VIEWER.password === '')
-      throw new Error('Set GS_SCORER_PASSWORD and GS_VIEWER_PASSWORD')
+      throw new Error('Set TS_SCORER_PASSWORD and TS_VIEWER_PASSWORD')
     scorer = await signIn(SCORER)
     scoringGame()
     viewer = await signIn(VIEWER)
     browser = await puppeteer.launch({
       headless: true,
-      executablePath: process.env.GS_CHROME_PATH,
+      executablePath: process.env.TS_CHROME_PATH,
       args: [
         '--use-gl=angle',
         '--use-angle=swiftshader',
@@ -572,7 +572,7 @@ describe('scoring into the server', function () {
     const read = await stored(scorer, gameId)
     const detail = (await (
       await fetch(`${API}/games/${gameId}`, {
-        headers: { cookie: `gs_session=${encodeURIComponent(scorer)}` }
+        headers: { cookie: `ts_session=${encodeURIComponent(scorer)}` }
       })
     ).json()) as GameDetail
     const first = read.plays[0].gumbo as {

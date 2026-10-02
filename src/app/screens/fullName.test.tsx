@@ -9,8 +9,8 @@ import {
   asPitchingRow,
   asPlayerDetail,
   asRosterEntry,
-  type GameStationClient,
-  type PlayerStats
+  type PlayerStats,
+  type TeamStationClient
 } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
@@ -128,7 +128,7 @@ function statsFor(filter: {
   }
 }
 
-function playerClient(fullName: string | null): GameStationClient {
+function playerClient(fullName: string | null): TeamStationClient {
   return {
     player: async () =>
       asPlayerDetail({
@@ -162,7 +162,7 @@ function playerClient(fullName: string | null): GameStationClient {
       _id: string,
       filter: { seasonId?: string; teamId?: string; year?: number }
     ) => statsFor(filter)
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
 }
 
 describe('a player’s whole name is never shown', function () {
@@ -269,7 +269,7 @@ describe('a player’s whole name is never shown', function () {
           runDifferential: 10
         }
       ]
-    } as unknown as GameStationClient
+    } as unknown as TeamStationClient
     await render(
       <TeamScreen
         client={client}

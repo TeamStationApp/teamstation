@@ -9,7 +9,7 @@ const { coverageSources } = require('../../scripts/coverage-source-paths.cjs')
 const { lineReport } = require('../../scripts/changed-line-coverage.cjs')
 describe('coverage source enumeration', () => {
   it('omits deleted helpers but requires coverage for surviving and untracked executable source', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gs-coverage-sources-'))
+    const dir = mkdtempSync(join(tmpdir(), 'ts-coverage-sources-'))
     const git = (...args: string[]): string =>
       execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
     try {

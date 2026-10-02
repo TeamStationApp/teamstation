@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
-  GameStationClient,
   PlayerDetail,
   PlayerHighlight,
-  PlayerStats
+  PlayerStats,
+  TeamStationClient
 } from '../../common/api'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
@@ -34,7 +34,7 @@ import { average } from './GameScreen'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
 
 export interface PlayerScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   userId: string
   /** The name the row that was tapped showed, so the header has one at once. */
   title?: string

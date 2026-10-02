@@ -20,7 +20,7 @@ import {
 } from './people'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_people_${Date.now()}`
+const scratchName = `teamstation_people_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const legacyOf = new Map<number, string>()

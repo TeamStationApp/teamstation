@@ -28,7 +28,7 @@ const run = promisify(execFile)
  * A finished recording becomes a video in the library.
  *
  * One sequence, used by everything that has a whole file to put in: the side
- * import that reads the archive volume, and the upload endpoint GS Director
+ * import that reads the archive volume, and the upload endpoint TS Director
  * sends its takes to. The live path is deliberately not this — it writes its
  * HLS as the game happens and has no file to hand — but it ends in the same
  * place, and the order here is the order it proved out:
@@ -280,7 +280,7 @@ export async function ingestVideoFile(
     startAt.getTime() - Math.round(probed.preRollSec * 1000)
   )
 
-  const work = await mkdtemp(join(tmpdir(), `gsIngest-${videoId}-`))
+  const work = await mkdtemp(join(tmpdir(), `tsIngest-${videoId}-`))
   try {
     // Before anything is moved: a database that cannot be reached at the end
     // has already cost however long the remux and the copy took.

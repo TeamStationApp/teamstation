@@ -30,8 +30,8 @@ import { testDatabaseUrl } from './testDatabase'
  */
 const adminUrl = testDatabaseUrl
 const stamp = Date.now()
-const upgradedName = `gamestation_upgrade_${stamp}`
-const freshName = `gamestation_fresh_${stamp}`
+const upgradedName = `teamstation_upgrade_${stamp}`
+const freshName = `teamstation_fresh_${stamp}`
 const urlOf = (name: string): string => adminUrl.replace(/\/[^/]*$/, `/${name}`)
 
 const throughBaseline = migrations.filter(
@@ -139,7 +139,7 @@ describe('046 over a database with an outside integration', function () {
   })
 
   it('refuses a database where two tables carry one signature, and changes nothing', async function () {
-    const name = `gamestation_twice_${stamp}`
+    const name = `teamstation_twice_${stamp}`
     await admin.query(`create database ${name}`)
     const twice = new Pool({ connectionString: urlOf(name) })
     try {
@@ -172,7 +172,7 @@ describe('046 over a database with an outside integration', function () {
   })
 
   it('changes nothing on a fresh build', async function () {
-    const name = `gamestation_noop_${stamp}`
+    const name = `teamstation_noop_${stamp}`
     await admin.query(`create database ${name}`)
     const noop = new Pool({ connectionString: urlOf(name) })
     try {

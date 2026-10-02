@@ -3,8 +3,8 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { gsBallpark } from '../theme/gsBallpark'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
 import { ContentInsetContext, useContentInset } from './contentInset'
 import { PillTabs } from './PillTabs'
 import { Screen } from './Screen'
@@ -81,7 +81,7 @@ describe('PillTabs', function () {
     const { list, content } = strip(container)
     expect(getComputedStyle(list).marginLeft).not.equals('-16px')
     expect(getComputedStyle(content).paddingLeft).equals(
-      `${gsBallpark.rem(gsBallpark.spaceXsRem)}px`
+      `${tsBallpark.rem(tsBallpark.spaceXsRem)}px`
     )
   })
 
@@ -90,7 +90,7 @@ describe('PillTabs', function () {
     const { list, content } = strip(container)
     expect(getComputedStyle(list).marginLeft).not.match(/^-/)
     expect(getComputedStyle(content).paddingLeft).equals(
-      `${gsBallpark.rem(gsBallpark.spaceXsRem)}px`
+      `${tsBallpark.rem(tsBallpark.spaceXsRem)}px`
     )
   })
 })

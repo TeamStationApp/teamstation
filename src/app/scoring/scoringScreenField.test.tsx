@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { GameStationClient } from '../../common/api'
+import { TeamStationClient } from '../../common/api'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -114,7 +114,7 @@ let root: Root | undefined
 const getContext = HTMLCanvasElement.prototype.getContext
 async function mount(source?: DevelopmentScoringSource): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async () => []
   const node = document.createElement('div')

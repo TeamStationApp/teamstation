@@ -43,10 +43,10 @@ describe('localFileId', function () {
   })
 
   it('is lf: and 16 hex digits of a real sha256', function () {
-    const id = localFileId('GS Walkup Fixture', 'GameStation Test', 90000)
+    const id = localFileId('TS Walkup Fixture', 'TeamStation Test', 90000)
     expect(id).match(/^lf:[0-9a-f]{16}$/)
     const expected = createHash('sha256')
-      .update('gs walkup fixture\u0000gamestation test\u000090')
+      .update('ts walkup fixture\u0000teamstation test\u000090')
       .digest('hex')
       .slice(0, 16)
     expect(id).equals(`lf:${expected}`)

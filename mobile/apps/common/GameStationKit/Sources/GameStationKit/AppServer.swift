@@ -20,7 +20,7 @@ import Foundation
 /// `http`. The same rule the server applies to its own links.
 public enum AppServer {
   /// The name in the source: where a release build talks to.
-  public static let defaultHost = "gamestation.co"
+  public static let defaultHost = "app.teamstation.app"
 
   /// `GSPrimaryHost` in the bundle, for a build pointed somewhere else.
   ///

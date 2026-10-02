@@ -14,13 +14,13 @@ import { scoreboardPageFor } from '../scoreboard/scoreboardRoute'
  * runtime would, so the same components behave the same way here as they will
  * on a phone.
  */
-declare const GS_API_BASE_URL: string
-declare const GS_FIELD_PREVIEW: boolean
+declare const TS_API_BASE_URL: string
+declare const TS_FIELD_PREVIEW: boolean
 
-const fieldPreview = typeof GS_FIELD_PREVIEW !== 'undefined' && GS_FIELD_PREVIEW
+const fieldPreview = typeof TS_FIELD_PREVIEW !== 'undefined' && TS_FIELD_PREVIEW
 
 const apiBaseUrl =
-  typeof GS_API_BASE_URL === 'string' ? GS_API_BASE_URL : '/api/v1'
+  typeof TS_API_BASE_URL === 'string' ? TS_API_BASE_URL : '/api/v1'
 
 export interface WebStart {
   document: Document
@@ -73,13 +73,13 @@ export function startWeb(start: WebStart): 'scoreboard' | 'app' {
       <App apiBaseUrl={start.apiBaseUrl} fieldPreview={start.fieldPreview} />
     )
   }
-  registry.registerComponent('GameStation', () => Root)
+  registry.registerComponent('TeamStation', () => Root)
   // `runApplication` is typed for the native runtime, where `rootTag` is an
   // opaque number. On web, react-native-web wants the DOM element itself — the
   // same call, a different contract, and the types describe only one of them.
   // Stated once here rather than leaving the module untyped, as it was for as
   // long as react-native silently resolved to `any`.
-  registry.runApplication('GameStation', {
+  registry.runApplication('TeamStation', {
     rootTag
   } as unknown as Parameters<typeof AppRegistry.runApplication>[1])
   return 'app'

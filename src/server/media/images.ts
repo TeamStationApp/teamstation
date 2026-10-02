@@ -88,7 +88,7 @@ export async function normaliseImage(options: {
     throw new Error(`Image is ${source.length} bytes, which is not a picture`)
   }
 
-  const dir = await mkdtemp(join(tmpdir(), 'gsImage-'))
+  const dir = await mkdtemp(join(tmpdir(), 'tsImage-'))
   try {
     const input = join(dir, 'in')
     await writeFile(input, source)

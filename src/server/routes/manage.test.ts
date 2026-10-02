@@ -28,7 +28,7 @@ import { manageRoutes } from './manage'
  * is a list; that is a rule, and a rule with a database behind it.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_manage_${Date.now()}`
+const scratchName = `teamstation_manage_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const BOSS = 'tok_boss_00000000000000000000000000'

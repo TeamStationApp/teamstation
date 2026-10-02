@@ -45,7 +45,7 @@ async function main() {
       )
     })
     await page.waitForSelector('input[type="password"]')
-    await page.type('input[type="email"]', 'uitest@gamestation.local')
+    await page.type('input[type="email"]', 'uitest@teamstation.local')
     await page.type('input[type="password"]', 'uitest-local-2609')
     await page.evaluate(() => {
       const button = [...document.querySelectorAll('[role="button"]')].find(

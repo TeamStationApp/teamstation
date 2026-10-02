@@ -3,9 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import type { PlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { rosterSegmentAt } from './RosterSelector'
@@ -30,7 +30,7 @@ describe('player entry sheet', function () {
   afterEach(async () => {
     await act(async () => {
       root?.unmount()
-      changeTheme(gsBallpark)
+      changeTheme(tsBallpark)
     })
     root = undefined
   })
@@ -56,14 +56,14 @@ describe('player entry sheet', function () {
       )
     })
     await act(async () => {
-      changeTheme(gsDark)
+      changeTheme(tsDark)
     })
     expect(
       (node('Save and Add Another Player').firstChild as HTMLElement).style
         .color
     ).equals('rgb(122, 152, 96)')
     await act(async () => {
-      changeTheme(gsBallpark)
+      changeTheme(tsBallpark)
     })
     expect(document.activeElement).equals(node('First Name'))
     await tap('Add Player')

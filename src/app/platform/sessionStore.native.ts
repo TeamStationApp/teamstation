@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
  * add a native dependency and a prompt for no threat this app faces. It is
  * still private to the app on both platforms.
  */
-const KEY = 'gs.session.token'
+const KEY = 'ts.session.token'
 
 export async function loadToken(): Promise<string | undefined> {
   try {

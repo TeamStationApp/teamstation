@@ -35,7 +35,7 @@ export interface HighlightEvent {
   /** The scorekeeper's tap time. The play itself happened before this. */
   startTime: Date | null
   eventType: string | null
-  /** For the sentence GameStation writes about the play. */
+  /** For the sentence TeamStation writes about the play. */
   inning: number | null
   halfInning: string | null
   awayScore: number | null
@@ -131,7 +131,7 @@ export interface Highlight {
   atBatIndex: number
   title: string
   /**
-   * The play in a sentence, for the panel under the video: GameStation's own
+   * The play in a sentence, for the panel under the video: TeamStation's own
    * reading of its type, credits, half-inning and score (`describePlay`),
    * written now and never stored.
    */

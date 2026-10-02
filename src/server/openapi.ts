@@ -106,7 +106,7 @@ const namedThing = {
 
 const sorted = (codes: ReadonlySet<string>): string[] => [...codes].sort()
 
-/** A player a play names: his GameStation user id, or only a name. */
+/** A player a play names: his TeamStation user id, or only a name. */
 const gumboPerson = {
   type: 'object',
   properties: {
@@ -120,7 +120,7 @@ const gumboEventType = {
   enum: sorted(STORED_EVENT_TYPES),
   description:
     "MLB's event types (`statsapi.mlb.com/api/v1/eventTypes`) and " +
-    "GameStation's extensions: `final_score` and `score_correction` (an " +
+    "TeamStation's extensions: `final_score` and `score_correction` (an " +
     'import), `gs_manual_placement` (a batter the scorer put ' +
     'on base by hand), `gs_batter_out` (a batter out on a play MLB has no ' +
     'code for) and `gs_batting_order` (a change of batting order). A post ' +
@@ -128,7 +128,7 @@ const gumboEventType = {
     '`manual_placement`; they are stored as `catcher_interf`, ' +
     '`runner_placed` and `gs_manual_placement`. It may also send the ' +
     "names older imports used, each stored as MLB's or " +
-    "GameStation's code: `runner_out` as `other_out`, `batter_out` as " +
+    "TeamStation's code: `runner_out` as `other_out`, `batter_out` as " +
     '`field_out`, `catcher_s_interference` as `catcher_interf`, ' +
     '`fc_double_play` as `double_play`, `offensive_interference` as ' +
     '`batter_interference`, `batter_put_on_base` as `gs_manual_placement` ' +
@@ -164,8 +164,8 @@ const gumboSchemas = {
       'One play as MLB’s live feed writes it (`liveData.plays.allPlays[]`), ' +
       'with its codes on the MLB lists checked in under ' +
       '`src/common/gumbo/reference/`. `npm run validate-gumbo` checks every ' +
-      'stored play against them. GameStation adds only the `gameStation` ' +
-      'record, the `gs_` event types and `about.halfOuts`. A play another ' +
+      'stored play against them. TeamStation adds only the `gameStation` ' +
+      'record, the `ts_` event types and `about.halfOuts`. A play another ' +
       'service posted carries what that service knew; the stats builder ' +
       'needs the fields the events route lists.',
     required: ['about', 'result'],
@@ -190,7 +190,7 @@ const gumboSchemas = {
           halfOuts: {
             type: 'integer',
             description:
-              'GameStation extension, written by the server on the last ' +
+              'TeamStation extension, written by the server on the last ' +
               'play of each half: the outs the half ended with. An imported ' +
               "half's can come from an Inning Ended marker and differ from " +
               "the play's `count.outs`."
@@ -273,7 +273,7 @@ const gumboSchemas = {
     type: 'object',
     description:
       'One movement of one runner, in the order they happened. A play ' +
-      'GameStation scored carries every key; one another service posted, ' +
+      'TeamStation scored carries every key; one another service posted, ' +
       'those it knew.',
     properties: {
       movement: {
@@ -380,7 +380,7 @@ const gumboSchemas = {
             type: 'string',
             enum: sorted(PITCH_CODES),
             description:
-              "MLB's pitch codes (`api/v1/pitchCodes`). GameStation writes " +
+              "MLB's pitch codes (`api/v1/pitchCodes`). TeamStation writes " +
               '`B`, `C`, `S`, `F`, `T`, `L` and `H` from the call, and for the ' +
               'ball in play `E` when it scored a run, else `X` when it made an ' +
               'out, else `D`. A dropped third strike is an `S`.'
@@ -398,7 +398,7 @@ const gumboSchemas = {
         type: 'object',
         description:
           'Only what the scorer gave of the pitch: its speed and its zone. ' +
-          'GameStation measures nothing, so it writes no `coordinates` or ' +
+          'TeamStation measures nothing, so it writes no `coordinates` or ' +
           'other tracking.',
         properties: {
           startSpeed: {
@@ -422,7 +422,7 @@ const gumboSchemas = {
           '`totalDistance` and `coordinates` are where the scorer put the ' +
           "ball, sized by the game's fence distance (`fenceDistanceFt` on " +
           '`GET /games/{gameId}`, 200 feet unless the game, its season or ' +
-          'its league says otherwise). GameStation writes no speed; a ' +
+          'its league says otherwise). TeamStation writes no speed; a ' +
           'dictated angle, the untouched default, or one estimated from a ' +
           'trajectory alone stays in the `gameStation` record.',
         properties: {
@@ -556,7 +556,7 @@ const gumboSchemas = {
   GameStationRecord: {
     type: 'object',
     description:
-      'GameStation extension, on every play it scored and on the at-bat in ' +
+      'TeamStation extension, on every play it scored and on the at-bat in ' +
       "progress: the scorer's action log the play is rebuilt from. " +
       '`setupBefore` is the lineups before it, `actions` the actions in the ' +
       "engine's own vocabulary, and `detail` the scorer's own picks and " +
@@ -578,7 +578,7 @@ export function openApiDocument(version: string): OpenApiDocument {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'GameStation',
+      title: 'TeamStation',
       version,
       description:
         'Teams, games, videos and the plays underneath them. Every failure ' +
@@ -907,7 +907,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             start: {
               description:
                 'The lineup the side began with; null until the game has ' +
-                'begun, and for a game GameStation did not score.',
+                'begun, and for a game TeamStation did not score.',
               oneOf: [{ $ref: '#/components/schemas/Lineup' }, { type: 'null' }]
             },
             changes: {
@@ -918,7 +918,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'The lineup as it stands, including a change not announced ' +
                 'yet, such as a pinch hitter waiting to bat. Null for a game ' +
-                'GameStation did not score, or whose record no longer replays.',
+                'TeamStation did not score, or whose record no longer replays.',
               oneOf: [{ $ref: '#/components/schemas/Lineup' }, { type: 'null' }]
             }
           }
@@ -1628,7 +1628,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'scoring entry also needs `details.responsiblePitcher`, ' +
             '`details.earned` and `details.rbi`. A player object may omit ' +
             '`id` (an unmapped opponent); a present `id` must name a ' +
-            'GameStation user. When the last play carries ' +
+            'TeamStation user. When the last play carries ' +
             '`result.awayScore` and `result.homeScore`, the runs from ' +
             "the 'score' runner entries must equal that score. A play that " +
             'lacks a required field is still stored: the builder marks the ' +
@@ -1779,7 +1779,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "A team's default lineup",
           description:
-            'The starting lineup of the last game scored in GameStation that ' +
+            'The starting lineup of the last game scored in TeamStation that ' +
             'began with a different one, the game it came from and when it ' +
             'was taken. The first live post after which a game has begun ' +
             "takes each side's starting lineup as its team's default, unless " +
@@ -1812,7 +1812,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Read from the stored plays and the at-bat in progress: the ' +
             'lineup each side began with, every substitution the stored ' +
             'Gumbo announces, in game order, and the lineup as it stands. A ' +
-            'game GameStation did not score has only the substitutions its ' +
+            'game TeamStation did not score has only the substitutions its ' +
             'plays carry. Needs somebody who can see the game; 404 for ' +
             'anybody else.',
           security: [{ bearer: [] }],
@@ -1844,7 +1844,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             "Each side's batters in order, with each one's walk-up song on " +
             "that team (a placeholder has none). The order is the game's " +
-            'own current lineup once GameStation has a record of it, the ' +
+            'own current lineup once TeamStation has a record of it, the ' +
             "team's default before that, and otherwise the team's players " +
             'by jersey number, then name. `canEditWalkUp` is whether the ' +
             "caller keeps that team's songs. `atBat` is the plate appearance " +
@@ -1911,7 +1911,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: "A client's own log lines, written to the server's log",
           description:
-            'For the GameStation app, or any client that runs ' +
+            'For the TeamStation app, or any client that runs ' +
             "away from the server. Each line is written to the server's log " +
             'tagged `[client <source>]` with `run`, `build` and the signed-in ' +
             'user, if any. No session is needed. At most 200 lines per post; ' +
@@ -2122,7 +2122,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Who people are here, by the ids another service has',
           description:
-            'A play names people by GameStation user id alone, so a sender ' +
+            'A play names people by TeamStation user id alone, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, externalIds }`: a person, and which of the asked ids ' +
             'are theirs. A merged row answers as the person it was merged ' +
@@ -3167,7 +3167,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             "`{ type: 'state', automated, overrides, final, gameAt, " +
             'watcherAt }` on open and after every change, and takes ' +
             "`{ type: 'overrides', data }`, stored whole, or " +
-            "`{ type: 'reset' }`, which clears every override and GS " +
+            "`{ type: 'reset' }`, which clears every override and TS " +
             "Watcher's stored state, so the board shows the game's own " +
             'scoring. An unreadable message is answered with ' +
             '`{ error }` and the socket stays open. **Who may call:** a site ' +
@@ -3203,7 +3203,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "Publish to a game's scoreboard over a WebSocket",
           description:
-            "GS Watcher's socket. Each message is a bare partial " +
+            "TS Watcher's socket. Each message is a bare partial " +
             '`ScoreState` JSON object, merged into what Watcher has sent ' +
             'before. Team names are ignored: they come from the game. An ' +
             'unreadable message is answered with `{ error }` and the socket ' +
@@ -3271,7 +3271,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'What the client that asked for the sign-in is waiting on',
           description:
-            'Tap the link on a laptop while GS Director is still waiting, and ' +
+            'Tap the link on a laptop while TS Director is still waiting, and ' +
             'this is how the iPad finds out: it polls with a secret only it ' +
             'holds. `deviceName` asks for a session that lasts a season and ' +
             'is named, which is what a Director wants and a browser does not.',

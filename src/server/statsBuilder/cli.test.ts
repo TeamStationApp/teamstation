@@ -21,7 +21,7 @@ import {
 import { runStatsBuilder } from './main'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_stats_cli_${Date.now()}`
+const scratchName = `teamstation_stats_cli_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 describe('statsBuilder cli', function () {

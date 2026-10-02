@@ -4,9 +4,9 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
@@ -37,14 +37,14 @@ describe('placeholder count sheet and platform adapters', function () {
   afterEach(async () => {
     await act(async () => {
       root?.unmount()
-      changeTheme(gsBallpark)
+      changeTheme(tsBallpark)
     })
     root = undefined
     Platform.OS = platform
   })
   it('keeps the placeholder text action green in dark mode', async function () {
     await act(async () => {
-      changeTheme(gsDark)
+      changeTheme(tsDark)
     })
     await mount(
       <RosterEditor

@@ -4,7 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import { GameStationClient } from '../../common/api'
+import { TeamStationClient } from '../../common/api'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameScreen } from './GameScreen'
@@ -41,7 +41,7 @@ afterEach(async function () {
 /** A phone held upright: tall enough that the card could stay put. */
 async function gamePage(): Promise<HTMLElement> {
   await windowOf(393, 852)
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.teams = async () => []
   const node = document.createElement('div')

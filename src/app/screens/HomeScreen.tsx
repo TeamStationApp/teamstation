@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
-  GameStationClient,
   LiveNow,
   SeasonGame,
   SeasonSummary,
+  TeamStationClient,
   TeamSummary
 } from '../../common/api'
 import {
@@ -23,7 +23,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 
 export interface HomeScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   onOpenTeam: (team: TeamSummary) => void
   onOpenSeason: (season: SeasonSummary) => void
   onOpenGame: (

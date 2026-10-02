@@ -2,14 +2,15 @@
  * The site's name, and the URLs built from it.
  *
  * `PRIMARY_HOST` is the only place the address is written down. Everything
- * that needs to know where GameStation answers — this server, the web app,
+ * that needs to know where TeamStation answers — this server, the web app,
  * the Director app, the stream URL an operator pastes into a camera — starts
  * here, and a deployment that is not production says so once, in its own
  * `serverConfig.json`, rather than by editing a committed file.
  *
  * It used to be a URL in a committed `config.json`, and before that a literal
  * in the iOS app, a field saved on every iPad, and a line in each deployment's
- * config. When the site moved from `tube2.gamestation.co` to `gamestation.co`
+ * config. When the site moved from `tube2.gamestation.co` to `gamestation.co`, and
+ * then to `app.teamstation.app`,
  * the copies did not, and a Director spent a day asking PeerTube for its
  * games. One committed file was better than five, but it still meant a branch
  * that wanted a development server had to change a tracked file and then
@@ -24,11 +25,11 @@
  * In `common/` because all three sides import it and it reads nothing: it is a
  * shared fact, not a file.
  */
-export const PRIMARY_HOST = 'gamestation.co'
+export const PRIMARY_HOST = 'app.teamstation.app'
 
 /**
  * An address as it is written down: a host, optionally with a port, and
- * nothing else. `gamestation.co`, `127.0.0.1:9100`, `[::1]:9100`.
+ * nothing else. `app.teamstation.app`, `127.0.0.1:9100`, `[::1]:9100`.
  */
 export type Authority = string
 
@@ -36,7 +37,7 @@ export type Authority = string
  * The bare authority in whatever somebody wrote.
  *
  * Tolerant on the way in because the override is typed by hand into a JSON
- * file, and `https://develop2.gamestation.co/` is what a person pastes when
+ * file, and `https://develop2.teamstation.app/` is what a person pastes when
  * asked for an address. A scheme, a path, a query and a trailing slash are all
  * dropped rather than refused — refusing would mean a deployment that boots
  * and then serves links to nowhere.

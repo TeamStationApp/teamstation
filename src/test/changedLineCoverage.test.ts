@@ -129,17 +129,17 @@ describe('changed-line counts from every report', function () {
 
   it('resolves pathspecs to the top level from anywhere inside it', function () {
     const top = '/repo'
-    expect(resolveSpecs(top, ['mobile/apps/gsDirector'], top)).deep.equals([
-      'mobile/apps/gsDirector'
+    expect(resolveSpecs(top, ['mobile/apps/tsDirector'], top)).deep.equals([
+      'mobile/apps/tsDirector'
     ])
     expect(
-      resolveSpecs(top, ['.'], `${top}/mobile/apps/gsDirector`)
-    ).deep.equals(['mobile/apps/gsDirector'])
+      resolveSpecs(top, ['.'], `${top}/mobile/apps/tsDirector`)
+    ).deep.equals(['mobile/apps/tsDirector'])
     expect(
       resolveSpecs(
         top,
         ['../../common/DirectorCore'],
-        `${top}/mobile/apps/gsDirector`
+        `${top}/mobile/apps/tsDirector`
       )
     ).deep.equals(['mobile/common/DirectorCore'])
     expect(resolveSpecs(top, ['.'], top)).deep.equals(['.'])

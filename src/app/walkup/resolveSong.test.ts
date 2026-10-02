@@ -8,10 +8,10 @@ import type { SongCandidate, WalkUpMusic } from './walkUpMusicTypes'
 
 const song: WalkUpSong = {
   provider: 'localFile',
-  providerId: 'lf:bcff80c2abab3d42',
+  providerId: 'lf:110f83a3e9419109',
   isrc: null,
-  title: 'GS Walkup Fixture',
-  artist: 'GameStation Test',
+  title: 'TS Walkup Fixture',
+  artist: 'TeamStation Test',
   album: null,
   artworkUrl: null,
   durationMs: 90000,
@@ -73,7 +73,7 @@ describe('resolveSong', function () {
     const links = deviceLinkStore(storage)
     await links.write(owner, song.providerId, 'content://picked/1')
     expect([...storage.items.keys()]).deep.equals([
-      'walkUp:t1:7:lf:bcff80c2abab3d42'
+      'walkUp:t1:7:lf:110f83a3e9419109'
     ])
     const phone = music(async () => [])
     expect(await resolveSong(phone, song, owner, links)).equals(
@@ -85,14 +85,14 @@ describe('resolveSong', function () {
   it('then the provider id, the ISRC and the title, in that order', async function () {
     const links = deviceLinkStore(memory())
     const byTitle = candidate({
-      title: 'GS Walkup Fixture',
-      artist: 'GameStation Test',
+      title: 'TS Walkup Fixture',
+      artist: 'TeamStation Test',
       handle: 'title'
     })
     const byId = candidate({ providerId: song.providerId, handle: 'id' })
     const phone = music(async () => [byTitle, byId])
     expect(await resolveSong(phone, song, owner, links)).equals('id')
-    expect(phone.terms).deep.equals(['gs walkup fixture gamestation test'])
+    expect(phone.terms).deep.equals(['ts walkup fixture teamstation test'])
 
     const apple: WalkUpSong = {
       ...song,

@@ -14,7 +14,7 @@ import { attachInt8Parser } from '../db/int8'
 import { checkLimits, clientIp, recordAttempts } from './rateLimit'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_ratelimit_${Date.now()}`
+const scratchName = `teamstation_ratelimit_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 /** Enough of a request for `clientIp`; nothing else is read. */

@@ -14,7 +14,7 @@ import { replaceGameEvents } from '../events/eventWrite'
 import { requestAllGameStats, requestGameStats } from './request'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_stats_req_${Date.now()}`
+const scratchName = `teamstation_stats_req_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 describe('statsBuilder request', function () {

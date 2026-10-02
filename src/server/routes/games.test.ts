@@ -29,7 +29,7 @@ import { teamRoutes } from './teams'
  */
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_games_route_${Date.now()}`
+const scratchName = `teamstation_games_route_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const ADMIN = 'tok_games_admin_00000000000000000000'
@@ -435,7 +435,7 @@ describe('every game somebody can see', function () {
 describe('whether a viewer may score a game', function () {
   this.timeout(60000)
 
-  const scratch = `gamestation_can_score_${Date.now()}`
+  const scratch = `teamstation_can_score_${Date.now()}`
   const url = adminUrl.replace(/\/[^/]*$/, `/${scratch}`)
   let adminPool: Pool | undefined
   let db: Kysely<Database> | undefined

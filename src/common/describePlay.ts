@@ -4,7 +4,7 @@ import {
   normalizeEventType
 } from './gumboEventTypes'
 
-// A play in a sentence, written by GameStation from what it knows about the
+// A play in a sentence, written by TeamStation from what it knows about the
 // play — its type, who is credited with what, the half-inning, the score —
 // and never from a sentence stored with it. Worked out whenever a play is
 // shown, so it always reads the way this code reads a play.

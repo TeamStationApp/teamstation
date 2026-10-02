@@ -41,11 +41,11 @@ describe('presigned Spaces URLs', function () {
       ...AWS_EXAMPLE,
       endpoint: 'https://sfo3.digitaloceanspaces.com',
       region: 'sfo3',
-      bucket: 'gamestation-media',
+      bucket: 'teamstation-media',
       key: 'videos/vid_abc/video.mp4'
     })
     expect(url).contains(
-      'https://gamestation-media.sfo3.digitaloceanspaces.com/videos/vid_abc/video.mp4?'
+      'https://teamstation-media.sfo3.digitaloceanspaces.com/videos/vid_abc/video.mp4?'
     )
     expect(url).contains('%2Fsfo3%2Fs3%2Faws4_request')
   })

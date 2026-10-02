@@ -18,7 +18,7 @@ export const DEFAULT_WALK_UP_PREFERENCES: WalkUpPreferences = {
   fadeAppleMusic: true
 }
 
-const KEY = 'gamestation:walkUp:preferences'
+const KEY = 'teamstation:walkUp:preferences'
 
 /**
  * The walk-up settings, per device, in the same `PreferenceStorage` the

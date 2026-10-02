@@ -172,7 +172,7 @@ describe('the game as a scoreboard source', function () {
 
   after(async function () {
     if (client?.isOpen) await client.close()
-    await dropPrefix('gs-test')
+    await dropPrefix('ts-test')
     await drop?.()
   })
 
@@ -232,7 +232,7 @@ describe('the game as a scoreboard source', function () {
     expect(await scoreboardFromGame(db, empty, log)).equals(undefined)
     expect(await scoreboardFromGame(db, 'gam_nothere', log)).equals(undefined)
 
-    // Another service's plays carry no GameStation record to replay.
+    // Another service's plays carry no TeamStation record to replay.
     const imported = await addGame(db, {
       homeTeamId: home,
       awayTeamId: away,

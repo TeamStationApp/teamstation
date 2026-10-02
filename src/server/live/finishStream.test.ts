@@ -31,9 +31,9 @@ import { LIVE_PLAYLIST_NAME } from './splitter'
  * database, and skipped where there is no Postgres.
  */
 const run = promisify(execFile)
-const FFMPEG = process.env.GS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_finish_${Date.now()}`
+const scratchName = `teamstation_finish_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 describe('the end of a live stream', function () {
@@ -61,7 +61,7 @@ describe('the end of a live stream', function () {
     await migrateUp(pool, migrations)
     await pool.end()
     db = makeDatabase(scratchUrl)
-    mediaRoot = await mkdtemp(join(tmpdir(), 'gsFinish-'))
+    mediaRoot = await mkdtemp(join(tmpdir(), 'tsFinish-'))
 
     space = createServer((req, res) => {
       const key = (req.url ?? '').split('?')[0] ?? ''
@@ -184,7 +184,7 @@ describe('the end of a live stream', function () {
         game_id: `gam_${options.id}`,
         team_id: `tem_home_${options.id}`,
         key_hash: `hash_${options.id}`,
-        key_prefix: 'gs_demo',
+        key_prefix: 'ts_demo',
         key_cipher: 'v1.x.y.z',
         state: options.published ? 'publishing' : 'idle',
         opens_at: new Date(now.getTime() - 3_600_000),

@@ -9,7 +9,7 @@
 
 /**
  * The innings an ERA divides by where neither the season nor its league says:
- * six, the length of a game in the leagues GameStation serves.
+ * six, the length of a game in the leagues TeamStation serves.
  */
 export const DEFAULT_ERA_INNINGS = 6
 

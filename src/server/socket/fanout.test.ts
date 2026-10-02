@@ -16,7 +16,7 @@ import { GameFanout } from './fanout'
 import { GAME_CHANGES_CHANNEL } from './gameChanges'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_fanout_${Date.now()}_${process.pid}`
+const scratchName = `teamstation_fanout_${Date.now()}_${process.pid}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const wait = async (ms: number): Promise<void> => {
@@ -411,7 +411,7 @@ describe('the game socket fan-out (U15)', function () {
   it('retries a listener that cannot connect, and stops when closed', async function () {
     let lost = 0
     const one = fanout({
-      databaseUrl: adminUrl.replace(/\/[^/]*$/, '/gamestation_no_such_db'),
+      databaseUrl: adminUrl.replace(/\/[^/]*$/, '/teamstation_no_such_db'),
       onLost: () => {
         lost++
       }

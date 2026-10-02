@@ -49,7 +49,7 @@ interface SceneProbeWindow {
   qaCamera?: PerspectiveCamera
   __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
 }
-const base = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+const base = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
@@ -359,7 +359,7 @@ describe('scoring browser', function () {
   before(async function () {
     browser = await puppeteer.launch({
       headless: true,
-      executablePath: process.env.GS_CHROME_PATH,
+      executablePath: process.env.TS_CHROME_PATH,
       args: [
         '--use-gl=angle',
         '--use-angle=swiftshader',
@@ -560,9 +560,9 @@ describe('scoring browser', function () {
         await click(page, 'Throw Out')
         await page.waitForSelector('canvas[data-field-ready="true"]')
         await placeDefenderWithKeyboard(page)
-        if (process.env.GS_SCORING_ARTIFACT_DIR != null && assisted)
+        if (process.env.TS_SCORING_ARTIFACT_DIR != null && assisted)
           recorder = await page.record({
-            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/20260923-scoring-hit-throw.mp4`,
+            path: `${process.env.TS_SCORING_ARTIFACT_DIR}/20260923-scoring-hit-throw.mp4`,
             audio: true
           })
         await page.keyboard.press('Enter')
@@ -597,11 +597,11 @@ describe('scoring browser', function () {
           await page.setViewport({ width, height: width === 390 ? 844 : 900 })
           await page.waitForSelector('canvas[data-field-ready="true"]')
           await click(page, 'Foul Ball')
-          if (process.env.GS_SCORING_ARTIFACT_DIR != null) {
+          if (process.env.TS_SCORING_ARTIFACT_DIR != null) {
             await new Promise(resolve => setTimeout(resolve, 900))
             for (let frame = 0; frame < 4; frame++) {
               await page.screenshot({
-                path: `${process.env.GS_SCORING_ARTIFACT_DIR}/foul-${bats}-${width}-${frame}.png`
+                path: `${process.env.TS_SCORING_ARTIFACT_DIR}/foul-${bats}-${width}-${frame}.png`
               })
               await new Promise(resolve => setTimeout(resolve, 70))
             }
@@ -1080,7 +1080,7 @@ describe('scoring browser', function () {
         }
         await page.screenshot({
           path: join(
-            process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+            process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
             `dropped-third-${scenario}.png`
           )
         })
@@ -1164,7 +1164,7 @@ describe('scoring browser', function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
       await page.evaluate(() => {
-        localStorage.removeItem('gamestation:scoring:100:switch-hitter')
+        localStorage.removeItem('teamstation:scoring:100:switch-hitter')
       })
       await page.reload()
       await page.waitForSelector(
@@ -1205,9 +1205,9 @@ describe('scoring browser', function () {
       await page.mouse.down()
       await page.mouse.move(...end, { steps: 12 })
       await page.mouse.up()
-      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+      if (process.env.TS_SCORING_ARTIFACT_DIR != null)
         await page.screenshot({
-          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/field.png`
+          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/field.png`
         })
       await page.waitForSelector('[aria-label*="Batter Jordan K. left handed"]')
       expect(await page.$('[aria-label="OK"]')).equals(null)
@@ -1549,7 +1549,7 @@ describe('scoring browser', function () {
       expect(alignment.child).closeTo(alignment.parent, 1)
     } catch (error) {
       const directory =
-        process.env.GS_SCORING_ARTIFACT_DIR ??
+        process.env.TS_SCORING_ARTIFACT_DIR ??
         join(homedir(), '.cursor', 'logs')
       await mkdir(directory, { recursive: true })
       const stem = join(directory, `roster-insertion-failure-${Date.now()}`)
@@ -1685,9 +1685,9 @@ describe('scoring browser', function () {
             .querySelector('[data-roster-target="lineup-0"]')!
             .getAttribute('data-roster-player') !== '1'
       )
-      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+      if (process.env.TS_SCORING_ARTIFACT_DIR != null)
         await page.screenshot({
-          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-slider-drag.png`
+          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/roster-slider-drag.png`
         })
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
@@ -1861,9 +1861,9 @@ describe('scoring browser', function () {
           .querySelector('[data-roster-target="defense-P"]')!
           .textContent!.includes('Jordan K.')
       )
-      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+      if (process.env.TS_SCORING_ARTIFACT_DIR != null)
         await page.screenshot({
-          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/rosters-phone.png`
+          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/rosters-phone.png`
         })
       await click(page, 'Save Rosters')
       await page.waitForSelector('[aria-label="Undo Set team roster"]')
@@ -1962,9 +1962,9 @@ describe('scoring browser', function () {
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
-      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+      if (process.env.TS_SCORING_ARTIFACT_DIR != null)
         await page.screenshot({
-          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/fielder-trajectory.png`
+          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/fielder-trajectory.png`
         })
       await page.mouse.move(500, 500)
       await page.mouse.down()
@@ -2189,10 +2189,10 @@ describe('scoring browser', function () {
         })
         const child = await bounds('Batter base')
         expect(child.bottom).at.most(width === 844 ? 390 : 844)
-        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        if (process.env.TS_SCORING_ARTIFACT_DIR != null)
           await page.screenshot({
             path: join(
-              process.env.GS_SCORING_ARTIFACT_DIR,
+              process.env.TS_SCORING_ARTIFACT_DIR,
               `menus-more-${width}.png`
             )
           })
@@ -2215,10 +2215,10 @@ describe('scoring browser', function () {
           expect(row.y).at.least(0)
           expect(row.bottom).at.most(width === 844 ? 390 : 844)
         }
-        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        if (process.env.TS_SCORING_ARTIFACT_DIR != null)
           await page.screenshot({
             path: join(
-              process.env.GS_SCORING_ARTIFACT_DIR,
+              process.env.TS_SCORING_ARTIFACT_DIR,
               `menus-outcome-${width}.png`
             )
           })
@@ -2885,7 +2885,7 @@ describe('scoring browser', function () {
         expect(samples.before.pixels).deep.equals(samples.after.pixels)
         await page.screenshot({
           path: join(
-            process.env.GS_SCORING_ARTIFACT_DIR!,
+            process.env.TS_SCORING_ARTIFACT_DIR!,
             `celebration-${outside ? 'stands' : 'park'}.png`
           )
         })
@@ -3354,7 +3354,7 @@ describe('scoring browser', function () {
           expect(data.logos).has.length(logos === 'valid' ? 2 : 0)
           await page.screenshot({
             path: join(
-              process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+              process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
               `dugouts-${logos ?? 'absent'}-${half}.png`
             )
           })
@@ -3807,7 +3807,7 @@ describe('scoring browser', function () {
         ).deep.equals({ font: '13px', weight: '700' })
         await page.screenshot({
           path: join(
-            process.env.GS_SCORING_ARTIFACT_DIR!,
+            process.env.TS_SCORING_ARTIFACT_DIR!,
             `paired-controls-${width}.png`
           )
         })
@@ -3848,7 +3848,7 @@ describe('scoring browser', function () {
         await page.locator('[aria-label^="Undo "]').click()
         await page.screenshot({
           path: join(
-            process.env.GS_SCORING_ARTIFACT_DIR!,
+            process.env.TS_SCORING_ARTIFACT_DIR!,
             `bunt-${outcome}.png`
           )
         })
@@ -4038,7 +4038,7 @@ describe('scoring browser', function () {
             )
             await page.screenshot({
               path: join(
-                process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+                process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
                 `bunt-contact-${bats}.png`
               )
             })
@@ -4130,7 +4130,7 @@ describe('scoring browser', function () {
           expect(samples.every(s => s.foreground === 1)).equals(true)
           await page.screenshot({
             path: join(
-              process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+              process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
               `guidance-${homeRun ? 'home-run' : 'single'}-${width}.png`
             )
           })
@@ -4222,7 +4222,7 @@ describe('scoring browser', function () {
       expect(Math.min(...resumed)).within(0.71, 0.76)
       await page.screenshot({
         path: join(
-          process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+          process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
           'reanimated-live.png'
         )
       })
@@ -4235,7 +4235,7 @@ describe('scoring browser', function () {
     const { page } = await open('/games/g1/score')
     try {
       await page.evaluate(() => {
-        localStorage.removeItem('gamestation:scoring:100:switch-hitter')
+        localStorage.removeItem('teamstation:scoring:100:switch-hitter')
       })
       await page.reload()
       const selector = '[aria-label="Drag to the other batter box"]'
@@ -4379,7 +4379,7 @@ describe('scoring browser', function () {
         expect(data.arrows).equals(6)
         expect(data.grassBack).closeTo(15.24, 0.01)
         await page.screenshot({
-          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/trajectory-polish-${outcome}-${width}.png`
+          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/trajectory-polish-${outcome}-${width}.png`
         })
         await page.mouse.move(data.x, data.y)
         await page.mouse.down()
@@ -4465,9 +4465,9 @@ describe('scoring browser', function () {
           expect(r.y).at.least(top.y - 0.5)
           expect(r.y + r.height).at.most(top.y + top.height + 0.5)
         }
-        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        if (process.env.TS_SCORING_ARTIFACT_DIR != null)
           await page.screenshot({
-            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-pill-${width}.png`
+            path: `${process.env.TS_SCORING_ARTIFACT_DIR}/roster-pill-${width}.png`
           })
         // Tapping the right half picks the home team; dragging back picks away.
         const lineup = async (): Promise<string> =>
@@ -4673,9 +4673,9 @@ describe('scoring browser', function () {
           expect(list.height).greaterThan(60)
           expect(list.bottom).at.most(footer.y)
         }
-        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        if (process.env.TS_SCORING_ARTIFACT_DIR != null)
           await page.screenshot({
-            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-flow-${width}.png`
+            path: `${process.env.TS_SCORING_ARTIFACT_DIR}/roster-flow-${width}.png`
           })
       }
       await page.setViewport({
@@ -4732,9 +4732,9 @@ describe('scoring browser', function () {
       expect((await rect('[data-roster-target="lineup-2"]')).y).greaterThan(
         next.y + 40
       )
-      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+      if (process.env.TS_SCORING_ARTIFACT_DIR != null)
         await page.screenshot({
-          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-flow-drag.png`
+          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/roster-flow-drag.png`
         })
       await page.touchscreen.touchEnd()
       await page.waitForFunction(
@@ -4810,10 +4810,10 @@ describe('scoring browser', function () {
         expect(selected.player).deep.equals(before.player)
         expect(selected.camera).deep.equals(before.camera)
         expect(selected.apex).greaterThan(15)
-        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        if (process.env.TS_SCORING_ARTIFACT_DIR != null)
           await page.screenshot({
             path: join(
-              process.env.GS_SCORING_ARTIFACT_DIR,
+              process.env.TS_SCORING_ARTIFACT_DIR,
               `high-fly-${outcome.replaceAll(' ', '-')}.png`
             )
           })
@@ -4850,7 +4850,7 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
   before(async function () {
     browser = await puppeteer.launch({
       headless: true,
-      executablePath: process.env.GS_CHROME_PATH,
+      executablePath: process.env.TS_CHROME_PATH,
       args: [
         '--use-gl=angle',
         '--use-angle=swiftshader',

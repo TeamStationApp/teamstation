@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import type { GameStationClient, RosterEntry } from '../../common/api'
+import type { RosterEntry, TeamStationClient } from '../../common/api'
 import {
   PLAYER_POSITIONS,
   type PlayerPosition,
@@ -12,7 +12,7 @@ import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface PlayerSettingsTabProps {
-  client: GameStationClient
+  client: TeamStationClient
   /** The team the page was opened for: whose jersey and positions these are. */
   teamId: string
   userId: string

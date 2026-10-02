@@ -91,10 +91,10 @@ if (
 const { coverageSources } = createRequire(import.meta.url)(
   './coverage-source-paths.cjs'
 )
-// The commit this branch was cut from, unless GS_COVERAGE_BASE names another.
+// The commit this branch was cut from, unless TS_COVERAGE_BASE names another.
 // Everything after it is this work.
 const base =
-  process.env.GS_COVERAGE_BASE ??
+  process.env.TS_COVERAGE_BASE ??
   JSON.parse(readFileSync('src/test/scoringCoverageBase.json', 'utf8')).base
 const { paths, untracked } = coverageSources(base)
 
@@ -138,7 +138,7 @@ console.log(
 )
 if (libraryPercent < 90) process.exitCode = 1
 
-const changedBase = process.env.GS_COVERAGE_BASE ?? base
+const changedBase = process.env.TS_COVERAGE_BASE ?? base
 if (changedBase != null) {
   const { changedLines, lineReport } = createRequire(import.meta.url)(
     './changed-line-coverage.cjs'

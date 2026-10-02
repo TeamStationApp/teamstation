@@ -3,9 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { rosterNameProps } from './RosterEditor'
 import { RosterSelector, rosterThumbWidth } from './RosterSelector'
 let root: Root | undefined
@@ -25,7 +25,7 @@ const Harness = (): React.ReactElement => {
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
   })
   root = undefined
 })
@@ -113,7 +113,7 @@ describe('roster selector', function () {
     }
     const tab = (name: string): HTMLElement =>
       host.querySelector(`[aria-label="${name}"]`)!
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       await act(async () => {
         changeTheme(theme)
       })

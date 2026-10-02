@@ -107,15 +107,15 @@ describe('GameSocket (U16)', function () {
       expect(socketUrl('http://10.10.7.40:9100/api/v1')).equals(
         'ws://10.10.7.40:9100/socket'
       )
-      expect(socketUrl('https://gamestation.co/api/v1/')).equals(
-        'wss://gamestation.co/socket'
+      expect(socketUrl('https://app.teamstation.app/api/v1/')).equals(
+        'wss://app.teamstation.app/socket'
       )
     })
 
     it('resolves a relative base against the page', function () {
       expect(
-        socketUrl('/api/v1', 'https://gamestation.co/games/g1?tab=watch')
-      ).equals('wss://gamestation.co/socket')
+        socketUrl('/api/v1', 'https://app.teamstation.app/games/g1?tab=watch')
+      ).equals('wss://app.teamstation.app/socket')
       expect(socketUrl('/api/v1', 'http://localhost:8092/')).equals(
         'ws://localhost:8092/socket'
       )
@@ -142,7 +142,7 @@ describe('GameSocket (U16)', function () {
       const had = { location: world.location, WebSocket: world.WebSocket }
       try {
         Object.defineProperty(globalThis, 'location', {
-          value: { href: 'https://gamestation.co/' },
+          value: { href: 'https://app.teamstation.app/' },
           configurable: true,
           writable: true
         })
@@ -156,9 +156,9 @@ describe('GameSocket (U16)', function () {
           /no WebSocket/
         )
         world.WebSocket = FakeSocket
-        expect(socket.url).equals('wss://gamestation.co/socket')
+        expect(socket.url).equals('wss://app.teamstation.app/socket')
         socket.subscribe('g1', () => undefined)
-        expect(last().url).equals('wss://gamestation.co/socket')
+        expect(last().url).equals('wss://app.teamstation.app/socket')
         socket.close()
       } finally {
         world.location = had.location

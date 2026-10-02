@@ -1,6 +1,6 @@
-# GameStation
+# TeamStation
 
-The video server and app behind gamestation.co. It took over from PeerTube on
+The video server and app behind app.teamstation.app. It took over from PeerTube on
 2026-09-18; PeerTube still runs beside it on tube2.gamestation.co, and this
 server reads its database and media in place. Plan:
 `~/.cursor/plans/202609150848-gameStationApp.md`.
@@ -24,7 +24,7 @@ server reads its database and media in place. Plan:
 `src/common/primaryUrl.ts`, and nowhere else:
 
 ```ts
-export const PRIMARY_HOST = 'gamestation.co'
+export const PRIMARY_HOST = 'app.teamstation.app'
 ```
 
 **A host, not a URL — no scheme is written down anywhere.** `https` is
@@ -34,16 +34,16 @@ you are running yourself is reached by. RTMP is always `rtmp://`, there being
 no encrypted RTMP here to choose between.
 
 Everything builds its URLs from it: playback links, invites, sign-in e-mails,
-the RTMP address an operator pastes into a camera, and the address GS Director
+the RTMP address an operator pastes into a camera, and the address TS Director
 talks to. Swift cannot import a TypeScript module, so `AppServer.defaultHost`
-in `GameStationKit` carries the same string — and a test on each side reads
+in `TeamStationKit` carries the same string — and a test on each side reads
 the other language's source and fails if the two disagree.
 
 A deployment that is **not** production says its own name once, in its own
 `serverConfig.json`:
 
 ```json
-{ "primaryUrlOverride": "develop2.gamestation.co" }
+{ "primaryUrlOverride": "develop2.teamstation.app" }
 ```
 
 Optionally with a port — `127.0.0.1:9100` for a server you are running
@@ -52,7 +52,7 @@ source.
 
 It was three places once — a literal in the iOS app, a copy saved into every
 iPad's settings, and a line in each deployment's `serverConfig.json`. When the
-site moved from `tube2.gamestation.co` to `gamestation.co` the saved copies
+site moved from `tube2.gamestation.co` to `app.teamstation.app` the saved copies
 did not, and a Director went on asking PeerTube for its games, getting a 400
 with an empty body, which reads as nothing being wrong at all. A committed
 `config.json` fixed that and introduced its own: a branch wanting a
@@ -106,7 +106,7 @@ root** on first run; it is gitignored, and every field has a default.
 ## Live streaming
 
 A game can be given a stream URL with its key in it — `rtmp://host:1936/live/…`
-— which is pasted into streaming software or picked from a list by GS Director.
+— which is pasted into streaming software or picked from a list by TS Director.
 One stream arrives and is recorded as this machine's own HLS, `-c copy`. The
 split can also send it onward to further RTMP destinations, also `-c copy`.
 

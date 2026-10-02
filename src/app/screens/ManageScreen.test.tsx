@@ -4,9 +4,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type {
-  GameStationClient,
   ManagePage,
-  ScopePerson
+  ScopePerson,
+  TeamStationClient
 } from '../../common/api'
 import type { RoleFlag } from '../../common/roles'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -175,7 +175,7 @@ async function mount(
       return { added: false }
     },
     invites: async () => ({ canInvite: false, invites: [] })
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)

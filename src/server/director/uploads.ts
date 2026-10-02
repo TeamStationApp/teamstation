@@ -8,7 +8,7 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../db/database'
 
 /**
- * A recording arriving from GS Director, in parts.
+ * A recording arriving from TS Director, in parts.
  *
  * **Why parts.** The take is the whole game — two hours, several gigabytes —
  * and it leaves from a ball field, over whatever network the field has. One

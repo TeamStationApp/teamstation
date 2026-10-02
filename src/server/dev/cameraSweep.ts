@@ -24,7 +24,7 @@ import { serverConfig } from '../serverConfig'
  * Tiles are not cameras: one tile is always the program output, so four
  * tiles is three cameras and three tiles is two.
  */
-const CSV = '/tmp/gsCameraSweep.csv'
+const CSV = '/tmp/tsCameraSweep.csv'
 
 async function main(): Promise<void> {
   const apply = process.argv.includes('--apply')

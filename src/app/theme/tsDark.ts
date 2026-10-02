@@ -2,8 +2,8 @@ import { fonts } from './fonts'
 import type { Theme } from './types'
 
 /**
- * GameStation's dark theme, carried over from the v1 scoreboard and dashboard
- * (`src/client/themes/gsDark.ts` at 25f9496e) so the new app looks like the one Paul
+ * TeamStation's dark theme, carried over from the v1 scoreboard and dashboard
+ * (`src/client/themes/tsDark.ts` at 25f9496e) so the new app looks like the one Paul
  * already uses. The palette is the same; what is new are the component names
  * the watch path needs.
  *
@@ -15,14 +15,14 @@ const palette = {
   black: '#000000',
   transparent: '#00000000',
 
-  // From the GameStation logo
-  gsBeige: '#E8E4D8',
-  gsLightOlive: '#7A9860',
-  gsMediumOlive: '#6B8E4E',
-  gsDarkOlive: '#3D4E2F',
-  gsVeryDarkGreen: '#1F2418',
-  gsAccentGreen: '#88A870',
-  gsPaleGreen: '#C4D4B8',
+  // From the TeamStation logo
+  tsBeige: '#E8E4D8',
+  tsLightOlive: '#7A9860',
+  tsMediumOlive: '#6B8E4E',
+  tsDarkOlive: '#3D4E2F',
+  tsVeryDarkGreen: '#1F2418',
+  tsAccentGreen: '#88A870',
+  tsPaleGreen: '#C4D4B8',
 
   emeraldGreen: '#22c55e',
   coralRed: '#ef4444',
@@ -48,45 +48,45 @@ const palette = {
 const BASE_REM = 16
 const rem = (size: number): number => Math.round(BASE_REM * size)
 
-export const gsDark: Theme = {
+export const tsDark: Theme = {
   rem,
   isDark: true,
 
-  defaultBorderColor: palette.gsPaleGreen,
+  defaultBorderColor: palette.tsPaleGreen,
 
-  backgroundColor: palette.gsVeryDarkGreen,
-  cardBackgroundColor: palette.gsBeige,
-  cardBackgroundDark: palette.gsDarkOlive,
-  containerBackgroundColor: palette.gsVeryDarkGreen,
-  inactiveBackgroundColor: palette.gsDarkOlive,
+  backgroundColor: palette.tsVeryDarkGreen,
+  cardBackgroundColor: palette.tsBeige,
+  cardBackgroundDark: palette.tsDarkOlive,
+  containerBackgroundColor: palette.tsVeryDarkGreen,
+  inactiveBackgroundColor: palette.tsDarkOlive,
   overlayBackgroundColor: palette.blackOp70,
 
   primaryTextFont: palette.quicksandBold,
   primaryTextFontSizeRem: 1.25,
-  primaryTextColor: palette.gsBeige,
-  secondaryTextColor: palette.gsVeryDarkGreen,
-  tertiaryTextColor: palette.gsDarkOlive,
-  placeholderTextColor: palette.gsMediumOlive,
+  primaryTextColor: palette.tsBeige,
+  secondaryTextColor: palette.tsVeryDarkGreen,
+  tertiaryTextColor: palette.tsDarkOlive,
+  placeholderTextColor: palette.tsMediumOlive,
   secondaryTextFont: palette.helveticaNeue,
   regularTextFont: palette.quicksandRegular,
   boldTextFont: palette.quicksandBold,
   semiBoldTextFont: palette.quicksandSemiBold,
 
-  primaryButtonColor: palette.gsMediumOlive,
-  primaryButtonPressedColor: palette.gsDarkOlive,
-  secondaryButtonColor: palette.gsLightOlive,
-  secondaryButtonPressedColor: palette.gsDarkOlive,
-  secondaryButtonTextColor: palette.gsVeryDarkGreen,
-  buttonGrayColor: palette.gsAccentGreen,
-  clearButtonColor: palette.gsPaleGreen,
-  clearIconBackgroundColor: palette.gsMediumOlive,
+  primaryButtonColor: palette.tsMediumOlive,
+  primaryButtonPressedColor: palette.tsDarkOlive,
+  secondaryButtonColor: palette.tsLightOlive,
+  secondaryButtonPressedColor: palette.tsDarkOlive,
+  secondaryButtonTextColor: palette.tsVeryDarkGreen,
+  buttonGrayColor: palette.tsAccentGreen,
+  clearButtonColor: palette.tsPaleGreen,
+  clearIconBackgroundColor: palette.tsMediumOlive,
   clearIconColor: palette.white,
-  buttonTextColor: palette.gsBeige,
+  buttonTextColor: palette.tsBeige,
 
   inputBackgroundColor: palette.white,
-  inputBorderColor: palette.gsMediumOlive,
-  inputFocusBorderColor: palette.gsAccentGreen,
-  inputTextColor: palette.gsVeryDarkGreen,
+  inputBorderColor: palette.tsMediumOlive,
+  inputFocusBorderColor: palette.tsAccentGreen,
+  inputTextColor: palette.tsVeryDarkGreen,
 
   activeColor: palette.coralRed,
   scoringInstructionBackground: '#665016',
@@ -101,52 +101,52 @@ export const gsDark: Theme = {
   scoringOutColor: '#a83535',
   scoringOutIdleColor: '#e8aaa5',
   scoringDecisionText: '#ffffff',
-  successColor: palette.gsLightOlive,
+  successColor: palette.tsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
   liveColor: palette.coralRed,
-  scheduledColor: palette.gsMediumOlive,
+  scheduledColor: palette.tsMediumOlive,
 
-  winBadgeBackground: palette.gsDarkOlive,
-  winBadgeTextColor: palette.gsPaleGreen,
-  lossBadgeBackground: palette.gsDarkOlive,
+  winBadgeBackground: palette.tsDarkOlive,
+  winBadgeTextColor: palette.tsPaleGreen,
+  lossBadgeBackground: palette.tsDarkOlive,
   lossBadgeTextColor: palette.amber,
-  honourBadgeBackground: palette.gsDarkOlive,
+  honourBadgeBackground: palette.tsDarkOlive,
   honourBadgeTextColor: palette.gold,
-  neutralBadgeBackground: palette.gsDarkOlive,
-  neutralBadgeTextColor: palette.gsPaleGreen,
+  neutralBadgeBackground: palette.tsDarkOlive,
+  neutralBadgeTextColor: palette.tsPaleGreen,
 
-  pillBackground: palette.gsDarkOlive,
-  pillPressedBackground: palette.gsMediumOlive,
-  pillTextColor: palette.gsBeige,
-  pillActiveBackground: palette.gsLightOlive,
-  pillActiveTextColor: palette.gsVeryDarkGreen,
+  pillBackground: palette.tsDarkOlive,
+  pillPressedBackground: palette.tsMediumOlive,
+  pillTextColor: palette.tsBeige,
+  pillActiveBackground: palette.tsLightOlive,
+  pillActiveTextColor: palette.tsVeryDarkGreen,
 
-  headerBackgroundColor: palette.gsVeryDarkGreen,
-  headerBorderColor: palette.gsDarkOlive,
-  headerTextColor: palette.gsBeige,
-  navBackgroundColor: palette.gsVeryDarkGreen,
+  headerBackgroundColor: palette.tsVeryDarkGreen,
+  headerBorderColor: palette.tsDarkOlive,
+  headerTextColor: palette.tsBeige,
+  navBackgroundColor: palette.tsVeryDarkGreen,
   markGradientStart: '#8FB35C',
   // The cream, not the dark green: `#182e16` against this header is half a
   // mark.
   markGradientEnd: '#E6E5D5',
   glassBackgroundColor: 'rgba(31, 36, 24, 0.55)',
-  glassFallbackColor: palette.gsVeryDarkGreen,
+  glassFallbackColor: palette.tsVeryDarkGreen,
   glassBorderColor: 'rgba(216, 214, 191, 0.14)',
   glassBlur: 'blur(24px) saturate(200%)',
-  navActiveColor: palette.gsAccentGreen,
-  navInactiveColor: palette.gsMediumOlive,
+  navActiveColor: palette.tsAccentGreen,
+  navInactiveColor: palette.tsMediumOlive,
 
   scoreboardBackground: palette.black,
-  scoreboardTextColor: palette.gsBeige,
-  scoreboardMutedTextColor: palette.gsAccentGreen,
-  scoreboardAccentColor: palette.gsAccentGreen,
+  scoreboardTextColor: palette.tsBeige,
+  scoreboardMutedTextColor: palette.tsAccentGreen,
+  scoreboardAccentColor: palette.tsAccentGreen,
 
   // The watch path
-  highlightRowBackground: palette.gsDarkOlive,
-  highlightRowActiveBackground: palette.gsMediumOlive,
-  scoringControlBackground: palette.gsBeige,
-  scoringControlText: palette.gsVeryDarkGreen,
+  highlightRowBackground: palette.tsDarkOlive,
+  highlightRowActiveBackground: palette.tsMediumOlive,
+  scoringControlBackground: palette.tsBeige,
+  scoringControlText: palette.tsVeryDarkGreen,
   scoringPlayColor: palette.gold,
   videoBackgroundColor: palette.black,
   gridGutterRem: 0.75,
@@ -154,7 +154,7 @@ export const gsDark: Theme = {
   shadowColor: palette.black,
   scoringSelectorIdle: palette.selectorGray,
   buttonShadowColor: palette.blackOp35,
-  backgroundGradientColors: [palette.gsVeryDarkGreen, palette.gsDarkOlive],
+  backgroundGradientColors: [palette.tsVeryDarkGreen, palette.tsDarkOlive],
   backgroundGradientStart: { x: 0, y: 0 },
   backgroundGradientEnd: { x: 1, y: 1 },
 

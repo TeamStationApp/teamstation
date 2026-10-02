@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
-import type { GameStationClient, SeasonGame } from '../../common/api'
+import type { SeasonGame, TeamStationClient } from '../../common/api'
 import {
   Card,
   GameRow,
@@ -27,7 +27,7 @@ import {
 import { gamesFor, type When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   /** `videos` shows only what was recorded; `schedule` shows everything. */
   mode: 'videos' | 'schedule'
   /** The filter the address asked for, if any. */

@@ -47,14 +47,14 @@ const serve = process.argv.includes('--serve')
  * absolute URL is the one that asks for it.
  */
 const apiBaseUrl =
-  process.env.GS_API_BASE_URL ??
+  process.env.TS_API_BASE_URL ??
   (serve ? 'http://127.0.0.1:9100/api/v1' : '/api/v1')
 
 // A production bundle that names a loopback address cannot work anywhere but
 // the machine that built it. Refuse to write one.
 if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
   throw new Error(
-    `Refusing to build with GS_API_BASE_URL=${apiBaseUrl}: a deployed app ` +
+    `Refusing to build with TS_API_BASE_URL=${apiBaseUrl}: a deployed app ` +
       'cannot reach the loopback of the device it is running on.'
   )
 }
@@ -104,8 +104,8 @@ const options = {
       serve ? 'development' : 'production'
     ),
     __DEV__: serve ? 'true' : 'false',
-    GS_API_BASE_URL: JSON.stringify(apiBaseUrl),
-    GS_FIELD_PREVIEW: process.env.GS_FIELD_PREVIEW === '1' ? 'true' : 'false',
+    TS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // `global` is what a React Native runtime calls it and no browser does.
     // Worklets are compiled to code that reaches for it, and React Native Web
     // reaches for it too — stopping an `Animated` timing calls
@@ -146,8 +146,8 @@ if (serve) {
     fallback: 'dist/index.html',
     // Overridable because two worktrees are often being served at once, and
     // the second one silently failing to bind is a confusing way to spend ten
-    // minutes. `GS_API_BASE_URL` moves the API port to match.
-    port: Number(process.env.GS_SERVE_PORT ?? 8080)
+    // minutes. `TS_API_BASE_URL` moves the API port to match.
+    port: Number(process.env.TS_SERVE_PORT ?? 8080)
   })
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)

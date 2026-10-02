@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
 import type {
-  GameStationClient,
   InviteInfo,
   Session,
-  SignInWait
+  SignInWait,
+  TeamStationClient
 } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
@@ -13,7 +13,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { rememberRequest } from './SignInLinkScreen'
 
 export interface JoinScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   /** The code out of `/i/<code>`. */
   code: string
   /** Somebody who was already signed in, so the screen can offer to redeem. */
@@ -27,7 +27,7 @@ export interface JoinScreenProps {
  * The screen an invite link opens.
  *
  * One address, `/i/<code>`, whether the person holding it has an account, is
- * signed in on this machine, or has never heard of GameStation — because a
+ * signed in on this machine, or has never heard of TeamStation — because a
  * link handed to a parent at a game cannot know which of the three they are.
  *
  * Signed in, it is one button. Not signed in, it is a name and an address and

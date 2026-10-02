@@ -8,7 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import {
   asGameDetail,
   type GameDetail,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import { NO_OVERRIDES, SAMPLE_SCOREBOARD } from '../../common/scoreboard'
 import { fakeSockets } from '../../test/fakeScoreboardSocket'
@@ -51,7 +51,7 @@ async function click(label: string): Promise<void> {
 const runnable = { open: true, mayOverride: true }
 
 async function gameScreen(patch: Partial<GameDetail>): Promise<void> {
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({ ...gameFixture, ...patch })
   client.teams = async () => []
   await render(
@@ -104,7 +104,7 @@ describe('the Score Game pill', function () {
       { canScore: true, ...finalGame, scoreboard: runnable }
     ],
     [
-      'a game GameStation is scoring',
+      'a game TeamStation is scoring',
       { canScore: true, scoringOwner: 'gamestation' as const, homeScore: 1 }
     ]
   ] as const) {
@@ -298,7 +298,7 @@ describe('the app, the Score Game screen and the dashboard', function () {
       name: 'signIn',
       next: '/games/g1/scoreboard-override'
     })
-    expect(document.body.textContent).includes('Sign in to GameStation')
+    expect(document.body.textContent).includes('Sign in to TeamStation')
     await press('Use a password instead')
     await type('E-mail address', 'runner@example.com')
     await type('Password', 'secret')

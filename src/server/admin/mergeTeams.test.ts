@@ -14,7 +14,7 @@ import { replaceGameEvents } from '../events/eventWrite'
 import { mergeTeams } from './mergeTeams'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_mergeteams_${Date.now()}`
+const scratchName = `teamstation_mergeteams_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 /**

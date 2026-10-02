@@ -231,7 +231,7 @@ describe('the changed-line check', function () {
     const files = {
       'src/server/index.ts': 5,
       'src/server/dev/tool.ts': 5,
-      'mobile/apps/gsDirector/Tests/DirectorUnitTests/X.swift': 5,
+      'mobile/apps/tsDirector/Tests/DirectorUnitTests/X.swift': 5,
       'mobile/apps/common/DirectorExport/Tests/DirectorExportTests/Y.swift': 5,
       'mobile/apps/common/DirectorExport/Sources/Z.swift': 5
     }
@@ -260,7 +260,7 @@ describe('the changed-line check', function () {
     expect(run.log.at(-1)).includes('5/5')
     const tests = globPattern('**/Tests/**')
     expect(
-      tests.test('mobile/apps/gsDirector/Tests/DirectorUnitTests/X.swift')
+      tests.test('mobile/apps/tsDirector/Tests/DirectorUnitTests/X.swift')
     ).equals(true)
     expect(
       tests.test(
@@ -375,7 +375,7 @@ function swiftCheck(
       ].join('\n')
     if (file === 'find')
       return [
-        `${reports}/DD/Build/Products/Debug-iphonesimulator/GS Director.app`,
+        `${reports}/DD/Build/Products/Debug-iphonesimulator/TS Director.app`,
         `${reports}/DD/Build/Products/Debug-iphonesimulator/PackageFrameworks/Tally_1_PackageProduct.framework`
       ].join('\n')
     return ''
@@ -534,7 +534,7 @@ describe('the Swift changed-line coverage', function () {
       '-format=lcov',
       '-instr-profile',
       `${TOP}/DD/Build/ProfileData/SIM/Coverage.profdata`,
-      `${TOP}/DD/Build/Products/Debug-iphonesimulator/GS Director.app/GS Director`,
+      `${TOP}/DD/Build/Products/Debug-iphonesimulator/TS Director.app/TS Director`,
       '-object',
       `${TOP}/DD/Build/Products/Debug-iphonesimulator/PackageFrameworks/Tally_1_PackageProduct.framework/Tally_1_PackageProduct`
     ])

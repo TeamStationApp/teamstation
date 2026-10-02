@@ -51,7 +51,7 @@ describe('the pills across a game', function () {
     expect(ids(gameTabs({ game }))).includes('score')
   })
 
-  it('offers it to take up a game GameStation is scoring', function () {
+  it('offers it to take up a game TeamStation is scoring', function () {
     const game = gameWith({
       canScore: true,
       status: 'final',

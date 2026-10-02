@@ -33,7 +33,7 @@ import { teamRoutes } from './teams'
  * list.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_highlights_${Date.now()}`
+const scratchName = `teamstation_highlights_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const ADMIN = 'tok_highlights_admin_0000000000000000'
@@ -93,7 +93,7 @@ describe('the highlight routes', function () {
 
     // No file and no Space, so warming stills after an answer finds nothing
     // to cut and makes no request.
-    const mediaRoot = mkdtempSync(join(tmpdir(), 'gsHighlightRoutes-'))
+    const mediaRoot = mkdtempSync(join(tmpdir(), 'tsHighlightRoutes-'))
     const media: MediaContext = {
       mediaRoot,
       workDir: mediaRoot,

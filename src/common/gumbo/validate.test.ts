@@ -13,7 +13,7 @@ import { type GameState, setupOf } from '../scoring/state'
 import { gumboViolations } from './validate'
 
 /**
- * The reference validator (U22): MLB's own feed and a play GameStation
+ * The reference validator (U22): MLB's own feed and a play TeamStation
  * scored pass it, and each kind of departure from the lists or the feed's
  * shapes is named.
  */
@@ -117,7 +117,7 @@ describe('the reference validator (U22)', function () {
       expect(gumboViolations(play), `play ${i}`).deep.equals([])
   })
 
-  it('passes every play GameStation scored, and the at-bat in progress', function () {
+  it('passes every play TeamStation scored, and the at-bat in progress', function () {
     const { state, plays } = scored()
     expect(plays.map(play => play.result.eventType)).deep.equals([
       'single',
@@ -241,7 +241,7 @@ describe('the reference validator (U22)', function () {
       'matchup matchup.pitchHand'
     ])
 
-    // A GameStation play carries every runner key; each is the feed's kind.
+    // A TeamStation play carries every runner key; each is the feed's kind.
     const runnerShape = copy(double) as Record<string, unknown>
     const runners = runnerShape.runners as Json[]
     const movement = runners[0].movement as Record<string, unknown>
@@ -356,7 +356,7 @@ describe('the reference validator (U22)', function () {
     ])
 
     // Hit data names a listed trajectory, fielders, a spray-chart point, a
-    // launch angle in degrees and a distance in feet, and GameStation writes
+    // launch angle in degrees and a distance in feet, and TeamStation writes
     // no measurement it only estimated.
     const hit = copy(single) as Record<string, unknown>
     const inPlay = (hit.playEvents as Array<Record<string, unknown>>).find(
@@ -423,7 +423,7 @@ describe('the reference validator (U22)', function () {
     expect(withData('fast')).deep.equals([
       `pitchData playEvents[${at}].pitchData`
     ])
-    // GameStation measures nothing, so its plays carry no coordinates.
+    // TeamStation measures nothing, so its plays carry no coordinates.
     expect(withData({ zone: 5, coordinates: { pX: 0, pZ: 2 } })).deep.equals([
       `pitchData playEvents[${at}].pitchData.coordinates`
     ])

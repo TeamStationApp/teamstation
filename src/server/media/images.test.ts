@@ -21,7 +21,7 @@ import {
 } from './images'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.GS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
 
 /** A picture that is not square, so cropping and padding tell themselves apart. */
 async function makeSource(
@@ -56,7 +56,7 @@ describe('stored images', function () {
   let dir = ''
 
   before(async function () {
-    dir = await mkdtemp(join(tmpdir(), 'gsImageTest-'))
+    dir = await mkdtemp(join(tmpdir(), 'tsImageTest-'))
   })
 
   after(async function () {
@@ -152,7 +152,7 @@ describe('stored images', function () {
     let space = {
       endpoint: '',
       region: 'sfo3',
-      bucket: 'gamestation-media',
+      bucket: 'teamstation-media',
       accessKeyId: 'AKIAEXAMPLE000000000',
       secretAccessKey: 'secret',
       pathStyle: true
@@ -259,7 +259,7 @@ describe('stored images', function () {
         body: Buffer.from('bytes'),
         contentType: 'image/png'
       })
-      const path = '/gamestation-media/images/team/tem_1/abcd1234-96.png'
+      const path = '/teamstation-media/images/team/tem_1/abcd1234-96.png'
       expect(written.get(path)?.toString()).equals('bytes')
     })
 
@@ -277,7 +277,7 @@ describe('stored images', function () {
         contentType: 'video/mp4'
       })
 
-      const path = '/gamestation-media/videos/vid_1/video.mp4'
+      const path = '/teamstation-media/videos/vid_1/video.mp4'
       expect(written.get(path)?.length, 'every byte arrived').equals(
         bytes.length
       )
@@ -333,7 +333,7 @@ describe('stored images', function () {
         partSize: 5 * 1024 * 1024
       })
 
-      const path = '/gamestation-media/videos/vid_big/video.mp4'
+      const path = '/teamstation-media/videos/vid_big/video.mp4'
       expect(written.get(path)?.length, 'every byte arrived').equals(
         bytes.length
       )
@@ -360,7 +360,7 @@ describe('stored images', function () {
       }
       expect(message).contains('400')
       expect(aborted).includes(
-        '/gamestation-media/videos/vid_fail-part/video.mp4'
+        '/teamstation-media/videos/vid_fail-part/video.mp4'
       )
     })
 
@@ -377,7 +377,7 @@ describe('stored images', function () {
       expect(stored?.pathPrefix).contains('images/user/usr_7/')
       for (const size of IMAGE_SIZES) {
         const key = imageKey(stored?.pathPrefix ?? '', size)
-        expect(written.has(`/gamestation-media/${key}`), key).equals(true)
+        expect(written.has(`/teamstation-media/${key}`), key).equals(true)
       }
     })
 

@@ -38,9 +38,9 @@ export interface EventRouteOptions {
  *
  * `source.system` is `gamestation`, `manual`, or an outside system spelled as
  * an external id's system is, stored as `external`. A post that names none
- * counts as an outside one, so that a sender has to say it is GameStation's
+ * counts as an outside one, so that a sender has to say it is TeamStation's
  * own before it may write a game
- * GameStation scores or have its play text kept.
+ * TeamStation scores or have its play text kept.
  *
  * A replace post whose plays carry both teams' scores sets the game `final`,
  * with the last score each side's plays carry, and a final game refuses every
@@ -48,14 +48,14 @@ export interface EventRouteOptions {
  * that a scheduled game with plays is `inProgress`. A cancelled game stays
  * cancelled.
  *
- * A `live` post is a game being scored in GameStation, a play at a time. Its
+ * A `live` post is a game being scored in TeamStation, a play at a time. Its
  * plays are written in place at their index, keeping each row's id; exactly
  * the indexes in `remove` are deleted; and `currentPlay`, when the body has
  * the key, is the at-bat in progress, kept on the game rather than as a row.
  * The game is `final` when a stored play is its `final_score`, `inProgress`
  * while it has plays or an at-bat in progress, and a cancelled game stays
  * cancelled. The scorer is the record, so a live post never marks a score
- * mismatch. The owning GameStation scorer may post to a final game to
+ * mismatch. The owning TeamStation scorer may post to a final game to
  * correct it; nobody else may.
  *
  * The write itself is `postGamePlays` in `events/postPlays.ts`, which the

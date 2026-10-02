@@ -22,26 +22,26 @@ const LIVE = {
 
 describe('stream keys', function () {
   it('seals a secret and reads it back', function () {
-    const sealed = sealSecret(SECRET, 'gs_hello')
-    expect(sealed).does.not.contain('gs_hello')
-    expect(openSecret(SECRET, sealed)).equals('gs_hello')
+    const sealed = sealSecret(SECRET, 'ts_hello')
+    expect(sealed).does.not.contain('ts_hello')
+    expect(openSecret(SECRET, sealed)).equals('ts_hello')
   })
 
   it('will not open a seal with the wrong secret', function () {
-    const sealed = sealSecret(SECRET, 'gs_hello')
+    const sealed = sealSecret(SECRET, 'ts_hello')
     expect(() => openSecret('another-secret', sealed)).throws()
   })
 
   it('will not open a seal somebody has edited', function () {
-    const sealed = sealSecret(SECRET, 'gs_hello')
+    const sealed = sealSecret(SECRET, 'ts_hello')
     const parts = sealed.split('.')
-    parts[3] = Buffer.from('gs_theirs').toString('base64url')
+    parts[3] = Buffer.from('ts_theirs').toString('base64url')
     expect(() => openSecret(SECRET, parts.join('.'))).throws()
   })
 
   it('makes a key that says nothing about the game', function () {
     const key = makeStreamKey()
-    expect(key.startsWith('gs_')).equals(true)
+    expect(key.startsWith('ts_')).equals(true)
     expect(key.length).equals(25)
     expect(makeStreamKey()).does.not.equal(key)
   })
@@ -55,8 +55,8 @@ describe('stream keys', function () {
   })
 
   it('prints the URL people paste, key and all', function () {
-    expect(streamUrlFor(LIVE, 'live.example.com', 'gs_abc')).equals(
-      'rtmp://live.example.com:1936/live/gs_abc'
+    expect(streamUrlFor(LIVE, 'live.example.com', 'ts_abc')).equals(
+      'rtmp://live.example.com:1936/live/ts_abc'
     )
   })
 
@@ -65,8 +65,8 @@ describe('stream keys', function () {
     // is built from the name this deployment goes by — the same name the
     // playback links are built from.
     expect(LIVE.bindHost).equals('0.0.0.0')
-    expect(liveBaseUrl(LIVE, 'develop2.gamestation.co')).equals(
-      'rtmp://develop2.gamestation.co:1936'
+    expect(liveBaseUrl(LIVE, 'develop2.teamstation.app')).equals(
+      'rtmp://develop2.teamstation.app:1936'
     )
   })
 

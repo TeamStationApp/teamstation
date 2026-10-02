@@ -22,7 +22,7 @@ export interface ResolvedOpponent {
 }
 
 /**
- * The GameStation team a schedule means by an opponent's name.
+ * The TeamStation team a schedule means by an opponent's name.
  *
  * A schedule names its opponent only by a name, and different teams write the
  * same club differently, so this rule lands every schedule's fixtures on the

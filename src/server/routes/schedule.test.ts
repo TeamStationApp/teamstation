@@ -26,7 +26,7 @@ import { scheduleRoutes } from './schedule'
  */
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_schedule_route_${Date.now()}`
+const scratchName = `teamstation_schedule_route_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const PEOPLE = [

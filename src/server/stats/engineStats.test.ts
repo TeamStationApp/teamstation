@@ -37,7 +37,7 @@ import {
 } from './gumboStats'
 
 /**
- * A game scored in GameStation builds stat lines: the engine's plays, folded
+ * A game scored in TeamStation builds stat lines: the engine's plays, folded
  * into the documents the server stores, go straight into the stats builder.
  * The visitors are users 101-109 batting in order; the home pitcher is 201.
  */
@@ -90,7 +90,7 @@ const home = (runner: number, reason?: 'Wild Pitch'): ScoringAction =>
         advances: [{ runner, to: 'home' }]
       }
 
-describe('a game scored in GameStation builds stats (U10)', function () {
+describe('a game scored in TeamStation builds stats (U10)', function () {
   it('a single, a run on a double, and a strikeout', function () {
     const plays = scored(
       ...hit('single'),

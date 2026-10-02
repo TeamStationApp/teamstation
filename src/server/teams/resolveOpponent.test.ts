@@ -15,7 +15,7 @@ import { resolveOpponent } from './resolveOpponent'
 // team for the same schedule.
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_opponent_${Date.now()}`
+const scratchName = `teamstation_opponent_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 describe('resolving an opponent by name', function () {

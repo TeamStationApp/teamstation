@@ -73,7 +73,7 @@ const palette = {
 /** 16 logical pixels is one comfortable line, as on the web generally. */
 const rem = (size: number): number => size * 16
 
-export const gsBallpark: Theme = {
+export const tsBallpark: Theme = {
   rem,
   isDark: false,
 

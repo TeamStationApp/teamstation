@@ -17,7 +17,7 @@ import {
 } from '../common/primaryUrl'
 
 export const asServerConfig = asObject({
-  /** Where the API listens. Caddy proxies gamestation.co to this. */
+  /** Where the API listens. Caddy proxies app.teamstation.app to this. */
   listenHost: asOptional(asString, '127.0.0.1'),
   listenPort: asOptional(asNumber, 9100),
 
@@ -35,7 +35,7 @@ export const asServerConfig = asObject({
    */
   statsBuilder: asOptional(asBoolean, true),
 
-  /** Postgres for GameStation's own data. */
+  /** Postgres for TeamStation's own data. */
   databaseUrl: asOptional(
     asString,
     'postgres://localhost:5432/teamstation_dev'
@@ -43,7 +43,7 @@ export const asServerConfig = asObject({
 
   /**
    * PeerTube's database, read-only, used only by the importer. Empty until
-   * the `gamestation_peertube_ro` role exists on the production host.
+   * the `teamstation_peertube_ro` role exists on the production host.
    */
   peertubeDatabaseUrl: asOptional(asString, ''),
 
@@ -107,7 +107,7 @@ export const asServerConfig = asObject({
       user: asOptional(asString, ''),
       password: asOptional(asString, ''),
       fromAddress: asOptional(asString, ''),
-      fromName: asOptional(asString, 'GameStation')
+      fromName: asOptional(asString, 'TeamStation')
     }),
     {
       host: '',
@@ -116,7 +116,7 @@ export const asServerConfig = asObject({
       user: '',
       password: '',
       fromAddress: '',
-      fromName: 'GameStation'
+      fromName: 'TeamStation'
     }
   ),
 
@@ -129,7 +129,7 @@ export const asServerConfig = asObject({
   /**
    * What this deployment is called, where that is not `PRIMARY_HOST`.
    *
-   * A **host**, with no scheme: `develop2.gamestation.co`, `127.0.0.1:9100`.
+   * A **host**, with no scheme: `develop2.teamstation.app`, `127.0.0.1:9100`.
    * `https` is implied, except for an IP address or `localhost`, which imply
    * `http`; the stream URL is built from the same name. Every link this
    * server hands out — playback, invites, sign-in, RTMP — is built from it.
@@ -170,7 +170,7 @@ export const asServerConfig = asObject({
 
   /**
    * Redis, which holds every game's scoreboard and carries its changes from
-   * worker to worker. Empty `prefix` means `gs:<database name>`, so seats
+   * worker to worker. Empty `prefix` means `ts:<database name>`, so seats
    * that share one Redis, each with its own database, never meet.
    *
    * `caFile` is the certificate authority to check TLS against: the managed

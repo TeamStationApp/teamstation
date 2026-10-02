@@ -5,12 +5,12 @@ import { readdirSync, readFileSync, writeFileSync } from 'fs'
 /**
  * The RTMP ingest, and the split.
  *
- * One stream arrives — from GS Director, or from anything else that was given
- * the URL — and goes into GameStation's own HLS on this machine, and on to any
+ * One stream arrives — from TS Director, or from anything else that was given
+ * the URL — and goes into TeamStation's own HLS on this machine, and on to any
  * further RTMP destination it is given. Every leg is `-c copy`, so nothing is
  * ever re-encoded and whatever the Director sent is what everybody receives.
  *
- * The process handling here is the splitter GameStation 1.0 has been running
+ * The process handling here is the splitter TeamStation 1.0 has been running
  * for a year (`src/server/rtmp/splitter.ts` at 25f9496e), brought across deliberately
  * unchanged in the parts that look strange. Every one of them is a production
  * failure that was paid for once: ffmpeg children Node reports as exited while
@@ -336,7 +336,7 @@ function makeOutput(
 
 function outputsFor(spec: LiveSpec): OutputRuntime[] {
   const outputs = [
-    makeOutput('hls', `${spec.hlsDir}/${LIVE_PLAYLIST_NAME}`, 'GameStation')
+    makeOutput('hls', `${spec.hlsDir}/${LIVE_PLAYLIST_NAME}`, 'TeamStation')
   ]
   for (const url of spec.destinations) {
     outputs.push(makeOutput('rtmp', url, hideKey(url)))
@@ -1110,7 +1110,7 @@ function pollSampler(): void {
 /**
  * Why a stream is not one we can take, or `null` when it is.
  *
- * GameStation stores HEVC and nothing else, and both legs of the split are a
+ * TeamStation stores HEVC and nothing else, and both legs of the split are a
  * copy — so a stream in the wrong codec cannot be salvaged downstream, and the
  * only kind thing to do is say so at once rather than record something no
  * browser here will play.
@@ -1122,9 +1122,9 @@ export function codecRefusal(
   const name = codecName(codec)
   if (name === 'hvc1' || name === 'hev1') return null
   if (name === 'avc1') {
-    return 'GameStation takes HEVC. This stream is H.264 — change the encoder to HEVC and start it again.'
+    return 'TeamStation takes HEVC. This stream is H.264 — change the encoder to HEVC and start it again.'
   }
-  return `GameStation takes HEVC. This stream is ${name}, which it cannot store.`
+  return `TeamStation takes HEVC. This stream is ${name}, which it cannot store.`
 }
 
 /**
@@ -1218,7 +1218,7 @@ function refuse(
 /**
  * The key, however the encoder spelled the address.
  *
- * GS Director and ffmpeg publish to `rtmp://host:1936/live/<key>`, which
+ * TS Director and ffmpeg publish to `rtmp://host:1936/live/<key>`, which
  * arrives as the app `live` and the stream `<key>`. Streaming software that
  * asks for a **server** and a **key** in two boxes — OBS, most of them —
  * leaves somebody who was handed one URL pasting the whole thing into the

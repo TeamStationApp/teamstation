@@ -8,9 +8,9 @@ import {
   BaseballScreen,
   type BaseballScreenProps
 } from '../field/BaseballScreen'
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { OutcomeControls } from './OutcomeControls'
 import { CORRECTION_WINDOW_MS } from './scoringTypes'
 
@@ -22,7 +22,7 @@ const style = (element: Element): CSSStyleDeclaration =>
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
   })
   root = undefined
 })
@@ -78,7 +78,7 @@ describe('scoring UI updates', () => {
     }
     await render({})
     expect(node('Bottom Finish at-bat')).equals(null)
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       await act(async () => {
         changeTheme(theme)
       })
@@ -110,7 +110,7 @@ describe('scoring UI updates', () => {
         bottom.click()
         node('Finish at-bat')!.click()
       })
-      expect(finishes).equals(theme === gsBallpark ? 2 : 4)
+      expect(finishes).equals(theme === tsBallpark ? 2 : 4)
       for (const [label, color, text] of [
         ['Ball', 'rgb(15, 92, 59)', 'rgb(255, 255, 255)'],
         ['Called Strike', 'rgb(146, 64, 14)', 'rgb(255, 255, 255)'],

@@ -30,7 +30,7 @@ import { mediaRoutes } from './media'
  * every one of those three is a place the rule could be lost.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_liveroutes_${Date.now()}`
+const scratchName = `teamstation_liveroutes_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const MANAGER = 'tok_manager_000000000000000000000'
@@ -109,7 +109,7 @@ describe('a game’s stream key over the API', function () {
       '/api/v1',
       mediaRoutes(db, {
         ffmpegPath: '/usr/bin/ffmpeg',
-        mediaRoot: '/tmp/gsLiveRoutesMedia',
+        mediaRoot: '/tmp/tsLiveRoutesMedia',
         mediaSecret: 'm'.repeat(32),
         publicUrl: 'http://127.0.0.1',
         space: {
@@ -120,7 +120,7 @@ describe('a game’s stream key over the API', function () {
           secretAccessKey: '',
           pathStyle: false
         },
-        workDir: '/tmp/gsLiveRoutesWork'
+        workDir: '/tmp/tsLiveRoutesWork'
       })
     )
     app.use(errorHandler)
@@ -294,7 +294,7 @@ describe('a game’s stream key over the API', function () {
     const url = String(made.body.url)
     // One field, one paste: the whole address, key and all, the way
     // other services print theirs.
-    expect(url.startsWith('rtmp://live.example:1936/live/gs_')).equals(true)
+    expect(url.startsWith('rtmp://live.example:1936/live/ts_')).equals(true)
     expect(made.body.label).equals('Camera 1')
     expect(made.body.ownerName).equals('Casey Manager')
 
@@ -312,7 +312,7 @@ describe('a game’s stream key over the API', function () {
     expect(list.mine[0].url, 'no key in an answer nobody asked for').equals(
       undefined
     )
-    expect(String(list.mine[0].keyPrefix).startsWith('gs_')).equals(true)
+    expect(String(list.mine[0].keyPrefix).startsWith('ts_')).equals(true)
   })
 
   it('gives each person their own key for the same game', async function () {
@@ -334,7 +334,7 @@ describe('a game’s stream key over the API', function () {
     // Theirs is named, and only named.
     expect(list.others[0].ownerName).equals('Casey Manager')
     expect(list.others[0].url).equals(undefined)
-    expect(String(list.others[0].keyPrefix).startsWith('gs_')).equals(true)
+    expect(String(list.others[0].keyPrefix).startsWith('ts_')).equals(true)
   })
 
   it('will not show one person another person’s key', async function () {
@@ -773,7 +773,7 @@ describe('a game’s stream key over the API', function () {
       expect(live.length).equals(1)
       expect(live[0].videoId).equals('vid_onNow')
       expect(live[0].homeTeamName).equals('Demo Home')
-      expect(JSON.stringify(live[0])).does.not.contain('gs_')
+      expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
   })
 })

@@ -10,7 +10,7 @@ import { clearFragmentCache, fetchSpaceFrame, fragmentAt } from './spaceFrames'
 const SPACE = {
   endpoint: 'https://sfo3.digitaloceanspaces.com',
   region: 'sfo3',
-  bucket: 'gamestation-media',
+  bucket: 'teamstation-media',
   accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
   secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
 }
@@ -107,7 +107,7 @@ video.mp4
 })
 
 describe('fetching one fragment out of the Space', function () {
-  const workDir = join(tmpdir(), `gsFrames-${process.pid}`)
+  const workDir = join(tmpdir(), `tsFrames-${process.pid}`)
   const object = Buffer.alloc(11402)
   // Marked so the assembled file can be checked byte for byte.
   object.fill(0xaa, 0, 1402)

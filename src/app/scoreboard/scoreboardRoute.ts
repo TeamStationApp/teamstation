@@ -1,7 +1,7 @@
 /**
  * The two scoreboard pages, which are not screens of the app.
  *
- * `/scoreboard/<gameId>` is the live board, with no sign-in, for OBS or GS
+ * `/scoreboard/<gameId>` is the live board, with no sign-in, for OBS or TS
  * Director to draw over video; `?quiet=1` draws nothing, rather than the
  * branded 404, once the board has closed, which is what a programme wants.
  * `/scoreboard-sample` is the same box with fixed demo values, for placing it.

@@ -1,8 +1,8 @@
 import type {
   GameDetail,
-  GameStationClient,
   Lineup,
-  RosterEntry
+  RosterEntry,
+  TeamStationClient
 } from '../../common/api'
 import {
   type EventStore,
@@ -46,7 +46,7 @@ function context(
  * side starts from its roster.
  */
 async function defaultsOf(
-  client: GameStationClient,
+  client: TeamStationClient,
   game: GameDetail
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> =>
@@ -64,7 +64,7 @@ async function defaultsOf(
 /** Scores into the server's copy of the game as it is played. */
 export class ServerScoringSource implements ScoringSource {
   readonly persistent = true
-  constructor(private readonly client: GameStationClient) {}
+  constructor(private readonly client: TeamStationClient) {}
 
   async open(
     game: GameDetail,

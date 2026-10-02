@@ -148,7 +148,7 @@ export class ScoringSession {
   private postedCurrent: string | null = null
   /** Indexes of plays this session scored that the server holds. */
   private readonly stored = new Set<number>()
-  /** Plays GameStation did not score, which it never writes or removes. */
+  /** Plays TeamStation did not score, which it never writes or removes. */
   private readonly derivedIndexes = new Set<number>()
   private readonly listeners = new Set<() => void>()
   private running: Promise<void> | null = null

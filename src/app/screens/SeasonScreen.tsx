@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
-  GameStationClient,
   SeasonGame,
   SeasonSummary,
   StandingsRow,
+  TeamStationClient,
   TeamSummary
 } from '../../common/api'
 import {
@@ -34,7 +34,7 @@ import {
 import { gamesFor, type When } from './whenFilter'
 
 export interface SeasonScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   season: SeasonSummary
   onOpenGame: (
     gameId: string,

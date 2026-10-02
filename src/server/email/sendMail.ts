@@ -58,14 +58,14 @@ export async function sendSignInCode(
         ? smtp.fromAddress
         : `${smtp.fromName} <${smtp.fromAddress}>`,
     to,
-    subject: `${code} is your GameStation sign-in code`,
+    subject: `${code} is your TeamStation sign-in code`,
     // The code is in the subject as well as the body: on a phone that is
     // often all somebody needs to see, without opening anything.
     text: [
       ...(link == null
         ? []
         : ['Tap to sign in:', link, '', 'Or type the code instead.', '']),
-      `Your GameStation sign-in code is ${code}.`,
+      `Your TeamStation sign-in code is ${code}.`,
       '',
       'It is good for the next 15 minutes and can be used once.',
       '',
@@ -110,7 +110,7 @@ export async function sendInvitation(
     to,
     subject: `${invitedBy} has invited you to watch ${scopeName}`,
     text: [
-      `${invitedBy} has invited you to watch ${scopeName} on GameStation.`,
+      `${invitedBy} has invited you to watch ${scopeName} on TeamStation.`,
       '',
       'Open this to accept:',
       link,
@@ -120,7 +120,7 @@ export async function sendInvitation(
     ].join('\n'),
     html: [
       `<p><strong>${invitedBy}</strong> has invited you to watch`,
-      `<strong>${scopeName}</strong> on GameStation.</p>`,
+      `<strong>${scopeName}</strong> on TeamStation.</p>`,
       inviteButton(link),
       '<p style="color:#666">You will be asked for your name and e-mail',
       'address, and sent a code to prove the address is yours.</p>'
@@ -146,7 +146,7 @@ function signInButton(link: string): string {
     '<tr><td align="center" bgcolor="#334423" style="border-radius:8px">',
     `<a href="${link}" style="display:inline-block;padding:14px 28px;`,
     'font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;',
-    'color:#ffffff;text-decoration:none">Sign in to GameStation</a>',
+    'color:#ffffff;text-decoration:none">Sign in to TeamStation</a>',
     '</td></tr></table>',
     `<p style="color:#666;font-size:12px">Or paste this address: ${link}</p>`
   ].join('')

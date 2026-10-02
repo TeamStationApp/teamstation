@@ -12,7 +12,7 @@ import {
 const SPACE = {
   endpoint: 'https://sfo3.digitaloceanspaces.com',
   region: 'sfo3',
-  bucket: 'gamestation-media',
+  bucket: 'teamstation-media',
   accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
   secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
 }
@@ -98,7 +98,7 @@ describe('serving HLS out of a Space', function () {
     expect(await cache.get('vid_abc', 'video.m3u8')).equals(MEDIA_PLAYLIST)
     expect(calls).equals(1)
     expect(lastUrl).contains(
-      'https://gamestation-media.sfo3.digitaloceanspaces.com/videos/vid_abc/video.m3u8?'
+      'https://teamstation-media.sfo3.digitaloceanspaces.com/videos/vid_abc/video.m3u8?'
     )
     expect(lastUrl).contains('X-Amz-Signature=')
   })

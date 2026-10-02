@@ -480,7 +480,7 @@ describe('MLB names and outs on the result (U16)', function () {
     }
     expect(MLB_EVENT_TYPES.has('field_out')).equals(true)
     // A legacy code by its listed name, the extensions in MLB's style, and
-    // an unknown type as GameStation names it.
+    // an unknown type as TeamStation names it.
     expect(
       [
         'catcher_interference',

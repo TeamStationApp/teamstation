@@ -1339,7 +1339,7 @@ const ORDERED_SUBSTITUTIONS: ReadonlySet<string> = new Set([
  * position, and the announcement. A pinch hitter and a defensive switch also
  * carry the player's place in the order and the player he replaced; a
  * pitching change and a defensive substitution carry neither, as in the feed.
- * A change of batting order alone is GameStation's own `gs_batting_order`.
+ * A change of batting order alone is TeamStation's own `gs_batting_order`.
  * A change to a side's fielders made while it bats is written where the feed
  * writes it, as the net change at the start of the first play that side
  * fields (`takingTheField`), and a man put in the order where he first

@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   asVideoSummary,
-  GameStationClient,
+  TeamStationClient,
   type VideoSummary
 } from '../../../common/api'
 import { ThemeProvider } from '../../theme/ThemeContext'
@@ -84,7 +84,7 @@ async function grid(
   tiles: Record<string, FakeTile>
   changes: Array<{ order?: string[] }>
 }> {
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.playback = async (id: string) => ({
     videoId: id,
     storage: 'spaces',

@@ -1,13 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { backdropOf } from './glassBackdrop'
 
 describe('glass backdrop on Android', function () {
   it('reads the web backdrop-filter as a radius and a saturation', function () {
-    for (const theme of [gsBallpark, gsDark])
+    for (const theme of [tsBallpark, tsDark])
       expect(backdropOf(theme.glassBlur)).deep.equals({
         radius: 24,
         saturation: 2

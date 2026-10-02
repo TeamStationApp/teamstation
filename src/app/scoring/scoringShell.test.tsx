@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { GameStationClient } from '../../common/api'
+import { TeamStationClient } from '../../common/api'
 import { App, stackFor } from '../App'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { StandaloneField } from '../field/StandaloneField'
@@ -150,7 +150,7 @@ describe('scoring shell and exit', function () {
     expect(currentRoute().name).equals('game')
   })
   it('has a visible failure exit, retries the load, and ignores a late response after unmount', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     let loads = 0
     client.game = async () => {
       loads++
@@ -174,7 +174,7 @@ describe('scoring shell and exit', function () {
     expect(exits).equals(1)
   })
   it('warns on dirty exit and document unload, while Undo clears the warning', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
     let exits = 0
     // Save the host method solely for restoration.
@@ -387,7 +387,7 @@ describe('scoring shell and exit', function () {
         headers: { 'Content-Type': 'application/json' }
       })
     }
-    const client = new GameStationClient({ baseUrl: 'http://api.test' })
+    const client = new TeamStationClient({ baseUrl: 'http://api.test' })
     const listeners = new Set<(state: PlaybackState) => void>()
     const played: string[] = []
     const stops: number[] = []

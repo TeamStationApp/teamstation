@@ -6,9 +6,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AccessibilityInfo } from 'react-native'
 
 import { GuidanceDetail } from '../scoring/GuidanceDetail'
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { useMotionPreference } from './useMotionPreference'
 
 const query = AccessibilityInfo.isReduceMotionEnabled
@@ -44,7 +44,7 @@ function Probe(): React.ReactElement {
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
   })
   root = undefined
   AccessibilityInfo.isReduceMotionEnabled = query
@@ -99,7 +99,7 @@ describe('live motion preference and guidance shadow', () => {
     this.timeout(5000)
     observe()
     AccessibilityInfo.isReduceMotionEnabled = async () => false
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       await act(async () => {
         changeTheme(theme)
       })

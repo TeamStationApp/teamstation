@@ -27,7 +27,7 @@ import { readWalkUpSong, walkUpSongRoutes } from './walkUpSongs'
  * that every change reaches the games the team plays in.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_walkup_${Date.now()}`
+const scratchName = `teamstation_walkup_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const taken = new Set<number>()
@@ -56,7 +56,7 @@ const fixture: WalkUpSong = {
   providerId: 'lf:0123456789abcdef',
   isrc: null,
   title: 'Walkup Fixture',
-  artist: 'GameStation',
+  artist: 'TeamStation',
   album: null,
   artworkUrl: null,
   durationMs: 90000,

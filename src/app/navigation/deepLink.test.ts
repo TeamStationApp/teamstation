@@ -4,7 +4,9 @@ import { routeOfUrl } from './deepLink'
 
 describe('routeOfUrl', function () {
   it('reads the address people actually paste', function () {
-    expect(routeOfUrl('https://gamestation.co/games/g1?t=734')).deep.equals({
+    expect(
+      routeOfUrl('https://app.teamstation.app/games/g1?t=734')
+    ).deep.equals({
       name: 'game',
       gameId: 'g1',
       tab: 'watch',
@@ -18,7 +20,7 @@ describe('routeOfUrl', function () {
     // host. React Native's own `URL` reads it as a host and loses the path,
     // which is why nothing here uses it.
     expect(routeOfUrl('gamestation://games/g1?t=734')).deep.equals(
-      routeOfUrl('https://gamestation.co/games/g1?t=734')
+      routeOfUrl('https://app.teamstation.app/games/g1?t=734')
     )
   })
 
@@ -37,12 +39,12 @@ describe('routeOfUrl', function () {
 
   it('takes a sign-in link out of the mail', function () {
     expect(
-      routeOfUrl('https://gamestation.co/signin/tok123?r=req9')
+      routeOfUrl('https://app.teamstation.app/signin/tok123?r=req9')
     ).deep.equals({ name: 'signInLink', token: 'tok123', requestId: 'req9' })
   })
 
   it('takes an invite link in either form', function () {
-    expect(routeOfUrl('https://gamestation.co/i/tforce26')).deep.equals({
+    expect(routeOfUrl('https://app.teamstation.app/i/tforce26')).deep.equals({
       name: 'join',
       code: 'tforce26'
     })
@@ -53,13 +55,17 @@ describe('routeOfUrl', function () {
   })
 
   it('reads a bare host as home', function () {
-    expect(routeOfUrl('https://gamestation.co')).deep.equals({ name: 'home' })
-    expect(routeOfUrl('https://gamestation.co/')).deep.equals({ name: 'home' })
+    expect(routeOfUrl('https://app.teamstation.app')).deep.equals({
+      name: 'home'
+    })
+    expect(routeOfUrl('https://app.teamstation.app/')).deep.equals({
+      name: 'home'
+    })
   })
 
   it('drops a fragment, which addresses nothing here', function () {
     expect(
-      routeOfUrl('https://gamestation.co/videos?when=all#top')
+      routeOfUrl('https://app.teamstation.app/videos?when=all#top')
     ).deep.equals({ name: 'videos', when: 'all' })
   })
 

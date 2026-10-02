@@ -19,7 +19,7 @@ import { DICTATION_MODEL_NAMES, DICTATION_MODELS } from '../../common/api'
  * actions come back through the screen's reducer and are saved. Nothing is
  * intercepted.
  *
- *   GS_SCORER_PASSWORD=… GS_VIEWER_PASSWORD=… \
+ *   TS_SCORER_PASSWORD=… TS_VIEWER_PASSWORD=… \
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 120000 src/app/scoring/dictationPipeline.e2e.ts
  *
@@ -28,8 +28,8 @@ import { DICTATION_MODEL_NAMES, DICTATION_MODELS } from '../../common/api'
  * `npm run scoring-game` — with the `dictation` block in `serverConfig.json`.
  * Two scenarios need the API started differently, and run only when told:
  *
- *   GS_E2E_DICTATION=providerDown   dictation.baseUrl at an unreachable host (E5)
- *   GS_E2E_DICTATION=off            no dictation block at all (E8)
+ *   TS_E2E_DICTATION=providerDown   dictation.baseUrl at an unreachable host (E5)
+ *   TS_E2E_DICTATION=off            no dictation block at all (E8)
  *
  * The microphone is the page's own `getUserMedia`, replaced with a stream the
  * test plays each clip into once the button is held. Chrome's fake-device
@@ -37,23 +37,23 @@ import { DICTATION_MODEL_NAMES, DICTATION_MODELS } from '../../common/api'
  * them. Everything after the stream — the AudioWorklet, the PCM, the socket,
  * the server, xAI — is the real path.
  */
-const APP = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
-const API = process.env.GS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
-const DATABASE = process.env.GS_E2E_DATABASE ?? 'GameStation_scoringCore'
-const MODE = process.env.GS_E2E_DICTATION ?? 'on'
-const API_LOG = process.env.GS_E2E_API_LOG
+const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
+const DATABASE = process.env.TS_E2E_DATABASE ?? 'TeamStation_scoringCore'
+const MODE = process.env.TS_E2E_DICTATION ?? 'on'
+const API_LOG = process.env.TS_E2E_API_LOG
 const SCORER = {
-  email: process.env.GS_SCORER_EMAIL ?? 'scoring@gamestation.local',
-  password: process.env.GS_SCORER_PASSWORD ?? ''
+  email: process.env.TS_SCORER_EMAIL ?? 'scoring@teamstation.local',
+  password: process.env.TS_SCORER_PASSWORD ?? ''
 }
 const VIEWER = {
-  email: process.env.GS_VIEWER_EMAIL ?? 'viewer@gamestation.local',
-  password: process.env.GS_VIEWER_PASSWORD ?? ''
+  email: process.env.TS_VIEWER_EMAIL ?? 'viewer@teamstation.local',
+  password: process.env.TS_VIEWER_PASSWORD ?? ''
 }
 const CLIPS = resolve('src/app/scoring/fixtures/audio')
 const temp = mkdtempSync(join(tmpdir(), 'dictation-e2e-'))
 const trace = (step: string): void => {
-  if (process.env.GS_E2E_TRACE != null) console.log(`  · ${step}`)
+  if (process.env.TS_E2E_TRACE != null) console.log(`  · ${step}`)
 }
 
 interface Fixture {
@@ -106,7 +106,7 @@ async function signIn(who: {
     body: JSON.stringify(who)
   })
   expect(response.status, `sign in ${who.email}`).equals(200)
-  const match = /gs_session=([^;]+)/.exec(
+  const match = /ts_session=([^;]+)/.exec(
     response.headers.get('set-cookie') ?? ''
   )
   if (match == null) throw new Error('No session cookie')
@@ -118,7 +118,7 @@ interface Stored {
 }
 async function stored(token: string, gameId: string): Promise<Stored> {
   const response = await fetch(`${API}/games/${gameId}/events`, {
-    headers: { cookie: `gs_session=${encodeURIComponent(token)}` }
+    headers: { cookie: `ts_session=${encodeURIComponent(token)}` }
   })
   return (await response.json()) as Stored
 }
@@ -228,7 +228,7 @@ interface Heard {
 async function launch(): Promise<Browser> {
   return await puppeteer.launch({
     headless: true,
-    executablePath: process.env.GS_CHROME_PATH,
+    executablePath: process.env.TS_CHROME_PATH,
     args: [
       '--use-gl=angle',
       '--use-angle=swiftshader',
@@ -312,7 +312,7 @@ async function open(
   })
   await page.setViewport({ width: 1200, height: 900 })
   await browser.defaultBrowserContext().setCookie({
-    name: 'gs_session',
+    name: 'ts_session',
     value: encodeURIComponent(token),
     domain: '127.0.0.1',
     path: '/'
@@ -668,7 +668,7 @@ async function dictate(
   trace(`${clip}: ${JSON.stringify(reply)}`)
   const sent = await heard(page)
   trace(`${clip}: ${sent.audioFrames} audio frames, peak ${sent.audioPeak}`)
-  if (process.env.GS_E2E_TRACE != null) {
+  if (process.env.TS_E2E_TRACE != null) {
     await new Promise(resolve => setTimeout(resolve, 300))
     const shown = await page.evaluate(() => {
       const message = document.querySelector('[aria-label="Dictation message"]')
@@ -709,7 +709,7 @@ describe('dictation, end to end', function () {
   this.timeout(600000)
   before(async function () {
     if (SCORER.password === '' || VIEWER.password === '')
-      throw new Error('Set GS_SCORER_PASSWORD and GS_VIEWER_PASSWORD')
+      throw new Error('Set TS_SCORER_PASSWORD and TS_VIEWER_PASSWORD')
     scorer = await signIn(SCORER)
   })
   after(function () {

@@ -5,7 +5,7 @@
 //   node scripts/game-socket-listen.mjs --api http://127.0.0.1:9120/api/v1 \
 //     --email m@example.com --password '...' --game gam_g2 [--game ...]
 //
-// Signs in with --email and --password (or uses --token, or GS_TOKEN), then
+// Signs in with --email and --password (or uses --token, or TS_TOKEN), then
 // subscribes through the app's own client, `src/common/gameSocket.ts`, so a
 // dropped connection reconnects, subscribes again and prints the `resync` the
 // screens would get. --no-token connects with no credentials at all, and
@@ -41,7 +41,7 @@ const print = line => {
 
 async function signIn() {
   if (values['no-token']) return undefined
-  const token = values.token ?? process.env.GS_TOKEN
+  const token = values.token ?? process.env.TS_TOKEN
   if (token != null) return token
   if (values.email == null || values.password == null) {
     throw new Error('Give --email and --password, --token, or --no-token')

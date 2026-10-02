@@ -3,10 +3,10 @@ import { Text, View } from 'react-native'
 
 import type {
   BattingRow,
-  GameStationClient,
   GameSummary,
   RosterEntry,
   StandingsRow,
+  TeamStationClient,
   TeamSummary
 } from '../../common/api'
 import {
@@ -43,7 +43,7 @@ import {
 import { gamesFor } from './whenFilter'
 
 export interface TeamScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   team: TeamSummary
   /** The gear in the card's corner, for somebody who administers this team. */
   onManage?: () => void

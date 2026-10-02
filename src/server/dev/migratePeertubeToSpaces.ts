@@ -42,7 +42,7 @@ import { slotOf, type VideoRow } from './auditVideos'
  * one stopped. One video at a time.
  *
  * Run it on the droplet. The files are there, and the remux of an 18 GB
- * primary needs the 100 GB disk at `/mnt/gamestation`, not the root volume.
+ * primary needs the 100 GB disk at `/mnt/teamstation`, not the root volume.
  */
 
 /** Same game, or an unattached live whose clock is this close to a primary. */
@@ -58,8 +58,8 @@ export const EQUIVALENT_PRIMARY_MS = 15 * 60 * 1000
  */
 const LOCAL_GRACE_MS = 6 * 3_600_000
 
-/** Remux output. `/mnt/gamestation` has the room; `/tmp` and `workDir` do not. */
-const REMOTE_WORK = '/mnt/gamestation/work/peertube-migrate'
+/** Remux output. `/mnt/teamstation` has the room; `/tmp` and `workDir` do not. */
+const REMOTE_WORK = '/mnt/teamstation/work/peertube-migrate'
 
 export interface LibraryVideo {
   id: string
@@ -207,7 +207,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 function remuxParent(): string {
-  return existsSync('/mnt/gamestation/work')
+  return existsSync('/mnt/teamstation/work')
     ? REMOTE_WORK
     : join(tmpdir(), 'peertube-migrate')
 }

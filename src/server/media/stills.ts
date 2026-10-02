@@ -133,7 +133,7 @@ export async function ensureStill(options: StillOptions): Promise<string> {
 
 async function cutAndKeep(options: StillOptions, key: string): Promise<void> {
   const { ffmpegPath, source, space, atSec, width = 480 } = options
-  const scratch = await mkdtemp(join(tmpdir(), 'gs-still-'))
+  const scratch = await mkdtemp(join(tmpdir(), 'ts-still-'))
   try {
     const frame = await openFrame(source, stillSecond(atSec), scratch)
     if (frame == null) {

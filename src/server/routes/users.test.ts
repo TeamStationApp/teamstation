@@ -27,7 +27,7 @@ import { userRoutes } from './users'
  * and is the one asking when the asker is not the site administrator.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_users_${Date.now()}`
+const scratchName = `teamstation_users_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const ADMIN = 'tok_users_admin_00000000000000000000'

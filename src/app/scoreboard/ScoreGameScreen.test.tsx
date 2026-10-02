@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { type GameDetail, GameStationClient } from '../../common/api'
+import { type GameDetail, TeamStationClient } from '../../common/api'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { COPIED_MS, ScoreGameScreen, siteOrigin } from './ScoreGameScreen'
@@ -46,7 +46,7 @@ async function screen(
   patch: Partial<GameDetail>,
   { origin }: { origin?: string } = { origin: 'https://seat.example' }
 ): Promise<Opened> {
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({ ...gameFixture, canScore: true, ...patch })
   const opened = { full: 0, board: 0 }
   await render(
@@ -211,12 +211,12 @@ describe('the Score Game screen', function () {
       siteOrigin({ window: { location: { origin: 'http://x:1' } } })
     ).equals('http://x:1')
     // A phone has a window and no location.
-    expect(siteOrigin({ window: {} })).equals('https://gamestation.co')
-    expect(siteOrigin({})).equals('https://gamestation.co')
+    expect(siteOrigin({ window: {} })).equals('https://app.teamstation.app')
+    expect(siteOrigin({})).equals('https://app.teamstation.app')
   })
 
   it('shows a spinner while it loads, and the usual not-found state for a game it cannot see', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     let fail: (error: Error) => void = () => undefined
     client.game = async () =>
       await new Promise<GameDetail>((resolve, reject) => {
@@ -240,7 +240,7 @@ describe('the Score Game screen', function () {
   })
 
   it('ignores an answer that arrives after it has gone', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     let answer: (game: GameDetail) => void = () => undefined
     let fail: (error: Error) => void = () => undefined
     let calls = 0

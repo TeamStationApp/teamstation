@@ -17,14 +17,14 @@ export function setNavigationGuard(
 }
 
 function indexOfHistory(): number | undefined {
-  const index: unknown = window.history.state?.gsRouteIndex
+  const index: unknown = window.history.state?.tsRouteIndex
   return typeof index === 'number' ? index : undefined
 }
 
 function initializeHistory(): void {
   position = indexOfHistory() ?? 0
   if (indexOfHistory() == null)
-    window.history.replaceState({ gsRouteIndex: position }, '')
+    window.history.replaceState({ tsRouteIndex: position }, '')
 }
 
 /**
@@ -71,8 +71,8 @@ export function showRoute(route: Route, replace = false): void {
   initializeHistory()
   const path = routePath(route)
   if (path === window.location.pathname + window.location.search) return
-  if (replace) window.history.replaceState({ gsRouteIndex: position }, '', path)
-  else window.history.pushState({ gsRouteIndex: ++position }, '', path)
+  if (replace) window.history.replaceState({ tsRouteIndex: position }, '', path)
+  else window.history.pushState({ tsRouteIndex: ++position }, '', path)
 }
 
 /**

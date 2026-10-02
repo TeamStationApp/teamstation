@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { GameStationClient, VideoSummary } from '../../../common/api'
+import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
 import { SLOW_RATE } from '../slowMotion'
@@ -42,7 +42,7 @@ import type { TileHandle } from './tileHandle'
 export type { TileHandle }
 
 export interface MultiCamProps {
-  client: GameStationClient
+  client: TeamStationClient
   /** Every video of the game, for names and for the strips on the bar. */
   videos: VideoSummary[]
   /** The chosen angles, in quadrant order. */

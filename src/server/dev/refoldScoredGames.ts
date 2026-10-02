@@ -21,7 +21,7 @@ import { contextOf } from '../scoring/replayContext'
 import { serverConfig } from '../serverConfig'
 
 /**
- * Rebuilds every stored play GameStation scored from its own action log, so
+ * Rebuilds every stored play TeamStation scored from its own action log, so
  * each is the document today's engine writes for it.
  *
  *   npm run refold-scored-games -- [--game <id>] [--preview]
@@ -34,7 +34,7 @@ import { serverConfig } from '../serverConfig'
  * record is opened as the scoring screen opens it, and every play it scored,
  * and its at-bat in progress, is folded again. A play is written only when it
  * differs from the stored one other than in what the server writes on it; the
- * write is the same `postGamePlays` a scorer's post makes. Plays GameStation
+ * write is the same `postGamePlays` a scorer's post makes. Plays TeamStation
  * did not score are never touched, so a second run changes nothing. A stored
  * play the log no longer makes — one an undo took back that the old code left
  * behind — is removed, as the scoring screen's own save removes it, through
@@ -63,7 +63,7 @@ export interface RefoldReport {
   skipped: Array<{ gameId: string; problem: string }>
 }
 
-/** Games GameStation scored any of: a play or an at-bat with its record. */
+/** Games TeamStation scored any of: a play or an at-bat with its record. */
 async function scoredGames(db: Kysely<Database>): Promise<string[]> {
   const rows = await sql<{ id: string }>`
     select distinct "gameId" as id from events where gumbo ? 'gameStation'
@@ -267,7 +267,7 @@ export async function refoldGame(
   }
 }
 
-/** Refolds one game, or every game GameStation scored. */
+/** Refolds one game, or every game TeamStation scored. */
 export async function refoldScoredGames(
   db: Kysely<Database>,
   options: { gameId?: string; preview?: boolean } = {}

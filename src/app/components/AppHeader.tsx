@@ -39,7 +39,7 @@ export interface AppHeaderProps {
 /**
  * The bar at the top of every screen, and it says as little as possible.
  *
- * It used to say `GAMESTATION` and then the name of the screen underneath,
+ * It used to say `TEAMSTATION` and then the name of the screen underneath,
  * which on the home screen meant reading the name of the app twice on a screen
  * that already has the mark in the corner. Now: the mark on home only, the
  * screen's name centred where a screen has one to give, and otherwise nothing

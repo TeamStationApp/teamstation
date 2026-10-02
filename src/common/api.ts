@@ -161,7 +161,7 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
-  /** `gamestation` once GameStation scores the game, and nothing else may. */
+  /** `gamestation` once TeamStation scores the game, and nothing else may. */
   scoringOwner: asOptional(
     asNullable(asValue('external' as const, 'gamestation' as const)),
     null
@@ -231,7 +231,7 @@ export const asHighlight = asObject({
   /** One frame of the video at the moment of the play. */
   stillUrl: asString,
   /**
-   * The play in a sentence, for the panel under the video: GameStation's own
+   * The play in a sentence, for the panel under the video: TeamStation's own
    * reading of it, written by the server when it answers. The list draws
    * `title`; only that panel draws this.
    */
@@ -666,7 +666,7 @@ export const asDeletedVideo = asObject({
 export type DeletedVideo = ReturnType<typeof asDeletedVideo>
 
 /**
- * A game GS Director can be pointed at.
+ * A game TS Director can be pointed at.
  *
  * The icons are the two teams' marks, which the picker draws on either side of
  * the row; the names read `<away> at <home>`, the way the game is spoken of.
@@ -1025,7 +1025,7 @@ export const asDjGame = asObject({
 })
 export type DjGame = ReturnType<typeof asDjGame>
 
-export class GameStationClient {
+export class TeamStationClient {
   /** Where the API is, which is also where its sockets are. */
   readonly baseUrl: string
   private readonly doFetch: typeof fetch
@@ -1746,7 +1746,7 @@ export class GameStationClient {
     } catch (caught: unknown) {
       throw new HttpError(
         'offline',
-        'Cannot reach GameStation. Check your connection and try again.'
+        'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
 

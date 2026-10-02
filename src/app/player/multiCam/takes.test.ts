@@ -186,7 +186,7 @@ describe('the four ticked when the picker opens', function () {
     // first. It is another copy of the game rather than an angle of it, so it
     // must not take a quadrant from a camera.
     const withLive = [
-      video('live', 'Bandits vs Lake Murray — GS Director', {
+      video('live', 'Bandits vs Lake Murray — TS Director', {
         durationSec: 5725
       }),
       ...take().filter(one => one.id !== 'mosaic')
@@ -236,7 +236,7 @@ describe('which tile is heard', function () {
     // which the view refuses to start, so the game played in silence.
     const mixed = [
       video('clip', '2026-09-22 a clip', { durationSec: 107 }),
-      video('live', 'Mission Trails at Bandits — GS Director', {
+      video('live', 'Mission Trails at Bandits — TS Director', {
         durationSec: 7057
       })
     ]
@@ -300,7 +300,7 @@ describe('which tile is heard', function () {
         startAt: '2026-09-20T19:15:00.000Z',
         durationSec: 600
       }),
-      video('late live', '2026-09-20 Bandits vs Trosky — GS Director', {
+      video('late live', '2026-09-20 Bandits vs Trosky — TS Director', {
         startAt: '2026-09-20T21:00:00.000Z',
         durationSec: 7057
       })
@@ -320,7 +320,7 @@ describe('which tile is heard', function () {
         startAt: '2026-09-20T19:15:00.000Z',
         durationSec: 26
       }),
-      video('game', '2026-09-20 Bandits vs Trosky — GS Director', {
+      video('game', '2026-09-20 Bandits vs Trosky — TS Director', {
         startAt: '2026-09-20T21:00:00.000Z',
         durationSec: 7057
       })
@@ -341,7 +341,7 @@ describe('which tile is heard', function () {
         startAt: '2026-09-20T19:15:00.000Z',
         durationSec: 26
       }),
-      video('game', '2026-09-20 Bandits vs Trosky — GS Director', {
+      video('game', '2026-09-20 Bandits vs Trosky — TS Director', {
         startAt: '2026-09-20T21:00:00.000Z',
         durationSec: 7057
       })

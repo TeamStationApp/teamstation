@@ -156,13 +156,13 @@ export async function quit(client: ScoreboardClient): Promise<void> {
 
 /**
  * The prefix every key and the channel start with. Empty in the config means
- * `gs:<database name>`, so two seats sharing one Redis, each with its own
+ * `ts:<database name>`, so two seats sharing one Redis, each with its own
  * database, never see each other's scoreboards.
  */
 export function scoreboardPrefix(prefix: string, databaseUrl: string): string {
   if (prefix !== '') return prefix
   const name = decodeURIComponent(new URL(databaseUrl).pathname.slice(1))
-  return `gs:${name}`
+  return `ts:${name}`
 }
 
 /** A stamp the script wrote as a decimal string, read back as a number. */
@@ -280,7 +280,7 @@ export interface ScoreboardStore {
     startAt: number
   ) => Promise<WriteResult>
   /**
-   * The dashboard's Reset Game State: no overrides, and GS Watcher's stored
+   * The dashboard's Reset Game State: no overrides, and TS Watcher's stored
    * state deleted, in one write.
    */
   resetScoreboard: (gameId: string, startAt: number) => Promise<WriteResult>

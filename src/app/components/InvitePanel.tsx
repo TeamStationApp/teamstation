@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import type { GameStationClient, Invite } from '../../common/api'
+import type { Invite, TeamStationClient } from '../../common/api'
 import { lstrings, sprintf } from '../locales/strings'
 import { copyToClipboard } from '../platform/clipboard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -12,7 +12,7 @@ import { SectionHeader } from './SectionHeader'
 import { TextField } from './TextField'
 
 export interface InvitePanelProps {
-  client: GameStationClient
+  client: TeamStationClient
   scopeType: 'league' | 'season' | 'team'
   scopeId: string
   /** What people are being invited to, for the line above the links. */
@@ -26,7 +26,7 @@ export interface InvitePanelProps {
  * decides that and says so in `canInvite`, and everybody else sees nothing
  * rather than a greyed-out row for a thing they cannot do.
  *
- * A link, not an e-mail: GameStation does not know the address of the parent
+ * A link, not an e-mail: TeamStation does not know the address of the parent
  * a coach wants to add, and asking a coach to type twenty of them is how a
  * feature goes unused. The code can be their own wording — `fall26` — because
  * the codes that worked in PeerTube were the ones people could read down a

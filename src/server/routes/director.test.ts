@@ -21,7 +21,7 @@ import { directorRoutes } from './director'
 import { eventListRoutes } from './eventList'
 
 /**
- * The games GS Director is offered, which Paul specified to the row.
+ * The games TS Director is offered, which Paul specified to the row.
  *
  * `GET /events?scope=film` is soonest first, reaching two hours backwards — a
  * game called for one o'clock that somebody starts filming at ten past three
@@ -51,7 +51,7 @@ const media: MediaContext = {
   workDir: '/tmp'
 }
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_director_${Date.now()}`
+const scratchName = `teamstation_director_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const COACH = 'tok_coach_00000000000000000000000'
@@ -78,7 +78,7 @@ const parentId = mintUser()
 const filmerId = mintUser()
 const scorerId = mintUser()
 
-describe('what GS Director is offered', function () {
+describe('what TS Director is offered', function () {
   this.timeout(60000)
 
   let admin: Pool | undefined
@@ -362,7 +362,7 @@ describe('what GS Director is offered', function () {
           user_id: coachId,
           slot,
           key_hash: `hash_cam${slot}`,
-          key_prefix: 'gs_cam',
+          key_prefix: 'ts_cam',
           key_cipher: 'v1.a.b.c',
           state: slot === 2 ? 'publishing' : 'idle',
           opens_at: new Date(now.getTime() - HOUR),
@@ -443,7 +443,7 @@ describe('what GS Director is offered', function () {
     const first = await ask('/director/events/gam_next/claim', COACH, 'POST')
     expect(first.status).equals(200)
     const url = String((first.body as Record<string, unknown>).url)
-    expect(url.startsWith('rtmp://live.example:1936/live/gs_')).equals(true)
+    expect(url.startsWith('rtmp://live.example:1936/live/ts_')).equals(true)
 
     // Every redial claims again; the same game must give the same address.
     const again = await ask('/director/events/gam_next/claim', COACH, 'POST')

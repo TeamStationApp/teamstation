@@ -499,7 +499,7 @@ describe('local scoring sessions', function () {
       '{"help":true,"shown":-4}',
       '{"help":true,"shown":"bad"}'
     ]) {
-      items.set('gamestation:scoring:one:switch-hitter', bad)
+      items.set('teamstation:scoring:one:switch-hitter', bad)
       expect((await preferences.read('one')).shown).equals(0)
     }
     const unavailable = scoringPreferenceStore({
@@ -520,7 +520,7 @@ describe('local scoring sessions', function () {
     })
     expect((await preferences.read('one')).dictationModel).equals('gpt-6-sol')
     items.set(
-      'gamestation:scoring:one:switch-hitter',
+      'teamstation:scoring:one:switch-hitter',
       '{"help":true,"shown":0,"dictationModel":"gpt-4"}'
     )
     expect(await preferences.read('one')).deep.equals({ help: true, shown: 0 })

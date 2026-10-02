@@ -24,7 +24,7 @@ import { meRoutes } from './me'
  * `GET /me/roles`: the roles the signed-in person holds, team by team, which
  * the app reads for the buttons no other answer carries.
  */
-const scratchName = `gamestation_me_${Date.now()}`
+const scratchName = `teamstation_me_${Date.now()}`
 const scratchUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const PEOPLE = ['keeper', 'manager', 'site', 'nobody'] as const

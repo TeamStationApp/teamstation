@@ -28,7 +28,7 @@ import { withAsync } from '../middleware/withErrors'
 import { teamWalkUpSongs } from './walkUpSongs'
 
 /**
- * Lineups, read back out of what GameStation stores.
+ * Lineups, read back out of what TeamStation stores.
  *
  * `GET /teams/:teamId/default-lineup` is the team's default lineup: the
  * starting lineup of the last game scored here that began with a different
@@ -38,13 +38,13 @@ import { teamWalkUpSongs } from './walkUpSongs'
  * `GET /games/:gameId/lineups` is each side's lineups in the game: the one it
  * began with (null until the game has begun), every substitution the stored
  * plays announce, and the lineup as it stands now, including a change not
- * announced yet. A game GameStation did not score, or whose record no longer
+ * announced yet. A game TeamStation did not score, or whose record no longer
  * replays, has only its announced changes. It needs somebody who can see the
  * game; anybody else gets 404.
  *
  * `GET /games/:gameId/dj` is what DJ Game lists: each side's batters in
  * order, with their walk-up songs on that team. The order is the game's own
- * lineup as it stands once GameStation has a record of it (`'lineup'`), the
+ * lineup as it stands once TeamStation has a record of it (`'lineup'`), the
  * team's default before that (`'default'`), and otherwise the team's players
  * by jersey number, then name (`'roster'`). `canEditWalkUp` says whether the
  * caller keeps that team's songs. The same visibility rule as the lineups.

@@ -75,7 +75,7 @@ describe('resuming an upload that was cut off', function () {
 describe('what the disk says has arrived', function () {
   let dir = ''
   beforeEach(async function () {
-    dir = await mkdtemp(join(tmpdir(), 'gsUploadTest-'))
+    dir = await mkdtemp(join(tmpdir(), 'tsUploadTest-'))
   })
   afterEach(async function () {
     await rm(dir, { recursive: true, force: true })
@@ -234,8 +234,8 @@ describe('what an operator is told about a conversion that failed', function () 
   it('keeps the sentence and drops the server’s paths', function () {
     const said = failureToShow(
       new Error(
-        'ffprobe exited 1: /srv/GameStation_multiCamera/uploads/dup_x/whole: Invalid data found when processing input\n' +
-          'Command: /srv/gamestation/bin/ffprobe -v error -show_entries stream=codec_type'
+        'ffprobe exited 1: /srv/TeamStation_multiCamera/uploads/dup_x/whole: Invalid data found when processing input\n' +
+          'Command: /srv/teamstation/bin/ffprobe -v error -show_entries stream=codec_type'
       )
     )
     expect(said).contains('Invalid data found')

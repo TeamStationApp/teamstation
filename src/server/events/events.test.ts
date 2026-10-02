@@ -20,7 +20,7 @@ import { bothPlayedTogether } from './playedTogether'
 import { whyEmpty } from './whyEmpty'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_events_${Date.now()}`
+const scratchName = `teamstation_events_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 describe('scoring events', function () {

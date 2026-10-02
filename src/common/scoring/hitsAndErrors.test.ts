@@ -250,7 +250,7 @@ describe('errors from the credits (U18)', function () {
 
   it('counts each error once: from its credits, or from the type when none is credited', function () {
     const counted = hitsAndErrors([
-      // Scored in GameStation: the error is on the batter's credits.
+      // Scored in TeamStation: the error is on the batter's credits.
       { halfInning: 'top', eventType: 'field_error', errorCredits: 1 },
       // Imported: a batter reached on an error nobody was charged with.
       { halfInning: 'top', eventType: 'field_error' },

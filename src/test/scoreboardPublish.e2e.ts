@@ -12,7 +12,7 @@ import {
 } from '../common/scoreboard'
 
 /**
- * Node clients for a scoreboard's publish and dashboard sockets, as GS
+ * Node clients for a scoreboard's publish and dashboard sockets, as TS
  * Watcher and the override dashboard use them.
  *
  *   node -r sucrase/register src/test/scoreboardPublish.e2e.ts \
@@ -237,7 +237,7 @@ async function storedCheck(
   }
 }
 
-/** Publishes one partial state, as GS Watcher does. */
+/** Publishes one partial state, as TS Watcher does. */
 export async function publish(
   host: string,
   gameId: string,

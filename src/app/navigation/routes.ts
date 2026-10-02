@@ -88,8 +88,8 @@ export type Route =
    * The address PeerTube's invite links already use, kept exactly: the codes
    * on this site were handed out as `tube.gamestation.co/i/tforce26` and are
    * in mailboxes and team sheets that nobody can edit. A screen at the same
-   * path is the only way those keep working the day GameStation takes the
-   * domain over.
+   * path is the only way those keep working: the old host now sends every
+   * path to the same one on `app.teamstation.app`.
    */
   | { name: 'join'; code: string }
   /**

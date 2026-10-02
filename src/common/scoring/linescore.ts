@@ -177,7 +177,7 @@ export interface LineScore {
  * `innings` and `teams` say the same in Gumbo's shape. An inning's runs are
  * the side's `runs` for that half, so they sum to `r` whenever the side has a
  * half. Hits and errors are counted inning by inning, and are null when the
- * game's are. Runners left on base are counted only for a half GameStation
+ * game's are. Runners left on base are counted only for a half TeamStation
  * scored whole (`leftOnBase`), and a side's total is null when any of its
  * innings is, or when there are no innings.
  *
@@ -323,12 +323,12 @@ export function leftOnBase(plays: GumboPlay[]): number | null {
   return left
 }
 
-/** A play GameStation scored, which lists every runner it moved. */
+/** A play TeamStation scored, which lists every runner it moved. */
 function hasRecord(play: GumboPlay): boolean {
   return play.gameStation != null && typeof play.gameStation === 'object'
 }
 
-/** A play GameStation scored, and whose runners no override set by hand. */
+/** A play TeamStation scored, and whose runners no override set by hand. */
 function scoredWhole(play: GumboPlay): boolean {
   if (!hasRecord(play)) return false
   const actions = (play.gameStation as { actions?: unknown }).actions

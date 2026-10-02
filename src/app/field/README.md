@@ -14,7 +14,7 @@ npm run preview.field
 ```
 
 `npm run build.field` creates a static production preview in `dist/`. Serve it
-with an SPA fallback to `index.html`. The compile-time `GS_FIELD_PREVIEW=1` flag
+with an SPA fallback to `index.html`. The compile-time `TS_FIELD_PREVIEW=1` flag
 starts the root URL on `/field` and prevents API/session requests across preview
 navigation, including deep links. Omit the flag (`npm run build.web`) for the
 normal app. No server or database configuration changes are needed.
@@ -28,7 +28,7 @@ independently. Camera presets, zoom, next-base/run-a-play and reset are local.
 
 - `BaseballScreen.tsx`: shared React Native controls and screen state. Mount it
   from another navigator without API, account or theme-specific dependencies
-  beyond the existing GameStation providers.
+  beyond the existing TeamStation providers.
 - `FieldScene.tsx`, `Ballpark.tsx`, `Player.tsx`: React Three Fiber geometry,
   lighting, pointer controls and articulated procedural animation. No fetched
   models, textures, stadium assets, database IDs or external services.

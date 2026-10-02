@@ -24,7 +24,7 @@ import { statsRoutes } from './stats'
 // to the stats engine that writes them.
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_statsroute_${Date.now()}`
+const scratchName = `teamstation_statsroute_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const spring = makeId('season')

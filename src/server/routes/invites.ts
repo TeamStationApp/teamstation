@@ -340,7 +340,7 @@ function shown(
  *
  * `/i/<code>`, which is the address PeerTube's invites already use. Those
  * links are in mailboxes and group chats and printed on team sheets; when
- * GameStation takes the domain over they have to keep working, and the way to
+ * TeamStation takes the domain over they have to keep working, and the way to
  * be sure of that is to serve the same path rather than to redirect from it.
  */
 export function inviteUrl(publicUrl: string | undefined, code: string): string {

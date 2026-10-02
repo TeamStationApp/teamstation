@@ -294,13 +294,13 @@ describe('the walk-up fade setting', function () {
     await store.write({ fadeAppleMusic: false })
     expect(await store.read()).deep.equals({ fadeAppleMusic: false })
     expect([...storage.items.keys()]).deep.equals([
-      'gamestation:walkUp:preferences'
+      'teamstation:walkUp:preferences'
     ])
-    storage.items.set('gamestation:walkUp:preferences', '{broken')
+    storage.items.set('teamstation:walkUp:preferences', '{broken')
     expect(await store.read()).equals(DEFAULT_WALK_UP_PREFERENCES)
-    storage.items.set('gamestation:walkUp:preferences', '7')
+    storage.items.set('teamstation:walkUp:preferences', '7')
     expect(await store.read()).equals(DEFAULT_WALK_UP_PREFERENCES)
-    storage.items.set('gamestation:walkUp:preferences', '{}')
+    storage.items.set('teamstation:walkUp:preferences', '{}')
     expect(await store.read()).deep.equals({ fadeAppleMusic: true })
     const refusing = walkUpPreferenceStore({
       getItem: async () => null,

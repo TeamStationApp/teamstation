@@ -162,7 +162,7 @@ export function lengthFromContentRange(header: string): number | undefined {
 /**
  * Taking a video off the Space.
  *
- * Nothing removed a finished video before: deleting one in GameStation left
+ * Nothing removed a finished video before: deleting one in TeamStation left
  * every byte of it in the bucket, being paid for, for ever. The list is asked
  * for rather than guessed at — a live recording leaves a single-file MP4 and a
  * byte-range playlist, a converted one leaves a directory of segments, and a

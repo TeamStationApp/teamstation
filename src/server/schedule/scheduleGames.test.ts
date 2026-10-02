@@ -17,7 +17,7 @@ import {
 } from './scheduleGames'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_schedule_${Date.now()}`
+const scratchName = `teamstation_schedule_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const SITE: ScheduleRights = {

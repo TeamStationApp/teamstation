@@ -5,7 +5,7 @@ import { type GumboEventType, normalizeEventType } from './gumboEventTypes'
  *
  * The highlighter already writes a line for every credited outcome — `Single:
  * Jensen P`, `Ground out: Jensen P (SS) to Wesley B (1B)`, `Run: Harlow P` —
- * and that wording is shared with the chapter titles GS Distributor writes, so
+ * and that wording is shared with the chapter titles TS Distributor writes, so
  * a play reads the same everywhere. On a player's own page the name is the one
  * thing the reader already knows, and a list that says it back forty times is
  * a list of one name.

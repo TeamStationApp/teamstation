@@ -177,8 +177,8 @@ describe('reading what ffprobe says about a recording', function () {
 
 describe('finding ffprobe', function () {
   it('is the one beside the ffmpeg this server is pinned to', function () {
-    expect(ffprobeBeside('/srv/gamestation/ffmpeg-9.0.1/bin/ffmpeg')).equals(
-      '/srv/gamestation/ffmpeg-9.0.1/bin/ffprobe'
+    expect(ffprobeBeside('/srv/teamstation/ffmpeg-9.0.1/bin/ffmpeg')).equals(
+      '/srv/teamstation/ffmpeg-9.0.1/bin/ffprobe'
     )
   })
 

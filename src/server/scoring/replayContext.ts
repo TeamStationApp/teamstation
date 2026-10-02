@@ -11,8 +11,8 @@ import { fenceDistanceFor } from '../games/fenceDistance'
  * starts from, and the fence the game is played to. Team names and logos are
  * written into no play.
  *
- * Null when no stored play or at-bat carries a GameStation record, so there
- * is nothing GameStation scored to replay.
+ * Null when no stored play or at-bat carries a TeamStation record, so there
+ * is nothing TeamStation scored to replay.
  */
 export async function contextOf(
   db: Kysely<Database>,

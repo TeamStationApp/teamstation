@@ -3,9 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { CORRECTION_INSTRUCTION, InstructionToast } from './InstructionToast'
 import { runnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
@@ -25,7 +25,7 @@ async function render(element: React.ReactElement): Promise<void> {
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
   })
   root = undefined
   host?.remove()
@@ -197,7 +197,7 @@ describe('scoring instruction and completion toast', function () {
     expect(host.textContent).equals('')
   })
   it('renders phase guidance with theme colors, projected bounds and no countdown', async function () {
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       await act(async () => {
         changeTheme(theme)
       })

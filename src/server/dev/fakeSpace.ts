@@ -35,7 +35,7 @@ const space = serverConfig.space
  * game landing on top of the local one it was copied from.
  */
 const spaceDir =
-  process.env.GS_FAKE_SPACE_DIR ?? join(serverConfig.workDir, 'space')
+  process.env.TS_FAKE_SPACE_DIR ?? join(serverConfig.workDir, 'space')
 
 const server = createServer((req, res) => {
   handle(req, res).catch(() => {

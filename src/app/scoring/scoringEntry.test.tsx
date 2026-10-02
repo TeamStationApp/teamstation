@@ -9,7 +9,7 @@ import {
   asBattingRow,
   asPitchingRow,
   asVideoSummary,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import { ScoreGameScreen } from '../scoreboard/ScoreGameScreen'
 import { GameScreen } from '../screens/GameScreen'
@@ -36,7 +36,7 @@ afterEach(async function () {
 })
 describe('actual game scoring entry', function () {
   it('renders Score Game after Box score and Videos, and shows its choices under the pills', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({ ...gameFixture, canScore: true })
     client.teams = async () => []
     await render(<GameScreen client={client} gameId="g1" />)
@@ -61,7 +61,7 @@ describe('actual game scoring entry', function () {
       gameFixture,
       { ...gameFixture, scoringOwner: 'gamestation' as const, homeScore: 1 }
     ]) {
-      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({ ...game, canScore: true })
       let scored = 0
       await render(
@@ -84,7 +84,7 @@ describe('actual game scoring entry', function () {
     }
   })
   it('does not offer scoring for a recorded 0–0 game', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({
       ...gameFixture,
       canScore: true,
@@ -111,7 +111,7 @@ describe('actual game scoring entry', function () {
         awayScore: 1
       }
     ]) {
-      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => game
       client.teams = async () => []
       await render(<GameScreen client={client} gameId="g1" />)
@@ -123,7 +123,7 @@ describe('actual game scoring entry', function () {
       })
     }
     // The same game, seen by its scorekeeper, is scored.
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({
       ...gameFixture,
       canScore: true,
@@ -160,7 +160,7 @@ describe('scoring entry on the phones', function () {
   }
   for (const os of ['ios', 'android'] as const) {
     it(`offers Score Game on ${os}, before DJ Game`, async function () {
-      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({
         ...gameFixture,
         canScore: true,
@@ -186,7 +186,7 @@ describe('scoring entry on the phones', function () {
     })
 
     it(`does not offer Score Game on ${os} to somebody who may not score`, async function () {
-      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({ ...gameFixture, canScore: false })
       client.teams = async () => []
       await renderOn(os, <GameScreen client={client} gameId="g1" />)
@@ -198,7 +198,7 @@ describe('scoring entry on the phones', function () {
 
 describe('game actions preserve box score and videos', function () {
   it('keeps both teams statistics usable beside the new entry', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({
       ...gameFixture,
       linescore: {
@@ -291,7 +291,7 @@ describe('game actions preserve box score and videos', function () {
     )
   })
   it('switches available recordings and returns from the box score at the same moment', async function () {
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     const video = asVideoSummary({
       id: 'v1',
       title: 'Game — Home plate',

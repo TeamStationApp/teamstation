@@ -12,7 +12,7 @@ import { serverConfig } from '../serverConfig'
 // season and a video of the first, and prints tokens so the schedule, roster
 // and video routes can be walked with `curl`.
 //
-// The first game gets three plays, written as GameStation's own, so its line
+// The first game gets three plays, written as TeamStation's own, so its line
 // score and highlights have something to show. The stat rollups stay empty:
 // they are sums of stat lines, and nothing here writes any.
 //

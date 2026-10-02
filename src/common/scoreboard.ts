@@ -13,7 +13,7 @@ import {
  * A game's scoreboard: what it shows, where each part of that comes from, and
  * how long it lasts.
  *
- * This file imports nothing but `cleaners`, so GS Watcher's tests can load it
+ * This file imports nothing but `cleaners`, so TS Watcher's tests can load it
  * beside 1.0's `ScoreState`, which is Watcher's wire format and which these
  * fields match one for one.
  */
@@ -84,10 +84,10 @@ export function mergeScoreboard<T extends ScoreboardUpdate>(
 }
 
 /**
- * The fields the game's own scoring sets, which GS Watcher may report too.
+ * The fields the game's own scoring sets, which TS Watcher may report too.
  *
  * Only a packet carrying one of these makes its source the newer one. A
- * TagOne phone reporting pitch speed, which GameStation's scoring never
+ * TagOne phone reporting pitch speed, which TeamStation's scoring never
  * reports, must not promote a count another source read minutes ago above the
  * count the scorer has just posted.
  */
@@ -312,7 +312,7 @@ export const SAMPLE_SCOREBOARD: ScoreboardState = {
  *
  * It is the size 1.0's scoreboard (`src/client/Scoreboard.tsx` at 25f9496e) drew
  * `SAMPLE_SCOREBOARD` at in a 1920 × 1080 window, 606.53 × 247, rounded up
- * as Director's measure rounds it. GS Director assumes it when it first
+ * as Director's measure rounds it. TS Director assumes it when it first
  * places a scoreboard (`ScoreboardOverlaySource.boardSize`), and measures it
  * on every page.
  */

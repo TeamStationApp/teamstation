@@ -29,10 +29,10 @@ import {
  * E6 to E8 (M2), and E9 by pointing the same file at a seat. E9 is E6 and
  * E7 steps 1–3, the tests whose titles end in `[E9]`.
  *
- *   GS_SCOREBOARD_WEB_URL=http://127.0.0.1:8080 \
- *   GS_API_TEST_URL=http://127.0.0.1:9100/api/v1 \
- *   GS_E2E_DATABASE=GameStation_nativeScoreboard \
- *   GS_E2E_SERVER_LOG=server.log \
+ *   TS_SCOREBOARD_WEB_URL=http://127.0.0.1:8080 \
+ *   TS_API_TEST_URL=http://127.0.0.1:9100/api/v1 \
+ *   TS_E2E_DATABASE=TeamStation_nativeScoreboard \
+ *   TS_E2E_SERVER_LOG=server.log \
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 120000 src/app/scoreboard/scoreboard.e2e.ts
  *
@@ -41,33 +41,33 @@ import {
  * the codes are in the service's journal, pass the tokens instead, and run
  * only the E9 tests, which need no local Redis and change nothing there:
  *
- *   GS_SCOREBOARD_WEB_URL=https://$SEAT_HOST \
- *   GS_API_TEST_URL=https://$SEAT_HOST/api/v1 \
- *   GS_E2E_DATABASE=postgres://localhost:<tunnel>/GameStation_<seat> \
- *   GS_E2E_RUNNER_TOKEN=… GS_E2E_OTHER_TOKEN=… \
+ *   TS_SCOREBOARD_WEB_URL=https://$SEAT_HOST \
+ *   TS_API_TEST_URL=https://$SEAT_HOST/api/v1 \
+ *   TS_E2E_DATABASE=postgres://localhost:<tunnel>/TeamStation_<seat> \
+ *   TS_E2E_RUNNER_TOKEN=… TS_E2E_OTHER_TOKEN=… \
  *     node_modules/.bin/mocha … --fgrep '[E9]' \
  *     src/app/scoreboard/scoreboard.e2e.ts
  *
- * Other settings: GS_CHROME_PATH (the Chrome puppeteer drives),
- * GS_E2E_REDIS_KEY (the key prefix, gs:<database name>), GS_E2E_SHOTS (where
+ * Other settings: TS_CHROME_PATH (the Chrome puppeteer drives),
+ * TS_E2E_REDIS_KEY (the key prefix, gs:<database name>), TS_E2E_SHOTS (where
  * screenshots go, /tmp/nsbShots).
  */
 const WEB = (
-  process.env.GS_SCOREBOARD_WEB_URL ?? 'http://127.0.0.1:8080'
+  process.env.TS_SCOREBOARD_WEB_URL ?? 'http://127.0.0.1:8080'
 ).replace(/\/+$/, '')
 const API = (
-  process.env.GS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
+  process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
 ).replace(/\/+$/, '')
 const HOST = new URL(API).origin
-const DATABASE = process.env.GS_E2E_DATABASE ?? 'GameStation_nativeScoreboard'
+const DATABASE = process.env.TS_E2E_DATABASE ?? 'TeamStation_nativeScoreboard'
 const DATABASE_URL = DATABASE.includes('://')
   ? DATABASE
   : `postgres://localhost:5433/${DATABASE}`
-const SERVER_LOG = process.env.GS_E2E_SERVER_LOG ?? 'server.log'
+const SERVER_LOG = process.env.TS_E2E_SERVER_LOG ?? 'server.log'
 const PREFIX =
-  process.env.GS_E2E_REDIS_KEY ??
-  `gs:${new URL(DATABASE_URL).pathname.slice(1)}`
-const SHOTS = process.env.GS_E2E_SHOTS ?? '/tmp/nsbShots'
+  process.env.TS_E2E_REDIS_KEY ??
+  `ts:${new URL(DATABASE_URL).pathname.slice(1)}`
+const SHOTS = process.env.TS_E2E_SHOTS ?? '/tmp/nsbShots'
 const FIXTURES = join(__dirname, 'fixtures')
 
 /**
@@ -86,7 +86,7 @@ function requireLocal(step: string): void {
 }
 const MEASURE_SCRIPT = join(
   __dirname,
-  '../../../mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/WebOverlayController.swift'
+  '../../../mobile/apps/tsDirector/Packages/DirectorUI/Sources/DirectorUI/WebOverlayController.swift'
 )
 
 const sleep = async (ms: number): Promise<void> => {
@@ -151,8 +151,8 @@ async function seedGroup(): Promise<Group> {
   console.log(`      seeded ${JSON.stringify(games)}`)
   return {
     games,
-    runner: await signIn(RUNNER_EMAIL, 'GS_E2E_RUNNER_TOKEN'),
-    other: await signIn(OTHER_EMAIL, 'GS_E2E_OTHER_TOKEN')
+    runner: await signIn(RUNNER_EMAIL, 'TS_E2E_RUNNER_TOKEN'),
+    other: await signIn(OTHER_EMAIL, 'TS_E2E_OTHER_TOKEN')
   }
 }
 
@@ -160,7 +160,7 @@ async function launch(): Promise<Browser> {
   mkdirSync(SHOTS, { recursive: true })
   return await puppeteer.launch({
     headless: true,
-    executablePath: process.env.GS_CHROME_PATH,
+    executablePath: process.env.TS_CHROME_PATH,
     args: ['--use-gl=angle', '--use-angle=swiftshader']
   })
 }
@@ -173,7 +173,7 @@ async function contextAs(
   const context = await browser.createBrowserContext()
   if (token != null) {
     await context.setCookie({
-      name: 'gs_session',
+      name: 'ts_session',
       value: encodeURIComponent(token),
       domain: new URL(API).hostname,
       path: '/'
@@ -257,12 +257,12 @@ async function notFoundShown(page: Page): Promise<boolean> {
     const text = String(document.body.textContent)
     const signUp = Array.from(document.querySelectorAll('a')).some(
       one =>
-        one.textContent === 'Sign up for GameStation' &&
+        one.textContent === 'Sign up for TeamStation' &&
         one.getAttribute('href') === '/sign-in'
     )
     return (
       text.includes("This scoreboard isn't live") &&
-      document.querySelector('[aria-label="GameStation"]') != null &&
+      document.querySelector('[aria-label="TeamStation"]') != null &&
       signUp
     )
   })
@@ -766,7 +766,7 @@ async function tileOverridden(page: Page, group: string): Promise<boolean> {
     )
     return (
       tile !== null &&
-      // 1.0's override colour, gsMediumOlive #6B8E4E.
+      // 1.0's override colour, tsMediumOlive #6B8E4E.
       getComputedStyle(tile).backgroundColor === 'rgb(107, 142, 78)'
     )
   }, group)

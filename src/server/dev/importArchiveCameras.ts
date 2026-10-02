@@ -56,10 +56,10 @@ const run = promisify(execFile)
 
 const VOLUME = '/Volumes/Movies_Archives'
 /** Where the file lands on the server while it is being taken in. */
-const SCRATCH = '/mnt/gamestation/work/import'
+const SCRATCH = '/mnt/teamstation/work/import'
 /** The deployed tree whose `node_modules` and configuration the import uses. */
-const REMOTE_APP = '/srv/gamestation-dev/current'
-const REMOTE_NODE = '/srv/gamestation/node-v24/bin'
+const REMOTE_APP = '/srv/teamstation-dev/current'
+const REMOTE_NODE = '/srv/teamstation/node-v24/bin'
 
 /** One argument, safe for a remote shell. */
 function quoted(text: string): string {
@@ -237,7 +237,7 @@ function reads(title: string, kind: string, source: string | null): string {
  * happened, and the two interleaved their output into one log so that a
  * working run looked like a failing one for twenty minutes.
  */
-const LOCK = '/tmp/gsImportArchive.lock'
+const LOCK = '/tmp/tsImportArchive.lock'
 
 function takeTheLock(): void {
   try {
@@ -270,7 +270,7 @@ async function main(): Promise<void> {
   }
   const dryRun = argv.includes('--dry-run')
   const local = argv.includes('--local')
-  const host = get('host') ?? 'root@gamestation.co'
+  const host = get('host') ?? 'root@app.teamstation.app'
   const seasons = (
     get('seasons') ?? '10U All-Stars 2026,NPLL Fall 2026,NPLL Spring 2026'
   ).split(',')

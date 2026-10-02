@@ -111,12 +111,12 @@ describe('client logs', function () {
 
   it('takes lines from somebody not signed in, and cleans the labels', async function () {
     const response = await post({
-      source: 'game station!\n',
+      source: 'team station!\n',
       lines: [{ at: 'now', level: 'error', text: 'two\nlines' }]
     })
     expect(response.status).equals(204)
     expect(written).deep.equals([
-      '[client gamestation] run=- build=- user=anonymous at=now error two lines'
+      '[client teamstation] run=- build=- user=anonymous at=now error two lines'
     ])
   })
 

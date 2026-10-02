@@ -41,7 +41,7 @@ const run = promisify(execFile)
 
 /** Where a start time came from, in descending order of how much it is worth. */
 export type StartTimeSource =
-  /** The uploader said so. GS Director knows: it started the clock. */
+  /** The uploader said so. TS Director knows: it started the clock. */
   | 'stated'
   /** `com.apple.quicktime.creationdate` — carries a real UTC offset. */
   | 'metadataOffset'

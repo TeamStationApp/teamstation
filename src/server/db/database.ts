@@ -249,7 +249,7 @@ export interface GamesTable {
   >
   ingest_status: Generated<'none' | 'ok' | 'scoreMismatch' | 'error'>
   ingest_message: string | null
-  /** The at-bat GameStation is scoring now, as a Gumbo document. */
+  /** The at-bat TeamStation is scoring now, as a Gumbo document. */
   currentPlay: Json | null
   /** Feet from home plate to the fence. Null takes the season's. */
   fence_distance_ft: number | null
@@ -429,7 +429,7 @@ export interface ApiTokensTable {
  *
  * The token is hashed: a stolen database cannot be used to walk in. `purpose`
  * says where the link leads — the website, or the page that hands a sign-in
- * back to GS Director.
+ * back to TS Director.
  */
 export interface LoginRequestsTable {
   id: string
