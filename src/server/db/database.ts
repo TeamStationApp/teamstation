@@ -620,49 +620,6 @@ export interface GamePlayerStatsTable {
   computed_at: Timestamp
 }
 
-export interface PlayerSeasonStatsTable {
-  id: string
-  user_id: number
-  season_id: string | null
-  team_id: string
-  g: Generated<number>
-  pa: Generated<number>
-  ab: Generated<number>
-  h: Generated<number>
-  singles: Generated<number>
-  doubles: Generated<number>
-  triples: Generated<number>
-  hr: Generated<number>
-  r: Generated<number>
-  rbi: Generated<number>
-  bb: Generated<number>
-  k: Generated<number>
-  sb: Generated<number>
-  cs: Generated<number>
-  pitch_appearances: Generated<number>
-  pitch_outs_recorded: Generated<number>
-  pitch_h: Generated<number>
-  pitch_r: Generated<number>
-  pitch_bb: Generated<number>
-  pitch_k: Generated<number>
-  field_po: Generated<number>
-  field_a: Generated<number>
-  field_e: Generated<number>
-  computed_at: Timestamp
-}
-
-export interface TeamSeasonRecordsTable {
-  id: string
-  team_id: string
-  season_id: string | null
-  w: Generated<number>
-  l: Generated<number>
-  t: Generated<number>
-  runs_for: Generated<number>
-  runs_against: Generated<number>
-  computed_at: Timestamp
-}
-
 export interface Database {
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
@@ -683,13 +640,11 @@ export interface Database {
   live_streams: LiveStreamsTable
   login_requests: LoginRequestsTable
   memberships: MembershipsTable
-  player_season_stats: PlayerSeasonStatsTable
   season_members: SeasonMembersTable
   scope_roles: ScopeRolesTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
   system_settings: SystemSettingsTable
-  team_season_records: TeamSeasonRecordsTable
   teams: TeamsTable
   user_links: UserLinksTable
   user_emails: UserEmailsTable

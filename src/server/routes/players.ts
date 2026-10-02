@@ -522,18 +522,22 @@ export async function teamsOf(
     .where('teams.merged_into', 'is', null)
     .execute()
 
+  // The stat lines themselves, which the stats builder rewrites whenever a
+  // game's plays change, so a team they batted for yesterday is here today.
   const fromPlays = await db
-    .selectFrom('player_season_stats')
-    .innerJoin('teams', 'teams.id', 'player_season_stats.team_id')
-    .leftJoin('seasons', 'seasons.id', 'player_season_stats.season_id')
+    .selectFrom('game_player_stats')
+    .innerJoin('games', 'games.id', 'game_player_stats.game_id')
+    .innerJoin('teams', 'teams.id', 'game_player_stats.team_id')
+    .leftJoin('seasons', 'seasons.id', 'games.season_id')
     .select([
-      'player_season_stats.team_id as teamId',
+      'teams.id as teamId',
       'teams.name as teamName',
       'seasons.id as seasonId',
       'seasons.name as seasonName',
       'seasons.year as seasonYear'
     ])
-    .where('player_season_stats.user_id', 'in', userIds)
+    .distinct()
+    .where('game_player_stats.user_id', 'in', userIds)
     .where('teams.merged_into', 'is', null)
     .execute()
 

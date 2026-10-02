@@ -56,7 +56,8 @@ export const asTeamSummary = asObject({
    */
   logoUrl: asOptional(asNullable(asString), null),
   /**
-   * The team's record in its most recent season, counted from the plays.
+   * The team's record in its most recent season, counted from its finished
+   * games' scores.
    *
    * Per season, never across all time: seasons overlap, so a child on a spring
    * team and an all-stars team at once would have one combined record that

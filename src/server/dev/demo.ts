@@ -5,7 +5,6 @@ import { mintUserId } from '../../common/mintUserId'
 import { createSession } from '../auth/sessions'
 import { makeDatabase } from '../db/database'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
-import { rebuildAll } from '../rollups'
 import { serverConfig } from '../serverConfig'
 
 // Builds a league, two seasons, two teams, a roster, a finished game in each
@@ -13,8 +12,8 @@ import { serverConfig } from '../serverConfig'
 // and video routes can be walked with `curl`.
 //
 // The first game gets three plays, written as TeamStation's own, so its line
-// score and highlights have something to show. The stat rollups stay empty:
-// they are sums of stat lines, and nothing here writes any.
+// score and highlights have something to show. It writes no stat lines; the
+// stats builder counts them from those plays when it runs.
 //
 //   npm run demo
 //
@@ -226,16 +225,16 @@ async function main(): Promise<void> {
       })
       .execute()
 
-    const rollups = await rebuildAll(db)
-
     // Somebody who actually batted for the home team: the first name on a
     // roster may never have come to the plate, and a demo that points at them
     // looks like the stats are broken when they are merely empty. Null until
-    // the games have stat lines and the rollups are rebuilt.
+    // the stats builder has written the games' stat lines.
     const topBatter = await db
-      .selectFrom('player_season_stats')
+      .selectFrom('game_player_stats')
       .select(['user_id'])
+      .select(eb => eb.fn.sum<number>('pa').as('pa'))
       .where('team_id', '=', homeTeamId)
+      .groupBy('user_id')
       .orderBy('pa', 'desc')
       .executeTakeFirst()
     const samplePlayerId = topBatter?.user_id ?? null
@@ -268,7 +267,6 @@ async function main(): Promise<void> {
           samplePlayerId,
           seasonBId,
           gameBId,
-          rollups,
           leagueId,
           seasonId,
           homeTeamId,
