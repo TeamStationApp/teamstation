@@ -65,7 +65,7 @@ export {
 } from './headerSlot'
 export { HandoffView } from './HandoffView'
 export { useHandoff, useHandoffStyle } from './useHandoff'
-export { GsMark } from './GsMark'
+export { TsMark } from './TsMark'
 export { glassStyle, webStyle } from './glass'
 export { GlassView } from './GlassView'
 export type { GlassViewProps } from './glassViewProps'

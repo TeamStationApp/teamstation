@@ -3,6 +3,9 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { describe, it } from 'mocha'
 import { join } from 'path'
 
+import { gsBallpark } from './gsBallpark'
+import { gsDark } from './gsDark'
+
 /**
  * Every theme token is a `string`, so nothing stops a background colour being
  * used as a text colour. That is not a hypothetical: four styles on the game
@@ -58,5 +61,12 @@ describe('theme tokens', function () {
     }
 
     expect(offences, offences.join('\n')).deep.equals([])
+  })
+
+  it("gives both themes the mark's two gradient colours as hex", function () {
+    for (const theme of [gsBallpark, gsDark]) {
+      expect(theme.markGradientStart).match(/^#[0-9A-Fa-f]{6}$/)
+      expect(theme.markGradientEnd).match(/^#[0-9A-Fa-f]{6}$/)
+    }
   })
 })

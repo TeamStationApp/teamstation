@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 24 464 464" width="464" height="464">
+  <title>TeamStation</title>
+  <defs>
+    <linearGradient id="teamStationMarkGradient" x1="80" y1="80" x2="432" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0.4" stop-color="#5e8f32"/>
+      <stop offset="0.6" stop-color="#182e16"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#teamStationMarkGradient)" stroke-width="50" fill="none" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M 224.89 66.49 A 44 44 0 0 1 287.11 66.49 L 445.51 224.89 A 44 44 0 0 1 445.51 287.11 L 287.11 445.51 A 44 44 0 0 1 224.89 445.51 L 66.49 287.11 A 44 44 0 0 1 66.49 224.89 Z"/>
+    <path d="M 146 146 Q 236 256 146 366"/>
+    <path d="M 366 146 Q 276 256 366 366"/>
+  </g>
+</svg>
