@@ -52,6 +52,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
+import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
 import { createTeam } from '../teams/createTeam'
@@ -160,33 +161,35 @@ export function teamRoutes(
               .orderBy('teams.name')
               .execute()
 
-      // A record is per season, counted from the plays — never copied from an
-      // import, whose own figures are a check and not a source. The most recent
-      // season is the one a team page shows.
-      const records =
-        teams.length === 0
+      // A record is per season, read from the finished games' scores, so it
+      // moves the moment a game does. The most recent season is the one a team
+      // page shows.
+      const counted = await teamRecords(db, {
+        teamIds: teams.map(team => team.id)
+      })
+      const seasonIds = [
+        ...new Set(
+          counted
+            .map(record => record.seasonId)
+            .filter((id): id is string => id != null)
+        )
+      ]
+      const seasons =
+        seasonIds.length === 0
           ? []
           : await db
-              .selectFrom('team_season_records')
-              .leftJoin(
-                'seasons',
-                'seasons.id',
-                'team_season_records.season_id'
-              )
-              .select([
-                'team_season_records.team_id as teamId',
-                'team_season_records.w as w',
-                'team_season_records.l as l',
-                'team_season_records.t as t',
-                'seasons.name as seasonName',
-                'seasons.year as seasonYear'
-              ])
-              .where(
-                'team_season_records.team_id',
-                'in',
-                teams.map(team => team.id)
-              )
+              .selectFrom('seasons')
+              .select(['id', 'name', 'year'])
+              .where('id', 'in', seasonIds)
               .execute()
+      const records = counted.map(record => {
+        const season = seasons.find(row => row.id === record.seasonId)
+        return {
+          ...record,
+          seasonName: season?.name ?? null,
+          seasonYear: season?.year ?? null
+        }
+      })
       const newest = new Map<string, (typeof records)[number]>()
       for (const row of records) {
         const held = newest.get(row.teamId)
@@ -396,16 +399,10 @@ export function teamRoutes(
       const roles = await roleScopes(db, actor.userId, actor.isAdmin)
 
       // Each side's record in the season this game was played in.
-      const recordRows = await db
-        .selectFrom('team_season_records')
-        .select(['team_id', 'w', 'l', 't'])
-        .where('team_id', 'in', [game.home_team_id, game.away_team_id])
-        .where(eb =>
-          game.season_id == null
-            ? eb('season_id', 'is', null)
-            : eb('season_id', '=', game.season_id)
-        )
-        .execute()
+      const recordRows = await teamRecords(db, {
+        teamIds: [game.home_team_id, game.away_team_id],
+        seasonId: game.season_id
+      })
       const logos = await db
         .selectFrom('teams')
         .select(['id', 'logo_path'])
@@ -418,7 +415,7 @@ export function teamRoutes(
         )
 
       const recordOf = (teamId: string): string | null => {
-        const row = recordRows.find(item => item.team_id === teamId)
+        const row = recordRows.find(item => item.teamId === teamId)
         if (row == null || row.w + row.l + row.t === 0) return null
         return row.t > 0 ? `${row.w}–${row.l}–${row.t}` : `${row.w}–${row.l}`
       }
