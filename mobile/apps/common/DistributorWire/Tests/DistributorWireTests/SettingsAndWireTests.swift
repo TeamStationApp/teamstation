@@ -9,7 +9,7 @@ struct SettingsAndWireTests {
   @Test("Settings round-trip through JSON")
   func settingsRoundTrip() throws {
     let settings = DistributorSettings(
-      destinations: [ "8A1F-MAC": "/Users/someone/Movies/GameStation" ],
+      destinations: [ "8A1F-MAC": "/Users/someone/Movies/TeamStation" ],
       createCombined: true,
       combinedLayout: CombinedLayoutSettings(
         included: [ "Home", "Away", "Wide" ],

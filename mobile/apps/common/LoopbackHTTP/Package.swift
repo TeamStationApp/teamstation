@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// A small HTTP/1.1 server bound to loopback: GS Director's link to GS Distributor, and GS
+// A small HTTP/1.1 server bound to loopback: TS Director's link to TS Distributor, and TS
 // Distributor's own API.
 let package = Package(
   name: "LoopbackHTTP",

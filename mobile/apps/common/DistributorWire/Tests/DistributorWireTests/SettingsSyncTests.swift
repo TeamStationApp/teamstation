@@ -13,7 +13,7 @@ struct SettingsSyncTests {
     let old = DistributorSettings(createCombined: false)
     var edited = old
     edited.createCombined = true
-    edited.destinations[Self.mac] = "/Movies/GameStation"
+    edited.destinations[Self.mac] = "/Movies/TeamStation"
     let stamped = edited.stampingChanges(from: old, by: Self.mac, at: Self.at(10))
     #expect(stamped.stamp(.createCombined) == SettingsStamp(modifiedAt: Self.at(10), by: Self.mac))
     #expect(stamped.stamp(.destination(mac: Self.mac))?.by == Self.mac)
@@ -46,11 +46,11 @@ struct SettingsSyncTests {
 
   @Test("A first Mac copy with nothing stamped takes everything the iPad has")
   func freshMacAdoptsIPad() throws {
-    let old = #"{"version":1,"createCombined":true,"destinations":{"MAC-1":"/Movies/GS"},"peerTube":{"enabled":true,"host":"videos.example.org"}}"#
+    let old = #"{"version":1,"createCombined":true,"destinations":{"MAC-1":"/Movies/TS"},"peerTube":{"enabled":true,"host":"videos.example.org"}}"#
     let ipad = try JSONDecoder().decode(DistributorSettings.self, from: Data(old.utf8))
     let merged = DistributorSettings().reconciled(with: ipad)
     #expect(merged.createCombined)
-    #expect(merged.destinations == [ Self.mac: "/Movies/GS" ])
+    #expect(merged.destinations == [ Self.mac: "/Movies/TS" ])
     #expect(merged.version == DistributorSettings.currentVersion)
   }
 
@@ -64,13 +64,13 @@ struct SettingsSyncTests {
     #expect(merged.destinations == [ Self.mac: "/Mine", Self.otherMac: "/Other" ])
   }
 
-  @Test("A GS Director that drops groups it does not know cannot take the Mac's away")
+  @Test("A TS Director that drops groups it does not know cannot take the Mac's away")
   func olderDirectorAnswer() {
     let before = DistributorSettings()
     var mac = before
     mac.combinedLayout = CombinedLayoutSettings(included: [ "Home", "Away" ], audioCamera: "Home")
     mac = mac.stampingChanges(from: before, by: Self.mac, at: Self.at(5))
-    // What an older GS Director answers: its own groups, no stamps, nothing it does not know.
+    // What an older TS Director answers: its own groups, no stamps, nothing it does not know.
     let answered = DistributorSettings(createCombined: mac.createCombined)
     #expect(mac.reconciled(with: answered).combinedLayout == mac.combinedLayout)
   }
@@ -79,7 +79,7 @@ struct SettingsSyncTests {
   func retiredGroup() throws {
     // The shape a retired group was saved in: its block, and its stamp beside the others'.
     let saved = #"""
-      {"version":2,"destinations":{"MAC-1":"/Movies/GS"},"createCombined":true,
+      {"version":2,"destinations":{"MAC-1":"/Movies/TS"},"createCombined":true,
        "upload":{"choice":{"primary":false,"cameras":["Home"],"combined":true}},
        "retiredGroup":{"teams":[{"id":"t1","publicID":"P1","name":"Titan"}]},
        "stamps":{"retiredGroup":{"modifiedAt":800000000,"by":"MAC-1"},
@@ -87,7 +87,7 @@ struct SettingsSyncTests {
                  "destination:MAC-1":{"modifiedAt":800000000,"by":"MAC-1"}}}
       """#
     let decoded = try JSONDecoder().decode(DistributorSettings.self, from: Data(saved.utf8))
-    #expect(decoded.destinations == [ Self.mac: "/Movies/GS" ])
+    #expect(decoded.destinations == [ Self.mac: "/Movies/TS" ])
     #expect(decoded.createCombined)
     #expect(decoded.upload.choice == UploadChoice(primary: false, cameras: [ "Home" ], combined: true))
     #expect(Set(decoded.stamps.keys) == [ "createCombined", "destination:MAC-1" ])
