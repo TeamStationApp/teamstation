@@ -15,11 +15,14 @@ import { testDatabaseUrl } from './testDatabase'
  * `user_emails` afterwards.
  */
 const adminUrl = testDatabaseUrl
-const name = `teamstation_050_${Date.now()}_${process.pid}`
+const name = `teamstation_051_${Date.now()}_${process.pid}`
 const url = adminUrl.replace(/\/[^/]*$/, `/${name}`)
 
-const before050 = migrations.filter(
+const before051 = migrations.filter(
   migration => migration.name < migration051GuardiansAndAccounts.name
+)
+const through051 = migrations.filter(
+  migration => migration.name <= migration051GuardiansAndAccounts.name
 )
 
 // Users, by what they hold before 051 runs.
@@ -71,7 +74,7 @@ describe('051: accounts are users with a way to sign in', function () {
     }
     await admin.query(`create database ${name}`)
     pool = new Pool({ connectionString: url })
-    await migrateUp(pool, before050)
+    await migrateUp(pool, before051)
     await sql(`
       insert into users (id, "legacyId", display_name, password_hash, login_enabled) values
         (${WITH_EMAIL}, 'u101', 'Email', null, false),
@@ -85,7 +88,7 @@ describe('051: accounts are users with a way to sign in', function () {
         ('uem_4', ${MERGED_WITH_EMAIL}, 'four@example.com');
     `)
     expect(
-      await migrateUp(pool, migrations).then(result => result.applied)
+      await migrateUp(pool, through051).then(result => result.applied)
     ).deep.equals([migration051GuardiansAndAccounts.name])
   })
 
@@ -209,7 +212,7 @@ describe('051: accounts are users with a way to sign in', function () {
   })
 
   it('rolls back and applies again', async function () {
-    const down = await migrateDown(pool!, migrations, 1)
+    const down = await migrateDown(pool!, through051, 1)
     expect(down).deep.equals([migration051GuardiansAndAccounts.name])
     const { rows } = await live().query<{ n: number }>(
       `select count(*)::int as n from information_schema.columns
@@ -219,7 +222,7 @@ describe('051: accounts are users with a way to sign in', function () {
     expect(rows[0].n).equals(0)
     await sql(`update users set login_enabled = true where id = ${LATER}`)
     expect(await enabled(LATER)).equals(true)
-    await migrateUp(pool!, migrations)
+    await migrateUp(pool!, through051)
     expect(await enabled(LATER)).equals(false)
   })
 })
