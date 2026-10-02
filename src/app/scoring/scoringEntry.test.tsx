@@ -59,7 +59,7 @@ describe('actual game scoring entry', function () {
   it('launches full scoring from the Score Game screen, for a game in progress too', async function () {
     for (const game of [
       gameFixture,
-      { ...gameFixture, scoringOwner: 'gamestation' as const, homeScore: 1 }
+      { ...gameFixture, scoringOwner: 'teamstation' as const, homeScore: 1 }
     ]) {
       const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({ ...game, canScore: true })
@@ -106,7 +106,7 @@ describe('actual game scoring entry', function () {
       {
         ...gameFixture,
         canScore: false,
-        scoringOwner: 'gamestation' as const,
+        scoringOwner: 'teamstation' as const,
         status: 'inProgress',
         awayScore: 1
       }
@@ -127,7 +127,7 @@ describe('actual game scoring entry', function () {
     client.game = async () => ({
       ...gameFixture,
       canScore: true,
-      scoringOwner: 'gamestation' as const,
+      scoringOwner: 'teamstation' as const,
       status: 'inProgress',
       awayScore: 1
     })

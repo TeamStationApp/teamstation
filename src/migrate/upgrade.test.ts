@@ -81,9 +81,12 @@ describe('046 over a database with an outside integration', function () {
     }
   })
 
-  it('applies 046 alone', async function () {
+  it('applies 046, and 047 after it', async function () {
     const result = await migrateUp(pool, migrations)
-    expect(result.applied).deep.equals([migration046ExternalCleanup.name])
+    expect(result.applied).deep.equals([
+      migration046ExternalCleanup.name,
+      '047teamStation'
+    ])
   })
 
   it('drops the four tables and the relay pair', async function () {
@@ -178,7 +181,12 @@ describe('046 over a database with an outside integration', function () {
     try {
       await migrateUp(noop, throughBaseline)
       const before = await schemaSnapshot(noop)
-      await migrateUp(noop, migrations)
+      await migrateUp(
+        noop,
+        migrations.filter(
+          migration => migration.name <= migration046ExternalCleanup.name
+        )
+      )
       expect(await schemaSnapshot(noop)).deep.equals(before)
     } finally {
       await noop.end()

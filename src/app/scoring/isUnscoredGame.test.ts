@@ -66,7 +66,7 @@ describe('the scoring entry on the Game page', function () {
     expect(
       scoringEntry({
         ...gameFixture,
-        scoringOwner: 'gamestation',
+        scoringOwner: 'teamstation',
         status: 'inProgress',
         awayScore: 1
       })
@@ -74,7 +74,7 @@ describe('the scoring entry on the Game page', function () {
     expect(
       scoringEntry({
         ...gameFixture,
-        scoringOwner: 'gamestation',
+        scoringOwner: 'teamstation',
         status: 'final',
         awayScore: 3,
         homeScore: 1
@@ -94,7 +94,7 @@ describe('the scoring entry on the Game page', function () {
     expect(
       scoringEntry({
         ...gameFixture,
-        scoringOwner: 'gamestation',
+        scoringOwner: 'teamstation',
         status: 'cancelled'
       })
     ).equals(null)

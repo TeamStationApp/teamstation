@@ -131,7 +131,7 @@ describe('refolding the stored plays (U11)', function () {
         asPostEventsBody({
           ...change,
           mode: 'live',
-          source: { system: 'gamestation' }
+          source: { system: 'teamstation' }
         })
       )
       return await store.load(gameId)
@@ -277,13 +277,13 @@ describe('refolding the stored plays (U11)', function () {
       .set({
         currentPlay: JSON.stringify({
           ...((await store.load(broken)).currentPlay as object),
-          gameStation: {
+          teamStation: {
             version: 1,
             setupBefore: (
               (await store.load(broken)).plays[0] as unknown as {
-                gameStation: { setupBefore: unknown }
+                teamStation: { setupBefore: unknown }
               }
-            ).gameStation.setupBefore,
+            ).teamStation.setupBefore,
             actions: [{ type: 'result', eventType: 'strikeout' }]
           }
         })
@@ -600,9 +600,9 @@ describe('refolding the stored plays (U11)', function () {
     // ...and the log it kept: the save that took Away 3 out.
     for (const row of await readPlays(db, old)) {
       const gumbo = row.gumbo as {
-        gameStation?: { actions: ScoringAction[] }
+        teamStation?: { actions: ScoringAction[] }
       }
-      const save = gumbo.gameStation?.actions.find(
+      const save = gumbo.teamStation?.actions.find(
         action => action.type === 'lineup' && action.kind === 'roster'
       )
       if (save?.type !== 'lineup' || save.setup == null) continue

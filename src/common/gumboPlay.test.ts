@@ -10,7 +10,12 @@ import {
   LEGACY_EVENT_TYPES,
   normalizeEventType
 } from './gumboEventTypes'
-import { asCurrentPlay, asGumboPlay, asPostEventsBody } from './gumboPlay'
+import {
+  asCurrentPlay,
+  asGumboPlay,
+  asPostEventsBody,
+  withTeamStationNames
+} from './gumboPlay'
 
 const correction = {
   about: { atBatIndex: 142, isScoringPlay: false },
@@ -179,14 +184,14 @@ describe('a Gumbo play', function () {
     expect((play.matchup as { batter: { id: number } }).batter.id).equals(7)
     const body = asPostEventsBody({
       plays: [correction],
-      source: { system: 'gamestation' }
+      source: { system: 'teamstation' }
     })
-    expect(body.source?.system).equals('gamestation')
+    expect(body.source?.system).equals('teamstation')
     expect(asPostEventsBody({ plays: [] }).plays).deep.equals([])
   })
 
   it('accepts any source system spelled as an external id system is', function () {
-    for (const system of ['acme', 'manual', 'gamestation', 'teamScorer2']) {
+    for (const system of ['acme', 'manual', 'teamstation', 'teamScorer2']) {
       expect(
         asPostEventsBody({ plays: [], source: { system } }).source?.system
       ).equals(system)
@@ -213,10 +218,10 @@ describe("MLB's event types", function () {
       expect(MLB_EVENT_TYPES.has(code), code).equals(false)
     expect([...GUMBO_EXTENSION_EVENT_TYPES].sort()).deep.equals([
       'final_score',
-      'gs_batter_out',
-      'gs_batting_order',
-      'gs_manual_placement',
-      'score_correction'
+      'score_correction',
+      'ts_batter_out',
+      'ts_batting_order',
+      'ts_manual_placement'
     ])
   })
 
@@ -241,15 +246,19 @@ describe("MLB's event types", function () {
     expect(LEGACY_EVENT_TYPES).deep.equals({
       catcher_interference: 'catcher_interf',
       placed_runner: 'runner_placed',
-      manual_placement: 'gs_manual_placement',
+      manual_placement: 'ts_manual_placement',
       // An earlier import's own names, from a retired server-side parser (U26).
       runner_out: 'other_out',
       batter_out: 'field_out',
       catcher_s_interference: 'catcher_interf',
       fc_double_play: 'double_play',
       offensive_interference: 'batter_interference',
-      batter_put_on_base: 'gs_manual_placement',
-      inning_changed_by_scorekeeper: 'final_score'
+      batter_put_on_base: 'ts_manual_placement',
+      inning_changed_by_scorekeeper: 'final_score',
+      // The extensions as they were named before TeamStation.
+      gs_manual_placement: 'ts_manual_placement',
+      gs_batter_out: 'ts_batter_out',
+      gs_batting_order: 'ts_batting_order'
     })
     const legacy = Object.keys(LEGACY_EVENT_TYPES)
     const listed = Object.values(LEGACY_EVENT_TYPES)
@@ -263,7 +272,7 @@ describe("MLB's event types", function () {
           { details: { eventType: 'single' } },
           { movement: { end: '1B' } }
         ],
-        gameStation: { actions: [{ type: 'result', eventType: code }] }
+        teamStation: { actions: [{ type: 'result', eventType: code }] }
       })),
       currentPlay: {
         about: { atBatIndex: 9, isComplete: false },
@@ -289,7 +298,7 @@ describe("MLB's event types", function () {
     )
     expect(body.plays[0].runners?.[0].details?.runner).deep.equals({ id: null })
     // The action log keeps its own words.
-    expect(body.plays[0].gameStation).deep.equals({
+    expect(body.plays[0].teamStation).deep.equals({
       actions: [{ type: 'result', eventType: 'catcher_interference' }]
     })
     expect(body.plays[0].result.rbi).equals(0)
@@ -311,6 +320,60 @@ describe("MLB's event types", function () {
         .currentPlay
     ).equals(null)
     expect(asPostEventsBody({ plays: [] }).currentPlay).equals(undefined)
+  })
+
+  it("reads a post from an app built before TeamStation in TeamStation's words", function () {
+    const old = {
+      mode: 'live',
+      source: { system: 'gamestation' },
+      plays: [
+        {
+          about: { atBatIndex: 0 },
+          result: { eventType: 'gs_batter_out', description: 'gamestation' },
+          runners: [{ details: { eventType: 'gs_manual_placement' } }],
+          playEvents: [
+            {
+              details: {
+                eventType: 'gs_batting_order',
+                code: 'gs_batting_order'
+              }
+            }
+          ],
+          credits: [{ eventType: 'gs_batter_out', label: 'Batter' }],
+          gameStation: {
+            version: 1,
+            detail: { source: { system: 'gamestation', gamestation: {} } }
+          }
+        }
+      ]
+    }
+    const renamed = withTeamStationNames(old) as typeof old & {
+      plays: Array<Record<string, any>>
+    }
+    expect(renamed.source.system).equals('teamstation')
+    const play = renamed.plays[0]
+    expect(play.result.eventType).equals('ts_batter_out')
+    expect(play.result.description).equals('teamstation')
+    expect(play.runners[0].details.eventType).equals('ts_manual_placement')
+    expect(play.playEvents[0].details).deep.equals({
+      eventType: 'ts_batting_order',
+      code: 'ts_batting_order'
+    })
+    expect(play.credits[0].eventType).equals('ts_batter_out')
+    expect(play.gameStation).equals(undefined)
+    expect(play.teamStation.detail.source).deep.equals({
+      system: 'teamstation',
+      teamstation: {}
+    })
+    const body = asPostEventsBody(old)
+    expect(body.source?.system).equals('teamstation')
+    expect(body.plays[0].result.eventType).equals('ts_batter_out')
+    // A post in today's words, and anything that is not an object, pass as
+    // they are.
+    const current = { plays: [{ about: { atBatIndex: 0 } }] }
+    expect(withTeamStationNames(current)).equals(current)
+    expect(withTeamStationNames('gamestation')).equals('gamestation')
+    expect(withTeamStationNames(null)).equals(null)
   })
 
   it('reads a legacy code as the listed one', function () {

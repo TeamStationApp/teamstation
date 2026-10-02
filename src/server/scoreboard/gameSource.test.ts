@@ -91,7 +91,7 @@ describe('the game as a scoreboard source', function () {
   const body = (change: SaveChange): unknown => ({
     ...change,
     mode: 'live',
-    source: { system: 'gamestation' }
+    source: { system: 'teamstation' }
   })
   /** Where a session writes: straight to the database, as the refold does. */
   const direct: EventStore = {
@@ -257,15 +257,15 @@ describe('the game as a scoreboard source', function () {
     const stored = await load(broken)
     const record = (
       stored.plays[0] as unknown as {
-        gameStation: { setupBefore: unknown }
+        teamStation: { setupBefore: unknown }
       }
-    ).gameStation
+    ).teamStation
     await db
       .updateTable('games')
       .set({
         currentPlay: JSON.stringify({
           ...(stored.currentPlay ?? { about: { atBatIndex: 2 } }),
-          gameStation: {
+          teamStation: {
             version: 1,
             setupBefore: record.setupBefore,
             actions: [{ type: 'result', eventType: 'strikeout' }]

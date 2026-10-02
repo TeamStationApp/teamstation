@@ -37,7 +37,7 @@ describe('bunt contact identity', () => {
       expect(chosen.pendingPlay!.outcome).equals(outcome)
       expect(
         asEstimatedGumboPlay(JSON.parse(JSON.stringify(play))).source
-          .gamestation.contactKind
+          .teamstation.contactKind
       ).equals('bunt')
       expect(
         scoringReducer(chosen, {
@@ -82,7 +82,7 @@ describe('bunt contact identity', () => {
       revision: state.correctionWindow?.revision
     })
     expect(
-      state.session.liveData.plays.allPlays[0].source.gamestation.contactKind
+      state.session.liveData.plays.allPlays[0].source.teamstation.contactKind
     ).equals('bunt')
     while (state.past.length > 0)
       state = scoringReducer(state, { type: 'UNDO' })

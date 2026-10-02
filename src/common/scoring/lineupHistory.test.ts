@@ -295,7 +295,7 @@ describe('lineup history (U9)', function () {
       '3 away pitching_substitution P  106 -'
     ])
     expect(sides.home.changes.map(summary)).deep.equals([
-      '3 home gs_batting_order   202 -'
+      '3 home ts_batting_order   202 -'
     ])
     expect(sides.home.current?.defense.P?.userId).equals(209)
     expect(users(sides.home.current).slice(0, 2)).deep.equals([202, 201])
@@ -381,8 +381,8 @@ describe('lineup history (U9)', function () {
     // An action that no longer applies.
     const refused = JSON.parse(JSON.stringify(kept.game)) as StoredGame
     const record = (
-      refused.currentPlay as unknown as { gameStation: { actions: unknown[] } }
-    ).gameStation
+      refused.currentPlay as unknown as { teamStation: { actions: unknown[] } }
+    ).teamStation
     record.actions = [
       {
         type: 'lineup',
@@ -401,8 +401,8 @@ describe('lineup history (U9)', function () {
     const broken = JSON.parse(JSON.stringify(kept.game)) as StoredGame
     for (const play of [...broken.plays, broken.currentPlay]) {
       const setupBefore = (
-        play as unknown as { gameStation: { setupBefore: GameSetup } }
-      ).gameStation.setupBefore
+        play as unknown as { teamStation: { setupBefore: GameSetup } }
+      ).teamStation.setupBefore
       setupBefore.sides.away.battingOrder = []
     }
     read = readLineups(broken, context)

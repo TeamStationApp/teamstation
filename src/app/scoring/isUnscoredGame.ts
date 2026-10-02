@@ -20,7 +20,7 @@ export function scoringEntry(
   >
 ): 'score' | 'continue' | null {
   if (game.status === 'cancelled') return null
-  if (game.scoringOwner === 'gamestation') return 'continue'
+  if (game.scoringOwner === 'teamstation') return 'continue'
   if (game.status === 'final') return null
   return isUnscoredGame(game) ? 'score' : null
 }

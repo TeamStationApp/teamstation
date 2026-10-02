@@ -97,7 +97,7 @@ describe('home-run landing and automatic arrivals', function () {
           const play = state.session.liveData.plays.allPlays.at(-1)!
           expect(play.result.eventType).equals('home_run')
           expect(play.result.rbi).equals(expected)
-          expect(play.source.gamestation.homeRunKind).equals(kind)
+          expect(play.source.teamstation.homeRunKind).equals(kind)
           expect(
             play.runners.filter(r => r.movement.runScored === true)
           ).length(expected)

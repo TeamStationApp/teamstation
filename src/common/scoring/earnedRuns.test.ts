@@ -277,7 +277,7 @@ describe('the responsible pitcher (U5)', function () {
           halfInning: 'top',
           isComplete: false
         },
-        gameStation: { version: 1, setupBefore, actions }
+        teamStation: { version: 1, setupBefore, actions }
       } as unknown as StoredGame['currentPlay']
     }
     const replayed = replayPlays(stored, {
@@ -331,7 +331,7 @@ describe('the responsible pitcher (U5)', function () {
       [false, true, true, { id: null }],
       [true, false, true, { id: null }]
     ])
-    expect(JSON.stringify(stored.gameStation)).not.contains('errorlessOuts')
+    expect(JSON.stringify(stored.teamStation)).not.contains('errorlessOuts')
   })
 })
 
@@ -1107,13 +1107,13 @@ describe('a roster save, read by the men it keeps (QA 25)', function () {
     expect(batter(saved)).equals(2)
     expect(said(saved)).deep.equals([
       `offensive_substitution PR ${a} 101 for 1`,
-      `gs_batting_order  3  for undefined`
+      `ts_batting_order  3  for undefined`
     ])
     // Away 6 moved up to lead off, and b in Away 5's place beside him.
     const moved = save(state, [6, 1, 2, 3, 4, b, 7, 8, 9]).state
     expect(said(moved)).deep.equals([
       `offensive_substitution PH ${b} 601 for 5`,
-      `gs_batting_order  6  for undefined`
+      `ts_batting_order  6  for undefined`
     ])
   })
 })

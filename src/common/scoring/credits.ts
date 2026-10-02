@@ -82,7 +82,7 @@ const PLATE_APPEARANCE = new Set([
   'fielders_choice_out',
   'force_out',
   'field_out',
-  'gs_batter_out',
+  'ts_batter_out',
   'double_play',
   'grounded_into_double_play',
   'grounded_into_triple_play',
@@ -94,7 +94,7 @@ const PLATE_APPEARANCE = new Set([
   'intent_walk',
   'hit_by_pitch',
   'catcher_interf',
-  'gs_manual_placement',
+  'ts_manual_placement',
   'sac_fly',
   'sac_fly_double_play',
   'sac_bunt',
@@ -106,7 +106,7 @@ const NOT_AT_BAT = new Set([
   'intent_walk',
   'hit_by_pitch',
   'catcher_interf',
-  'gs_manual_placement',
+  'ts_manual_placement',
   'sac_fly',
   'sac_fly_double_play',
   'sac_bunt',
@@ -195,7 +195,7 @@ export function statLines(plays: readonly GamePlay[]): {
   for (const play of plays) {
     const type = storedEventType(
       play.result.eventType,
-      play.source.gamestation.outcome
+      play.source.teamstation.outcome
     )
     const batter = play.matchup.batter.id
     const pitcher = pitch(play.matchup.pitcher.id)

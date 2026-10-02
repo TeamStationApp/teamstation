@@ -359,7 +359,7 @@ describe('defensive presentation barriers', function () {
     if (seq.kind !== 'throw') throw new Error('Expected throw')
     expect(seq.unassisted).equals(true)
     expect(
-      state.session.liveData.plays.currentPlay!.source.gamestation.runnerActions
+      state.session.liveData.plays.currentPlay!.source.teamstation.runnerActions
     ).equals(undefined)
     const clock = presentationRuntime()
     expect(

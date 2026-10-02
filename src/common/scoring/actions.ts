@@ -200,7 +200,7 @@ export const PRODUCED_EVENT_TYPES = [
   'offensive_substitution',
   'defensive_substitution',
   'defensive_switch',
-  'gs_batting_order',
+  'ts_batting_order',
   'final_score'
 ] as const
 

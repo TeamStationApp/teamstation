@@ -21,7 +21,7 @@ describe('what is stored of a posted play', function () {
   })
 
   it('keeps the Gumbo descriptions of a play TeamStation wrote itself', function () {
-    const stored = storedGumbo(play, 'gamestation')
+    const stored = storedGumbo(play, 'teamstation')
     expect(stored.result).deep.equals(play.result)
     expect(stored.playEvents).deep.equals(play.playEvents)
     expect(stored).not.to.have.property('source')

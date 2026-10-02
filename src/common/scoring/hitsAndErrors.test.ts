@@ -171,9 +171,9 @@ describe('event classes', function () {
       other_out: [true, undefined],
       final_score: [false, undefined],
       score_correction: [false, undefined],
-      gs_manual_placement: [true, undefined],
-      gs_batter_out: [true, undefined],
-      gs_batting_order: [false, undefined]
+      ts_manual_placement: [true, undefined],
+      ts_batter_out: [true, undefined],
+      ts_batting_order: [false, undefined]
     }
     expect(Object.keys(expected).sort()).deep.equals(
       [...GUMBO_EVENT_TYPES].sort()

@@ -134,8 +134,8 @@ export function startAppearance(state: GameState): GameState['awaitingBatter'] {
     playEvents: [],
     lineups: { opened: lineupsOf(state), began: lineupsOf(state) },
     source: {
-      system: 'gamestation',
-      gamestation: { version: 'estimated-v1', outcome: '' }
+      system: 'teamstation',
+      teamstation: { version: 'estimated-v1', outcome: '' }
     }
   })
   return null
@@ -496,7 +496,7 @@ export type LineupEventType =
   | 'offensive_substitution'
   | 'defensive_substitution'
   | 'defensive_switch'
-  | 'gs_batting_order'
+  | 'ts_batting_order'
 
 /** One lineup change, as the play records it and MLB would announce it. */
 export interface LineupChange {
@@ -579,7 +579,7 @@ function announcedOrder(state: GameState, side: Side): Map<number, number> {
  * pinch hitter otherwise, with `replacedPlayer` the man whose place he took;
  * one who comes in to field is a defensive substitution; one already in the
  * game who takes another position is a defensive switch; and an order that
- * changes otherwise is `gs_batting_order`. Before the game has begun nothing
+ * changes otherwise is `ts_batting_order`. Before the game has begun nothing
  * is announced. A player added to the roster but not the game, or the batter
  * changing sides, changes no lineup. The play records each change where the
  * scorer made it; the stored play announces a man put in the order where he
@@ -765,7 +765,7 @@ function sideChanges(
       bats: now.battingOrder.indexOf(id) + 1
     }))
     changes.push({
-      eventType: 'gs_batting_order',
+      eventType: 'ts_batting_order',
       player: bats[0].player,
       moved: bats,
       description: battingOrderSaid(

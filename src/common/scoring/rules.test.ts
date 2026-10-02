@@ -283,7 +283,7 @@ describe('the ball in play and the play begun, with the lineup changes the engin
     )
     // Without the flag the substitution alone has not begun the play.
     const flagless = copyState(changed)
-    delete flagless.liveData.plays.currentPlay!.source.gamestation.lineupChanged
+    delete flagless.liveData.plays.currentPlay!.source.teamstation.lineupChanged
     expect(after(flagless, endGame).final).equals(true)
     expect(
       applyAction(after(flagless, ball), endGame).problems[0]?.message

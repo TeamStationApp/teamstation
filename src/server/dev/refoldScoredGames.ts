@@ -30,7 +30,7 @@ import { serverConfig } from '../serverConfig'
  * means the same when the script is run with node itself, but `socket npm`
  * takes that flag as its own even after `--`, so the script never sees it.
  *
- * Each game with a play or an at-bat in progress that carries a `gameStation`
+ * Each game with a play or an at-bat in progress that carries a `teamStation`
  * record is opened as the scoring screen opens it, and every play it scored,
  * and its at-bat in progress, is folded again. A play is written only when it
  * differs from the stored one other than in what the server writes on it; the
@@ -66,9 +66,9 @@ export interface RefoldReport {
 /** Games TeamStation scored any of: a play or an at-bat with its record. */
 async function scoredGames(db: Kysely<Database>): Promise<string[]> {
   const rows = await sql<{ id: string }>`
-    select distinct "gameId" as id from events where gumbo ? 'gameStation'
+    select distinct "gameId" as id from events where gumbo ? 'teamStation'
     union
-    select id from games where "currentPlay" ? 'gameStation'
+    select id from games where "currentPlay" ? 'teamStation'
     order by id
   `.execute(db)
   return rows.rows.map(row => row.id)
@@ -255,7 +255,7 @@ export async function refoldGame(
       gameId,
       asPostEventsBody({
         plays,
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         mode: 'live',
         remove: removed,
         ...(currentPlay ? { currentPlay: picture.current } : {})

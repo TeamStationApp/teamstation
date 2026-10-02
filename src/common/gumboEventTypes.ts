@@ -6,9 +6,9 @@
  * the stats builder) is told what it is.
  *
  * The extensions are `final_score` and `score_correction`, which an import
- * posts, `gs_manual_placement`, a batter the scorer put on
- * base by hand, `gs_batter_out`, a batter out on a play MLB has no code
- * for ("Batter Out — Other"), and `gs_batting_order`, the action a scorer's
+ * posts, `ts_manual_placement`, a batter the scorer put on
+ * base by hand, `ts_batter_out`, a batter out on a play MLB has no code
+ * for ("Batter Out — Other"), and `ts_batting_order`, the action a scorer's
  * change of batting order writes.
  */
 export const GUMBO_EVENT_TYPES = [
@@ -89,9 +89,9 @@ export const GUMBO_EVENT_TYPES = [
   // TeamStation's extensions.
   'final_score',
   'score_correction',
-  'gs_manual_placement',
-  'gs_batter_out',
-  'gs_batting_order'
+  'ts_manual_placement',
+  'ts_batter_out',
+  'ts_batting_order'
 ] as const
 
 export type GumboEventType = (typeof GUMBO_EVENT_TYPES)[number]
@@ -100,29 +100,34 @@ export type GumboEventType = (typeof GUMBO_EVENT_TYPES)[number]
 export const GUMBO_EXTENSION_EVENT_TYPES: readonly GumboEventType[] = [
   'final_score',
   'score_correction',
-  'gs_manual_placement',
-  'gs_batter_out',
-  'gs_batting_order'
+  'ts_manual_placement',
+  'ts_batter_out',
+  'ts_batting_order'
 ]
 
 /**
  * Codes that are not on the list but are still accepted as input, and the
  * code each is stored as. The scoring engine and older imports write the
- * first three, and migration 039 renamed the ones already stored. The rest are
- * an earlier import source's own names, which a retired server-side parser
- * stored as results; migration 040 renamed those.
+ * first three, and migration 039 renamed the ones already stored. The next
+ * seven are an earlier import source's own names, which a retired server-side
+ * parser stored as results; migration 040 renamed those. The last three are
+ * the extensions as they were named before TeamStation, which apps already
+ * installed still send; migration 047 renamed the ones already stored.
  */
 export const LEGACY_EVENT_TYPES = {
   catcher_interference: 'catcher_interf',
   placed_runner: 'runner_placed',
-  manual_placement: 'gs_manual_placement',
+  manual_placement: 'ts_manual_placement',
   runner_out: 'other_out',
   batter_out: 'field_out',
   catcher_s_interference: 'catcher_interf',
   fc_double_play: 'double_play',
   offensive_interference: 'batter_interference',
-  batter_put_on_base: 'gs_manual_placement',
-  inning_changed_by_scorekeeper: 'final_score'
+  batter_put_on_base: 'ts_manual_placement',
+  inning_changed_by_scorekeeper: 'final_score',
+  gs_manual_placement: 'ts_manual_placement',
+  gs_batter_out: 'ts_batter_out',
+  gs_batting_order: 'ts_batting_order'
 } as const satisfies Record<string, GumboEventType>
 
 export type LegacyEventType = keyof typeof LEGACY_EVENT_TYPES
@@ -228,9 +233,9 @@ const EVENT_TYPE_NAMES: Record<GumboEventType, string> = {
   other_out: 'Out',
   final_score: 'Final score',
   score_correction: 'Score correction',
-  gs_manual_placement: 'Batter placed on base',
-  gs_batter_out: 'Out',
-  gs_batting_order: 'Batting order change'
+  ts_manual_placement: 'Batter placed on base',
+  ts_batter_out: 'Out',
+  ts_batting_order: 'Batting order change'
 }
 
 export function eventTypeName(eventType: string | null): string {

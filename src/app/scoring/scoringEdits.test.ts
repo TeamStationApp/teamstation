@@ -55,7 +55,7 @@ describe('atomic scoring edits', function () {
       events.slice(1).map(event => [event.isSubstitution, event.details.code])
     ).deep.equals([
       [true, 'pitching_substitution'],
-      [true, 'gs_batting_order'],
+      [true, 'ts_batting_order'],
       [true, 'defensive_switch']
     ])
     expect(next.session.liveData.linescore.balls).equals(1)

@@ -268,7 +268,7 @@ describe('posting and reading plays', function () {
           home_team_id: home,
           away_team_id: away,
           start_at: now,
-          scoringOwner: 'gamestation'
+          scoringOwner: 'teamstation'
         },
         {
           id: mismatchId,
@@ -457,7 +457,7 @@ describe('posting and reading plays', function () {
           startTime: '2026-05-01T18:00:00.000Z'
         })
       ],
-      source: { system: 'gamestation' }
+      source: { system: 'teamstation' }
     })
     expect(first.status).equals(200)
     const plays = first.body.plays as Array<{
@@ -502,7 +502,7 @@ describe('posting and reading plays', function () {
       ])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    expect(row.scoringOwner).equals('gamestation')
+    expect(row.scoringOwner).equals('teamstation')
     expect(row.away_score).equals(2)
     expect(row.home_score).equals(0)
     expect(row.status).equals('final')
@@ -510,7 +510,7 @@ describe('posting and reading plays', function () {
 
     const again = await ask(`/games/${gameId}/events`, 'POST', {
       plays: [play({ atBatIndex: 0, awayScore: 9, homeScore: 9 })],
-      source: { system: 'gamestation' }
+      source: { system: 'teamstation' }
     })
     expect(again.status).equals(409)
     const still = await db!
@@ -525,7 +525,7 @@ describe('posting and reading plays', function () {
       .select(['startTime', 'source'])
       .where('gameId', '=', gameId)
       .executeTakeFirstOrThrow()
-    expect(stored.source).equals('gamestation')
+    expect(stored.source).equals('teamstation')
     expect(stored.startTime).to.be.instanceOf(Date)
   })
 
@@ -759,7 +759,7 @@ describe('posting and reading plays', function () {
           }
         }
       ],
-      source: { system: 'gamestation' }
+      source: { system: 'teamstation' }
     })
     expect(marked.status).equals(200)
     const halves = await ask(`/games/${markerId}/halves`)
@@ -885,11 +885,11 @@ describe('posting and reading plays', function () {
             eventType: 'catcher_interference'
           })
         ],
-        source: { system: 'gamestation' }
+        source: { system: 'teamstation' }
       },
       {
         mode: 'live',
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         plays: [
           play({ atBatIndex: 0, awayScore: 1, homeScore: 0, outs: 1 }),
           play({ atBatIndex: 1, awayScore: 1, homeScore: 0, outs: 2 })
@@ -1008,7 +1008,7 @@ describe('posting and reading plays', function () {
           result: { eventType: 'final_score', awayScore: 5, homeScore: 2 }
         }
       ],
-      source: { system: 'gamestation' }
+      source: { system: 'teamstation' }
     })
     expect(only.status).equals(200)
     expect(only.body.plays).to.have.length(1)
@@ -1067,7 +1067,7 @@ describe('posting and reading plays', function () {
       'catcher_interf',
       'double_play',
       'batter_interference',
-      'gs_manual_placement',
+      'ts_manual_placement',
       'final_score'
     ])
   })
@@ -1179,7 +1179,7 @@ describe('posting and reading plays', function () {
     }
     // No source counts as an outside sender, like `acme`.
     expect(await described(outsideId)).deep.equals([undefined, undefined])
-    expect(await described(ownId, { system: 'gamestation' })).deep.equals([
+    expect(await described(ownId, { system: 'teamstation' })).deep.equals([
       'Single',
       'Ball 1'
     ])
@@ -1204,11 +1204,11 @@ describe('posting and reading plays', function () {
             play({ atBatIndex: 1, awayScore: 0, homeScore: 0 }),
             {
               ...play({ atBatIndex: 2, awayScore: 0, homeScore: 0 }),
-              gameStation: record(2)
+              teamStation: record(2)
             }
           ]
         },
-        'Play 2: gameStation.version must be 1'
+        'Play 2: teamStation.version must be 1'
       ],
       [
         {
@@ -1220,26 +1220,26 @@ describe('posting and reading plays', function () {
               halfInning: 'top',
               isComplete: false
             },
-            gameStation: record('2')
+            teamStation: record('2')
           }
         },
-        'Play 5: gameStation.version must be 1'
+        'Play 5: teamStation.version must be 1'
       ],
       [
         {
           plays: [
             {
               ...play({ atBatIndex: 0, awayScore: 0, homeScore: 0 }),
-              gameStation: { setupBefore: {}, actions: [] }
+              teamStation: { setupBefore: {}, actions: [] }
             }
           ]
         },
-        'Play 0: gameStation.version must be 1'
+        'Play 0: teamStation.version must be 1'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {
         ...body,
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         mode: 'live'
       })
       expect(refused.status).equals(400)
@@ -1305,7 +1305,7 @@ describe('posting and reading plays', function () {
       'POST',
       {
         mode: 'live',
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         plays: [],
         ...body
       },
@@ -1361,7 +1361,7 @@ describe('posting and reading plays', function () {
     expect(await gameRow(liveId)).deep.include({
       status: 'inProgress',
       ingest_status: 'ok',
-      scoringOwner: 'gamestation'
+      scoringOwner: 'teamstation'
     })
     const second = await live(liveId, {
       plays: [play({ atBatIndex: 1, awayScore: 1, homeScore: 0, outs: 1 })]
@@ -1834,7 +1834,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     save: async (_gameId, change) => {
       const answer = await post(gameId, {
         mode: 'live',
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         plays: change.plays,
         remove: change.remove,
         ...(change.currentPlay === undefined
@@ -1993,7 +1993,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     const stored = await store(g4).load(g4)
     const replaced = await post(g5, {
       mode: 'replace',
-      source: { system: 'gamestation' },
+      source: { system: 'teamstation' },
       plays: stored.plays
     })
     expect(replaced.status).equals(200)
@@ -2030,9 +2030,9 @@ describe('the team default lineup a live post keeps (U10)', function () {
       .where('id', '=', g7)
       .execute()
     const broken = JSON.parse(JSON.stringify(stored.currentPlay)) as {
-      gameStation: { actions: unknown[] }
+      teamStation: { actions: unknown[] }
     }
-    broken.gameStation.actions = [reorder([99, 1, 2, 3, 4, 5, 6, 7, 8]), ball]
+    broken.teamStation.actions = [reorder([99, 1, 2, 3, 4, 5, 6, 7, 8]), ball]
     const warned: unknown[][] = []
     const warn = console.warn
     console.warn = (...args: unknown[]) => {
@@ -2042,7 +2042,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     try {
       answer = await post(g7, {
         mode: 'live',
-        source: { system: 'gamestation' },
+        source: { system: 'teamstation' },
         plays: [],
         currentPlay: broken
       })

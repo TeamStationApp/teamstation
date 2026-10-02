@@ -472,7 +472,7 @@ describe('api client', function () {
     expect(calls[0].method).equals('POST')
     expect(JSON.parse(calls[0].body!)).deep.equals({
       mode: 'live',
-      source: { system: 'gamestation' },
+      source: { system: 'teamstation' },
       plays: [],
       remove: [3]
     })

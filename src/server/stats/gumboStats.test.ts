@@ -296,7 +296,7 @@ describe('gameStatLines', function () {
           'grounded_into_triple_play',
           'batter_interference',
           'fan_interference',
-          'gs_batter_out'
+          'ts_batter_out'
         ] as const
       ).map(eventType => ({
         eventType,
@@ -334,7 +334,7 @@ describe('gameStatLines', function () {
         play: paPlay('sac_bunt_double_play', { isOut: true, outs: 2 })
       },
       {
-        eventType: 'gs_manual_placement',
+        eventType: 'ts_manual_placement',
         batter: { pa: 1 },
         pitcher: { pitch_bf: 1 }
       }
@@ -1287,14 +1287,14 @@ describe('gameStatLines', function () {
     ): NonNullable<GumboPlay['runners']>[number] => ({
       movement: { start, end, isOut: false },
       details: {
-        eventType: 'gs_manual_placement',
+        eventType: 'ts_manual_placement',
         runner: { id: runner },
         ...(end === 'score'
           ? { responsiblePitcher: { id: 11 }, earned: true, rbi: true }
           : {})
       }
     })
-    const play = paPlay('gs_manual_placement', {
+    const play = paPlay('ts_manual_placement', {
       awayScore: 1,
       homeScore: 0,
       runners: [
@@ -1303,7 +1303,7 @@ describe('gameStatLines', function () {
         run(2, '1B', '2B'),
         {
           movement: { start: null, end: '1B', isOut: false },
-          details: { eventType: 'gs_manual_placement', runner: { id: 1 } }
+          details: { eventType: 'ts_manual_placement', runner: { id: 1 } }
         }
       ]
     })
@@ -1317,9 +1317,9 @@ describe('gameStatLines', function () {
     })
   })
 
-  it('gives gs_batter_out a PA and an AB, and a between-pitch other_out neither', function () {
+  it('gives ts_batter_out a PA and an AB, and a between-pitch other_out neither', function () {
     const batterOut = gameStatLines(
-      [paPlay('gs_batter_out', { isOut: true, outs: 1 })],
+      [paPlay('ts_batter_out', { isOut: true, outs: 1 })],
       teams,
       known
     )

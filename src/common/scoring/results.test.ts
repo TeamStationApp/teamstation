@@ -485,8 +485,8 @@ describe('MLB names and outs on the result (U16)', function () {
       [
         'catcher_interference',
         'placed_runner',
-        'gs_batter_out',
-        'gs_manual_placement',
+        'ts_batter_out',
+        'ts_manual_placement',
         'nonsense_type'
       ].map(mlbEventName)
     ).deep.equals([

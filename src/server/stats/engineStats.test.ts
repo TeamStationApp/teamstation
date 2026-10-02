@@ -1370,7 +1370,7 @@ describe('when each lineup change is announced', function () {
           ...out(8)
         ],
         announced: [
-          '#0[1] gs_batting_order 106 - - - c=1-0-0',
+          '#0[1] ts_batting_order 106 - - - c=1-0-0',
           '#3[0] defensive_substitution 111 SS - - c=0-0-0'
         ],
         said: [
@@ -1390,7 +1390,7 @@ describe('when each lineup change is announced', function () {
           ...out(9)
         ],
         announced: [
-          '#2[1] gs_batting_order 102 - - - c=1-0-2',
+          '#2[1] ts_batting_order 102 - - - c=1-0-2',
           '#3[0] defensive_substitution 111 SS - - c=0-0-0'
         ],
         said: [
@@ -1409,7 +1409,7 @@ describe('when each lineup change is announced', function () {
           ...out(8)
         ],
         announced: [
-          '#0[1] gs_batting_order 103 - - - c=1-0-0',
+          '#0[1] ts_batting_order 103 - - - c=1-0-0',
           '#2[0] offensive_substitution 111 PH 301 105 c=0-0-2',
           '#3[0] defensive_switch 111 SS 301 105 c=0-0-0'
         ],
@@ -1423,7 +1423,7 @@ describe('when each lineup change is announced', function () {
         row: 'R8 a DH entrant waiting across halves, moved at a later break',
         steps: [...forTheDesignated, reorder(110, 104), ...out(6)],
         announced: [
-          '#6[0] gs_batting_order 104 - - - c=0-0-0',
+          '#6[0] ts_batting_order 104 - - - c=0-0-0',
           '#12[0] offensive_substitution 110 PH 401 111 c=0-0-0'
         ],
         said: [
@@ -1461,7 +1461,7 @@ describe('when each lineup change is announced', function () {
         ],
         announced: [
           '#3[0] defensive_substitution 110 RF - - c=0-0-0',
-          '#6[0] gs_batting_order 110 - - - c=0-0-0'
+          '#6[0] ts_batting_order 110 - - - c=0-0-0'
         ],
         said: [
           'Defensive Substitution: 110 replaces 109, playing right field.',
@@ -1958,7 +1958,7 @@ describe('every set keyed by event type covers what the engine produces (U15)', 
       'offensive_substitution',
       'defensive_substitution',
       'defensive_switch',
-      'gs_batting_order',
+      'ts_batting_order',
       'final_score'
     ])
     for (const type of produced) {
@@ -1993,7 +1993,7 @@ describe('every set keyed by event type covers what the engine produces (U15)', 
       'caught_stealing_2b',
       'stolen_base_home',
       'catcher_interf',
-      'gs_batter_out',
+      'ts_batter_out',
       'runner_placed'
     ])
     expect(eventTypeName('catcher_interf')).equals("Catcher's interference")

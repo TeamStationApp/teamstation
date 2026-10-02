@@ -326,7 +326,7 @@ export function scoringFieldPlayers(
     }
     if (pending != null && player.team === 'defense') {
       for (const action of session.liveData.plays.currentPlay?.source
-        .gamestation.runnerActions ?? []) {
+        .teamstation.runnerActions ?? []) {
         const credit = action.credits.find(
           credit => credit.player.id === player.playerId
         )
@@ -357,7 +357,7 @@ export function scoringFieldPlayers(
     }
     if (player.team === 'defense') {
       for (const record of session.liveData.plays.currentPlay?.source
-        .gamestation.runnerActions ?? [])
+        .teamstation.runnerActions ?? [])
         for (const hop of record.defensiveRoute ?? [])
           if (hop.player.id === player.playerId) {
             player.position = { ...hop.location }

@@ -158,7 +158,7 @@ describe('outcome-specific fielding', function () {
         generation: 0
       })
       const play = asScoringPlay(state.session.liveData.plays.currentPlay)
-      expect(play.source.gamestation.foulCaught).equals(foul ? true : undefined)
+      expect(play.source.teamstation.foulCaught).equals(foul ? true : undefined)
       expect(play.hitData!.launchAngle).equals(10)
       expect(state.session.liveData.linescore.outs).equals(1)
       expect(state.session.liveData.linescore.teams.away.hits).equals(0)
@@ -293,7 +293,7 @@ describe('outcome-specific fielding', function () {
       expect(state.session.liveData.linescore.offense.second!.id).equals(6)
       expect(
         state.session.liveData.plays
-          .currentPlay!.source.gamestation.runnerActions!.at(-1)!
+          .currentPlay!.source.teamstation.runnerActions!.at(-1)!
           .defensiveRoute!.map(h => h.player.id)
       ).deep.equals([10, ...receivers])
       expect(state.session.liveData.plays.currentPlay!.result.event).equals(

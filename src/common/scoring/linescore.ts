@@ -294,7 +294,7 @@ const ON_BASE = new Set(['1B', '2B', '3B'])
  * The runners a half left on base: those whose last entry in the half's plays
  * ends on a base, not out.
  *
- * Only a half whose every play carries a `gameStation` record lists every
+ * Only a half whose every play carries a `teamStation` record lists every
  * runner, and an override sets the bases without writing an entry, so any
  * other half is null: an imported one, or one with an override.
  */
@@ -325,13 +325,13 @@ export function leftOnBase(plays: GumboPlay[]): number | null {
 
 /** A play TeamStation scored, which lists every runner it moved. */
 function hasRecord(play: GumboPlay): boolean {
-  return play.gameStation != null && typeof play.gameStation === 'object'
+  return play.teamStation != null && typeof play.teamStation === 'object'
 }
 
 /** A play TeamStation scored, and whose runners no override set by hand. */
 function scoredWhole(play: GumboPlay): boolean {
   if (!hasRecord(play)) return false
-  const actions = (play.gameStation as { actions?: unknown }).actions
+  const actions = (play.teamStation as { actions?: unknown }).actions
   if (!Array.isArray(actions)) return true
   return !actions.some(
     action =>

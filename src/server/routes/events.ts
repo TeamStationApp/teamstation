@@ -30,13 +30,13 @@ export interface EventRouteOptions {
  *
  * A post is one of two modes. A `replace` post, the default, is a finished
  * game arriving whole: a stored play whose index the body does not name is
- * deleted, even after `scoringOwner` is `gamestation`. That includes a
+ * deleted, even after `scoringOwner` is `teamstation`. That includes a
  * legacy line-score-only `final_score` play, stored for a game whose sender
  * had nothing but a line score and turned into Gumbo by migration 031. It
  * sits at index 9999 after a game's other plays, or at index 0 in a game that
  * has nothing else.
  *
- * `source.system` is `gamestation`, `manual`, or an outside system spelled as
+ * `source.system` is `teamstation`, `manual`, or an outside system spelled as
  * an external id's system is, stored as `external`. A post that names none
  * counts as an outside one, so that a sender has to say it is TeamStation's
  * own before it may write a game
