@@ -13,8 +13,7 @@
   // The rule that prevents a repeat: the root configuration always travels
   // *with* `src2`, so what is
   // built anywhere is the same tree as here. Nothing in `src2` may reach
-  // above the root, and `src/` — frozen 1.0, kept for reference — is not part
-  // of this project.
+  // above the root.
 
   "compilerOptions": {
     "target": "es2022",

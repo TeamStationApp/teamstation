@@ -1,5 +1,5 @@
 /**
- * The values of 1.0's dark GameStation theme (`src/client/themes/gsDark.ts`)
+ * The values of 1.0's dark GameStation theme (`src/client/themes/gsDark.ts` at 25f9496e)
  * that 1.0's scoreboard reads, exactly, for the board alone. It draws in these
  * whatever the app's own theme is.
  */
@@ -33,7 +33,7 @@ const palette = {
 }
 
 /**
- * 1.0's `src/client/themes/scaling.ts` (`scaleV`), with the window's height
+ * 1.0's `src/client/themes/scaling.ts` at 25f9496e (`scaleV`), with the window's height
  * fixed where 1.0 read it from the window once at load.
  *
  * 1.0 grew every size with the window's height, so its board was 522 px wide

@@ -74,7 +74,7 @@ function pagePoint(event: GestureResponderEvent): PagePoint {
 }
 
 /**
- * The override dashboard: 1.0's `src/client/Dashboard.tsx`, its layout,
+ * The override dashboard: 1.0's `src/client/Dashboard.tsx` at 25f9496e, its layout,
  * styles and gestures, on the 2.0 dashboard socket.
  *
  * It draws in 1.0's dark GameStation colours (`dashboardTheme.ts`) whatever

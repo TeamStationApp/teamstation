@@ -54,7 +54,7 @@ export function startWeb(start: WebStart): 'scoreboard' | 'app' {
       element.style.background = 'transparent'
       element.style.margin = '0'
     }
-    // 1.0's page root is a plain block (`src/client/index.html`). This page's
+    // 1.0's page root is a plain block (`src/client/index.html` at 25f9496e). This page's
     // `#root` is a flex row, which would stretch the board to the web view.
     rootTag.style.display = 'block'
     createRoot(rootTag).render(
