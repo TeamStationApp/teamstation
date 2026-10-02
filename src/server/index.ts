@@ -51,6 +51,7 @@ import { scheduleRoutes } from './routes/schedule'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
+import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
@@ -486,6 +487,7 @@ function runWorker(): void {
   )
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
   app.use('/api/v1', scheduleRoutes(db))
+  app.use('/api/v1', teamMemberRoutes(db))
   app.use(
     '/api/v1',
     eventRoutes(db, { onGameWritten: scoreboard.onGameWritten })

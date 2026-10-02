@@ -10,6 +10,7 @@ import {
   type ScheduleGamesResponse
 } from '../../common/scheduleGames'
 import { adminScopes } from '../access'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { recordExternalId } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
@@ -211,9 +212,7 @@ async function applyRow(
 
   if (externalId != null) {
     // Two posts of one new id at once make one game, not two.
-    await sql`select pg_advisory_xact_lock(hashtextextended(${`schedule:${externalId.system}:${externalId.id}`}, 0))`.execute(
-      trx
-    )
+    await lockKeys(trx, [`schedule:${externalId.system}:${externalId.id}`])
     const held = await trx
       .selectFrom('external_ids')
       .innerJoin('games', 'games.id', 'external_ids.entity_id')

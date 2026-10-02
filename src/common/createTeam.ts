@@ -5,6 +5,8 @@
  * with the same words.
  */
 
+import { asExternalIdAt, type ExternalIdBody } from './externalIds'
+
 /** A team's name is at most this long, after trimming. */
 export const TEAM_NAME_MAX = 100
 
@@ -16,11 +18,7 @@ export const CREATE_TEAM_EXTERNAL_IDS_MAX = 20
 
 export type CreateTeamSeason = { id: string } | { name: string; year: number }
 
-export interface CreateTeamExternalId {
-  system: string
-  id: string
-  kind: string
-}
+export type CreateTeamExternalId = ExternalIdBody
 
 export interface CreateTeamBody {
   name: string
@@ -50,9 +48,6 @@ export type CreateTeamResponse =
       season: CreatedTeamSeason | null
     }
   | { id: string; name: string; created: false; season: null }
-
-/** The rule `external_ids.system` holds everywhere. */
-const SYSTEM_PATTERN = /^[a-z][a-zA-Z0-9]{0,31}$/
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === 'object' && raw != null && !Array.isArray(raw)
@@ -97,22 +92,6 @@ function asSeason(raw: unknown): CreateTeamSeason {
   return { name, year }
 }
 
-function asExternalId(raw: unknown, index: number): CreateTeamExternalId {
-  const at = `externalIds[${index}]`
-  if (!isRecord(raw)) fail(`${at} must be an object`)
-  const { system, id, kind } = raw
-  if (typeof system !== 'string' || !SYSTEM_PATTERN.test(system)) {
-    fail(`${at}.system must match ^[a-z][a-zA-Z0-9]{0,31}$`)
-  }
-  if (typeof kind !== 'string' || kind === '') {
-    fail(`${at}.kind must be a non-empty string`)
-  }
-  if (typeof id !== 'string' || id === '') {
-    fail(`${at}.id must be a non-empty string`)
-  }
-  return { system, id, kind }
-}
-
 /** The body, or a `TypeError` naming the field that is wrong. */
 export function asCreateTeamBody(raw: unknown): CreateTeamBody {
   if (!isRecord(raw)) fail('The body must be an object')
@@ -124,7 +103,9 @@ export function asCreateTeamBody(raw: unknown): CreateTeamBody {
     if (raw.externalIds.length > CREATE_TEAM_EXTERNAL_IDS_MAX) {
       fail(`externalIds holds at most ${CREATE_TEAM_EXTERNAL_IDS_MAX} ids`)
     }
-    externalIds = raw.externalIds.map(asExternalId)
+    externalIds = raw.externalIds.map((one, index) =>
+      asExternalIdAt(one, `externalIds[${index}]`)
+    )
   }
   return season == null ? { name, externalIds } : { name, season, externalIds }
 }

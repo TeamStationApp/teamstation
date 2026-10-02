@@ -14,6 +14,7 @@ import {
   canSeeTeam,
   visibleScopes
 } from '../access'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import {
   type ExternalIdKey,
@@ -95,12 +96,7 @@ export async function createTeam(
         `season:${body.season.name.toLowerCase()}:${String(body.season.year)}`
       )
     }
-    // In one order, so two posts that share two keys cannot each hold one.
-    for (const key of [...new Set(keys)].sort()) {
-      await sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`.execute(
-        trx
-      )
-    }
+    await lockKeys(trx, keys)
 
     const access = creatorAccess(trx, creator)
     const { held, orphans } = await heldTeam(trx, body, access)

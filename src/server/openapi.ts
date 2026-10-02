@@ -104,6 +104,33 @@ const namedThing = {
   properties: { id: { type: 'string' }, name: { type: 'string' } }
 }
 
+/** An id another system has for a person, by the rules `POST /teams` uses. */
+const memberExternalId = {
+  type: 'object',
+  required: ['system', 'kind', 'id'],
+  properties: {
+    system: { type: 'string', pattern: '^[a-z][a-zA-Z0-9]{0,31}$' },
+    kind: { type: 'string', minLength: 1 },
+    id: { type: 'string', minLength: 1 }
+  }
+}
+
+/** A person's two names, trimmed; either may be empty. */
+const personNames = {
+  firstName: { type: 'string', maxLength: 100 },
+  lastName: { type: 'string', maxLength: 100 }
+}
+
+/** Why one row of a roster call was refused while the others applied. */
+const memberRowError = {
+  type: 'object',
+  required: ['code', 'message'],
+  properties: {
+    code: { type: 'string', enum: ['conflict'] },
+    message: { type: 'string' }
+  }
+}
+
 const sorted = (codes: ReadonlySet<string>): string[] => [...codes].sort()
 
 /** A player a play names: his TeamStation user id, or only a name. */
@@ -1657,6 +1684,118 @@ export function openApiDocument(version: string): OpenApiDocument {
                         properties: {
                           created: { type: 'integer' },
                           updated: { type: 'integer' },
+                          unchanged: { type: 'integer' },
+                          error: { type: 'integer' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players': {
+        post: {
+          summary: "Add a team's players by external id",
+          description:
+            'Adds 1 to 200 players in one call, in one transaction, and ' +
+            'answers each row in order. Each row is a person another system ' +
+            'knows by `externalId`.\n\n' +
+            '**Who may call:** an administrator of the team (set on the ' +
+            'team, its season or its league, or its owner or manager) or a ' +
+            'site administrator. Anyone else gets 403; a team the caller ' +
+            'cannot see gets 404. A person an external id already names is ' +
+            'added to the team wherever else they are.\n\n' +
+            '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
+            'characters, either may be empty), `jersey` (at most 3 ' +
+            'characters), `bats` (`left`, `right` or `switch`), `throws` ' +
+            '(`left` or `right`) and `externalId` `{system, kind, id}`, with ' +
+            '`system` matching `^[a-z][a-zA-Z0-9]{0,31}$`. One malformed row ' +
+            'refuses the call with a 400 naming it.\n\n' +
+            '**What a row does:** the user holding the external id (merged ' +
+            'accounts followed to the one they became) is the player; ' +
+            'otherwise a new user is made, who cannot sign in, named `first ' +
+            'last` or `Unknown player`, with the id recorded on them. That ' +
+            "user's membership of the team is made a player's: a new one is " +
+            'a `member` with the jersey, and an existing one keeps its jersey ' +
+            'unless it had none. Each of `bats` and `throws` sent replaces ' +
+            'an imported one and is never written over a coach\u2019s; a ' +
+            'hand not sent is left as it is. An id held by something that ' +
+            "is not a user is that row's `conflict`; the other rows still " +
+            'apply.\n\n' +
+            '**Answers:** `result` is `created` (a new user), `joined` (an ' +
+            'existing user newly a player here), `unchanged` (already a ' +
+            'player here) or `error`, with the `userId`.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['players'],
+                  properties: {
+                    players: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['externalId'],
+                        properties: {
+                          ...personNames,
+                          jersey: { type: 'string', maxLength: 3 },
+                          bats: {
+                            type: 'string',
+                            enum: ['left', 'right', 'switch']
+                          },
+                          throws: { type: 'string', enum: ['left', 'right'] },
+                          externalId: memberExternalId
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'One answer per row, in order, and the counts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['results', 'counts'],
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['index', 'result'],
+                          properties: {
+                            index: { type: 'integer' },
+                            result: {
+                              type: 'string',
+                              enum: ['created', 'joined', 'unchanged', 'error']
+                            },
+                            userId: { type: 'integer' },
+                            error: memberRowError
+                          }
+                        }
+                      },
+                      counts: {
+                        type: 'object',
+                        properties: {
+                          created: { type: 'integer' },
+                          joined: { type: 'integer' },
                           unchanged: { type: 'integer' },
                           error: { type: 'integer' }
                         }
