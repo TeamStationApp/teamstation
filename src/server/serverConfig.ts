@@ -38,7 +38,7 @@ export const asServerConfig = asObject({
   /** Postgres for GameStation's own data. */
   databaseUrl: asOptional(
     asString,
-    'postgres://localhost:5432/gamestation_dev'
+    'postgres://localhost:5432/teamstation_dev'
   ),
 
   /**
@@ -76,7 +76,7 @@ export const asServerConfig = asObject({
     asObject({
       endpoint: asOptional(asString, 'https://sfo3.digitaloceanspaces.com'),
       region: asOptional(asString, 'sfo3'),
-      bucket: asOptional(asString, 'gamestation'),
+      bucket: asOptional(asString, 'media-bucket'),
       accessKeyId: asOptional(asString, ''),
       secretAccessKey: asOptional(asString, ''),
       pathStyle: asOptional(asBoolean, false)
@@ -84,7 +84,7 @@ export const asServerConfig = asObject({
     {
       endpoint: 'https://sfo3.digitaloceanspaces.com',
       region: 'sfo3',
-      bucket: 'gamestation',
+      bucket: 'media-bucket',
       accessKeyId: '',
       secretAccessKey: '',
       pathStyle: false
@@ -168,13 +168,17 @@ export const asServerConfig = asObject({
    * Redis, which holds every game's scoreboard and carries its changes from
    * worker to worker. Empty `prefix` means `gs:<database name>`, so deployments
    * that share one Redis, each with its own database, never meet.
+   *
+   * `caFile` is the certificate authority to check TLS against, for a server
+   * that signs with its own CA. Empty for a local Redis.
    */
   redis: asOptional(
     asObject({
       url: asOptional(asString, 'redis://127.0.0.1:6379'),
-      prefix: asOptional(asString, '')
+      prefix: asOptional(asString, ''),
+      caFile: asOptional(asString, '')
     }),
-    { url: 'redis://127.0.0.1:6379', prefix: '' }
+    { url: 'redis://127.0.0.1:6379', prefix: '', caFile: '' }
   ),
 
   /**

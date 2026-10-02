@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { after, before, beforeEach, describe, it } from 'mocha'
 
@@ -17,6 +21,7 @@ import {
   makeScoreboardSubscriber,
   parseScoreboardMessage,
   quit,
+  redisSocketOptions,
   type ScoreboardClient,
   type ScoreboardMessage,
   scoreboardPrefix,
@@ -341,5 +346,50 @@ describe('the scoreboard store', function () {
     await quit(stuck)
     expect(stuck.isOpen).equals(false)
     await connecting
+  })
+})
+
+describe('the Redis connection options', function () {
+  it('adds nothing for a local Redis, whose URL says it all', function () {
+    expect(redisSocketOptions('')).equals(undefined)
+  })
+
+  it('checks TLS against the CA file when one is named', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-redis-ca-'))
+    try {
+      const file = join(dir, 'ca.crt')
+      writeFileSync(file, '-----BEGIN CERTIFICATE-----\nAAAA\n')
+      expect(redisSocketOptions(file)).deep.equals({
+        tls: true,
+        ca: '-----BEGIN CERTIFICATE-----\nAAAA\n'
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to start with a CA file it cannot read, and names it', function () {
+    expect(() => redisSocketOptions('/nowhere/ca.crt')).throws(
+      /redis\.caFile \/nowhere\/ca\.crt cannot be read/
+    )
+  })
+
+  it('builds a client carrying the CA, and one without when there is none', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-redis-ca-'))
+    try {
+      const file = join(dir, 'ca.crt')
+      writeFileSync(file, 'CA')
+      const withCa = makeScoreboardClient(
+        'rediss://localhost:1',
+        () => {},
+        'test',
+        file
+      )
+      expect(withCa.options?.socket).deep.include({ tls: true, ca: 'CA' })
+      const plain = makeScoreboardClient('redis://localhost:1', () => {})
+      expect(plain.options?.socket?.tls).not.equals(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
