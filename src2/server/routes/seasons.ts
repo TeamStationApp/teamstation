@@ -206,7 +206,13 @@ function toIso(value: Date | string | null): string | null {
 }
 
 /** A schedule row plus the logo paths the event list turns into URLs. */
-export interface ScheduleRow extends SeasonGame {
+/**
+ * A game as the schedule query reads it: the logos are still paths here, and
+ * `GET /events` signs them into the `homeLogoUrl`/`awayLogoUrl` it answers
+ * with.
+ */
+export interface ScheduleRow
+  extends Omit<SeasonGame, 'homeLogoUrl' | 'awayLogoUrl'> {
   homeLogoPath: string | null
   awayLogoPath: string | null
 }

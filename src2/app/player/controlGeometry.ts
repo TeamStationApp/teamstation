@@ -215,3 +215,28 @@ export function liveRects(w: number, h: number, engine: Engine): Rect[] {
   }
   return pieces
 }
+
+/**
+ * How deep the player's own controls run in from the top and the bottom of a
+ * picture `height` tall: the lowest edge of anything touching the top, and the
+ * highest edge of anything touching the bottom.
+ *
+ * What is drawn in a corner — the slow-motion words — sits just inside these,
+ * so it is never on a button.
+ */
+export function edgeBars(
+  rects: Rect[],
+  height: number
+): { top: number; bottom: number } {
+  const top = Math.max(
+    0,
+    ...rects.filter(rect => rect.y <= 1).map(rect => rect.y + rect.h)
+  )
+  const bottom = Math.max(
+    0,
+    ...rects
+      .filter(rect => rect.y + rect.h >= height - 1)
+      .map(rect => height - rect.y)
+  )
+  return { top, bottom }
+}

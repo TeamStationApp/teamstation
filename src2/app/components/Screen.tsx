@@ -6,6 +6,7 @@ import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
+import { ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import { navClearanceAboveInset } from './navClearance'
 import { useBreakpoint } from './useBreakpoint'
@@ -98,6 +99,10 @@ export function Screen(props: ScreenProps): React.ReactElement {
   // wider — the design's, or the hardware's — so a line of text never starts
   // underneath the island.
   const margin = theme.rem(edgeMarginRem(theme, breakpoint))
+  const side = {
+    left: Math.max(margin, insets.left),
+    right: Math.max(margin, insets.right)
+  }
 
   const inner = (
     <View
@@ -105,10 +110,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
         styles.column,
         breakpoint !== 'phone' && styles.columnWide,
         breakpoint === 'phone' && styles.clearOfNav,
-        {
-          paddingLeft: Math.max(margin, insets.left),
-          paddingRight: Math.max(margin, insets.right)
-        },
+        { paddingLeft: side.left, paddingRight: side.right },
         breakpoint === 'phone' && {
           paddingBottom: navClearance
         },
@@ -116,7 +118,10 @@ export function Screen(props: ScreenProps): React.ReactElement {
         contentStyle
       ]}
     >
-      {children}
+      {/* A pill strip in here runs back out through this padding. */}
+      <ContentInsetContext.Provider value={side}>
+        {children}
+      </ContentInsetContext.Provider>
     </View>
   )
 

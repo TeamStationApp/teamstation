@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useContentInset } from './contentInset'
 
 export interface PillTab<Id extends string = string> {
   id: Id
@@ -23,6 +24,12 @@ export interface PillTabsProps<Id extends string = string> {
    */
   size?: 'regular' | 'compact'
   accessibilityLabel?: string
+  /**
+   * Run past the column's padding to the edges of the screen, with the first
+   * pill still on the margin (`ContentInset`). On by default; off for a
+   * strip that belongs inside a panel of its own.
+   */
+  bleed?: boolean
 }
 
 /**
@@ -50,9 +57,20 @@ export interface PillTabsProps<Id extends string = string> {
 export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  const { tabs, selected, onSelect, size = 'compact' } = props
+  const { tabs, selected, onSelect, size = 'compact', bleed = true } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const inset = useContentInset()
+  // Drawn into the column's padding, the strip reaches the screen's edges and
+  // a swiped pill goes all the way out; padded by the same amount inside, its
+  // first pill still starts on the margin with everything else.
+  const reach =
+    bleed && (inset.left > 0 || inset.right > 0)
+      ? {
+          strip: { marginLeft: -inset.left, marginRight: -inset.right },
+          content: { paddingLeft: inset.left, paddingRight: inset.right }
+        }
+      : undefined
 
   const row = (
     <View style={styles.row}>
@@ -78,7 +96,8 @@ export function PillTabs<Id extends string = string>(
       showsHorizontalScrollIndicator={false}
       accessibilityRole="tablist"
       accessibilityLabel={props.accessibilityLabel}
-      contentContainerStyle={styles.scrollContent}
+      style={reach?.strip}
+      contentContainerStyle={[styles.scrollContent, reach?.content]}
     >
       {row}
     </ScrollView>

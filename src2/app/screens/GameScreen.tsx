@@ -40,9 +40,10 @@ import {
   webStyle,
   WideTable
 } from '../components'
+import { ContentInsetContext, NO_INSET } from '../components/contentInset'
 import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
-import { SHORT_WINDOW_MAX, watchLayout, type WatchMode } from '../layout/watch'
+import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
@@ -55,10 +56,10 @@ import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
-import { scoringEntry } from '../scoring/isUnscoredGame'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
+import { gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
@@ -396,13 +397,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const [tabsHeight, setTabsHeight] = useState(0)
   /**
-   * The hero and the pills, measured, so the picture leaves room for them.
-   *
-   * They stay on the page while the section under them changes, so the
-   * picture can no longer assume the whole window under the header is its.
-   */
-  const [sectionChrome, setSectionChrome] = useState(0)
-  /**
    * How tall the camera-angle buttons are, so the picture can leave room.
    *
    * Measured rather than guessed at, because it is nothing at all on the games
@@ -460,16 +454,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // nothing left over for a black bar to fill. Until the browser knows, 16:9.
   const aspect = useVideoAspect(playerRef, video?.id)
   const mode = useRef<WatchMode>('stacked')
-  // Tall enough that the score card stays above the picture. Below this the
-  // card is not drawn there at all, so it must not be subtracted from the
-  // picture — doing both is how the two fight and the card flickers.
-  const cardStays = height - headerHeight > SHORT_WINDOW_MAX
   const layout = watchLayout({
     // The width the content actually gets, not the width of the screen.
     width: width - insets.left - insets.right,
     height,
-    // The header, and — where the card stays put — the card and the pills.
-    chromeHeight: headerHeight + (cardStays ? sectionChrome : 0),
+    // The header alone: the card and the pills scroll away above the picture,
+    // which then pegs under the header with the whole window below it.
+    chromeHeight: headerHeight,
     // The camera-angle buttons are pegged with the picture and have to stay
     // on the screen with it. Twice the small space as well: `onLayout`
     // measures the card and not the margin above it, and the second keeps the
@@ -911,12 +902,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       awayScore={game.awayScore}
       homeScore={game.homeScore}
       status={gameStatusLine(game)}
+      live={game.status === 'inProgress'}
       winner={winnerOf(game)}
       compact
       awayRecord={game.awayRecord}
       homeRecord={game.homeRecord}
       awayLogoUrl={game.awayLogoUrl}
       homeLogoUrl={game.homeLogoUrl}
+      awayTeamId={game.awayTeamId}
+      homeTeamId={game.homeTeamId}
       date={shortDate(game.startAt)}
       venue={game.venue ?? undefined}
       teamStats={teamStatsOf(game.linescore)}
@@ -925,36 +919,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   )
 
-  const showScore =
-    Platform.OS === 'web' &&
-    game.canScore &&
-    (scoringEntry(game) != null || game.scoreboard?.open === true)
   const tabs = (
     <PillTabs
-      tabs={[
-        { id: 'boxScore' as const, label: lstrings.game_box_score },
-        { id: 'watch' as const, label: lstrings.game_videos },
-        // The one scoring pill, for the people whose plays the server would
-        // take, and only while there is something behind it to use. It is a
-        // tab, like the other two: the hero stays and the choices appear
-        // under the pills.
-        ...(showScore
-          ? [{ id: 'score' as const, label: lstrings.game_score_game }]
-          : []),
-        // For a songkeeper of either team, on a phone, whatever the game's
-        // status: songs are set and played before, during and after.
-        ...(game.canDj &&
-        props.music?.available === true &&
-        props.onDjGame != null
-          ? [
-              {
-                id: 'dj' as const,
-                label: lstrings.dj_game,
-                role: 'button' as const
-              }
-            ]
-          : [])
-      ]}
+      tabs={gameTabs({ game, music: props.music, onDjGame: props.onDjGame })}
       selected={tab}
       onSelect={next => {
         if (next === 'dj') {
@@ -1051,6 +1018,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           }}
         >
           <PillTabs
+            bleed={false}
             tabs={[
               ...game.videos.map(item => {
                 const name = pickerNames.get(item.id) ?? item.title
@@ -1138,13 +1106,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
+  // Stacked, the pills sit in the head's padding and run back out through
+  // it to the screen's edges. In the short layout they share a column with
+  // the picture beside them, so they stay inside it.
+  const headInset = theme.rem(theme.spaceMdRem)
   const sections = (
     <View
       onLayout={event => {
         setTabsHeight(event.nativeEvent.layout.height)
       }}
     >
-      {tabs}
+      <ContentInsetContext.Provider
+        value={short ? NO_INSET : { left: headInset, right: headInset }}
+      >
+        {tabs}
+      </ContentInsetContext.Provider>
     </View>
   )
   const head = (
@@ -1217,7 +1193,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // shared the pictures with the taps that play, pause and skip, and
       // fought them. An address that still names one is ignored.
       zoomedId={null}
-      title={`${game.awayTeamName} @ ${game.homeTeamName}`}
       atMs={
         takeWindow != null && startAtSec != null && startAtSec > 0
           ? takeWindow.fromMs + startAtSec * 1000
@@ -1242,20 +1217,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   ) : null
 
-  // One hero and one pill row for every section. Videos used to pad them one
-  // way and Box score another, so switching moved the card. The row stays
-  // mounted here, and only the pane under it changes.
-  const chrome = cardStays ? (
-    <View
-      style={styles.head}
-      onLayout={event => {
-        const next = event.nativeEvent.layout.height
-        setSectionChrome(current => (current === next ? current : next))
-      }}
-    >
-      {head}
-    </View>
-  ) : null
   const below = (
     <View style={styles.tabBody}>
       {tab === 'score' ? (
@@ -1278,12 +1239,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      <View style={[styles.watch, cardStays && { paddingTop: headerHeight }]}>
-        {chrome}
-        <View style={styles.tabPane}>
+      {/*
+        The card and the pills scroll with every section, from the same place
+        at the top of each, so switching sections does not move them. On
+        Videos they scroll away above the picture, which pegs under the
+        header while the highlights scroll on under it and its angle buttons.
+      */}
+      <View style={styles.watch}>
+        <View style={styles.tabPane} testID="gameSection">
           {tab === 'watch' ? (
             <GameWatchLayout
-              head={cardStays ? null : head}
+              head={head}
               player={player}
               description={description}
               sections={sections}
@@ -1301,8 +1267,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               layout={layout}
               short={short}
               sideBySide={sideBySide}
-              headerHeight={cardStays ? 0 : headerHeight}
-              tabsHeight={cardStays ? 0 : tabsHeight}
+              headerHeight={headerHeight}
+              tabsHeight={tabsHeight}
               height={height}
               onScroll={handleWatchScroll}
               style={styles.tabPane}
@@ -1319,11 +1285,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               style={styles.tabPane}
               onScroll={handleWatchScroll}
               scrollEventThrottle={16}
-              contentContainerStyle={
-                cardStays ? undefined : { paddingTop: headerHeight }
-              }
+              contentContainerStyle={{ paddingTop: headerHeight }}
             >
-              {cardStays ? null : <View style={styles.head}>{head}</View>}
+              <View style={styles.head}>{head}</View>
               {below}
             </ScrollView>
           )}
@@ -1481,7 +1445,10 @@ function LineScore(props: {
       contentContainerStyle={styles.lineScoreContent}
     >
       <View style={[styles.tableRow, styles.tableHead]}>
-        <Text style={[styles.cellName, styles.cellHead]} numberOfLines={1} />
+        <Text
+          style={[styles.cellName, styles.cellHead, styles.lineScoreName]}
+          numberOfLines={1}
+        />
         {Array.from({ length: innings }, (unused, index) => (
           <Text key={index} style={[styles.cell, styles.cellHead]}>
             {index + 1}
@@ -1495,7 +1462,10 @@ function LineScore(props: {
       </View>
       {sides.map(({ name, side }) => (
         <View key={name} style={styles.tableRow}>
-          <Text style={styles.cellName} numberOfLines={1}>
+          <Text
+            style={[styles.cellName, styles.lineScoreName]}
+            numberOfLines={1}
+          >
             {name}
           </Text>
           {Array.from({ length: innings }, (unused, index) => (
@@ -1892,8 +1862,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       flex: 1,
       backgroundColor: theme.backgroundColor
     },
-    // The section under the pills. It fills whatever the hero and the pills
-    // have not taken, so those two stay where they are while this swaps.
+    // The section's own scroller, which the card and the pills scroll in.
     tabPane: {
       flex: 1
     },
@@ -2026,6 +1995,11 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     lineScoreContent: {
       flexDirection: 'column'
+    },
+    // The line score is a white card, so its pinned names are white too. The
+    // page colour `cellName` paints is for the tables that sit on the page.
+    lineScoreName: {
+      backgroundColor: theme.cardBackgroundColor
     },
     cellStrong: {
       fontFamily: theme.boldTextFont,

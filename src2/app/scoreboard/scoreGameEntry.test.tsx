@@ -145,13 +145,12 @@ describe('the Score Game pill', function () {
     expect(document.body.textContent).includes('Web Widget Scoreboard Link')
   })
 
-  it('is hidden on a phone', async function () {
+  it('shows on a phone too, after Box score and Videos', async function () {
     const os = Platform.OS
     Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true })
     try {
       await gameScreen({ canScore: true, scoreboard: runnable })
-      expect(button('Box score')).not.equals(null)
-      expect(button('Score Game')).equals(null)
+      expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
     } finally {
       Object.defineProperty(Platform, 'OS', { value: os, configurable: true })
     }

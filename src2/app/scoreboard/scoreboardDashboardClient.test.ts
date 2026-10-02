@@ -21,7 +21,7 @@ const stateMessage = {
   watcherAt: null
 }
 
-function dashboard(): {
+function dashboard(token?: string): {
   sockets: ReturnType<typeof fakeSockets>
   clock: ReturnType<typeof fakeClock>
   states: ScoreboardDashboard[]
@@ -39,6 +39,7 @@ function dashboard(): {
     onState: state => states.push(state),
     onError: message => errors.push(message),
     onStop: code => stops.push(code),
+    token,
     WebSocketImpl: sockets.Impl,
     schedule: clock.schedule
   })
@@ -46,6 +47,26 @@ function dashboard(): {
 }
 
 describe('scoreboardDashboardClient', function () {
+  it('signs the socket in with the session on a phone, every time it opens', function () {
+    const { sockets, clock } = dashboard('tok_123')
+    expect(sockets.latest().headers).deep.equals({
+      Authorization: 'Bearer tok_123'
+    })
+    sockets.latest().drop(1006)
+    clock.advance(RECONNECT_MS)
+    expect(sockets.sockets).length(2)
+    expect(sockets.latest().headers).deep.equals({
+      Authorization: 'Bearer tok_123'
+    })
+  })
+
+  it('sends no header without a session, leaving it to the cookie', function () {
+    const { sockets } = dashboard()
+    expect(sockets.latest().headers).equals(undefined)
+    const empty = dashboard('')
+    expect(empty.sockets.latest().headers).equals(undefined)
+  })
+
   it('sends overrides and reset in the order made, holding them until open', function () {
     const { sockets, client } = dashboard()
     client.send({ type: 'overrides', data: countOn })

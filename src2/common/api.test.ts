@@ -689,6 +689,44 @@ describe('api client', function () {
     expect(older.scoreboard).equals(null)
   })
 
+  it('keeps each side\u2019s logo on the newest game, and reads a missing one as none', async function () {
+    const row = {
+      id: 'gam_1',
+      homeTeamId: 'tem_ag',
+      awayTeamId: 'tem_br',
+      homeTeamName: 'Amber Gardens',
+      awayTeamName: 'Badgers (Ripken)',
+      homeTeamExternal: false,
+      awayTeamExternal: false,
+      seasonId: null,
+      startAt: '2026-10-04T19:30:00Z',
+      venue: null,
+      status: 'inProgress',
+      homeScore: 0,
+      awayScore: 0,
+      ingestStatus: 'none',
+      videoCount: 0
+    }
+    const withLogo = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, [
+        {
+          ...row,
+          awayLogoUrl: 'https://space/badgers-96.png',
+          homeLogoUrl: null
+        }
+      ]).fetch
+    }).recentGame()
+    expect(withLogo?.awayLogoUrl).equals('https://space/badgers-96.png')
+    expect(withLogo?.homeLogoUrl).equals(null)
+    const older = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, [row]).fetch
+    }).recentGame()
+    expect(older?.awayLogoUrl).equals(null)
+    expect(older?.homeLogoUrl).equals(null)
+  })
+
   it('asks for seasons, their games and teams, the newest game and who is signed in', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })

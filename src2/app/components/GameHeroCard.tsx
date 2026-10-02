@@ -4,7 +4,8 @@ import { Pressable, Text, View } from 'react-native'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
-import { initialsOf } from './initials'
+import { LivePill } from './LivePill'
+import { teamInitialsOf, teamTint } from './teamTile'
 import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
@@ -15,6 +16,12 @@ export interface GameHeroCardProps {
   homeScore: number | null
   /** `FINAL`, `TOP 3RD`, `SAT 10:00 AM`. */
   status: string
+  /**
+   * The game is being played now. Its status is then the red `live` pill,
+   * top right on the date's line, rather than a chip or a word between the
+   * two teams.
+   */
+  live?: boolean
   winner?: 'away' | 'home'
   /** A frame of the game's video. Absent until one has been cut. */
   posterUrl?: string | null
@@ -61,6 +68,12 @@ export interface GameHeroCardProps {
   awayLogoUrl?: string | null
   homeLogoUrl?: string | null
   /**
+   * Each side's team, which picks the colour of its tile where it has no
+   * logo. The name picks it where there is no id.
+   */
+  awayTeamId?: string
+  homeTeamId?: string
+  /**
    * Opens a side's team, from its name and its mark.
    *
    * Nothing is drawn to say so — no colour, no chevron, no underline. Paul
@@ -104,6 +117,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     awayScore,
     homeScore,
     status,
+    live = false,
     winner,
     posterUrl,
     videoUrl,
@@ -115,6 +129,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     homeRecord,
     awayLogoUrl,
     homeLogoUrl,
+    awayTeamId,
+    homeTeamId,
     onOpenAwayTeam,
     onOpenHomeTeam
   } = props
@@ -157,9 +173,13 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
                 </Text>
               )}
             </View>
-            <View style={styles.statusChip}>
-              <Text style={styles.statusChipText}>{status}</Text>
-            </View>
+            {live ? (
+              <LivePill inline />
+            ) : (
+              <View style={styles.statusChip}>
+                <Text style={styles.statusChipText}>{status}</Text>
+              </View>
+            )}
           </View>
         )}
         <View style={[styles.plain, narrow && styles.plainStacked]}>
@@ -168,6 +188,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             score={awayScore}
             record={awayRecord}
             logoUrl={awayLogoUrl}
+            teamId={awayTeamId}
             note="Away"
             won={winner === 'away'}
             stacked={narrow}
@@ -179,6 +200,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             score={homeScore}
             record={homeRecord}
             logoUrl={homeLogoUrl}
+            teamId={homeTeamId}
             note="Home"
             won={winner === 'home'}
             alignEnd={!narrow}
@@ -259,6 +281,8 @@ function ScoreLine(props: {
   score: number | null
   record?: string | null
   logoUrl?: string | null
+  /** Picks the tile's colour where there is no logo. */
+  teamId?: string
   note: string
   won: boolean
   alignEnd?: boolean
@@ -272,6 +296,7 @@ function ScoreLine(props: {
     score,
     record,
     logoUrl,
+    teamId,
     note,
     won,
     alignEnd = false,
@@ -279,9 +304,9 @@ function ScoreLine(props: {
     onPress
   } = props
   const styles = getStyles(useTheme())
-  // Only where there is a picture. A circle of initials beside a name that is
-  // written out in full next to it says the same thing twice, in the place a
-  // photograph would have gone.
+  // Every side has a mark: its logo, or a tile of its initials in a colour of
+  // its own where it has none, or where the logo will not load. With a mark
+  // on one side only, the two names started at different places.
   //
   // Wrapped rather than the whole row made pressable: the row is laid out two
   // ways — the mark beside the name across the card, and the mark beside a
@@ -289,12 +314,16 @@ function ScoreLine(props: {
   // around the row would take in the record on one of them and not the other.
   // The mark and the name are the two things Paul named, and they are the two
   // things wrapped, in both.
-  const emblem =
-    logoUrl == null || logoUrl === '' ? null : (
-      <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
-    )
+  const emblem = (
+    <Emblem
+      uri={logoUrl}
+      fallback={teamInitialsOf(name)}
+      tint={teamTint(teamId ?? name)}
+      size={2}
+    />
+  )
   const mark =
-    emblem == null || onPress == null ? (
+    onPress == null ? (
       emblem
     ) : (
       <Pressable
@@ -330,7 +359,7 @@ function ScoreLine(props: {
   // the score hard against the right, which is how a score is read.
   if (stacked) {
     return (
-      <View style={[styles.side, styles.sideStacked, styles.sideRow]}>
+      <View style={styles.sideStacked}>
         {mark}
         <View style={styles.sideRowText}>
           {nameText}
@@ -338,7 +367,13 @@ function ScoreLine(props: {
             {record == null || record === '' ? note : `${note} · ${record}`}
           </Text>
         </View>
-        <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
+        <Text
+          style={[
+            styles.sideScore,
+            styles.sideScoreStacked,
+            won && styles.sideScoreWon
+          ]}
+        >
           {score ?? '–'}
         </Text>
       </View>
@@ -461,9 +496,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.75),
     letterSpacing: theme.rem(0.04)
   },
+  // Across the card: the two sides share its width, each a column of the
+  // mark and the name, the score, and the record.
   side: {
     flex: 1,
-    // A column now: the score on top, the name and the record under it.
     flexDirection: 'column',
     alignItems: 'flex-start',
     gap: theme.rem(0.125)
@@ -484,22 +520,26 @@ const getStyles = cacheStyles((theme: Theme) => ({
   sideNameRowEnd: {
     flexDirection: 'row-reverse'
   },
-  // `flex: 1` is flex-basis 0 as well, and in a column that measures the
-  // *height*: the side would collapse to the height of the score and the name
-  // would overflow it. Stacked, each side is simply as tall as it is.
-  sideRow: {
+  // Stacked, one side per line, and a style of its own rather than `side`
+  // with overrides. `flex: 1` is a basis of 0, and React Native keeps that
+  // basis even under a later `flexBasis: 'auto'`, which it reads as unset.
+  // In the column of two sides that left each row 0 tall, clipped by the
+  // card: the phone showed the date and half a logo, and nothing else. A
+  // browser takes the override, so the web never showed it.
+  sideStacked: {
+    alignSelf: 'stretch',
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
   },
+  // The name takes what the mark and the score leave, against the row's
+  // definite width, and truncates.
   sideRowText: {
-    flexShrink: 1,
-    flexGrow: 1
+    flex: 1
   },
-  sideStacked: {
-    flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: 'auto'
+  sideScoreStacked: {
+    flexShrink: 0
   },
 
   sideName: {

@@ -9,13 +9,21 @@ import {
 
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { controlRects, liveRects, type Rect } from './controlGeometry'
+import { controlRects, edgeBars, liveRects, type Rect } from './controlGeometry'
 import { playerEngine } from './engine'
 import { SeekFlashView, SlowMoBadge, useFlash } from './GestureFeedback'
 import { slowMotion } from './slowMotion'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import type { VideoHandle } from './videoHandle'
-import { HOLD_MS, seekBy, STEP_SECONDS, type Zone, zoneFor } from './zones'
+import {
+  type GestureAction,
+  gestureAction,
+  HOLD_MS,
+  seekBy,
+  STEP_SECONDS,
+  type Zone,
+  zoneFor
+} from './zones'
 
 export interface PlayerSurfaceProps {
   videoRef: React.RefObject<VideoHandle | null>
@@ -43,8 +51,8 @@ export interface PlayerSurfaceProps {
 /**
  * The nine squares, and the keyboard where there is one.
  *
- * The middle sides move ten seconds a tap; the top and bottom middles run at a
- * quarter speed for as long as they are held; every other square pauses. On a
+ * The middle sides move ten seconds a tap, and the right one runs at a quarter
+ * speed for as long as it is held; every other square pauses. On a
  * laptop the arrow keys do the same thing, taken in the capture phase because
  * the control bar takes them for itself once the scrubber has focus.
  *
@@ -88,17 +96,12 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
         : [{ x: 0, y: 0, w: width, h: height }],
     [controlsVisible, engine, height, width]
   )
-  // The slow-motion words sit just above whatever the player draws along the
-  // bottom, and in the corner itself once that has faded.
-  const barHeight = useMemo(
+  // The slow-motion words sit just below whatever the player draws along the
+  // top, and in the corner itself once that has faded.
+  const topBar = useMemo(
     () =>
       controlsVisible
-        ? Math.max(
-            0,
-            ...controlRects(width, height, engine)
-              .filter(rect => rect.y + rect.h >= height - 1)
-              .map(rect => height - rect.y)
-          )
+        ? edgeBars(controlRects(width, height, engine), height).top
         : 0,
     [controlsVisible, engine, height, width]
   )
@@ -127,10 +130,10 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     showFlash(direction)
   }
 
-  const beginSlow = (zone: Zone): void => {
-    if (zone !== 'slowForward' && zone !== 'slowBack') return
+  const beginSlow = (action: GestureAction | null): void => {
+    if (action !== 'slowForward') return
     holding.current = true
-    slow.start(zone === 'slowForward' ? 'forward' : 'back')
+    slow.start()
     setSpeed(slow.rate())
   }
 
@@ -170,10 +173,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
         />
       ))}
       <SeekFlashView flash={flash} />
-      <SlowMoBadge
-        rate={speed}
-        bottom={barHeight + theme.rem(theme.spaceSmRem)}
-      />
+      <SlowMoBadge rate={speed} top={topBar + theme.rem(theme.spaceSmRem)} />
     </View>
   )
 }
@@ -183,7 +183,7 @@ function GesturePiece(props: {
   width: number
   height: number
   onTap: (zone: Zone) => void
-  onHold: (zone: Zone) => void
+  onHold: (action: GestureAction | null) => void
   onRelease: () => void
 }): React.ReactElement {
   const { piece, width, height, onTap, onHold, onRelease } = props
@@ -196,7 +196,7 @@ function GesturePiece(props: {
     maxDistance: 10,
     runOnJS: true,
     onActivate: event => {
-      onHold(zoneAt(event.x, event.y))
+      onHold(gestureAction(zoneAt(event.x, event.y), 'hold'))
     },
     onFinalize: () => {
       onRelease()

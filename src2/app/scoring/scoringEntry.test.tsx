@@ -138,7 +138,8 @@ describe('actual game scoring entry', function () {
 })
 
 describe('scoring entry on the phones', function () {
-  // Score Game is a tab of the web game page. A phone does not offer it.
+  // Score Game is a tab of the game page on every platform, for the same
+  // people, and sits immediately before DJ Game where there is one.
   const web = Platform.OS
   afterEach(function () {
     Platform.OS = web
@@ -150,14 +151,46 @@ describe('scoring entry on the phones', function () {
     Platform.OS = os
     await render(<GestureHandlerRootView>{element}</GestureHandlerRootView>)
   }
+  function pills(): string[] {
+    return Array.from(document.querySelectorAll<HTMLElement>('[aria-label]'))
+      .map(node => node.getAttribute('aria-label') ?? '')
+      .filter(label =>
+        ['Box score', 'Videos', 'Score Game', 'DJ Game'].includes(label)
+      )
+  }
   for (const os of ['ios', 'android'] as const) {
-    it(`does not offer Score Game on ${os}`, async function () {
+    it(`offers Score Game on ${os}, before DJ Game`, async function () {
       const client = new GameStationClient({ baseUrl: '/api/v1' })
-      client.game = async () => gameFixture
+      client.game = async () => ({
+        ...gameFixture,
+        canScore: true,
+        canDj: true
+      })
+      client.teams = async () => []
+      await renderOn(
+        os,
+        <GameScreen
+          client={client}
+          gameId="g1"
+          music={{ available: true }}
+          onDjGame={() => undefined}
+        />
+      )
+      expect(pills()).deep.equals([
+        'Box score',
+        'Videos',
+        'Score Game',
+        'DJ Game'
+      ])
+      expect(button('Continue Scoring')).equals(null)
+    })
+
+    it(`does not offer Score Game on ${os} to somebody who may not score`, async function () {
+      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      client.game = async () => ({ ...gameFixture, canScore: false })
       client.teams = async () => []
       await renderOn(os, <GameScreen client={client} gameId="g1" />)
       expect(button('Score Game')).equals(null)
-      expect(button('Continue Scoring')).equals(null)
       expect(button('Box score')).not.equals(null)
     })
   }

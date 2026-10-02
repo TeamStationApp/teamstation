@@ -65,8 +65,10 @@ export interface VideoHandle {
   /**
    * Zero until the metadata has loaded, and at least 1 after.
    *
-   * Only ever compared as `>= 1`, which is `HAVE_METADATA`: the question being
-   * asked is always "may I seek yet".
+   * The single player only ever compares it as `>= 1`, which is
+   * `HAVE_METADATA`: "may I seek yet". The multi-camera grid also asks whether
+   * a picture is up (`HAVE_ENOUGH_DATA`, 4), which a phone's player reports
+   * once it is ready for display.
    */
   readonly readyState: number
   /** The shape of the file, so the box can be cut to fit it. */
@@ -93,3 +95,6 @@ export interface VideoHandle {
 
 /** `HAVE_METADATA`: the length is known, so a seek will land where it is told. */
 export const HAVE_METADATA = 1
+
+/** `HAVE_ENOUGH_DATA`: there is a picture, and more behind it. */
+export const HAVE_ENOUGH_DATA = 4

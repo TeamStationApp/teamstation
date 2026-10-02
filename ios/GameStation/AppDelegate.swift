@@ -72,6 +72,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
+  /**
+   * The app's own screens, upright on an iPhone.
+   *
+   * `Info.plist` lets an iPhone turn sideways, because the multi-camera view
+   * does: it is a full-screen `Modal`, a view controller of its own that
+   * declares portrait and landscape and turns with the phone. Everything
+   * under it is this controller, which stays upright, so closing the view
+   * stands the app up again. An iPad turns everywhere, as it always has.
+   */
+  override func createRootViewController() -> UIViewController {
+    PortraitRootViewController()
+  }
+
   override func sourceURL(for bridge: RCTBridge) -> URL? {
     self.bundleURL()
   }
@@ -82,5 +95,12 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
+  }
+}
+
+/** Upright on an iPhone; any way up on an iPad. */
+class PortraitRootViewController: UIViewController {
+  override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+    UIDevice.current.userInterfaceIdiom == .pad ? .all : .portrait
   }
 }

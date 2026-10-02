@@ -24,7 +24,15 @@ export interface SocketLike {
   send: (data: string) => void
   close: (code?: number) => void
 }
-export type SocketConstructor = new (url: string) => SocketLike
+/**
+ * A WebSocket's constructor. The third argument is React Native's, which
+ * sends headers on the handshake; a browser takes two and ignores it.
+ */
+export type SocketConstructor = new (
+  url: string,
+  protocols?: string | string[],
+  options?: { headers: Record<string, string> }
+) => SocketLike
 
 /** Runs `run` after `ms`, and returns how to call that off. */
 export type Schedule = (run: () => void, ms: number) => () => void
@@ -59,6 +67,12 @@ export function openReconnecting(options: {
   onOpen?: () => void
   onMessage: (data: unknown) => void
   onStop: (code: number) => void
+  /**
+   * The session, sent as `Authorization` on the handshake. A phone has no
+   * cookie jar, so this is how it is signed in; a browser sends its cookie
+   * by itself and ignores the header.
+   */
+  token?: string
   WebSocketImpl?: SocketConstructor
   schedule?: Schedule
 }): ReconnectingSocket {
@@ -78,7 +92,12 @@ export function openReconnecting(options: {
     if (done) return
     let next: SocketLike
     try {
-      next = new Impl(options.url)
+      next =
+        options.token == null || options.token === ''
+          ? new Impl(options.url)
+          : new Impl(options.url, undefined, {
+              headers: { Authorization: `Bearer ${options.token}` }
+            })
     } catch {
       retry()
       return

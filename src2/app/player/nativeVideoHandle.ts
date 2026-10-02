@@ -9,11 +9,17 @@ import type {
   VideoRef
 } from 'react-native-video'
 
-import { answersSeek, SEEK_TOLERANCE, shouldAdoptProgress } from './seekTracker'
-import type {
-  VideoEventName,
-  VideoHandle,
-  VideoListenerOptions
+import {
+  answersSeek,
+  SEEK_TOLERANCE,
+  shouldAdoptProgress,
+  shouldResumeAfterSeek
+} from './seekTracker'
+import {
+  HAVE_ENOUGH_DATA,
+  type VideoEventName,
+  type VideoHandle,
+  type VideoListenerOptions
 } from './videoHandle'
 
 /**
@@ -75,6 +81,8 @@ export class NativeVideoHandle implements VideoHandle {
    * seek simply replaces an older one.
    */
   private pendingSeekTo: number | null = null
+  /** It has played to its end, and stays ended until it is moved back. */
+  private over = false
   /**
    * When that seek was sent, so a seek nobody ever acknowledges cannot wedge
    * the playhead for ever.
@@ -113,6 +121,7 @@ export class NativeVideoHandle implements VideoHandle {
   set currentTime(seconds: number) {
     const next = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
     this.time = next
+    if (next < this.length - 0.5) this.over = false
     this.pendingSeekTo = next
     this.pendingSeekAt = Date.now()
     this.player?.seek(next, SEEK_TOLERANCE)
@@ -124,6 +133,11 @@ export class NativeVideoHandle implements VideoHandle {
 
   get paused(): boolean {
     return this.props.paused
+  }
+
+  /** What a browser's element calls `ended`: it played to the end. */
+  get ended(): boolean {
+    return this.over
   }
 
   get muted(): boolean {
@@ -239,6 +253,9 @@ export class NativeVideoHandle implements VideoHandle {
     if (answersSeek(this.pendingSeekTo, data.seekTime)) {
       this.pendingSeekTo = null
     }
+    if (shouldResumeAfterSeek({ wantsPaused: this.props.paused })) {
+      this.player?.resume()
+    }
   }
 
   handlePlaybackState = (data: OnPlaybackStateChangedData): void => {
@@ -260,6 +277,9 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleReadyForDisplay = (): void => {
+    // A picture is up: what a browser calls `HAVE_ENOUGH_DATA`, which is what
+    // the multi-camera grid asks before it believes a tile has started.
+    this.state = Math.max(this.state, HAVE_ENOUGH_DATA)
     this.emit('canplay')
     this.emit('loadeddata')
   }
@@ -287,6 +307,10 @@ export class NativeVideoHandle implements VideoHandle {
     this.width = width
     this.height = height
     this.emit('resize')
+  }
+
+  handleEnd = (): void => {
+    this.over = true
   }
 
   handleError = (error: OnVideoErrorData): void => {
@@ -325,6 +349,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null
+    this.over = false
   }
 
   private emit(type: VideoEventName): void {

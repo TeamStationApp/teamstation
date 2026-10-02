@@ -560,6 +560,9 @@ export const asSeasonGame = asObject({
   durationSec: asOptional(asNullable(asNumber), null),
   /** A frame of the game's video, signed and short-lived. */
   posterUrl: asOptional(asNullable(asString), null),
+  /** Each side's mark, signed and short-lived; null for a side without one. */
+  homeLogoUrl: asOptional(asNullable(asString), null),
+  awayLogoUrl: asOptional(asNullable(asString), null),
   /** Being played, and being streamed, right now. */
   isLive: asOptional(asBoolean, false),
   /** Other services' ids for the game, as its importers recorded them. */

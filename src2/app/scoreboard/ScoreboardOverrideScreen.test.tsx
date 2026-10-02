@@ -47,7 +47,9 @@ function state(overrides: DashboardOverrides = NO_OVERRIDES): object {
   }
 }
 
-async function dashboard(options: { load?: boolean } = {}): Promise<{
+async function dashboard(
+  options: { load?: boolean; token?: string } = {}
+): Promise<{
   sockets: ReturnType<typeof fakeSockets>
   clock: ReturnType<typeof fakeClock>
   signIns: string[]
@@ -67,6 +69,7 @@ async function dashboard(options: { load?: boolean } = {}): Promise<{
           gameId="g1"
           origin={{ protocol: 'https:', host: 'gamestation.co' }}
           onSignIn={next => signIns.push(next)}
+          token={options.token}
           WebSocketImpl={sockets.Impl}
           schedule={clock.schedule}
         />
@@ -159,6 +162,16 @@ async function longPress(
 }
 
 describe('ScoreboardOverrideScreen', function () {
+  it('signs its socket in with the session it is given, as a phone must', async function () {
+    const { sockets } = await dashboard({ load: false, token: 'tok_phone' })
+    expect(sockets.latest().url).equals(
+      'wss://gamestation.co/api/v1/scoreboard/g1/dashboard'
+    )
+    expect(sockets.latest().headers).deep.equals({
+      Authorization: 'Bearer tok_phone'
+    })
+  })
+
   it('connects at once and shows a spinner until the first state', async function () {
     const { sockets } = await dashboard({ load: false })
     expect(sockets.latest().url).equals(

@@ -49,7 +49,7 @@ const FLASH_LEFT = {
 } as const
 
 /** How long the arrow takes to fade away. */
-const FLASH_MS = 1000
+export const FLASH_MS = 1000
 
 /**
  * What a tap on the picture just did, drawn over it for a second.
@@ -110,27 +110,33 @@ export function SeekFlashView(props: {
 }
 
 /**
- * `Slow Mo 25%`, in the bottom right corner, for as long as a crawl is held.
+ * `Slow Mo 25%`, in the top right corner, for as long as a crawl is held.
  *
- * `bottom` lifts it clear of whatever control bar is showing, so the words do
- * not sit on the buttons.
+ * At the top because the crawl is held with a finger on the right of the
+ * picture, which covers the bottom corner. `top` drops it below whatever
+ * controls the player draws along the top edge, so the words do not sit on
+ * the buttons.
  */
 export function SlowMoBadge(props: {
   rate: number
-  bottom?: number
+  top?: number
+  /** How far in from the right edge, past whatever else is in the corner. */
+  right?: number
 }): React.ReactElement | null {
-  const { rate, bottom } = props
+  const { rate, top, right } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   if (rate === 0) return null
   return (
     <View
       pointerEvents="none"
-      style={[styles.slowMo, bottom != null ? { bottom } : null]}
+      style={[
+        styles.slowMo,
+        top != null ? { top } : null,
+        right != null ? { right } : null
+      ]}
     >
-      <Text style={styles.slowMoText}>
-        {rate < 0 ? lstrings.player_slow_mo_back : lstrings.player_slow_mo}
-      </Text>
+      <Text style={styles.slowMoText}>{lstrings.player_slow_mo}</Text>
     </View>
   )
 }
@@ -181,7 +187,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   slowMo: {
     position: 'absolute',
     right: theme.rem(theme.spaceSmRem),
-    bottom: theme.rem(theme.spaceSmRem),
+    top: theme.rem(theme.spaceSmRem),
     zIndex: 6,
     paddingHorizontal: theme.rem(theme.spaceSmRem),
     paddingVertical: theme.rem(0.125),

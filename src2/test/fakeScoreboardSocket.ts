@@ -18,7 +18,11 @@ export class FakeSocket implements SocketLike {
   sent: string[] = []
   closedWith: number | undefined
 
-  constructor(readonly url: string) {}
+  constructor(
+    readonly url: string,
+    /** The handshake's headers, where a phone would send them. */
+    readonly headers?: Record<string, string>
+  ) {}
 
   send(data: string): void {
     this.sent.push(data)
@@ -62,8 +66,12 @@ export function fakeSockets(): {
 } {
   const sockets: FakeSocket[] = []
   class Impl extends FakeSocket {
-    constructor(url: string) {
-      super(url)
+    constructor(
+      url: string,
+      _protocols?: string | string[],
+      options?: { headers: Record<string, string> }
+    ) {
+      super(url, options?.headers)
       sockets.push(this)
     }
   }
