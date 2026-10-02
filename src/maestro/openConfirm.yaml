@@ -6,7 +6,7 @@
 # the address is handed over, and a condition evaluated before it is up simply
 # reads as "no alert" and moves on, leaving it on screen over everything that
 # follows.
-appId: co.gamestation.app
+appId: app.teamstation.app
 ---
 - waitForAnimationToEnd:
     timeout: 3000

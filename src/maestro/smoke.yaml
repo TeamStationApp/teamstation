@@ -12,7 +12,7 @@
 # gives. Two of the eleven screens are reachable only by address — an
 # invitation and the link from the sign-in mail — so they are opened with
 # `openLink`; without that step this flow silently covers nine.
-appId: co.gamestation.app
+appId: app.teamstation.app
 # `TEAM_ID` names the team whose invite link the clipboard check copies, and
 # it differs between the production database and a local dev one:
 #
@@ -37,7 +37,7 @@ appId: co.gamestation.app
 - extendedWaitUntil:
     visible: 'Sign in to TeamStation'
     timeout: 30000
-- openLink: gamestation://signin/notarealtoken?r=notarealrequest
+- openLink: teamstation://signin/notarealtoken?r=notarealrequest
 - runFlow: openConfirm.yaml
 - extendedWaitUntil:
     visible: 'This link can be used once.*'
@@ -133,7 +133,7 @@ appId: co.gamestation.app
 # ---- An invitation, which is also only reachable by address ---------------
 #
 # A code that exists, so the screen has something to say about it.
-- openLink: gamestation://i/tforce26
+- openLink: teamstation://i/tforce26
 - runFlow: openConfirm.yaml
 - extendedWaitUntil:
     visible: 'You have been invited'

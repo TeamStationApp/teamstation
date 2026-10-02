@@ -19,14 +19,14 @@ export type { GlassViewProps }
  * iOS 26 draws `UIGlassEffect` — the material its own bars are made of, which
  * refracts and highlights what passes beneath rather than merely blurring it —
  * and earlier versions draw `systemThinMaterial`, which is what the web app's
- * `backdrop-filter` was imitating. `GSGlassView.mm` decides between them.
+ * `backdrop-filter` was imitating. `TSGlassView.mm` decides between them.
  *
  * Android gets `theme.glassFallbackColor` and an elevation, which is exactly
  * the branch `glassStyle` already takes in a browser without
  * `backdrop-filter`. Blurring a view's backdrop on Android means recording
  * that backdrop again every frame, under a scrolling list, for a tint that is
  * already legible without it — so only a surface that asks (`androidBlur`)
- * gets `GSBlurView`, the web's blur and tint drawn over a recording of what
+ * gets `TSBlurView`, the web's blur and tint drawn over a recording of what
  * is behind it.
  *
  * The glass is drawn **behind** the children rather than around them, so it
@@ -41,7 +41,7 @@ const NativeGlass =
         glassClear?: boolean
         glassRadius?: number
         glassDark?: boolean
-      }>('GSGlassView')
+      }>('TSGlassView')
     : null
 const NativeBlur =
   Platform.OS === 'android'
@@ -51,7 +51,7 @@ const NativeBlur =
         blurTint?: number
         blurSaturation?: number
         blurCornerRadius?: number
-      }>('GSBlurView')
+      }>('TSBlurView')
     : null
 
 export function GlassView(props: GlassViewProps): React.ReactElement {
@@ -117,7 +117,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
         glassInteractive={interactive}
         glassClear={clear}
         glassRadius={radius}
-        // The app's theme, not the phone's Dark Mode: see `GSGlassView.mm`.
+        // The app's theme, not the phone's Dark Mode: see `TSGlassView.mm`.
         glassDark={theme.isDark}
       />
       {children}

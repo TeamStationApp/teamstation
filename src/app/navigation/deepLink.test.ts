@@ -19,14 +19,14 @@ describe('routeOfUrl', function () {
     // No authority between the slashes, so `games` is a path segment and not a
     // host. React Native's own `URL` reads it as a host and loses the path,
     // which is why nothing here uses it.
-    expect(routeOfUrl('gamestation://games/g1?t=734')).deep.equals(
+    expect(routeOfUrl('teamstation://games/g1?t=734')).deep.equals(
       routeOfUrl('https://app.teamstation.app/games/g1?t=734')
     )
   })
 
   it('keeps the query on a scheme link', function () {
     expect(
-      routeOfUrl('gamestation://players/u1?tab=stats&season=s1')
+      routeOfUrl('teamstation://players/u1?tab=stats&season=s1')
     ).deep.equals({
       name: 'player',
       userId: 'u1',
@@ -48,7 +48,7 @@ describe('routeOfUrl', function () {
       name: 'join',
       code: 'tforce26'
     })
-    expect(routeOfUrl('gamestation://i/tforce26')).deep.equals({
+    expect(routeOfUrl('teamstation://i/tforce26')).deep.equals({
       name: 'join',
       code: 'tforce26'
     })

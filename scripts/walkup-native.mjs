@@ -43,7 +43,7 @@ const daemon = await MaestroD.connect({
 const m = await daemon.attach({
   device,
   platform: 'ios',
-  appId: 'co.gamestation.app',
+  appId: 'app.teamstation.app',
   artifacts: 'on-failure'
 })
 await mkdir(artifacts, { recursive: true })

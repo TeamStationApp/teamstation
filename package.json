@@ -7,11 +7,11 @@
     "node": ">=24.9.0"
   },
   "codegenConfig": {
-    "name": "GameStationWalkUpMusicSpec",
+    "name": "TeamStationWalkUpMusicSpec",
     "type": "modules",
     "jsSrcsDir": "src/app/walkup",
     "android": {
-      "javaPackageName": "co.gamestation.app.walkup"
+      "javaPackageName": "app.teamstation.app.walkup"
     },
     "ios": {
       "modulesProvider": {

@@ -6,7 +6,7 @@
 # for the bar lands on a control that no longer exists. The session survives a
 # relaunch — it is in storage, not in memory — so this costs a second and buys
 # a flow whose failures are the app's rather than the harness's.
-appId: co.gamestation.app
+appId: app.teamstation.app
 ---
 - launchApp
 - extendedWaitUntil:
