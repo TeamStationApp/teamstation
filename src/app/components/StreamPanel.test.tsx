@@ -202,7 +202,12 @@ class FakeServer {
     const base = '/games/gam_1/live-streams'
     if (method === 'GET' && path === base) return this.list()
     if (method === 'POST' && path === base) {
-      const added = camera(`lst_${this.mine.length + 1}`, 'Camera')
+      const sent = body as { label?: string } | undefined
+      const trimmed = sent?.label?.trim() ?? ''
+      const label = trimmed === '' ? `Camera ${this.mine.length + 1}` : trimmed
+      const added = camera(`lst_${this.mine.length + 1}`, label, {
+        slot: this.mine.length + 1
+      })
       this.mine = [...this.mine, added]
       return { ...added, url: `rtmp://ingest.example/live/${added.id}-key` }
     }
@@ -286,6 +291,18 @@ function button(words: string, index = 0): HTMLElement {
   return found[index]
 }
 
+async function type(label: string, value: string): Promise<void> {
+  await act(async () => {
+    const input = labelled(label) as HTMLInputElement
+    Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(input, value)
+    input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await delay(10)
+  })
+}
+
 async function press(node: HTMLElement): Promise<void> {
   await act(async () => {
     node.click()
@@ -338,10 +355,17 @@ describe('the stream panel', function () {
     expect(text()).includes('Give yourself a stream URL')
     expect(text()).not.includes('Loading…')
     expect(buttonsNamed('Add a camera')).has.lengthOf(0)
+    expect(button('Create a stream URL').getAttribute('aria-disabled')).equals(
+      'true'
+    )
 
+    await type('Camera name', 'Camera')
     await press(button('Create a stream URL'))
     expect(sent(server)).deep.equals(['POST /games/gam_1/live-streams'])
     expect(text()).not.includes('Give yourself a stream URL')
+    expect(text()).includes('••••')
+    expect(text()).includes('Tap to show')
+    await press(labelled('Show the URL for Camera'))
     expect(text()).includes('rtmp://ingest.example/live/lst_1-key')
     expect(text()).includes('Tap to copy')
     expect(text()).includes('The whole address goes in your software’s')
@@ -683,5 +707,59 @@ describe('the stream panel', function () {
     root = undefined
     expect(timers.polls()).deep.equals([])
     expect(server.requests).has.lengthOf(asked)
+  })
+
+  it('asks for a camera name before it creates a key', async function () {
+    const server = new FakeServer()
+    await mount(server)
+    labelled('Camera name')
+
+    await press(button('Create a stream URL'))
+    expect(sent(server)).deep.equals([])
+
+    await type('Camera name', '   ')
+    await press(button('Create a stream URL'))
+    expect(sent(server)).deep.equals([])
+
+    await type('Camera name', 'A'.repeat(81))
+    await press(button('Create a stream URL'))
+    expect(sent(server)).deep.equals([])
+
+    await type('Camera name', 'Home — Plate')
+    await press(button('Create a stream URL'))
+    expect(sent(server)).deep.equals([])
+
+    const exact = 'B'.repeat(80)
+    await type('Camera name', ` ${exact} `)
+    await press(button('Create a stream URL'))
+    const created = server.requests.find(
+      request =>
+        request.method === 'POST' && request.path.endsWith('live-streams')
+    )
+    expect(created?.body).deep.equals({ label: exact })
+    expect(text()).includes(exact)
+    expect((labelled('Camera name') as HTMLInputElement).value).equals('')
+
+    await type('Camera name', 'First Base')
+    await press(button('Add a camera'))
+    expect(text()).includes('First Base')
+    const added = server.requests.filter(
+      request =>
+        request.method === 'POST' && request.path.endsWith('live-streams')
+    )
+    expect(added[1]?.body).deep.equals({ label: 'First Base' })
+    expect((labelled('Camera name') as HTMLInputElement).value).equals('')
+
+    await press(button('New key', 1))
+    const rotated = server.requests.find(request =>
+      request.path.endsWith('/rotate')
+    )
+    expect(rotated?.body).deep.equals({})
+    expect(text()).includes('First Base')
+
+    await press(button('End stream', 1))
+    expect(
+      server.requests.some(request => request.path.endsWith('/end'))
+    ).equals(true)
   })
 })
