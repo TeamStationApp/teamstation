@@ -29,18 +29,26 @@ appId: app.teamstation.app
 # followed by somebody who is already signed in lands them on Home, here and
 # on the web alike.
 #
-# The token is deliberately not a real one. What this asserts is that opening
-# the link **spends nothing** — the screen comes up and waits for a person,
-# which is what stops a mail scanner burning a sign-in before it is read.
+# The token is deliberately not a real one. Opening the link spends it at
+# once, with no tap, and the server refuses it: what this asserts is that a
+# dead link says so and its button leads to the sign-in form, rather than to
+# the same refusal again.
 - launchApp:
     clearState: true
 - extendedWaitUntil:
     visible: 'Sign in to TeamStation'
     timeout: 30000
-- openLink: teamstation://signin/notarealtoken?r=notarealrequest
+- openLink: teamstation://signin/notarealtoken
 - runFlow: openConfirm.yaml
 - extendedWaitUntil:
-    visible: 'This link can be used once.*'
+    visible: 'This sign-in link is no longer good.*'
+    timeout: 30000
+# By its place under the refusal: the header above it says `Sign in` too.
+- tapOn:
+    text: 'Sign in'
+    below: 'This sign-in link is no longer good.*'
+- extendedWaitUntil:
+    visible: 'Sign in to TeamStation'
     timeout: 30000
 
 - runFlow: signIn.yaml

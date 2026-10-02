@@ -5,7 +5,7 @@ import type { Kysely } from 'kysely'
 import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { adminScopes } from '../access'
-import { createEmailCode, type SignInOrigin } from '../auth/emailCodes'
+import { asSignInOrigin, createEmailCode, signInLink } from '../auth/emailCodes'
 import {
   checkLimits,
   clientIp,
@@ -302,7 +302,7 @@ export function inviteRoutes(
       await options.sendCode(
         email,
         request.code,
-        signInLink(options.publicUrl, request.token, request.id)
+        signInLink(options.publicUrl, request.token)
       )
       res.status(202).json({
         sent: true,
@@ -347,21 +347,6 @@ function shown(
 export function inviteUrl(publicUrl: string | undefined, code: string): string {
   const base = (publicUrl ?? '').replace(/\/$/, '')
   return `${base}/i/${code}`
-}
-
-/** The sign-in address in the e-mail, the same one the auth routes send. */
-function signInLink(
-  publicUrl: string | undefined,
-  token: string,
-  requestId: string
-): string {
-  const base = (publicUrl ?? '').replace(/\/$/, '')
-  return `${base}/signin/${token}?r=${requestId}`
-}
-
-function asSignInOrigin(raw: unknown): SignInOrigin {
-  if (raw === 'ios' || raw === 'android' || raw === 'web') return raw
-  throw new TypeError('Expected web, ios or android')
 }
 
 /** A count that may arrive as a number or as the string a form sends. */

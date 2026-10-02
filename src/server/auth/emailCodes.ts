@@ -15,7 +15,7 @@ export type CodePurpose = 'login' | 'verify' | 'reset'
  * one works and a stream of requests cannot widen the guessing window.
  */
 export interface SignInRequest {
-  /** Names the row, and rides on the link so a browser can recognise its own. */
+  /** Names the row, and is what the client that asked waits on. */
   id: string
   code: string
   /** The link's secret. Hashed in the database; shown once, in the e-mail. */
@@ -26,6 +26,12 @@ export interface SignInRequest {
 }
 
 export type SignInOrigin = 'web' | 'ios' | 'android'
+
+/** One of the three places a sign-in can start. */
+export function asSignInOrigin(raw: unknown): SignInOrigin {
+  if (raw === 'ios' || raw === 'android' || raw === 'web') return raw
+  throw new TypeError('Expected web, ios or android')
+}
 
 export async function createEmailCode(
   db: Kysely<Database>,
@@ -81,6 +87,23 @@ export async function createEmailCode(
   return { id, code, token, clientSecret, expiresAt }
 }
 
+/**
+ * The address in the e-mail.
+ *
+ * Always an ordinary `https://` link on our own domain, never a scheme of our
+ * own: mail clients hide or strip what they do not know, and a link that
+ * cannot open on a laptop is a dead end. With the app installed the operating
+ * system hands this same address to it; without, it opens the browser, which
+ * is the right answer in both cases.
+ */
+export function signInLink(
+  publicUrl: string | undefined,
+  token: string
+): string {
+  const base = (publicUrl ?? '').replace(/\/$/, '')
+  return `${base}/signin/${token}`
+}
+
 export interface LinkClaim {
   email: string
   next: string | null
@@ -94,7 +117,7 @@ export interface LinkClaim {
  * Spend the link, and the code with it.
  *
  * A `GET` never reaches this: the address in the e-mail loads the app, which
- * asks for this once a person is behind it. That is what keeps a mail
+ * asks for this once it is running. That is what keeps a mail
  * scanner — which follows links and runs no scripts — from burning a sign-in
  * before it is read.
  */
@@ -102,33 +125,19 @@ export async function claimSignInLink(
   db: Kysely<Database>,
   token: string
 ): Promise<LinkClaim | null> {
+  // One statement, so whichever claim updates the row spent the link: two
+  // racing — two tabs, or a link and its code — cannot both find it unspent.
   const now = new Date()
   const row = await db
-    .selectFrom('email_codes')
-    .select([
-      'id',
-      'email',
-      'expires_at',
-      'consumed_at',
-      'next_path',
-      'origin',
-      'invite_id',
-      'display_name'
-    ])
-    .where('token_hash', '=', hashEmailCode(token.trim()))
-    .where('purpose', '=', 'login')
-    .executeTakeFirst()
-
-  if (row == null) return null
-  if (row.consumed_at != null) return null
-  if (new Date(row.expires_at).getTime() <= now.getTime()) return null
-
-  await db
     .updateTable('email_codes')
     .set({ consumed_at: now, approved_at: now })
-    .where('id', '=', row.id)
+    .where('token_hash', '=', hashEmailCode(token.trim()))
+    .where('purpose', '=', 'login')
     .where('consumed_at', 'is', null)
-    .execute()
+    .where('expires_at', '>', now)
+    .returning(['email', 'next_path', 'origin', 'invite_id', 'display_name'])
+    .executeTakeFirst()
+  if (row == null) return null
 
   return {
     email: row.email,
@@ -224,18 +233,23 @@ export async function verifyEmailCode(
   if (row.attempts >= MAX_ATTEMPTS) return null
 
   if (row.code_hash !== hashEmailCode(code.trim())) {
+    // Counted in the database, so wrong guesses sent together each count.
     await db
       .updateTable('email_codes')
-      .set({ attempts: row.attempts + 1 })
+      .set(eb => ({ attempts: eb('attempts', '+', 1) }))
       .where('id', '=', row.id)
       .execute()
     return null
   }
 
-  await db
+  // The link spends this same row, so the code is only good if this is the
+  // write that spent it.
+  const spent = await db
     .updateTable('email_codes')
     .set({ consumed_at: now, approved_at: now })
     .where('id', '=', row.id)
-    .execute()
+    .where('consumed_at', 'is', null)
+    .executeTakeFirst()
+  if (spent.numUpdatedRows === BigInt(0)) return null
   return { inviteId: row.invite_id, displayName: row.display_name }
 }
