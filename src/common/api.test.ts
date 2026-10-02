@@ -605,6 +605,136 @@ describe('api client', function () {
     expect(JSON.parse(lao.calls[0].body ?? '')).deep.equals({ lao: true })
   })
 
+  it('reads chats, members, the log, candidates and adults, and starts, adds to and leaves DMs', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const chat = {
+      id: 'cnv_1',
+      kind: 'teamMembers',
+      title: 'Hawks Members',
+      scope: { type: 'team', id: 'tem_1' },
+      lastSeq: 3,
+      unread: 1,
+      canPost: true,
+      canModerate: false,
+      locked: true,
+      noHolder: false,
+      closed: false,
+      memberCount: 11
+    }
+    const dm = {
+      ...chat,
+      id: 'cnv_2',
+      kind: 'dm',
+      title: null,
+      scope: null,
+      memberCount: 1,
+      people: [{ userId: 7, shortName: 'Eli C', left: true }]
+    }
+    const list = client([chat, dm])
+    // A server that names nobody (an older one) reads as nobody to name.
+    expect(await list.client.chatConversations()).deep.equals([
+      { ...chat, people: [] },
+      dm
+    ])
+    expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
+
+    const member = {
+      userId: 42,
+      shortName: 'Hank C',
+      avatarUrl: null,
+      label: 'Coach',
+      isModerator: true,
+      isApprover: true,
+      eligible: false,
+      hasIdentity: false,
+      identityKey: null,
+      generation: null
+    }
+    const members = client([member])
+    expect(await members.client.chatMembers('cnv 1')).deep.equals([member])
+    expect(members.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv%201/members'
+    )
+
+    const reads = client([{ userId: 42, seq: 3 }])
+    expect(await reads.client.chatReads('cnv_1')).deep.equals([
+      { userId: 42, seq: 3 }
+    ])
+    expect(reads.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv_1/reads'
+    )
+
+    const row = {
+      seq: 1,
+      event: 'join',
+      userId: 42,
+      actorUserId: null,
+      reason: 'audience',
+      prevHash: 'AA',
+      hash: 'BB',
+      at: 1
+    }
+    const log = client([row])
+    expect(await log.client.chatLog('cnv_1', 5)).deep.equals([row])
+    expect(log.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv_1/log?after=5'
+    )
+    await client([]).client.chatLog('cnv_1')
+
+    const person = { userId: 42, shortName: 'Hank C', avatarUrl: null }
+    const candidates = client([person])
+    expect(await candidates.client.dmCandidates('ha nk')).deep.equals([person])
+    expect(candidates.calls[0].url).equals(
+      'http://x/api/v1/chat/dm-candidates?q=ha%20nk'
+    )
+    await client([]).client.dmCandidates()
+
+    const adult = { userId: 7, shortName: 'Gale G', label: 'Guardian' }
+    const adults = client([adult])
+    expect(await adults.client.includedAdults([1, 2], 'ga')).deep.equals([
+      adult
+    ])
+    expect(adults.calls[0].url).equals(
+      'http://x/api/v1/chat/included-adults?playerIds=1,2&q=ga'
+    )
+    await client([]).client.includedAdults([1])
+
+    const made = client({ ...chat, kind: 'dm', title: null, scope: null })
+    expect((await made.client.createDm([42])).kind).equals('dm')
+    expect(made.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/dms'
+    })
+    expect(JSON.parse(made.calls[0].body ?? '')).deep.equals({
+      userIds: [42]
+    })
+
+    const added = client({ added: [7] })
+    expect(await added.client.addDmMembers('cnv_1', [7, 8])).deep.equals([7])
+    expect(added.calls[0].url).equals('http://x/api/v1/chat/dms/cnv_1/members')
+
+    const left = client({ left: true, closed: true })
+    expect(await left.client.leaveDm('cnv_1')).deep.equals({ closed: true })
+    expect(left.calls[0]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/chat/dms/cnv_1/members/me'
+    })
+  })
+
   it('reads isPlayer on team grants, and season and league grants without it', function () {
     expect(
       asScopeGrant({
