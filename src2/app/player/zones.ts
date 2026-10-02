@@ -1,15 +1,14 @@
 /** What a press does, by where it lands in the picture. */
 import type { VideoHandle } from './videoHandle'
 
-export type Zone =
-  'seekBack' | 'seekForward' | 'slowForward' | 'slowBack' | 'toggle'
+export type Zone = 'seekBack' | 'seekForward' | 'toggle'
 
 /**
  * Nine squares, tic-tac-toe, over the whole picture.
  *
- * | pause | hold: slow forwards | pause |
- * | −10s  | pause               | +10s  |
- * | pause | hold: slow backwards| pause |
+ * | pause | pause | pause                            |
+ * | −10s  | pause | +10s; hold: slow forwards         |
+ * | pause | pause | pause                            |
  *
  * Even thirds of the **picture**, not of the window: the box is exactly the
  * video's own shape, so the two are the same thing. The browser's own controls
@@ -26,9 +25,27 @@ export function zoneFor(
   const row = Math.min(2, Math.max(0, Math.floor((y / height) * 3)))
   if (row === 1 && col === 0) return 'seekBack'
   if (row === 1 && col === 2) return 'seekForward'
-  if (row === 0 && col === 1) return 'slowForward'
-  if (row === 2 && col === 1) return 'slowBack'
   return 'toggle'
+}
+
+/** What a press ends up doing: a zone's own action, or the crawl. */
+export type GestureAction = Zone | 'slowForward'
+
+/**
+ * What a tap and what a hold do on each square.
+ *
+ * A tap is the square's own action. A hold is slow motion on the +10 s square
+ * only — the finger is already where the eye is following the play, and the
+ * crawl lasts exactly as long as it stays down — and nothing anywhere else, so
+ * a press that lingers on the picture does not pause it when the finger lifts.
+ * There is no crawl backwards.
+ */
+export function gestureAction(
+  zone: Zone,
+  kind: 'tap' | 'hold'
+): GestureAction | null {
+  if (kind === 'tap') return zone
+  return zone === 'seekForward' ? 'slowForward' : null
 }
 
 /** A press becomes a hold at a quarter of a second. */
@@ -47,32 +64,18 @@ export function seekBy(video: VideoHandle, delta: number): void {
 }
 
 /** What a press does on the multi-camera view, which has no bar of its own to cut round. */
-export type AngleZone = Exclude<Zone, 'slowBack'> | 'controls'
-
-/**
- * The single player's squares, as the top two rows of the multi-camera view.
- *
- * `slowBack` is the bottom middle, which is the bar's row there and never
- * reaches this; it is spelled out only so the type holds without a cast.
- */
-const ON_ANGLES: Record<Zone, AngleZone> = {
-  seekBack: 'seekBack',
-  seekForward: 'seekForward',
-  slowForward: 'slowForward',
-  slowBack: 'toggle',
-  toggle: 'toggle'
-}
+export type AngleZone = Zone | 'controls'
 
 /**
  * The same nine squares over the four angles, with the bottom row given to
  * the control bar.
  *
- * | pause | hold: slow forwards | pause |
- * | −10s  | pause               | +10s  |
- * |        show the controls           |
+ * | pause | pause | pause                     |
+ * | −10s  | pause | +10s; hold: slow forwards  |
+ * |        show the controls                  |
  *
  * The bar hides itself after a few seconds, so the bottom third is how it is
- * called back — and a crawl backwards has no square here, only its key.
+ * called back.
  */
 export function angleZoneFor(
   x: number,
@@ -81,5 +84,5 @@ export function angleZoneFor(
   height: number
 ): AngleZone {
   const row = Math.min(2, Math.max(0, Math.floor((y / height) * 3)))
-  return row === 2 ? 'controls' : ON_ANGLES[zoneFor(x, y, width, height)]
+  return row === 2 ? 'controls' : zoneFor(x, y, width, height)
 }

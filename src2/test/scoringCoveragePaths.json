@@ -112,5 +112,19 @@
   "src2/app/field/useFieldSurface.native.ts",
   "src2/app/field/useFieldSurface.ts",
   "src2/app/scoreboard/**/*.ts",
-  "src2/app/scoreboard/**/*.tsx"
+  "src2/app/scoreboard/**/*.tsx",
+  "src2/app/screens/gameTabs.ts",
+  "src2/app/components/teamTile.ts",
+  "src2/app/components/Emblem.tsx",
+  "src2/app/components/GameHeroCard.tsx",
+  "src2/app/screens/HomeScreen.tsx",
+  "src2/app/components/contentInset.ts",
+  "src2/app/components/Screen.tsx",
+  "src2/app/player/seekTracker.ts",
+  "src2/app/player/nativeVideoHandle.ts",
+  "src2/app/player/zones.ts",
+  "src2/app/player/controlGeometry.ts",
+  "src2/app/player/slowMotion.ts",
+  "src2/app/player/multiCam/useMultiCam.ts",
+  "src2/app/player/multiCam/barParts.tsx"
 ]

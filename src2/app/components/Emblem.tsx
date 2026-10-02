@@ -24,6 +24,12 @@ export interface EmblemProps {
   shape?: 'rounded' | 'circle'
   /** In rem, like every other size. */
   size?: number
+  /**
+   * The tile's own colour, with white letters on it, for a team: each team
+   * keeps one colour of its own (`teamTint`). Without it the tile is the
+   * theme's pale container with letters in the active colour.
+   */
+  tint?: string
 }
 
 /**
@@ -36,7 +42,7 @@ export interface EmblemProps {
  * shape either way.
  */
 export function Emblem(props: EmblemProps): React.ReactElement {
-  const { uri, fallback, icon, shape = 'rounded', size = 2.5 } = props
+  const { uri, fallback, icon, shape = 'rounded', size = 2.5, tint } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [failed, setFailed] = useState(false)
@@ -50,11 +56,24 @@ export function Emblem(props: EmblemProps): React.ReactElement {
 
   if (uri == null || uri === '' || failed) {
     return (
-      <View style={[styles.tile, box]}>
+      <View
+        style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
+      >
         {icon != null ? (
           <Icon name={icon} size={size / 2} color={theme.activeColor} />
         ) : (
-          <Text style={styles.letters} numberOfLines={1}>
+          <Text
+            style={[
+              styles.letters,
+              // Two letters sized to the tile, so a smaller team mark keeps
+              // the same margin round them as the larger default.
+              tint != null && {
+                ...styles.lettersOnTint,
+                fontSize: theme.rem(size * 0.4)
+              }
+            ]}
+            numberOfLines={1}
+          >
             {fallback}
           </Text>
         )}
@@ -85,6 +104,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '700',
     color: theme.activeColor
+  },
+  lettersOnTint: {
+    color: '#FFFFFF'
   },
   picture: {
     // The same plate the letters sit on, so a picture that is still loading

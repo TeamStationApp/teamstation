@@ -246,17 +246,31 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         <View style={styles.section}>
           <SectionHeader title="Recent game" />
           <Card style={styles.gameCard}>
-            <Text style={styles.gameMeta}>
-              {shortDate(recent.startAt)}
-              {recent.venue == null ? '' : ` · ${recent.venue}`}
-            </Text>
+            {/*
+              Over a picture the card has no line of its own for the date, so
+              it sits above; drawn plainly, the card carries it, with the
+              status on the same line at the right.
+            */}
+            {recent.posterUrl != null && recent.posterUrl !== '' && (
+              <Text style={styles.gameMeta}>
+                {shortDate(recent.startAt)}
+                {recent.venue == null ? '' : ` · ${recent.venue}`}
+              </Text>
+            )}
             <GameHeroCard
               awayName={recent.awayTeamName}
               homeName={recent.homeTeamName}
               awayScore={recent.awayScore}
               homeScore={recent.homeScore}
               status={gameStatusLine(recent)}
+              live={recent.status === 'inProgress'}
+              date={shortDate(recent.startAt)}
+              venue={recent.venue ?? undefined}
               winner={winnerOf(recent)}
+              awayTeamId={recent.awayTeamId}
+              homeTeamId={recent.homeTeamId}
+              awayLogoUrl={recent.awayLogoUrl}
+              homeLogoUrl={recent.homeLogoUrl}
               posterUrl={recent.posterUrl}
               videoUrl={recentUrl}
             />

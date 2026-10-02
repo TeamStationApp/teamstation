@@ -1,5 +1,5 @@
 import type { VideoHandle } from './videoHandle'
-import type { Zone } from './zones'
+import type { GestureAction, Zone } from './zones'
 
 /**
  * What a key press is allowed to do, shared by both `useKeyboardShortcuts`
@@ -26,7 +26,8 @@ export interface KeyboardShortcuts {
    * Left out, they move the one `video` returns.
    */
   seek?: (deltaSec: number) => void
-  beginSlow: (zone: Zone) => void
+  /** The crawl a held press would start; nothing for any other action. */
+  beginSlow: (action: GestureAction | null) => void
   endSlow: () => void
   /** True while a crawl is running, so a key repeat does not start a second. */
   holding: () => boolean

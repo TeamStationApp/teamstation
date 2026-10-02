@@ -935,6 +935,7 @@ function Shell(props: AppProps): React.ReactElement {
       <ScoreboardOverrideScreen
         apiBaseUrl={apiBaseUrl}
         gameId={top.gameId}
+        token={client.token}
         onSignIn={next => {
           rememberSession(undefined)
           const signIn: Route = { name: 'signIn', next }
