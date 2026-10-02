@@ -17,6 +17,7 @@
   "src2/app/field/batterModel.ts",
   "src2/app/field/playerPresentation.ts",
   "src2/app/field/scoreboardModel.ts",
+  "src2/app/field/fieldActivity.ts",
   "src2/common/api.ts",
   "src2/common/names.ts",
   "src2/common/gumboEventTypes.ts",

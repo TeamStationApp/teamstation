@@ -1,4 +1,4 @@
-import type { ScoringAction } from '../../common/scoring/actions'
+import type { Problem, ScoringAction } from '../../common/scoring/actions'
 import type { HomeRunKind, Override } from '../../common/scoring/rules'
 import type {
   BatSide,
@@ -73,6 +73,11 @@ export interface PendingPlay {
 }
 export interface MotionCommand {
   purpose?: 'approachFirst'
+  /**
+   * A runner waiting for a later beat of a dictated sentence: drawn at his
+   * first point, not moved, until his beat starts and replaces this.
+   */
+  held?: boolean
   id: string
   generation: number
   playerId: number
@@ -127,6 +132,52 @@ export interface ScoringSnapshot {
   generation: number
   /** The server refused this game's changes: nothing more is scored. */
   readOnly?: boolean
+  /**
+   * The last utterance dictated, and why it was refused when it was. Cleared
+   * at each utterance and by Undo, so it never describes an older sentence.
+   */
+  dictation?: { transcript: string; problem?: Problem }
+  /**
+   * The beats of a dictated sentence still to play, first first. Present from
+   * the moment the sentence is accepted until its last picture and motion end.
+   */
+  reel?: Beat[]
+  /** Sentences that came back while a reel played, applied when it ends. */
+  queuedDictation?: Array<{ transcript: string; actions: ScoringAction[] }>
+  /**
+   * What a dictated sentence left open that only the scorer can answer. The
+   * sentence is not applied until it is answered.
+   */
+  dictationQuestion?: DictationQuestion
+}
+/**
+ * A question the screen asks about a dictated sentence: one answer among
+ * `options`, or any of the `pick` choices, each carrying the whole sentence
+ * it comes to.
+ */
+export interface DictationQuestion {
+  transcript: string
+  question: string
+  options?: Array<{ label: string; actions: ScoringAction[] }>
+  pick?: {
+    choices: Array<{ label: string; actions: ScoringAction[] }>
+    /** The sentence the picked choices join. */
+    before: ScoringAction[]
+    /** What picking nobody comes to, after `before`. */
+    none: ScoringAction[]
+    /** The rest of the sentence, after the picks. */
+    after?: ScoringAction[]
+  }
+}
+/**
+ * One step of a dictated sentence's animation: at most one picture — a pitch,
+ * a hit or a throw — the runner motions that run with it, and whether it may
+ * start as soon as the picture before it ends or only once nothing moves.
+ */
+export interface Beat {
+  presentation?: PresentationSequence
+  motions: MotionCommand[]
+  after: 'presentation' | 'motions'
 }
 /**
  * The screen without the game: the step, what is drawn, the drafts. It is
@@ -256,3 +307,12 @@ export type ScoringEvent =
       readOnly?: boolean
     }
   | { type: 'SWITCH_SIDE'; side: BatSide }
+  /** The scorer's answer to `dictationQuestion`: an option, or the runners picked. */
+  | { type: 'DICTATION_ANSWER'; option?: number; picks?: number[] }
+  | { type: 'DICTATION_DISMISS' }
+  /** One spoken sentence: applied whole as one undo step, or refused whole. */
+  | {
+      type: 'DICTATED'
+      transcript: string
+      actions: readonly ScoringAction[]
+    }

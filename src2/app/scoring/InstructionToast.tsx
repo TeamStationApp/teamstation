@@ -22,7 +22,8 @@ export function InstructionToast({
   onFinish,
   bounds,
   compact = false,
-  minTop = 62
+  minTop = 62,
+  below = 0
 }: {
   instruction?: string
   detail?: string
@@ -35,6 +36,8 @@ export function InstructionToast({
   compact?: boolean
   /** The highest the toast may start, clear of ☰: 62 on the web. */
   minTop?: number
+  /** Keeps the toast below whatever sits above it — the dictation log. */
+  below?: number
 }): React.ReactElement | null {
   const theme = useTheme()
   if (instruction == null && remainingMs == null && onFinish == null)
@@ -44,7 +47,10 @@ export function InstructionToast({
       pointerEvents="box-none"
       style={{
         position: 'absolute',
-        top: compact ? (bounds?.y ?? 8) : Math.max(minTop, bounds?.y ?? 75),
+        top: Math.max(
+          below,
+          compact ? (bounds?.y ?? 8) : Math.max(minTop, bounds?.y ?? 75)
+        ),
         left: bounds?.x ?? 12,
         right: bounds == null ? 12 : undefined,
         width: bounds?.width,

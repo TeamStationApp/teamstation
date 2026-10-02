@@ -14,7 +14,7 @@ import {
   View
 } from 'react-native'
 
-import type { GameStationClient } from '../../common/api'
+import type { DictationModel, GameStationClient } from '../../common/api'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   awaitingResult,
@@ -24,6 +24,7 @@ import {
   undoesHitOffer
 } from '../../common/scoring/rules'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
+import type { GameState } from '../../common/scoring/state'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -44,10 +45,16 @@ import { WalkUpControl } from '../walkup/WalkUpControl'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
+import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
+import {
+  describeEntryPlays,
+  describeLastPlay,
+  describePlay
+} from './playDescription'
 import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -56,9 +63,11 @@ import { scoringAudio } from './scoringAudio'
 import { runnerDecisionError } from './scoringFlow'
 import {
   actsOnOpening,
+  atRest,
   resumedScoringState,
   scoringScreenModel,
-  scoringScreenReducer
+  scoringScreenReducer,
+  sessionAt
 } from './scoringMachine'
 import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -72,7 +81,8 @@ import {
 import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import { DevelopmentScoringSource, type ScoringSource } from './scoringSource'
-import type { ScoringEvent } from './scoringTypes'
+import type { HistoryEntry, ScoringEvent } from './scoringTypes'
+import { dictationUrl } from './useDictation'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
@@ -181,6 +191,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     <ScoringPanel
       key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}`}
       game={opened}
+      client={props.client}
+      gameId={props.gameId}
       persistent={source.persistent === true}
       onExit={props.onExit}
       userId={String(props.userId ?? 'local-scorer')}
@@ -235,8 +247,21 @@ export function saveStatusText(status: SaveStatus): string | null {
   if (status.pending > 0) return 'Saving…'
   return null
 }
+/** A number for each Undo entry, the same for as long as the entry lasts. */
+const entryIds = new WeakMap<HistoryEntry, number>()
+let nextEntryId = 1
+function entryId(entry: HistoryEntry): number {
+  let id = entryIds.get(entry)
+  if (id == null) {
+    id = nextEntryId++
+    entryIds.set(entry, id)
+  }
+  return id
+}
 function ScoringPanel(props: {
   game: GameSession
+  client: GameStationClient
+  gameId: string
   persistent: boolean
   onExit: () => void
   userId: string
@@ -323,6 +348,7 @@ function ScoringPanel(props: {
     })
   }, [props.game, model.savedUndos, model.savedUndone, state.log])
   const [sound, setSound] = useState(true)
+  const [dictationModel, setDictationModel] = useState<DictationModel>()
   useEffect(() => {
     let live = true
     scoringPreferences
@@ -330,6 +356,7 @@ function ScoringPanel(props: {
       .then(value => {
         if (live) {
           setSound(value.sound !== false)
+          setDictationModel(value.dictationModel)
           dispatch({
             type: 'PRESENTATION',
             enabled: value.animations !== false
@@ -422,6 +449,155 @@ function ScoringPanel(props: {
   // screen reader.
   const actionsAllowed = bottomActionsAllowed(state) && !status.readOnly
   const session = state.session
+  const { client } = props
+  const health = useCallback(async () => await client.health(), [client])
+  const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
+  // A development game has no server to dictate to.
+  const noDictation = useCallback(
+    async () => ({
+      status: 'ok' as const,
+      version: '',
+      database: 'ok' as const,
+      migrations: 0,
+      dictation: false,
+      dictationModels: []
+    }),
+    []
+  )
+  // The last play in two lines, however many entries it took to tap.
+  const lastEntry = state.past.at(-1)
+  const { game } = props
+  const { log, past, checkpoints } = state
+  const lastPlay = useMemo(
+    () =>
+      describeLastPlay(log, past, session, logLength =>
+        sessionAt({ log, checkpoints }, logLength, () => game.opening)
+      ),
+    [game, log, past, session, checkpoints]
+  )
+  // The last sentence's plays — each batter's, when it scored more than
+  // one — once per sentence, for the dictation log.
+  const played = useMemo(
+    () =>
+      state.dictation != null &&
+      state.dictation.problem == null &&
+      lastEntry?.label === state.dictation.transcript
+        ? {
+            id: entryId(lastEntry),
+            lines: describeEntryPlays(log, past, logLength =>
+              sessionAt({ log, checkpoints }, logLength, () => game.opening)
+            ).flatMap(play => [
+              play.primary,
+              ...(play.secondary == null ? [] : [play.secondary])
+            ])
+          }
+        : undefined,
+    [state.dictation, lastEntry, log, past, checkpoints, game]
+  )
+  // A dictated undo: the step back the Undo button takes, but at once, so the
+  // rest of the sentence is applied after it. What it took back — the
+  // actions, and the game they were applied to — or null for nothing.
+  const undoLast = (): {
+    removed: ScoringAction[]
+    before: GameState
+    label?: string
+  } | null => {
+    scoringAudio.stop()
+    if (status.readOnly) return null
+    const entry = state.past.at(-1)
+    if (entry != null || state.log.length === 0) {
+      dispatch({ type: 'UNDO' })
+      return entry == null
+        ? null
+        : {
+            removed: state.log.slice(entry.logLength),
+            before: sessionAt(state, entry.logLength, () => game.opening),
+            label: entry.label
+          }
+    }
+    // Scored before this screen opened: the game steps back one action, and
+    // on past any step the screen cannot rest on, as an Undo tap does.
+    props.game.sync(state.log)
+    let undone = props.game.undo()
+    while (
+      undone.problems.length === 0 &&
+      (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
+    )
+      undone = props.game.undo()
+    if (undone.problems.length > 0) return null
+    dispatch({
+      type: 'RESET',
+      session: props.game.state,
+      log: [...props.game.actions]
+    })
+    return {
+      removed: state.log.slice(props.game.actions.length),
+      before: props.game.state
+    }
+  }
+  // The log's line for a dictated undo, from what it took back.
+  const undoneLine = (
+    taken: {
+      removed: ScoringAction[]
+      before: GameState
+      label?: string
+    } | null
+  ): string => {
+    if (taken == null) return 'Nothing to undo'
+    const closing = (action: ScoringAction): boolean =>
+      action.type === 'gameFlow' && action.kind === 'closePlay'
+    const shown = taken.removed.filter(action => !closing(action))
+    if (shown.length === 0 && taken.removed.length > 0)
+      return 'Reopened the last play'
+    // A tapped step that changed no play of its own ("Fielded by …") is
+    // named as the Undo entry names it.
+    const described =
+      shown.length === 0
+        ? undefined
+        : describePlay(taken.before, shown, state.session)?.primary
+    return `Undid ${
+      described != null && described !== 'Play changed'
+        ? described
+        : (taken.label ?? 'the last step')
+    }`
+  }
+  // The log's line for a dictated undo; `id` changes per undo.
+  const [undone, setUndone] = useState<{ id: number; line: string }>()
+  const dictation = useDictationControls({
+    health: props.persistent ? health : noDictation,
+    url: socketUrl,
+    gameId: props.gameId,
+    model: dictationModel,
+    session,
+    log: state.log,
+    problem: state.dictation?.problem,
+    question: state.dictationQuestion,
+    played,
+    onAnswer: answer => {
+      dispatch({ type: 'DICTATION_ANSWER', ...answer })
+    },
+    onDismissQuestion: () => {
+      dispatch({ type: 'DICTATION_DISMISS' })
+    },
+    // While a play is drawn or a player dragged, Space is the field's.
+    spaceTalks: (atRest(state) || state.reel != null) && !gestureActive,
+    undone,
+    onActions: (transcript, actions, undo) => {
+      if (undo === true) {
+        // Undone now, before the rest of the sentence is applied. With a
+        // question open, what is taken back is the unanswered sentence.
+        const line =
+          state.dictationQuestion != null
+            ? 'Dropped the question'
+            : undoneLine(undoLast())
+        if (state.dictationQuestion != null)
+          dispatch({ type: 'DICTATION_DISMISS' })
+        setUndone(last => ({ id: (last?.id ?? 0) + 1, line }))
+      }
+      if (actions.length > 0)
+        dispatch({ type: 'DICTATED', transcript, actions })
+    }
+  })
   const line = session.liveData.linescore
   const scoredHere = useRef(state.past.length)
   scoredHere.current = state.past.length
@@ -913,6 +1089,7 @@ function ScoringPanel(props: {
           : (state.past.at(-1)?.label ??
             (state.log.length > 0 ? 'Last play' : undefined))
       }
+      historyDetail={status.readOnly ? undefined : lastPlay}
       // Read-only asks nothing of the scorer, so it shows no instruction.
       instruction={
         status.readOnly
@@ -1004,6 +1181,8 @@ function ScoringPanel(props: {
         state.presentation == null
       }
       summary={summary}
+      dictationControl={dictation.control}
+      dictationLog={dictation.log}
       accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
       <ErrorCreditSheet state={state} dispatch={dispatch} />
@@ -1123,6 +1302,9 @@ function ScoringPanel(props: {
         <ScoringSheet
           textCancel={sheet === 'rosters'}
           fullScreen={sheet === 'rosters'}
+          tall={sheet === 'settings'}
+          done={sheet === 'settings'}
+          swipeToDismiss={sheet === 'settings'}
           scroll={sheet !== 'rosters'}
           title={
             {
@@ -1162,6 +1344,8 @@ function ScoringPanel(props: {
           {sheet === 'settings' && (
             <ScoringSettings
               userId={props.userId}
+              health={props.persistent ? health : noDictation}
+              onDictationModelChange={setDictationModel}
               onSoundChange={setSound}
               onAnimationsChange={enabled => {
                 dispatch({ type: 'PRESENTATION', enabled })

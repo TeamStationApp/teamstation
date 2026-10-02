@@ -19,6 +19,7 @@ import {
   POSITIONS,
   withoutUndefined
 } from './state'
+import { DICTATION_TERMS } from './vocabulary'
 
 /**
  * The middle ground between whoever watched the game and the rules that score
@@ -52,6 +53,15 @@ export const TRAJECTORIES = [
   'popup',
   'chopper'
 ] as const
+/** Where a ball in play went, across the outfield from left to right. */
+export const DIRECTIONS = [
+  'left',
+  'left_center',
+  'center',
+  'right_center',
+  'right'
+] as const
+export type Direction = (typeof DIRECTIONS)[number]
 export type Trajectory = (typeof TRAJECTORIES)[number]
 
 export const HOME_RUN_KINDS = ['out-of-park', 'in-park'] as const
@@ -233,6 +243,7 @@ const actionCleaners = {
     launchAngleDragged: asOptional(asBoolean),
     location: asOptional(asPoint),
     fielder: asOptional(asSessionId),
+    direction: asOptional(asOneOf(DIRECTIONS)),
     landingHeight: asOptional(asNumber),
     homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS)),
     ...PITCH_DATA_CLEANERS
@@ -486,6 +497,10 @@ export function toolSchema(): Tool[] {
         launchAngle: { type: 'number', description: 'Degrees, when known' },
         location: point,
         fielder: id('The fielder who first handled the ball'),
+        direction: oneOf(
+          DIRECTIONS,
+          'Where the ball went when the scorer says: left, left center, center, right center or right field'
+        ),
         homeRunKind: oneOf(HOME_RUN_KINDS, 'For a home run'),
         landingHeight: { type: 'number' },
         ...PITCH_DATA_TOOL_FIELDS
@@ -494,7 +509,7 @@ export function toolSchema(): Tool[] {
     ),
     tool(
       'result',
-      'What the plate appearance came to.',
+      'What the plate appearance came to. strikeout here means a dropped third strike only — strike three the catcher did not hold — and is refused unless there are two strikes and first base is empty or two out. An ordinary strikeout is the pitch that makes strike three, and a walk is the pitch that makes ball four; the game records both from the pitch.',
       {
         eventType: oneOf(RESULT_TYPES, 'The outcome'),
         outBy: oneOf(
@@ -508,18 +523,18 @@ export function toolSchema(): Tool[] {
     ),
     tool(
       'fieldingPlay',
-      'The fielders who handled the ball, in order, and who made an error.',
+      'Charges an error, and is refused at any other time: only after a result of field_error, name the fielders who handled the ball in order and the one charged. It does not record who fielded a hit or made a throw — ballInPlay names the fielder, and runnerMovement names the fielders of a putout.',
       {
         fielders: ids('Fielders in the order they handled the ball'),
         error: id('The fielder charged with an error'),
         errorKind: oneOf(ERROR_KINDS, 'Fielding or throwing error'),
         locations: { type: 'array', items: point }
       },
-      ['fielders']
+      ['fielders', 'error']
     ),
     tool(
       'runnerMovement',
-      "A runner's fate: safe at a base, or out.",
+      "A runner's fate: safe at a base, or out. A hit already moves the batter and every runner forward by its bases — a double, two — and a caught ball already retires the batter; naming a runner where the play already put him is refused. Use it for what the play did not do: a runner who stopped short, went further, or was put out; a runner the hit sent home, to say he scored (to home) or was out there; and the batter when he was thrown or tagged out, to credit the fielders.",
       {
         runner: id('The runner'),
         to: oneOf(DESTINATIONS, 'Where the runner ended up or was put out'),
@@ -539,7 +554,10 @@ export function toolSchema(): Tool[] {
       {
         kind: oneOf(BASE_RUNNING_KINDS, 'What the runner did'),
         runner: id('The runner'),
-        to: oneOf(DESTINATIONS, 'The base he went for'),
+        to: oneOf(
+          DESTINATIONS,
+          'The base he went for; for a pickoff, the base he was picked off at'
+        ),
         fielders: ids('For an out: the fielders involved, putout last')
       },
       ['kind', 'runner']
@@ -610,13 +628,60 @@ function ordinal(n: number): string {
  * where, by name with the id the model must use. It names no score and no
  * at-bat index, because the model must never echo those back.
  */
+/**
+ * How a player is named to a model: first name and last initial, the way a
+ * scorer says it. A full surname belongs to a child and is never put in front
+ * of a model — neither the LLM nor the recogniser.
+ */
+export function shortName(player: {
+  fullName: string
+  firstName?: string
+  lastName?: string
+}): string {
+  const first = player.firstName?.trim() ?? ''
+  const last = player.lastName?.trim() ?? ''
+  if (first !== '' && last !== '') return `${first} ${initial(last)}`
+  const words = player.fullName
+    .trim()
+    .split(/\s+/)
+    .filter(word => word !== '')
+  if (words.length === 0) return first
+  if (words.length === 1) return words[0]
+  return `${words.slice(0, -1).join(' ')} ${initial(words[words.length - 1])}`
+}
+function initial(word: string): string {
+  const letter = word.replace(/^[^\p{L}\p{N}]+/u, '').charAt(0)
+  return letter === '' ? '' : `${letter.toUpperCase()}.`
+}
+
+/** Who bats after the batter now up, for a sentence about two batters. */
+function nextBatter(state: GameState): PlayerRef | null {
+  const line = state.liveData.linescore
+  const order =
+    state.liveData.boxscore.teams[line.isTopInning ? 'away' : 'home']
+      .battingOrder
+  const now = line.offense.batter?.id
+  if (now == null || order.length === 0) return null
+  const id = order[(order.indexOf(now) + 1) % order.length]
+  const player = state.gameData.players[id]
+  return player == null ? null : { id, fullName: player.fullName }
+}
+
+/**
+ * What a model is told before it hears the scorer: the situation, and who is
+ * where, by short name with the id the model must use. It names no score and
+ * no at-bat index, because the model must never echo those back.
+ */
 export function promptContext(state: GameState): string {
   const line = state.liveData.linescore
   const players = state.gameData.players
-  const name = (ref: PlayerRef | null): string =>
-    ref == null
-      ? 'nobody'
-      : `${players[ref.id]?.fullName ?? ref.fullName} (id ${ref.id})`
+  // A scorer names a player by first name or by the number on the shirt.
+  const name = (ref: PlayerRef | null): string => {
+    if (ref == null) return 'nobody'
+    const player = players[ref.id]
+    const jersey = player?.jersey.trim() ?? ''
+    return `${shortName(player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} (id ${ref.id})`
+  }
   const batting = line.isTopInning ? 'away' : 'home'
   const fielding = batting === 'away' ? 'home' : 'away'
   const lines = [
@@ -624,7 +689,51 @@ export function promptContext(state: GameState): string {
     `${state.gameData.teams[batting].name} batting, ${state.gameData.teams[fielding].name} in the field.`,
     `Batter: ${name(line.offense.batter)}. Pitcher: ${name(line.defense.P)}.`,
     `On first: ${name(line.offense.first)}. On second: ${name(line.offense.second)}. On third: ${name(line.offense.third)}.`,
+    `Next batter: ${name(nextBatter(state))}.`,
     `Fielders: ${POSITIONS.map(position => `${position} ${name(line.defense[position])}`).join(', ')}.`
   ]
   return lines.join('\n')
+}
+
+/**
+ * What the recogniser is biased toward for the at-bat the game is on, in
+ * priority order: the batter, the pitcher and the runners — who a scorer is
+ * about to name — then the fielders, then everyone else on both rosters, then
+ * the two team names, then `DICTATION_TERMS`. Names are short names. No term
+ * is empty or longer than the recogniser's 50 characters, and none repeats.
+ * The recogniser takes at most 100, and the order is what the caller truncates.
+ */
+export function keyterms(state: GameState): string[] {
+  const line = state.liveData.linescore
+  const players = state.gameData.players
+  const boxscore = state.liveData.boxscore.teams
+  const refs: Array<PlayerRef | null | number> = [
+    line.offense.batter,
+    line.defense.P,
+    line.offense.first,
+    line.offense.second,
+    line.offense.third,
+    ...POSITIONS.map(position => line.defense[position]),
+    ...boxscore.away.players,
+    ...boxscore.home.players
+  ]
+  const out: string[] = []
+  const seen = new Set<string>()
+  const add = (term: string): void => {
+    const trimmed = term.trim()
+    const key = trimmed.toLowerCase()
+    if (trimmed === '' || trimmed.length > 50 || seen.has(key)) return
+    seen.add(key)
+    out.push(trimmed)
+  }
+  for (const ref of refs) {
+    if (ref == null) continue
+    const id = typeof ref === 'number' ? ref : ref.id
+    const player = players[id] ?? (typeof ref === 'number' ? undefined : ref)
+    if (player != null) add(shortName(player))
+  }
+  add(state.gameData.teams.away.name)
+  add(state.gameData.teams.home.name)
+  for (const term of DICTATION_TERMS) add(term)
+  return out
 }
