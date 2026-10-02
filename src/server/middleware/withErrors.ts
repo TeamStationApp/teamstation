@@ -5,7 +5,8 @@ import {
   badRequest,
   HttpError,
   notFound,
-  toApiError
+  toApiError,
+  tooLarge
 } from '../../common/errors'
 
 /** Writes the one error shape, and nothing else, to a response. */
@@ -47,6 +48,12 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     sendError(res, badRequest('That request body is not valid JSON'))
     return
   }
+  // A body over the parser's limit is the caller's too, and says so as 413
+  // rather than as a 500 that hides which end to fix.
+  if (isTooLarge(error)) {
+    sendError(res, tooLarge('That request body is too large'))
+    return
+  }
   if (!(error instanceof HttpError)) {
     console.error(`${req.method} ${req.path}`, error)
   }
@@ -63,5 +70,14 @@ function isBadJson(error: unknown): boolean {
     error instanceof SyntaxError &&
     'status' in error &&
     (error as { status?: number }).status === 400
+  )
+}
+
+/** express.json() rejects a body over its limit with `entity.too.large`. */
+function isTooLarge(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error != null &&
+    (error as { type?: unknown }).type === 'entity.too.large'
   )
 }

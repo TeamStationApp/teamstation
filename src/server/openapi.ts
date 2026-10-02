@@ -131,6 +131,80 @@ const memberRowError = {
   }
 }
 
+/** The body both picture routes take. */
+const pictureBody = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['image', 'source'],
+        properties: {
+          image: {
+            type: 'object',
+            required: ['contentType', 'base64'],
+            properties: {
+              contentType: {
+                type: 'string',
+                enum: ['image/jpeg', 'image/png', 'image/webp']
+              },
+              base64: {
+                type: 'string',
+                pattern: '^[A-Za-z0-9+/]+={0,2}$',
+                description:
+                  'The bytes, as strict base64 whose length divides by 4; ' +
+                  'at most 10 MiB decoded'
+              }
+            }
+          },
+          source: { type: 'string', enum: ['import', 'upload'] }
+        }
+      }
+    }
+  }
+}
+
+/** What both picture routes answer. */
+const pictureAnswer = {
+  description:
+    'Stored, with the signed URL of the 192 px rendition; or not stored, ' +
+    'because it was the picture already held, or because an import met an ' +
+    'uploaded picture (`kept: upload`)',
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['stored'],
+        properties: {
+          stored: { type: 'boolean' },
+          url: { type: 'string' },
+          kept: { type: 'string', enum: ['upload'] }
+        }
+      }
+    }
+  }
+}
+
+/** How both picture routes are described, after their first line. */
+const pictureRules =
+  '**Who may call:** an administrator of the team (set on the team, its ' +
+  'season or its league, or its owner or manager) or a site ' +
+  'administrator. Anyone else gets 403; a team the caller cannot see gets ' +
+  '404.\n\n' +
+  '**The body:** `image` `{contentType, base64}` and `source` (`import` or ' +
+  '`upload`). A content type other than `image/jpeg`, `image/png` or ' +
+  '`image/webp` is 415. `base64` that is empty, outside the alphabet or of ' +
+  'a length that does not divide by 4 is 400. More than 10 MiB decoded is ' +
+  '413. Bytes that do not begin with the declared type\u2019s signature ' +
+  '(JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF`, a length, ' +
+  '`WEBP`) are 415, as are bytes that are not a picture TeamStation can ' +
+  'read.\n\n' +
+  '**What is stored:** the picture is normalised to square PNGs of 96 and ' +
+  '192 px, named by the hash of their bytes. The same picture again uploads ' +
+  'nothing and answers `stored: false`. An `import` never replaces a picture ' +
+  'whose source is `upload`, and answers `stored: false, kept: upload`. ' +
+  'No picture store configured, or one that does not answer, is 503.'
+
 const sorted = (codes: ReadonlySet<string>): string[] => [...codes].sort()
 
 /** A player a play names: his TeamStation user id, or only a name. */
@@ -1967,6 +2041,55 @@ export function openApiDocument(version: string): OpenApiDocument {
             401: errorResponse,
             403: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/logo': {
+        put: {
+          summary: "Store a team's logo",
+          description:
+            'Stores the team\u2019s logo, padded to a square so a wide ' +
+            'badge keeps its shape and a transparent one stays transparent.' +
+            '\n\n' +
+            pictureRules,
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: pictureBody,
+          responses: {
+            200: pictureAnswer,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            413: errorResponse,
+            415: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/avatar': {
+        put: {
+          summary: "Store a player's headshot",
+          description:
+            'Stores the headshot of a player of this team, cropped to a ' +
+            'square. It is the person\u2019s own picture, so it shows on ' +
+            'every team they are on. A user who is not a player of this ' +
+            'team is 404. A headshot whose source is `upload` is replaced ' +
+            'only by a site administrator\u2019s upload; anybody else\u2019s ' +
+            'answers `stored: false, kept: upload`.\n\n' +
+            pictureRules,
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          requestBody: pictureBody,
+          responses: {
+            200: pictureAnswer,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            413: errorResponse,
+            415: errorResponse,
+            503: errorResponse
           }
         }
       },
