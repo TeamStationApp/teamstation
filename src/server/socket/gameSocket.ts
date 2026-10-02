@@ -6,9 +6,10 @@ import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
 import { asLiteral } from '../../common/asLiteral'
-import type {
-  GameSocketErrorCode,
-  GameSocketReply
+import {
+  type GameSocketErrorCode,
+  type GameSocketReply,
+  TYPING_INTERVAL_MS
 } from '../../common/gameSocket'
 import {
   canSeeGame,
@@ -18,7 +19,14 @@ import {
 } from '../access'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
+import { mayPost, type PostingStanding } from '../chat/messages'
 import type { Database } from '../db/database'
+import {
+  ChatFanout,
+  type ChatFanoutOptions,
+  type ChatSubscriber,
+  notifyTyping
+} from './chatFanout'
 import {
   type FanoutSubscriber,
   GameFanout,
@@ -47,6 +55,15 @@ export interface GameSocketOptions {
    */
   stopSignals?: NodeJS.EventEmitter | null
   fanout?: Omit<GameFanoutOptions, 'db' | 'databaseUrl' | 'onLost'>
+  chat?: Omit<ChatFanoutOptions, 'db' | 'databaseUrl'>
+  /**
+   * Wraps each typing hint's check, which `check` runs. For tests, to make
+   * it fail; the check itself unless given.
+   */
+  checkTyping?: (
+    conversationId: string,
+    check: () => Promise<PostingStanding>
+  ) => Promise<PostingStanding>
   /** Where a request that failed is reported. `console.error` unless given. */
   log?: (message: string) => void
   /**
@@ -67,6 +84,7 @@ export interface GameSocketOptions {
 
 export interface GameSocketHandle {
   fanout: GameFanout
+  chat: ChatFanout
   /** How many sockets are open. */
   size: () => number
   /**
@@ -83,7 +101,12 @@ const asRequest = asEither(
     gameId: asString,
     id: asString
   }),
-  asObject({ type: asLiteral('ping'), id: asString })
+  asObject({ type: asLiteral('ping'), id: asString }),
+  asObject({
+    type: asLiteral('typing'),
+    conversationId: asString,
+    id: asString
+  })
 )
 
 /** One open socket: who it is, what it has subscribed to, and its health. */
@@ -114,6 +137,10 @@ interface Connection {
   scopesAt: number
   reading: Promise<VisibleScopes> | undefined
   subscriber: FanoutSubscriber
+  /** Set for a signed-in session: what hears its person's chat hints. */
+  chat: ChatSubscriber | undefined
+  /** When this socket last sent a typing hint that was looked at. */
+  typedAt: number
 }
 
 /**
@@ -125,6 +152,11 @@ interface Connection {
  * `type`; `common/gameSocket.ts` lists them. A socket subscribes to games it
  * can see, up to twenty at once, and is sent each game's changes as the
  * worker's `game_changes` listener hears of them.
+ *
+ * A socket signed in with a session (not a machine token, which cannot use
+ * chat) is also registered in the worker's `ChatFanout`, and so hears its
+ * person's chat hints with nothing to subscribe to. It may send `typing` for
+ * a conversation its person may post in, at most once every three seconds.
  */
 export function attachGameSocket(
   server: Server,
@@ -142,6 +174,8 @@ export function attachGameSocket(
     })
   const checkGame =
     options.checkGame ?? (async (_gameId, check) => await check())
+  const checkTyping =
+    options.checkTyping ?? (async (_conversationId, check) => await check())
   const connections = new Set<Connection>()
   const wss = new WebSocketServer({
     noServer: true,
@@ -157,6 +191,7 @@ export function attachGameSocket(
         connection.ws.close(1012, 'Changes may have been missed')
     }
   })
+  const chat = new ChatFanout({ ...options.chat, db, databaseUrl })
 
   const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
     if (connection.scopes != null && clock() - connection.scopesAt < recheckMs)
@@ -376,6 +411,10 @@ export function attachGameSocket(
       reply(connection, { type: 'pong', id: request.id })
       return
     }
+    if (request.type === 'typing') {
+      await typed(connection, request.conversationId, request.id)
+      return
+    }
     const { gameId, type } = request
     const requestId = request.id
     // The cap is settled as each request arrives; its effect and its answer
@@ -405,6 +444,53 @@ export function attachGameSocket(
         })
       })
     }
+  }
+
+  /**
+   * A typing hint: at most one every `TYPING_INTERVAL_MS` per socket is
+   * looked at, and it is passed on, unstored, only from a member who may
+   * post there. Anything else is refused, and nothing is sent.
+   */
+  const typed = async (
+    connection: Connection,
+    conversationId: string,
+    id: string
+  ): Promise<void> => {
+    const refuseTyping = (code: GameSocketErrorCode, message: string): void => {
+      reply(connection, { type: 'error', id, conversationId, code, message })
+    }
+    if (connection.chat == null) {
+      refuseTyping('forbidden', 'Chat needs a signed-in session')
+      return
+    }
+    const now = clock()
+    if (now - connection.typedAt < TYPING_INTERVAL_MS) {
+      refuseTyping('tooMany', 'At most one typing hint every three seconds')
+      return
+    }
+    connection.typedAt = now
+    const userId = connection.actor.userId
+    let standing: PostingStanding
+    try {
+      standing = await checkTyping(
+        conversationId,
+        async () => await mayPost(db, conversationId, userId, new Date(now))
+      )
+      if (standing === 'poster') await notifyTyping(db, conversationId, userId)
+    } catch (error: unknown) {
+      log(`chat socket: typing in ${conversationId}: ${String(error)}`)
+      refuseTyping('internal', 'The server could not pass that on; try again')
+      return
+    }
+    if (standing === 'reader') {
+      refuseTyping('forbidden', 'Only those who may post here may type')
+      return
+    }
+    if (standing === 'stranger') {
+      refuseTyping('notFound', 'No such conversation')
+      return
+    }
+    reply(connection, { type: 'typed', conversationId, id })
   }
 
   const connected = (ws: WebSocket, actor: Actor, token: string): void => {
@@ -445,7 +531,18 @@ export function attachGameSocket(
             return false
           }
         }
+      },
+      chat: undefined,
+      typedAt: Number.NEGATIVE_INFINITY
+    }
+    if (actor.sessionId != null) {
+      connection.chat = {
+        userId: actor.userId,
+        send: frame => {
+          reply(connection, frame)
+        }
       }
+      chat.add(connection.chat)
     }
     connections.add(connection)
     ws.on('pong', () => {
@@ -459,6 +556,7 @@ export function attachGameSocket(
     ws.on('error', () => undefined)
     ws.on('close', () => {
       connections.delete(connection)
+      if (connection.chat != null) chat.remove(connection.chat)
       for (const gameId of connection.games)
         fanout.unwatch(gameId, connection.subscriber)
       connection.games.clear()
@@ -540,6 +638,7 @@ export function attachGameSocket(
       for (const connection of connections)
         connection.ws.close(1001, 'The server is restarting')
       await fanout.close()
+      await chat.close()
       await new Promise<void>(resolve => {
         wss.close(() => {
           resolve()
@@ -553,6 +652,7 @@ export function attachGameSocket(
 
   return {
     fanout,
+    chat,
     size: () => connections.size,
     acceptUpgrade,
     close
