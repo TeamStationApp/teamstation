@@ -509,6 +509,42 @@ const conversationIdParam = {
   schema: { type: 'string' }
 }
 
+const pathParam = (name: string): Record<string, unknown> => ({
+  name,
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+})
+
+/** A JSON body whose fields are all base64url strings unless typed. */
+const keyBody = (
+  properties: Record<string, unknown>
+): Record<string, unknown> => ({
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: Object.keys(properties),
+        properties
+      }
+    }
+  }
+})
+
+const b64 = { type: 'string', description: 'base64url' }
+
+const identityBody = keyBody({
+  identityId: {
+    type: 'string',
+    description: '`cid_` and 16 base64url characters, made by the device'
+  },
+  identityPublicKey: b64,
+  pukPublicKey: b64,
+  pukSignature: b64,
+  box: b64
+})
+
 const userIdsBody = {
   required: true,
   content: {
@@ -4832,6 +4868,315 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: { description: '`{left, closed}`' },
             401: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/chat/devices': {
+        post: {
+          summary: 'Register this device for chat',
+          description:
+            '`{name, platform, boxPublicKey, signPublicKey}` (X25519 and ' +
+            'Ed25519 public keys, base64url). The device is bound to the ' +
+            'session (taking the binding from any other device on it) and ' +
+            'holds no keys until it enrols, is linked or resets. A machine ' +
+            'token is refused (403 `sessionRequired`), on every chat key ' +
+            'route. Answers the device as `GET /chat/devices` lists it. ' +
+            'Notifies `{u, k: devices}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            name: { type: 'string' },
+            platform: { type: 'string', enum: ['web', 'ios', 'android'] },
+            boxPublicKey: b64,
+            signPublicKey: b64
+          }),
+          responses: {
+            201: { description: 'The device' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        get: {
+          summary: "The caller's chat devices",
+          description:
+            'Revoked ones included, oldest first: `{id, name, platform, ' +
+            'boxPublicKey, signPublicKey, createdAt, lastSeenAt, revokedAt, ' +
+            'linked, current}`. `linked`: holds the current per-user key ' +
+            'generation and is not revoked; `current`: bound to this session.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The devices' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/devices/{deviceId}': {
+        delete: {
+          summary: 'Revoke a chat device',
+          description:
+            "One of the caller's devices, from a linked device or from the " +
+            'device itself (signing out); otherwise 403 `notHolder`. Its ' +
+            'session is ended. When it held the current identity, every chat ' +
+            'of the user is flagged for a new epoch and `GET /chat/me/keys` ' +
+            'reports `pukNeedsRotation`. Revoking again changes nothing. ' +
+            'Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('deviceId')],
+          responses: {
+            200: { description: 'The device' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/devices/{deviceId}/resume-challenge': {
+        post: {
+          summary: 'A nonce to resume a device with',
+          description:
+            '`{nonce, sessionId, expiresAt}`: 32 random bytes, good once and ' +
+            'for two minutes, and the session the signature must name. 403 ' +
+            '`unknownDevice` for a device the server does not have or that is ' +
+            "another user's, `deviceRevoked` for a revoked one.",
+          security: [{ bearer: [] }],
+          parameters: [pathParam('deviceId')],
+          responses: {
+            200: { description: 'The challenge' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/devices/{deviceId}/resume': {
+        post: {
+          summary: 'Bind a device to this session again',
+          description:
+            "`{nonce, signature}`: the device's Ed25519 signature over " +
+            '`lp(nonce) ‖ lp(deviceId) ‖ lp(sessionId)`. The nonce is spent ' +
+            'by the attempt. 403 `badChallenge` (unknown, used or expired ' +
+            'nonce), `badSignature`, `unknownDevice` or `deviceRevoked`. ' +
+            'Answers the device. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('deviceId')],
+          requestBody: keyBody({ nonce: b64, signature: b64 }),
+          responses: {
+            200: { description: 'The device' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/identity': {
+        put: {
+          summary: 'Enrol: publish the first identity',
+          description:
+            "The identity's id and public key, PUK generation 1's public key " +
+            "with the identity's signature over `u64(userId) ‖ u64(1) ‖ " +
+            "lp(publicKey)`, and the PUK private key boxed to this session's " +
+            'device (HPKE `puk`), which is then linked. 409 ' +
+            '`identityExists` the second time, `idTaken` for a used id; 400 ' +
+            '`badSignature`; 403 `noDevice` without a registered device. ' +
+            'Opens a grant request (notifying `grant`) in every chat of the ' +
+            "user's that has an epoch. Answers `{identityId, generation, " +
+            'grantRequests}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: identityBody,
+          responses: {
+            201: { description: 'Enrolled' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/identity/reset': {
+        post: {
+          summary: 'Replace the identity from the device in hand',
+          description:
+            'The same body as enrolling. The old identity is replaced; every ' +
+            "other device of the user's is revoked and its session ended; in " +
+            'every chat of the user an `identityReset` row is logged, a new ' +
+            'epoch flagged, and a grant request only an approver may fill ' +
+            'opened where there is an epoch. 409 `noIdentity` with nothing ' +
+            'to reset. Answers `{identityId, generation, revokedDeviceIds}`. ' +
+            'Audited.',
+          security: [{ bearer: [] }],
+          requestBody: identityBody,
+          responses: {
+            201: { description: 'Reset' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/puk': {
+        post: {
+          summary: 'Post the next per-user key generation',
+          description:
+            'From a linked device (403 `notHolder` otherwise): `{generation, ' +
+            'publicKey, signature, previousKeysBox, boxes: [{deviceId, ' +
+            'box}]}`. `generation` must be the current one plus 1 (409 ' +
+            '`generationTaken`), signed by the current identity (400 ' +
+            '`badSignature`), and boxed to exactly the linked devices at the ' +
+            'current generation (400 `boxSet`). Flags every chat of the user ' +
+            'for a new epoch and opens grant requests at the new generation. ' +
+            'Answers `{generation, grantRequests}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            generation: { type: 'integer', minimum: 2 },
+            publicKey: b64,
+            signature: b64,
+            previousKeysBox: b64,
+            boxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { deviceId: { type: 'string' }, box: b64 }
+              }
+            }
+          }),
+          responses: {
+            201: { description: 'Posted' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/me/keys': {
+        get: {
+          summary: "The caller's keys, as this device holds them",
+          description:
+            '`{deviceId, linked, identity: {id, publicKey, createdAt} | ' +
+            'null, generations: [{generation, publicKey, signature, ' +
+            'previousKeysBox, box}], pukNeedsRotation}`: every generation of ' +
+            "the current identity with this session's device's box of it.",
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The keys' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/users/{userId}/keys': {
+        get: {
+          summary: "Somebody's current identity and per-user key",
+          description:
+            'For a user who is or was a member of a chat the caller is in ' +
+            'now (or the caller); 404 otherwise. `{userId, identity: {id, ' +
+            'publicKey, createdAt} | null, puk: {generation, publicKey, ' +
+            'signature} | null}`.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          responses: {
+            200: { description: 'The keys' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/identities/{identityId}': {
+        get: {
+          summary: 'An identity, current or replaced',
+          description:
+            '`{id, userId, publicKey, createdAt, replacedAt}`, with the same ' +
+            'reach as a user’s keys; 404 otherwise.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('identityId')],
+          responses: {
+            200: { description: 'The identity' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/links': {
+        post: {
+          summary: 'Ask to link this device',
+          description:
+            "This session's device, not yet linked (409 `alreadyLinked`), " +
+            "asks the user's linked devices for the identity. 409 " +
+            '`noIdentity` or `noLinkedDevice` (reset instead), 403 ' +
+            '`noDevice`. Lasts ten minutes. Answers `{id, newDeviceId, ' +
+            'createdAt, expiresAt, approved, expired, approvedByDeviceId, ' +
+            'box}`. Notifies `{u, k: link}`. Audited.',
+          security: [{ bearer: [] }],
+          responses: {
+            201: { description: 'The link' },
+            401: errorResponse,
+            403: errorResponse,
+            409: errorResponse
+          }
+        },
+        get: {
+          summary: 'Open link requests',
+          description:
+            "The user's unapproved, unexpired requests from unrevoked " +
+            'devices: `{id, newDevice: {id, name, platform, boxPublicKey}, ' +
+            'createdAt, expiresAt}`. Both screens show the six digits of ' +
+            '`linkCode(boxPublicKey, id)`.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The requests' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/links/{linkId}': {
+        get: {
+          summary: 'One link request',
+          description:
+            "One of the user's links, with `box` once approved; 404 " +
+            'otherwise. The new device polls it.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('linkId')],
+          responses: {
+            200: { description: 'The link' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/links/{linkId}/approve': {
+        post: {
+          summary: 'Approve a link',
+          description:
+            'From a linked device of the same user (403 `notHolder`): `{box, ' +
+            'pukBoxes: [{generation, box}]}`, the identity private key boxed ' +
+            'to the new device (HPKE `link`) and one PUK box per generation ' +
+            '(HPKE `puk`; 400 `boxSet` otherwise). 409 `linkExpired`, ' +
+            '`linkApproved`; 403 `deviceRevoked` for a revoked new device. ' +
+            'Answers the link. Notifies `{u, k: link}`. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('linkId')],
+          requestBody: keyBody({
+            box: b64,
+            pukBoxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { generation: { type: 'integer' }, box: b64 }
+              }
+            }
+          }),
+          responses: {
+            200: { description: 'The approved link' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },

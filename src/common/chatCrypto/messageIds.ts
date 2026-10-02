@@ -1,4 +1,4 @@
-import { base32 } from 'rfc4648'
+import { base32, base64url } from 'rfc4648'
 
 import { randomBytes } from './random'
 
@@ -18,4 +18,20 @@ export function newMessageId(): string {
 
 export function isMessageId(value: unknown): value is string {
   return typeof value === 'string' && MESSAGE_ID_PATTERN.test(value)
+}
+
+/**
+ * Identity ids, made by the enrolling (or resetting) device, because the
+ * PUK box it sends with the identity binds the id in its AAD. `cid_` and 16
+ * base64url characters of 12 random bytes, the shape `makeId` gives every
+ * other row.
+ */
+export const IDENTITY_ID_PATTERN = /^cid_[A-Za-z0-9_-]{16}$/
+
+export function newIdentityId(): string {
+  return `cid_${base64url.stringify(randomBytes(12), { pad: false })}`
+}
+
+export function isIdentityId(value: unknown): value is string {
+  return typeof value === 'string' && IDENTITY_ID_PATTERN.test(value)
 }
