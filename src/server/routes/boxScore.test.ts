@@ -20,7 +20,7 @@ import { statRows } from '../stats/rows'
 import { teamRoutes } from './teams'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_boxscore_${Date.now()}`
+const scratchName = `teamstation_boxscore_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const season = makeId('season')

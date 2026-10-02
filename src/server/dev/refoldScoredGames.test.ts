@@ -34,7 +34,7 @@ import { refoldScoredGames, runRefold } from './refoldScoredGames'
  * before the runners were Gumbo's.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_refold_${Date.now()}`
+const scratchName = `teamstation_refold_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const home = makeId('team')
@@ -291,7 +291,7 @@ describe('refolding the stored plays (U11)', function () {
       .where('id', '=', broken)
       .execute()
 
-    // A game an outside scorer sent, which GameStation never scored.
+    // A game an outside scorer sent, which TeamStation never scored.
     imported = await newGame()
     await replaceGameEvents(db, {
       gameId: imported,
@@ -308,7 +308,7 @@ describe('refolding the stored plays (U11)', function () {
       }))
     })
 
-    // Imported plays first, then scored in GameStation from there.
+    // Imported plays first, then scored in TeamStation from there.
     mixed = await newGame()
     await replaceGameEvents(db, {
       gameId: mixed,
@@ -401,7 +401,7 @@ describe('refolding the stored plays (U11)', function () {
     // Untouched: the game that does not replay, and the imported one.
     expect(await snapshot(broken)).deep.equals(brokenBefore)
     expect(await snapshot(imported)).deep.equals(importedBefore)
-    // The imported play before GameStation's is left as it was.
+    // The imported play before TeamStation's is left as it was.
     const mixedAfter = (await snapshot(mixed)) as typeof mixedBefore
     expect(mixedAfter.rows[0].gumbo).deep.equals(mixedBefore.rows[0].gumbo)
 
@@ -448,7 +448,7 @@ describe('refolding the stored plays (U11)', function () {
     expect(again!.changed).deep.equals([])
     expect(again!.unchanged).to.include.members([finished, midPlay, mixed])
     expect(again!.unchanged).not.to.include(imported)
-    // Named on its own, a game GameStation never scored has nothing to do.
+    // Named on its own, a game TeamStation never scored has nothing to do.
     const alone = await refoldScoredGames(db, { gameId: imported })
     expect(alone).deep.equals({
       changed: [],

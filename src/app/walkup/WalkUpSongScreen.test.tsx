@@ -4,7 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
-import type { GameStationClient } from '../../common/api'
+import type { TeamStationClient } from '../../common/api'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import type { PreferenceStorage } from '../scoring/scoringPreferenceStore'
@@ -33,10 +33,10 @@ const web = Platform.OS
 
 const fixture: SongCandidate = {
   provider: 'localFile',
-  providerId: 'lf:bcff80c2abab3d42',
+  providerId: 'lf:110f83a3e9419109',
   isrc: null,
-  title: 'GS Walkup Fixture',
-  artist: 'GameStation Test',
+  title: 'TS Walkup Fixture',
+  artist: 'TeamStation Test',
   album: 'Fixtures',
   artworkUrl: null,
   durationMs: 90000,
@@ -127,14 +127,14 @@ function memory(): PreferenceStorage & { items: Map<string, string> } {
 function songClient(
   sent: Array<{ teamId: string; userId: string; song: WalkUpSong }>,
   fail?: Error
-): GameStationClient {
+): TeamStationClient {
   return {
     setWalkUpSong: async (teamId: string, userId: string, song: WalkUpSong) => {
       sent.push({ teamId, userId, song })
       if (fail != null) throw fail
       return song
     }
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
 }
 
 async function render(
@@ -237,7 +237,7 @@ describe('the song picker’s access', function () {
         opened++
       }
     })
-    expect(text()).includes('GameStation can’t see your music')
+    expect(text()).includes('TeamStation can’t see your music')
     expect(text()).includes('read the music on this phone')
     await press('Open Settings')
     expect(opened).equals(1)
@@ -295,8 +295,8 @@ describe('the song picker’s search', function () {
     )
     expect(text()).not.includes('Choose a file…')
     await search('centerfield')
-    expect(text()).includes('GS Walkup Fixture')
-    expect(text()).includes('GameStation Test · Fixtures')
+    expect(text()).includes('TS Walkup Fixture')
+    expect(text()).includes('TeamStation Test · Fixtures')
     expect(text()).not.includes('3:53')
     expect(labelled('On this phone')).equals(true)
     expect(labelled('Apple Music')).equals(true)
@@ -350,7 +350,7 @@ describe('the song picker’s clip', function () {
       onSaved: song => done.push(song)
     })
     await search('walkup fixture')
-    await press('GS Walkup Fixture')
+    await press('TS Walkup Fixture')
     expect(readout('start')).equals('0:00.0')
     expect(readout('end')).equals('0:15.0')
     expect(text()).not.includes('15.0 s')
@@ -382,8 +382,8 @@ describe('the song picker’s clip', function () {
           provider: 'localFile',
           providerId: fixture.providerId,
           isrc: null,
-          title: 'GS Walkup Fixture',
-          artist: 'GameStation Test',
+          title: 'TS Walkup Fixture',
+          artist: 'TeamStation Test',
           album: 'Fixtures',
           artworkUrl: null,
           durationMs: 90000,
@@ -393,7 +393,7 @@ describe('the song picker’s clip', function () {
       }
     ])
     expect(Object.fromEntries(storage.items)).deep.equals({
-      'walkUp:t1:7:lf:bcff80c2abab3d42': fixture.handle
+      'walkUp:t1:7:lf:110f83a3e9419109': fixture.handle
     })
     expect(done).length(1)
   })

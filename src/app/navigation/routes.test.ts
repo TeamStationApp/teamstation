@@ -156,7 +156,7 @@ describe('addresses', function () {
   })
 
   it('reads an invite link at the address PeerTube used', function () {
-    // These links are already out there — `tube.gamestation.co/i/demo2026` is
+    // These links are already out there — `app.teamstation.app/i/demo2026` is
     // in mailboxes and on a team sheet — so the path is not ours to change.
     expect(parseRoute('/i/demo2026')).deep.equals({
       name: 'join',

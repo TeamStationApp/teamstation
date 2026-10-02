@@ -2,8 +2,8 @@ import type { CodegenTypes, TurboModule } from 'react-native'
 import { TurboModuleRegistry } from 'react-native'
 
 // The `WalkUpMusic` TurboModule's codegen spec (GameStationWalkUpMusicSpec):
-// MusicKit in ios/GameStation/WalkUpMusic/, MediaStore and ExoPlayer in
-// android/.../co/gamestation/app/walkup/. Types and one line; the adapter the
+// MusicKit in ios/TeamStation/WalkUpMusic/, MediaStore and ExoPlayer in
+// android/.../co/teamstation/app/walkup/. Types and one line; the adapter the
 // screens use is shaped in makeWalkUpMusic.ts, where a test can reach it.
 
 /** A song as the phone's search found it. `source` is catalog, library or device. */

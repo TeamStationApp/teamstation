@@ -1,5 +1,5 @@
 /**
- * The values of 1.0's dark GameStation theme (`src/client/themes/gsDark.ts` at 25f9496e)
+ * The values of 1.0's dark TeamStation theme (`src/client/themes/tsDark.ts` at 25f9496e)
  * that 1.0's scoreboard reads, exactly, for the board alone. It draws in these
  * whatever the app's own theme is.
  */
@@ -7,8 +7,8 @@ const palette = {
   white: '#FFFFFF',
   black: '#000000',
 
-  // GS Logo Colors - from gs_logo.png
-  gsBeige: '#E8E4D8',
+  // Logo colours, sampled from 1.0's logo raster
+  tsBeige: '#E8E4D8',
 
   // Blues and Greens
   navyBlue: '#003087',
@@ -39,7 +39,7 @@ const palette = {
  * 1.0 grew every size with the window's height, so its board was 522 px wide
  * in a 720-high browser and 607 px in a 1080-high one. The board must be one
  * size wherever it is drawn (`SCOREBOARD_BOARD_SIZE`), so it is drawn at the
- * size 1.0 drew in a 1920 × 1080 window: the web view GS Director loads every
+ * size 1.0 drew in a 1920 × 1080 window: the web view TS Director loads every
  * overlay page in, and an OBS browser source on a 1080p canvas.
  */
 export const SCOREBOARD_WINDOW_HEIGHT = 1080
@@ -55,7 +55,7 @@ export const scoreboardTheme = {
     return Math.round(scale(16) * size)
   },
 
-  primaryTextColor: palette.gsBeige,
+  primaryTextColor: palette.tsBeige,
   secondaryTextFont: palette.helveticaNeue,
 
   // Status colors

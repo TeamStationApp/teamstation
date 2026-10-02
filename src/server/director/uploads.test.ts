@@ -75,7 +75,7 @@ describe('resuming an upload that was cut off', function () {
 describe('what the disk says has arrived', function () {
   let dir = ''
   beforeEach(async function () {
-    dir = await mkdtemp(join(tmpdir(), 'gsUploadTest-'))
+    dir = await mkdtemp(join(tmpdir(), 'tsUploadTest-'))
   })
   afterEach(async function () {
     await rm(dir, { recursive: true, force: true })

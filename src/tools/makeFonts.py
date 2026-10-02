@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Builds the two fonts the native apps carry, into app/assets/fonts.
 
-    python3 -m venv /tmp/gsFonts && /tmp/gsFonts/bin/pip install fonttools
-    /tmp/gsFonts/bin/python tools/makeFonts.py
+    python3 -m venv /tmp/tsFonts && /tmp/tsFonts/bin/pip install fonttools
+    /tmp/tsFonts/bin/python tools/makeFonts.py
 
 Both sources are variable fonts, and neither can be shipped as it stands.
 
@@ -37,7 +37,7 @@ from fontTools.varLib import instancer
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "app" / "assets" / "fonts"
 ICON_SOURCE = HERE.parent / "app" / "components" / "Icon.tsx"
-CACHE = Path("/tmp/gsFontSources")
+CACHE = Path("/tmp/tsFontSources")
 
 SPACE_GROTESK = (
     "https://github.com/google/fonts/raw/main/ofl/spacegrotesk/"
@@ -101,7 +101,7 @@ def build_space_grotesk() -> None:
             # The Mac-compatible subfamily may only be one of four words, so
             # the real style lives in the typographic names beside it.
             subfamily="Bold" if bold else "Regular",
-            unique=f"SpaceGrotesk-{style}:gamestation",
+            unique=f"SpaceGrotesk-{style}:teamstation",
             full="Space Grotesk" if style == "Regular" else f"Space Grotesk {style}",
             postscript=f"SpaceGrotesk-{style}",
             typographic_family="Space Grotesk",
@@ -171,7 +171,7 @@ def build_material_symbols() -> None:
         font,
         family="Material Symbols Outlined",
         subfamily="Regular",
-        unique="MaterialSymbolsOutlined:gamestation",
+        unique="MaterialSymbolsOutlined:teamstation",
         full="Material Symbols Outlined",
         postscript="MaterialSymbolsOutlined",
         typographic_family="Material Symbols Outlined",

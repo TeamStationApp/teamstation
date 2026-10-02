@@ -148,11 +148,11 @@ try {
   await shot('e21-no-song')
   await button('Set')
   await expectText(
-    'Allow GameStation to access music and audio on this device?'
+    'Allow TeamStation to access music and audio on this device?'
   )
   await shot('e21-permission')
   await button('Don’t allow')
-  await expectText('GameStation can’t see your music')
+  await expectText('TeamStation can’t see your music')
   await shot('e21-denied')
   await button('Open Settings')
   await m.tapOn({ text: 'Permissions' })
@@ -174,7 +174,7 @@ try {
   await tap(
     node =>
       node.type === 'Button' &&
-      (node.text ?? '').startsWith('GS Walkup Fixture')
+      (node.text ?? '').startsWith('TS Walkup Fixture')
   )
   for (let i = 0; i < 5; i++) await button('Start 1 s later')
   for (let i = 0; i < 5; i++) await button('End 1 s later')
@@ -220,7 +220,7 @@ try {
   await exact('Pixel 10')
   await exact('Music')
   await tap(node => node.text === 'walkup-fixture.mp3', 3000)
-  await expectText('GS Walkup Fixture')
+  await expectText('TS Walkup Fixture')
   for (let i = 0; i < 10; i++) await button('Start 1 s later')
   for (let i = 0; i < 10; i++) await button('End 1 s later')
   await button('Save')

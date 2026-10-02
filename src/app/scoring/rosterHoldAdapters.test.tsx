@@ -4,9 +4,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { Button } from '../components/Button'
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { RosterDrag } from './RosterDrag'
 import { RosterContext } from './RosterDragContext'
 import { RosterGesture } from './rosterGesture'
@@ -21,7 +21,7 @@ const wait = async (): Promise<void> => {
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
   })
   document.body.innerHTML = ''
 })
@@ -142,7 +142,7 @@ describe('roster hold platform adapters', function () {
     const host = document.createElement('div')
     document.body.append(host)
     root = createRoot(host)
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       await act(async () => {
         changeTheme(theme)
         root!.render(

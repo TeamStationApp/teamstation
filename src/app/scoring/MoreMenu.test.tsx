@@ -3,9 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { MORE_GROUPS, type MoreInput } from './moreActions'
@@ -52,7 +52,7 @@ async function mount(native = false, occupied = false): Promise<void> {
 }
 afterEach(async () => {
   await act(async () => {
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
     root?.unmount()
   })
   root = undefined
@@ -62,7 +62,7 @@ describe('More scoring menu', function () {
   it('omits headings and unavailable Balk in both themes', async () => {
     await mount()
     await click('More')
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       await act(async () => {
         changeTheme(theme)
       })

@@ -22,7 +22,7 @@ export const enUs = {
   login_code_wrong: 'That code is wrong or has expired.',
 
   // Home
-  home_title: 'GameStation',
+  home_title: 'TeamStation',
   home_your_teams: 'Your teams',
   home_seasons: 'Seasons',
   home_nothing_yet:
@@ -171,7 +171,7 @@ export const enUs = {
   player_walkup: 'Walk-up',
   player_walkup_none: 'No walk-up song yet',
   player_walkup_web_note:
-    'Set walk-up songs in the GameStation app on iPhone or Android.',
+    'Set walk-up songs in the TeamStation app on iPhone or Android.',
   player_walkup_apple_music: 'Apple Music',
   player_walkup_local_file: 'A file on the phone',
   player_walkup_clip: 'Plays %s',
@@ -200,11 +200,11 @@ export const enUs = {
   walkup_badge_library: 'Library',
   walkup_badge_device: 'On this phone',
   walkup_checking: 'Checking music access…',
-  walkup_denied: 'GameStation can’t see your music',
+  walkup_denied: 'TeamStation can’t see your music',
   walkup_denied_ios:
-    'Allow GameStation to use Apple Music and your media library in Settings, then come back here.',
+    'Allow TeamStation to use Apple Music and your media library in Settings, then come back here.',
   walkup_denied_android:
-    'Allow GameStation to read the music on this phone in Settings, then come back here.',
+    'Allow TeamStation to read the music on this phone in Settings, then come back here.',
   walkup_restricted: 'Music is restricted on this phone.',
   walkup_unavailable: 'Music isn’t available on this phone.',
   walkup_open_settings: 'Open Settings',
@@ -429,7 +429,7 @@ export const enUs = {
   scoreboard_not_live: "This scoreboard isn't live",
   scoreboard_not_live_detail:
     'Scoreboards open when a game is scheduled and close after it ends.',
-  scoreboard_sign_up: 'Sign up for GameStation',
+  scoreboard_sign_up: 'Sign up for TeamStation',
 
   // The Score Game screen
   score_game_full_header:

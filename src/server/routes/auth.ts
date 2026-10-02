@@ -69,7 +69,7 @@ const asCodeLogin = asObject({
 /**
  * How long a session lasts.
  *
- * A browser gets the ordinary month. A **device** — GS Director, signed in
+ * A browser gets the ordinary month. A **device** — TS Director, signed in
  * once indoors and then used every weekend from a field where fixing it is
  * the last thing anybody wants to be doing — gets a season, and is named, so
  * a list of them reads like a list of iPads rather than of user agents.

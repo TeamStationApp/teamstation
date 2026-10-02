@@ -188,7 +188,7 @@ export function parseFixtureArgs(argv: string[]): {
   }
   if (game == null || url == null || cookie == null) {
     throw new Error(
-      'Usage: stats-fixture --game <id> --url <server> --cookie <gs_session> [--innings n] [--no-scores] [--drop path@index]'
+      'Usage: stats-fixture --game <id> --url <server> --cookie <ts_session> [--innings n] [--no-scores] [--drop path@index]'
     )
   }
   return { game, url, cookie, options }
@@ -206,7 +206,7 @@ export async function postStatsFixture(input: {
   const fetchImpl = input.fetchImpl ?? fetch
   const base = input.url.replace(/\/$/, '')
   const headers = {
-    cookie: `gs_session=${input.cookie}`,
+    cookie: `ts_session=${input.cookie}`,
     'content-type': 'application/json'
   }
 

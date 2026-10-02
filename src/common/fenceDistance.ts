@@ -4,7 +4,7 @@
  * The scorer places the ball on a field whose fence is a circle, so where the
  * ball landed says how far it went only once the fence has a size. A game
  * takes its own, else its season's, else its league's, else this one: the
- * youth fields GameStation scores are about 200 feet to the wall.
+ * youth fields TeamStation scores are about 200 feet to the wall.
  */
 export const DEFAULT_FENCE_DISTANCE_FT = 200
 

@@ -1,6 +1,6 @@
 import { cacheStyles, makeThemeContext } from 'react-native-patina'
 
-import { gsBallpark } from './gsBallpark'
+import { tsBallpark } from './tsBallpark'
 import type { Theme } from './types'
 
 export type { Theme }
@@ -17,19 +17,19 @@ export { cacheStyles }
  *   const getStyles = cacheStyles((theme: Theme) => ({ … }))
  *   const styles = getStyles(useTheme())
  *
- * `gsBallpark` is the default: the light Organic Ballpark Classic theme the
- * designs are drawn in. `gsDark` is still here and still complete, because a
+ * `tsBallpark` is the default: the light Organic Ballpark Classic theme the
+ * designs are drawn in. `tsDark` is still here and still complete, because a
  * theme framework carrying one theme is a framework nobody has tested — and
  * the second theme is what proves no screen has quietly spelled out a colour.
  *
- * Switch with `changeTheme(gsDark)`; every screen follows without re-rendering
+ * Switch with `changeTheme(tsDark)`; every screen follows without re-rendering
  * from the root, because patina notifies rather than re-parents.
  */
 export interface ThemeProps {
   theme: Theme
 }
 
-const themeContext = makeThemeContext<Theme>(gsBallpark)
+const themeContext = makeThemeContext<Theme>(tsBallpark)
 
 export const {
   ThemeProvider,

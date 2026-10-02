@@ -1,5 +1,5 @@
 # iOS asks before handing a custom-scheme address to an app that is already
-# running — `Open in "GameStation"?` — and Android does not. Whoever opens a
+# running — `Open in "TeamStation"?` — and Android does not. Whoever opens a
 # link answers it where it appears.
 #
 # The wait is not padding: the alert is presented by the system a beat after

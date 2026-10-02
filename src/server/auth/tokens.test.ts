@@ -71,16 +71,16 @@ describe('tokens', function () {
 
 describe('which credential a request carries', function () {
   it('takes the bearer header when there is one', function () {
-    expect(sessionToken('Bearer abc', 'gs_session=xyz')).equals('abc')
+    expect(sessionToken('Bearer abc', 'ts_session=xyz')).equals('abc')
   })
 
   it('falls back to the cookie, which is how the web app signs in', function () {
-    expect(sessionToken(undefined, 'gs_session=xyz')).equals('xyz')
+    expect(sessionToken(undefined, 'ts_session=xyz')).equals('xyz')
   })
 
   it('finds its cookie among others', function () {
     expect(
-      sessionToken(undefined, 'other=1; gs_session=xyz; another=2')
+      sessionToken(undefined, 'other=1; ts_session=xyz; another=2')
     ).equals('xyz')
   })
 
@@ -90,6 +90,6 @@ describe('which credential a request carries', function () {
 
   it('has nothing when there is nothing', function () {
     expect(sessionToken(undefined, undefined)).equals(undefined)
-    expect(sessionToken(undefined, 'gs_session=')).equals(undefined)
+    expect(sessionToken(undefined, 'ts_session=')).equals(undefined)
   })
 })

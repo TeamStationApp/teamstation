@@ -18,7 +18,7 @@ import { runValidate, validateStoredPlays } from './validateGumbo'
  * its game and play.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_validate_${Date.now()}`
+const scratchName = `teamstation_validate_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const home = makeId('team')

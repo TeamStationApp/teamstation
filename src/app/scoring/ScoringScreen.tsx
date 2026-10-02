@@ -14,7 +14,7 @@ import {
   View
 } from 'react-native'
 
-import type { DictationModel, GameStationClient } from '../../common/api'
+import type { DictationModel, TeamStationClient } from '../../common/api'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   awaitingResult,
@@ -89,7 +89,7 @@ import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
 
 export interface ScoringScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   gameId: string
   userId?: string | number
   onExit: () => void
@@ -260,7 +260,7 @@ function entryId(entry: HistoryEntry): number {
 }
 function ScoringPanel(props: {
   game: GameSession
-  client: GameStationClient
+  client: TeamStationClient
   gameId: string
   persistent: boolean
   onExit: () => void

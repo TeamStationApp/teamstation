@@ -20,7 +20,7 @@ const SPACE = {
 }
 
 async function stagedVideo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'gs-spaces-'))
+  const dir = await mkdtemp(join(tmpdir(), 'ts-spaces-'))
   await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\n#EXT-X-VERSION:7\n')
   await writeFile(join(dir, 'video.m3u8'), '#EXTM3U\nvideo.mp4\n')
   await writeFile(join(dir, 'video.mp4'), Buffer.alloc(2048, 7))

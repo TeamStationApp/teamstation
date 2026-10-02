@@ -38,7 +38,7 @@ import {
  */
 
 export const testRedisUrl =
-  process.env.GS_TEST_REDIS_URL ?? 'redis://127.0.0.1:6379/15'
+  process.env.TS_TEST_REDIS_URL ?? 'redis://127.0.0.1:6379/15'
 
 /**
  * Fails, rather than skipping, when Redis is not there: a scoreboard test
@@ -55,7 +55,7 @@ export async function requireRedis(): Promise<void> {
     await probe.ping()
   } catch (error) {
     throw new Error(
-      `Redis is not reachable at ${testRedisUrl} (GS_TEST_REDIS_URL): ${String(error)}`
+      `Redis is not reachable at ${testRedisUrl} (TS_TEST_REDIS_URL): ${String(error)}`
     )
   } finally {
     if (probe.isOpen) await probe.close()
@@ -63,7 +63,7 @@ export async function requireRedis(): Promise<void> {
 }
 
 export function testPrefix(): string {
-  return `gs-test:${randomBytes(6).toString('hex')}`
+  return `ts-test:${randomBytes(6).toString('hex')}`
 }
 
 export const quiet = (): void => undefined
@@ -98,7 +98,7 @@ export async function dropPrefix(prefix: string): Promise<void> {
 export async function scratchDatabase(
   label: string
 ): Promise<{ db: Kysely<Database>; drop: () => Promise<void> }> {
-  const name = `gamestation_${label}_${Date.now()}`
+  const name = `teamstation_${label}_${Date.now()}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
   await admin.query(`create database ${name}`)
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)

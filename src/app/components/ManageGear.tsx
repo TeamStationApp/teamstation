@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Pressable, View } from 'react-native'
 
-import type { GameStationClient } from '../../common/api'
+import type { TeamStationClient } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Icon } from './Icon'
 
 export interface ManageGearProps {
-  client: GameStationClient
+  client: TeamStationClient
   scopeType: 'league' | 'season' | 'team'
   scopeId: string
   onPress: () => void

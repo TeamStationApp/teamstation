@@ -23,7 +23,7 @@ export interface GameSource {
 }
 
 /**
- * The scoreboard of a game scored in GameStation, as its stored plays make
+ * The scoreboard of a game scored in TeamStation, as its stored plays make
  * it.
  *
  * The plays, the at-bat in progress and the game's `updated_at` are read in
@@ -32,7 +32,7 @@ export interface GameSource {
  * the version the write carries, so a hook that read an older game can never
  * overwrite a newer one, whichever worker finishes last.
  *
- * Undefined for a game with nothing GameStation scored, and for one whose
+ * Undefined for a game with nothing TeamStation scored, and for one whose
  * plays no longer replay, which is logged.
  */
 export async function scoreboardFromGame(

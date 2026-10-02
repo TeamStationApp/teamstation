@@ -12,13 +12,13 @@ import {
  * What a stored play may hold, checked against MLB's lists in `reference.ts`
  * and the shapes of the live feed in `reference/feed776258.json`.
  *
- * Every code is on MLB's list or is one of GameStation's named extensions:
+ * Every code is on MLB's list or is one of TeamStation's named extensions:
  * the event type of the result, of each runner and of each action, each
  * pitch code, each movement reason, each trajectory and each position. Every
  * runner has the feed's runner shape: the keys it carries are the feed's, and
  * each holds the feed's type of value.
  *
- * A play GameStation scored (it carries a `gameStation` record) is written
+ * A play TeamStation scored (it carries a `gameStation` record) is written
  * whole by `scoring/document.ts`, so its runners carry every key and its
  * events every detail. A play another service posted carries what that
  * service knew, so only the keys it has are held to the feed's shape.
@@ -120,7 +120,7 @@ const ACTION_DETAILS: Shape = {
 }
 
 /**
- * Measured on the ball in the feed; GameStation only ever estimates them. Its
+ * Measured on the ball in the feed; TeamStation only ever estimates them. Its
  * `launchAngle` is the scorer's own, set on the field, and its
  * `totalDistance` is where the scorer put the ball on a field of the game's
  * size, so neither is here.
@@ -379,7 +379,7 @@ export function gumboViolations(play: unknown): GumboViolation[] {
 
   /**
    * A pitch's speed and zone. Everything else the feed writes there is
-   * measured, so a play GameStation scored carries none of it.
+   * measured, so a play TeamStation scored carries none of it.
    */
   function pitchData(path: string, value: unknown): void {
     if (!isRecord(value)) {

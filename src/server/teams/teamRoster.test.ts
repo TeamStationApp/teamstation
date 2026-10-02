@@ -23,7 +23,7 @@ import { errorHandler } from '../middleware/withErrors'
 import { teamRoutes } from '../routes/teams'
 
 const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5433/postgres'
+  process.env.TS_TEST_DATABASE_URL ?? 'postgres://localhost:5433/postgres'
 const name = `AppDb_scoringUiUpdates_roster_${Date.now()}`
 const url = new URL(adminUrl)
 url.pathname = `/${name}`
@@ -359,7 +359,7 @@ describe('scoring roster HTTP contract', function () {
           provider: 'localFile',
           provider_id: 'lf:0123456789abcdef',
           title: 'Walkup Fixture',
-          artist: 'GameStation'
+          artist: 'TeamStation'
         }
       ])
       .execute()

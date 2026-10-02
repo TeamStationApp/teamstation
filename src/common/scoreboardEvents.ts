@@ -8,7 +8,7 @@ import { asDashboardOverrides, asScoreboardState } from './scoreboard'
  *
  * The games a scoreboard may be published to: those that started in the
  * last three hours and whose board is still open, newest first, and the next
- * five, soonest first. Each is the same row GS Director's picker lists.
+ * five, soonest first. Each is the same row TS Director's picker lists.
  */
 export const asScoreboardEvents = asObject({
   recent: asArray(asDirectorEvent),

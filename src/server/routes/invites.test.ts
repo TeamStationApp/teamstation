@@ -37,7 +37,7 @@ import { inviteRoutes } from './invites'
  *    two routers and the e-mail code table.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_invites_${Date.now()}`
+const scratchName = `teamstation_invites_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const BOSS = 'tok_boss_00000000000000000000000000'

@@ -17,7 +17,7 @@ import { openSecret, sealSecret } from './secrets'
  * a log is recognisably ours.
  */
 export function makeStreamKey(): string {
-  return `gs_${randomBytes(16).toString('base64url')}`
+  return `ts_${randomBytes(16).toString('base64url')}`
 }
 
 /**

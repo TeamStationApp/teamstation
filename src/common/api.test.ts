@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { GameStationClient } from './api'
+import { TeamStationClient } from './api'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
@@ -40,7 +40,7 @@ function stubFetch(
 describe('api client', function () {
   it('sets somebody\u2019s roles on one level, and reads the caller\u2019s own', async function () {
     const set = stubFetch(200, { userId: 42, roles: ['admin', 'coach'] })
-    const client = new GameStationClient({
+    const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: set.fetch
     })
@@ -61,7 +61,7 @@ describe('api client', function () {
     const mine = stubFetch(200, {
       teams: { tem_1: ['scorekeeper'], tem_2: ['admin', 'coach'] }
     })
-    const reader = new GameStationClient({
+    const reader = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: mine.fetch
     })
@@ -71,7 +71,7 @@ describe('api client', function () {
     const odd = stubFetch(200, { teams: { tem_1: ['umpire'] } })
     let refused = false
     try {
-      await new GameStationClient({
+      await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
         fetch: odd.fetch
       }).myRoles()
@@ -92,7 +92,7 @@ describe('api client', function () {
       isPlayer: true,
       role: 'member'
     })
-    const client = new GameStationClient({
+    const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: set.fetch
     })
@@ -126,7 +126,7 @@ describe('api client', function () {
       endMs: 25000
     } as const
     const set = stubFetch(200, song)
-    const client = new GameStationClient({
+    const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: set.fetch
     })
@@ -139,7 +139,7 @@ describe('api client', function () {
 
     // 204 carries no body, which a stubbed Response may not be given.
     const cleared: Array<{ url: string; method?: string; body?: unknown }> = []
-    await new GameStationClient({
+    await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: async (url: unknown, init?: RequestInit) => {
         cleared.push({
@@ -161,7 +161,7 @@ describe('api client', function () {
     // A song the app would not store is refused rather than drawn.
     let refused = false
     try {
-      await new GameStationClient({
+      await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
         fetch: stubFetch(200, { ...song, endMs: 5000 }).fetch
       }).setWalkUpSong('tem_1', 7, song)
@@ -184,7 +184,7 @@ describe('api client', function () {
       // An older server sends no song at all.
       { ...entry, userId: 9 }
     ])
-    const read = await new GameStationClient({
+    const read = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: roster.fetch
     }).roster('tem_1')
@@ -209,7 +209,7 @@ describe('api client', function () {
       fromGameId: 'gam 1',
       setAt: '2026-09-28T12:00:00.000Z'
     })
-    const client = new GameStationClient({
+    const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: kept.fetch
     })
@@ -241,7 +241,7 @@ describe('api client', function () {
       current: { batters: [person], defense }
     })
     const read = stubFetch(200, { away: side('a'), home: side('h') })
-    const lineups = await new GameStationClient({
+    const lineups = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: read.fetch
     }).gameLineups('gam 1')
@@ -253,7 +253,7 @@ describe('api client', function () {
     const bad = stubFetch(200, { away: side('a'), home: { teamId: 'h' } })
     let refused = false
     try {
-      await new GameStationClient({
+      await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
         fetch: bad.fetch
       }).gameLineups('g')
@@ -287,7 +287,7 @@ describe('api client', function () {
       ]
     })
     const read = stubFetch(200, { away: side('lineup'), home: side('roster') })
-    const dj = await new GameStationClient({
+    const dj = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: read.fetch
     }).djGame('gam 1')
@@ -300,7 +300,7 @@ describe('api client', function () {
     const bad = stubFetch(200, { away: side('lineup'), home: side('guess') })
     let refused = false
     try {
-      await new GameStationClient({
+      await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
         fetch: bad.fetch
       }).djGame('g')
@@ -318,12 +318,12 @@ describe('api client', function () {
       ownerName: 'Pat',
       slot: 1,
       label: 'Dugout',
-      keyPrefix: 'gs_abc',
+      keyPrefix: 'ts_abc',
       state: 'idle',
       opensAt: '2026-05-02T18:00:00.000Z',
       closesAt: null
     })
-    const client = new GameStationClient({
+    const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: renamed.fetch
     })
@@ -344,7 +344,7 @@ describe('api client', function () {
     const { fetch } = stubFetch(200, [
       { id: 'tem_1', name: 'Badgers', shortName: null, logoPath: null }
     ])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const teams = await client.teams()
     expect(teams.length).equals(1)
     expect(teams[0].name).equals('Badgers')
@@ -353,7 +353,7 @@ describe('api client', function () {
 
   it('refuses a response of the wrong shape rather than passing it on', async function () {
     const { fetch } = stubFetch(200, [{ id: 'tem_1' }])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     let threw = false
     try {
       await client.teams()
@@ -365,7 +365,7 @@ describe('api client', function () {
 
   it('turns an error body back into the same error the server threw', async function () {
     const { fetch } = stubFetch(404, { code: 'notFound', message: 'Not found' })
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     try {
       await client.game('gam_missing')
       expect.fail('should have thrown')
@@ -378,7 +378,7 @@ describe('api client', function () {
 
   it('does not choke on an error body that is not our shape', async function () {
     const { fetch } = stubFetch(502, '<html>gateway</html>')
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     try {
       await client.teams()
       expect.fail('should have thrown')
@@ -394,7 +394,7 @@ describe('api client', function () {
       user: { id: 1, displayName: 'Robin', isAdmin: false }
     }
     const { fetch, calls } = stubFetch(200, session)
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.signInWithPassword('a@b.c', 'hunter2')
     expect(client.token).equals('tok_abc')
 
@@ -405,7 +405,7 @@ describe('api client', function () {
 
   it('sends a JSON body only when there is one', async function () {
     const { fetch, calls } = stubFetch(200, [])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.teams()
     expect(calls[0].body).equals(undefined)
     expect(calls[0].headers['content-type']).equals(undefined)
@@ -413,7 +413,7 @@ describe('api client', function () {
 
   it('escapes an id rather than pasting it into the path', async function () {
     const { fetch, calls } = stubFetch(200, [])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.teamGames('a/b?c')
     expect(calls[0].url).equals('http://x/api/v1/teams/a%2Fb%3Fc/games')
   })
@@ -422,7 +422,7 @@ describe('api client', function () {
     const { fetch, calls } = stubFetch(200, [
       { userId: 7, externalIds: ['a&b', 'c'] }
     ])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const users = await client.users({ externalIds: ['a&b', 'c'] })
     expect(calls[0].url).equals(
       'http://x/api/v1/users?externalId=a%26b&externalId=c'
@@ -432,7 +432,7 @@ describe('api client', function () {
 
   it('trims a trailing slash off the base so paths do not double up', async function () {
     const { fetch, calls } = stubFetch(200, [])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1/', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1/', fetch })
     await client.teams()
     expect(calls[0].url).equals('http://x/api/v1/teams')
   })
@@ -449,13 +449,13 @@ describe('api client', function () {
       plays: [{ id: 'evt_1', gameId: 'gam_1', gumbo: play }],
       currentPlay: current
     })
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const stored = await client.gameEvents('gam 1')
     expect(calls[0].url).equals('http://x/api/v1/games/gam%201/events')
     expect(JSON.parse(JSON.stringify(stored.plays))).deep.equals([play])
     expect(stored.currentPlay).deep.equals(current)
     const none = stubFetch(200, { plays: [] })
-    const bare = new GameStationClient({
+    const bare = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: none.fetch
     })
@@ -465,9 +465,9 @@ describe('api client', function () {
     })
   })
 
-  it('scores into a game live, naming GameStation and only what changed', async function () {
+  it('scores into a game live, naming TeamStation and only what changed', async function () {
     const { fetch, calls } = stubFetch(200, { plays: [], currentPlay: null })
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.saveGameEvents('gam_1', { plays: [], remove: [3] })
     expect(calls[0].method).equals('POST')
     expect(JSON.parse(calls[0].body!)).deep.equals({
@@ -513,13 +513,13 @@ describe('api client', function () {
       batting: [{ ...batting, sh: 1 }],
       pitching: []
     })
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const box = await client.boxScore('gam 1')
     expect(calls[0].url).equals('http://x/api/v1/games/gam%201/box-score')
     expect([box.batting[0].sf, box.batting[0].sh]).deep.equals([1, 1])
 
     const older = stubFetch(200, [batting])
-    const team = new GameStationClient({
+    const team = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: older.fetch
     })
@@ -557,7 +557,7 @@ describe('api client', function () {
       linescore: JSON.parse(JSON.stringify(linescore)),
       videos: []
     })
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const game = await client.game('gam_1')
     // The totals the scoreboard draws, and nothing it does not read.
     expect(game.linescore).deep.equals({
@@ -580,7 +580,7 @@ describe('api client', function () {
       runDifferential: 3
     }
     const { fetch, calls } = stubFetch(200, [row])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     expect(await client.standings('sea 1')).deep.equals([row])
     expect(calls[0].url).equals('http://x/api/v1/seasons/sea%201/standings')
   })
@@ -613,7 +613,7 @@ describe('api client', function () {
       const [status, body] = answers[calls.length - 1]
       return new Response(JSON.stringify(body), { status })
     }
-    const client = new GameStationClient({
+    const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: fetch as unknown as typeof globalThis.fetch
     })
@@ -672,7 +672,7 @@ describe('api client', function () {
       canDj: true,
       scoreboard: { open: true, mayOverride: false }
     })
-    const detail = await new GameStationClient({
+    const detail = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: flagged.fetch
     }).game('g/1')
@@ -680,7 +680,7 @@ describe('api client', function () {
     expect(detail.canScore).equals(true)
     expect(detail.canDj).equals(true)
     expect(detail.scoreboard).deep.equals({ open: true, mayOverride: false })
-    const older = await new GameStationClient({
+    const older = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: stubFetch(200, game).fetch
     }).game('g/1')
@@ -707,7 +707,7 @@ describe('api client', function () {
       ingestStatus: 'none',
       videoCount: 0
     }
-    const withLogo = await new GameStationClient({
+    const withLogo = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: stubFetch(200, [
         {
@@ -719,7 +719,7 @@ describe('api client', function () {
     }).recentGame()
     expect(withLogo?.awayLogoUrl).equals('https://space/badgers-96.png')
     expect(withLogo?.homeLogoUrl).equals(null)
-    const older = await new GameStationClient({
+    const older = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: stubFetch(200, [row]).fetch
     }).recentGame()
@@ -729,7 +729,7 @@ describe('api client', function () {
 
   it('asks for seasons, their games and teams, the newest game and who is signed in', async function () {
     const { fetch, calls } = stubFetch(200, [])
-    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     expect(await client.seasons()).deep.equals([])
     expect(await client.games()).deep.equals([])
     expect(await client.games({ externalIds: ['ext 1'] })).deep.equals([])
@@ -738,7 +738,7 @@ describe('api client', function () {
     expect(await client.liveNow()).deep.equals([])
     expect(await client.whoAmI()).equals(null)
     expect(
-      await new GameStationClient({
+      await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
         fetch: stubFetch(200, []).fetch
       }).recentGame()

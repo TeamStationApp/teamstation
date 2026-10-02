@@ -41,7 +41,7 @@ import {
 } from './events'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_events_route_${Date.now()}`
+const scratchName = `teamstation_events_route_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const TOKEN = 'tok_events_000000000000000000000000'
@@ -529,7 +529,7 @@ describe('posting and reading plays', function () {
     expect(stored.startTime).to.be.instanceOf(Date)
   })
 
-  it('rejects an outside post onto a GameStation-owned game', async function () {
+  it('rejects an outside post onto a TeamStation-owned game', async function () {
     const rejected = await ask(`/games/${lockedId}/events`, 'POST', {
       plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })],
       source: { system: 'acme' }
@@ -798,7 +798,7 @@ describe('posting and reading plays', function () {
     expect(linescore.home.runs).deep.equals([0])
     expect(linescore.away.h).equals(2)
     // Gumbo's innings beside the totals; nobody is counted left on base
-    // without GameStation's record of every runner.
+    // without TeamStation's record of every runner.
     const gumbo = game.linescore as {
       innings: Array<{ num: number; away: { runs: number } }>
       teams: { away: { runs: number; leftOnBase: number | null } }
@@ -1148,7 +1148,7 @@ describe('posting and reading plays', function () {
     expect(await statusOf(pendingId)).equals('inProgress')
   })
 
-  it("drops an outside sender's play text and keeps GameStation's own", async function () {
+  it("drops an outside sender's play text and keeps TeamStation's own", async function () {
     const worded = {
       ...play({ atBatIndex: 0, awayScore: 1, homeScore: 0 }),
       playEvents: [{ type: 'pitch', description: 'Ball 1' }],
@@ -1191,7 +1191,7 @@ describe('posting and reading plays', function () {
     expect(JSON.stringify(row.gumbo)).not.contains('description')
   })
 
-  it('refuses a GameStation record in a version it cannot read, naming the play, and writes nothing', async function () {
+  it('refuses a TeamStation record in a version it cannot read, naming the play, and writes nothing', async function () {
     const record = (version: unknown): unknown => ({
       version,
       setupBefore: {},
@@ -1467,7 +1467,7 @@ describe('posting and reading plays', function () {
     expect(await gameRow(liveId)).deep.include({ status: 'inProgress' })
   })
 
-  it('refuses an outside scorer on a game GameStation scored, final or not', async function () {
+  it('refuses an outside scorer on a game TeamStation scored, final or not', async function () {
     await live(liveId, {
       plays: [
         play({
@@ -1683,7 +1683,7 @@ describe('a play naming a user who does not exist', function () {
 describe('the team default lineup a live post keeps (U10)', function () {
   this.timeout(60000)
 
-  const name = `gamestation_lineup_defaults_${Date.now()}`
+  const name = `teamstation_lineup_defaults_${Date.now()}`
   const url = adminUrl.replace(/\/[^/]*$/, `/${name}`)
   const OWNER = 'tok_lineups_0000000000000000000000'
   let adminPool: Pool | undefined

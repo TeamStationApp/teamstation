@@ -6,8 +6,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   asPlayerDetail,
   asRosterEntry,
-  type GameStationClient,
-  type PlayerStats
+  type PlayerStats,
+  type TeamStationClient
 } from '../../common/api'
 import type { PlayerSettings } from '../../common/playerSettings'
 import { App } from '../App'
@@ -112,7 +112,7 @@ const stats: PlayerStats = {
 function playerClient(
   saves: Array<{ teamId: string; settings: PlayerSettings }> = [],
   rosters: string[] = []
-): GameStationClient {
+): TeamStationClient {
   return {
     player: async () =>
       asPlayerDetail({
@@ -140,7 +140,7 @@ function playerClient(
       saves.push({ teamId, settings })
       return { ...jordan, ...settings }
     }
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
 }
 
 afterEach(async function () {

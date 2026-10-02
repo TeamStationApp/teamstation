@@ -16,10 +16,10 @@ import type { PlaybackState } from './walkUpMusicTypes'
 
 const raw: NativeSongCandidate = {
   provider: 'localFile',
-  providerId: 'lf:bcff80c2abab3d42',
+  providerId: 'lf:110f83a3e9419109',
   isrc: null,
-  title: ' GS Walkup Fixture ',
-  artist: 'GameStation Test',
+  title: ' TS Walkup Fixture ',
+  artist: 'TeamStation Test',
   album: '',
   artworkUrl: null,
   durationMs: 90000.4,
@@ -110,10 +110,10 @@ describe('makeWalkUpMusic', function () {
     expect(await music.search('fixture')).deep.equals([
       {
         provider: 'localFile',
-        providerId: 'lf:bcff80c2abab3d42',
+        providerId: 'lf:110f83a3e9419109',
         isrc: null,
-        title: 'GS Walkup Fixture',
-        artist: 'GameStation Test',
+        title: 'TS Walkup Fixture',
+        artist: 'TeamStation Test',
         album: null,
         artworkUrl: null,
         durationMs: 90000,

@@ -10,7 +10,7 @@ export function isUnscoredGame(
 
 /**
  * How the Game page offers scoring: a game nobody has scored can be scored, a
- * game GameStation is scoring — in progress, or final and open to correction —
+ * game TeamStation is scoring — in progress, or final and open to correction —
  * can be taken up again, and anything else cannot.
  */
 export function scoringEntry(

@@ -20,7 +20,7 @@ npm install                # once
 (cd ios && pod install)    # once, and after any native dependency changes
 npm run metro              # leave running
 
-npm run ios                # or: open ios/GameStation.xcworkspace
+npm run ios                # or: open ios/TeamStation.xcworkspace
 npm run android
 ```
 
@@ -41,8 +41,8 @@ from — so there is nothing else to start. Point it somewhere else for a day's
 work against a local server:
 
 ```sh
-GS_API_BASE_URL=http://192.168.1.20:9100/api/v1 npx react-native start --reset-cache
-GS_API_BASE_URL=http://192.168.1.20:9100/api/v1 npm run ios
+TS_API_BASE_URL=http://192.168.1.20:9100/api/v1 npx react-native start --reset-cache
+TS_API_BASE_URL=http://192.168.1.20:9100/api/v1 npm run ios
 ```
 
 `--reset-cache` is not optional. Babel inlines the value and Metro caches the
@@ -160,7 +160,7 @@ And the three pieces of native glue the `expo` package would otherwise own:
 | | |
 |---|---|
 | `ios/Podfile` | `use_expo_modules!`, defined in place from `expo-modules-autolinking` (what `expo/scripts/autolinking.rb` does) |
-| `ios/GameStation/GSExpoModules.mm` | installs the Expo modules into each JavaScript runtime, as `EXReactNativeFactory` does — a category on `RCTReactNativeFactory`, which overrides nothing |
+| `ios/TeamStation/GSExpoModules.mm` | installs the Expo modules into each JavaScript runtime, as `EXReactNativeFactory` does — a category on `RCTReactNativeFactory`, which overrides nothing |
 | `android/settings.gradle`, `build.gradle`, `app/build.gradle` | the `expo-autolinking-settings` plugin and `useExpoModules()`, `expo-root-project`, and `expo-autolinking` applied to the app |
 | `android/.../ExpoModulesPackage.kt` | the `expo` package's `ExpoModulesPackage`, over the list `expo-autolinking` generates, added in `MainApplication` |
 
@@ -209,7 +209,7 @@ them.
 ### Testing it on a phone against this Mac
 
 A **Release** build embeds the bundle, so it needs no Metro; set
-`GS_API_BASE_URL` on the build and Babel inlines it. Android's release
+`TS_API_BASE_URL` on the build and Babel inlines it. Android's release
 variant refuses cleartext HTTP, so a local run needs a variant that allows it
 (a `localRelease` copied from `release` with
 `manifestPlaceholders.usesCleartextTraffic = "true"`, not committed).
@@ -217,14 +217,14 @@ variant refuses cleartext HTTP, so a local run needs a variant that allows it
 The URL is part of the bundle, so a build for a new URL has to make a new
 bundle. Xcode's bundle phase always does, with `--reset-cache`. Gradle's
 bundle task skips work it calls up to date, and the environment is not
-something it compares, so `app/build.gradle` declares `GS_API_BASE_URL` as an
+something it compares, so `app/build.gradle` declares `TS_API_BASE_URL` as an
 input of every bundle task: a changed value rebuilds the bundle, and the same
 value leaves it alone. Build, install, then read the URL out of what is on
 the phone rather than trusting the build:
 
 ```sh
 cd android
-GS_API_BASE_URL=http://<lan-ip>:9120/api/v1 ./gradlew assembleLocalRelease --console=plain \
+TS_API_BASE_URL=http://<lan-ip>:9120/api/v1 ./gradlew assembleLocalRelease --console=plain \
   | grep createBundle        # no UP-TO-DATE after a URL change
 adb install -r app/build/outputs/apk/localRelease/app-localRelease.apk
 adb pull "$(adb shell pm path co.gamestation.app | sed -n 's/^package://p' | head -1)" installed.apk
@@ -232,7 +232,7 @@ unzip -p installed.apk assets/index.android.bundle | grep -ao 'http://[0-9.]*:[0
 ```
 
 On iOS the same check is
-`grep -ao 'http://[0-9.]*:[0-9]*/api/v1' build-device/Build/Products/Release-iphoneos/GameStation.app/main.jsbundle`.
+`grep -ao 'http://[0-9.]*:[0-9]*/api/v1' build-device/Build/Products/Release-iphoneos/TeamStation.app/main.jsbundle`.
 
 WDA on the iPhone can report the phone as landscape while it is upright; a
 point tap then lands at the transposed position. Tap by text wherever you
@@ -245,7 +245,7 @@ can.
 `package.json` names `GameStationWalkUpMusicSpec`; the screens use it through
 `walkUpMusic.native.ts`, which is one call to the shared `makeWalkUpMusic.ts`.
 
-- **iOS** (`ios/GameStation/WalkUpMusic/`): `RCTWalkUpMusic.mm` over
+- **iOS** (`ios/TeamStation/WalkUpMusic/`): `RCTWalkUpMusic.mm` over
   `WalkUpMusic.swift` (MusicKit) and `SystemVolume.swift` (the fades).
   `codegenConfig.ios.modulesProvider` maps the name to the class, so a new
   spec needs `pod install`. Catalog search and playback need the **MusicKit
@@ -253,7 +253,7 @@ can.
   Apple Music subscription on the phone; without them a search fails with
   Apple's own words, which the picker shows. The library search is only
   asked with media-library access: MediaPlayer crashes without it.
-- **Android** (`android/.../co/gamestation/app/walkup/`): MediaStore, the
+- **Android** (`android/.../co/teamstation/app/walkup/`): MediaStore, the
   system file picker and Media3 ExoPlayer, registered in `MainApplication`
   through `WalkUpMusicPackage`. The app's codegen library is linked by CMake
   only if it existed when CMake was configured: after adding or renaming a
@@ -318,7 +318,7 @@ and is what stops the picture riding out over the stream panel.
 
 ## Liquid Glass
 
-`ios/GameStation/GSGlassView.mm`, a legacy `RCTViewManager` that React Native
+`ios/TeamStation/GSGlassView.mm`, a legacy `RCTViewManager` that React Native
 0.87 still mounts under Fabric and finds by name. iOS 26 draws `UIGlassEffect`,
 which refracts and highlights what passes beneath it; earlier versions draw
 `systemThinMaterial`, which is what the CSS `backdrop-filter` was imitating.
@@ -351,7 +351,7 @@ are already configured for each other, `serverConfig.json` allowlists
 `127.0.0.1:8080` and `build.mjs` points a served bundle at `:9100` — and look:
 
 ```sh
-npm start          # the API, on 9100, against gamestation_dev
+npm start          # the API, on 9100, against teamstation_dev
 npm run start.web  # the app, on 8080, pointed at it
 ```
 
@@ -365,7 +365,7 @@ maestro --device <udid|serial> test maestro/smoke.yaml
 ```
 
 Maestro directly, and not `mobile/scripts/run-maestro.js`. That runner exists
-so the GS Director flows can name no device and be pointed at one iPad or
+so the TS Director flows can name no device and be pointed at one iPad or
 another; these flows have the same property — none of them names a device —
 but the runner also knows about Director's build scripts and its simulator
 conventions, which have nothing to do with this app. One flag is cheaper than
@@ -469,13 +469,13 @@ thing the build has to be told.
 
 ```sh
 cd ios
-xcodebuild -workspace GameStation.xcworkspace -scheme GameStation \
+xcodebuild -workspace TeamStation.xcworkspace -scheme TeamStation \
   -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
   -derivedDataPath build-device \
   DEVELOPMENT_TEAM=G5LQ7MERPK CODE_SIGN_STYLE=Automatic
 
 xcrun devicectl device install app --device <device-id> \
-  build-device/Build/Products/Release-iphoneos/GameStation.app
+  build-device/Build/Products/Release-iphoneos/TeamStation.app
 ```
 
 `xcrun devicectl list devices` gives the id. Build **Release**, not Debug: the
@@ -534,10 +534,10 @@ four things have to line up, and three of them bit before they worked.
 
 ```sh
 npm run start                                     # API, from serverConfig.json
-GS_SERVE_PORT=8090 GS_API_BASE_URL=http://127.0.0.1:9100/api/v1 npm run start.web
+TS_SERVE_PORT=8090 TS_API_BASE_URL=http://127.0.0.1:9100/api/v1 npm run start.web
 ```
 
-- **`GS_SERVE_PORT`.** Two worktrees are often served at once and the second
+- **`TS_SERVE_PORT`.** Two worktrees are often served at once and the second
   silently fails to bind. Use it rather than killing whatever holds 8080 —
   that will be another branch's server.
 - **`corsOrigins` in `serverConfig.json`** lists the origins the API will
@@ -546,7 +546,7 @@ GS_SERVE_PORT=8090 GS_API_BASE_URL=http://127.0.0.1:9100/api/v1 npm run start.we
 - **The app cannot use a loopback URL**: on a handset `127.0.0.1` is the
   handset, and `app/native/config.ts` refuses one. Build with the Mac's LAN
   address and set `listenHost` to `0.0.0.0` so the simulator can reach it:
-  `GS_API_BASE_URL=http://<lan-ip>:9100/api/v1 xcodebuild …`
+  `TS_API_BASE_URL=http://<lan-ip>:9100/api/v1 xcodebuild …`
 - **The dev database has none of the fixtures** the flows expect:
   the flows' sign-in, its password, and the invite code
   the clipboard check reads. Add them to the dev database rather than editing

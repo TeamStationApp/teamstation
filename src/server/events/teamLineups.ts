@@ -114,7 +114,7 @@ export function defaultOf(raw: unknown): DefaultLineup | null {
 
 /**
  * What a live post leaves of the game's lineups, inside its transaction and
- * after its writes: the digest, and for a post from GameStation the teams'
+ * after its writes: the digest, and for a post from TeamStation the teams'
  * defaults. The first post after which the game has begun takes each side's
  * starting lineup as its team's default, unless the team's default is the
  * same arrangement already, and marks the game `lineup_started_at`. A post
@@ -132,7 +132,7 @@ export async function keepLineups(
     lineup_started_at: Date | null
   },
   stored: StoredLineupGame,
-  fromGameStation: boolean,
+  fromTeamStation: boolean,
   now: Date
 ): Promise<{ lineups_digest: string; lineup_started_at?: Date | null }> {
   const read: GameLineups = readLineups(stored, await lineupContext(trx, game))
@@ -143,7 +143,7 @@ export async function keepLineups(
     )
     return { lineups_digest: digest }
   }
-  if (!fromGameStation) return { lineups_digest: digest }
+  if (!fromTeamStation) return { lineups_digest: digest }
   if (read.begun === false && game.lineup_started_at != null)
     return { lineups_digest: digest, lineup_started_at: null }
   const away = read.sides.away.start

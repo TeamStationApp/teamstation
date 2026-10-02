@@ -203,7 +203,7 @@ describe('probing a real file', function () {
       this.skip()
       return
     }
-    workDir = await mkdtemp(join(tmpdir(), 'gsStart-'))
+    workDir = await mkdtemp(join(tmpdir(), 'tsStart-'))
   })
 
   after(async function () {

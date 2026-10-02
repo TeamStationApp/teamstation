@@ -282,7 +282,7 @@ describe('the API document', function () {
       sorted(HIT_TRAJECTORIES)
     )
     expect(play.properties.about.properties.halfOuts.description).includes(
-      'GameStation extension'
+      'TeamStation extension'
     )
     expect(play.properties.gameStation.$ref).equals(
       '#/components/schemas/GameStationRecord'

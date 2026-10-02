@@ -3,9 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { gsBallpark } from '../theme/gsBallpark'
-import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { TsMark } from './TsMark'
 import { MARK_PATHS, MARK_STROKE_WIDTH, MARK_VIEW_BOX } from './tsMarkPaths'
 
@@ -25,7 +25,7 @@ async function render(element: React.ReactElement): Promise<HTMLElement> {
 afterEach(async function () {
   await act(async () => {
     root?.unmount()
-    changeTheme(gsBallpark)
+    changeTheme(tsBallpark)
   })
   root = undefined
   host?.remove()
@@ -61,11 +61,11 @@ describe('the TeamStation mark', function () {
   it("strokes with the theme's gradient, light green to dark on the pale theme", async function () {
     const container = await render(<TsMark />)
     expect(stops(container)).deep.equals([
-      gsBallpark.markGradientStart,
-      gsBallpark.markGradientEnd
+      tsBallpark.markGradientStart,
+      tsBallpark.markGradientEnd
     ])
-    expect(gsBallpark.markGradientStart).equals('#5e8f32')
-    expect(gsBallpark.markGradientEnd).equals('#182e16')
+    expect(tsBallpark.markGradientStart).equals('#5e8f32')
+    expect(tsBallpark.markGradientEnd).equals('#182e16')
     const gradient = container.querySelector('linearGradient')
     const id = gradient?.getAttribute('id') ?? ''
     expect(container.querySelector('g')?.getAttribute('stroke')).equals(
@@ -81,7 +81,7 @@ describe('the TeamStation mark', function () {
 
   it('runs to the cream on the dark theme, so the mark stays whole on a dark header', async function () {
     await act(async () => {
-      changeTheme(gsDark)
+      changeTheme(tsDark)
     })
     const container = await render(<TsMark />)
     expect(stops(container)).deep.equals(['#8FB35C', '#E6E5D5'])

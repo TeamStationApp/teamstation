@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
-import type { GameStationClient, Session } from '../../common/api'
+import type { Session, TeamStationClient } from '../../common/api'
 import { Button, Card, Screen } from '../components'
 import { alreadyAsked, markAsked } from '../platform/onceStore'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface SignInLinkScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   token: string
   /** Which sign-in the link belongs to, from `?r=`. */
   requestId?: string
@@ -76,7 +76,7 @@ export function SignInLinkScreen(
     <Screen>
       <Card>
         <View style={styles.body}>
-          <Text style={styles.title}>Sign in to GameStation</Text>
+          <Text style={styles.title}>Sign in to TeamStation</Text>
           {error != null && <Text style={styles.error}>{error}</Text>}
           {busy && error == null ? (
             <ActivityIndicator color={theme.primaryTextColor} />

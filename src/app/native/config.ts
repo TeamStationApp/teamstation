@@ -9,7 +9,7 @@
  *
  * Point it somewhere else for a day's work against a local server:
  *
- *     GS_API_BASE_URL=http://192.168.1.20:9100/api/v1 npm run ios
+ *     TS_API_BASE_URL=http://192.168.1.20:9100/api/v1 npm run ios
  *
  * A LAN address, not the loopback: on a simulator `127.0.0.1` is the Mac, and
  * on a handset it is the handset.
@@ -18,7 +18,7 @@ import { httpOrigin, PRIMARY_HOST } from '../../common/primaryUrl'
 
 declare const process: { env: Record<string, string | undefined> }
 
-const configured = process.env.GS_API_BASE_URL
+const configured = process.env.TS_API_BASE_URL
 
 // A build that names the loopback cannot work on anything but the machine that
 // made it — on a simulator `127.0.0.1` is the Mac, and on a handset it is the
@@ -29,7 +29,7 @@ if (
   /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(configured)
 ) {
   throw new Error(
-    `GS_API_BASE_URL=${configured} names this device's own loopback, which ` +
+    `TS_API_BASE_URL=${configured} names this device's own loopback, which ` +
       'no other device can reach. Use the LAN address of the machine running ' +
       'the server.'
   )

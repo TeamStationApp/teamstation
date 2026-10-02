@@ -35,7 +35,7 @@ export const asServerConfig = asObject({
    */
   statsBuilder: asOptional(asBoolean, true),
 
-  /** Postgres for GameStation's own data. */
+  /** Postgres for TeamStation's own data. */
   databaseUrl: asOptional(
     asString,
     'postgres://localhost:5432/teamstation_dev'
@@ -105,7 +105,7 @@ export const asServerConfig = asObject({
       user: asOptional(asString, ''),
       password: asOptional(asString, ''),
       fromAddress: asOptional(asString, ''),
-      fromName: asOptional(asString, 'GameStation')
+      fromName: asOptional(asString, 'TeamStation')
     }),
     {
       host: '',
@@ -114,7 +114,7 @@ export const asServerConfig = asObject({
       user: '',
       password: '',
       fromAddress: '',
-      fromName: 'GameStation'
+      fromName: 'TeamStation'
     }
   ),
 
@@ -127,7 +127,7 @@ export const asServerConfig = asObject({
   /**
    * What this deployment is called, where that is not `PRIMARY_HOST`.
    *
-   * A **host**, with no scheme: `devhost2.examplegs.test`, `127.0.0.1:9100`.
+   * A **host**, with no scheme: `devhost2.example-ts.test`, `127.0.0.1:9100`.
    * `https` is implied, except for an IP address or `localhost`, which imply
    * `http`; the stream URL is built from the same name. Every link this
    * server hands out — playback, invites, sign-in, RTMP — is built from it.
@@ -166,7 +166,7 @@ export const asServerConfig = asObject({
 
   /**
    * Redis, which holds every game's scoreboard and carries its changes from
-   * worker to worker. Empty `prefix` means `gs:<database name>`, so deployments
+   * worker to worker. Empty `prefix` means `ts:<database name>`, so deployments
    * that share one Redis, each with its own database, never meet.
    *
    * `caFile` is the certificate authority to check TLS against, for a server

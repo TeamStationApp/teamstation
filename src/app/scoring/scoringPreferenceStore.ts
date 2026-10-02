@@ -18,7 +18,7 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
   write: (userId: string, value: ScoringPreferences) => Promise<void>
 } {
   const key = (id: string): string =>
-    `gamestation:scoring:${encodeURIComponent(id)}:switch-hitter`
+    `teamstation:scoring:${encodeURIComponent(id)}:switch-hitter`
   return {
     async read(userId) {
       try {

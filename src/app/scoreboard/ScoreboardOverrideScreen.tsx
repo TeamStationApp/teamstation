@@ -77,14 +77,14 @@ function pagePoint(event: GestureResponderEvent): PagePoint {
  * The override dashboard: 1.0's `src/client/Dashboard.tsx` at 25f9496e, its layout,
  * styles and gestures, on the 2.0 dashboard socket.
  *
- * It draws in 1.0's dark GameStation colours (`dashboardTheme.ts`) whatever
+ * It draws in 1.0's dark TeamStation colours (`dashboardTheme.ts`) whatever
  * the app's theme is. Five groups — the team names, the score, the inning,
  * the bases and the count — each turn the override colour while overridden.
  * Tapping a score or the inning number adds one, and a long press opens the
  * number picker where it was pressed. The arrows pick the half, a tapped
  * base flips, B, S and O add one up to 3, 2 and 2, and C clears the row.
  * Each ✕ turns its group off. Reset Game State turns every group off and has
- * the server drop GS Watcher's stored state, so the board falls back to the
+ * the server drop TS Watcher's stored state, so the board falls back to the
  * game's own scoring.
  *
  * What the server works out on its own stays in sight: each count circle

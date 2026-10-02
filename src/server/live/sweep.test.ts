@@ -27,7 +27,7 @@ import { liveVideoDir, sweepLocalCopies } from './controller'
  * way the migration suite does.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_sweep_${Date.now()}`
+const scratchName = `teamstation_sweep_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 /** Older than the fifteen minutes a failed upload waits before a retry. */
@@ -59,7 +59,7 @@ describe('the live sweep', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
 
-    mediaRoot = await mkdtemp(join(tmpdir(), 'gsSweep-'))
+    mediaRoot = await mkdtemp(join(tmpdir(), 'tsSweep-'))
     space = createServer((req, res) => {
       const key = (req.url ?? '').split('?')[0] ?? ''
       if (req.method === 'PUT') {
@@ -113,7 +113,7 @@ describe('the live sweep', function () {
         closeAfterHours: 6,
         freeDiskFloorGb: 10
       },
-      ffmpegPath: process.env.GS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg',
+      ffmpegPath: process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg',
       mediaRoot,
       workDir: join(mediaRoot, 'work'),
       sessionSecret: 'a'.repeat(32),

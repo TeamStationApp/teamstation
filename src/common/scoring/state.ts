@@ -62,7 +62,7 @@ const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
 
 /**
  * A pitch's `pitchData` as the scorer gives it: its speed, and its zone. Gumbo
- * writes much more there, all of it measured, so GameStation writes no more.
+ * writes much more there, all of it measured, so TeamStation writes no more.
  */
 export interface PitchData {
   startSpeed?: number

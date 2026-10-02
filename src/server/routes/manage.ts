@@ -189,7 +189,7 @@ export function manageRoutes(
         .executeTakeFirst()
       await options.sendInvite(email, {
         scopeName: name,
-        invitedBy: who?.display_name ?? 'A GameStation administrator',
+        invitedBy: who?.display_name ?? 'A TeamStation administrator',
         link: inviteUrl(options.publicUrl, invite.code)
       })
       setAudit(res.locals, {

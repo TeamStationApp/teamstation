@@ -33,7 +33,7 @@ import {
 } from './gameSocket'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_game_socket_${Date.now()}_${process.pid}`
+const scratchName = `teamstation_game_socket_${Date.now()}_${process.pid}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const SCORER = 'tok_socket_scorer_0000000000000000'
@@ -445,7 +445,7 @@ describe('the game socket (U14)', function () {
         await refusedWith(socketUrl, { authorization: 'Bearer tok_nobody' })
       ).equals(401)
       expect(
-        await refusedWith(socketUrl, { cookie: 'gs_session=tok_nobody' })
+        await refusedWith(socketUrl, { cookie: 'ts_session=tok_nobody' })
       ).equals(401)
     })
 
@@ -470,7 +470,7 @@ describe('the game socket (U14)', function () {
 
     it('is taken with the session cookie, as a browser sends it', async function () {
       const ws = new WebSocket(socketUrl, {
-        headers: { cookie: `gs_session=${VIEWER}` }
+        headers: { cookie: `ts_session=${VIEWER}` }
       })
       await new Promise<void>((resolve, reject) => {
         ws.once('open', resolve)

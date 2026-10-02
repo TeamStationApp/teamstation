@@ -1088,12 +1088,12 @@ describe('a question the screen asks', function () {
 
 describe('the dictation socket address', function () {
   it('follows the API, over wss where the page is https', function () {
-    const page = { protocol: 'https:', host: 'devhost3.examplegs.test' }
+    const page = { protocol: 'https:', host: 'devhost3.example-ts.test' }
     expect(dictationUrl('/api/v1', page)).equals(
-      'wss://devhost3.examplegs.test/api/v1/dictation'
+      'wss://devhost3.example-ts.test/api/v1/dictation'
     )
     expect(dictationUrl('api/v1/', page)).equals(
-      'wss://devhost3.examplegs.test/api/v1/dictation'
+      'wss://devhost3.example-ts.test/api/v1/dictation'
     )
     expect(dictationUrl('http://127.0.0.1:9100/api/v1', page)).equals(
       'ws://127.0.0.1:9100/api/v1/dictation'

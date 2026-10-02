@@ -5,9 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   type GameLiveStreams,
-  GameStationClient,
   type LiveStatus,
-  type LiveStream
+  type LiveStream,
+  TeamStationClient
 } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { StreamPanel } from './StreamPanel'
@@ -245,9 +245,9 @@ function answer(status: number, text: string): Response {
   } as unknown as Response
 }
 
-async function mount(server: FakeServer): Promise<GameStationClient> {
-  const client = new GameStationClient({
-    baseUrl: 'https://gamestation.example/api/v1',
+async function mount(server: FakeServer): Promise<TeamStationClient> {
+  const client = new TeamStationClient({
+    baseUrl: 'https://teamstation.example/api/v1',
     fetch: server.fetch
   })
   host = document.createElement('div')
@@ -440,7 +440,7 @@ describe('the stream panel', function () {
     expect(page).includes('Home plate')
     expect(page).includes('Live now')
     expect(page).includes('Receiving 3.4 Mbit/s')
-    expect(page).includes('GameStation · 1:02:05 recorded')
+    expect(page).includes('TeamStation · 1:02:05 recorded')
     expect(page).includes('Relay · 1:05 sent · reconnected 2× · timed out')
     expect(page).includes('Relay · connected')
     expect(page).includes('Relay · connecting')

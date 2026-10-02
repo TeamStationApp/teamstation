@@ -9,7 +9,7 @@ import {
   View
 } from 'react-native'
 
-import type { GameStationClient } from '../../common/api'
+import type { TeamStationClient } from '../../common/api'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
@@ -44,7 +44,7 @@ import type {
 } from './walkUpMusicTypes'
 
 export interface WalkUpSongScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   music: WalkUpMusic
   teamId: string
   userId: string

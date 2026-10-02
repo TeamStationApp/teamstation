@@ -3,11 +3,11 @@ import { Dimensions } from 'react-native'
 import { fonts } from '../theme/fonts'
 
 /**
- * 1.0's dark GameStation theme, `src/client/themes/gsDark.ts` at 25f9496e, exactly, for
+ * 1.0's dark TeamStation theme, `src/client/themes/tsDark.ts` at 25f9496e, exactly, for
  * the override dashboard alone.
  *
  * The dashboard is 1.0's, and so are its colours: the summer greens of the
- * GameStation logo, with the count, the bases and the inning arrows in the
+ * TeamStation logo, with the count, the bases and the inning arrows in the
  * colours an operator already knows. It draws in these whatever the app's
  * own theme is, so it is not a `Theme` and does not come from `useTheme`.
  */
@@ -16,14 +16,14 @@ const palette = {
   black: '#000000',
   transparent: '#00000000',
 
-  // GS Logo Colors - from gs_logo.png
-  gsBeige: '#E8E4D8',
-  gsLightOlive: '#7A9860',
-  gsMediumOlive: '#6B8E4E',
-  gsDarkOlive: '#3D4E2F',
-  gsVeryDarkGreen: '#1F2418',
-  gsAccentGreen: '#88A870',
-  gsPaleGreen: '#C4D4B8',
+  // Logo colours, sampled from 1.0's logo raster
+  tsBeige: '#E8E4D8',
+  tsLightOlive: '#7A9860',
+  tsMediumOlive: '#6B8E4E',
+  tsDarkOlive: '#3D4E2F',
+  tsVeryDarkGreen: '#1F2418',
+  tsAccentGreen: '#88A870',
+  tsPaleGreen: '#C4D4B8',
 
   // Blues and Greens
   emeraldGreen: '#22c55e',
@@ -53,33 +53,33 @@ export const dashboardTheme = {
   rem: (size: number): number => Math.round(remSize * size),
 
   // Backgrounds
-  backgroundColor: palette.gsVeryDarkGreen,
-  cardBackgroundDark: palette.gsDarkOlive,
-  containerBackgroundColor: palette.gsVeryDarkGreen,
-  inactiveBackgroundColor: palette.gsDarkOlive,
+  backgroundColor: palette.tsVeryDarkGreen,
+  cardBackgroundDark: palette.tsDarkOlive,
+  containerBackgroundColor: palette.tsVeryDarkGreen,
+  inactiveBackgroundColor: palette.tsDarkOlive,
   overlayBackgroundColor: palette.blackOp70,
 
   // Text
-  primaryTextColor: palette.gsBeige,
+  primaryTextColor: palette.tsBeige,
   secondaryTextFont: fonts.helveticaNeue,
 
   // Buttons
-  secondaryButtonColor: palette.gsLightOlive,
-  buttonGrayColor: palette.gsAccentGreen,
-  clearButtonColor: palette.gsPaleGreen,
+  secondaryButtonColor: palette.tsLightOlive,
+  buttonGrayColor: palette.tsAccentGreen,
+  clearButtonColor: palette.tsPaleGreen,
 
   // Bases and inning arrows
   activeColor: palette.coralRed,
 
   // Dashboard specific
-  dashboardOverrideBackground: palette.gsMediumOlive,
+  dashboardOverrideBackground: palette.tsMediumOlive,
   dashboardCircleGreen: palette.emeraldGreen,
   dashboardCircleOrange: palette.amber,
   dashboardCircleRed: palette.coralRed,
-  dashboardInactiveColor: palette.gsDarkOlive,
-  dashboardBaseFill: palette.gsVeryDarkGreen,
-  dashboardOutlineGray: palette.gsAccentGreen,
-  dashboardSuperscript: palette.gsPaleGreen,
+  dashboardInactiveColor: palette.tsDarkOlive,
+  dashboardBaseFill: palette.tsVeryDarkGreen,
+  dashboardOutlineGray: palette.tsAccentGreen,
+  dashboardSuperscript: palette.tsPaleGreen,
   dashboardDarkBaseRed: palette.crimsonRed,
 
   // The C and Reset lettering

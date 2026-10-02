@@ -5,8 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   asRosterEntry,
-  type GameStationClient,
-  type RosterEntry
+  type RosterEntry,
+  type TeamStationClient
 } from '../../common/api'
 import type { PlayerSettings } from '../../common/playerSettings'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -86,7 +86,7 @@ function settingsClient(
   roster: RosterEntry[] | Error,
   saves: Saved[],
   answer?: (settings: PlayerSettings) => RosterEntry | Error
-): GameStationClient {
+): TeamStationClient {
   return {
     roster: async () => {
       if (roster instanceof Error) throw roster
@@ -106,7 +106,7 @@ function settingsClient(
       if (result instanceof Error) throw result
       return result
     }
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
 }
 
 describe('a player’s settings form', function () {

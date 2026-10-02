@@ -67,7 +67,7 @@ async function dashboard(
         <ScoreboardOverrideScreen
           apiBaseUrl="/api/v1"
           gameId="g1"
-          origin={{ protocol: 'https:', host: 'gamestation.co' }}
+          origin={{ protocol: 'https:', host: 'app.teamstation.app' }}
           onSignIn={next => signIns.push(next)}
           token={options.token}
           WebSocketImpl={sockets.Impl}
@@ -110,12 +110,12 @@ const background = (id: string): string =>
   getComputedStyle(byTestId(id)).backgroundColor
 const colour = (id: string): string => getComputedStyle(byTestId(id)).color
 
-// 1.0's gsDark, as the browser reports it.
-const PAGE = 'rgb(31, 36, 24)' // gsVeryDarkGreen #1F2418
-const CARD = 'rgb(61, 78, 47)' // gsDarkOlive #3D4E2F
-const OVERRIDE_COLOUR = 'rgb(107, 142, 78)' // gsMediumOlive #6B8E4E
-const BEIGE = 'rgb(232, 228, 216)' // gsBeige #E8E4D8
-const PALE_GREEN = 'rgb(196, 212, 184)' // gsPaleGreen #C4D4B8
+// 1.0's tsDark, as the browser reports it.
+const PAGE = 'rgb(31, 36, 24)' // tsVeryDarkGreen #1F2418
+const CARD = 'rgb(61, 78, 47)' // tsDarkOlive #3D4E2F
+const OVERRIDE_COLOUR = 'rgb(107, 142, 78)' // tsMediumOlive #6B8E4E
+const BEIGE = 'rgb(232, 228, 216)' // tsBeige #E8E4D8
+const PALE_GREEN = 'rgb(196, 212, 184)' // tsPaleGreen #C4D4B8
 const BALL = 'rgb(34, 197, 94)' // #22c55e
 const BALL_DARKENED = 'rgb(23, 137, 65)' // #22c55e × 0.7
 const OUTER_OFF = 'rgb(85, 85, 85)' // #555
@@ -165,7 +165,7 @@ describe('ScoreboardOverrideScreen', function () {
   it('signs its socket in with the session it is given, as a phone must', async function () {
     const { sockets } = await dashboard({ load: false, token: 'tok_phone' })
     expect(sockets.latest().url).equals(
-      'wss://gamestation.co/api/v1/scoreboard/g1/dashboard'
+      'wss://app.teamstation.app/api/v1/scoreboard/g1/dashboard'
     )
     expect(sockets.latest().headers).deep.equals({
       Authorization: 'Bearer tok_phone'
@@ -175,7 +175,7 @@ describe('ScoreboardOverrideScreen', function () {
   it('connects at once and shows a spinner until the first state', async function () {
     const { sockets } = await dashboard({ load: false })
     expect(sockets.latest().url).equals(
-      'wss://gamestation.co/api/v1/scoreboard/g1/dashboard'
+      'wss://app.teamstation.app/api/v1/scoreboard/g1/dashboard'
     )
     expect(document.body.textContent).includes('Connecting to the scoreboard')
     await receive(sockets, state())

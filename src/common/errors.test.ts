@@ -31,7 +31,7 @@ describe('errors', function () {
   })
 
   it('reports offline as its own thing, not as a server failure', function () {
-    const error = new HttpError('offline', 'Cannot reach GameStation.')
+    const error = new HttpError('offline', 'Cannot reach TeamStation.')
     expect(error.status).equals(0)
     expect(toApiError(error).code).equals('offline')
   })

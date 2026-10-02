@@ -37,7 +37,7 @@ import { directorUploadRoutes, replaceLiveRecording } from './directorUploads'
  * running server rather than here.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_uploads_${Date.now()}`
+const scratchName = `teamstation_uploads_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const COACH = 'tok_coach_upload_000000000000000'
@@ -83,7 +83,7 @@ describe('a Director sending a recording in', function () {
     }
     db = makeDatabase(scratchUrl)
     await seed(db)
-    mediaDir = await mkdtemp(join(tmpdir(), 'gsUploadRoutes-'))
+    mediaDir = await mkdtemp(join(tmpdir(), 'tsUploadRoutes-'))
 
     const app = express()
     app.use(express.json())
@@ -441,7 +441,7 @@ describe('the live stream stepping aside for a better copy', function () {
 
   let admin: Pool | undefined
   let db: Kysely<Database> | undefined
-  const name = `gamestation_replace_${Date.now()}`
+  const name = `teamstation_replace_${Date.now()}`
   const url = adminUrl.replace(/\/[^/]*$/, `/${name}`)
 
   before(async function () {

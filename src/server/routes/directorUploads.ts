@@ -34,7 +34,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
 /**
- * Where GS Director sends the recording it made.
+ * Where TS Director sends the recording it made.
  *
  * The stream is what people watched live, and it is the worst copy of that
  * game that will ever exist: it went out over a ball field's uplink at

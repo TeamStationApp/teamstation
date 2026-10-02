@@ -6,7 +6,7 @@
  * twice is how a working link turns into an error message in front of
  * somebody who did nothing wrong.
  */
-const KEY = 'gs.signIn.asked'
+const KEY = 'ts.signIn.asked'
 
 export function markAsked(requestId: string): void {
   try {

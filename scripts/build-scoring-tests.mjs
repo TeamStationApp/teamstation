@@ -31,7 +31,7 @@ await build({
   sourcemap: true,
   define: {
     __DEV__: 'true',
-    GS_API_BASE_URL: JSON.stringify('/api/v1'),
+    TS_API_BASE_URL: JSON.stringify('/api/v1'),
     'process.env.NODE_ENV': JSON.stringify('test')
   },
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }

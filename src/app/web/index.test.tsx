@@ -75,8 +75,8 @@ describe('the web entry', function () {
     const { calls, start } = page('/games/g1')
     expect(start()).equals('app')
     expect(calls).deep.equals([
-      'register GameStation',
-      'run GameStation into #root'
+      'register TeamStation',
+      'run TeamStation into #root'
     ])
     expect(document.body.style.background).equals('')
   })

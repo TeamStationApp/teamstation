@@ -237,7 +237,7 @@ function reads(title: string, kind: string, source: string | null): string {
  * happened, and the two interleaved their output into one log so that a
  * working run looked like a failing one for twenty minutes.
  */
-const LOCK = '/tmp/gsImportArchive.lock'
+const LOCK = '/tmp/tsImportArchive.lock'
 
 function takeTheLock(): void {
   try {

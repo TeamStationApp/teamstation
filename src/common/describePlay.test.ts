@@ -16,7 +16,7 @@ const credit = (
   credit: { name: string; role: string; position: string | null }
 } => ({ eventType, label, credit: { name, role, position } })
 
-describe('a play in GameStation’s own words', function () {
+describe('a play in TeamStation’s own words', function () {
   it('says who did what, in which half, and the score after', function () {
     expect(
       describePlay({

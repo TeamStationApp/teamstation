@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import {
-  type GameStationClient,
   grantsOf,
   type ManagePage,
   type RoleGrant,
-  type ScopePerson
+  type ScopePerson,
+  type TeamStationClient
 } from '../../common/api'
 import type { Role } from '../../common/roles'
 import {
@@ -25,7 +25,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { calendarDate } from './format'
 
 export interface ManageScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   scopeKind: 'league' | 'season' | 'team'
   scopeId: string
   /** Tells the shell what this page is called, once it knows. */

@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   asGameDetail,
   type DjBatter,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
@@ -197,8 +197,8 @@ describe('the DJ Game button (U30)', function () {
   function client(
     canDj: boolean,
     status = gameFixture.status
-  ): GameStationClient {
-    const made = new GameStationClient({ baseUrl: '/api/v1' })
+  ): TeamStationClient {
+    const made = new TeamStationClient({ baseUrl: '/api/v1' })
     made.game = async () =>
       asGameDetail({ ...gameFixture, canDj, canScore: true, status })
     made.teams = async () => []

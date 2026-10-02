@@ -60,7 +60,7 @@ describe('a still from the Space', function () {
       this.skip()
       return
     }
-    workDir = await mkdtemp(join(tmpdir(), 'gsSpaceStill-'))
+    workDir = await mkdtemp(join(tmpdir(), 'tsSpaceStill-'))
 
     // Half a minute, so the remux writes several fragments and second 20 is
     // deep inside one of the later ones.
@@ -206,7 +206,7 @@ describe('a still from the Space', function () {
 
   it('leaves nothing on this machine once the still is kept', async function () {
     const names = await readdir(tmpdir())
-    expect(names.filter(name => name.startsWith('gs-still-'))).deep.equals([])
+    expect(names.filter(name => name.startsWith('ts-still-'))).deep.equals([])
   })
 
   it('has nothing to offer for a moment past the end, and keeps nothing', async function () {

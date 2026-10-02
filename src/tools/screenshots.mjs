@@ -24,7 +24,7 @@ const flag = (name, fallback) => {
 
 const out = flag('out', 'screenshots')
 const appUrl = flag('app', 'http://127.0.0.1:8080')
-const email = flag('email', 'uitest@gamestation.local')
+const email = flag('email', 'uitest@teamstation.local')
 const password = flag('password', 'uitest-local-2609')
 const only = flag('only', '')
 

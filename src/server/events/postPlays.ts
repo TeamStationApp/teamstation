@@ -38,7 +38,7 @@ export interface PostedPlays {
  * and the status, as `POST /games/:gameId/events` describes. `authorize`
  * sees the locked game row first and throws to refuse the post; the route
  * asks there whether its sender may score the game. The refold script, which
- * rewrites GameStation's own plays, passes none.
+ * rewrites TeamStation's own plays, passes none.
  */
 export async function postGamePlays(
   db: Kysely<Database>,
@@ -46,7 +46,7 @@ export async function postGamePlays(
   body: PostEventsBody,
   authorize?: (trx: Trx, game: PostedGame) => Promise<void>
 ): Promise<PostedPlays> {
-  // GameStation and a person typing name themselves. Every other sender, and
+  // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
   const sent = body.source?.system
   const system: PlaySource =
@@ -105,7 +105,7 @@ export async function postGamePlays(
       }
       if (authorize != null) await authorize(trx, game)
       if (system === 'external' && game.scoringOwner === 'gamestation') {
-        throw conflict('This game is scored in GameStation')
+        throw conflict('This game is scored in TeamStation')
       }
 
       const teams = {
@@ -160,7 +160,7 @@ export async function postGamePlays(
             game.ingest_status,
             game.ingest_message
           )
-      // A live post keeps the lineups' digest, and a GameStation one the
+      // A live post keeps the lineups' digest, and a TeamStation one the
       // teams' default lineups, from what it leaves stored.
       const lineups = live
         ? await keepLineups(
@@ -227,7 +227,7 @@ export async function postGamePlays(
 }
 
 /**
- * A play GameStation scored is replayed from its record, which is version 1:
+ * A play TeamStation scored is replayed from its record, which is version 1:
  * a record in any other version would be dropped when the game is read
  * back. A play with no record is read from its document.
  */

@@ -14,11 +14,11 @@ import type {
   BattingRow,
   BoxScore as BoxScoreData,
   GameDetail,
-  GameStationClient,
   Highlight,
   LineScoreSide,
   PitchingRow,
   Playback,
+  TeamStationClient,
   TeamSummary,
   VideoSummary
 } from '../../common/api'
@@ -64,7 +64,7 @@ import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
 export interface GameScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   gameId: string
   /** Opens the full scorer from the Score Game tab. */
   onFullScoring?: () => void

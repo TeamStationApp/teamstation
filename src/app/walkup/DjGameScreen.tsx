@@ -6,7 +6,7 @@ import type {
   DjBatter,
   DjGame,
   DjSide,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
@@ -40,7 +40,7 @@ export interface DjSocket {
 }
 
 export interface DjGameScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   gameId: string
   /** The app's one game socket; without one the screen only polls. */
   socket?: DjSocket

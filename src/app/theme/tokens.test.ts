@@ -3,8 +3,8 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { describe, it } from 'mocha'
 import { join } from 'path'
 
-import { gsBallpark } from './gsBallpark'
-import { gsDark } from './gsDark'
+import { tsBallpark } from './tsBallpark'
+import { tsDark } from './tsDark'
 
 /**
  * Every theme token is a `string`, so nothing stops a background colour being
@@ -64,7 +64,7 @@ describe('theme tokens', function () {
   })
 
   it("gives both themes the mark's two gradient colours as hex", function () {
-    for (const theme of [gsBallpark, gsDark]) {
+    for (const theme of [tsBallpark, tsDark]) {
       expect(theme.markGradientStart).match(/^#[0-9A-Fa-f]{6}$/)
       expect(theme.markGradientEnd).match(/^#[0-9A-Fa-f]{6}$/)
     }

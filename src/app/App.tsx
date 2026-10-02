@@ -3,11 +3,11 @@ import { ActivityIndicator, Image, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
-  GameStationClient,
   type InviteInfo,
   type MyRoles,
   type SeasonSummary,
   type Session,
+  TeamStationClient,
   type TeamSummary
 } from '../common/api'
 import { GameSocket } from '../common/gameSocket'
@@ -197,7 +197,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   const { initialToken, onToken } = props
   const client = useMemo(
-    () => new GameStationClient({ baseUrl: apiBaseUrl, token: initialToken }),
+    () => new TeamStationClient({ baseUrl: apiBaseUrl, token: initialToken }),
     [apiBaseUrl, initialToken]
   )
   const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
@@ -644,7 +644,7 @@ function Shell(props: AppProps): React.ReactElement {
         <View style={[styles.app, styles.booting]}>
           <Image
             accessibilityIgnoresInvertColors
-            accessibilityLabel="GameStation"
+            accessibilityLabel="TeamStation"
             source={tsLogoSource}
             style={styles.bootMark}
           />
@@ -1122,8 +1122,8 @@ function Shell(props: AppProps): React.ReactElement {
 /**
  * The name of the screen you are on, never the name of the app.
  *
- * Home is `Your Home` rather than `GameStation`, which the header already says
- * on the line above: the two together read `GAMESTATION / GameStation`, which
+ * Home is `Your Home` rather than `TeamStation`, which the header already says
+ * on the line above: the two together read `TEAMSTATION / TeamStation`, which
  * tells you nothing twice.
  */
 export /**

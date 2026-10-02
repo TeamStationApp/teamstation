@@ -12,7 +12,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
  *
  * A branded page rather than a bare 404, because whoever opens a stale
  * scoreboard link is somebody who watches youth baseball, which is exactly
- * who GameStation is for. It fills the window on an opaque brand background,
+ * who TeamStation is for. It fills the window on an opaque brand background,
  * so it reads as a page even where the scoreboard page is otherwise
  * transparent.
  */
@@ -23,7 +23,7 @@ export function ScoreboardNotFound(): React.ReactElement {
     <View style={styles.page} accessibilityRole="summary">
       <Image
         accessibilityIgnoresInvertColors
-        accessibilityLabel="GameStation"
+        accessibilityLabel="TeamStation"
         resizeMode="contain"
         source={tsLogoSource}
         style={styles.logo}

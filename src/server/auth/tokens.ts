@@ -48,7 +48,7 @@ export function bearerToken(header: string | undefined): string | undefined {
 }
 
 /** The name of the one cookie this application sets. */
-export const SESSION_COOKIE = 'gs_session'
+export const SESSION_COOKIE = 'ts_session'
 
 /**
  * The session token from a request, header first and then the cookie.
@@ -56,7 +56,7 @@ export const SESSION_COOKIE = 'gs_session'
  * Two ways in on purpose rather than by accident. The web app is served from
  * the same origin as the API and uses a cookie, which is `HttpOnly` so its own
  * JavaScript cannot read it and a script injected onto the page cannot steal
- * it. A phone has no cookie jar, and neither has GS Distributor nor an AI with
+ * it. A phone has no cookie jar, and neither has TS Distributor nor an AI with
  * a scoped token, so the bearer header is the native path rather than a
  * legacy one.
  *

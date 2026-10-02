@@ -5,9 +5,9 @@ import {
   asGameDetail,
   asRosterEntry,
   type DefaultLineup,
-  GameStationClient,
   type LineupPerson,
-  type RosterEntry
+  type RosterEntry,
+  TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { ScoringSession } from '../../common/scoring/session'
@@ -69,8 +69,8 @@ const none: DefaultLineup = { lineup: null, fromGameId: null, setAt: null }
 function client(
   defaults: (teamId: string) => Promise<DefaultLineup>,
   store = memoryStore()
-): { client: GameStationClient; asked: string[] } {
-  const made = new GameStationClient({ baseUrl: '/api/v1' })
+): { client: TeamStationClient; asked: string[] } {
+  const made = new TeamStationClient({ baseUrl: '/api/v1' })
   const asked: string[] = []
   made.defaultLineup = async teamId => {
     asked.push(teamId)

@@ -14,7 +14,7 @@ export interface MediaContext {
   ffmpegPath: string
   /** Signs the `/media` tokens. The same key the proxy's auth check uses. */
   mediaSecret: string
-  /** The origin URLs are built against, e.g. `https://gamestation.co`. */
+  /** The origin URLs are built against, e.g. `https://app.teamstation.app`. */
   publicUrl: string
   /** The bucket finished videos and their stills live in. */
   space: SpaceSettings

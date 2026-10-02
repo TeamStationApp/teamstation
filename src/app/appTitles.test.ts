@@ -6,7 +6,7 @@ import { join } from 'path'
 /**
  * The header says as little as it can get away with.
  *
- * It used to say `GAMESTATION` and then the name of the screen underneath,
+ * It used to say `TEAMSTATION` and then the name of the screen underneath,
  * which on the home screen meant reading the name of the app twice on a screen
  * that already has the mark in the corner. Now: the mark on home only, the
  * screen's name centred where there is one, and nothing at all where the
@@ -21,7 +21,7 @@ describe('app titles', function () {
 
   it('names the home screen after the screen, not the app', function () {
     expect(source).contains("return 'Your Home'")
-    expect(source).not.contains("if (tab === 'home') return 'GameStation'")
+    expect(source).not.contains("if (tab === 'home') return 'TeamStation'")
   })
 
   it('has no overline anywhere, and no way to pass one', function () {

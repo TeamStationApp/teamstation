@@ -128,7 +128,7 @@ describe('ScoreboardBoard', function () {
   })
 
   it("uses 1.0's styles, style for style", function () {
-    // Recorded from 1.0's own `getStyles(gsDark)` (`src/client/Scoreboard.tsx` at 25f9496e
+    // Recorded from 1.0's own `getStyles(tsDark)` (`src/client/Scoreboard.tsx` at 25f9496e
     // at v1.0.0) in a 1920 × 1080 window. Only the "waiting for game data"
     // card's styles are gone, with the card.
     const { noGameContainer, noGameText, noGameSubtext, ...drawn } = v1Styles

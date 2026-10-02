@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Platform, Text, View } from 'react-native'
 
-import type { GameStationClient, Session, SignInWait } from '../../common/api'
+import type { Session, SignInWait, TeamStationClient } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { rememberRequest } from './SignInLinkScreen'
 
 export interface LoginScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   onSignedIn: (session: Session) => void
 }
 
@@ -120,7 +120,7 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
     <Screen centreContent contentStyle={styles.centre}>
       <Card style={styles.card}>
         <View style={styles.heading}>
-          <Text style={styles.title}>Sign in to GameStation</Text>
+          <Text style={styles.title}>Sign in to TeamStation</Text>
           <Text style={styles.subtitle}>
             Watch live games, multi-angle replays and follow your teams
           </Text>

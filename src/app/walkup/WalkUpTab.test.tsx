@@ -5,8 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   asRosterEntry,
-  type GameStationClient,
-  type RosterEntry
+  type RosterEntry,
+  type TeamStationClient
 } from '../../common/api'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -88,7 +88,7 @@ const fixture: WalkUpSong = {
   providerId: 'lf:0123456789abcdef',
   isrc: null,
   title: 'Walkup Fixture',
-  artist: 'GameStation',
+  artist: 'TeamStation',
   album: null,
   artworkUrl: null,
   durationMs: 90000,
@@ -118,7 +118,7 @@ function songClient(
     clear?: () => Promise<void>
     cleared?: string[]
   } = {}
-): GameStationClient {
+): TeamStationClient {
   const { song = centerfield, cleared = [] } = options
   return {
     roster: options.roster ?? (async () => [entry(song)]),
@@ -126,7 +126,7 @@ function songClient(
       cleared.push(`${teamId}/${userId}`)
       if (options.clear != null) await options.clear()
     }
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
 }
 
 interface Played {
@@ -237,7 +237,7 @@ describe('the Walk-up tab on the web', function () {
   it('says where to set songs, and offers no button', async function () {
     await render({ onPick: () => undefined })
     expect(text()).includes(
-      'Set walk-up songs in the GameStation app on iPhone or Android.'
+      'Set walk-up songs in the TeamStation app on iPhone or Android.'
     )
     expect(labels()).deep.equals([])
   })
@@ -279,7 +279,7 @@ describe('the Walk-up tab on a phone', function () {
       onPick
     })
     expect(labels()).deep.equals(['Set'])
-    expect(text()).not.includes('Set walk-up songs in the GameStation app')
+    expect(text()).not.includes('Set walk-up songs in the TeamStation app')
     await press('Set')
     await act(async () => {
       root?.unmount()

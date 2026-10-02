@@ -20,7 +20,7 @@ export interface UserMatch {
 /**
  * Who people are here, asked by the ids another service knows them by.
  *
- * A sender names people in a play by GameStation user id alone, so it asks
+ * A sender names people in a play by TeamStation user id alone, so it asks
  * this first with the ids it holds. An `external_ids` row of entity type
  * `user` matches whatever its kind. A merged row answers as the person it
  * was merged into, carrying every asked id that points at any of their rows.

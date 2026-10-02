@@ -24,7 +24,7 @@ import { requestGameStats } from './request'
 import { gameStatsStatus } from './status'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_stats_bld_${Date.now()}`
+const scratchName = `teamstation_stats_bld_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 function paPlay(

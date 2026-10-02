@@ -4,7 +4,7 @@
  * Structured the way edge-react-gui does it: a theme file declares a private
  * `palette` of raw colours, then maps **component-level names** onto it. A
  * screen therefore asks for `theme.cardBackgroundColor`, never for a hex code
- * and never for `palette.gsBeige`, so a colour can be changed in one place and
+ * and never for `palette.tsBeige`, so a colour can be changed in one place and
  * a second theme is a second mapping rather than a second app.
  */
 export interface ThemeGradientPoint {

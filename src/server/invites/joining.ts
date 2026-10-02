@@ -8,7 +8,7 @@ import { findInviteById, redeemInvite } from './invites'
 /**
  * Finishing a sign-in that arrived with an invite on it.
  *
- * This is the half of an invite PeerTube had and GameStation did not: a
+ * This is the half of an invite PeerTube had and TeamStation did not: a
  * stranger holding a link has no account to redeem into, and the server will
  * not make one for an address nobody has proved they can read. So the invite
  * travels on the sign-in request, and the account is made **here** — after the

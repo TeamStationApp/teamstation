@@ -4,10 +4,10 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import { asBattingRow, GameStationClient } from '../../common/api'
+import { asBattingRow, TeamStationClient } from '../../common/api'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
-import { gsBallpark } from '../theme/gsBallpark'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
 import { GameScreen } from './GameScreen'
 
 let root: Root | undefined
@@ -42,7 +42,7 @@ function pinned(container: HTMLElement, text: string): HTMLElement[] {
 }
 
 async function boxScore(): Promise<HTMLElement> {
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({
     ...gameFixture,
     linescore: {
@@ -96,7 +96,7 @@ describe('the box score', function () {
   it('draws the line score’s pinned names, and the cell above them, on the card’s white', async function () {
     this.timeout(10000)
     const container = await boxScore()
-    const card = rgb(gsBallpark.cardBackgroundColor)
+    const card = rgb(tsBallpark.cardBackgroundColor)
     for (const name of ['Owls', 'Hawks']) {
       const [cell] = pinned(container, name)
       expect(cell, `pinned ${name}`).not.equals(undefined)
@@ -114,7 +114,7 @@ describe('the box score', function () {
     const [alex] = pinned(container, 'Alex')
     expect(alex, 'pinned Alex').not.equals(undefined)
     expect(getComputedStyle(alex).backgroundColor).equals(
-      rgb(gsBallpark.backgroundColor)
+      rgb(tsBallpark.backgroundColor)
     )
   })
 })

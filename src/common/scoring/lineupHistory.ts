@@ -25,7 +25,7 @@ import {
 } from './state'
 
 /**
- * Lineups read out of a game GameStation stores: the lineup each side began
+ * Lineups read out of a game TeamStation stores: the lineup each side began
  * with, every change MLB's record announces, and the lineup as it stands.
  * `replayPlays`, `begun` and `lineupsOf` do the work; nothing here replays a
  * game any other way.
@@ -80,7 +80,7 @@ export interface SideLineups {
   changes: LineupChange[]
   /**
    * The lineup as it stands, with changes not announced yet (a pinch hitter
-   * waiting to bat); null for a game without GameStation's record.
+   * waiting to bat); null for a game without TeamStation's record.
    */
   current: Lineup | null
 }
@@ -227,7 +227,7 @@ export function lineupHistory(
 }
 
 /**
- * Both sides' lineups, and whether the game has begun. A game GameStation
+ * Both sides' lineups, and whether the game has begun. A game TeamStation
  * did not score, or whose record no longer replays, has no start and no
  * current lineup, only the substitutions its documents carry.
  */

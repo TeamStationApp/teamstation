@@ -8,7 +8,7 @@ import {
   View
 } from 'react-native'
 
-import type { GameDetail, GameStationClient } from '../../common/api'
+import type { GameDetail, TeamStationClient } from '../../common/api'
 import { httpOrigin, PRIMARY_HOST } from '../../common/primaryUrl'
 import { Button, Card, Icon, Screen } from '../components'
 import { lstrings } from '../locales/strings'
@@ -19,7 +19,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 export const COPIED_MS = 2000
 
 export interface ScoreGameScreenProps {
-  client: GameStationClient
+  client: TeamStationClient
   gameId: string
   /** Opens the full scorer, at `/games/<gameId>/score`. */
   onFullScoring: () => void
@@ -37,7 +37,7 @@ export interface ScoreGameScreenProps {
  * Everything the people running a game do to its score, behind the game
  * page's one Score Game pill: full scoring, the simplified scoreboard (1.0's
  * override dashboard), and the scoreboard's web widget link to paste into OBS
- * or GS Director.
+ * or TS Director.
  *
  * Each option says why when it is not on offer, because the screen can be
  * reached by its address as well as by the pill. The link is always shown: a

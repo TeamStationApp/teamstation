@@ -12,7 +12,7 @@ import { badRequest } from '../../common/errors'
 import { skipAudit } from '../middleware/withAudit'
 import { withAsync } from '../middleware/withErrors'
 
-// Where a client's own log lines land: the GameStation app, a phone app that
+// Where a client's own log lines land: the TeamStation app, a phone app that
 // reads another service, or anything else that runs away from the server and
 // has to be understood from it.
 //

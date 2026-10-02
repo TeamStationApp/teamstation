@@ -164,7 +164,7 @@ describe('the scoreboard over HTTP', function () {
     server?.close()
     if (client?.isOpen) await client.close()
     if (offline?.isOpen) await offline.close().catch(() => undefined)
-    await dropPrefix('gs-test')
+    await dropPrefix('ts-test')
     await drop?.()
   })
 

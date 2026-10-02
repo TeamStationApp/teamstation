@@ -61,7 +61,7 @@ describe('unscored entry', function () {
 })
 
 describe('the scoring entry on the Game page', function () {
-  it('scores an unscored game, continues one GameStation scores, and offers nothing else', function () {
+  it('scores an unscored game, continues one TeamStation scores, and offers nothing else', function () {
     expect(scoringEntry(gameFixture)).equals('score')
     expect(
       scoringEntry({

@@ -7,7 +7,7 @@ import {
   asDjGame,
   type DjGame,
   type DjSide,
-  type GameStationClient
+  type TeamStationClient
 } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
@@ -145,7 +145,7 @@ function game(away: Partial<DjSide> = {}, home: Partial<DjSide> = {}): DjGame {
 }
 
 /** A client that answers DJ Game with whatever `answers` holds next. */
-function djClient(answers: Array<DjGame | Error>): GameStationClient & {
+function djClient(answers: Array<DjGame | Error>): TeamStationClient & {
   reads: number
 } {
   const client = {
@@ -158,7 +158,7 @@ function djClient(answers: Array<DjGame | Error>): GameStationClient & {
     },
     game: async () => ({ startAt: '2026-09-27T17:00:00.000Z' })
   }
-  return client as unknown as GameStationClient & { reads: number }
+  return client as unknown as TeamStationClient & { reads: number }
 }
 
 /** The app's socket, as a test drives it. */
@@ -230,7 +230,7 @@ function fakeMusic(): WalkUpMusic & { played: string[]; stops: number[] } {
 }
 
 async function render(
-  props: Partial<DjGameScreenProps> & { client: GameStationClient }
+  props: Partial<DjGameScreenProps> & { client: TeamStationClient }
 ): Promise<void> {
   const node = document.createElement('div')
   document.body.appendChild(node)

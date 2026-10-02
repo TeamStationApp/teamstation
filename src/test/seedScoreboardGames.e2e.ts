@@ -10,8 +10,8 @@ import { type Database, makeDatabase } from '../server/db/database'
  *
  *   node -r sucrase/register src/test/seedScoreboardGames.e2e.ts <databaseUrl>
  *
- * Ensures two non-admin accounts: `scoreboard-e2e@gamestation.local`, who
- * owns the team Scoreboard E2E, and `scoreboard-e2e-other@gamestation.local`,
+ * Ensures two non-admin accounts: `scoreboard-e2e@teamstation.local`, who
+ * owns the team Scoreboard E2E, and `scoreboard-e2e-other@teamstation.local`,
  * a plain `member` of it, who can see its games but runs nothing; and the
  * opponent Scoreboard E2E Visitors. Both teams
  * have twelve rostered players, so their games can be scored. It cancels
@@ -22,8 +22,8 @@ import { type Database, makeDatabase } from '../server/db/database'
  * A development database only: it refuses NODE_ENV=production.
  */
 
-export const RUNNER_EMAIL = 'scoreboard-e2e@gamestation.local'
-export const OTHER_EMAIL = 'scoreboard-e2e-other@gamestation.local'
+export const RUNNER_EMAIL = 'scoreboard-e2e@teamstation.local'
+export const OTHER_EMAIL = 'scoreboard-e2e-other@teamstation.local'
 export const TEAM_NAME = 'Scoreboard E2E'
 export const VISITORS_NAME = 'Scoreboard E2E Visitors'
 

@@ -1,5 +1,5 @@
 {
-  "comment": "Where each PeerTube channel's invite code lands in GameStation. Paul, 2026-09-18. A channel with skip set is deliberately left behind.",
+  "comment": "Where each PeerTube channel's invite code lands in TeamStation. Paul, 2026-09-18. A channel with skip set is deliberately left behind.",
   "channels": [
     {
       "channel": "2026 Titan Force",

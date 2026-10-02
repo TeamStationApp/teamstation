@@ -21,7 +21,7 @@ import {
 } from './images'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.GS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
 
 /** A picture that is not square, so cropping and padding tell themselves apart. */
 async function makeSource(
@@ -56,7 +56,7 @@ describe('stored images', function () {
   let dir = ''
 
   before(async function () {
-    dir = await mkdtemp(join(tmpdir(), 'gsImageTest-'))
+    dir = await mkdtemp(join(tmpdir(), 'tsImageTest-'))
   })
 
   after(async function () {

@@ -13,33 +13,33 @@ import puppeteer, {
  * The UI Fixes test vectors on Chrome (platform CH), against a running API
  * and web app with a copy of production in their database:
  *
- *   GS_E2E_WEB_URL=http://192.168.7.40:8092 \
- *   GS_API_TEST_URL=http://192.168.7.40:8092/api/v1 \
- *   GS_E2E_SERVER_LOG=server.log \
- *   GS_CHROME_PATH=…/Google Chrome for Testing \
+ *   TS_E2E_WEB_URL=http://192.168.7.40:8092 \
+ *   TS_API_TEST_URL=http://192.168.7.40:8092/api/v1 \
+ *   TS_E2E_SERVER_LOG=server.log \
+ *   TS_CHROME_PATH=…/Google Chrome for Testing \
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 180000 src/app/uiFixes.e2e.ts
  *
  * Every vector runs twice: in a desktop window and in Chrome's phone
  * emulation. The reference game is Sunday 4 October, Badgers (Ripken) at
- * Amber Gardens (GS_E2E_GAME). The scorer is the Badgers' administrator
- * (GS_E2E_SCORER) and the member a plain member of the team
- * (GS_E2E_MEMBER). Sign-in codes are read from the server's log.
+ * Amber Gardens (TS_E2E_GAME). The scorer is the Badgers' administrator
+ * (TS_E2E_SCORER) and the member a plain member of the team
+ * (TS_E2E_MEMBER). Sign-in codes are read from the server's log.
  */
-const WEB = (process.env.GS_E2E_WEB_URL ?? 'http://127.0.0.1:8091').replace(
+const WEB = (process.env.TS_E2E_WEB_URL ?? 'http://127.0.0.1:8091').replace(
   /\/+$/,
   ''
 )
 const API = (
-  process.env.GS_API_TEST_URL ?? 'http://127.0.0.1:9311/api/v1'
+  process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9311/api/v1'
 ).replace(/\/+$/, '')
-const SERVER_LOG = process.env.GS_E2E_SERVER_LOG ?? 'server.log'
-const SHOTS = process.env.GS_E2E_SHOTS ?? '/tmp/uiFixesShots'
-const GAME = process.env.GS_E2E_GAME ?? 'gam_demo000000000001'
+const SERVER_LOG = process.env.TS_E2E_SERVER_LOG ?? 'server.log'
+const SHOTS = process.env.TS_E2E_SHOTS ?? '/tmp/uiFixesShots'
+const GAME = process.env.TS_E2E_GAME ?? 'gam_demo000000000001'
 /** A finished Badgers game with scores and team stats. */
-const FINAL_GAME = process.env.GS_E2E_FINAL_GAME ?? 'gam_demo000000000002'
-const SCORER = process.env.GS_E2E_SCORER ?? 'paul@vtex.net'
-const MEMBER = process.env.GS_E2E_MEMBER ?? 'paullinator@yahoo.com'
+const FINAL_GAME = process.env.TS_E2E_FINAL_GAME ?? 'gam_demo000000000002'
+const SCORER = process.env.TS_E2E_SCORER ?? 'paul@vtex.net'
+const MEMBER = process.env.TS_E2E_MEMBER ?? 'paullinator@yahoo.com'
 
 interface Size {
   name: string
@@ -116,7 +116,7 @@ async function contextAs(email?: string): Promise<BrowserContext> {
   const context = await browser.createBrowserContext()
   if (email != null) {
     await context.setCookie({
-      name: 'gs_session',
+      name: 'ts_session',
       value: encodeURIComponent(await signIn(email)),
       domain: new URL(API).hostname,
       path: '/'
@@ -199,7 +199,7 @@ before(async function () {
   mkdirSync(SHOTS, { recursive: true })
   browser = await puppeteer.launch({
     headless: true,
-    executablePath: process.env.GS_CHROME_PATH,
+    executablePath: process.env.TS_CHROME_PATH,
     args: [
       '--use-gl=angle',
       '--use-angle=swiftshader',

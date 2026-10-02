@@ -8,12 +8,12 @@ import { stillKey, stillSubject } from './stills'
 describe('a game poster', function () {
   it('is a signed URL to the API for a still kept beside the video in the Space', function () {
     const media = {
-      publicUrl: 'https://gamestation.co',
+      publicUrl: 'https://app.teamstation.app',
       mediaSecret: 'secret'
     } as unknown as Parameters<typeof posterUrl>[0]
     const url = new URL(posterUrl(media, 'vid_1', 150.4, Date.UTC(2026, 9, 2)))
     expect(url.origin + url.pathname).equals(
-      'https://gamestation.co/api/v1/videos/vid_1/stills/150.jpg'
+      'https://app.teamstation.app/api/v1/videos/vid_1/stills/150.jpg'
     )
     const token = url.searchParams.get('t')
     expect(

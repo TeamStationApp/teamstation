@@ -486,7 +486,7 @@ describe('reading a game back', function () {
         shortName: `H${i}`
       }))
     })
-    // A GameStation document whose record cannot be replayed still lists
+    // A TeamStation document whose record cannot be replayed still lists
     // every runner, with Gumbo's bases or the numbers older ones stored.
     const documents = (gameStation: boolean): GumboPlay[] => {
       const doc = (
@@ -806,7 +806,7 @@ describe('the line score from documents', function () {
       )
     })
 
-    it('counts runners left only on halves GameStation scored whole', function () {
+    it('counts runners left only on halves TeamStation scored whole', function () {
       const plays = scored()
       // The top of the 1st as an import sends it: no record.
       const imported = plays.map(play =>

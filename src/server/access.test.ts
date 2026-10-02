@@ -108,7 +108,7 @@ describe('access', function () {
 describe('role flags', function () {
   this.timeout(60000)
 
-  const scratchName = `gamestation_access_${Date.now()}`
+  const scratchName = `teamstation_access_${Date.now()}`
   const scratchUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${scratchName}`)
   let admin: Pool | undefined
   let db: Kysely<Database>

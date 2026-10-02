@@ -27,7 +27,7 @@ import { fenceDistanceFor } from './fenceDistance'
  */
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_fence_${Date.now()}`
+const scratchName = `teamstation_fence_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const media: MediaContext = {

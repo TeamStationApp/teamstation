@@ -134,7 +134,7 @@ const WORKER_CUT_CONNECTIONS_MS = 3_000
  * a second in the case that used to cost ten.
  */
 const WORKER_SWEEP_MS = 250
-const MEDIA_SECRET_ENV = 'GS_MEDIA_SECRET'
+const MEDIA_SECRET_ENV = 'TS_MEDIA_SECRET'
 
 /**
  * The key that signs `/media` tokens.
@@ -350,7 +350,7 @@ function runPrimary(workerCount: number): void {
   const forceExit = forceStop(builder, code => {
     process.exit(code)
   })
-  console.log(`gamestation ${VERSION}: forking ${workerCount} workers`)
+  console.log(`teamstation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
   let stopping = false
@@ -506,7 +506,7 @@ function runWorker(): void {
       space: serverConfig.space,
       // What a camera claimed by a Director is called, so a coach with an iPad
       // and a laptop pointed at one game can tell which row is which.
-      deviceLabel: 'GS Director'
+      deviceLabel: 'TS Director'
     })
   )
   // Its own router because its bodies are not JSON: a part is megabytes of

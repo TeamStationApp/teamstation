@@ -279,7 +279,7 @@ export function mediaRoutes(
   /**
    * Deletes a video, its files, and what the Space is being paid to hold.
    *
-   * Nothing removed a video before. Deleting one in GameStation — which was
+   * Nothing removed a video before. Deleting one in TeamStation — which was
    * not possible either — would have left every byte of it in the bucket
    * being paid for, and a stream somebody started to test the URL leaves a
    * recording of a car park that nobody wants and nobody could get rid of.

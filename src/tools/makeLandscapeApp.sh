@@ -13,7 +13,7 @@
 #   tools/makeLandscapeApp.sh <path-to-built.app> [dest]
 set -e
 SRC="$1"
-DST="${2:-/tmp/GameStation-landscape.app}"
+DST="${2:-/tmp/TeamStation-landscape.app}"
 [ -d "$SRC" ] || { echo "no app at $SRC" >&2; exit 1; }
 rm -rf "$DST"
 cp -R "$SRC" "$DST"

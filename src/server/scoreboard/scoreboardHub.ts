@@ -32,7 +32,7 @@ import {
  * A game's scoreboard over WebSockets, on one worker.
  *
  *   /api/v1/scoreboard/<gameId>/socket     anybody: the board as drawn
- *   /api/v1/scoreboard/<gameId>/publish    GS Watcher: partial states in
+ *   /api/v1/scoreboard/<gameId>/publish    TS Watcher: partial states in
  *   /api/v1/scoreboard/<gameId>/dashboard  the override dashboard
  *
  * Every write, on any worker, is published on one Redis channel with the

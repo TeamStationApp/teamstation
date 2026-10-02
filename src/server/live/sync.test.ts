@@ -28,11 +28,11 @@ import { configureIngest, liveKeys, resetForTest } from './splitter'
  * ended would be no rotation at all.
  */
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_sync_${Date.now()}`
+const scratchName = `teamstation_sync_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const SECRET = 's'.repeat(32)
-const FIRST_KEY = 'gs_firstkeyfirstkeyfirst'
-const SECOND_KEY = 'gs_secondkeysecondkeysec'
+const FIRST_KEY = 'ts_firstkeyfirstkeyfirst'
+const SECOND_KEY = 'ts_secondkeysecondkeysec'
 
 describe('what the ingest is told', function () {
   this.timeout(60000)
@@ -57,7 +57,7 @@ describe('what the ingest is told', function () {
     await migrateUp(pool, migrations)
     await pool.end()
     db = makeDatabase(scratchUrl)
-    mediaRoot = await mkdtemp(join(tmpdir(), 'gsSync-'))
+    mediaRoot = await mkdtemp(join(tmpdir(), 'tsSync-'))
 
     // Configured, not started: nothing binds a port here, and `setLive` and
     // `clearLive` are what this is about.
@@ -190,7 +190,7 @@ describe('what the ingest is told', function () {
     const spec = await resolveKey(SECOND_KEY, options)
     expect(typeof spec).equals('object')
     expect((spec as { liveStreamId: string }).liveStreamId).equals('liv_1')
-    expect(await resolveKey('gs_neverIssuedNeverIssued', options)).equals(
+    expect(await resolveKey('ts_neverIssuedNeverIssued', options)).equals(
       undefined
     )
   })

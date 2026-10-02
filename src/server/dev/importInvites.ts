@@ -12,15 +12,15 @@ import {
 import { serverConfig } from '../serverConfig'
 
 /**
- * PeerTube's channel invite codes, brought across as GameStation invites.
+ * PeerTube's channel invite codes, brought across as TeamStation invites.
  *
  *   npm run import-invites -- --dry     (writes nothing)
  *   npm run import-invites
  *   npm run import-invites -- --map /path/to/other.json
  *
  * The codes themselves come over **unchanged**, because they are already out
- * there: `tube.gamestation.co/i/demo2026` is in mailboxes, in group chats and
- * on a team sheet, and none of those can be edited. GameStation serves the
+ * there: `app.teamstation.app/i/demo2026` is in mailboxes, in group chats and
+ * on a team sheet, and none of those can be edited. TeamStation serves the
  * same `/i/<code>` path, so those links keep working the day it takes the
  * domain over — which only holds if the code behind them is the same string.
  *

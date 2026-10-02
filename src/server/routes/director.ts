@@ -18,7 +18,7 @@ import { withAsync } from '../middleware/withErrors'
 import type { LiveSettings } from '../serverConfig'
 
 /**
- * What GS Director asks for once it has picked a game.
+ * What TS Director asks for once it has picked a game.
  *
  * The list itself is `GET /events?scope=film`. The operator picks a game from
  * that list and the app claims it, which is the whole of choosing a

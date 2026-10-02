@@ -18,7 +18,7 @@ import { LIVE_PLAYLIST_NAME } from './splitter'
  * While a game is on, the stream is a growing playlist and a segment every few
  * seconds, because that is what a viewer can join in the middle of. A finished
  * game is a different thing: it is watched from the start, seeked around, and
- * has to be stored somewhere cheap. Every other recording in GameStation is one
+ * has to be stored somewhere cheap. Every other recording in TeamStation is one
  * fragmented MP4 with a byte-range playlist, which is what lets a video in the
  * Space need **one** presigned URL instead of one per segment.
  *

@@ -153,7 +153,7 @@ describe('highlights', function () {
 
     const named = computeHighlights([event()], video, settings)
     expect(named[0].title).equals('Single')
-    // The sentence under the video is GameStation's own, from the play.
+    // The sentence under the video is TeamStation's own, from the play.
     expect(named[0].description).equals('Single.')
     const placed = computeHighlights(
       [event({ inning: 3, halfInning: 'bottom', awayScore: 1, homeScore: 2 })],

@@ -6,7 +6,7 @@ import type { Database } from '../db/database'
 /**
  * The games somebody **runs** — as owner, manager, or an admin of the team,
  * its season or its league — which is who may point a camera at a game,
- * publish its scoreboard or override it. GS Director's picker and the
+ * publish its scoreboard or override it. TS Director's picker and the
  * scoreboard's lists both start here.
  */
 

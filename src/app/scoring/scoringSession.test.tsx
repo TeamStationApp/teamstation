@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   asGameDetail,
   asRosterEntry,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import {
@@ -42,7 +42,7 @@ async function unmount(): Promise<void> {
   root = undefined
 }
 async function mount(
-  client: GameStationClient,
+  client: TeamStationClient,
   source?: ScoringSource
 ): Promise<void> {
   await unmount()
@@ -73,8 +73,8 @@ async function click(label: string): Promise<void> {
 }
 function clientForSwitchHitter(
   bats: 'switch' | 'left' | 'right' = 'switch'
-): GameStationClient {
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+): TeamStationClient {
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async team =>
     team === 'away'
@@ -544,7 +544,7 @@ describe('saving from the scoring screen', function () {
       createDevelopmentSession(sized, [], []).gameData.venue?.fieldInfo.center
     ).equals(250)
 
-    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.gameEvents = async () => ({ plays: [], currentPlay: null })
     const server = new ServerScoringSource(client)
     expect(

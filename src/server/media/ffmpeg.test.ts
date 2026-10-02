@@ -46,7 +46,7 @@ describe('ffmpeg contract', function () {
       this.skip()
       return
     }
-    workDir = await mkdtemp(join(tmpdir(), 'gsFfmpeg-'))
+    workDir = await mkdtemp(join(tmpdir(), 'tsFfmpeg-'))
   })
 
   after(async function () {
@@ -232,7 +232,7 @@ describe('ffmpeg contract', function () {
     )
 
     // Read back out of the FLV: the picture crossed unchanged and is still
-    // HEVC, so what goes onward is the same picture GameStation recorded.
+    // HEVC, so what goes onward is the same picture TeamStation recorded.
     const carried = await probeVideoStream(ffprobePath, flv)
     expect(carried.codecName).equals('hevc')
     expect(carried.width).equals(320)

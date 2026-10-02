@@ -5,11 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type {
   GameDetail,
-  GameStationClient,
   LiveNow,
   Playback,
   SeasonGame,
   SeasonSummary,
+  TeamStationClient,
   TeamSummary
 } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -230,7 +230,7 @@ async function mount(setup: Setup = {}): Promise<Calls> {
           : setup.playbackUrl(videoId)
       )
     }
-  } as unknown as GameStationClient
+  } as unknown as TeamStationClient
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)

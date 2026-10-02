@@ -110,7 +110,7 @@ describe('a worker’s scoreboard while Redis is away', function () {
   })
 
   after(async function () {
-    await dropPrefix('gs-test')
+    await dropPrefix('ts-test')
     await drop?.()
   })
 

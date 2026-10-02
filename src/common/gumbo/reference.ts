@@ -27,7 +27,7 @@ export const MLB_EVENT_TYPES: ReadonlySet<string> = new Set(
   eventTypes.map(entry => entry.code)
 )
 
-/** MLB's event types and GameStation's extensions: what a play may name. */
+/** MLB's event types and TeamStation's extensions: what a play may name. */
 export const STORED_EVENT_TYPES: ReadonlySet<string> = new Set([
   ...MLB_EVENT_TYPES,
   ...GUMBO_EXTENSION_EVENT_TYPES
@@ -41,7 +41,7 @@ export const STORED_EVENT_TYPES: ReadonlySet<string> = new Set([
 const MLB_EVENT_NAMES: ReadonlyMap<string, string> = new Map(
   eventTypes.map(entry => [entry.code, entry.description])
 )
-/** GameStation's extensions, named in MLB's style. */
+/** TeamStation's extensions, named in MLB's style. */
 const EXTENSION_NAMES: Record<string, string> = {
   final_score: 'Final Score',
   score_correction: 'Score Correction',

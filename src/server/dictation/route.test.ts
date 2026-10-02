@@ -11,7 +11,7 @@ import WebSocket from 'ws'
 import {
   asDictationReply,
   type DictationReply,
-  GameStationClient
+  TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
@@ -37,7 +37,7 @@ import { type Scope, SCOPES } from './scopes'
 import type { SttHandlers } from './stt'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_dictation_route_${Date.now()}`
+const scratchName = `teamstation_dictation_route_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const MEMBER = 'tok_dictation_member_0000000000000'
@@ -513,7 +513,7 @@ describe('dictation route', function () {
         db: db!,
         config: CONFIG,
         allowedOrigins: [
-          'https://devhost2.examplegs.test/',
+          'https://devhost2.example-ts.test/',
           'http://127.0.0.1:8080'
         ],
         openRecogniser: handlers => new FakeRecogniser(handlers)
@@ -537,8 +537,8 @@ describe('dictation route', function () {
           ws.on('error', () => undefined)
         })
       expect(await attempt('https://evil.example')).equals(403)
-      expect(await attempt('https://devhost3.examplegs.test')).equals(403)
-      expect(await attempt('https://devhost2.examplegs.test')).equals(101)
+      expect(await attempt('https://devhost3.example-ts.test')).equals(403)
+      expect(await attempt('https://devhost2.example-ts.test')).equals(101)
       expect(await attempt('http://127.0.0.1:8080')).equals(101)
       expect(await attempt()).equals(101)
       handle.close()
@@ -1006,7 +1006,7 @@ describe('dictation route', function () {
 
   describe('health', function () {
     it('says whether dictation is configured, and the client reads it', async function () {
-      const client = new GameStationClient({
+      const client = new TeamStationClient({
         baseUrl: `http://127.0.0.1:${port}/api/v1`
       })
       expect(await client.health()).deep.include({
@@ -1020,7 +1020,7 @@ describe('dictation route', function () {
       plain.use('/api/v1', healthRoutes(db!, '1.2.3'))
       const bare = plain.listen(0, '127.0.0.1')
       await new Promise<void>(resolve => bare.once('listening', resolve))
-      const off = new GameStationClient({
+      const off = new TeamStationClient({
         baseUrl: `http://127.0.0.1:${(bare.address() as AddressInfo).port}/api/v1`
       })
       expect(await off.health()).deep.include({
@@ -1029,7 +1029,7 @@ describe('dictation route', function () {
       })
       bare.close()
 
-      const older = new GameStationClient({
+      const older = new TeamStationClient({
         baseUrl: 'http://older',
         fetch: async () =>
           new Response(

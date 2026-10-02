@@ -30,7 +30,7 @@ const board = (): HTMLElement | null =>
   document.querySelector('[data-scoreboard="board"]')
 const signUp = (): HTMLAnchorElement | null =>
   Array.from(document.querySelectorAll('a')).find(
-    link => link.textContent === 'Sign up for GameStation'
+    link => link.textContent === 'Sign up for TeamStation'
   ) ?? null
 
 function live(quiet = false): {
@@ -47,7 +47,7 @@ function live(quiet = false): {
       <ScoreboardPage
         page={{ kind: 'live', gameId: 'g1', quiet }}
         apiBaseUrl="/api/v1"
-        origin={{ protocol: 'https:', host: 'gamestation.co' }}
+        origin={{ protocol: 'https:', host: 'app.teamstation.app' }}
         WebSocketImpl={sockets.Impl}
         schedule={clock.schedule}
       />
@@ -62,7 +62,7 @@ describe('ScoreboardNotFound', function () {
         <ScoreboardNotFound />
       </ThemeProvider>
     )
-    expect(document.querySelector('[aria-label="GameStation"]')).not.equals(
+    expect(document.querySelector('[aria-label="TeamStation"]')).not.equals(
       null
     )
     const text = document.body.textContent ?? ''
@@ -90,7 +90,7 @@ describe('ScoreboardPage', function () {
     await render(element)
     expect(sockets.sockets).length(1)
     expect(sockets.latest().url).equals(
-      'wss://gamestation.co/api/v1/scoreboard/g1/socket'
+      'wss://app.teamstation.app/api/v1/scoreboard/g1/socket'
     )
     expect(board()?.dataset.drawn).equals('false')
     expect(board()?.children).length(0)

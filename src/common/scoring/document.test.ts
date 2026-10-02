@@ -1255,7 +1255,7 @@ describe('action events (U12)', function () {
         })
       )
     ).at(-1)!
-    // actionPlayId is MLB's own id for the action, which GameStation has none of.
+    // actionPlayId is MLB's own id for the action, which TeamStation has none of.
     const { actionPlayId, ...feedEvent } = want as StoredEvent & {
       actionPlayId?: string
     }

@@ -3,7 +3,7 @@
  *
  * A schedule names an opponent only by a name, and different teams write the
  * same club differently, so these are how a schedule's opponent lands on the
- * team GameStation already holds.
+ * team TeamStation already holds.
  */
 
 /**

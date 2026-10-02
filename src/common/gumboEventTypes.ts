@@ -1,7 +1,7 @@
 /**
  * The event types a stored play may name: MLB's own list
  * (`gumbo/reference/eventTypes.json`, from `statsapi.mlb.com/api/v1/eventTypes`),
- * then GameStation's extensions. A new type is added here, and every
+ * then TeamStation's extensions. A new type is added here, and every
  * classifier of event types (`hitsAndErrors`, `outcomeName`, `describePlay`,
  * the stats builder) is told what it is.
  *
@@ -86,7 +86,7 @@ export const GUMBO_EVENT_TYPES = [
   'forced_balk',
   'wild_pitch',
   'other_out',
-  // GameStation's extensions.
+  // TeamStation's extensions.
   'final_score',
   'score_correction',
   'gs_manual_placement',
@@ -147,8 +147,8 @@ export function normalizeEventType(value: string): string {
 
 /**
  * What a play of each type is called, when nobody on it is credited with
- * anything to name. A play is shown as GameStation's own reading of it, never
- * as a sentence stored with it. The names are MLB's, in GameStation's
+ * anything to name. A play is shown as TeamStation's own reading of it, never
+ * as a sentence stored with it. The names are MLB's, in TeamStation's
  * sentence case.
  */
 const EVENT_TYPE_NAMES: Record<GumboEventType, string> = {

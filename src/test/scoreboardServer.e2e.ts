@@ -22,28 +22,28 @@ import {
  * Steps, in the order a group runs them: `seed` (seeds and signs both
  * accounts in, reading the codes from the server's log), `e1` … `e5`.
  * Each step prints what it observed and exits non-zero when an observation
- * fails. State between steps is kept in `GS_E2E_STATE`.
+ * fails. State between steps is kept in `TS_E2E_STATE`.
  *
- *   GS_E2E_HOST          the API origin, http://127.0.0.1:9100
- *   GS_E2E_WEB           the app from `npm run start.web`, for E3
- *   GS_E2E_DATABASE_URL  the development database the server uses
- *   GS_E2E_SERVER_LOG    the server's log, for sign-in codes and E4
- *   GS_E2E_STATE         where the seeded ids and tokens are kept
- *   GS_E2E_REDIS_KEY     the key prefix, gs:<database name>
- *   GS_CHROME_PATH       the Chrome puppeteer drives, for E3
- *   GS_E2E_SERVER_PID    the server's primary, which E4 restarts
+ *   TS_E2E_HOST          the API origin, http://127.0.0.1:9100
+ *   TS_E2E_WEB           the app from `npm run start.web`, for E3
+ *   TS_E2E_DATABASE_URL  the development database the server uses
+ *   TS_E2E_SERVER_LOG    the server's log, for sign-in codes and E4
+ *   TS_E2E_STATE         where the seeded ids and tokens are kept
+ *   TS_E2E_REDIS_KEY     the key prefix, gs:<database name>
+ *   TS_CHROME_PATH       the Chrome puppeteer drives, for E3
+ *   TS_E2E_SERVER_PID    the server's primary, which E4 restarts
  */
 
-const HOST = process.env.GS_E2E_HOST ?? 'http://127.0.0.1:9100'
-const WEB = process.env.GS_E2E_WEB ?? 'http://127.0.0.1:8080'
+const HOST = process.env.TS_E2E_HOST ?? 'http://127.0.0.1:9100'
+const WEB = process.env.TS_E2E_WEB ?? 'http://127.0.0.1:8080'
 const DATABASE_URL =
-  process.env.GS_E2E_DATABASE_URL ??
+  process.env.TS_E2E_DATABASE_URL ??
   'postgres://localhost:5433/AppDb_nativeScoreboard'
-const SERVER_LOG = process.env.GS_E2E_SERVER_LOG ?? 'server.log'
-const STATE = process.env.GS_E2E_STATE ?? 'scoreboardE2E.json'
+const SERVER_LOG = process.env.TS_E2E_SERVER_LOG ?? 'server.log'
+const STATE = process.env.TS_E2E_STATE ?? 'scoreboardE2E.json'
 const PREFIX =
-  process.env.GS_E2E_REDIS_KEY ??
-  `gs:${new URL(DATABASE_URL).pathname.slice(1)}`
+  process.env.TS_E2E_REDIS_KEY ??
+  `ts:${new URL(DATABASE_URL).pathname.slice(1)}`
 const API = `${HOST}/api/v1`
 
 interface State {
@@ -328,7 +328,7 @@ async function e3(): Promise<void> {
   await until('the first state', () => viewer.states.length > 0)
   const browser = await puppeteer.launch({
     headless: true,
-    executablePath: process.env.GS_CHROME_PATH,
+    executablePath: process.env.TS_CHROME_PATH,
     args: [
       '--use-gl=angle',
       '--use-angle=swiftshader',
@@ -346,7 +346,7 @@ async function e3(): Promise<void> {
     page.setDefaultTimeout(30_000)
     await page.setViewport({ width: 1200, height: 900 })
     await browser.defaultBrowserContext().setCookie({
-      name: 'gs_session',
+      name: 'ts_session',
       value: encodeURIComponent(runner),
       domain: '127.0.0.1',
       path: '/'
@@ -483,9 +483,9 @@ function alive(pid: number): boolean {
 async function e4(): Promise<void> {
   const { games, runner } = readState()
   const gameId = games['-10m']
-  const pid = Number(process.env.GS_E2E_SERVER_PID)
+  const pid = Number(process.env.TS_E2E_SERVER_PID)
   if (!Number.isInteger(pid) || !alive(pid))
-    throw new Error('Set GS_E2E_SERVER_PID')
+    throw new Error('Set TS_E2E_SERVER_PID')
 
   // 1. A viewer, and homeScore 7.
   const first = view(gameId)

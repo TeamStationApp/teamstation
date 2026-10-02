@@ -4,7 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
-import { GameStationClient } from '../../common/api'
+import { TeamStationClient } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
@@ -102,7 +102,7 @@ async function mount(
   prepare?: (session: ScoringSessionState) => void
 ): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
-  const client = new GameStationClient({ baseUrl: '/api/v1' })
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async () => []
   const source: ScoringSource = {

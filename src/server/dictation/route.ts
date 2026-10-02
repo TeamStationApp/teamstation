@@ -29,7 +29,7 @@ import { type SttHandlers, SttSession } from './stt'
 
 /**
  * `WS /api/v1/dictation` — one socket for everything a person says to
- * GameStation.
+ * TeamStation.
  *
  * It never touches a game. It turns speech into a transcript and a transcript
  * into actions, and sends the actions back; the client applies them through
@@ -73,7 +73,7 @@ export interface DictationOptions {
    * The pages that may open the socket, checked against a browser's `Origin`
    * the way `withCors` checks the HTTP routes: a browser sends the session
    * cookie to any same-site page's socket, and SameSite=Lax makes every
-   * gamestation.co host same-site. A request with no `Origin` — the phone, a
+   * app.teamstation.app host same-site. A request with no `Origin` — the phone, a
    * script — is not a browser page and is admitted on its token alone.
    * Absent, any origin is admitted.
    */

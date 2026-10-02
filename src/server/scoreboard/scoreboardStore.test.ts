@@ -31,7 +31,7 @@ import {
 } from './scoreboardStore'
 
 /**
- * `WRITE_SCOREBOARD` against a real Redis (`GS_TEST_REDIS_URL`), each test
+ * `WRITE_SCOREBOARD` against a real Redis (`TS_TEST_REDIS_URL`), each test
  * under a prefix of its own and with a clock it moves by hand.
  */
 
@@ -76,7 +76,7 @@ describe('the scoreboard store', function () {
 
   after(async function () {
     for (const one of opened) if (one.isOpen) await one.close()
-    await dropPrefix('gs-test')
+    await dropPrefix('ts-test')
   })
 
   /** Every message published so far, once they have all arrived. */
@@ -324,7 +324,7 @@ describe('the scoreboard store', function () {
   it('names its keys after the database unless told a prefix', function () {
     expect(
       scoreboardPrefix('', 'postgres://localhost:5433/AppDatabase_seat')
-    ).equals('gs:AppDatabase_seat')
+    ).equals('ts:AppDatabase_seat')
     expect(scoreboardPrefix('mine', 'postgres://x/y')).equals('mine')
     expect(() => parseScoreboardMessage('{"gameId":1}')).throws(TypeError)
     expect(() =>

@@ -52,8 +52,8 @@ describe('scoreboard socket address', function () {
       )
     ).equals('ws://127.0.0.1:9100/api/v1/scoreboard/g1/socket')
     expect(
-      socketUrlFor(undefined, 'https://gamestation.co/api/v1/', 'g1')
-    ).equals('wss://gamestation.co/api/v1/scoreboard/g1/socket')
+      socketUrlFor(undefined, 'https://app.teamstation.app/api/v1/', 'g1')
+    ).equals('wss://app.teamstation.app/api/v1/scoreboard/g1/socket')
   })
 
   it('names the dashboard socket and encodes the game', function () {

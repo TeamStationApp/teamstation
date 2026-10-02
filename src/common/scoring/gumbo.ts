@@ -33,8 +33,8 @@ import {
 } from './state'
 
 /**
- * A play as GameStation stores it: a Gumbo document naming every player by
- * the server's user id, never by a session id, with GameStation's own record
+ * A play as TeamStation stores it: a Gumbo document naming every player by
+ * the server's user id, never by a session id, with TeamStation's own record
  * beside it — the setup as it stood before the play and the actions that made
  * it — so the game can be rebuilt exactly as it was scored.
  */
@@ -63,7 +63,7 @@ const asRecord: Cleaner<GameStationRecord> = asObject({
  */
 const readRecords = new WeakMap<object, GameStationRecord | null>()
 
-/** The record on a stored play, or null for one GameStation did not score. */
+/** The record on a stored play, or null for one TeamStation did not score. */
 export function recordOf(play: unknown): GameStationRecord | null {
   if (play == null || typeof play !== 'object') return null
   const raw = (play as { gameStation?: unknown }).gameStation
@@ -184,7 +184,7 @@ export interface Replayed {
 
 /**
  * Rebuilds a game from what the server stored. Plays before the first one
- * GameStation scored are read from their documents. At that play the lineup,
+ * TeamStation scored are read from their documents. At that play the lineup,
  * the defence and the order come from its `setupBefore`, read once; from
  * there every play's actions are applied in order, the current play's last.
  * A completed play at the current play's index was reopened by an undo, so
@@ -269,7 +269,7 @@ function baseNumber(raw: unknown): number {
 }
 
 /**
- * The state a run of plays GameStation did not score leaves behind: the half,
+ * The state a run of plays TeamStation did not score leaves behind: the half,
  * the outs, the score, who is on base and who bats next. Each play stands in
  * the game's list so the next play takes the next index.
  */
@@ -327,7 +327,7 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
       outs = 0
       bases = [null, null, null]
     }
-    // Only GameStation's documents list every runner; an imported play's
+    // Only TeamStation's documents list every runner; an imported play's
     // runners are left for the scorer to place by hand.
     const runners = 'gameStation' in doc ? (doc.runners ?? []) : []
     for (const runner of runners) {

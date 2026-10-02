@@ -212,7 +212,7 @@ async function main(): Promise<void> {
 
     const out: string[] = []
     const now = new Date()
-    out.push('# GameStation video audit')
+    out.push('# TeamStation video audit')
     out.push('')
     out.push(
       `Every video in the library, by game, as of ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC.`

@@ -208,7 +208,7 @@ describe('the scoreboard hub', function () {
   })
 
   after(async function () {
-    await dropPrefix('gs-test')
+    await dropPrefix('ts-test')
     await drop?.()
   })
 
@@ -248,7 +248,7 @@ describe('the scoreboard hub', function () {
     const watching = viewer(worker, gameId)
     await heard(watching, 1)
     const byCookie = connect(`${worker.url}/${gameId}/publish`, {
-      headers: { cookie: `gs_session=${runner.token}` }
+      headers: { cookie: `ts_session=${runner.token}` }
     })
     await byCookie.opened
     send(byCookie, { balls: 2 })
@@ -415,7 +415,7 @@ describe('the scoreboard hub', function () {
     expect(state).includes({ type: 'state', watcherAt: null })
     expect(state.automated.balls).equals(1)
     expect(state.gameAt).is.a('number')
-    // GS Watcher's count is newer than the game's, so it shows.
+    // TS Watcher's count is newer than the game's, so it shows.
     const phone = publisher(worker, gameId, runner)
     await phone.opened
     send(phone, { balls: 3 })

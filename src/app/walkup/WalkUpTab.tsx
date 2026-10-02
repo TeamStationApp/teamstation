@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
-import type { GameStationClient } from '../../common/api'
+import type { TeamStationClient } from '../../common/api'
 import { formatClip, type WalkUpSong } from '../../common/walkUpSong'
 import { Button, Card, Emblem } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
@@ -10,7 +10,7 @@ import { clipFade } from './useSongPlayer'
 import type { WalkUpMusic } from './walkUpMusicTypes'
 
 export interface WalkUpTabProps {
-  client: GameStationClient
+  client: TeamStationClient
   /** The team the page was opened for: whose walk-up song this is. */
   teamId: string
   userId: string

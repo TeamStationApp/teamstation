@@ -35,9 +35,9 @@ import {
  */
 
 /** Stands in for ffmpeg: takes any arguments, does nothing, waits to be killed. */
-const FAKE_FFMPEG = join(tmpdir(), 'gs-live-test-ffmpeg.sh')
-const KEY = 'gs_testkeytestkeytestkey'
-const OTHER_KEY = 'gs_otherkeyotherkeyother'
+const FAKE_FFMPEG = join(tmpdir(), 'ts-live-test-ffmpeg.sh')
+const KEY = 'ts_testkeytestkeytestkey'
+const OTHER_KEY = 'ts_otherkeyotherkeyother'
 
 let events: LiveEvent[] = []
 let logs: string[] = []
@@ -67,7 +67,7 @@ function spec(destinations: string[] = []): {
 } {
   return {
     liveStreamId: 'liv_test',
-    hlsDir: join(tmpdir(), 'gs-live-test-hls'),
+    hlsDir: join(tmpdir(), 'ts-live-test-hls'),
     destinations
   }
 }
@@ -87,7 +87,7 @@ describe('live ingest', function () {
   })
 
   it('refuses a key that could be a path or an argument', function () {
-    expect(isPublishableKey('gs_abcdefgh')).equals(true)
+    expect(isPublishableKey('ts_abcdefgh')).equals(true)
     expect(isPublishableKey('../../etc/passwd')).equals(false)
     expect(isPublishableKey('key with spaces')).equals(false)
     expect(isPublishableKey('-i')).equals(false)
@@ -96,7 +96,7 @@ describe('live ingest', function () {
   })
 
   it('reads the key however the address was spelled', function () {
-    // What GS Director and ffmpeg send.
+    // What TS Director and ffmpeg send.
     expect(
       keyFromSession({ streamApp: 'live', streamName: KEY }, 'live')
     ).equals(KEY)
@@ -153,7 +153,7 @@ describe('live ingest', function () {
     const status = statusFor(KEY)
     expect(status?.outputs.length).equals(1)
     expect(status?.outputs[0].kind).equals('hls')
-    expect(status?.outputs[0].label).equals('GameStation')
+    expect(status?.outputs[0].label).equals('TeamStation')
     expect(status?.ingress.publishing).equals(true)
   })
 
@@ -204,7 +204,7 @@ describe('live ingest', function () {
     expect(after?.restartCount).equals(before?.restartCount)
     expect(
       logs.filter(
-        line => line.includes('GameStation') && line.includes('retired')
+        line => line.includes('TeamStation') && line.includes('retired')
       ),
       'the recording was not retired'
     ).deep.equals([])
@@ -357,7 +357,7 @@ describe('a stream that comes back', function () {
    * playlist, and the only account of what happened that survives a crash, a
    * drop, or this whole process restarting is what is on the disk.
    */
-  const dir = join(tmpdir(), 'gs-live-test-reconnect')
+  const dir = join(tmpdir(), 'ts-live-test-reconnect')
 
   beforeEach(function () {
     rmSync(dir, { recursive: true, force: true })

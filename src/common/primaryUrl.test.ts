@@ -38,11 +38,11 @@ describe('the primary address', function () {
   })
 
   it('takes an address however somebody wrote it', function () {
-    expect(asAuthority('devhost2.examplegs.test')).equals(
-      'devhost2.examplegs.test'
+    expect(asAuthority('devhost2.example-ts.test')).equals(
+      'devhost2.example-ts.test'
     )
-    expect(asAuthority('https://devhost2.examplegs.test/')).equals(
-      'devhost2.examplegs.test'
+    expect(asAuthority('https://devhost2.example-ts.test/')).equals(
+      'devhost2.example-ts.test'
     )
     expect(asAuthority('  http://127.0.0.1:9100/api/v1  ')).equals(
       '127.0.0.1:9100'
@@ -51,14 +51,14 @@ describe('the primary address', function () {
   })
 
   it('separates the host from the port', function () {
-    expect(hostOf('gamestation.co')).equals('gamestation.co')
+    expect(hostOf('app.teamstation.app')).equals('app.teamstation.app')
     expect(hostOf('127.0.0.1:9100')).equals('127.0.0.1')
     expect(hostOf('[::1]:9100')).equals('[::1]')
   })
 
   it('implies https for a name and http for an address', function () {
-    expect(isPlainHttp('gamestation.co')).equals(false)
-    expect(isPlainHttp('devhost2.examplegs.test')).equals(false)
+    expect(isPlainHttp('app.teamstation.app')).equals(false)
+    expect(isPlainHttp('devhost2.example-ts.test')).equals(false)
     expect(isPlainHttp('localhost:8080')).equals(true)
     expect(isPlainHttp('127.0.0.1:9100')).equals(true)
     expect(isPlainHttp('192.168.7.181')).equals(true)
@@ -66,9 +66,9 @@ describe('the primary address', function () {
   })
 
   it('builds the origin the app is served from', function () {
-    expect(httpOrigin(PRIMARY_HOST)).equals('https://gamestation.co')
-    expect(httpOrigin('devhost2.examplegs.test')).equals(
-      'https://devhost2.examplegs.test'
+    expect(httpOrigin(PRIMARY_HOST)).equals('https://app.teamstation.app')
+    expect(httpOrigin('devhost2.example-ts.test')).equals(
+      'https://devhost2.example-ts.test'
     )
     // Nobody holds a certificate for a loopback address, and this is the one
     // case a person actually meets: a server they are running themselves.
@@ -77,7 +77,9 @@ describe('the primary address', function () {
   })
 
   it('builds the stream URL on the ingest port, not the web one', function () {
-    expect(rtmpOrigin(PRIMARY_HOST, 1936)).equals('rtmp://gamestation.co:1936')
+    expect(rtmpOrigin(PRIMARY_HOST, 1936)).equals(
+      'rtmp://app.teamstation.app:1936'
+    )
     // The override carries the *web* port where it carries one at all, and
     // the ingest is listening somewhere else entirely.
     expect(rtmpOrigin('127.0.0.1:9100', 1936)).equals('rtmp://127.0.0.1:1936')
@@ -86,9 +88,9 @@ describe('the primary address', function () {
   it('leaves rtmp unencrypted wherever it points', function () {
     // There is no rtmps here to choose between, so an IP and a DNS name both
     // get the same scheme — unlike the web origin above.
-    expect(rtmpOrigin('gamestation.co', 1936).startsWith('rtmp://')).equals(
-      true
-    )
+    expect(
+      rtmpOrigin('app.teamstation.app', 1936).startsWith('rtmp://')
+    ).equals(true)
     expect(rtmpOrigin('127.0.0.1', 1936).startsWith('rtmp://')).equals(true)
   })
 })

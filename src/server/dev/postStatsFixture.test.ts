@@ -32,7 +32,7 @@ import { eventRoutes } from '../routes/events'
 import { teamRoutes } from '../routes/teams'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `gamestation_stats_fix_${Date.now()}`
+const scratchName = `teamstation_stats_fix_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const TOKEN = 'tok_fixture_000000000000000000000000'
 
@@ -171,7 +171,7 @@ describe('postStatsFixture', function () {
       })
       .execute()
 
-    const mediaRoot = mkdtempSync(join(tmpdir(), 'gsStatsFixture-'))
+    const mediaRoot = mkdtempSync(join(tmpdir(), 'tsStatsFixture-'))
     const media: MediaContext = {
       mediaRoot,
       workDir: mediaRoot,
