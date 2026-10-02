@@ -1,6 +1,7 @@
-import { asEither, asNumber, asObject, asString, asValue } from 'cleaners'
+import { asEither, asNumber, asObject, asString } from 'cleaners'
 import { type Kysely, sql } from 'kysely'
 
+import { asLiteral } from '../../common/asLiteral'
 import type { Database } from '../db/database'
 
 /**
@@ -24,11 +25,11 @@ export type GameChangePayload =
 export const asGameChangePayload = asEither(
   asObject({
     game: asString,
-    kind: asValue('plays', 'game', 'lineups')
+    kind: asLiteral('plays', 'game', 'lineups')
   }),
   asObject({
     team: asString,
-    kind: asValue('walkUpSong'),
+    kind: asLiteral('walkUpSong'),
     userId: asNumber
   })
 )

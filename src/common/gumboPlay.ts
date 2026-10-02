@@ -4,10 +4,10 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
 
+import { asLiteral } from './asLiteral'
 import { isFenceDistance } from './fenceDistance'
 import {
   type GumboEventType,
@@ -127,7 +127,7 @@ const asGumboPlayShape = asObject({
   about: asObject({
     atBatIndex: asCount,
     inning: asNullable(asCount),
-    halfInning: asNullable(asValue('top', 'bottom')),
+    halfInning: asNullable(asLiteral('top', 'bottom')),
     halfOuts: asAbsentOr(asCount),
     isScoringPlay: asAbsentOr(asBoolean),
     startTime: asNullable(asIsoTime),
@@ -201,8 +201,8 @@ const asCurrentPlayShape = asObject({
   about: asObject({
     atBatIndex: asCount,
     inning: asNullable(asCount),
-    halfInning: asNullable(asValue('top', 'bottom')),
-    isComplete: asValue(false)
+    halfInning: asNullable(asLiteral('top', 'bottom')),
+    isComplete: asLiteral(false)
   }).withRest
 }).withRest
 
@@ -231,7 +231,7 @@ const asPostEventsShape = asObject({
    * the plays sent are written in place, and only the indexes in `remove`
    * are deleted.
    */
-  mode: asOptional(asValue('replace', 'live'), 'replace'),
+  mode: asOptional(asLiteral('replace', 'live'), 'replace'),
   remove: asOptional(asArray(asCount)),
   /** On a live post: the at-bat in progress, or null when there is none. */
   currentPlay: (raw: unknown): CurrentPlay | null | undefined =>

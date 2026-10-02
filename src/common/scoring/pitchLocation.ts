@@ -1,5 +1,6 @@
-import { asBoolean, asNumber, asObject, asOptional, asValue } from 'cleaners'
+import { asBoolean, asNumber, asObject, asOptional } from 'cleaners'
 
+import { asLiteral } from '../asLiteral'
 import type { BatSide } from './state'
 
 /**
@@ -11,8 +12,8 @@ export const PITCH_HEIGHTS = ['high', 'middle', 'low'] as const
 export const PITCH_SIDES = ['inside', 'middle', 'away'] as const
 
 export const asPitchLocation = asObject({
-  height: asValue(...PITCH_HEIGHTS),
-  side: asValue(...PITCH_SIDES),
+  height: asLiteral(...PITCH_HEIGHTS),
+  side: asLiteral(...PITCH_SIDES),
   inZone: asBoolean
 })
 export type PitchLocation = ReturnType<typeof asPitchLocation>

@@ -1,10 +1,11 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 
-import { asEither, asObject, asString, asValue } from 'cleaners'
+import { asEither, asObject, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
+import { asLiteral } from '../../common/asLiteral'
 import type {
   GameChange,
   GameSocketErrorCode,
@@ -75,11 +76,11 @@ export interface GameSocketHandle {
 
 const asRequest = asEither(
   asObject({
-    type: asValue('subscribe', 'unsubscribe'),
+    type: asLiteral('subscribe', 'unsubscribe'),
     gameId: asString,
     id: asString
   }),
-  asObject({ type: asValue('ping'), id: asString })
+  asObject({ type: asLiteral('ping'), id: asString })
 )
 
 /** One open socket: who it is, what it has subscribed to, and its health. */

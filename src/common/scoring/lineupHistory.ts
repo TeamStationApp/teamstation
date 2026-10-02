@@ -5,10 +5,10 @@ import {
   asNumber,
   asObject,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
 
+import { asLiteral } from '../asLiteral'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import { asUserId } from '../userIdNumber'
 import { recordOf, replayPlays } from './gumbo'
@@ -132,9 +132,9 @@ export const asLineup: Cleaner<Lineup> = asObject({
 const asLineupChange: Cleaner<LineupChange> = asObject({
   atBatIndex: asNumber,
   inning: asNumber,
-  half: asValue('top', 'bottom'),
-  side: asValue('away', 'home'),
-  eventType: asValue(...SUBSTITUTION_TYPES),
+  half: asLiteral('top', 'bottom'),
+  side: asLiteral('away', 'home'),
+  eventType: asLiteral(...SUBSTITUTION_TYPES),
   player: asLineupPerson,
   position: asEither(asNull, asString),
   battingOrder: asEither(asNull, asString),

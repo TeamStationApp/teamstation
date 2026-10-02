@@ -5,9 +5,10 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
+
+import { asLiteral } from './asLiteral'
 
 /**
  * A game's scoreboard: what it shows, where each part of that comes from, and
@@ -18,7 +19,7 @@ import {
  * fields match one for one.
  */
 
-const asHalf = asValue('top' as const, 'bottom' as const, 'mid' as const)
+const asHalf = asLiteral('top', 'bottom', 'mid')
 
 export const asScoreboardState = asObject({
   inGame: asBoolean,
@@ -175,8 +176,8 @@ export const NO_OVERRIDES: DashboardOverrides = {
 
 /** What the dashboard sends: the whole overrides object, or a reset. */
 export const asDashboardCommand = asEither(
-  asObject({ type: asValue('overrides' as const), data: asDashboardOverrides }),
-  asObject({ type: asValue('reset' as const) })
+  asObject({ type: asLiteral('overrides'), data: asDashboardOverrides }),
+  asObject({ type: asLiteral('reset') })
 )
 export type DashboardCommand = ReturnType<typeof asDashboardCommand>
 

@@ -6,10 +6,10 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
 
+import { asLiteral } from './asLiteral'
 import { type ApiError, asApiError, HttpError } from './errors'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
@@ -43,7 +43,7 @@ import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 
 /** The API sends `null` for an absent value, which `asOptional` will not take. */
 const asNullable = <T>(cleaner: Cleaner<T>): Cleaner<T | null> =>
-  asEither(asValue(null), cleaner)
+  asEither(asLiteral(null), cleaner)
 
 export const asTeamSummary = asObject({
   id: asString,
@@ -164,7 +164,7 @@ export const asGameDetail = asObject({
   ingestMessage: asNullable(asString),
   /** `teamstation` once TeamStation scores the game, and nothing else may. */
   scoringOwner: asOptional(
-    asNullable(asValue('external' as const, 'teamstation' as const)),
+    asNullable(asLiteral('external', 'teamstation')),
     null
   ),
   /** Each side's record in this game's season, `12–3`. */
@@ -358,13 +358,13 @@ export const asPlayerStats = asObject({
 export type PlayerStats = ReturnType<typeof asPlayerStats>
 
 export const asGameStatsStatus = asEither(
-  asObject({ status: asValue('none' as const) }),
+  asObject({ status: asLiteral('none') }),
   asObject({
     status: asEither(
-      asValue('pending' as const),
-      asValue('built' as const),
-      asValue('incomplete' as const),
-      asValue('failed' as const)
+      asLiteral('pending'),
+      asLiteral('built'),
+      asLiteral('incomplete'),
+      asLiteral('failed')
     ),
     detail: asNullable(asString),
     builtAt: asNullable(asString)
@@ -382,15 +382,15 @@ export type BoxScore = ReturnType<typeof asBoxScore>
 
 /** How a player bats and throws. Null is `nobody has said`, not `neither`. */
 export const asBats = asEither(
-  asValue(null),
-  asValue('left' as const),
-  asValue('right' as const),
-  asValue('switch' as const)
+  asLiteral(null),
+  asLiteral('left'),
+  asLiteral('right'),
+  asLiteral('switch')
 )
 export const asThrows = asEither(
-  asValue(null),
-  asValue('left' as const),
-  asValue('right' as const)
+  asLiteral(null),
+  asLiteral('left'),
+  asLiteral('right')
 )
 
 export const asRosterEntry = asObject({
@@ -738,7 +738,7 @@ export type SignInWait = ReturnType<typeof asSignInWait>
  * and not a failure, so it is a shape rather than a status code.
  */
 export const asMaybeSession = asEither(
-  asObject({ ready: asValue(false) }),
+  asObject({ ready: asLiteral(false) }),
   asSession
 )
 
@@ -748,7 +748,7 @@ export const asInvite = asObject({
   code: asString,
   /** The address to send somebody, built by the server. */
   url: asString,
-  scopeType: asValue('league', 'season', 'team'),
+  scopeType: asLiteral('league', 'season', 'team'),
   scopeId: asString,
   label: asNullable(asString),
   maxUses: asNullable(asNumber),
@@ -757,7 +757,7 @@ export const asInvite = asObject({
   revokedAt: asNullable(asString),
   createdAt: asString,
   /** Why it no longer works, or null while it does. */
-  problem: asNullable(asValue('revoked', 'expired', 'exhausted'))
+  problem: asNullable(asLiteral('revoked', 'expired', 'exhausted'))
 })
 export type Invite = ReturnType<typeof asInvite>
 
@@ -772,9 +772,9 @@ export type InviteList = ReturnType<typeof asInviteList>
 export const asInviteInfo = asObject({
   code: asString,
   valid: asBoolean,
-  problem: asNullable(asValue('revoked', 'expired', 'exhausted')),
+  problem: asNullable(asLiteral('revoked', 'expired', 'exhausted')),
   scope: asObject({
-    kind: asValue('league', 'season', 'team'),
+    kind: asLiteral('league', 'season', 'team'),
     id: asString,
     name: asString
   }),
@@ -787,7 +787,7 @@ export type InviteInfo = ReturnType<typeof asInviteInfo>
 export const asRedeemed = asObject({
   granted: asBoolean,
   scope: asObject({
-    kind: asValue('league', 'season', 'team'),
+    kind: asLiteral('league', 'season', 'team'),
     id: asString,
     name: asString
   })
@@ -806,7 +806,7 @@ export const asNamed = asObject({ id: asString, name: asString })
 
 /** The roles one person holds on one level of the tree being managed. */
 export const asRoleGrant = asObject({
-  kind: asValue('league' as const, 'season' as const, 'team' as const),
+  kind: asLiteral('league', 'season', 'team'),
   id: asString,
   name: asString,
   roles: asArray(asRole)
@@ -834,7 +834,7 @@ export const asScopePerson = asObject({
   grants: asOptional(asArray(asRoleGrant)),
   adminOf: asArray(
     asObject({
-      kind: asValue('league', 'season', 'team'),
+      kind: asLiteral('league', 'season', 'team'),
       id: asString,
       name: asString
     })
@@ -879,7 +879,7 @@ export type PendingPerson = ReturnType<typeof asPendingPerson>
 /** Everything the page behind the gear draws, in one answer. */
 export const asManagePage = asObject({
   scope: asObject({
-    kind: asValue('league', 'season', 'team'),
+    kind: asLiteral('league', 'season', 'team'),
     id: asString,
     name: asString
   }),
@@ -950,9 +950,9 @@ export const DICTATION_MODEL_NAMES: Record<DictationModel, string> = {
  * name one this client does not know.
  */
 export const asHealth = asObject({
-  status: asValue('ok', 'degraded'),
+  status: asLiteral('ok', 'degraded'),
   version: asString,
-  database: asValue('ok', 'unreachable'),
+  database: asLiteral('ok', 'unreachable'),
   migrations: asNumber,
   dictation: asOptional(asBoolean, false),
   dictationModels: asOptional(asArray(asString), [])
@@ -999,7 +999,7 @@ export type DjBatter = ReturnType<typeof asDjBatter>
 export const asDjSide = asObject({
   teamId: asString,
   teamName: asString,
-  source: asValue('lineup', 'default', 'roster'),
+  source: asLiteral('lineup', 'default', 'roster'),
   /** Whether this viewer may set this team's walk-up songs. */
   canEditWalkUp: asBoolean,
   batters: asArray(asDjBatter)
@@ -1008,7 +1008,7 @@ export type DjSide = ReturnType<typeof asDjSide>
 
 /** The plate appearance in progress: which side, and who is batting. */
 export const asDjAtBat = asObject({
-  side: asValue('away', 'home'),
+  side: asLiteral('away', 'home'),
   userId: asNullable(asUserId)
 })
 export type DjAtBat = ReturnType<typeof asDjAtBat>
@@ -1815,7 +1815,7 @@ export const asWireAction: Cleaner<ScoringAction> = raw => {
   return cleaned.action
 }
 const asProblem: Cleaner<Problem> = asObject({
-  code: asValue(
+  code: asLiteral(
     'unknownAction',
     'malformed',
     'notNow',
@@ -1833,7 +1833,7 @@ const asStartBody = asObject({
   target: asTarget,
   context: asNonEmpty,
   /** Absent means the model the server is configured with. */
-  model: asOptional(asValue(...DICTATION_MODELS))
+  model: asOptional(asLiteral(...DICTATION_MODELS))
 })
 export type DictationStart = { kind: 'start' } & ReturnType<typeof asStartBody>
 export const asDictationStart: Cleaner<DictationStart> = raw => {

@@ -5,10 +5,10 @@ import {
   asObject,
   asOptional,
   asString,
-  asValue,
   type Cleaner
 } from 'cleaners'
 
+import { asLiteral } from '../asLiteral'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import {
   asGameSetup,
@@ -218,19 +218,19 @@ export const ACTION_TYPES = [
 export type ActionType = (typeof ACTION_TYPES)[number]
 
 const asPoint = asObject({ x: asNumber, z: asNumber })
-const asSideName = asValue('away' as const, 'home' as const)
-const asPosition = asValue(...POSITIONS)
+const asSideName = asLiteral('away', 'home')
+const asPosition = asLiteral(...POSITIONS)
 const asOneOf = <T extends string>(values: readonly T[]): Cleaner<T> =>
-  asValue(...values)
+  asLiteral(...values)
 
 const actionCleaners = {
   pitch: asObject({
-    type: asValue('pitch' as const),
+    type: asLiteral('pitch'),
     call: asOneOf(PITCH_CALLS),
     ...PITCH_DATA_CLEANERS
   }),
   ballInPlay: asObject({
-    type: asValue('ballInPlay' as const),
+    type: asLiteral('ballInPlay'),
     contact: asOneOf(CONTACTS),
     trajectory: asOptional(asOneOf(TRAJECTORIES)),
     launchAngle: asOptional(asNumber),
@@ -249,21 +249,21 @@ const actionCleaners = {
     ...PITCH_DATA_CLEANERS
   }),
   result: asObject({
-    type: asValue('result' as const),
+    type: asLiteral('result'),
     eventType: asOneOf(RESULT_TYPES),
     outBy: asOptional(asOneOf(OUT_KINDS)),
     base: asOptional(asOneOf(BASES)),
     foulCaught: asOptional(asBoolean)
   }),
   fieldingPlay: asObject({
-    type: asValue('fieldingPlay' as const),
+    type: asLiteral('fieldingPlay'),
     fielders: asArray(asSessionId),
     error: asOptional(asSessionId),
     errorKind: asOptional(asOneOf(ERROR_KINDS)),
     locations: asOptional(asArray(asPoint))
   }),
   runnerMovement: asObject({
-    type: asValue('runnerMovement' as const),
+    type: asLiteral('runnerMovement'),
     runner: asSessionId,
     to: asOneOf(DESTINATIONS),
     out: asOptional(asBoolean),
@@ -273,21 +273,21 @@ const actionCleaners = {
     runnerLocation: asOptional(asPoint)
   }),
   baseRunning: asObject({
-    type: asValue('baseRunning' as const),
+    type: asLiteral('baseRunning'),
     kind: asOneOf(BASE_RUNNING_KINDS),
     runner: asSessionId,
     to: asOptional(asOneOf(DESTINATIONS)),
     fielders: asOptional(asArray(asSessionId))
   }),
   batteryEvent: asObject({
-    type: asValue('batteryEvent' as const),
+    type: asLiteral('batteryEvent'),
     kind: asOneOf(BATTERY_KINDS),
     advances: asOptional(
       asArray(asObject({ runner: asSessionId, to: asOneOf(DESTINATIONS) }))
     )
   }),
   lineup: asObject({
-    type: asValue('lineup' as const),
+    type: asLiteral('lineup'),
     kind: asOneOf(LINEUP_KINDS),
     side: asOptional(asSideName),
     setup: asOptional(asGameSetup),
@@ -299,10 +299,10 @@ const actionCleaners = {
     base: asOptional(asOneOf(BASES)),
     name: asOptional(asString),
     jersey: asOptional(asString),
-    batSide: asOptional(asValue('L' as const, 'R' as const))
+    batSide: asOptional(asLiteral('L', 'R'))
   }),
   gameFlow: asObject({
-    type: asValue('gameFlow' as const),
+    type: asLiteral('gameFlow'),
     kind: asOneOf(GAME_FLOW_KINDS),
     runner: asOptional(asSessionId),
     base: asOptional(asOneOf(BASES)),
