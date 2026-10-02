@@ -149,8 +149,15 @@ public final class AppEnvironment {
   public private(set) lazy var eventCoordinator = EventCoordinator(
     events: teamStation,
     linker: index,
-    currentTake: { [weak self] in self?.activeRecordingID }
+    currentTake: { [weak self] in self?.activeRecordingID },
+    cameraName: { [weak self] in self?.cameraNameForClaim ?? "" }
   )
+  /// The camera name the next claim sends.
+  ///
+  /// Copied from `config.cameraName` at launch and again when Settings opens.
+  /// The Camera name field writes it on each change, so picking an event
+  /// before SAVE still sends the name that was typed.
+  public var cameraNameForClaim = ""
   /// Keeps each Scoreboard content item's page on the sample, the chosen
   /// event's board, or nothing, with this environment running the pages.
   @ObservationIgnored
@@ -408,6 +415,7 @@ public final class AppEnvironment {
     self.configStore = ConfigStore()
     let persisted = configStore.load()
     self.persistedConfig = persisted
+    self.cameraNameForClaim = persisted.cameraName
     let session = Self.applying(launch, to: persisted)
     self.config = session
     SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)

@@ -13,9 +13,13 @@ private final class StubEvents: TeamStationEventService {
   var refuse: String?
   var dropOnRefresh = false
   var asked: [String] = []
+  /// Names passed into a call that claims. A pick that does not claim is absent.
+  var claimedNames: [String] = []
+  var refreshedNames: [String] = []
 
-  func choose(event: TeamStationEvent, claim: Bool) async -> Bool {
+  func choose(event: TeamStationEvent, claim: Bool, cameraName: String) async -> Bool {
     asked.append(claim ? "choose+claim \(event.gameId)" : "choose \(event.gameId)")
+    if claim { claimedNames.append(cameraName) }
     if claim, let refuse {
       lastError = refuse
       return false
@@ -29,8 +33,9 @@ private final class StubEvents: TeamStationEventService {
     return true
   }
 
-  func claimChosen() async -> Bool {
+  func claimChosen(cameraName: String) async -> Bool {
     asked.append("claim")
+    claimedNames.append(cameraName)
     guard let current = chosen else { return false }
     if let refuse {
       lastError = refuse
@@ -45,8 +50,9 @@ private final class StubEvents: TeamStationEventService {
     return true
   }
 
-  func refreshChosen() async {
+  func refreshChosen(cameraName: String) async {
     asked.append("refresh")
+    refreshedNames.append(cameraName)
     if dropOnRefresh { chosen = nil }
   }
 
@@ -97,10 +103,12 @@ private final class Rig {
   let events = StubEvents()
   let linker = RecordingLinker()
   var take: Int64?
+  var cameraName = ""
   lazy var coordinator = EventCoordinator(
     events: events,
     linker: linker,
-    currentTake: { [unowned self] in self.take }
+    currentTake: { [unowned self] in self.take },
+    cameraName: { [unowned self] in self.cameraName }
   )
 }
 
@@ -252,6 +260,32 @@ struct EventCoordinatorTests {
       _ = try await rig.coordinator.streamURLForDial(destination: .event)
     }
     #expect(rig.events.asked == [ "choose+claim g1", "refresh" ])
+  }
+
+  @Test func aPickThatClaimsPassesTheCameraNameAndOneThatDoesNotDoesNot() async {
+    let rig = Rig()
+    rig.cameraName = "Center Field"
+    #expect(await rig.coordinator.pick(event: event("g1"), destination: .event))
+    #expect(rig.events.claimedNames == [ "Center Field" ])
+
+    rig.cameraName = "Left Field"
+    #expect(await rig.coordinator.pick(event: event("g2"), destination: .url))
+    #expect(rig.events.claimedNames == [ "Center Field" ])
+    #expect(rig.events.asked == [ "choose+claim g1", "choose g2" ])
+  }
+
+  @Test func dialPassesTheCameraNameOnTheFirstClaimAndOnARefresh() async throws {
+    let rig = Rig()
+    rig.cameraName = "Center Field"
+    await rig.coordinator.pick(event: event("g1"), destination: .url)
+    let claimed = try await rig.coordinator.streamURLForDial(destination: .event)
+    #expect(claimed == "rtmp://ingest/live/g1")
+    #expect(rig.events.claimedNames == [ "Center Field" ])
+
+    rig.cameraName = "Left Field"
+    let refreshed = try await rig.coordinator.streamURLForDial(destination: .event)
+    #expect(refreshed == "rtmp://ingest/live/g1")
+    #expect(rig.events.refreshedNames == [ "Left Field" ])
   }
 
   @Test func aTypedURLAsksTeamStationNothing() async throws {

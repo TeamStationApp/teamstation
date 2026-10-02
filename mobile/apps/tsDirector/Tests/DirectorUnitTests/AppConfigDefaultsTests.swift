@@ -86,6 +86,13 @@ struct StreamDestinationTests {
     )
     #expect(old.streamDestination == .url)
     #expect(old.streamURL == "rtmp://host:1935/live/key")
+    #expect(old.cameraName == "")
+  }
+
+  @Test("A config saved before camera names existed has none")
+  func missingCameraNameIsEmpty() throws {
+    let config = try JSONDecoder().decode(AppConfig.self, from: Data("{}".utf8))
+    #expect(config.cameraName == "")
   }
 
   @Test("A saved address left over from when it was a setting is ignored")

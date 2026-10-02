@@ -148,6 +148,7 @@ public struct SettingsView: View {
       draft.replaySlowMotionRate = environment.persistedConfig.replaySlowMotionRate * 100
       draft.useSimulatedCameras = environment.isUsingSimulatedCameras
       draft.showDebugHUD = environment.config.showDebugHUD
+      environment.cameraNameForClaim = draft.cameraName
     }
   }
 
@@ -189,6 +190,16 @@ public struct SettingsView: View {
           // to somebody else's service needs, and it keeps working exactly as
           // it did for every Director that already has one.
           streamEventRow
+
+          if draft.streamDestination == .event {
+            TextField("Camera name", text: $draft.cameraName)
+              .textInputAutocapitalization(.words)
+              .autocorrectionDisabled()
+              .accessibilityIdentifier("settings-camera-name")
+              .onChange(of: draft.cameraName) { _, name in
+                environment.cameraNameForClaim = name
+              }
+          }
 
           HStack(spacing: 12) {
             destinationButton(.url, label: "Use a stream URL")

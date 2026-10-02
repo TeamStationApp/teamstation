@@ -310,7 +310,11 @@ public final class TeamStationAccount: TeamStationEventService {
    * chosen before stays chosen.
    */
   @discardableResult
-  public func choose(event: TeamStationEvent, claim: Bool = true) async -> Bool {
+  public func choose(
+    event: TeamStationEvent,
+    claim: Bool = true,
+    cameraName: String = ""
+  ) async -> Bool {
     guard claim else {
       // Choosing the same game again keeps the address it was given.
       let kept = chosen?.gameId == event.gameId ? chosen?.streamURL : nil
@@ -326,7 +330,7 @@ public final class TeamStationAccount: TeamStationEventService {
     isLoading = true
     defer { isLoading = false }
     do {
-      let taken = try await client.claim(gameId: event.gameId)
+      let taken = try await client.claim(gameId: event.gameId, cameraName: cameraName)
       keep(claimed(taken, gameId: event.gameId, title: event.title, startAt: event.startAt))
       lastError = nil
       return true
@@ -344,7 +348,7 @@ public final class TeamStationAccount: TeamStationEventService {
    * yet, and a refusal is something they need to read. `lastError` says why.
    */
   @discardableResult
-  public func claimChosen() async -> Bool {
+  public func claimChosen(cameraName: String = "") async -> Bool {
     guard let current = chosen else {
       lastError = "Pick a TeamStation event first."
       return false
@@ -352,7 +356,7 @@ public final class TeamStationAccount: TeamStationEventService {
     isLoading = true
     defer { isLoading = false }
     do {
-      let taken = try await client.claim(gameId: current.gameId)
+      let taken = try await client.claim(gameId: current.gameId, cameraName: cameraName)
       // Another game may have been picked while the claim was out.
       guard chosen?.gameId == current.gameId else { return false }
       keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
@@ -406,10 +410,10 @@ public final class TeamStationAccount: TeamStationEventService {
    * Failure is deliberately quiet. Out at a field with no signal the cached
    * address is the best thing anybody has, and it is usually still right.
    */
-  public func refreshChosen() async {
+  public func refreshChosen(cameraName: String = "") async {
     guard let current = chosen else { return }
     do {
-      let taken = try await client.claim(gameId: current.gameId)
+      let taken = try await client.claim(gameId: current.gameId, cameraName: cameraName)
       guard chosen?.gameId == current.gameId else { return }
       keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
       lastError = nil
@@ -463,10 +467,10 @@ public protocol TeamStationEventService: AnyObject {
   /// Why the last request failed, in TeamStation's words.
   var lastError: String? { get }
   @discardableResult
-  func choose(event: TeamStationEvent, claim: Bool) async -> Bool
+  func choose(event: TeamStationEvent, claim: Bool, cameraName: String) async -> Bool
   @discardableResult
-  func claimChosen() async -> Bool
-  func refreshChosen() async
+  func claimChosen(cameraName: String) async -> Bool
+  func refreshChosen(cameraName: String) async
   func forgetChosenEvent()
   func scoreboardURL(for gameId: String) -> URL
 }

@@ -137,6 +137,11 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// it did. Choosing a TeamStation event is the other way, and the app never shows that URL: the
   /// event *is* the destination, and its key lives in the keychain with the account.
   public var streamDestination: StreamDestination
+  /// The name this Director's camera is given when it claims a TeamStation event.
+  ///
+  /// Empty means the claim does not name a camera. A config saved before the key
+  /// existed decodes as empty, so an iPad already in use keeps every other setting.
+  public var cameraName: String
   /// Sweep a different /24 for cameras instead of this iPad's own, for a bench where the cameras sit
   /// behind a traffic shaper on another subnet. Off for normal use.
   public var subnetScanOverrideEnabled: Bool
@@ -208,6 +213,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = "",
     streamDestination: StreamDestination = .url,
+    cameraName: String = "",
     subnetScanOverrideEnabled: Bool = false,
     subnetScanOverride: String = "",
     resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds
@@ -240,6 +246,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.replaySlowMotionRate = Self.clampedReplaySlowMotionRate(replaySlowMotionRate)
     self.streamURL = streamURL
     self.streamDestination = streamDestination
+    self.cameraName = cameraName
     self.subnetScanOverrideEnabled = subnetScanOverrideEnabled
     self.subnetScanOverride = subnetScanOverride
     self.resumeDowntimeLimitSeconds = Self.clampedResumeDowntimeLimit(resumeDowntimeLimitSeconds)
@@ -462,6 +469,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
         StreamDestination.self,
         forKey: .streamDestination
       )) as? StreamDestination ?? fallback.streamDestination,
+      cameraName: try container.decodeIfPresent(String.self, forKey: .cameraName)
+        ?? fallback.cameraName,
       subnetScanOverrideEnabled: try container.decodeIfPresent(
         Bool.self,
         forKey: .subnetScanOverrideEnabled
