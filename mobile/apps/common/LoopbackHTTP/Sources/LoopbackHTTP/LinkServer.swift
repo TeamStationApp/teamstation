@@ -3,7 +3,7 @@ import Network
 
 /// A small HTTP/1.1 server bound to loopback, so nothing on the Wi-Fi can connect.
 ///
-/// GS Distributor reaches GS Director's through usbmuxd, which hands the iPad's side of the cable
+/// TS Distributor reaches TS Director's through usbmuxd, which hands the iPad's side of the cable
 /// to 127.0.0.1. Connections stay open between requests. Files go out one chunk at a time, each
 /// sent only once the previous one has been handed to the network, so serving a 2 GB file costs
 /// one chunk of memory rather than two gigabytes.
@@ -12,7 +12,7 @@ public final class LinkServer: @unchecked Sendable {
 
   public static let fileChunkBytes = 4 << 20
 
-  let queue = DispatchQueue(label: "co.gamestation.loopback-http")
+  let queue = DispatchQueue(label: "app.teamstation.loopback-http")
   let handler: Handler
   private let requestedPort: UInt16
 
@@ -23,7 +23,7 @@ public final class LinkServer: @unchecked Sendable {
   private let statsLock = NSLock()
   private var inFlightPeak = 0
 
-  /// Told how many connections are open each time that changes, on the server's queue. GS
+  /// Told how many connections are open each time that changes, on the server's queue. TS
   /// Distributor holds its event stream open all the while it is attached, so any at all means a
   /// Mac is there.
   private let connectionsChanged: (@Sendable (Int) -> Void)?
@@ -81,7 +81,7 @@ public final class LinkServer: @unchecked Sendable {
     }
   }
 
-  /// Closes the listener and every connection. GS Director calls this on the way into the
+  /// Closes the listener and every connection. TS Director calls this on the way into the
   /// background, where iOS would otherwise leave a listener that accepts and never answers.
   public func stop() {
     queue.async { [self] in
