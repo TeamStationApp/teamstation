@@ -70,6 +70,9 @@ export const enUs = {
 
   // Four angles at once
   angles_open: 'All angles',
+  angles_unavailable:
+    'Multi-camera viewing is unavailable in this browser. Please switch to Brave or Chrome on desktop or Android, or the native TeamStation mobile app.',
+  angles_unavailable_ok: 'OK',
   angles_title: 'Choose up to four angles',
   angles_detail:
     'They play together, on one clock. Hold a picture for a second, then drag it to move it.',

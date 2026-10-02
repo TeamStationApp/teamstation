@@ -11,6 +11,10 @@ export {
   AnglePickerModal,
   type AnglePickerModalProps
 } from './AnglePickerModal'
+export {
+  AnglesUnavailableModal,
+  type AnglesUnavailableModalProps
+} from './AnglesUnavailableModal'
 export { AppHeader, type AppHeaderProps } from './AppHeader'
 export {
   AppNav,
