@@ -5,7 +5,7 @@ public enum ProgramOverlayKind: String, Sendable, Codable, Hashable {
   case web
   case image
   case text
-  /// The chosen GameStation event's scoreboard: a web page whose URL the app
+  /// The chosen TeamStation event's scoreboard: a web page whose URL the app
   /// decides, so the overlay stores none.
   case scoreboard
 

@@ -18,7 +18,7 @@ let package = Package(
       dependencies: [ "DirectorCore" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
-    // Run on the Mac with `swift test`. GS Director's iPad unit tests compile the same files, so
+    // Run on the Mac with `swift test`. TS Director's iPad unit tests compile the same files, so
     // both platforms prove the same stitching.
     .testTarget(
       name: "DirectorExportTests",

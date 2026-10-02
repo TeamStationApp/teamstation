@@ -42,7 +42,7 @@ const APPS = [
     svg: path.join(iconsDir, 'clapboard.svg'),
     out: path.join(
       repoRoot,
-      'mobile/apps/gsDirector/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+      'mobile/apps/tsDirector/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     )
   },
   {
@@ -64,7 +64,7 @@ const APPS = [
     svg: path.join(iconsDir, 'monitors.svg'),
     out: path.join(
       repoRoot,
-      'mobile/apps/gsPreview/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+      'mobile/apps/tsPreview/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     )
   }
 ]

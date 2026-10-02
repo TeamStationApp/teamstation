@@ -6,7 +6,7 @@ let package = Package(
   platforms: [ .iOS(.v18) ],
   products: [
     .library(name: "DirectorNDI", targets: [ "DirectorNDI" ]),
-    // The raw SDK, with none of our Swift on top. Exposed for `gsNdiProbe`, which exists to run
+    // The raw SDK, with none of our Swift on top. Exposed for `tsNdiProbe`, which exists to run
     // the receive path with everything of ours removed, so a crash inside the SDK can be told
     // apart from Director provoking one.
     .library(name: "CNDI", targets: [ "CNDI" ])
@@ -16,7 +16,7 @@ let package = Package(
     .package(path: "../DirectorSources")
   ],
   targets: [
-    // Built by `gsDirector/scripts/bootstrapNdi.sh`, not committed: the library is about 380 MB
+    // Built by `tsDirector/scripts/bootstrapNdi.sh`, not committed: the library is about 380 MB
     // across its slices, and its simulator slice has to be produced on this machine because the
     // stock SDK ships none for arm64.
     .binaryTarget(name: "libndi", path: "Vendor/libndi.xcframework"),

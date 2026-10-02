@@ -28,7 +28,7 @@ public final class RTSPSession: @unchecked Sendable {
       username: String? = nil,
       password: String? = nil,
       transport: Transport = .tcp,
-      userAgent: String = "GS Director/1.0"
+      userAgent: String = "TS Director/1.0"
     ) {
       self.host = host
       self.port = port
@@ -88,7 +88,7 @@ public final class RTSPSession: @unchecked Sendable {
     self.onEvent = onEvent
     contentBase = configuration.url
     builder = RTSPRequestBuilder(userAgent: configuration.userAgent)
-    queue = DispatchQueue(label: "co.gamestation.director.rtsp.\(configuration.host)")
+    queue = DispatchQueue(label: "app.teamstation.director.rtsp.\(configuration.host)")
   }
 
   public func start() {
@@ -135,7 +135,7 @@ public final class RTSPSession: @unchecked Sendable {
       case .cancelled:
         break
       case .waiting:
-        // iOS-to-iOS RTSP (GS Cameraman) sits in `.waiting` for Local Network / peer-to-peer
+        // iOS-to-iOS RTSP (TS Cameraman) sits in `.waiting` for Local Network / peer-to-peer
         // before `.ready`. NearStream boxes skip this state; aborting it made the iPhone look dead.
         break
       default:

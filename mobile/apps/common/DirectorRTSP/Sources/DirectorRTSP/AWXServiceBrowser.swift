@@ -30,7 +30,7 @@ public final class StaticAdvertisementBrowser: CameraAdvertisementBrowsing, @unc
   public func stop() {}
 }
 
-/// NearStream identity plus GS Cameraman `_rtsp._tcp`, so one discovery sweep sees both.
+/// NearStream identity plus TS Cameraman `_rtsp._tcp`, so one discovery sweep sees both.
 public final class CompositeAdvertisementBrowser: CameraAdvertisementBrowsing, @unchecked Sendable {
   private let browsers: [any CameraAdvertisementBrowsing]
 

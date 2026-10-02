@@ -1,0 +1,217 @@
+# Content Templates: default row, Add/Edit canvas, web overlay, list rewind toggle, copy template, Add Text.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 1
+      syntheticEntropy: low
+      archiveAudio: false
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 20000
+
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-content-template-1'
+    timeout: 10000
+- assertVisible: 'default template'
+- tapOn:
+    id: 'settings-content-template-1'
+
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- assertVisible:
+    id: 'content-editor-rename'
+- tapOn:
+    id: 'content-add'
+- extendedWaitUntil:
+    visible:
+      id: 'content-add-web'
+    timeout: 5000
+- tapOn:
+    id: 'content-add-web'
+- extendedWaitUntil:
+    visible:
+      id: 'overlay-edit-url'
+    timeout: 10000
+- tapOn:
+    id: 'overlay-edit-url'
+- eraseText
+- inputText: 'https://app.teamstation.app/scoreboard/qpll'
+- tapOn:
+    id: 'overlay-edit-url-clear'
+- tapOn:
+    id: 'overlay-edit-url'
+- inputText: 'https://app.teamstation.app/scoreboard/qpll'
+- tapOn:
+    id: 'overlay-edit-save'
+- extendedWaitUntil:
+    notVisible:
+      id: 'overlay-edit-save'
+    timeout: 10000
+
+- tapOn:
+    id: 'content-list'
+- extendedWaitUntil:
+    visible:
+      id: 'content-list-row-1'
+    timeout: 10000
+- assertVisible: 'https://app.teamstation.app/scoreboard/qpll'
+- extendedWaitUntil:
+    visible:
+      id: 'content-list-rewind-1'
+    timeout: 5000
+- tapOn:
+    id: 'content-list-rewind-1'
+- assertVisible:
+    id: 'content-list-live-1'
+- tapOn:
+    id: 'content-list-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-list-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: 'settings-add-content-template'
+    timeout: 10000
+- assertNotVisible:
+    id: 'settings-content-template-rename-1'
+- tapOn:
+    id: 'settings-add-content-template'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-new-template-name'
+    timeout: 10000
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Saturday JV'
+- tapOn:
+    id: 'settings-new-template-name-clear'
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Saturday JV'
+- tapOn:
+    id: 'settings-new-template-create'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
+- assertVisible: 'Saturday JV'
+- tapOn:
+    id: 'settings-content-template-select-1'
+- assertNotVisible:
+    id: 'content-editor-done'
+- tapOn:
+    id: 'settings-content-template-2'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'settings-add-content-template'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-new-template-name'
+    timeout: 10000
+- tapOn: 'Blank'
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Empty Game'
+- tapOn:
+    id: 'settings-new-template-create'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
+- assertVisible: 'Empty Game'
+- tapOn:
+    id: 'settings-content-template-delete-2'
+- tapOn:
+    id: 'settings-content-template-delete-confirm'
+- assertNotVisible: 'Saturday JV'
+
+- tapOn:
+    id: 'settings-content-template-1'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-add'
+- extendedWaitUntil:
+    visible:
+      id: 'content-add-text'
+    timeout: 5000
+- tapOn:
+    id: 'content-add-text'
+- extendedWaitUntil:
+    visible:
+      id: 'text-overlay-field'
+    timeout: 10000
+- assertVisible:
+    id: 'text-align-center'
+- assertVisible:
+    id: 'text-font-size-field'
+- assertVisible:
+    id: 'text-color'
+- assertNotVisible:
+    id: 'content-editor-done'
+- assertNotVisible:
+    id: 'content-list'
+- assertNotVisible:
+    id: 'content-add'
+- tapOn:
+    id: 'text-overlay-field'
+- inputText: 'Hello Replay'
+- tapOn:
+    id: 'text-overlay-done'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000

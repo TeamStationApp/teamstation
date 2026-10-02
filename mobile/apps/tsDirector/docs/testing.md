@@ -1,0 +1,491 @@
+# Testing
+
+Video is opaque to normal UI automation. A tile that renders a frozen frame and a tile that
+renders live look identical to an accessibility tree, so the app publishes what it is actually
+doing and the tests assert on that.
+
+## Three ways to observe the app
+
+**The debug HUD** overlays counters on the grid. Useful when watching by hand; not what the
+tests read.
+
+**Accessibility values.** Every tile exposes a compact string:
+
+```
+state=live src=VM33_00001 f=246 off=0.0 onair=1
+```
+
+Maestro asserts on substrings of this, which is why the shape is a contract rather than a
+convenience.
+
+A tile's value carries the archive height as `arch=`, which is how a flow tells the difference
+between a tier being *reported* and a tier being *applied*:
+
+```
+tile=1 state=live src=VM33_00001 f=246 off=0.0 onair=1 arch=720 out=30
+```
+
+`f=` counts arrivals even while the tile is paused on a still. `out=` is the rate of frames that
+actually reached the display layer — that is how Return to Live is proven not frozen.
+
+`loss=` is packets the transport lost over the last whole second (on an NDI tile, the SDK's
+dropped frames). It is the raw rate: the pill on the tile shows an em dash instead whenever
+nothing is arriving to measure, because loss is counted from gaps between packets that *do*
+arrive, so a dead link would otherwise read zero like a clean one. Output's value carries
+`fps=`, `loss=`, `age=` and `rec=` for its own pills; `age=` is the on-air camera's
+capture-to-arrival age, and `rec=` counts only while the operator has recording engaged, not
+while a stopped recording is still flushing.
+
+**The control server.** When launched with `-uiTest true`, the app runs a loopback HTTP server
+on port 8765. It exists because custom URL schemes make iOS show a confirmation dialog that
+breaks unattended runs.
+
+```bash
+node scripts/control.js --device summary          # one-line state
+node scripts/control.js --device state            # full JSON dump
+node scripts/control.js --device enable 1 2 3     # enable sources (1-based)
+node scripts/control.js --device send /start
+node scripts/control.js --device send "/record?on=true"
+node scripts/control.js --device send "/name-camera?index=1&name=Third%20Base"
+node scripts/control.js --device send "/bind-camera?index=1&name=First%20Base"
+node scripts/control.js --device send "/link-source?video=1&control=2"   # row 2's phone controls row 1's tile
+node scripts/control.js --device send "/unlink-source?index=2"           # from either row of the link
+node scripts/control.js --device send /search-cameras
+node scripts/control.js --device send "/source-layout?order=5,1,2,3,4"
+node scripts/control.js --device send "/source-layout?order=1,2,3,4,5&corner=bottomTrailing"  # park Output bottom-right
+```
+
+The camera commands exist so identity can be asserted without driving a menu by coordinates, and
+`/search-cameras` forces a search while production has the periodic one switched off.
+
+Row numbers on the wire are the **stored** order, the one `/dump-state` lists under `sources`
+(`linkedControlIndex` and `isLinkedControl` say who is linked to whom). The Cameras screen shows a
+linked phone directly under the row it controls, so on screen `source-row-{n}` counts **display**
+order; a row's accessibility value carries `link=video:{n}` or `link=control:{n}` naming its partner's
+display row. A row's name is its rename control (`source-name-{n}`, Done commits); the chain button is
+`source-link-{n}`, its picker entries `link-choice-{n}` by the candidate's display row, and the red X
+on a linked phone is `source-unlink-{n}`.
+
+### Launch camera runs through Maestro, not `devicectl`
+
+An app launched by `xcrun devicectl device process launch` discovers **zero** cameras; the same
+build launched by Maestro finds all three at once. Whatever grants local-network access does not
+apply to that launch path, and nothing in the app reports an error — discovery is simply empty.
+
+So anything involving real cameras starts by letting a flow launch the app, then drives the running
+process over the control server:
+
+```bash
+node scripts/run-maestro.js --device <udid> smoke   # launches, selects cameras, enters the grid
+node scripts/control.js --device send "/record?on=true"
+node scripts/measure.js --device --seconds 30
+```
+
+Synthetic and file profiles are unaffected and can be launched with `scripts/device.sh launch`.
+
+### The camera flows also run in the simulator
+
+The simulator inherits the Mac's interfaces, so a simulator run reaches the same cameras the iPad
+does — as long as the Mac is on their network, wired or not:
+
+```bash
+DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
+node scripts/run-maestro.js --device <udid> --sim rtsp-three-cameras
+node scripts/run-maestro.js --device <udid> --sim rtsp-camera-naming
+```
+
+That covers the transport, the search and the identity rules against real cameras without the iPad on
+the bench. It says nothing about thermals, sustained encode or either iPad's decode capacity, all of
+which are the reasons the device runs still exist.
+
+Two caveats, both learned the hard way. The app is letterboxed on a portrait iPad simulator, so the
+percentage coordinates in the scrub flows do not land where they do on the device — run the scrub
+flows on the iPad. And the simulator finds cameras through whichever interface the Mac is using,
+including Ethernet, which is why `SubnetScanner` looks at every non-loopback interface rather than
+`en0`.
+
+### Which iPad
+
+Every script takes the target UDID before it runs (`--device <udid>`, `DIRECTOR_DEVICE_UDID`, or
+`DIRECTOR_SIMULATOR_UDID`). Flows in `maestro/flows` do not name a device, so parallel agents can
+point the same YAML at different machines. Two very different iPads have been used here — a 2018
+A12X and an M4 — and `run-maestro.js` prints the model it was given:
+
+```bash
+export DIRECTOR_DEVICE_UDID=<udid>            # physical scripts
+export DIRECTOR_SIMULATOR_UDID=<udid>         # build-sim / test-unit
+node scripts/run-maestro.js --device <udid> --suite operator
+```
+
+`run-maestro.js` prints the UDID it was given. Quote that line with any measurement. A number in
+`docs/risks.md` without a device attached to it cannot be compared with anything.
+
+### What to look at when a camera does not appear
+
+`discoveryStatus`, in the HUD and the state dump, reports the search rather than its conclusion:
+
+```
+scan=192.168.7.0/24 probed=253 open=3 confirmed=3 cname=1 streaming=0 manual=0
+```
+
+`open` counts hosts listening on 554 (NearStream) or 8554 (TS Cameraman); `confirmed` counts the
+sockets that then described a video track this app can decode, and `cname` how many of those named
+themselves with a TS Cameraman UUID — each of those is recognised by its record, whatever its
+address. `open` above `confirmed` means something else is on one of those ports.
+`probed=0` with a subnet named means the mask was too wide to scan; `scan=off` means scanning is
+switched off and only `rtspHosts` will be tried.
+
+Per camera, `loss=` in the HUD counts RTP packets that never arrived, and `src=` carries the reason a
+source last stopped delivering — `no frames for 5s` is a session that went quiet without an error,
+which is the failure a flapping link actually produces.
+
+## Measuring rather than sampling
+
+`framesPerSecond` in a single dump is instantaneous and jitters hard with network sources — one
+reading told us 0.2 fps and the next 4.5 fps for the same stream. Anything that claims a source
+is or is not keeping up must measure over a window:
+
+```bash
+node scripts/measure.js --device --seconds 20
+```
+
+It reports arrival, encode and proxy rates per tile alongside what the source *says* it is
+sending, which is what separates a network problem from a pipeline one.
+
+### Counters are not files
+
+Telemetry proves buffers reached a writer. Whether the bytes on disk are playable at the expected
+rate is a separate question, and every archive bug found so far produced healthy counters beside
+unusable output. So after a recording, decode what actually landed:
+
+```bash
+node scripts/verifyProgram.js     # programme master: rate, audio track, scorebug burn-in
+node scripts/verifyArchives.js    # newest recording, each camera's first segments
+```
+
+Both pull from the device and run `ffprobe`. `verifyProgram.js` also writes a still to
+`artifacts/program/frame.png`, which is the only way to see the composited picture at all — the
+programme tile is an `AVSampleBufferDisplayLayer`, and WebDriverAgent screenshots exclude hardware
+video layers. `verifyArchives.js` reconstructs a playable file by concatenating the initialization
+segment with the first media segments, so it takes the init segment's name from the device listing
+rather than assuming one; a missing `moov` is reported by `ffprobe` as invalid data, which reads as
+a corrupt archive when the file was never assembled properly in the first place.
+
+### Is the network the limit, or are we?
+
+A source delivering 4 fps looks identical whether the link cannot carry it or the app cannot keep
+up. The control server serves ballast so the link can be measured directly:
+
+```bash
+curl -s -o /dev/null -w '%{speed_download} B/s\n' \
+  "http://<ipad-wifi-ip>:8765/throughput?bytes=33554432"
+```
+
+Compare against the same request over USB — a large gap is the link, a small one is us. This is how
+a full-resolution collapse was pinned to a 15 Mbps Wi-Fi link rather than the pipeline.
+
+Check the *host's* route before comparing against a desktop receiver: `route -n get default`.
+A Mac on Ethernet is not a test of the same network.
+
+### When a recording will not stop, compare the two clocks
+
+Tile telemetry publishes `archiveVideoSeconds` and `archiveAudioSeconds`. They must stay close
+together. If they do not, the muxer is being asked to span a timeline that does not exist and
+`finishWriting` will never return — the symptom is a stop that sits at stage `finishing archives`
+until the deadline fires and reports a possibly-truncated file:
+
+```bash
+node scripts/control.js --device state | \
+  node -e '…; for (const t of s.tiles) console.log(t.archiveVideoSeconds, t.archiveAudioSeconds)'
+```
+
+`dvr.lastFlushSeconds` records how long the last stop spent flushing. Healthy is under a second.
+
+## Probing the encoder when recording fails
+
+`AVAssetWriter` reports every encode problem as `Cannot Encode`, whether the cause is a bad setting,
+a busy device, or a wedged encoder. Two probes separate those cases, both reachable over the control
+server and both reporting into `encodeProbe` in the state dump.
+
+```bash
+# How much 1080p encoding can this device sustain, in 30 fps stream equivalents?
+curl "http://<ipad>:8765/probe-throughput?sessions=4&seconds=20&height=1080"
+
+# Does the hardware encoder actually emit compressed frames? Count emitted, not accepted.
+node scripts/control.js --device send "/probe-encoders?max=1&frames=30"
+
+# How many concurrent 1080p sessions will this device give us?
+node scripts/control.js --device send "/probe-encoders?max=8"
+
+# Will an AVAssetWriter configured the way the DVR configures it accept a stream of frames?
+node scripts/bisect-writer.js 30
+```
+
+`bisect-writer.js` sweeps segmented versus plain-file writers, minimal versus full compression
+settings, our buffer pool versus the adaptor's, and both codecs. If every configuration fails the
+problem is the device, not the settings — see `risks.md` for the run where that happened.
+
+Read the probe output carefully: `frames accepted` only means VideoToolbox queued them. `emitted` is
+the number it actually compressed, and that is the number that says the encoder works.
+
+## Chasing a stutter
+
+Frame rate will not show you a stutter. A tile missing one frame a second still reports 30 fps and a
+two-millisecond mean, so the numbers to read are extremes from a single second:
+
+```bash
+node scripts/jitter.js --device --seconds 20            # while live
+node scripts/jitter.js --device --seconds 20 --record   # with the DVR running too
+```
+
+`gap` is the widest space between two arriving frames in one second, and a trailing `k` means that
+gap ended on a keyframe — the camera's own pacing. `deliver` is the longest a single frame spent being
+decoded and delivered on the receive thread, which is time we did not spend reading the socket. The
+same two figures per tile are in the HUD as `gap=` and `dlv=`.
+
+`buffer needed` answers a different question: how much video a smoothed preview would have to hold to
+present every frame on time, taken as the spread between the least and most late arrival against the
+frames' own timestamps over ten seconds. It needs a longer run than the other two — give it at least
+60 seconds so several windows close — and appears in the HUD as `buf=`.
+
+Since frames are held in a delay line and released against their own timestamps, the number that says
+whether the operator sees a stutter is `release` (`rel=` in the HUD), which is the same widest gap
+measured on the way out. Read it against `gap`:
+
+| `gap` | `release` | `late` | Reading |
+|---|---|---|---|
+| 200–500 ms | one frame interval | 0 | Normal. The camera bursts, the buffer absorbs it. |
+| 200–500 ms | tracks `gap` | climbing | The buffer is too small, or has just started and has not sized itself yet. |
+| one frame interval | one frame interval | 0 | The camera is not bursting at all — check it is really streaming. |
+| any | spikes with `dlv` | 0 | Our own work on the release tick, not the camera. |
+
+`held` (`pl=`) is the delay being paid for that, and `late` counts frames that arrived after they were
+due. A handful of `late` frames in the first seconds of a camera is the controller finding its size;
+`late` climbing during steady streaming is a real problem.
+
+Read them together. A `gap` of several frame intervals with a small `deliver` is the camera or the
+link; a `gap` that tracks `deliver` is our own work on that thread. To rule the app out entirely,
+measure the stream itself from the Mac — sizes are reliable even when arrival timing through a pipe is
+not:
+
+```bash
+ffprobe -rtsp_transport tcp -i rtsp://<camera>:554/live/mainstream \
+  -select_streams v -show_entries packet=pts_time,size,flags -of csv=p=0
+```
+
+A keyframe that is half of its second of video takes half a second to arrive, and no app-side change
+makes it arrive sooner — see the keyframe entry in `risks.md`.
+
+## Launch arguments
+
+| Argument | Effect |
+|----------|--------|
+| `-uiTest true` | Enables the control server and the control channel |
+| `-sourceProfile synthetic4\|file4\|rtsp` | Which sources to use |
+| `-clearState true` | Forget saved source selection, source-tile order, last Output camera, and every named camera |
+| `-failEncoders N` | Fault injection for the degradation ladder |
+| `-segmentSeconds N` | Shorter segments so a flow produces several in seconds |
+| `-rtspHosts a,b,c` | Cameras to try directly, bypassing the search |
+| `-rtspScan false` | Turn the subnet search off, leaving only `rtspHosts` |
+| `-rtspPath /live/mainstream` | Stream path to request |
+| `-rtspTransport tcp` | Only TCP is implemented; `udp` fails rather than quietly using TCP |
+| `-sourceProfile ndi` | Receive NDI cameras instead of RTSP ones |
+| `-ndiSources a;b` | Restrict the list to these NDI names |
+| `-ndiExtraIPs a,b` | Query these addresses directly, for a camera mDNS cannot reach |
+| `-ndiBandwidth lowest` | Ask the SDK for its reduced-bandwidth stream |
+| `-sourceEncodeCodec h264\|hevc` | Codec for archives the app has to encode itself |
+| `-sourceEncodeBitrate N` | Bitrate for those archives |
+| `-sourceEncodeLimit N` | How many cameras may encode an archive at once |
+
+With no `-sourceProfile`, the Settings switch decides: simulated cameras on gives `synthetic4`, off
+gives `rtsp`. An app opened from the home screen passes no arguments, so it searches for real
+cameras — which is the only profile a device can actually fill, since the `file4` fixtures ship with
+the test runner rather than the app.
+
+## Maestro flows
+
+```bash
+node scripts/run-maestro.js --list
+node scripts/run-maestro.js --device <udid> --suite operator
+node scripts/run-maestro.js --device <udid> smoke
+```
+
+Operator-facing conditions (tap to program, scrub a preview, cut a rewind, Return to Live not
+frozen, mix, cap, empty slots) live in [operator-test-vectors.md](operator-test-vectors.md).
+
+Flows involving real cameras run on the iPad, or on a simulator with `--sim` when the Mac is on the
+camera network. Two device-specific requirements the runner handles: `--team-id` for WebDriverAgent
+signing, and `--app-file` for any flow using `clearState`, since the runner reinstalls the bundle to
+clear it.
+
+| Flow | Gate |
+|---|---|
+| `smoke` | Toolchain and UI automation work at all |
+| `rtsp-three-cameras` | All three real cameras found by search, decoded, live, nothing lost |
+| `rtsp-camera-naming` | A named camera is recognised again by unique id at the next launch |
+| `cameraman-control` | A Cameraman tile's three-dot button opens the phone's own screen; zoom, flip and Settings reach the phone (simulator, against `fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman`) |
+| `operator-*` | Product vectors in [operator-test-vectors.md](operator-test-vectors.md) |
+| `record-and-stop` | Recording starts, segments accumulate, the stop *completes*, program file exists |
+| `scrub-and-return` | Scrub back through history while recording continues, then return to live |
+| `scrub-incremental` | A second swipe continues from the playhead, not from live |
+| `recordings-export` | Recordings lists a stopped take, Export is offered, Select All + Delete removes it |
+| `resume-after-crash` | The app is killed mid-take and comes back recording the same take, and a take the operator stopped stays stopped |
+
+Screenshots and hierarchy dumps land in `maestro/reports/<timestamp>/assets/`.
+
+### Resuming a take across a crash
+
+`resume-after-crash.yaml` is the operator's half: the deck comes back already recording and the
+HUD says the take was picked up. Everything below the UI — that each camera rediscovers its server
+and re-arms, that the export still puts every angle and the programme on the wall clock, and that
+the hole holds the last picture — needs real cameras and a decode, so it lives in a driver:
+
+```bash
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js                  # a take
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js --scenario stream    # a stream
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js --scenario expired   # too late
+```
+
+It serves two RTSP cameras rather than using the in-app test pattern, because rediscovering and
+reconnecting is the part under test. By default they are **live wall-clock cameras**
+(`scripts/makeRtspFixtures.js --live`): ffmpeg generates each picture and its sound as it is served,
+drawing the Unix time of every frame as 32 binary cells and beeping on every whole second. After the
+export, `scripts/verifyWallClockSync.js` reads both back out of each file with AVFoundation (ffmpeg's
+edit-list handling shows the wrong frames on these files) and checks, per file:
+
+| Check | Means |
+|---|---|
+| length | the file lasts the take, start to stop, within 0.1 s |
+| pace | every picture outside a hole shows the take's clock at one constant offset — no drift, no jump |
+| placement | that offset is under a second |
+| hole | where the app was away, one frame is held |
+| sync | each beep lands on the second the picture shows: median within 40 ms, none past 100 ms |
+| rhythm | beeps a second apart, so the sound runs at wall speed |
+
+It can be pointed at any export by hand:
+
+```bash
+node scripts/verifyWallClockSync.js <file.mov> --take-start <unix s> --take-end <unix s> --holes 27.1-35.6
+```
+
+`--loop` serves the older looped capture instead, which proves resuming but not sync.
+
+Both need **passwordless sudo**. Each camera binds `:554` on its own `10.255.77.N/32` alias on the
+loopback interface. Director identifies a camera by its IPv4, so two cameras on one address collapse
+into a single row; and it accepts only private LAN addresses, so `127.0.0.x` will not do. An iOS
+simulator reaches the aliases because it shares the Mac's network stack.
+
+`tsdirector://test/crash` is `SIGKILL` on the app's own process. Terminating the app politely runs
+the stop path, which is the path that already worked.
+
+**This runner ignores `text` when an `id` is also present in a selector.** `{id: hud-recording,
+text: 'rec=0'}` therefore passes the instant the label exists, whatever it says — which made a
+number of assertions here vacuous until it was caught with `maestro/flows/matcher-check.yaml`.
+Any assertion about a *value* must use a text-only selector.
+
+## Archive wall clock (equal-length takes)
+
+Recording wall clock is the timeline. Every exported MOV for a take — each angle and the program —
+lasts `ended_at - started_at`. A camera that pauses, drops audio, or changes 720→1080 is filled with
+**black video and silent audio** so four movies started together stay in sync. Live pictures stay a
+bitstream copy; filler is a small encoder at the size locked on that camera's first keyframe.
+
+Live lavfi farm (pause / drop-audio / set-size / reset-tcp), not the looped stopwatch fixtures:
+
+```bash
+node scripts/fakeRtspCameras.js --local --scenario bad-cameras
+node scripts/fakeRtspCameras.js --scenario bad-cameras --self-test
+```
+
+`--local` binds `0.0.0.0:18554–18557` so the M4 (or simulator) can reach the farm at the Mac's
+LAN IP. `http://127.0.0.1:18550` is `/fault` and `/clock` on the Mac. Keep `--fixtures` for a
+non-faulting regression. `sudo -E node scripts/fakeRtspCameras.js` is the Bonjour+alias path
+when a flow needs four distinct :554 addresses instead of host:port.
+
+`testArchiveTimeline.js` passes those four `host:port` values as a **semicolon**-separated
+`LAN_HOSTS` list. Maestro `-e KEY=a,b` keeps only `a`, which is why a comma list showed one
+camera row (`manual=1`) on the M4. LaunchConfiguration accepts `;` or `,`.
+
+M4 integration (does **not** `clearState`; do **not** run this, or `recordings-export.yaml`,
+on the rec-18 iPad):
+
+```bash
+DIRECTOR_DEVICE_UDID=11111111-1111111111111111 bash scripts/build-device.sh
+DIRECTOR_DEVICE_UDID=11111111-1111111111111111 node scripts/testArchiveTimeline.js --device 11111111-1111111111111111
+```
+
+Simulator:
+
+```bash
+DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testArchiveTimeline.js --sim --device <udid>
+```
+
+`archive-timeline.yaml` is not in `--suite operator`.
+
+## Program writer death (continuation files)
+
+If the program `AVAssetWriter` fails mid-take, recording continues. A second file
+`program-YYYYMMDD-HHMMSS-2.mp4` is opened, the dead interval is black + silence, and export
+of the primary output lasts `D = ended_at - started_at`. rec-18 on disk is the historical
+single short file; do not export, delete, or `clearState` that take to “fix” it.
+
+UITest-only (`-uiTest true`): `tsdirector://test/kill-program-writer` poisons the live writer.
+There is no operator control for this. `probeWriter` is a separate lab writer.
+
+M4 (Bench iPad (2) — iPad Pro 11-inch (M4)); does **not** `clearState`; do **not** run
+this on the rec-18 iPad:
+
+```bash
+DIRECTOR_DEVICE_UDID=11111111-1111111111111111 ./scripts/build-device.sh
+DIRECTOR_DEVICE_UDID=11111111-1111111111111111 \
+  node scripts/testProgramWriterDeath.js --device 11111111-1111111111111111
+```
+
+Not in `--suite operator`.
+
+## NDI cameras
+
+The transport, the filter and the archive shape are covered in [ndi.md](ndi.md), including the
+fault table. The farm and the app:
+
+```bash
+node scripts/fakeNdiCameras.js --self-test           # markers, render cost, pacing
+node scripts/fakeNdiCameras.js --count 4 --fps 30
+DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
+xcrun simctl launch <udid> app.teamstation.director -uiTest true -sourceProfile ndi
+node scripts/control.js enable 1 2 3 4
+node scripts/fakeNdiCameras.js --fault cam=1 drop=0.05
+node scripts/fakeNdiCameras.js --clock               # what the generator actually sent
+node scripts/fakeNdiCameras.js --stop
+```
+
+Two counters answer most NDI questions, and they are on the tile rather than in a log.
+`archiveStride` above 1 means the camera is recording at a fraction of its live rate because its
+encoder could not sustain the full one; `archiveDropped` climbing beside a healthy `framesPerSecond`
+is the archive degrading on purpose so the picture does not.
+
+**A simulator has no hardware video encoder.** Four 1080p HEVC archives there are software encodes
+and the fleet collapses; that number says nothing about the iPad. Preview, discovery, the filter,
+timing and format handling are all honest on a simulator — capacity is not.
+
+## Fixtures
+
+`scripts/make-fixtures.js` generates H.264 and HEVC clips with the frame number burned into the
+image, plus a JSON sidecar listing the expected markers. Decoding a fixture and reading the
+markers back is how encode fidelity is checked without comparing pixels.
+
+## Inspecting what was written
+
+```bash
+xcrun devicectl device info files --device <udid> \
+  --domain-type appDataContainer --domain-identifier app.teamstation.director \
+  --subdirectory "Library/Application Support/TSDirector/Archives" \
+  --json-output /tmp/archives.json
+```
+
+Listing the whole container can fail (`CoreDevice StreamingAction`) when Archives holds thousands of files. Pull one `rec-<n>` tree, plus `index.sqlite` and its `-wal`/`-shm`, then `PRAGMA wal_checkpoint(FULL)` before reading spans. Equal-length is `MAX(start_wall+duration)-MIN(start_wall)` versus `ended_at-started_at`, not a naive ffmpeg concat of fMP4 segments.
+
+Archives live under `Library/Application Support/TSDirector/Archives/<source>/rec-<n>/`, as an
+`init.mp4` plus numbered segments. Segments are fMP4 and are not playable alone — `SegmentAssembler`
+concatenates them with the initialization segment for replay and export.

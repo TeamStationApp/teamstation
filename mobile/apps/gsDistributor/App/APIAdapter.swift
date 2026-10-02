@@ -4,7 +4,7 @@ import DistributorAPI
 import DistributorWire
 import Foundation
 import LoopbackHTTP
-import GameStationKit
+import TeamStationKit
 
 /// Answers GS Distributor's REST API with the model the window uses, so what the API starts is what
 /// the window would start, and the window shows it.

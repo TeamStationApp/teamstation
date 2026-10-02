@@ -1,0 +1,42 @@
+# B5/B6: unused grid slots stay empty; tapping them does not change program.
+appId: app.teamstation.director
+---
+- launchApp:
+    appId: app.teamstation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 2
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-2'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- assertVisible: '2/5 enabled'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible: 'source=2 state=live.*'
+    timeout: 20000
+
+- assertVisible: 'source=3 state=empty .*src=none'
+- assertVisible: 'source=4 state=empty .*src=none'
+- assertVisible: 'source=5 state=empty .*src=none'
+- assertVisible: 'output src=CAM2 .*'
+
+- tapOn:
+    id: 'source-5'
+- assertVisible: 'output src=CAM2 .*'
+- assertVisible: 'source=2 .*onair=1'

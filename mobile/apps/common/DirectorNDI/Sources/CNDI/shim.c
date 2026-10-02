@@ -3,6 +3,6 @@
 // first Swift file that imports it.
 #include "CNDI.h"
 
-const char* gs_ndi_shim_version(void) {
+const char* ts_ndi_shim_version(void) {
   return NDIlib_version();
 }

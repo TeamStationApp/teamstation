@@ -42,7 +42,7 @@ public final class FileFrameSource: FrameSource, @unchecked Sendable {
     self.loops = loops
     self.clock = clock
     self.queue = DispatchQueue(
-      label: "co.gamestation.director.file.\(sourceID.slug)",
+      label: "app.teamstation.director.file.\(sourceID.slug)",
       qos: .userInitiated
     )
   }

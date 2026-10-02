@@ -1,6 +1,6 @@
 # GS Director ↔ GS Distributor protocol
 
-GS Director serves HTTP/1.1 on `127.0.0.1:8770` (`gsDirector/Packages/DirectorLink`). GS
+GS Director serves HTTP/1.1 on `127.0.0.1:8770` (`tsDirector/Packages/DirectorLink`). GS
 Distributor reaches it over the USB-C cable: usbmuxd opens a byte pipe to that port on the iPad, and
 `Packages/UsbMux`'s loopback forwarder makes it answer on a local port on the Mac. Nothing on the
 Wi-Fi can connect, so there are no tokens.

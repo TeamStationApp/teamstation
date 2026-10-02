@@ -31,8 +31,8 @@ packages:
     path: ../common/DirectorExport
   DistributorWire:
     path: ../common/DistributorWire
-  GameStationKit:
-    path: ../common/GameStationKit
+  TeamStationKit:
+    path: ../common/TeamStationKit
   UsbMux:
     path: Packages/UsbMux
   DirectorClient:
@@ -62,7 +62,7 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: GameStation
         CURRENT_PROJECT_VERSION: "1"
         MARKETING_VERSION: "1.0"
-        # Adds GSPrimaryHost, which no INFOPLIST_KEY_ build setting can
+        # Adds TSPrimaryHost, which no INFOPLIST_KEY_ build setting can
         # express; the rest of the plist is still generated below.
         INFOPLIST_FILE: App/Info.plist
         LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/../Frameworks
@@ -73,8 +73,8 @@ targets:
         product: DirectorExport
       - package: DistributorWire
         product: DistributorWire
-      - package: GameStationKit
-        product: GameStationKit
+      - package: TeamStationKit
+        product: TeamStationKit
       - package: UsbMux
         product: UsbMux
       - package: DirectorClient
