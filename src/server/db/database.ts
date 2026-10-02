@@ -12,6 +12,8 @@ import { attachInt8Parser } from './int8'
 /** `timestamptz`: read as a Date, written as a Date or an ISO string. */
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
 type Json = ColumnType<unknown, unknown, unknown>
+/** `bytea`: read as a Buffer, written as any byte array. */
+type Bytes = ColumnType<Buffer, Uint8Array, Uint8Array>
 
 /** A fan following a group: a line on their Home and no access. */
 export interface FollowsTable {
@@ -49,6 +51,12 @@ export interface UsersTable {
   bats_source: 'import' | 'manual' | null
   /** Set when this account was absorbed by another; it is closed, not deleted. */
   merged_into: string | null
+  /**
+   * The year and month of birth, both or neither (051guardiansAndAccounts).
+   * Never a day: `ageOn` in `common/age.ts` reads an age from these two.
+   */
+  birth_year: number | null
+  birth_month: number | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -98,6 +106,11 @@ export interface LeaguesTable {
   /** Feet from home plate to the fence, for seasons that do not set their own. */
   fence_distance_ft: number | null
   spectator_access: Generated<'team' | 'league'>
+  /**
+   * A SafeSport Local Affiliated Organization, bound by the MAAPP. Set by the
+   * league's own administrators (051guardiansAndAccounts).
+   */
+  safesport_lao: Generated<boolean>
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -223,6 +236,13 @@ export interface MembershipsTable {
   positions: Generated<string[]>
   joined_at: Timestamp
   granted_by_link_id: string | null
+}
+
+/** A person following a team, which shows them its listing (050teamFollows). */
+export interface TeamFollowsTable {
+  user_id: number
+  team_id: string
+  created_at: Generated<Date>
 }
 
 /** One role for one person on one league, season or team (043roleFlags). */
@@ -554,6 +574,12 @@ export interface InvitesTable {
   /** Set when the invitation was made out to one address and mailed to it. */
   for_email: string | null
   request_id: string | null
+  /**
+   * The player whose guardian (or adult family member, by `relative_kind`)
+   * redeeming this makes somebody. Both set together, on team invites only.
+   */
+  guardian_of_user_id: Generated<number | null>
+  relative_kind: Generated<'guardian' | 'family' | null>
 }
 
 /** Who redeemed which invite, and whether that is where their account began. */
@@ -1152,6 +1178,242 @@ export interface TessUsageWeeksTable {
   requests: Generated<number>
 }
 
+/** The audience a conversation is kept to, or `dm` (052chat). */
+export type ChatKind =
+  | 'teamStaff'
+  | 'teamMembers'
+  | 'teamFans'
+  | 'seasonStaff'
+  | 'seasonAllStaff'
+  | 'seasonAnnouncements'
+  | 'leagueOrg'
+  | 'dm'
+
+/** A device holding chat keys, bound to the session it signed in with. */
+export interface ChatDevicesTable {
+  id: string
+  user_id: number
+  session_id: string | null
+  name: string
+  platform: 'web' | 'ios' | 'android'
+  box_public_key: Bytes
+  sign_public_key: Bytes
+  created_at: Generated<Date>
+  last_seen_at: Generated<Date>
+  revoked_at: Timestamp | null
+}
+
+/** A nonce a device signs to bind itself to a new session; used once. */
+export interface ChatResumeChallengesTable {
+  nonce: Bytes
+  device_id: string
+  created_at: Generated<Date>
+  expires_at: Timestamp
+}
+
+/** A user's identity key; at most one per user is not `replaced_at`. */
+export interface ChatIdentitiesTable {
+  id: string
+  user_id: number
+  identity_public_key: Bytes
+  created_at: Generated<Date>
+  replaced_at: Timestamp | null
+}
+
+/** One generation of a user's per-user key, signed by the identity. */
+export interface ChatUserKeysTable {
+  user_id: number
+  identity_id: string
+  generation: number
+  public_key: Bytes
+  signature: Bytes
+  previous_keys_box: Bytes | null
+  created_at: Generated<Date>
+}
+
+/** A per-user key generation, boxed to one of the user's devices. */
+export interface ChatUserKeyBoxesTable {
+  user_id: number
+  identity_id: string
+  generation: number
+  device_id: string
+  box: Bytes
+  created_at: Generated<Date>
+}
+
+/** A new device asking a linked one for the identity. */
+export interface ChatLinksTable {
+  id: string
+  user_id: number
+  new_device_id: string
+  approved_by_device_id: string | null
+  box: Bytes | null
+  created_at: Generated<Date>
+  expires_at: Timestamp
+}
+
+/** A chat. A scope chat names its scope; a DM has none. */
+export interface ChatConversationsTable {
+  id: string
+  kind: ChatKind
+  scope_type: 'team' | 'season' | 'league' | null
+  scope_id: string | null
+  created_by: number | null
+  needs_rotation: Generated<boolean>
+  closed_at: Timestamp | null
+  /** The last message's `seq`. */
+  last_seq: Generated<number>
+  /** The last membership log row's `seq`. */
+  last_log_seq: Generated<number>
+  created_at: Generated<Date>
+}
+
+/** Who is in a chat, and who was (`left_at`). */
+export interface ChatMembersTable {
+  conversation_id: string
+  user_id: number
+  joined_at: Generated<Date>
+  left_at: Timestamp | null
+  created_at: Generated<Date>
+}
+
+/** The hash-chained record of a chat's membership. */
+export interface ChatMembershipLogTable {
+  conversation_id: string
+  seq: number
+  event: 'join' | 'leave' | 'identityReset' | 'closed'
+  user_id: number
+  actor_user_id: number | null
+  reason: string | null
+  prev_hash: Bytes
+  hash: Bytes
+  at: Timestamp
+  created_at: Generated<Date>
+}
+
+/** One epoch of a chat's key, chained to the one before. */
+export interface ChatEpochsTable {
+  conversation_id: string
+  epoch: number
+  created_by_user_id: number
+  identity_id: string
+  /** Null on epoch 1 and on a chain break. */
+  previous_key_box: Bytes | null
+  chain_break: Generated<boolean>
+  signature: Bytes
+  created_at: Generated<Date>
+}
+
+/** An epoch key, wrapped to one member's per-user key. */
+export interface ChatEpochBoxesTable {
+  conversation_id: string
+  epoch: number
+  user_id: number
+  identity_id: string
+  generation: number
+  box: Bytes
+  granted_by_user_id: number | null
+  created_at: Generated<Date>
+}
+
+/** A member asking for a chat's latest key; open until filled or superseded. */
+export interface ChatGrantRequestsTable {
+  id: Generated<number>
+  conversation_id: string
+  user_id: number
+  identity_id: string
+  generation: number
+  identity_reset: Generated<boolean>
+  opened_at: Generated<Date>
+  filled_at: Timestamp | null
+  superseded_at: Timestamp | null
+  created_at: Generated<Date>
+}
+
+/** One encrypted message. The server sees its envelope, never its content. */
+export interface ChatMessagesTable {
+  id: string
+  conversation_id: string
+  seq: number
+  epoch: number
+  sender_user_id: number
+  sender_identity_id: string
+  kind: 'post' | 'reaction' | 'edit' | 'delete' | 'moderatorDelete'
+  /** Set on the two delete kinds only. */
+  target_ids: string[] | null
+  nonce: Bytes
+  ciphertext: Bytes
+  signature: Bytes
+  cleared_at: Timestamp | null
+  created_at: Generated<Date>
+}
+
+/** Which uploads a message's content refers to. */
+export interface ChatMessageAttachmentsTable {
+  message_id: string
+  attachment_id: string
+  created_at: Generated<Date>
+}
+
+/** An encrypted upload, put to the Space once complete. */
+export interface ChatAttachmentsTable {
+  id: string
+  conversation_id: string
+  uploader_user_id: number
+  size: number
+  object_key: string
+  digest: Bytes
+  completed_at: Timestamp | null
+  created_at: Generated<Date>
+}
+
+/** How far a member has read. */
+export interface ChatReadCursorsTable {
+  conversation_id: string
+  user_id: number
+  seq: Generated<number>
+  at: Generated<Date>
+  created_at: Generated<Date>
+}
+
+/** A reported message, with its text and key disclosed by the reporter. */
+export interface ChatReportsTable {
+  id: string
+  conversation_id: string
+  message_id: string
+  reporter_user_id: number
+  /** The message row as it stood when reported. */
+  envelope: Json
+  message_key: Bytes
+  plaintext: string
+  verified: boolean
+  created_at: Generated<Date>
+  resolved_at: Timestamp | null
+}
+
+/** A scope or user whose chats may have changed, set by triggers. */
+export interface ChatDirtyTable {
+  scope_type: 'team' | 'season' | 'league' | 'user'
+  scope_id: string
+  marked_at: Generated<Date>
+}
+
+export interface ChatConversationPreferencesTable {
+  user_id: number
+  conversation_id: string
+  pinned: Generated<boolean>
+  muted: Generated<boolean>
+  manual_unread: Generated<boolean>
+  manual_unread_revision: Generated<number>
+}
+
+export interface ChatMessagePinsTable {
+  user_id: number
+  conversation_id: string
+  message_id: string
+  pinned_at: Generated<Date>
+}
+
 export interface Database {
   umpire_note_types: UmpireLevelsTable
   game_umpire_notes: { game_id: string; note_type_id: string; value: string }
@@ -1196,6 +1458,26 @@ export interface Database {
   audit_log: AuditLogTable
   game_play_archives: GamePlayArchivesTable
   auth_sessions: AuthSessionsTable
+  chat_attachments: ChatAttachmentsTable
+  chat_conversations: ChatConversationsTable
+  chat_conversation_preferences: ChatConversationPreferencesTable
+  chat_devices: ChatDevicesTable
+  chat_dirty: ChatDirtyTable
+  chat_epoch_boxes: ChatEpochBoxesTable
+  chat_epochs: ChatEpochsTable
+  chat_grant_requests: ChatGrantRequestsTable
+  chat_identities: ChatIdentitiesTable
+  chat_links: ChatLinksTable
+  chat_members: ChatMembersTable
+  chat_membership_log: ChatMembershipLogTable
+  chat_message_attachments: ChatMessageAttachmentsTable
+  chat_messages: ChatMessagesTable
+  chat_message_pins: ChatMessagePinsTable
+  chat_read_cursors: ChatReadCursorsTable
+  chat_reports: ChatReportsTable
+  chat_resume_challenges: ChatResumeChallengesTable
+  chat_user_key_boxes: ChatUserKeyBoxesTable
+  chat_user_keys: ChatUserKeysTable
   email_codes: EmailCodesTable
   rate_events: RateEventsTable
   eventCredits: EventCreditsTable
@@ -1228,6 +1510,7 @@ export interface Database {
   sync_clock: SyncClockTable
   sync_idempotency: SyncIdempotencyTable
   system_settings: SystemSettingsTable
+  team_follows: TeamFollowsTable
   teams: TeamsTable
   tess_attachments: TessAttachmentsTable
   tess_changes: TessChangesTable
