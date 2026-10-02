@@ -1,8 +1,8 @@
 /**
  * The bodies and answers of the routes that add a team's people by the ids
- * another system knows them by: `POST /api/v1/teams/:teamId/players`. Shared
- * by the server and any client, so both refuse the same bodies with the same
- * words.
+ * another system knows them by: `POST /api/v1/teams/:teamId/players` and
+ * `POST /api/v1/teams/:teamId/adults`. Shared by the server and any client,
+ * so both refuse the same bodies with the same words.
  *
  * A body is cleaned whole: one malformed row refuses the call, with a message
  * naming the row and the field.
@@ -10,12 +10,19 @@
 
 import { asExternalIdAt, type ExternalIdBody } from './externalIds'
 import { JERSEY_MAX_LENGTH } from './playerSettings'
+import type { Role } from './roles'
 
 /** At most this many rows per call, and at least one. */
 export const TEAM_MEMBERS_MAX = 200
 
 /** A first or last name is at most this long, after trimming. */
 export const PERSON_NAME_MAX = 100
+
+/** An address is at most this long, after trimming. */
+export const EMAIL_MAX = 254
+
+/** One adult guards at most this many players in one row. */
+export const GUARDIAN_OF_MAX = 50
 
 /** One id another system has for a person. */
 export type TeamMemberExternalId = ExternalIdBody
@@ -67,6 +74,82 @@ export interface TeamPlayersCounts {
 export interface TeamPlayersResponse {
   results: TeamPlayerResult[]
   counts: TeamPlayersCounts
+}
+
+export interface TeamAdultRow {
+  /** Trimmed; may be empty. */
+  firstName: string
+  /** Trimmed; may be empty. */
+  lastName: string
+  /** Trimmed and lower-cased, with an `@`; null for none. */
+  email: string | null
+  externalId: TeamMemberExternalId
+  /** The external ids of the players this adult is a guardian of. */
+  guardianOf: TeamMemberExternalId[]
+  /** Given the coach and scorekeeper roles on the team. */
+  staff: boolean
+}
+
+export interface TeamAdultsBody {
+  adults: TeamAdultRow[]
+}
+
+/** What one adult row did, whatever its result. */
+export interface TeamAdultGains {
+  /** A membership of the team was made by this row. */
+  joined: boolean
+  /** Guardian links this row made. */
+  guardianLinks: number
+  /** `guardianOf` ids that named no player of this team. */
+  guardiansMissing: number
+  /** Roles this row added on the team. */
+  rolesAdded: Role[]
+}
+
+export type TeamAdultResult =
+  | (TeamAdultGains & {
+      index: number
+      /**
+       * `created`: a new user. `matched`: an existing user who gained
+       * something here. `unchanged`: an existing user who gained nothing.
+       */
+      result: 'created' | 'matched' | 'unchanged'
+      userId: number
+      /** The row's address belongs to somebody else, and was left there. */
+      emailHeldElsewhere?: true
+      /**
+       * The row's address is held by nobody, and was not attached: the
+       * account was already here, and the caller is not a site
+       * administrator or the account already has an address.
+       */
+      emailNotAttached?: true
+      /**
+       * The row's external id was not recorded: the account was found by
+       * its address, and only a site administrator may give an account the
+       * call did not make another system's id.
+       */
+      externalIdNotAttached?: true
+    })
+  | (TeamAdultGains & {
+      index: number
+      result: 'error'
+      error: TeamMemberError
+    })
+
+export interface TeamAdultsCounts {
+  created: number
+  matched: number
+  unchanged: number
+  error: number
+  /** Guardian links this call made. */
+  guardianLinks: number
+  /** Adults who gained at least one role in this call. */
+  staff: number
+}
+
+export interface TeamAdultsResponse {
+  results: TeamAdultResult[]
+  counts: TeamAdultsCounts
 }
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {
@@ -156,5 +239,46 @@ function asTeamPlayerRow(raw: unknown, index: number): TeamPlayerRow {
 export function asTeamPlayersBody(raw: unknown): TeamPlayersBody {
   return {
     players: asTeamMemberRows(raw, 'players', 'player').map(asTeamPlayerRow)
+  }
+}
+
+function asEmailAt(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'string') fail(`${field} must be a string`)
+  const email = raw.trim().toLowerCase()
+  if (!email.includes('@')) fail(`${field} must be an address, with an @`)
+  if (email.length > EMAIL_MAX) {
+    fail(`${field} must be at most ${EMAIL_MAX} characters`)
+  }
+  return email
+}
+
+function asGuardianOf(raw: unknown, field: string): TeamMemberExternalId[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) fail(`${field} must be an array`)
+  if (raw.length > GUARDIAN_OF_MAX) {
+    fail(`${field} holds at most ${GUARDIAN_OF_MAX} players`)
+  }
+  return raw.map((one, index) => asExternalIdAt(one, `${field}[${index}]`))
+}
+
+function asTeamAdultRow(raw: unknown, index: number): TeamAdultRow {
+  const at = `adults[${index}]`
+  if (!isRecord(raw)) fail(`${at} must be an object`)
+  const staff = raw.staff ?? false
+  if (typeof staff !== 'boolean') fail(`${at}.staff must be true or false`)
+  return {
+    ...asPersonNames(raw, at),
+    email: asEmailAt(raw.email, `${at}.email`),
+    externalId: asExternalIdAt(raw.externalId, `${at}.externalId`),
+    guardianOf: asGuardianOf(raw.guardianOf, `${at}.guardianOf`),
+    staff
+  }
+}
+
+/** The body, or a `TypeError` naming the row and field that is wrong. */
+export function asTeamAdultsBody(raw: unknown): TeamAdultsBody {
+  return {
+    adults: asTeamMemberRows(raw, 'adults', 'adult').map(asTeamAdultRow)
   }
 }

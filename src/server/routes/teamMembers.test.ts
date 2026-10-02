@@ -8,7 +8,7 @@ import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
-import { asTeamPlayersBody } from '../../common/teamMembers'
+import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -20,14 +20,17 @@ import type { MediaContext } from '../media/mediaContext'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { attachEmail } from '../teams/addAdults'
 import { mintFreeUserId } from '../teams/addPlayers'
+import { authRoutes } from './auth'
+import { manageRoutes } from './manage'
 import { teamMemberRoutes } from './teamMembers'
 import { teamRoutes } from './teams'
 import { userRoutes } from './users'
 
 /**
  * Adding a team's people by the ids another system has for them:
- * `POST /teams/:teamId/players`.
+ * `POST /teams/:teamId/players` and `POST /teams/:teamId/adults`.
  */
 
 const adminUrl = testDatabaseUrl
@@ -80,6 +83,8 @@ describe('a team’s people by external id', function () {
   const leagueAdmin = person()
   const member = person()
   const stranger = person()
+
+  const mail: Array<{ to: string; code?: string }> = []
 
   const database = (): Kysely<Database> => {
     if (db == null) throw new Error('no database')
@@ -243,6 +248,26 @@ describe('a team’s people by external id', function () {
     app.use('/api/v1', teamRoutes(db, media))
     app.use('/api/v1', userRoutes(db))
     app.use('/api/v1', teamMemberRoutes(db))
+    // Mail doubles: the adults route must never send anything, and the
+    // sign-in cases read their codes from here.
+    app.use(
+      '/api/v1',
+      authRoutes(db, {
+        sendCode: async (to, code) => {
+          mail.push({ to, code })
+        },
+        publicUrl: 'http://127.0.0.1'
+      })
+    )
+    app.use(
+      '/api/v1',
+      manageRoutes(db, {
+        sendInvite: async to => {
+          mail.push({ to })
+        },
+        publicUrl: 'http://127.0.0.1'
+      })
+    )
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -338,24 +363,19 @@ describe('a team’s people by external id', function () {
 
   /**
    * Runs `request` while another connection, taking no advisory lock, holds
-   * an uncommitted row for the external id, and commits that row once the
-   * request is waiting on it: the request read the id as free, and then
-   * finds it taken.
+   * an uncommitted row from `insert`, and commits that row once the request
+   * is waiting on it: the request read the row's key as free, and then finds
+   * it taken.
    */
-  async function whileHeldElsewhere(
-    externalId: string,
-    request: () => Promise<Answer>,
-    kind = 'player'
+  async function whileUncommitted(
+    insert: { text: string; values: unknown[] },
+    request: () => Promise<Answer>
   ): Promise<Answer> {
     const racer = new Pool({ connectionString: scratchUrl })
     const client = await racer.connect()
     try {
       await client.query('begin')
-      await client.query(
-        `insert into external_ids (id, entity_type, entity_id, system, kind, external_id)
-         values ($1, 'game', $2, 'otherLeague', $3, $4)`,
-        [makeId('externalId'), game, kind, externalId]
-      )
+      await client.query(insert.text, insert.values)
       const pending = request()
       for (let tries = 0; tries < 250; tries += 1) {
         const waiting = await racer.query<{ n: string }>(
@@ -371,6 +391,22 @@ describe('a team’s people by external id', function () {
       client.release()
       await racer.end()
     }
+  }
+
+  /** `whileUncommitted`, for an external id a game is given. */
+  async function whileHeldElsewhere(
+    externalId: string,
+    request: () => Promise<Answer>,
+    kind = 'player'
+  ): Promise<Answer> {
+    return await whileUncommitted(
+      {
+        text: `insert into external_ids (id, entity_type, entity_id, system, kind, external_id)
+               values ($1, 'game', $2, 'otherLeague', $3, $4)`,
+        values: [makeId('externalId'), game, kind, externalId]
+      },
+      request
+    )
   }
 
   async function count(
@@ -1103,6 +1139,892 @@ describe('a team’s people by external id', function () {
       }
       expect(row).deep.include({ entity_type: 'team', entity_id: team })
       expect((row?.after as any).players.created).equals(1)
+    })
+  })
+
+  describe('the adults body', function () {
+    const row = { externalId: ext('x', 'member') }
+    const refusals: Array<[unknown, string]> = [
+      [{ adults: [] }, 'adults must hold at least one adult'],
+      [{ adults: [7] }, 'adults[0] must be an object'],
+      [
+        { adults: [{ ...row, email: 'nobody' }] },
+        'adults[0].email must be an address, with an @'
+      ],
+      [{ adults: [{ ...row, email: 5 }] }, 'adults[0].email must be a string'],
+      [
+        { adults: [{ ...row, email: `${'x'.repeat(250)}@a.bc` }] },
+        'adults[0].email must be at most 254 characters'
+      ],
+      [
+        { adults: [{ ...row, guardianOf: ext('p') }] },
+        'adults[0].guardianOf must be an array'
+      ],
+      [
+        { adults: [{ ...row, guardianOf: new Array(51).fill(ext('p')) }] },
+        'adults[0].guardianOf holds at most 50 players'
+      ],
+      [
+        {
+          adults: [{ ...row, guardianOf: [ext('p'), { ...ext('q'), id: '' }] }]
+        },
+        'adults[0].guardianOf[1].id must be a non-empty string'
+      ],
+      [
+        { adults: [{ ...row, staff: 'yes' }] },
+        'adults[0].staff must be true or false'
+      ]
+    ]
+    for (const [body, message] of refusals) {
+      it(`refuses with “${message}”`, function () {
+        expect(() => asTeamAdultsBody(body)).throws(TypeError, message)
+      })
+    }
+
+    it('lower-cases the address, and reads missing lists and flags as none', function () {
+      expect(
+        asTeamAdultsBody({
+          adults: [{ firstName: 'Al', email: ' Al@Example.TEST ', ...row }]
+        })
+      ).deep.equals({
+        adults: [
+          {
+            firstName: 'Al',
+            lastName: '',
+            email: 'al@example.test',
+            externalId: ext('x', 'member'),
+            guardianOf: [],
+            staff: false
+          }
+        ]
+      })
+    })
+  })
+
+  describe('POST /teams/:teamId/adults', function () {
+    /** People the sign-in cases at the end reach by address. */
+    const signIns: Array<{ email: string; userId: number; teamId: string }> = []
+
+    const adults = async (
+      teamId: string,
+      rows: unknown[],
+      token = ADMIN
+    ): Promise<Answer> =>
+      await ask('POST', `/teams/${teamId}/adults`, token, { adults: rows })
+
+    /** A team with players `<prefix>-1` … `<prefix>-n`, by external id. */
+    async function teamWithPlayers(
+      name: string,
+      prefix: string,
+      n: number
+    ): Promise<{ teamId: string; players: number[] }> {
+      const teamId = await newTeam(name)
+      const answer = await ask('POST', `/teams/${teamId}/players`, ADMIN, {
+        players: Array.from({ length: n }, (_, i) => ({
+          firstName: `Kid${i + 1}`,
+          lastName: name,
+          externalId: ext(`${prefix}-${i + 1}`)
+        }))
+      })
+      return {
+        teamId,
+        players: answer.body.results.map((one: any) => one.userId)
+      }
+    }
+
+    const emailsOf = async (
+      userId: number
+    ): Promise<
+      Array<{
+        email: string
+        is_primary: boolean
+        source: string
+        verified_at: Date | null
+      }>
+    > =>
+      await database()
+        .selectFrom('user_emails')
+        .select(['email', 'is_primary', 'source', 'verified_at'])
+        .where('user_id', '=', userId)
+        .orderBy('created_at')
+        .execute()
+
+    const linksOf = async (
+      userId: number
+    ): Promise<
+      Array<{ related_user_id: number; kind: string; can_manage: boolean }>
+    > =>
+      await database()
+        .selectFrom('user_links')
+        .select(['related_user_id', 'kind', 'can_manage'])
+        .where('user_id', '=', userId)
+        .orderBy('related_user_id')
+        .execute()
+
+    const rolesOf = async (userId: number, teamId: string): Promise<string[]> =>
+      (
+        await database()
+          .selectFrom('scope_roles')
+          .select(['role'])
+          .where('user_id', '=', userId)
+          .where('scope_type', '=', 'team')
+          .where('scope_id', '=', teamId)
+          .execute()
+      )
+        .map(row => row.role as string)
+        .sort((a, b) => a.localeCompare(b))
+
+    async function giveEmail(
+      userId: number,
+      email: string,
+      isPrimary: boolean
+    ): Promise<void> {
+      await database()
+        .insertInto('user_emails')
+        .values({
+          id: makeId('userEmail'),
+          user_id: userId,
+          email,
+          is_primary: isPrimary,
+          created_at: new Date()
+        })
+        .execute()
+    }
+
+    const one = { firstName: 'Al', externalId: ext('perm-1', 'member') }
+
+    it('answers 401, 403 and 404 as the players route does', async function () {
+      expect(
+        (await adults(hawks, [one], null as unknown as string)).status
+      ).equals(401)
+      expect((await adults(hawks, [one], MEMBER)).status).equals(403)
+      expect((await adults(hawks, [one], STRANGER)).status).equals(404)
+      expect((await adults('tem_nothere', [one])).status).equals(404)
+    })
+
+    it('lets an administrator of the team who is not a site administrator in', async function () {
+      const answer = await adults(hawks, [one], TEAM_ADMIN)
+      expect(answer.status).equals(200)
+      expect(answer.body.results[0].result).equals('created')
+    })
+
+    it('lets an administrator of the team’s season or league in', async function () {
+      const teamId = await newTeam('Adults by season and league')
+      for (const [token, id] of [
+        [SEASON_ADMIN, 'by-season-admin'],
+        [LEAGUE_ADMIN, 'by-league-admin']
+      ]) {
+        const answer = await adults(
+          teamId,
+          [{ firstName: 'Ad', externalId: ext(id, 'member') }],
+          token
+        )
+        expect(answer.status, token).equals(200)
+        expect(answer.body.results[0].result, token).equals('created')
+      }
+    })
+
+    it('answers 400 naming the field', async function () {
+      const cases: Array<[unknown, string]> = [
+        [{ adults: [] }, 'adults must hold at least one adult'],
+        [
+          { adults: new Array(201).fill(one) },
+          'adults holds at most 200 adults per call'
+        ],
+        [
+          { adults: [{ externalId: { ...ext('x'), system: '9lives' } }] },
+          'adults[0].externalId.system'
+        ],
+        [
+          { adults: [{ externalId: { ...ext('x'), kind: '' } }] },
+          'adults[0].externalId.kind'
+        ],
+        [
+          { adults: [{ externalId: { ...ext('x'), id: '' } }] },
+          'adults[0].externalId.id'
+        ],
+        [
+          { adults: [{ ...one, email: 'parent.example.test' }] },
+          'adults[0].email'
+        ]
+      ]
+      for (const [body, field] of cases) {
+        const answer = await ask('POST', `/teams/${hawks}/adults`, ADMIN, body)
+        expect(answer.status, field).equals(400)
+        expect(answer.body.message).includes(field)
+      }
+    })
+
+    it('makes a new parent who may sign in, with their address, on the team and linked to their children', async function () {
+      const { teamId, players } = await teamWithPlayers('Parents', 'kid', 2)
+      const answer = await adults(teamId, [
+        {
+          firstName: 'Pat',
+          lastName: 'Lee',
+          email: ' Pat.Lee@Example.TEST ',
+          externalId: ext('parent-1', 'member'),
+          guardianOf: [ext('kid-1'), ext('kid-2')],
+          staff: false
+        }
+      ])
+      expect(answer.status).equals(200)
+      const [row] = answer.body.results
+      expect(row).deep.include({
+        index: 0,
+        result: 'created',
+        joined: true,
+        guardianLinks: 2,
+        guardiansMissing: 0,
+        rolesAdded: []
+      })
+      expect(row).not.to.have.property('emailHeldElsewhere')
+      expect(answer.body.counts).deep.equals({
+        created: 1,
+        matched: 0,
+        unchanged: 0,
+        error: 0,
+        guardianLinks: 2,
+        staff: 0
+      })
+
+      const user = await database()
+        .selectFrom('users')
+        .selectAll()
+        .where('id', '=', row.userId)
+        .executeTakeFirstOrThrow()
+      expect(user).deep.include({
+        display_name: 'Pat Lee',
+        first_name: 'Pat',
+        last_name: 'Lee',
+        login_enabled: true
+      })
+      expect(await emailsOf(row.userId)).deep.equals([
+        {
+          email: 'pat.lee@example.test',
+          is_primary: true,
+          source: 'import',
+          verified_at: null
+        }
+      ])
+      const held = await database()
+        .selectFrom('external_ids')
+        .select(['entity_type', 'entity_id', 'system', 'kind'])
+        .where('external_id', '=', 'parent-1')
+        .executeTakeFirstOrThrow()
+      expect(held).deep.equals({
+        entity_type: 'user',
+        entity_id: String(row.userId),
+        system: 'otherLeague',
+        kind: 'member'
+      })
+      expect(await membershipOf(teamId, row.userId)).deep.include({
+        is_spectator: true,
+        is_player: false,
+        role: 'member'
+      })
+      expect(await linksOf(row.userId)).deep.equals(
+        [...players]
+          .sort((a, b) => a - b)
+          .map(id => ({
+            related_user_id: id,
+            kind: 'guardian',
+            can_manage: true
+          }))
+      )
+      signIns.push({
+        email: 'pat.lee@example.test',
+        userId: row.userId,
+        teamId
+      })
+    })
+
+    it('makes an adult without an address one who cannot sign in, with no address', async function () {
+      const teamId = await newTeam('No address')
+      const answer = await adults(teamId, [
+        { firstName: '', lastName: '', externalId: ext('no-address', 'member') }
+      ])
+      const { userId } = answer.body.results[0]
+      const user = await database()
+        .selectFrom('users')
+        .select(['display_name', 'login_enabled'])
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow()
+      expect(user).deep.equals({
+        display_name: 'Unknown adult',
+        login_enabled: false
+      })
+      expect(await emailsOf(userId)).deep.equals([])
+    })
+
+    it('attaches an address to somebody found by external id, as primary when they had none', async function () {
+      const teamId = await newTeam('Attach')
+      const known = await existingUser('attach-1', {}, 'member')
+      const answer = await adults(teamId, [
+        {
+          firstName: 'Quin',
+          email: 'quin@example.test',
+          externalId: ext('attach-1', 'member')
+        }
+      ])
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        userId: known,
+        joined: true
+      })
+      expect(await emailsOf(known)).deep.equals([
+        {
+          email: 'quin@example.test',
+          is_primary: true,
+          source: 'import',
+          verified_at: null
+        }
+      ])
+      const user = await database()
+        .selectFrom('users')
+        .select(['login_enabled'])
+        .where('id', '=', known)
+        .executeTakeFirstOrThrow()
+      // Never changed for somebody already here.
+      expect(user.login_enabled).equals(false)
+      signIns.push({ email: 'quin@example.test', userId: known, teamId })
+    })
+
+    it('never gives an account that has an address a second one', async function () {
+      const teamId = await newTeam('Second address')
+      const known = await existingUser('second-1', {}, 'member')
+      await giveEmail(known, 'first@example.test', true)
+      for (const token of [ADMIN, SEASON_ADMIN]) {
+        const answer = await adults(
+          teamId,
+          [
+            {
+              email: 'second@example.test',
+              externalId: ext('second-1', 'member')
+            }
+          ],
+          token
+        )
+        expect(answer.body.results[0], token).deep.include({
+          userId: known,
+          emailNotAttached: true
+        })
+        expect(answer.body.results[0]).not.to.have.property(
+          'emailHeldElsewhere'
+        )
+      }
+      expect(
+        (await emailsOf(known)).map(row => [row.email, row.is_primary])
+      ).deep.equals([['first@example.test', true]])
+    })
+
+    it('attaches no address to an account already here when a team administrator imports it', async function () {
+      const teamId = await newTeam('Team admin addresses')
+      const known = await existingUser('no-address-1', {}, 'member')
+      const row = {
+        firstName: 'Nia',
+        email: 'nia@example.test',
+        externalId: ext('no-address-1', 'member')
+      }
+      const first = await adults(teamId, [row], SEASON_ADMIN)
+      expect(first.body.results[0]).deep.include({
+        result: 'matched',
+        userId: known,
+        joined: true,
+        emailNotAttached: true
+      })
+      expect(await emailsOf(known)).deep.equals([])
+
+      // Gaining nothing else, they are unchanged.
+      const again = await adults(teamId, [row], SEASON_ADMIN)
+      expect(again.body.results[0]).deep.include({
+        result: 'unchanged',
+        emailNotAttached: true
+      })
+      expect(await emailsOf(known)).deep.equals([])
+
+      // A site administrator may give the account its first address.
+      const byAdmin = await adults(teamId, [row])
+      expect(byAdmin.body.results[0]).deep.include({ result: 'matched' })
+      expect(byAdmin.body.results[0]).not.to.have.property('emailNotAttached')
+      expect(await emailsOf(known)).deep.equals([
+        {
+          email: 'nia@example.test',
+          is_primary: true,
+          source: 'import',
+          verified_at: null
+        }
+      ])
+    })
+
+    it('attaches the address to an account a team administrator’s import makes', async function () {
+      const teamId = await newTeam('Team admin new parents')
+      const answer = await adults(
+        teamId,
+        [
+          {
+            firstName: 'Ola',
+            email: 'ola@example.test',
+            externalId: ext('new-with-address', 'member')
+          }
+        ],
+        SEASON_ADMIN
+      )
+      const [row] = answer.body.results
+      expect(row.result).equals('created')
+      expect(row).not.to.have.property('emailNotAttached')
+      expect((await emailsOf(row.userId)).map(one => one.email)).deep.equals([
+        'ola@example.test'
+      ])
+    })
+
+    it('gives a parent who is also staff their links, coach and scorekeeper, and a spectator membership', async function () {
+      const { teamId } = await teamWithPlayers('Coach parents', 'cp', 1)
+      const answer = await adults(teamId, [
+        {
+          firstName: 'Ro',
+          lastName: 'Bin',
+          externalId: ext('coach-parent', 'member'),
+          guardianOf: [ext('cp-1')],
+          staff: true
+        }
+      ])
+      const [row] = answer.body.results
+      expect(row).deep.include({
+        result: 'created',
+        guardianLinks: 1,
+        rolesAdded: ['coach', 'scorekeeper']
+      })
+      expect(answer.body.counts.staff).equals(1)
+      expect(await rolesOf(row.userId, teamId)).deep.equals([
+        'coach',
+        'scorekeeper'
+      ])
+      expect((await membershipOf(teamId, row.userId))?.is_spectator).equals(
+        true
+      )
+    })
+
+    it('finds the user holding the address when nobody holds the id, and records the id on them', async function () {
+      const teamId = await newTeam('By address')
+      const known = await existingUser(null, { loginEnabled: true })
+      await giveEmail(known, 'held@example.test', true)
+      const users = await count('users')
+      const answer = await adults(teamId, [
+        {
+          firstName: 'Held',
+          email: 'HELD@example.test',
+          externalId: ext('by-address-1', 'member')
+        }
+      ])
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        userId: known
+      })
+      expect(answer.body.results[0]).not.to.have.property(
+        'externalIdNotAttached'
+      )
+      expect(await count('users')).equals(users)
+      const held = await database()
+        .selectFrom('external_ids')
+        .select(['entity_id'])
+        .where('external_id', '=', 'by-address-1')
+        .executeTakeFirstOrThrow()
+      expect(held.entity_id).equals(String(known))
+    })
+
+    it('records no id on an account found by address when a team administrator imports it', async function () {
+      const teamId = await newTeam('By address, team admin')
+      const known = await existingUser(null, { loginEnabled: true })
+      await giveEmail(known, 'kept@example.test', true)
+      const answer = await adults(
+        teamId,
+        [
+          {
+            firstName: 'Kept',
+            email: 'kept@example.test',
+            externalId: ext('by-address-2', 'member')
+          }
+        ],
+        SEASON_ADMIN
+      )
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        userId: known,
+        joined: true,
+        externalIdNotAttached: true
+      })
+      expect(answer.body.results[0]).not.to.have.property('emailNotAttached')
+      const held = await database()
+        .selectFrom('external_ids')
+        .select('id')
+        .where('external_id', '=', 'by-address-2')
+        .execute()
+      expect(held).deep.equals([])
+
+      // So the id finds nobody: posted as a player, it makes a new one.
+      const player = await ask('POST', `/teams/${teamId}/players`, ADMIN, {
+        players: [
+          { firstName: 'Kept', externalId: ext('by-address-2', 'member') }
+        ]
+      })
+      expect(player.body.results[0].result).equals('created')
+      expect(player.body.results[0].userId).not.equals(known)
+    })
+
+    it('finds the account an address’s merged-away holder became, and makes nobody', async function () {
+      const teamId = await newTeam('Merged address')
+      const survivor = await existingUser(null)
+      const closed = await existingUser(null, { mergedInto: survivor })
+      await giveEmail(closed, 'merged@example.test', true)
+      const users = await count('users')
+      const answer = await adults(teamId, [
+        {
+          firstName: 'Mer',
+          email: 'merged@example.test',
+          externalId: ext('merged-address-1', 'member')
+        }
+      ])
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        userId: survivor,
+        joined: true
+      })
+      expect(answer.body.results[0]).not.to.have.property('emailHeldElsewhere')
+      expect(answer.body.results[0]).not.to.have.property('emailNotAttached')
+      expect(await count('users')).equals(users)
+    })
+
+    it('answers conflict, and makes nobody, when a writer that took no lock records the id first', async function () {
+      const teamId = await newTeam('Raced adults')
+      const users = await count('users')
+      const answer = await whileHeldElsewhere(
+        'raced-adult',
+        async () =>
+          await adults(teamId, [
+            {
+              firstName: 'Ray',
+              email: 'ray@example.test',
+              externalId: ext('raced-adult', 'member')
+            }
+          ]),
+        'member'
+      )
+      expect(answer.body.results[0]).deep.equals({
+        index: 0,
+        result: 'error',
+        error: {
+          code: 'conflict',
+          message:
+            'otherLeague member raced-adult is already held by something else'
+        },
+        joined: false,
+        guardianLinks: 0,
+        guardiansMissing: 0,
+        rolesAdded: []
+      })
+      expect(await count('users')).equals(users)
+
+      // The same for an account a site administrator found by its address.
+      const known = await existingUser(null)
+      await giveEmail(known, 'raced@example.test', true)
+      const found = await whileHeldElsewhere(
+        'raced-adult-2',
+        async () =>
+          await adults(teamId, [
+            {
+              email: 'raced@example.test',
+              externalId: ext('raced-adult-2', 'member')
+            }
+          ]),
+        'member'
+      )
+      expect(found.body.results[0]).deep.include({ result: 'error' })
+      expect(await membershipOf(teamId, known)).equals(undefined)
+    })
+
+    it('leaves an address another sign-in commits while the row waits, and applies the rest', async function () {
+      const teamId = await newTeam('Raced address')
+      const other = await existingUser(null)
+      const answer = await whileUncommitted(
+        {
+          text: `insert into user_emails (id, user_id, email, is_primary)
+                 values ($1, $2, 'race@example.test', true)`,
+          values: [makeId('userEmail'), other]
+        },
+        async () =>
+          await adults(teamId, [
+            {
+              firstName: 'Rae',
+              email: 'race@example.test',
+              externalId: ext('raced-address-1', 'member')
+            },
+            { firstName: 'Next', externalId: ext('raced-address-2', 'member') }
+          ])
+      )
+      expect(answer.status).equals(200)
+      const [raced, next] = answer.body.results
+      expect(raced).deep.include({
+        result: 'created',
+        joined: true,
+        emailHeldElsewhere: true
+      })
+      expect(next).deep.include({ result: 'created', joined: true })
+      expect(await emailsOf(raced.userId)).deep.equals([])
+      expect((await emailsOf(other)).map(row => row.email)).deep.equals([
+        'race@example.test'
+      ])
+    })
+
+    it('keeps what addEmail answers when the address is taken after the check', async function () {
+      const userId = await existingUser(null)
+      const other = await existingUser(null)
+      const merged = await existingUser(null, { mergedInto: userId })
+      const attach = async (heldBy: number | undefined): Promise<string> =>
+        await database()
+          .transaction()
+          .execute(
+            async trx =>
+              await attachEmail(
+                trx,
+                userId,
+                'late@example.test',
+                { created: true, callerIsAdmin: false },
+                async () =>
+                  heldBy == null ? { added: false } : { added: false, heldBy }
+              )
+          )
+      expect(await attach(other)).equals('heldElsewhere')
+      expect(await attach(undefined)).equals('theirs')
+      expect(await attach(userId)).equals('theirs')
+      expect(await attach(merged)).equals('theirs')
+      expect(await emailsOf(userId)).deep.equals([])
+    })
+
+    it('keeps the user holding the id when somebody else holds the address', async function () {
+      const teamId = await newTeam('Elsewhere')
+      const holder = await existingUser('elsewhere-1', {}, 'member')
+      const other = await existingUser(null)
+      await giveEmail(other, 'other@example.test', true)
+      const answer = await adults(teamId, [
+        {
+          email: 'other@example.test',
+          externalId: ext('elsewhere-1', 'member')
+        }
+      ])
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        userId: holder,
+        emailHeldElsewhere: true
+      })
+      expect(answer.body.results[0]).not.to.have.property('emailNotAttached')
+      expect(await emailsOf(holder)).deep.equals([])
+      expect((await emailsOf(other)).map(row => row.email)).deep.equals([
+        'other@example.test'
+      ])
+    })
+
+    it('adds coach and scorekeeper to staff, keeps their other roles, never adds admin, and adds nothing twice', async function () {
+      const teamId = await newTeam('Staff')
+      const singer = await existingUser('staff-1', {}, 'member')
+      await database()
+        .insertInto('scope_roles')
+        .values({
+          id: makeId('scopeRole'),
+          user_id: singer,
+          scope_type: 'team',
+          scope_id: teamId,
+          role: 'songkeeper',
+          granted_at: new Date()
+        })
+        .execute()
+      const body = [
+        {
+          firstName: 'Sing',
+          externalId: ext('staff-1', 'member'),
+          staff: true
+        },
+        { firstName: 'Only', externalId: ext('staff-2', 'member'), staff: true }
+      ]
+      const first = await adults(teamId, body)
+      expect(first.body.results.map((row: any) => row.rolesAdded)).deep.equals([
+        ['coach', 'scorekeeper'],
+        ['coach', 'scorekeeper']
+      ])
+      expect(first.body.counts.staff).equals(2)
+      expect(await rolesOf(singer, teamId)).deep.equals([
+        'coach',
+        'scorekeeper',
+        'songkeeper'
+      ])
+      const staffOnly = first.body.results[1].userId
+      // Staff who guard nobody are not spectators.
+      expect(await membershipOf(teamId, staffOnly)).deep.include({
+        is_spectator: false,
+        role: 'member'
+      })
+
+      const again = await adults(teamId, body)
+      expect(again.body.results.map((row: any) => row.result)).deep.equals([
+        'unchanged',
+        'unchanged'
+      ])
+      expect(again.body.counts).deep.include({ staff: 0, guardianLinks: 0 })
+      const admins = await database()
+        .selectFrom('scope_roles')
+        .select(['id'])
+        .where('scope_id', '=', teamId)
+        .where('role', '=', 'admin')
+        .execute()
+      expect(admins).deep.equals([])
+    })
+
+    it('counts a guardian of somebody who is not a player here as missing, and links nobody', async function () {
+      const { teamId } = await teamWithPlayers('Missing', 'miss', 1)
+      const elsewhere = await teamWithPlayers('Elsewhere team', 'away', 1)
+      const answer = await adults(teamId, [
+        {
+          externalId: ext('missing-parent', 'member'),
+          guardianOf: [ext('away-1'), ext('nobody-at-all')]
+        }
+      ])
+      expect(answer.body.results[0]).deep.include({
+        guardianLinks: 0,
+        guardiansMissing: 2
+      })
+      expect(await linksOf(answer.body.results[0].userId)).deep.equals([])
+      expect(elsewhere.players).to.have.length(1)
+    })
+
+    it('makes a follower a spectator with no links and no roles', async function () {
+      const teamId = await newTeam('Followers')
+      const answer = await adults(teamId, [
+        { firstName: 'Fan', externalId: ext('follower-1', 'member') }
+      ])
+      const [row] = answer.body.results
+      expect(row).deep.include({
+        result: 'created',
+        joined: true,
+        guardianLinks: 0,
+        rolesAdded: []
+      })
+      expect(await membershipOf(teamId, row.userId)).deep.include({
+        is_spectator: true,
+        is_player: false
+      })
+      expect(await linksOf(row.userId)).deep.equals([])
+      expect(await rolesOf(row.userId, teamId)).deep.equals([])
+    })
+
+    it('keeps a player a player, and makes them a spectator too', async function () {
+      const { teamId, players } = await teamWithPlayers('Both', 'both', 1)
+      const answer = await adults(teamId, [
+        { firstName: 'Kid1', externalId: ext('both-1') }
+      ])
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        userId: players[0],
+        joined: false
+      })
+      expect(await membershipOf(teamId, players[0])).deep.include({
+        is_player: true,
+        is_spectator: true
+      })
+    })
+
+    it('adds nothing twice when the same adults come again', async function () {
+      const { teamId } = await teamWithPlayers('Twice', 'twice', 2)
+      const body = [
+        {
+          firstName: 'Mo',
+          email: 'mo@example.test',
+          externalId: ext('twice-parent', 'member'),
+          guardianOf: [ext('twice-1'), ext('twice-2')]
+        },
+        { firstName: 'Fo', externalId: ext('twice-follower', 'member') },
+        {
+          firstName: 'Co',
+          externalId: ext('twice-coach', 'member'),
+          staff: true
+        }
+      ]
+      const first = await adults(teamId, body)
+      expect(first.body.counts).deep.equals({
+        created: 3,
+        matched: 0,
+        unchanged: 0,
+        error: 0,
+        guardianLinks: 2,
+        staff: 1
+      })
+      const tables = async (): Promise<number[]> => [
+        await count('users'),
+        await count('memberships'),
+        await count('external_ids'),
+        Number(
+          (
+            await database()
+              .selectFrom('user_links')
+              .select(eb => eb.fn.countAll<string>().as('n'))
+              .executeTakeFirstOrThrow()
+          ).n
+        )
+      ]
+      const before = await tables()
+      const again = await adults(teamId, body)
+      expect(again.body.counts).deep.equals({
+        created: 0,
+        matched: 0,
+        unchanged: 3,
+        error: 0,
+        guardianLinks: 0,
+        staff: 0
+      })
+      expect(await tables()).deep.equals(before)
+    })
+
+    it('refuses only the row whose id is not a person’s', async function () {
+      const teamId = await newTeam('Adult conflicts')
+      const answer = await adults(teamId, [
+        { externalId: ext('held-by-a-game') },
+        { externalId: ext('fine-adult', 'member') }
+      ])
+      expect(answer.body.results[0]).deep.equals({
+        index: 0,
+        result: 'error',
+        error: {
+          code: 'conflict',
+          message: 'otherLeague player held-by-a-game is already on a game'
+        },
+        joined: false,
+        guardianLinks: 0,
+        guardiansMissing: 0,
+        rolesAdded: []
+      })
+      expect(answer.body.counts).deep.include({ created: 1, error: 1 })
+    })
+
+    it('sends no mail to anybody', function () {
+      expect(mail).deep.equals([])
+    })
+
+    it('signs each attached address in by e-mail code, to an account already on the team', async function () {
+      expect(signIns).to.have.length(2)
+      for (const one of signIns) {
+        const asked = await ask('POST', '/auth/email-code', null, {
+          email: one.email
+        })
+        expect(asked.status).equals(202)
+        const sent = mail.find(entry => entry.to === one.email)
+        expect(sent?.code, one.email).to.be.a('string')
+        const session = await ask('POST', '/auth/email-code/verify', null, {
+          email: one.email,
+          code: sent?.code
+        })
+        expect(session.status, one.email).equals(200)
+        expect(session.body.user.id).equals(one.userId)
+        const teams = await ask('GET', '/teams', session.body.token)
+        expect(teams.body.map((team: any) => team.id)).includes(one.teamId)
+      }
     })
   })
 })
