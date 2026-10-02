@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { testPasswordParameters } from '../test/passwordFixtures'
-import { asStandingsRow, TeamStationClient } from './api'
+import {
+  asManagePage,
+  asScopeGrant,
+  asStandingsRow,
+  TeamStationClient
+} from './api'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
@@ -434,6 +439,925 @@ describe('api client', function () {
     expect(JSON.parse(renamed.calls[0].body ?? '')).deep.equals({
       label: 'Dugout'
     })
+  })
+
+  it('finds, follows and unfollows teams, and reads what a fan may', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const hawks = {
+      id: 'tem_1',
+      name: 'Hawks',
+      logoUrl: null,
+      seasons: [{ id: 'sea_1', title: 'QPLL Spring 2027' }],
+      following: false
+    }
+
+    const search = client([hawks])
+    expect(await search.client.searchTeams('Haw ks')).deep.equals([hawks])
+    expect(search.calls[0].url).equals(
+      'http://x/api/v1/teams/search?q=Haw%20ks'
+    )
+
+    const follow = client({ following: true })
+    expect(await follow.client.followTeam('tem 1')).equals(true)
+    expect(follow.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/teams/tem%201/follow'
+    })
+
+    const unfollow = client({ following: false })
+    expect(await unfollow.client.unfollowTeam('tem_1')).equals(false)
+    expect(unfollow.calls[0]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/teams/tem_1/follow'
+    })
+
+    const mine = client([{ ...hawks, following: true }])
+    expect((await mine.client.myFollows())[0]?.following).equals(true)
+    expect(mine.calls[0].url).equals('http://x/api/v1/me/team-follows')
+
+    const entry = {
+      gameId: 'gam_1',
+      startsAt: '2027-04-03T17:00:00.000Z',
+      homeTeam: { id: 'tem_1', name: 'Hawks' },
+      awayTeam: { id: 'tem_2', name: 'Owls' },
+      venue: null,
+      homeScore: 6
+    }
+    const schedule = client([entry])
+    // Anything more than the listing is dropped, a score included.
+    expect(await schedule.client.teamSchedule('tem_1')).deep.equals([
+      {
+        gameId: 'gam_1',
+        startsAt: '2027-04-03T17:00:00.000Z',
+        homeTeam: { id: 'tem_1', name: 'Hawks' },
+        awayTeam: { id: 'tem_2', name: 'Owls' },
+        venue: null
+      }
+    ])
+    expect(schedule.calls[0].url).equals('http://x/api/v1/teams/tem_1/schedule')
+
+    const staff = client([
+      { userId: 42, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
+    ])
+    expect(await staff.client.teamStaff('tem_1')).deep.equals([
+      { userId: 42, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
+    ])
+    expect(staff.calls[0].url).equals('http://x/api/v1/teams/tem_1/staff')
+  })
+
+  it('links, lists and unlinks guardians, and sets birth months and SafeSport', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const g1 = { userId: 7, name: 'Gale G', email: 'g1@x', kind: 'guardian' }
+
+    const list = client([g1])
+    expect(await list.client.guardians('tem 1', 42)).deep.equals([g1])
+    expect(list.calls[0].url).equals(
+      'http://x/api/v1/teams/tem%201/players/42/guardians'
+    )
+
+    const byId = client({ guardians: [g1] })
+    expect(
+      await byId.client.addGuardian('tem_1', 42, { userId: 7 })
+    ).deep.equals({ guardians: [g1], invited: undefined })
+    expect(byId.calls[0].method).equals('POST')
+    expect(JSON.parse(byId.calls[0].body ?? '')).deep.equals({
+      userId: '7',
+      kind: 'guardian'
+    })
+
+    const invited = {
+      inviteId: 'inv_1',
+      email: 'aunt@x',
+      code: 'abc',
+      invitedAt: '2027-04-01T00:00:00.000Z'
+    }
+    const byEmail = client({ guardians: [], invited })
+    expect(
+      (
+        await byEmail.client.addGuardian(
+          'tem_1',
+          '42',
+          { email: 'aunt@x' },
+          'family'
+        )
+      ).invited
+    ).deep.equals(invited)
+    expect(JSON.parse(byEmail.calls[0].body ?? '')).deep.equals({
+      email: 'aunt@x',
+      kind: 'family'
+    })
+
+    const removed = client({ removed: true })
+    expect(await removed.client.removeGuardian('tem_1', 42, 7)).equals(true)
+    expect(removed.calls[0]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/teams/tem_1/players/42/guardians/7'
+    })
+
+    const born = client({ userId: 42, birthMonth: '2012-03' })
+    expect(
+      await born.client.setBirthMonth(42, { year: 2012, month: 3 })
+    ).equals('2012-03')
+    expect(born.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/players/42/birth-month'
+    })
+    expect(JSON.parse(born.calls[0].body ?? '')).deep.equals({
+      year: 2012,
+      month: 3
+    })
+    const cleared = client({ userId: 42, birthMonth: null })
+    expect(await cleared.client.setBirthMonth(42, null)).equals(null)
+    expect(JSON.parse(cleared.calls[0].body ?? '')).deep.equals({
+      year: null,
+      month: null
+    })
+
+    const lao = client({ leagueId: 'lea 1', safesportLao: true })
+    expect(await lao.client.setSafesport('lea 1', true)).equals(true)
+    expect(lao.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/manage/league/lea%201/safesport'
+    })
+    expect(JSON.parse(lao.calls[0].body ?? '')).deep.equals({ lao: true })
+  })
+
+  it('reads chats, members, the log, candidates and adults, and starts, adds to and leaves DMs', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const chat = {
+      id: 'cnv_1',
+      kind: 'teamMembers',
+      title: 'Hawks Members',
+      scope: { type: 'team', id: 'tem_1' },
+      scopeName: 'Hawks',
+      lastSeq: 3,
+      lastMessageAt: '2027-04-01T17:00:00.000Z',
+      unread: 1,
+      canPost: true,
+      canModerate: false,
+      locked: true,
+      noHolder: false,
+      closed: false,
+      memberCount: 11
+    }
+    const dm = {
+      ...chat,
+      id: 'cnv_2',
+      kind: 'dm',
+      title: null,
+      scope: null,
+      scopeName: null,
+      memberCount: 1,
+      people: [{ userId: 7, shortName: 'Eli C', left: true }]
+    }
+    const list = client([chat, dm])
+    // A server that names nobody (an older one) reads as nobody to name.
+    expect(await list.client.chatConversations()).deep.equals([
+      {
+        ...chat,
+        people: [],
+        lastPostAt: null,
+        lastPostId: null,
+        lastPostSeq: 0,
+        preferences: {
+          pinned: false,
+          muted: false,
+          manualUnread: false,
+          manualUnreadRevision: 0
+        }
+      },
+      {
+        ...dm,
+        lastPostAt: null,
+        lastPostId: null,
+        lastPostSeq: 0,
+        preferences: {
+          pinned: false,
+          muted: false,
+          manualUnread: false,
+          manualUnreadRevision: 0
+        }
+      }
+    ])
+    expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
+
+    const member = {
+      userId: 42,
+      shortName: 'Hank C',
+      avatarUrl: null,
+      label: 'Coach',
+      isModerator: true,
+      isApprover: true,
+      eligible: false,
+      hasIdentity: false,
+      identityKey: null,
+      generation: null
+    }
+    const members = client([member])
+    expect(await members.client.chatMembers('cnv 1')).deep.equals([member])
+    expect(members.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv%201/members'
+    )
+
+    const reads = client([{ userId: 42, seq: 3 }])
+    expect(await reads.client.chatReads('cnv_1')).deep.equals([
+      { userId: 42, seq: 3 }
+    ])
+    expect(reads.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv_1/reads'
+    )
+
+    const row = {
+      seq: 1,
+      event: 'join',
+      userId: 42,
+      actorUserId: null,
+      reason: 'audience',
+      prevHash: 'AA',
+      hash: 'BB',
+      at: 1
+    }
+    const log = client([row])
+    expect(await log.client.chatLog('cnv_1', 5)).deep.equals([row])
+    expect(log.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv_1/log?after=5'
+    )
+    await client([]).client.chatLog('cnv_1')
+
+    const person = { userId: 42, shortName: 'Hank C', avatarUrl: null }
+    const candidates = client([person])
+    expect(await candidates.client.dmCandidates('ha nk')).deep.equals([person])
+    expect(candidates.calls[0].url).equals(
+      'http://x/api/v1/chat/dm-candidates?q=ha%20nk'
+    )
+    await client([]).client.dmCandidates()
+
+    const adult = { userId: 7, shortName: 'Gale G', label: 'Guardian' }
+    const adults = client([adult])
+    expect(await adults.client.includedAdults([1, 2], 'ga')).deep.equals([
+      adult
+    ])
+    expect(adults.calls[0].url).equals(
+      'http://x/api/v1/chat/included-adults?playerIds=1,2&q=ga'
+    )
+    await client([]).client.includedAdults([1])
+
+    const made = client({ ...chat, kind: 'dm', title: null, scope: null })
+    expect((await made.client.createDm([42])).kind).equals('dm')
+    expect(made.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/dms'
+    })
+    expect(JSON.parse(made.calls[0].body ?? '')).deep.equals({
+      userIds: [42]
+    })
+
+    const added = client({ added: [7] })
+    expect(await added.client.addDmMembers('cnv_1', [7, 8])).deep.equals([7])
+    expect(added.calls[0].url).equals('http://x/api/v1/chat/dms/cnv_1/members')
+
+    const left = client({ left: true, closed: true })
+    expect(await left.client.leaveDm('cnv_1')).deep.equals({ closed: true })
+    expect(left.calls[0]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/chat/dms/cnv_1/members/me'
+    })
+  })
+
+  it('registers, resumes and revokes chat devices, publishes keys, and links devices', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const device = {
+      id: 'cdv_1',
+      name: 'Phone',
+      platform: 'ios',
+      boxPublicKey: 'AA',
+      signPublicKey: 'BB',
+      createdAt: '2027-04-10T12:00:00.000Z',
+      lastSeenAt: '2027-04-10T12:00:00.000Z',
+      revokedAt: null,
+      linked: false,
+      current: true
+    }
+    const registration = {
+      name: 'Phone',
+      platform: 'ios' as const,
+      boxPublicKey: 'AA',
+      signPublicKey: 'BB'
+    }
+    const registered = client(device)
+    expect(
+      await registered.client.registerChatDevice(registration)
+    ).deep.equals(device)
+    expect(registered.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/devices'
+    })
+    expect(JSON.parse(registered.calls[0].body ?? '')).deep.equals(registration)
+
+    const listed = client([device])
+    expect(await listed.client.chatDevices()).deep.equals([device])
+    expect(listed.calls[0].url).equals('http://x/api/v1/chat/devices')
+
+    const revoked = client({ ...device, revokedAt: 'later', current: false })
+    expect((await revoked.client.revokeChatDevice('cdv 1')).revokedAt).equals(
+      'later'
+    )
+    expect(revoked.calls[0]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/chat/devices/cdv%201'
+    })
+
+    const challenge = { nonce: 'NN', sessionId: 'ses_1', expiresAt: 'soon' }
+    const challenged = client(challenge)
+    expect(await challenged.client.chatResumeChallenge('cdv_1')).deep.equals(
+      challenge
+    )
+    expect(challenged.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/devices/cdv_1/resume-challenge'
+    })
+    const resumed = client(device)
+    await resumed.client.resumeChatDevice('cdv_1', {
+      nonce: 'NN',
+      signature: 'SS'
+    })
+    expect(resumed.calls[0].url).equals(
+      'http://x/api/v1/chat/devices/cdv_1/resume'
+    )
+    expect(JSON.parse(resumed.calls[0].body ?? '')).deep.equals({
+      nonce: 'NN',
+      signature: 'SS'
+    })
+
+    const identity = {
+      identityId: 'cid_1',
+      identityPublicKey: 'II',
+      pukPublicKey: 'PP',
+      pukSignature: 'SS',
+      box: 'BX'
+    }
+    const enrolled = client({
+      identityId: 'cid_1',
+      generation: 1,
+      grantRequests: 2
+    })
+    expect((await enrolled.client.enrolChat(identity)).grantRequests).equals(2)
+    expect(enrolled.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/chat/identity'
+    })
+    expect(JSON.parse(enrolled.calls[0].body ?? '')).deep.equals(identity)
+    const reset = client({
+      identityId: 'cid_2',
+      generation: 1,
+      revokedDeviceIds: ['cdv_2']
+    })
+    expect(
+      (await reset.client.resetChatIdentity(identity)).revokedDeviceIds
+    ).deep.equals(['cdv_2'])
+    expect(reset.calls[0].url).equals('http://x/api/v1/chat/identity/reset')
+
+    const puk = {
+      generation: 2,
+      publicKey: 'PK',
+      signature: 'SG',
+      previousKeysBox: 'PB',
+      boxes: [{ deviceId: 'cdv_1', box: 'BX' }]
+    }
+    const posted = client({ generation: 2, grantRequests: 0 })
+    expect(await posted.client.postChatPuk(puk)).deep.equals({
+      generation: 2,
+      grantRequests: 0
+    })
+    expect(posted.calls[0].url).equals('http://x/api/v1/chat/puk')
+    expect(JSON.parse(posted.calls[0].body ?? '')).deep.equals(puk)
+
+    const mine = {
+      deviceId: 'cdv_1',
+      linked: true,
+      identity: { id: 'cid_1', publicKey: 'II', createdAt: 'then' },
+      generations: [
+        {
+          generation: 1,
+          publicKey: 'PK',
+          signature: 'SG',
+          previousKeysBox: null,
+          box: 'BX'
+        }
+      ],
+      pukNeedsRotation: false
+    }
+    const keys = client(mine)
+    expect(await keys.client.myChatKeys()).deep.equals(mine)
+    expect(keys.calls[0].url).equals('http://x/api/v1/chat/me/keys')
+    await client({
+      ...mine,
+      deviceId: null,
+      identity: null,
+      generations: []
+    }).client.myChatKeys()
+
+    const theirs = {
+      userId: 42,
+      identity: { id: 'cid_9', publicKey: 'II', createdAt: 'then' },
+      puk: { generation: 3, publicKey: 'PK', signature: 'SG' }
+    }
+    const users = client(theirs)
+    expect(await users.client.chatUserKeys(42)).deep.equals(theirs)
+    expect(users.calls[0].url).equals('http://x/api/v1/chat/users/42/keys')
+    await client({ userId: 42, identity: null, puk: null }).client.chatUserKeys(
+      42
+    )
+
+    const old = {
+      id: 'cid_9',
+      userId: 42,
+      publicKey: 'II',
+      createdAt: 'then',
+      replacedAt: 'later'
+    }
+    const identities = client(old)
+    expect(await identities.client.chatIdentity('cid_9')).deep.equals(old)
+    expect(identities.calls[0].url).equals(
+      'http://x/api/v1/chat/identities/cid_9'
+    )
+
+    const link = {
+      id: 'clk_1',
+      newDeviceId: 'cdv_2',
+      createdAt: 'now',
+      expiresAt: 'soon',
+      approved: false,
+      expired: false,
+      approvedByDeviceId: null,
+      box: null
+    }
+    const asked = client(link)
+    expect(await asked.client.requestChatLink()).deep.equals(link)
+    expect(asked.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/links'
+    })
+    const pendingLink = {
+      id: 'clk_1',
+      newDevice: {
+        id: 'cdv_2',
+        name: 'Laptop',
+        platform: 'web',
+        boxPublicKey: 'AA'
+      },
+      createdAt: 'now',
+      expiresAt: 'soon'
+    }
+    const pending = client([pendingLink])
+    expect(await pending.client.chatLinks()).deep.equals([pendingLink])
+    expect(pending.calls[0].url).equals('http://x/api/v1/chat/links')
+    const polled = client(link)
+    await polled.client.chatLink('clk_1')
+    expect(polled.calls[0].url).equals('http://x/api/v1/chat/links/clk_1')
+    const approval = { box: 'BX', pukBoxes: [{ generation: 1, box: 'B1' }] }
+    const approved = client({
+      ...link,
+      approved: true,
+      approvedByDeviceId: 'cdv_1',
+      box: 'BX'
+    })
+    expect(
+      (await approved.client.approveChatLink('clk_1', approval)).box
+    ).equals('BX')
+    expect(approved.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/links/clk_1/approve'
+    })
+    expect(JSON.parse(approved.calls[0].body ?? '')).deep.equals(approval)
+  })
+
+  it('reads epochs, makes one, and lists and fills grant requests', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const epochs = {
+      latest: 2,
+      needsRotation: false,
+      noHolder: false,
+      epochs: [
+        {
+          epoch: 2,
+          createdByUserId: 7,
+          identityId: 'cid_1',
+          previousKeyBox: 'PK',
+          chainBreak: false,
+          signature: 'SG',
+          createdAt: 'now'
+        }
+      ],
+      boxes: [
+        {
+          epoch: 2,
+          identityId: 'cid_2',
+          pukGeneration: 1,
+          box: 'BX',
+          grantedByUserId: null
+        }
+      ]
+    }
+    const read = client(epochs)
+    expect(await read.client.chatEpochs('cnv 1', 1)).deep.equals(epochs)
+    expect(read.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv%201/epochs?after=1'
+    )
+    await client(epochs).client.chatEpochs('cnv_1')
+
+    const publication = {
+      epoch: 3,
+      previousKeyBox: 'PK',
+      signature: 'SG',
+      boxes: [{ userId: 7, pukGeneration: 1, box: 'BX' }]
+    }
+    const made = client({
+      epoch: 3,
+      chainBreak: false,
+      boxed: 1,
+      grantRequests: 0
+    })
+    expect(
+      (await made.client.postChatEpoch('cnv_1', publication)).epoch
+    ).equals(3)
+    expect(made.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/conversations/cnv_1/epochs'
+    })
+    expect(JSON.parse(made.calls[0].body ?? '')).deep.equals(publication)
+
+    const request = {
+      id: 1,
+      conversationId: 'cnv_1',
+      epoch: 3,
+      userId: 8,
+      identityId: 'cid_3',
+      identityKey: 'IK',
+      pukGeneration: 1,
+      pukPublicKey: 'PP',
+      pukSignature: 'PS',
+      identityReset: true,
+      canApprove: false,
+      openedAt: 'now'
+    }
+    const listed = client([request])
+    expect(await listed.client.chatGrants()).deep.equals([request])
+    expect(listed.calls[0].url).equals('http://x/api/v1/chat/grants')
+
+    const boxes = [
+      {
+        conversationId: 'cnv_1',
+        epoch: 3,
+        userId: 8,
+        identityId: 'cid_3',
+        pukGeneration: 1,
+        box: 'BX'
+      }
+    ]
+    const answer = {
+      filled: 0,
+      skipped: [
+        {
+          conversationId: 'cnv_1',
+          userId: 8,
+          identityId: 'cid_3',
+          pukGeneration: 1,
+          reason: 'notOpen'
+        }
+      ]
+    }
+    const filled = client(answer)
+    expect(await filled.client.postChatGrants(boxes)).deep.equals(answer)
+    expect(filled.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/grants'
+    })
+    expect(JSON.parse(filled.calls[0].body ?? '')).deep.equals({ boxes })
+  })
+  it('posts and pages chat messages, moves read cursors, and reports', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const message = {
+      id: 'msg_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+      conversationId: 'cnv_1',
+      seq: 3,
+      epoch: 1,
+      senderUserId: 7,
+      senderIdentityId: 'cid_1',
+      kind: 'delete',
+      targetIds: ['msg_bbbbbbbbbbbbbbbbbbbbbbbbbb'],
+      nonce: 'NN',
+      ciphertext: 'CT',
+      signature: 'SG',
+      attachmentIds: [],
+      clearedAt: null,
+      createdAt: '2027-04-10T12:00:00.000Z'
+    }
+    const envelope = {
+      id: message.id,
+      epoch: 1,
+      kind: 'delete' as const,
+      senderIdentityId: 'cid_1',
+      targetIds: message.targetIds,
+      nonce: 'NN',
+      ciphertext: 'CT',
+      signature: 'SG'
+    }
+    const posted = client(message)
+    expect(await posted.client.postChatMessage('cnv 1', envelope)).deep.equals(
+      message
+    )
+    expect(posted.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/conversations/cnv%201/messages'
+    })
+    expect(JSON.parse(posted.calls[0].body ?? '')).deep.equals(envelope)
+
+    const paged = client([message])
+    expect(await paged.client.chatMessages('cnv_1')).deep.equals([message])
+    await paged.client.chatMessages('cnv_1', { after: 2, limit: 50 })
+    await paged.client.chatMessages('cnv_1', { before: 9 })
+    expect(paged.calls.map(call => call.url)).deep.equals([
+      'http://x/api/v1/chat/conversations/cnv_1/messages',
+      'http://x/api/v1/chat/conversations/cnv_1/messages?after=2&limit=50',
+      'http://x/api/v1/chat/conversations/cnv_1/messages?before=9'
+    ])
+
+    const read = client({ seq: 3 })
+    expect(await read.client.markChatRead('cnv_1', 2)).deep.equals({ seq: 3 })
+    expect(read.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/chat/conversations/cnv_1/read'
+    })
+    expect(JSON.parse(read.calls[0].body ?? '')).deep.equals({ seq: 2 })
+
+    const disclosure = {
+      messageId: message.id,
+      plaintext: '{"type":"text"}',
+      messageKey: 'MK'
+    }
+    const reported = client({ id: 'crp_1', verified: true })
+    expect(await reported.client.reportChatMessage(disclosure)).deep.equals({
+      id: 'crp_1',
+      verified: true
+    })
+    expect(reported.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/reports'
+    })
+    expect(JSON.parse(reported.calls[0].body ?? '')).deep.equals(disclosure)
+
+    const report = {
+      id: 'crp_1',
+      conversation: {
+        id: 'cnv_1',
+        kind: 'teamMembers',
+        title: 'Hawks Members'
+      },
+      messageId: message.id,
+      reporter: { userId: 8, shortName: 'Blair B' },
+      sender: { userId: 7, shortName: 'Casey C' },
+      kind: 'post',
+      sentAt: '2027-04-10T12:00:00.000Z',
+      plaintext: '{"type":"text"}',
+      verified: true,
+      createdAt: '2027-04-10T12:01:00.000Z',
+      resolvedAt: null
+    }
+    const listed = client([report])
+    expect(await listed.client.chatReports()).deep.equals([report])
+    await listed.client.chatReports(true)
+    expect(listed.calls.map(call => call.url)).deep.equals([
+      'http://x/api/v1/admin/chat/reports',
+      'http://x/api/v1/admin/chat/reports?open=true'
+    ])
+    const resolved = client({ ...report, resolvedAt: 'later' })
+    expect(
+      (await resolved.client.resolveChatReport('crp 1')).resolvedAt
+    ).equals('later')
+    expect(resolved.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/admin/chat/reports/crp%201/resolve'
+    })
+  })
+
+  it('uploads attachment parts as bytes and reads attachments', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const upload = {
+      id: 'cat_1',
+      conversationId: 'cnv_1',
+      size: 9,
+      completed: false,
+      partSize: 8388608,
+      parts: 1,
+      missing: [0]
+    }
+    const opened = client(upload)
+    const request = { conversationId: 'cnv_1', size: 9, digest: 'DG' }
+    expect(await opened.client.createChatAttachment(request)).deep.equals(
+      upload
+    )
+    expect(opened.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/attachments'
+    })
+    expect(JSON.parse(opened.calls[0].body ?? '')).deep.equals(request)
+
+    const part = client({ received: 1, parts: 1, missing: [] })
+    const bytes = new Uint8Array([1, 2, 3])
+    expect(
+      await part.client.putChatAttachmentPart('cat 1', 0, bytes)
+    ).deep.equals({ received: 1, parts: 1, missing: [] })
+    expect(part.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/chat/attachments/cat%201/parts/0'
+    })
+    expect(part.calls[0].headers['content-type']).equals(
+      'application/octet-stream'
+    )
+    expect([...(part.calls[0].body as unknown as Uint8Array)]).deep.equals([
+      1, 2, 3
+    ])
+
+    const finished = {
+      id: 'cat_1',
+      conversationId: 'cnv_1',
+      size: 9,
+      digest: 'DG',
+      completed: true
+    }
+    const completed = client(finished)
+    expect(
+      await completed.client.completeChatAttachment('cat_1')
+    ).to.deep.include(finished)
+    expect(completed.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/attachments/cat_1/complete'
+    })
+
+    const readable = {
+      ...finished,
+      url: 'http://space/x',
+      expiresAt: '2027-04-10T12:10:00.000Z'
+    }
+    const read = client(readable)
+    expect(await read.client.chatAttachment('cat_1')).deep.equals(readable)
+    expect(read.calls[0]).deep.include({
+      method: 'GET',
+      url: 'http://x/api/v1/chat/attachments/cat_1'
+    })
+    const unfinished = client(upload)
+    expect(await unfinished.client.chatAttachment('cat_1')).deep.equals(upload)
+  })
+
+  it('reads isPlayer on team grants, and season and league grants without it', function () {
+    expect(
+      asScopeGrant({
+        id: 'tem_1',
+        name: 'Hawks',
+        role: 'member',
+        isPlayer: true
+      }).isPlayer
+    ).equals(true)
+    expect(
+      asScopeGrant({ id: 'sea_1', name: 'Spring', role: 'spectator' }).isPlayer
+    ).equals(undefined)
+    expect(() =>
+      asScopeGrant({ id: 'tem_1', name: 'H', role: 'member', isPlayer: 'yes' })
+    ).to.throw()
+    const page = asManagePage({
+      scope: { kind: 'league', id: 'lea_1', name: 'QPLL', safesportLao: true },
+      tree: { leagues: [], seasons: [], teams: [] },
+      people: [],
+      pending: [],
+      invites: []
+    })
+    expect(page.scope.safesportLao).equals(true)
+  })
+
+  it('reads how a team is seen, and a list from before that was said', async function () {
+    const now = stubFetch(200, [
+      {
+        id: 'tem_1',
+        name: 'Hawks',
+        shortName: null,
+        logoPath: null,
+        record: null,
+        access: 'fan',
+        following: true,
+        onTeam: false
+      },
+      { id: 'tem_2', name: 'Owls', shortName: null, logoPath: null }
+    ])
+    const teams = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: now.fetch
+    }).teams()
+    expect(teams[0]).deep.include({
+      access: 'fan',
+      following: true,
+      onTeam: false
+    })
+    expect(teams[1]?.access).equals(undefined)
+    expect(teams[1]?.onTeam).equals(undefined)
   })
 
   it('cleans a team list', async function () {
