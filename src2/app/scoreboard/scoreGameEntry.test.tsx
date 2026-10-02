@@ -5,7 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import { type GameDetail, GameStationClient } from '../../common/api'
+import {
+  asGameDetail,
+  type GameDetail,
+  GameStationClient
+} from '../../common/api'
 import { NO_OVERRIDES, SAMPLE_SCOREBOARD } from '../../common/scoreboard'
 import { fakeSockets } from '../../test/fakeScoreboardSocket'
 import { App } from '../App'
@@ -66,6 +70,13 @@ function pills(): string[] {
 
 const finalGame = { status: 'final' as const, homeScore: 3, awayScore: 2 }
 
+/**
+ * The game as a server sends it with no word on who may score, read the way
+ * the client reads every response.
+ */
+const { canScore: _canScore, ...unsaid } = gameFixture
+const silent = asGameDetail({ ...unsaid, scoreboard: runnable })
+
 describe('the Score Game pill', function () {
   it('is the one scoring pill, after Box score and Videos, and opens its choices on this page', async function () {
     await gameScreen({ canScore: true, scoreboard: runnable })
@@ -108,7 +119,7 @@ describe('the Score Game pill', function () {
       'somebody who may not score it, even unscored and open',
       { canScore: false, scoreboard: runnable }
     ],
-    ['a server that does not say', { scoreboard: runnable }],
+    ['a server that does not say', silent],
     [
       'a final game whose scoreboard has closed',
       { canScore: true, ...finalGame, scoreboard: { ...runnable, open: false } }
