@@ -185,6 +185,15 @@ export async function mergeTeams(
     const n = Number(counted?.n ?? 0)
     if (n > 0) report.repointed[`${table}.${column}`] = n
   }
+  // Follows move too, but not by the update below: two rows of one person
+  // would collide on the key, so they are copied and the old ones dropped.
+  const follows = await db
+    .selectFrom('team_follows')
+    .select(expression => [expression.fn.countAll<string>().as('n')])
+    .where('team_id', '=', fromTeamId)
+    .executeTakeFirst()
+  const followCount = Number(follows?.n ?? 0)
+  if (followCount > 0) report.repointed['team_follows.team_id'] = followCount
 
   const fixtures = await planFixtures(db, fromTeamId, intoTeamId)
   report.fixtures = fixtures
@@ -277,6 +286,20 @@ export async function mergeTeams(
         select min(id) from memberships group by user_id, team_id
       )
     `.execute(trx)
+    // A fan of the closed team follows the survivor: one row each, so a
+    // person who followed both keeps the one they already had there.
+    await sql`
+      insert into follows (user_id, group_type, group_id, created_at)
+      select user_id, 'team', ${intoTeamId}, created_at
+      from follows
+      where group_type = 'team' and group_id = ${fromTeamId}
+      on conflict (user_id, group_type, group_id) do nothing
+    `.execute(trx)
+    await trx
+      .deleteFrom('follows')
+      .where('group_type', '=', 'team')
+      .where('group_id', '=', fromTeamId)
+      .execute()
     // `season_teams` has no id of its own — it is the pair — so the duplicate
     // is removed by keeping the earliest row for each pair instead.
     await sql`

@@ -245,6 +245,28 @@ export async function putObject(options: {
   }
 }
 
+/**
+ * Removes one object from the Space with a presigned DELETE.
+ *
+ * A 404 is the same outcome as a 204 — somebody else got there first, or it
+ * was never written — and is not worth failing a clean-up over.
+ */
+export async function deleteObject(options: {
+  space: SpaceSettings
+  key: string
+}): Promise<void> {
+  const { space, key } = options
+  const response = await fetch(signedSpaceUrl(space, key, 'DELETE'), {
+    method: 'DELETE'
+  })
+  if (!response.ok && response.status !== 404) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `Deleting ${key} answered ${response.status} ${detail.slice(0, 200)}`
+    )
+  }
+}
+
 /** How long a stalled upload waits before it is given up on. */
 const IDLE_LIMIT_MS = 60_000
 /**
