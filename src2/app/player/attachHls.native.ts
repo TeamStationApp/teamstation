@@ -1,4 +1,5 @@
 import { NativeVideoHandle } from './nativeVideoHandle'
+import type { PlayIntent } from './playIntent'
 import { addressIsWrong } from './videoError'
 import type { VideoHandle } from './videoHandle'
 
@@ -33,7 +34,13 @@ import type { VideoHandle } from './videoHandle'
 export function attachHls(
   handle: VideoHandle,
   url: string,
-  onGiveUp?: () => void
+  onGiveUp?: () => void,
+  /**
+   * What the caller knows about the viewer's wish, for a caller that pauses
+   * the player itself (the multi-camera grid). The buffer limit is the web's:
+   * AVPlayer and ExoPlayer size their own.
+   */
+  intent?: PlayIntent
 ): () => void {
   if (!(handle instanceof NativeVideoHandle)) {
     // Nothing else can be driven from here. Silently doing nothing is better
@@ -83,7 +90,7 @@ export function attachHls(
     wait = 1000
     reloads = 0
     if (!recovering) return
-    const wanted = wantsToPlay && handle.paused
+    const wanted = (intent?.wantsToPlay() ?? wantsToPlay) && handle.paused
     recovering = false
     if (wanted) handle.play().catch(() => undefined)
   }

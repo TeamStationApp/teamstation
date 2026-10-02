@@ -115,6 +115,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       onReadyForDisplay={handle.handleReadyForDisplay}
       onVideoTracks={handle.handleVideoTracks}
       onAspectRatio={handle.handleAspectRatio}
+      onEnd={handle.handleEnd}
       onError={handle.handleError}
     />
   )
