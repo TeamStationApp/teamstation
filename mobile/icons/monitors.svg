@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
   <!-- Overlapping monitors (copy-icon stack): three screens + short stands, drawn back to front.
-       The middle and front screens are filled with the icon cream (gs_logo.png's background) so
+       The middle and front screens are filled with the icon cream (the logo raster's background) so
        each one hides the screens behind it. -->
   <g stroke="#1F2418" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
     <!-- Rear monitor, offset up-left -->

@@ -69,7 +69,7 @@ describe('sign-in link', function () {
     // the source, not a link being built.
     expect(link).contains('/signin/')
     expect(link).contains('?r=')
-    expect(routes).not.contains('gamestation://')
+    expect(routes).not.contains('teamstation://')
   })
 
   it('prints the address as text beside the button', function () {

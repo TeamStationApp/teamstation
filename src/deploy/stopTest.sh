@@ -19,7 +19,7 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-node -r sucrase/register server/index.ts >/tmp/gsStopTest.log 2>&1 &
+node -r sucrase/register server/index.ts >/tmp/tsStopTest.log 2>&1 &
 MAIN=$!
 
 for _ in $(seq 1 40); do
@@ -54,5 +54,5 @@ fi
 
 [ -n "${VICTIM:-}" ] && { kill -CONT "$VICTIM" 2>/dev/null; kill -9 "$VICTIM" 2>/dev/null; }
 wait 2>/dev/null
-grep -iE "SIGTERM|forcing" /tmp/gsStopTest.log | sed 's/^/     /'
+grep -iE "SIGTERM|forcing" /tmp/tsStopTest.log | sed 's/^/     /'
 exit $STATUS
