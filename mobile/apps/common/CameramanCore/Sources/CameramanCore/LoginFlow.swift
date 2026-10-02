@@ -85,7 +85,7 @@ public struct LoginFlow: Equatable, Sendable {
 
   public static func showsDevelopmentHost(_ host: String) -> Bool {
     let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
-    return !trimmed.isEmpty && trimmed != "gamestation.co" && trimmed != "https://gamestation.co"
+    return !trimmed.isEmpty && trimmed != "app.teamstation.app" && trimmed != "https://app.teamstation.app"
   }
 
   public static func loggedInLine(_ email: String) -> String {

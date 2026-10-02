@@ -14,9 +14,9 @@ public protocol BroadcastControlling: AnyObject {
 /// stays quiet. A UI test or a loopback probe needs the listener without writing that choice, so the
 /// next ordinary launch is still quiet. A recording run writes a file and must not bind the port.
 public enum BroadcastPolicy {
-  public static let preferenceKey = "co.gamestation.cameraman.broadcasting"
+  public static let preferenceKey = "app.teamstation.cameraman.broadcasting"
 
-  /// How far the stop slider has to travel before it commits. Matches GS Director.
+  /// How far the stop slider has to travel before it commits. Matches TS Director.
   public static let slideCommitFraction = 0.8
 
   public static func shouldListen(

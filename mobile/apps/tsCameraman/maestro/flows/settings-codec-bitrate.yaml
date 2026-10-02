@@ -1,0 +1,78 @@
+appId: app.teamstation.cameraman
+---
+# Codec and bitrate are set in the sheet and have to survive leaving it. A setting that reverts on
+# dismiss looks identical to one that was never applied, so the assertions are made after Done.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "settings-codec"
+# Adaptive bitrate is on by default, so the rate reads as a range: the floor at half the rate, up to
+# the rate itself.
+- assertVisible:
+    id: "settings-bitrate-value"
+    text: ".*3.0–6.0 Mbps"
+
+# The identifier is shown but not editable. Worth asserting, because a camera whose identity changed
+# when its settings did would be a new camera to Producer every time. Name and stream sit on the
+# second settings row, below video and lenses.
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: DOWN
+    timeout: 10000
+- assertVisible:
+    id: "settings-cname"
+- copyTextFrom:
+    id: "settings-cname"
+- evalScript: ${output.cname = maestro.copiedText}
+
+- scrollUntilVisible:
+    element:
+      id: "settings-codec"
+    direction: UP
+    timeout: 10000
+- tapOn:
+    id: "settings-codec"
+- tapOn: "HEVC"
+- waitForAnimationToEnd:
+    timeout: 2000
+
+- tapOn:
+    id: "settings-done"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# Back on the camera screen, still running — changing the codec reconfigures the encoder, and a
+# reconfiguration that kills the session would show up here.
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "zoom-label"
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# The choice stuck, and the identity did not move with it.
+- assertVisible:
+    id: "settings-codec"
+    text: ".*HEVC"
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: DOWN
+    timeout: 10000
+- assertVisible:
+    id: "settings-cname"
+    text: ".*${output.cname}"
+
+- tapOn:
+    id: "settings-done"

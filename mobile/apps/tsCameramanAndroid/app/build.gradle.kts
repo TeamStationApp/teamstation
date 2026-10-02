@@ -1,0 +1,137 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlinx.kover")
+}
+
+android {
+    namespace = "app.teamstation.cameraman"
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
+    ndkVersion = "27.1.12297006"
+
+    defaultConfig {
+        applicationId = "app.teamstation.cameraman"
+        // Android 14. FOREGROUND_SERVICE_CAMERA and the typed-service rules that let this app keep
+        // capturing in the background were introduced there, and the whole point of this build is
+        // that it runs backgrounded.
+        minSdk = 34
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+
+        // Empty, the usual case, is app.teamstation.app. A special build sets
+        // TS_PRIMARY_HOST=devhost3.example-ts.test and sign-in follows it.
+        val primaryHost = (System.getenv("TS_PRIMARY_HOST") ?: "").trim().ifEmpty { "app.teamstation.app" }
+        buildConfigField("String", "TS_PRIMARY_HOST", "\"${primaryHost.replace("\"", "")}\"")
+
+        // Only for the Pixel this ships to. The one native call is `SocketQueue`'s.
+        ndk { abiFilters += listOf("arm64-v8a") }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    signingConfigs {
+        // The release build is signed with the debug keystore, so `installRelease` works on a
+        // handset without provisioning a release keystore for a match-day tool.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("src/main/kotlin")
+        }
+        getByName("test") {
+            java.srcDirs("src/test/kotlin")
+        }
+    }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = true
+        }
+    }
+
+    packaging {
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2025.09.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.security:security-crypto:1.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+}
+
+kover {
+    reports {
+        filters {
+            includes {
+                classes(
+                    "app.teamstation.cameraman.ui.SettingsBody",
+                    "app.teamstation.cameraman.ui.RadarSettingsCard",
+                    "app.teamstation.cameraman.ui.RadarSettingsCardKt",
+                    "app.teamstation.cameraman.ui.SpeedOverlay",
+                    "app.teamstation.cameraman.ui.LoginFlow",
+                    "app.teamstation.cameraman.radar.*"
+                )
+            }
+        }
+        verify {
+            rule {
+                minBound(90)
+            }
+        }
+    }
+}

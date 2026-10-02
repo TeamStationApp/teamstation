@@ -3,7 +3,7 @@
 // the phone does, so Director and Preview control flows run on a simulator with no phone attached.
 //
 // Shape mirrors an iPhone 13 Pro: 0.5x / 1x / 3x back lenses, 9x ceiling, a single 1x front
-// camera with a 5x digital ceiling. Formats come from gsCameraman/docs/capabilities.json when
+// camera with a 5x digital ceiling. Formats come from tsCameraman/docs/capabilities.json when
 // present.
 
 'use strict'
@@ -30,7 +30,7 @@ const LENSES = [
 ]
 
 function loadFormats () {
-  const file = path.resolve(__dirname, '..', '..', 'gsCameraman', 'docs', 'capabilities.json')
+  const file = path.resolve(__dirname, '..', '..', 'tsCameraman', 'docs', 'capabilities.json')
   const fallback = [
     { width: 1280, height: 720, frameRate: 30, multiLens: true },
     { width: 1920, height: 1080, frameRate: 30, multiLens: true },

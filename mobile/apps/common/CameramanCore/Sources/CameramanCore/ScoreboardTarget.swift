@@ -58,15 +58,15 @@ public struct ScoreboardSaved: Equatable, Sendable {
 }
 
 /**
- Where a TAG One reading goes, matching GS Watcher.
+ Where a TAG One reading goes, matching TS Watcher.
 
  V1 is `<apiServer>/sockets/api/v1/autoState/<eventId>` with the server string used as typed.
  An event is `<server>/api/v1/scoreboard/<gameId>/publish` over `wss://` (`ws://` for an `http://`
  server), with the session bearer token.
  */
 public enum ScoreboardTarget {
-  public static let defaultV1Server = "wss://app.gamestation.co"
-  public static let defaultAccountServer = "https://gamestation.co"
+  public static let defaultV1Server = "wss://app.teamstation.app"
+  public static let defaultAccountServer = "https://app.teamstation.app"
 
   public static func trimmed(_ origin: String) -> String {
     var text = origin.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -160,13 +160,13 @@ public enum ScoreboardTarget {
     return PitchReading(text: text, restartsPitchHold: pitchMph > 0)
   }
 
-  /// Where sign-in goes. A release build is gamestation.co. `GSPrimaryHost`
+  /// Where sign-in goes. A release build is app.teamstation.app. `TSPrimaryHost`
   /// reroutes a special build; the operator does not type it.
-  public static let productionAccountHost = "gamestation.co"
+  public static let productionAccountHost = "app.teamstation.app"
 
   public static func accountHost(primaryHost: String?) -> String {
     var text = (primaryHost ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    if text == "$(GS_PRIMARY_HOST)" { return productionAccountHost }
+    if text == "$(TS_PRIMARY_HOST)" { return productionAccountHost }
     if let range = text.range(of: "^[a-z][a-z0-9+.-]*://", options: [.regularExpression, .caseInsensitive]) {
       text.removeSubrange(range)
     }
@@ -182,9 +182,9 @@ public enum ScoreboardTarget {
     return "\(plain ? "http" : "https")://\(host)"
   }
 
-  /// The host named by this build's `GSPrimaryHost`, or gamestation.co.
+  /// The host named by this build's `TSPrimaryHost`, or app.teamstation.app.
   public static func accountOrigin(bundle: Bundle = .main) -> String {
-    let written = bundle.object(forInfoDictionaryKey: "GSPrimaryHost") as? String
+    let written = bundle.object(forInfoDictionaryKey: "TSPrimaryHost") as? String
     return accountOrigin(primaryHost: written)
   }
 
@@ -264,15 +264,15 @@ public enum ScoreboardTarget {
   }
 
   private enum Keys {
-    static let route = "co.gamestation.cameraman.scoreboard.route"
-    static let apiServer = "co.gamestation.cameraman.scoreboard.apiServer"
-    static let v1Event = "co.gamestation.cameraman.scoreboard.v1EventId"
-    static let accountServer = "co.gamestation.cameraman.scoreboard.accountServer"
-    static let token = "co.gamestation.cameraman.scoreboard.token"
-    static let displayName = "co.gamestation.cameraman.scoreboard.displayName"
-    static let email = "co.gamestation.cameraman.scoreboard.email"
-    static let gameId = "co.gamestation.cameraman.scoreboard.gameId"
-    static let gameTitle = "co.gamestation.cameraman.scoreboard.gameTitle"
-    static let gameStart = "co.gamestation.cameraman.scoreboard.gameStartAt"
+    static let route = "app.teamstation.cameraman.scoreboard.route"
+    static let apiServer = "app.teamstation.cameraman.scoreboard.apiServer"
+    static let v1Event = "app.teamstation.cameraman.scoreboard.v1EventId"
+    static let accountServer = "app.teamstation.cameraman.scoreboard.accountServer"
+    static let token = "app.teamstation.cameraman.scoreboard.token"
+    static let displayName = "app.teamstation.cameraman.scoreboard.displayName"
+    static let email = "app.teamstation.cameraman.scoreboard.email"
+    static let gameId = "app.teamstation.cameraman.scoreboard.gameId"
+    static let gameTitle = "app.teamstation.cameraman.scoreboard.gameTitle"
+    static let gameStart = "app.teamstation.cameraman.scoreboard.gameStartAt"
   }
 }

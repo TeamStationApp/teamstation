@@ -34,7 +34,7 @@ struct SettingsView<Model: CameraControlling>: View {
         let columns = SettingsLayout.columns(for: geo.size)
         ScrollView {
           VStack(alignment: .leading, spacing: 16) {
-            gameStationSection
+            teamStationSection
             if columns == 2 {
               HStack(alignment: .top, spacing: 12) {
                 VStack(spacing: 16) {
@@ -131,10 +131,10 @@ struct SettingsView<Model: CameraControlling>: View {
 
   /// Sign-in, alone, above every other card. The account server is the build's.
   @ViewBuilder
-  private var gameStationSection: some View {
+  private var teamStationSection: some View {
     if let board = model as? any ScoreboardControlling {
       VStack(alignment: .leading, spacing: 8) {
-        settingsCard(board.scoreboard.signedIn ? "Gamestation account" : "Log in to Gamestation") {
+        settingsCard(board.scoreboard.signedIn ? "TeamStation account" : "Log in to TeamStation") {
           if LoginFlow.showsDevelopmentHost(board.scoreboard.accountHost) {
             Text(board.scoreboard.accountHost)
               .font(.footnote)
@@ -162,7 +162,7 @@ struct SettingsView<Model: CameraControlling>: View {
               if login.logoutArmed {
                 SlideToStop(
                   label: "Slide to log out",
-                  trackIdentifier: "gamestation-slide-logout",
+                  trackIdentifier: "teamstation-slide-logout",
                   animate: model.animatesChrome
                 ) {
                   if login.slide(progress: 1) {
@@ -208,10 +208,10 @@ struct SettingsView<Model: CameraControlling>: View {
       ZStack {
         Color.black.opacity(0.92).ignoresSafeArea()
         VStack(spacing: 20) {
-          Text("GameStation")
+          Text("TeamStation")
             .font(.largeTitle.weight(.bold))
             .foregroundStyle(Color(red: 0.50, green: 0.85, blue: 0.61))
-            .accessibilityIdentifier("gamestation-logo")
+            .accessibilityIdentifier("teamstation-logo")
           if login.fieldIsCode {
             Text(login.notice ?? LoginFlow.checkEmail)
               .font(.subheadline)
@@ -279,7 +279,7 @@ struct SettingsView<Model: CameraControlling>: View {
         .font(.body.weight(.semibold))
         .foregroundStyle(.red)
         .padding()
-        .accessibilityIdentifier("gamestation-cancel")
+        .accessibilityIdentifier("teamstation-cancel")
       }
       .onAppear { loginFocused = true }
       .onChange(of: login.step) { _, _ in loginFocused = true }
@@ -387,7 +387,7 @@ struct SettingsView<Model: CameraControlling>: View {
     if let board = model as? any ScoreboardControlling {
       settingsCard("Scoreboard") {
         routeButton(
-          "GameStation V1",
+          "TeamStation V1",
           selected: board.scoreboard.route == .v1,
           enabled: true,
           tag: "scoreboard-route-v1"
@@ -416,14 +416,14 @@ struct SettingsView<Model: CameraControlling>: View {
             }
         }
         routeButton(
-          "GameStation event",
+          "TeamStation event",
           selected: board.scoreboard.route == .event,
           enabled: board.scoreboard.signedIn,
           tag: "scoreboard-route-event"
         ) {
           board.selectScoreboardRoute(.event)
         }
-        Text("Gamestation Event")
+        Text("TeamStation Event")
           .font(.headline)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal, 16)
@@ -561,7 +561,7 @@ struct SettingsView<Model: CameraControlling>: View {
   private var nameSection: some View {
     settingsCard(
       "Name",
-      footer: "Renaming does not make this a new camera in GS Director."
+      footer: "Renaming does not make this a new camera in TS Director."
     ) {
       cardRow {
         HStack(spacing: 10) {

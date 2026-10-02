@@ -16,7 +16,7 @@ public final class AdaptiveBitrateLoop: @unchecked Sendable {
   /// follow is wasted; slower lets a Wi-Fi burst reach the drop threshold before anything reacts.
   public static let tickInterval: DispatchTimeInterval = .milliseconds(250)
 
-  private let queue = DispatchQueue(label: "co.gamestation.adaptive-bitrate")
+  private let queue = DispatchQueue(label: "app.teamstation.adaptive-bitrate")
   private let sample: @Sendable (@escaping @Sendable (CongestionSample?) -> Void) -> Void
   private let apply: @Sendable (Int) -> Void
   private let published: OSAllocatedUnfairLock<Status>

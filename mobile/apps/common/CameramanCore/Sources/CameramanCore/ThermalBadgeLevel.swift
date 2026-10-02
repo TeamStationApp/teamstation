@@ -80,7 +80,7 @@ public enum ThermalBadgeLevel: String, CaseIterable, Sendable {
     }
   }
 
-  /// Cool is GS Director's source blue and hot its record red, so the pill reads the same in every
+  /// Cool is TS Director's source blue and hot its record red, so the pill reads the same in every
   /// app that shows it.
   public var hue: Hue {
     switch self {
