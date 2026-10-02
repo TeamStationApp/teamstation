@@ -38,6 +38,14 @@ const expoStandIn = path.resolve(
 const strayModules = path.resolve(__dirname, 'src', 'node_modules') + path.sep
 const repositoryOrigin = path.join(__dirname, 'package.json')
 const config = {
+  // Babel inlines these two variables (`babel.config.js`), and Metro's cache
+  // key knows nothing of the environment: without this, a file transformed for
+  // a bench build (`TS_CHAT_BENCH=1`) or for another API address would be
+  // reused, inlined value and all, by the next build that asked for another.
+  cacheVersion: JSON.stringify([
+    process.env.TS_API_BASE_URL ?? '',
+    process.env.TS_CHAT_BENCH ?? ''
+  ]),
   resolver: {
     resolveRequest: (context, moduleName, platform) => {
       if (/^expo-(asset|file-system)(\/legacy)?$/.test(moduleName))
