@@ -323,7 +323,10 @@ describe('teams by external id, and making one', function () {
           logoUrl: null,
           record: null,
           externalIds: ['ext-hawks', 'nick-hawks'],
-          kind: 'full'
+          kind: 'full',
+          access: 'member',
+          following: false,
+          onTeam: true
         }
       ])
       // Asking for full teams is asking for nothing more.
@@ -994,7 +997,10 @@ describe('teams by external id, and making one', function () {
           logoUrl: null,
           record: null,
           externalIds: ['ext-owls', 'nick-owls'],
-          kind: 'full'
+          kind: 'full',
+          access: 'member',
+          following: false,
+          onTeam: false
         }
       ])
 

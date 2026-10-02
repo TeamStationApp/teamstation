@@ -195,6 +195,8 @@ interface Setup {
   live?: () => Promise<LiveNow[]>
   videos?: GameDetail['videos']
   playbackUrl?: (videoId: string) => string | null
+  /** Offer Follow a team. */
+  follow?: boolean
 }
 
 interface Calls {
@@ -203,6 +205,7 @@ interface Calls {
   games: Array<{ gameId: string; title: string; options?: unknown }>
   playbacks: string[]
   details: string[]
+  followTeam: number
 }
 
 async function mount(setup: Setup = {}): Promise<Calls> {
@@ -211,7 +214,8 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     seasons: [],
     games: [],
     playbacks: [],
-    details: []
+    details: [],
+    followTeam: 0
   }
   const client = {
     teams: setup.teams ?? (async () => []),
@@ -244,6 +248,13 @@ async function mount(setup: Setup = {}): Promise<Calls> {
           onOpenSeason={opened => calls.seasons.push(opened)}
           onOpenGame={(gameId, title, options) =>
             calls.games.push({ gameId, title, options })
+          }
+          onFollowTeam={
+            setup.follow === true
+              ? () => {
+                  calls.followTeam += 1
+                }
+              : undefined
           }
         />
       </ThemeProvider>
@@ -598,6 +609,34 @@ describe('the home screen', function () {
     await clock.tick()
     expect(calls.playbacks).deep.equals(['vid_a', 'vid_a'])
     expect(document.querySelector('video')).not.equals(null)
+  })
+
+  it('opens Follow a team, and marks the teams only followed', async function () {
+    const calls = await mount({
+      follow: true,
+      teams: async () => [
+        team('tem_eagles', 'Eagles', {
+          access: 'member',
+          record: { w: 3, l: 1, t: 0, seasonName: 'QPLL Spring 2027' }
+        }),
+        team('tem_hawks', 'Hawks', { access: 'fan', record: null })
+      ]
+    })
+    expect(labelled('Eagles, QPLL Spring 2027 · 3–1')).not.equals(null)
+    expect(labelled('Hawks, Following')).not.equals(null)
+    await press(button('Follow a team'))
+    expect(calls.followTeam).equals(1)
+  })
+
+  it('offers Follow a team to somebody on nothing yet', async function () {
+    await mount({ follow: true })
+    expect(text()).includes('Nothing to watch yet')
+    expect(hasButton('Follow a team')).equals(true)
+  })
+
+  it('has no Follow a team where the shell offers none', async function () {
+    await mount({ teams: async () => [team('tem_hawks', 'Hawks')] })
+    expect(hasButton('Follow a team')).equals(false)
   })
 
   it('treats a failed look at what is live as nothing being live', async function () {

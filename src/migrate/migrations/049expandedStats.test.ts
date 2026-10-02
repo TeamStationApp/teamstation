@@ -11,6 +11,8 @@ describe('049 expanded statistics migration', function () {
   this.timeout(60000)
   const name = `teamstation_expandedstats_migration_${Date.now()}`
   const person = mintUserId(() => false)
+  // What this block tests ends at 049; later migrations have their own tests.
+  const through049 = migrations.filter(m => m.name <= '049expandedStats')
   let admin: Pool
   let pool: Pool
   before(async function () {
@@ -44,7 +46,7 @@ describe('049 expanded statistics migration', function () {
     }
   })
   it('preserves old counts and requeues existing and new games with events', async function () {
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([
+    expect((await migrateUp(pool, through049)).applied).deep.equals([
       '049expandedStats'
     ])
     const row = (await pool.query('select pa,extra from game_player_stats'))
@@ -62,7 +64,7 @@ describe('049 expanded statistics migration', function () {
     expect(rows[1]).includes({ status: 'pending', attempts: 0, retry_at: null })
   })
   it('rolls down and up without removing existing counts or queue generations', async function () {
-    expect(await migrateDown(pool, migrations)).deep.equals([
+    expect(await migrateDown(pool, through049)).deep.equals([
       '049expandedStats'
     ])
     expect(
@@ -72,7 +74,7 @@ describe('049 expanded statistics migration', function () {
         )
       ).rows
     ).has.length(0)
-    await migrateUp(pool, migrations)
+    await migrateUp(pool, through049)
     expect(
       Number(
         (

@@ -19,6 +19,7 @@ import { authRoutes } from './routes/auth'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
+import { followRoutes } from './routes/follows'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -140,6 +141,7 @@ describe('the API document', function () {
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(followRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
@@ -182,6 +184,7 @@ describe('the API document', function () {
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(followRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
