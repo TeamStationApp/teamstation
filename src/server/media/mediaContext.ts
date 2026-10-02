@@ -10,14 +10,12 @@ import type { SpaceSettings } from './spacesHls'
 export interface MediaContext {
   /** the media root. */
   mediaRoot: string
-  /** Where stills are cached, under the media root as `work`. */
-  workDir: string
   /** The pinned build, used for the one frame a still needs. */
   ffmpegPath: string
   /** Signs the `/media` tokens. The same key the proxy's auth check uses. */
   mediaSecret: string
   /** The origin URLs are built against, e.g. `https://gamestation.co`. */
   publicUrl: string
-  /** The bucket finished videos live in. Empty until one is configured. */
+  /** The bucket finished videos and their stills live in. */
   space: SpaceSettings
 }

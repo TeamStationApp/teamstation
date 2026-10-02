@@ -834,10 +834,11 @@ async function keepAPicture(
   durationSec: number
 ): Promise<void> {
   try {
+    if (current.space == null) return
     await ensureStill({
       ffmpegPath: current.ffmpegPath,
       source: { kind: 'file', path: join(dir, VIDEO_FILE) },
-      workDir: current.workDir,
+      space: current.space,
       videoId,
       atSec: posterSecond(durationSec)
     })

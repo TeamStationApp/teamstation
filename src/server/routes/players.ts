@@ -27,8 +27,7 @@ import {
 import { cleanBody } from '../jsonBody'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { mediaUrlPath } from '../media/mediaTokens'
-import { stillSecond } from '../media/stills'
+import { stillUrl } from '../media/stills'
 import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -332,14 +331,7 @@ export function playerRoutes(
             playAt: highlight.playAt.toISOString(),
             startOffsetSec: highlight.startOffsetSec,
             playOffsetSec: highlight.playOffsetSec,
-            stillUrl:
-              media.publicUrl +
-              mediaUrlPath(
-                media.mediaSecret,
-                `work/stills/${video.id}`,
-                `${stillSecond(highlight.playOffsetSec)}.jpg`,
-                now
-              ),
+            stillUrl: stillUrl(media, video.id, highlight.playOffsetSec, now),
             storage: video.storage
           })
           // One row per play: the first video that covers it is the one the

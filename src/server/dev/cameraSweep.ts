@@ -58,7 +58,7 @@ async function main(): Promise<void> {
             still = await ensureStill({
               ffmpegPath: serverConfig.ffmpegPath,
               source,
-              workDir: serverConfig.workDir,
+              space: serverConfig.space,
               videoId: video.id,
               atSec,
               width: 960

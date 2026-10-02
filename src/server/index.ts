@@ -243,23 +243,6 @@ function liveRouteOptions(): LiveRouteOptions {
   }
 }
 
-/**
- * Stills are written to `workDir` and served from `mediaDir/work`.
- *
- * Nothing makes those the same place, and when they are not, every thumbnail
- * in the app is a plain plate and nothing anywhere says why — the still is cut,
- * filed, and then looked for somewhere else. It costs one comparison at boot to
- * say so out loud.
- */
-function checkStillsAreReachable(): void {
-  const wanted = path.join(serverConfig.mediaDir, 'work')
-  if (path.resolve(serverConfig.workDir) === path.resolve(wanted)) return
-  console.error(
-    `workDir is ${serverConfig.workDir} but stills are served from ${wanted}: ` +
-      'no thumbnail will be found. One of the two settings is wrong.'
-  )
-}
-
 function startLive(db: ReturnType<typeof makeDatabase>): void {
   if (!serverConfig.live.enabled) {
     console.log('live ingest is switched off (live.enabled is false)')
@@ -342,7 +325,6 @@ function startPurge(db: ReturnType<typeof makeDatabase>): void {
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
-  checkStillsAreReachable()
   const liveDb = makeDatabase(serverConfig.databaseUrl)
   startLive(liveDb)
   reopenInterrupted(liveDb)
@@ -452,8 +434,7 @@ function runWorker(): void {
     mediaRoot: serverConfig.mediaDir,
     mediaSecret,
     publicUrl,
-    space: serverConfig.space,
-    workDir: serverConfig.workDir
+    space: serverConfig.space
   }
   // Redis is connected to and not waited for: the API comes up without it,
   // and only the scoreboard notices that it is away.

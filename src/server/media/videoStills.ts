@@ -26,7 +26,7 @@ export async function warmVideoStills(
     await warmStills({
       ffmpegPath: media.ffmpegPath,
       source,
-      workDir: media.workDir,
+      space: media.space,
       videoId,
       seconds: highlights.map(highlight => highlight.playOffsetSec)
     })
