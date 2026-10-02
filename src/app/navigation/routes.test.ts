@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { parseRoute, type Route, routePath, safeNext } from './routes'
+import {
+  parseDevRoute,
+  parseRoute,
+  type Route,
+  routePath,
+  safeNext
+} from './routes'
 
 /** Every route survives being written down and read back. */
 const roundTrip = (route: Route): Route => {
@@ -260,6 +266,29 @@ describe('addresses', function () {
     for (const route of routes) {
       expect(roundTrip(route), routePath(route)).deep.equals(route)
     }
+  })
+
+  it('has no chat bench outside a phone build made for it', function () {
+    // The web and the tests read `chatBench.ts`, which has no bench.
+    expect(parseRoute('/dev/chat-bench')).deep.equals({ name: 'home' })
+    expect(parseRoute('/dev')).deep.equals({ name: 'home' })
+    expect(routePath({ name: 'chatBench' })).equals('/')
+  })
+
+  it('reads the bench’s address where the build has one', function () {
+    const path = '/dev/chat-bench'
+    expect(parseDevRoute(['dev', 'chat-bench'], path)).deep.equals({
+      name: 'chatBench'
+    })
+    expect(parseDevRoute(['dev', 'chat-bench'], undefined)).deep.equals({
+      name: 'home'
+    })
+    expect(parseDevRoute(['dev', 'chat-bench', 'x'], path)).deep.equals({
+      name: 'home'
+    })
+    expect(parseDevRoute(['dev', 'other'], path)).deep.equals({
+      name: 'home'
+    })
   })
 
   it('reads an invite link at the address PeerTube used', function () {

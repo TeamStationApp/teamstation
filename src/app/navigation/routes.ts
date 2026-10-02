@@ -11,6 +11,8 @@
  * read but not written is a Back button that goes somewhere else.
  */
 
+import { chatBenchPath } from '../dev/chatBench'
+
 export type When = 'upcoming' | 'past' | 'all'
 type GroupKind = 'league' | 'season' | 'team'
 interface GroupRef {
@@ -176,6 +178,7 @@ export type Route =
    * server. Absent on the web, where the link is the server's own.
    */
   | { name: 'signInLink'; token: string; server?: string }
+  | { name: 'chatBench' }
 
 /** A sign-in link's route, with the issuing server only when the link names one. */
 function signInLinkRoute(token: string, server: string | null): Route {
@@ -458,9 +461,25 @@ export function parseRoute(path: string, search = ''): Route {
         ...(angles.length > 0 && zoom != null ? { zoom } : {})
       }
     }
+    case 'dev':
+      return parseDevRoute(parts)
     default:
       return { name: 'home' }
   }
+}
+
+/**
+ * `/dev/…`: the bench where the build has one, and home otherwise. The path
+ * comes from the build's `chatBench` twin, so the web bundle does not even
+ * hold it.
+ */
+export function parseDevRoute(
+  parts: string[],
+  benchPath: string | undefined = chatBenchPath
+): Route {
+  return benchPath != null && `/${parts.join('/')}` === benchPath
+    ? { name: 'chatBench' }
+    : { name: 'home' }
 }
 
 /** The address of a route, ready for the history. */
@@ -612,6 +631,8 @@ export function routePath(route: Route): string {
     }
     case 'join':
       return `/i/${route.code}`
+    case 'chatBench':
+      return chatBenchPath ?? '/'
     case 'signIn':
       return route.next == null
         ? '/sign-in'

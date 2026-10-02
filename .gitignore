@@ -75,3 +75,6 @@ coverage/
 /.deploy-export/
 /.deploy-macos/
 /distribution.dmg
+
+# The simulator build in src/MOBILE.md and the chat crypto bench.
+ios/build-sim/

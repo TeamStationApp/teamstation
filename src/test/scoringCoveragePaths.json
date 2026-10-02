@@ -128,5 +128,9 @@
   "src/app/player/controlGeometry.ts",
   "src/app/player/slowMotion.ts",
   "src/app/player/multiCam/useMultiCam.ts",
-  "src/app/player/multiCam/barParts.tsx"
+  "src/app/player/multiCam/barParts.tsx",
+  "src/app/dev/ChatBenchScreen.tsx",
+  "src/app/dev/chatBenchRun.ts",
+  "src/app/dev/chatBench.ts",
+  "src/app/dev/chatBench.native.ts"
 ]
