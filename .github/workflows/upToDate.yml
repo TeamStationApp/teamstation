@@ -1,0 +1,41 @@
+# Fails a pull request that is not rebased onto the latest master: master's
+# tip must be an ancestor of the branch, and the branch must carry no merge
+# commits, so a branch that merged master in to catch up does not pass.
+#
+# A pass goes stale the moment master moves. The ruleset that requires this
+# check also requires branches to be up to date, which is what makes GitHub
+# ask for it again.
+name: Up to date with master
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  rebased:
+    name: Rebased onto master
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Check the branch is rebased onto master
+        run: |
+          git fetch --no-tags origin master
+          base=$(git rev-parse origin/master)
+          head=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$base" "$head"; then
+            echo "::error::This branch is not based on the latest master ($base). Rebase it onto master."
+            exit 1
+          fi
+          merges=$(git rev-list --merges "$base..$head")
+          if [ -n "$merges" ]; then
+            echo "::error::This branch has merge commits. Rebase onto master instead of merging it in:"
+            git log --oneline --merges "$base..$head"
+            exit 1
+          fi
+          echo "Rebased onto master $base"
