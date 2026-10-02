@@ -57,6 +57,8 @@ import { migration054AssistantRole } from './054assistantRole'
 import { migration055GuardianRequests } from './055guardianRequests'
 import { migration056OneMemberKind } from './056oneMemberKind'
 
+import { migration050TeamFollows } from './050teamFollows'
+
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
   migration001Identity,
@@ -105,6 +107,7 @@ export const migrations: Migration[] = [
   migration047TeamStation,
   migration048DropStatRollups,
   migration049ExpandedStats,
+  migration050TeamFollows,
   migration050CreationHierarchy,
   migration050OAuth,
   migration051EventTags,

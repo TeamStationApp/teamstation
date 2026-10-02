@@ -209,6 +209,13 @@ export interface MembershipsTable {
   granted_by_link_id: string | null
 }
 
+/** A person following a team, which shows them its listing (050teamFollows). */
+export interface TeamFollowsTable {
+  user_id: number
+  team_id: string
+  created_at: Generated<Date>
+}
+
 /** One role for one person on one league, season or team (043roleFlags). */
 export interface ScopeRolesTable {
   id: string
@@ -769,6 +776,7 @@ export interface Database {
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
   system_settings: SystemSettingsTable
+  team_follows: TeamFollowsTable
   teams: TeamsTable
   user_links: UserLinksTable
   user_emails: UserEmailsTable
