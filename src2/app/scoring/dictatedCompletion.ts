@@ -3,6 +3,7 @@ import type {
   Destination,
   Direction,
   ResultAction,
+  RunnerMovementAction,
   ScoringAction
 } from '../../common/scoring/actions'
 import { destinationBase, RUNNER_REASONS } from '../../common/scoring/actions'
@@ -55,14 +56,20 @@ function batterOf(state: GameState): number {
   return state.liveData.plays.currentPlay!.matchup.batter.id
 }
 
-function out(runner: number, to: Destination, reason?: string): ScoringAction {
+function out(
+  runner: number,
+  to: Destination,
+  reason?: string,
+  fielders?: number[]
+): ScoringAction {
   const known = (RUNNER_REASONS as readonly string[]).includes(reason ?? '')
   return {
     type: 'runnerMovement',
     runner,
     to,
     out: true,
-    ...(known ? { reason: reason as (typeof RUNNER_REASONS)[number] } : {})
+    ...(known ? { reason: reason as (typeof RUNNER_REASONS)[number] } : {}),
+    ...(fielders == null ? {} : { fielders })
   }
 }
 
@@ -99,13 +106,54 @@ function decide(
   if (!WAITS.includes(decision) || pending == null) return null
   const batter = batterOf(state)
   switch (decision) {
-    case 'batterOut':
-      // Nobody said who put him out, so nobody is credited.
+    case 'batterOut': {
+      if (pending.outcome === 'Batter Out — Other')
+        return [out(batter, 'batter', 'Batter Out — Other')]
+      // Thrown out with no throw said: the fielder the ball went to threw
+      // to first ("ground out to short" is 6-3). Otherwise nobody said who
+      // put him out, so nobody is credited.
+      const thrown = sentence.some(
+        action =>
+          action.type === 'result' &&
+          action.eventType === 'field_out' &&
+          action.outBy === 'throw'
+      )
+      // With a runner put out too, the throw to first came from the fielder
+      // who made that out, if the sentence says who did.
+      // Only an out on this ball in play, not a caught stealing before it.
+      const since = sentence.findLastIndex(
+        action => action.type === 'ballInPlay'
+      )
+      const runnerOut = sentence
+        .slice(Math.max(0, since))
+        .reverse()
+        .find(
+          action =>
+            action.type === 'runnerMovement' &&
+            action.out === true &&
+            action.runner !== batter
+        )
+      const named = [...sentence]
+        .reverse()
+        .find(action => action.type === 'ballInPlay' && action.fielder != null)
+      const fielder =
+        runnerOut?.type === 'runnerMovement'
+          ? runnerOut.fielders?.at(-1)
+          : named?.type === 'ballInPlay'
+            ? named.fielder
+            : undefined
+      const first = state.liveData.linescore.defense['1B']?.id
+      if (!thrown || fielder == null || first == null)
+        return [out(batter, '1B', pending.outcome)]
       return [
-        pending.outcome === 'Batter Out — Other'
-          ? out(batter, 'batter', 'Batter Out — Other')
-          : out(batter, '1B', pending.outcome)
+        out(
+          batter,
+          '1B',
+          pending.outcome,
+          fielder === first ? [first] : [fielder, first]
+        )
       ]
+    }
     case 'resolveBatter': {
       if (pending.outcome === "Fielder's Choice") {
         const outs = new Set(
@@ -327,9 +375,10 @@ function saidSide(
  */
 export function playDefaults(
   game: GameState,
-  spoken: readonly ScoringAction[],
+  said: readonly ScoringAction[],
   transcript = ''
 ): ScoringAction[] {
+  const spoken = afterStrikeThree(game, said, transcript)
   const defense = game.liveData.linescore.defense
   // A batted-ball result followed by its ball in play, with only runners'
   // moves between: the ball in play goes first. A caught foul with no ball
@@ -410,7 +459,7 @@ export function playDefaults(
   const caught =
     result?.eventType === 'field_out' && (result.outBy === 'catch' || foul)
   let caughtBy: number | undefined
-  return sentence.flatMap((action, index): ScoringAction[] => {
+  const filled = sentence.flatMap((action, index): ScoringAction[] => {
     if (action.type === 'result') {
       if (action.foulCaught === true && action.outBy == null)
         return [{ ...action, outBy: 'catch' }]
@@ -478,7 +527,714 @@ export function playDefaults(
     }
     return [action]
   })
+  return holding(game, doublePlay(game, filled, transcript))
 }
+
+/** Pitches that are a strike whatever the count; a foul only below two. */
+const STRIKES: ReadonlySet<string> = new Set(['C', 'S', 'T', 'L'])
+
+/**
+ * An out sent straight after strike three, with no ball in play of its own
+ * ("foul ball, swing and a miss, called strike three" sent with a caught foul
+ * or a strikeout after it): the at-bat ended with the strikeout, and the out
+ * is the model's invention, not the next batter's.
+ */
+function afterStrikeThree(
+  game: GameState,
+  actions: readonly ScoringAction[],
+  transcript: string
+): ScoringAction[] {
+  let strikes = game.liveData.linescore.strikes
+  let struckOut = false
+  const kept: ScoringAction[] = []
+  for (const action of actions) {
+    if (action.type === 'pitch') {
+      if (STRIKES.has(action.call) || (action.call === 'F' && strikes < 2))
+        strikes++
+      struckOut = strikes >= 3
+      kept.push(action)
+      continue
+    }
+    const after = struckOut && action.type === 'result'
+    struckOut = false
+    if (action.type === 'result' || action.type === 'ballInPlay') strikes = 0
+    if (after && action.eventType === 'strikeout') {
+      // A strikeout said again is invented too, the pitch made it — unless
+      // the third strike was dropped: then the result is the dropped third
+      // strike, and the pitch is what goes, so the rules ask whether he
+      // reached.
+      if (DROPPED_THIRD.test(transcript)) kept.splice(-1, 1, action)
+      continue
+    }
+    if (after && BATTED.has(action.eventType)) continue
+    kept.push(action)
+  }
+  return kept
+}
+
+/** Words that say the third strike got away from the catcher. */
+const DROPPED_THIRD =
+  /\b(?:drop(?:s|ped)?|in the dirt|gets? away|got away|passed ball|wild pitch|reach(?:es|ed)?|runs? to first|beats? (?:out )?(?:the )?throw)\b/i
+
+/** Each runner's base as the sentence begins. */
+function basesOf(game: GameState): Map<number, Destination> {
+  const offense = game.liveData.linescore.offense
+  const on = new Map<number, Destination>()
+  if (offense.first != null) on.set(offense.first.id, '1B')
+  if (offense.second != null) on.set(offense.second.id, '2B')
+  if (offense.third != null) on.set(offense.third.id, '3B')
+  return on
+}
+
+/**
+ * A runner sent, safe, to the base he is already on held there ("the runner
+ * holds"). When the play has moved him on by rule — home from third on a
+ * single — the move keeps him there; when it has not, there is nothing to
+ * move, and the rules would refuse it.
+ */
+function holding(
+  game: GameState,
+  actions: readonly ScoringAction[]
+): ScoringAction[] {
+  const on = basesOf(game)
+  const stays = (action: ScoringAction, index: number): boolean =>
+    action.type === 'runnerMovement' &&
+    action.out !== true &&
+    on.get(action.runner) === action.to &&
+    !actions
+      .slice(0, index)
+      .some(
+        earlier =>
+          earlier.type === 'runnerMovement' && earlier.runner === action.runner
+      )
+  // A hold said before the play's result holds him against that result.
+  const resultAt = actions.findIndex(action => action.type === 'result')
+  const ordered =
+    resultAt < 0
+      ? [...actions]
+      : [
+          ...actions.slice(0, resultAt).filter((a, i) => !stays(a, i)),
+          actions[resultAt],
+          ...actions.slice(0, resultAt).filter((a, i) => stays(a, i)),
+          ...actions.slice(resultAt + 1)
+        ]
+  const moved = new Set<number>()
+  let state = game
+  const kept: ScoringAction[] = []
+  for (const action of ordered) {
+    if (action.type === 'runnerMovement') {
+      const stays =
+        action.out !== true &&
+        !moved.has(action.runner) &&
+        on.get(action.runner) === action.to
+      moved.add(action.runner)
+      const sent = state.pending?.movements.find(
+        move => move.playerId === action.runner
+      )
+      if (stays && (sent == null || sent.to === destinationBase(action.to)))
+        continue
+    }
+    kept.push(action)
+    state = applyAction(state, action).state
+  }
+  return kept
+}
+
+const DOUBLE_PLAY =
+  /\b(?:double[- ]?plays?|d\.? ?p\.?|turns? two|turned two|turning two|twin killing)\b/gi
+/**
+ * Words just before a double play that say it did not happen: "no double
+ * play", "they couldn't turn two", "they try to turn two".
+ */
+const NOT_DONE =
+  /\b(?:no|not|never|couldn[’']t|could not|can[’']t|cannot|didn[’']t|did not|don[’']t|doesn[’']t|wasn[’']t|failed to|fails? to|almost|nearly|too late|late)(?:\s+(?:a|an|the|get|gets|got|turn|make|complete|for|chance|time|in|enough|quite))*\s*$/i
+/**
+ * Words just before a double play that only try for it — "they try to turn
+ * two", "they go for the double play" — which the words after it say failed
+ * ("but the relay is late", "but only get the lead runner").
+ */
+const TRIED =
+  /\b(?:tr(?:y|ies|ied|ying)|attempt(?:s|ed|ing)?|go(?:es|ing)?|went)\s+(?:to|for)(?:\s+(?:a|an|the|get|turn))*\s*$/i
+const FELL_SHORT =
+  /^[^.]*?\bbut\b[^.]*?\b(?:late|only|just|beats?|miss(?:es|ed)?|in time|batter (?:is |was )?safe|safe at first)\b/i
+/**
+ * Words beside a double play's that say the batter was safe at first — not
+ * that he almost was, and not a runner beating a throw elsewhere.
+ */
+const BATTER_SAFE =
+  /(?<!\b(?:almost|nearly|just about)\s+)\b(?:batter (?:is |was )?safe|safe at first|beats? it out|beats? (?:out )?(?:the )?(?:throw|relay|return)(?!\s+(?:home|to (?:the plate|home|second|third)|at (?:home|the plate|second|third))))\b/i
+/** A double play off a ball in the air: the rules' own, not this one. */
+const IN_THE_AIR =
+  /\b(?:line drive|liner|lines (?:out|into|to)|lined (?:out|into|to)|fly ball|fly out|flies|flied|pop ?ups?|pop fly|pops? (?:up|out to)|popped (?:up|out)|doubled?(?:\s+\w+){0,3}\s+off|doubles(?:\s+\w+){0,3}\s+off)\b/i
+const POSITION_WORDS: Record<string, (typeof POSITIONS)[number]> = {
+  1: 'P',
+  2: 'C',
+  3: '1B',
+  4: '2B',
+  5: '3B',
+  6: 'SS',
+  7: 'LF',
+  8: 'CF',
+  9: 'RF',
+  one: 'P',
+  two: 'C',
+  three: '1B',
+  four: '2B',
+  five: '3B',
+  six: 'SS',
+  seven: 'LF',
+  eight: 'CF',
+  nine: 'RF'
+}
+const POSITION_TOKEN = '(?:[1-9]|one|two|three|four|five|six|seven|eight|nine)'
+/**
+ * A double play's chain of position numbers: "6-4-3", "six four three", "6
+ * to 4 to 3", or "643" run together — never a jersey ("number six").
+ */
+const POSITION_CHAIN = new RegExp(
+  `(?<!(?:number|#)\\s*)(?:\\b(${POSITION_TOKEN}(?:(?:\\s*[-–]\\s*|\\s+to\\s+|\\s+)${POSITION_TOKEN})+)\\b|\\b([1-9]{2,3})\\s*(?=double|d\\.? ?p\\b))`,
+  'gi'
+)
+
+/**
+ * The positions a double play's words name, in order: the first chain of
+ * three, or of two right before the double play ("6-3 double play"). A count
+ * ("the two-one pitch") is two numbers anywhere else, and is passed over.
+ */
+function chainSaid(transcript: string): Array<(typeof POSITIONS)[number]> {
+  for (const match of transcript.matchAll(POSITION_CHAIN)) {
+    const tokens =
+      match[1] != null
+        ? match[1].split(/\s*[-–]\s*|\s+to\s+|\s+/i)
+        : (match[2].match(/[1-9]/g) ?? [])
+    const after = transcript.slice(match.index + match[0].length)
+    if (tokens.length >= 3 || /^\W*(?:double|d\.? ?p\b)/i.test(after))
+      return tokens.map(token => POSITION_WORDS[token.toLowerCase()])
+  }
+  return []
+}
+
+/**
+ * What the words say of a double play: done — its words, not denied, or a
+ * chain of three position numbers; denied — "no double play", "they
+ * couldn't turn two", "they almost turned two", "they try to turn two but
+ * the relay is late", or the batter safe at first beside them ("the relay
+ * is late", "too late at first"), wherever said; or nothing.
+ */
+function doublePlaySaid(transcript: string): 'done' | 'denied' | 'unsaid' {
+  const matches = [...transcript.matchAll(DOUBLE_PLAY)]
+  if (matches.length === 0 && chainSaid(transcript).length < 3) return 'unsaid'
+  if (BATTER_SAFE.test(transcript) || RELAY_LATE.test(transcript))
+    return 'denied'
+  const denied = matches.some(match => {
+    const before =
+      transcript
+        .slice(0, match.index)
+        .split(/[.;,]|\bbut\b/i)
+        .at(-1) ?? ''
+    const after = transcript.slice(match.index + match[0].length)
+    return (
+      NOT_DONE.test(before) || (TRIED.test(before) && FELL_SHORT.test(after))
+    )
+  })
+  return denied && matches.length > 0 ? 'denied' : 'done'
+}
+
+/**
+ * The fielders a double play's words name as taking a throw, in order —
+ * "throws to the shortstop", "feeds the second baseman" — and the one they
+ * say covered first ("the pitcher covers first"), who takes the last throw.
+ */
+function receiversSaid(transcript: string): {
+  between: Array<(typeof POSITIONS)[number]>
+  atFirst?: (typeof POSITIONS)[number]
+} {
+  const found: Array<{
+    index: number
+    position: (typeof POSITIONS)[number]
+    atFirst: boolean
+  }> = []
+  for (const [noun, position] of FIELDER_NOUNS)
+    for (const match of transcript.matchAll(
+      new RegExp(`\\b(?:${noun})\\b`, 'gi')
+    )) {
+      const before = transcript.slice(0, match.index)
+      const after = transcript.slice(match.index + match[0].length)
+      const atFirst =
+        /^\s+(?:covers|covering|covered|is at|at)\s+first\b/i.test(after)
+      if (atFirst || THROWN_TO.test(before) || THROWS.test(after))
+        found.push({ index: match.index, position, atFirst })
+    }
+  found.sort((a, b) => a.index - b.index)
+  return {
+    between: found.filter(item => !item.atFirst).map(item => item.position),
+    atFirst: found.find(item => item.atFirst)?.position
+  }
+}
+
+/** Words before a fielder that say a throw went to him. */
+const THROWN_TO =
+  /\b(?:(?:throws?|threw|throwing|flips?|flipped|tosses?|tossed|relays?|relayed|relay|fires?|fired|over|on|back)\s+(?:it\s+)?to|feeds?|fed)\s+(?:the\s+)?$/i
+/** Words after a fielder that say he threw. */
+const THROWS =
+  /^\s*,?\s*(?:who\s+)?(?:throws|threw|fires|fired|relays|relayed|flips|flipped)\b/i
+
+/** The base a double play's pivot takes the throw at. */
+function pivotBase(
+  pivot: (typeof POSITIONS)[number] | undefined
+): Destination | undefined {
+  return pivot === 'C'
+    ? 'home'
+    : pivot === '3B'
+      ? '3B'
+      : pivot === '2B' || pivot === 'SS'
+        ? '2B'
+        : undefined
+}
+
+/** The fielders the words name by position ("the shortstop"). */
+function fieldersNamed(transcript: string): Array<(typeof POSITIONS)[number]> {
+  return FIELDER_NOUNS.filter(([noun]) =>
+    new RegExp(`\\b(?:${noun})\\b`, 'i').test(transcript)
+  ).map(([, position]) => position)
+}
+
+/**
+ * The runners' moves said before the play's result, moved after it: the
+ * rules take a fielder's choice only with its runners still on base.
+ */
+function runnersAfterResult(
+  actions: readonly ScoringAction[]
+): ScoringAction[] {
+  const at = actions.findIndex(action => action.type === 'result')
+  if (at < 0) return [...actions]
+  const before = actions.slice(0, at)
+  return [
+    ...before.filter(action => action.type !== 'runnerMovement'),
+    actions[at],
+    ...before.filter(action => action.type === 'runnerMovement'),
+    ...actions.slice(at + 1)
+  ]
+}
+
+/** Results a denied double play on the ground is sent as. */
+const DENIED_RESULTS: ReadonlySet<string> = new Set([
+  'field_out',
+  'fielders_choice',
+  'double_play',
+  'grounded_into_double_play'
+])
+
+/** Words that put the batter safe at first: the relay to him was late. */
+const RELAY_LATE =
+  /\b(?:relay|return throw|throw to first|throw to the first baseman) (?:is |was )?(?:too |just |a step )?late\b|\blate (?:on )?the relay\b|\b(?:too |just )?late (?:at|to) first\b|\bnot in time (?:at|to) first\b/i
+
+/**
+ * A double play the words deny, on a ball not caught, where the model put a
+ * runner out: a fielder's choice, the batter safe. With no runner put out,
+ * the model's one out stands — the words may say it was the batter ("no
+ * double play, they only get the batter at first") — unless they say the
+ * batter was safe ("the relay is late"): then the lead runner was the out,
+ * left to the fielder's choice rules.
+ */
+function noDoublePlay(
+  game: GameState,
+  actions: readonly ScoringAction[],
+  transcript: string
+): ScoringAction[] {
+  const batter = game.liveData.plays.currentPlay?.matchup.batter.id
+  const forced = game.liveData.linescore.offense.first?.id
+  const batterSafe = BATTER_SAFE.test(transcript) || RELAY_LATE.test(transcript)
+  const runnerOut = actions.some(
+    action =>
+      action.type === 'runnerMovement' &&
+      action.out === true &&
+      action.runner !== batter
+  )
+  const result = actions.find(
+    (action): action is ResultAction => action.type === 'result'
+  )
+  if (
+    (!runnerOut && !(batterSafe && forced != null)) ||
+    result == null ||
+    result.outBy === 'catch' ||
+    result.foulCaught === true ||
+    !DENIED_RESULTS.has(result.eventType)
+  )
+    return runnersAfterResult(actions)
+  return runnersAfterResult(
+    actions.flatMap((action): ScoringAction[] => {
+      if (action === result)
+        return [{ type: 'result', eventType: 'fielders_choice' }]
+      if (action.type !== 'runnerMovement') return [action]
+      if (action.runner === batter && action.out === true) return []
+      // The lead runner the failed double play got, sent safe to second.
+      if (
+        !runnerOut &&
+        action.runner === forced &&
+        action.out !== true &&
+        action.to === '2B'
+      )
+        return []
+      return [action]
+    })
+  )
+}
+
+/** Fielders in a row, a fielder who kept the ball named once. */
+function chainOf(ids: ReadonlyArray<number | undefined>): number[] {
+  const chain: number[] = []
+  for (const id of ids) if (id != null && chain.at(-1) !== id) chain.push(id)
+  return chain
+}
+
+/** The base before each: where the runner forced to it comes from. */
+const BEFORE: Partial<Record<Destination, Destination>> = {
+  '2B': '1B',
+  '3B': '2B',
+  home: '3B'
+}
+const NEXT: Partial<Record<Destination, Destination>> = {
+  '1B': '2B',
+  '2B': '3B',
+  '3B': 'home'
+}
+
+/**
+ * A ground ball the words call a double play ("six four three double play",
+ * "they turn two", "the shortstop fields it, double play") is two outs, with
+ * fewer than two out before it: a runner forced out, and the batter out at
+ * first.
+ *
+ * The runner's base comes from the position numbers said (the fielder before
+ * the last took the throw there: "one two three" is home), else "home to
+ * first" or "third to first", else the out the model sent when it is a base
+ * ahead of its runner, else second. The runner is the one forced there, or
+ * the one the model put out there.
+ *
+ * Their fielders are one sequence, read from the first of: the position
+ * numbers said; the two outs the model sent when they chain as one double
+ * play; a chain of three the model sent; the runner's chain the model sent,
+ * then the first baseman; the fielder the ball went to, the fielder covering
+ * the base (second base is the second baseman's when the ball went to the
+ * shortstop or third baseman, the shortstop's otherwise), then the first
+ * baseman. A model's chain counts only when it starts with the fielder the
+ * ball went to and its fielder at the runner's base could have taken the
+ * throw there. The runner's out takes all but the last of the sequence, the
+ * batter's the last two.
+ *
+ * With nobody out before it, every other runner the batter forced moves up a
+ * base, unless the model sent him somewhere.
+ */
+function doublePlay(
+  game: GameState,
+  actions: readonly ScoringAction[],
+  transcript: string
+): ScoringAction[] {
+  const outs = game.liveData.linescore.outs
+  const said = doublePlaySaid(transcript)
+  if (said === 'denied') return noDoublePlay(game, actions, transcript)
+  if (outs >= 2 || said === 'unsaid') return [...actions]
+  const inPlay = actions.find(
+    (action): action is BallInPlayAction => action.type === 'ballInPlay'
+  )
+  const result = actions.find(
+    (action): action is ResultAction => action.type === 'result'
+  )
+  if (
+    inPlay == null ||
+    result == null ||
+    !DOUBLE_PLAY_RESULTS.has(result.eventType) ||
+    result.outBy === 'catch' ||
+    result.foulCaught === true ||
+    (inPlay.trajectory != null &&
+      inPlay.trajectory !== 'ground_ball' &&
+      inPlay.trajectory !== 'chopper') ||
+    IN_THE_AIR.test(transcript)
+  )
+    return [...actions]
+  const batter = game.liveData.plays.currentPlay?.matchup.batter.id
+  if (batter == null) return [...actions]
+  // A fielder's choice the model sent, with the batter not put out, is its
+  // reading of a double play that did not happen — unless the scorer said
+  // its numbers.
+  if (
+    result.eventType === 'fielders_choice' &&
+    chainSaid(transcript).length < 2 &&
+    !actions.some(
+      action =>
+        action.type === 'runnerMovement' &&
+        action.runner === batter &&
+        action.out === true
+    )
+  )
+    return runnersAfterResult(actions)
+  const on = basesOf(game)
+  const runnerAt = new Map([...on].map(([id, at]) => [at, id]))
+  const moves = actions.filter(
+    (action): action is RunnerMovementAction => action.type === 'runnerMovement'
+  )
+  // A runner's move the model sent counts only ahead of him; his out, only
+  // at the next base, where a double play puts him out.
+  const ahead = (move: RunnerMovementAction): boolean => {
+    const at = on.get(move.runner)
+    return at != null && destinationBase(move.to) > destinationBase(at)
+  }
+  const atNext = (move: RunnerMovementAction): boolean => {
+    const at = on.get(move.runner)
+    return at != null && destinationBase(move.to) === destinationBase(at) + 1
+  }
+  const runnerOuts = moves.filter(
+    move => move.runner !== batter && move.out === true
+  )
+  if (runnerOuts.length > 1) return [...actions]
+  // Farther than the next base only where the words say so: "he throws home
+  // to get the runner from second".
+  const named = (to: Destination): boolean =>
+    to === 'home'
+      ? /\b(?:home|plate|catcher)\b/i.test(transcript)
+      : to === '3B'
+        ? /\bthird\b/i.test(transcript)
+        : false
+  const sentOut = runnerOuts.find(
+    move => atNext(move) || (ahead(move) && named(move.to))
+  )
+  const defense = game.liveData.linescore.defense
+  const idOf = (position: (typeof POSITIONS)[number]): number | undefined =>
+    defense[position]?.id
+  const first = idOf('1B')
+  const saidPositions = chainSaid(transcript)
+  const chainIds = saidPositions.map(idOf)
+  // The fielders the words name taking the throws, after the one the ball
+  // went to: "he throws to the shortstop covering second, on to first".
+  const ballAt = POSITIONS.find(position => idOf(position) === inPlay.fielder)
+  const receivers = receiversSaid(transcript)
+  // The pivot is the first of them who could take a throw at a base; the
+  // first baseman named last takes the throw to first.
+  const pivotAt = receivers.between.findIndex(
+    position => position !== ballAt && pivotBase(position) != null
+  )
+  const wordsPivot = pivotAt < 0 ? undefined : receivers.between[pivotAt]
+  const between = pivotAt < 0 ? [] : receivers.between.slice(pivotAt)
+  const base: Destination =
+    pivotBase(saidPositions.at(-2)) ??
+    pivotBase(wordsPivot) ??
+    (/\bhome to first\b/i.test(transcript)
+      ? 'home'
+      : /\bthird to first\b/i.test(transcript)
+        ? '3B'
+        : undefined) ??
+    sentOut?.to ??
+    '2B'
+  const runner =
+    sentOut?.to === base ? sentOut.runner : runnerAt.get(BEFORE[base] ?? '1B')
+  if (runner == null) return [...actions]
+  const sentFor = (id: number): RunnerMovementAction | undefined =>
+    moves.find(move => move.runner === id)
+  const runnerSent = sentFor(runner)
+  const batterSent = sentFor(batter)
+  // Who can take the throw at the runner's base: second is the second
+  // baseman's or the shortstop's.
+  const covers =
+    base === '2B'
+      ? [idOf('2B'), idOf('SS')]
+      : COVERS[base] != null
+        ? [idOf(COVERS[base])]
+        : []
+  const holds = (id: number | undefined): boolean =>
+    covers.length === 0 || covers.includes(id)
+  // A model's chain counts only when the words account for every fielder
+  // in it: the one the ball went to, any named ("the second baseman"), the
+  // usual cover at the base, and the first baseman at the end. Otherwise
+  // the model made them up, and the usual double play stands.
+  const usualCover =
+    base === '2B'
+      ? idOf(
+          inPlay.fielder === idOf('SS') || inPlay.fielder === idOf('3B')
+            ? '2B'
+            : 'SS'
+        )
+      : covers[0]
+  const accounted = new Set(
+    [
+      inPlay.fielder,
+      usualCover,
+      first,
+      ...fieldersNamed(transcript).map(idOf)
+    ].filter(id => id != null)
+  )
+  const himself = HIMSELF.test(transcript)
+  const startsRight = (chain: readonly number[]): boolean =>
+    (inPlay.fielder == null || chain[0] === inPlay.fielder) &&
+    chain.every(id => accounted.has(id))
+  // The model's runner chain counts when it starts with the fielder who
+  // fielded it, its last fielder could take the throw there, and it is more
+  // than the fielder who fielded it named again — unless the words say he
+  // took the base himself.
+  const runnerChainSent =
+    runnerSent?.out === true && runnerSent.to === base
+      ? chainOf(runnerSent.fielders ?? [])
+      : []
+  const runnerTrusted =
+    runnerChainSent.length > 0 &&
+    startsRight(runnerChainSent) &&
+    (holds(runnerChainSent.at(-1)) ||
+      (himself && runnerChainSent.at(-1) === inPlay.fielder)) &&
+    !(
+      runnerChainSent.length === 1 &&
+      runnerChainSent[0] === inPlay.fielder &&
+      !himself
+    )
+  const batterChainSent =
+    batterSent?.out === true ? chainOf(batterSent.fielders ?? []) : []
+  const long = [runnerSent?.fielders ?? [], batterSent?.fielders ?? []]
+    .map(chainOf)
+    .find(
+      chain => chain.length >= 3 && startsRight(chain) && holds(chain.at(-2))
+    )
+  let chains: [number[], number[]] | undefined
+  let sequence: number[] = []
+  if (chainIds.length >= 2 && chainIds.every(id => id != null))
+    sequence = chainOf(chainIds)
+  else if (
+    inPlay.fielder != null &&
+    (wordsPivot != null || receivers.atFirst != null)
+  )
+    // The fielders the words name: the pivot, and whoever took the throw at
+    // first — the one said to cover it, the next named, or the first baseman.
+    sequence = chainOf([
+      inPlay.fielder,
+      wordsPivot != null ? idOf(wordsPivot) : usualCover,
+      receivers.atFirst != null
+        ? idOf(receivers.atFirst)
+        : between[1] != null
+          ? idOf(between[1])
+          : first
+    ])
+  else if (
+    runnerTrusted &&
+    batterChainSent.length > 0 &&
+    batterChainSent.length <= 2 &&
+    batterChainSent[0] === runnerChainSent.at(-1) &&
+    startsRight([inPlay.fielder ?? batterChainSent[0], ...batterChainSent])
+  )
+    // Two outs the model chained together, as one double play: as sent.
+    chains = [runnerChainSent, batterChainSent]
+  else if (long != null) sequence = long
+  else if (runnerTrusted) sequence = chainOf([...runnerChainSent, first])
+  else if (inPlay.fielder != null) {
+    const position = POSITIONS.find(
+      position => idOf(position) === inPlay.fielder
+    )
+    const cover =
+      base === '2B'
+        ? idOf(position === 'SS' || position === '3B' ? '2B' : 'SS')
+        : covers[0]
+    sequence = chainOf([inPlay.fielder, cover, first])
+  }
+  if (chains == null && sequence.length >= 2)
+    chains = [chainOf(sequence.slice(0, -1)), chainOf(sequence.slice(-2))]
+  const runnerOut: RunnerMovementAction = {
+    type: 'runnerMovement',
+    runner,
+    to: base,
+    out: true,
+    ...(chains != null
+      ? { fielders: chains[0] }
+      : runnerSent?.out === true && runnerSent.fielders != null
+        ? { fielders: runnerSent.fielders }
+        : {})
+  }
+  const batterOut: RunnerMovementAction = {
+    type: 'runnerMovement',
+    runner: batter,
+    to: '1B',
+    out: true,
+    ...(chains != null
+      ? { fielders: chains[1] }
+      : batterSent?.out === true && batterSent.fielders != null
+        ? { fielders: batterSent.fielders }
+        : {})
+  }
+  // Every other runner the batter forced moves up a base, when the inning
+  // goes on and the model sent him nowhere a base ahead.
+  const forcedUp: RunnerMovementAction[] = []
+  // Lead runner first: one who holds keeps the runners behind him where
+  // they are too.
+  const heldAt = new Set<Destination>()
+  if (outs === 0)
+    for (const at of ['3B', '2B', '1B'] as const) {
+      const id = runnerAt.get(at)
+      const forced = (['1B', '2B', '3B'] as const)
+        .slice(0, destinationBase(at))
+        .every(behind => runnerAt.has(behind))
+      if (id == null || id === runner || !forced) continue
+      // Sent ahead, or held: "the runner on second holds".
+      const sent = sentFor(id)
+      if (sent != null && sent.out !== true && ahead(sent)) continue
+      // A hold another runner's move contradicts is not one: he was forced on.
+      const taken = moves.some(
+        move =>
+          move.runner !== id &&
+          move.out !== true &&
+          move.to === at &&
+          ahead(move)
+      )
+      if (
+        (sent != null && sent.out !== true && sent.to === at && !taken) ||
+        heldAt.has(NEXT[at]!)
+      ) {
+        heldAt.add(at)
+        continue
+      }
+      forcedUp.push({ type: 'runnerMovement', runner: id, to: NEXT[at]! })
+    }
+  const replaced = new Set([
+    runner,
+    batter,
+    ...forcedUp.map(move => move.runner),
+    // The out the model sent, replaced by the double play's own.
+    ...runnerOuts.map(move => move.runner)
+  ])
+  // The runners' moves after the result, the double play's among them,
+  // lead runner first so no one is moved onto an occupied base; the batter's
+  // out last.
+  const at = actions.indexOf(result)
+  const others = actions
+    .slice(at + 1)
+    .filter(
+      (action): action is RunnerMovementAction =>
+        action.type === 'runnerMovement' && !replaced.has(action.runner)
+    )
+  const runners = [runnerOut, ...forcedUp, ...others].sort(
+    (a, b) =>
+      destinationBase(on.get(b.runner) ?? '1B') -
+      destinationBase(on.get(a.runner) ?? '1B')
+  )
+  return [
+    ...actions
+      .slice(0, at + 1)
+      .filter(
+        action =>
+          action.type !== 'runnerMovement' || !replaced.has(action.runner)
+      ),
+    ...runners,
+    ...actions.slice(at + 1).filter(action => action.type !== 'runnerMovement'),
+    batterOut
+  ]
+}
+
+/** A fielder who made the out at the base himself. */
+const HIMSELF =
+  /\b(?:steps? on|stepped on|touch(?:es|ed)?|tags?|tagged|unassisted|himself|on his own)\b/i
+
+/** Results a dictated ground-ball double play may be sent as. */
+const DOUBLE_PLAY_RESULTS: ReadonlySet<string> = new Set([
+  'field_out',
+  'fielders_choice',
+  'double_play',
+  'grounded_into_double_play'
+])
 
 /** The base a runner stealing this one comes from. */
 const FROM: Record<Destination, Destination> = {

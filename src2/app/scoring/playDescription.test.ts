@@ -227,11 +227,23 @@ describe('a play in two lines', function () {
       primary: 'Chase L. ground out',
       secondary: 'Noah D. (SS) to Sam P. (1B)'
     })
-    // Nobody said who made it: no credit, no second line.
+    // Thrown out with no throw said: the fielder the ball went to threw to
+    // first.
     expect(
       told(
         game(),
         inPlay(14, 'ground_ball'),
+        result('field_out', { outBy: 'throw' })
+      )
+    ).deep.equals({
+      primary: 'Chase L. ground out',
+      secondary: 'Noah D. (SS) to Sam P. (1B)'
+    })
+    // Nobody said who made it: no credit, no second line.
+    expect(
+      told(
+        game(),
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'ground_ball' },
         result('field_out', { outBy: 'throw' })
       )
     ).deep.equals({

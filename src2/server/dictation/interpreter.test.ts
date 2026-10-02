@@ -190,6 +190,20 @@ describe('dictation interpreter', function () {
     expect(sent.body).not.to.have.property('prompt_cache_key')
     // "Number six" is a shirt; digits in a chain are positions.
     expect(system).includes('is the player the game lists as #6')
+    // A double play is two outs, the usual ones unless others are said.
+    expect(system).match(
+      /the runner from first out at second and the\s+batter out at first/
+    )
+    expect(system).includes('Do not ask which runners were out')
+    expect(system).match(
+      /A double play said with no kind of ball is\s+a ground ball/
+    )
+    expect(system).match(/never ask which one happened/)
+    expect(system).match(/is only the out\s+the scorer says/)
+    expect(system).match(/never send\s+a result or an out after it/)
+    expect(system).match(
+      /A runner who tags up on a catch says the catch happened/
+    )
     expect(system).match(
       /barely use position numbers[^]*double play[^]*6 shortstop/
     )
