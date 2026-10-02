@@ -19,12 +19,15 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { chatRoutes } from '../routes/chat'
+import { chatKeyRoutes } from '../routes/chatKeys'
 import { drainDirty } from './reconciler'
 
 /**
  * The chat fixture (`chatSeed`) in a scratch database on the test cluster,
- * with a session for everybody and the chat routes served, for the M5
- * tests. The clock is the fixture's `now`, which a test may move.
+ * with a session for everybody and the chat routes (and the key routes)
+ * served, for the chat tests. The clock is the fixture's `now`, which a test
+ * may move. Each `who` a call names is one session: a person's own key, or
+ * another session made for them by `signIn` (another device).
  */
 
 export interface Answer {
@@ -47,6 +50,12 @@ export interface ChatFixture {
     path: string,
     body?: unknown
   ) => Promise<Answer>
+  /** A new session, called `who`, for the person `key`; its session id. */
+  signIn: (who: string, key: string) => Promise<string>
+  /** A machine token, called `who`, for the person `key`. */
+  apiToken: (who: string, key: string) => Promise<void>
+  /** The session id behind `who`. */
+  sessionOf: (who: string) => string
   /** Makes a person (an account unless `account: false`) with a session. */
   person: (
     key: string,
@@ -96,21 +105,29 @@ export async function openChatFixture(
 
   const tokens = new Map<string, string>()
   const keys = new Map<number, string>()
-  const signIn = async (key: string, userId: number): Promise<void> => {
-    const token = `tok_chat_${key}_${'0'.repeat(24)}`
-    tokens.set(key, token)
-    keys.set(userId, key)
+  const sessions = new Map<string, string>()
+  const signIn = async (
+    key: string,
+    userId: number,
+    who = key
+  ): Promise<string> => {
+    const token = `tok_chat_${who}_${'0'.repeat(24)}`
+    tokens.set(who, token)
+    if (who === key) keys.set(userId, key)
     const at = new Date()
+    const sessionId = makeId('authSession')
+    sessions.set(who, sessionId)
     await db
       .insertInto('auth_sessions')
       .values({
-        id: makeId('authSession'),
+        id: sessionId,
         user_id: userId,
         token_hash: hashToken(token),
         created_at: at,
         expires_at: new Date(at.getTime() + 3_600_000)
       })
       .execute()
+    return sessionId
   }
   for (const person of Object.values(seed.people)) {
     await signIn(person.key, person.userId)
@@ -128,6 +145,26 @@ export async function openChatFixture(
       throw new Error(`nobody called ${key}`)
     },
     keyOf: userId => keys.get(userId) ?? String(userId),
+    signIn: async (who, key) => await signIn(key, fixture.id(key), who),
+    apiToken: async (who, key) => {
+      const token = `tok_chat_${who}_${'1'.repeat(24)}`
+      tokens.set(who, token)
+      await db
+        .insertInto('api_tokens')
+        .values({
+          id: makeId('apiToken'),
+          user_id: fixture.id(key),
+          label: who,
+          token_hash: hashToken(token),
+          created_at: new Date()
+        })
+        .execute()
+    },
+    sessionOf: who => {
+      const sessionId = sessions.get(who)
+      if (sessionId == null) throw new Error(`no session called ${who}`)
+      return sessionId
+    },
     call: async (who, method, path, body) => {
       const headers: Record<string, string> = {}
       const token = tokens.get(who)
@@ -188,6 +225,10 @@ export async function openChatFixture(
   app.use(
     '/api/v1',
     chatRoutes(db, TEST_MEDIA, () => fixture.now)
+  )
+  app.use(
+    '/api/v1',
+    chatKeyRoutes(db, () => fixture.now)
   )
   app.use(errorHandler)
   const server = app.listen(0, '127.0.0.1')

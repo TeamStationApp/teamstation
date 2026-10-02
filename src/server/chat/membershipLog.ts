@@ -51,6 +51,22 @@ export async function notifyChat(
   await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(trx)
 }
 
+export type ChatUserChangeKind = 'link' | 'devices'
+
+/**
+ * `pg_notify('chat_changes', { u, k })`: something about one user's own chat
+ * devices changed (`devices`), or a link to a new device was asked for or
+ * approved (`link`). Sent when the transaction commits.
+ */
+export async function notifyChatUser(
+  trx: Kysely<Database>,
+  userId: number,
+  kind: ChatUserChangeKind
+): Promise<void> {
+  const payload = JSON.stringify({ u: userId, k: kind })
+  await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(trx)
+}
+
 /** Appends rows to the conversation's log, each hashed onto the last. */
 export async function appendLog(
   trx: Kysely<Database>,
@@ -199,12 +215,15 @@ export async function closeConversation(
  * and no box for the conversation's latest epoch at their current per-user
  * key generation, and notifies `grant` when any was opened. A conversation
  * with no epoch yet has nothing to grant; a member without an identity gets
- * theirs when they enrol.
+ * theirs when they enrol. `identityReset` marks requests opened for an
+ * identity that replaced one the conversation had seen, which only an
+ * approver may fill.
  */
 export async function openGrantRequests(
   trx: Kysely<Database>,
   conversationId: string,
-  userIds: number[]
+  userIds: number[],
+  identityReset = false
 ): Promise<number> {
   if (userIds.length === 0) return 0
   const latest = await trx
@@ -248,7 +267,8 @@ export async function openGrantRequests(
         conversation_id: conversationId,
         user_id: key.userId,
         identity_id: key.identityId,
-        generation: key.generation
+        generation: key.generation,
+        identity_reset: identityReset
       })
       .onConflict(oc =>
         oc
