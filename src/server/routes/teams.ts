@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
-import { notFound, unauthorized } from '../../common/errors'
+import { asCreateTeamBody } from '../../common/createTeam'
+import { forbidden, notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { scoreboardOpen } from '../../common/scoreboard'
 import {
@@ -25,6 +26,7 @@ import {
   highlightEvent,
   withDropped
 } from '../highlights'
+import { cleanBody } from '../jsonBody'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import {
@@ -35,6 +37,7 @@ import {
 } from '../media/posters'
 import { stillUrl } from '../media/stills'
 import { warmVideoStills } from '../media/videoStills'
+import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import {
@@ -51,7 +54,9 @@ import {
 } from '../stats'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
+import { createTeam } from '../teams/createTeam'
 import { teamRoster } from '../teams/teamRoster'
+import { externalIdsAsked } from './seasons'
 
 /**
  * The watch path: teams, then that team's games newest first, then one game
@@ -79,57 +84,66 @@ export function teamRoutes(
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
+      const externalIds = externalIdsAsked(req.query.externalId)
+
       // External teams are opponents, not teams anybody belongs to: they
       // appear on a game and nowhere else, admin or not.
-      const teams = scopes.isAdmin
-        ? await db
-            .selectFrom('teams')
-            .leftJoin('games', join =>
-              join.on(eb =>
-                eb.or([
-                  eb('games.home_team_id', '=', eb.ref('teams.id')),
-                  eb('games.away_team_id', '=', eb.ref('teams.id'))
-                ])
+      let query = db
+        .selectFrom('teams')
+        .leftJoin('games', join =>
+          join.on(eb =>
+            eb.or([
+              eb('games.home_team_id', '=', eb.ref('teams.id')),
+              eb('games.away_team_id', '=', eb.ref('teams.id'))
+            ])
+          )
+        )
+        .select([
+          'teams.id as id',
+          'teams.name as name',
+          'teams.short_name as short_name',
+          'teams.logo_path as logo_path'
+        ])
+        .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
+        // Which ids other systems know the team by, so a caller that asked
+        // by one can tell which team answered to which.
+        .select(eb =>
+          eb
+            .selectFrom('external_ids')
+            .select(
+              sql<
+                string[]
+              >`coalesce(array_agg(external_ids.external_id order by external_ids.external_id), '{}')`.as(
+                'ids'
               )
             )
-            .select([
-              'teams.id as id',
-              'teams.name as name',
-              'teams.short_name as short_name',
-              'teams.logo_path as logo_path'
-            ])
-            .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
-            .where('teams.kind', '=', 'full')
-            .groupBy([
-              'teams.id',
-              'teams.name',
-              'teams.short_name',
-              'teams.logo_path'
-            ])
-            .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
-            .orderBy('teams.name')
-            .execute()
-        : scopes.teamIds.size === 0
+            .where('external_ids.entity_type', '=', 'team')
+            .whereRef('external_ids.entity_id', '=', 'teams.id')
+            .as('externalIds')
+        )
+        .where('teams.kind', '=', 'full')
+        // A team merged into another is that team now: it has no games of
+        // its own, and an id it still holds must not find it.
+        .where('teams.merged_into', 'is', null)
+      if (!scopes.isAdmin) {
+        query = query.where('teams.id', 'in', [...scopes.teamIds])
+      }
+      if (externalIds != null) {
+        query = query.where(eb =>
+          eb.exists(
+            eb
+              .selectFrom('external_ids')
+              .select('external_ids.id')
+              .where('external_ids.entity_type', '=', 'team')
+              .whereRef('external_ids.entity_id', '=', 'teams.id')
+              .where('external_ids.external_id', 'in', externalIds)
+          )
+        )
+      }
+      const teams =
+        !scopes.isAdmin && scopes.teamIds.size === 0
           ? []
-          : await db
-              .selectFrom('teams')
-              .leftJoin('games', join =>
-                join.on(eb =>
-                  eb.or([
-                    eb('games.home_team_id', '=', eb.ref('teams.id')),
-                    eb('games.away_team_id', '=', eb.ref('teams.id'))
-                  ])
-                )
-              )
-              .select([
-                'teams.id as id',
-                'teams.name as name',
-                'teams.short_name as short_name',
-                'teams.logo_path as logo_path'
-              ])
-              .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
-              .where('teams.id', 'in', [...scopes.teamIds])
-              .where('teams.kind', '=', 'full')
+          : await query
               .groupBy([
                 'teams.id',
                 'teams.name',
@@ -198,10 +212,44 @@ export function teamRoutes(
                     l: record.l,
                     t: record.t,
                     seasonName: record.seasonName
-                  }
+                  },
+            externalIds: team.externalIds ?? []
           }
         })
       )
+    })
+  )
+
+  /**
+   * Makes a team, in a season, known by the ids another system has for it.
+   * Site administrators only. A body whose external id already names a team
+   * makes nothing and answers that team with 200.
+   */
+  router.post(
+    '/teams',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      if (!actor.isAdmin) {
+        throw forbidden('Only a site administrator may create a team')
+      }
+      const body = cleanBody(asCreateTeamBody, req.body)
+      const answer = await createTeam(db, body)
+
+      setAudit(res.locals, {
+        entityType: 'team',
+        entityId: answer.id,
+        after: answer.created
+          ? {
+              name: answer.name,
+              seasonId: answer.season.id,
+              seasonCreated: answer.season.created,
+              externalIds: body.externalIds
+            }
+          : undefined
+      })
+      res.status(answer.created ? 201 : 200).json(answer)
     })
   )
 
