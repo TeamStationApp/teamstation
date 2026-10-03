@@ -417,6 +417,52 @@ export const enUs = {
   account_walkup_fade: 'Fade Apple Music using the phone’s volume',
   account_walkup_fade_detail:
     'Some Bluetooth speakers beep when the volume changes. Turn this off for hard starts and stops.',
+  account_chat: 'Chat',
+  account_chat_devices: 'Chat devices',
+  account_chat_devices_detail: 'The devices that can read your chats',
+  account_sign_out: 'Sign out',
+
+  // Chat devices, linking and reset
+  chat_devices_title: 'Chat devices',
+  chat_devices_intro:
+    'Every device here can read your chats. A new device joins only when one of these approves it.',
+  chat_devices_list: 'Your devices',
+  chat_devices_this: '%s (this device)',
+  chat_devices_linked: 'Linked',
+  chat_devices_pending: 'Not linked yet',
+  chat_devices_platform_web: 'Web',
+  chat_devices_platform_ios: 'iPhone or iPad',
+  chat_devices_platform_android: 'Android',
+  chat_devices_remove: 'Remove',
+  chat_devices_remove_label: 'Remove %s',
+  chat_devices_requests: 'Waiting for approval',
+  chat_devices_request: '%s asks to read your chats',
+  chat_devices_request_detail:
+    'Approve only if %s shows these same six digits.',
+  chat_devices_code_label: 'Code %s',
+  chat_devices_approve: 'Approve',
+  chat_devices_approve_label: 'Approve %s',
+  chat_devices_decline: 'Decline',
+  chat_devices_decline_label: 'Decline %s',
+  chat_devices_cannot_load: 'Chat devices could not be loaded.',
+  chat_devices_failed: 'That did not work. Try again.',
+  chat_link_title: 'Link this device',
+  chat_link_detail:
+    'Open Chat devices on a device where you already use chat, and approve this one there when it shows the same six digits.',
+  chat_link_code_label: 'Six-digit code %s',
+  chat_link_waiting: 'Waiting for approval…',
+  chat_link_expired: 'That request expired.',
+  chat_link_again: 'Ask again',
+  chat_link_cant_reach: 'I can’t reach my other devices',
+  chat_link_done: 'This device is linked.',
+  chat_link_open_devices: 'Chat devices',
+  chat_reset_title: 'Start chat again on this device',
+  chat_reset_no_device:
+    'None of your devices can approve this one, so chat starts again here.',
+  chat_reset_detail:
+    'Your other devices will stop working for chat. Earlier messages stay locked until another member of each chat opens TeamStation and unlocks them for you, and the people you chat with will see that your safety number changed.',
+  chat_reset_submit: 'Reset chat on this device',
+  chat_reset_back: 'Back to linking',
 
   // Box score and stats
   stats_title: 'Stats',

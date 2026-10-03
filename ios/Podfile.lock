@@ -1917,6 +1917,28 @@ PODS:
     - ReactNativeDependencies
     - RNWorklets (>= 0.8.0)
     - Yoga
+  - RNKeychain (10.0.0):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNReanimated (4.6.0):
     - hermes-engine
     - RCTRequired
@@ -2259,6 +2281,7 @@ DEPENDENCIES:
   - "RNCClipboard (from `../node_modules/@react-native-clipboard/clipboard`)"
   - "RNCPicker (from `../node_modules/@react-native-picker/picker`)"
   - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
+  - RNKeychain (from `../node_modules/react-native-keychain`)
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - "RNSentry (from `../node_modules/@sentry/react-native`)"
   - RNSVG (from `../node_modules/react-native-svg`)
@@ -2466,6 +2489,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-picker/picker"
   RNGestureHandler:
     :path: "../node_modules/react-native-gesture-handler"
+  RNKeychain:
+    :path: "../node_modules/react-native-keychain"
   RNReanimated:
     :path: "../node_modules/react-native-reanimated"
   RNSentry:
@@ -2578,6 +2603,7 @@ SPEC CHECKSUMS:
   RNCClipboard: a4d3243922d75b241b7ab9c0f8b62995a601ff2b
   RNCPicker: ec68d66db9b3dae7563bdd5f13bdadee1ac90eba
   RNGestureHandler: eb4c031b22e791851742d29384ddcad30f3ee49d
+  RNKeychain: 551d42b0ef53426f82551a0cc961cfa10ad33afa
   RNReanimated: 9ae98436a430fb660cf67746b918f998a3afb22f
   RNSentry: 1d2bec0a247f616678efe3e10e0b9b2f4a747a8a
   RNSVG: 6c9bcbf53822153be6f6c1484f6b0b57c0040d21
