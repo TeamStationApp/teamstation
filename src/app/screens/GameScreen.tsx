@@ -1274,7 +1274,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                     team: everybody else is answered `404` and sees nothing
                     here at all.
                   */}
-                  <StreamPanel client={client} gameId={gameId} />
+                  <StreamPanel key={gameId} client={client} gameId={gameId} />
                 </>
               }
               layout={layout}

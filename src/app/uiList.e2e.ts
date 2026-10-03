@@ -55,6 +55,34 @@ const GAME = {
   externalIds: []
 }
 
+const RTMP_URL = 'rtmp://ingest.example/live/lst_own-key'
+
+const OWN_CAMERA = {
+  id: 'lst_own',
+  gameId: 'gam_rtmp',
+  userId: 7,
+  ownerName: 'Pat',
+  slot: 1,
+  label: 'Dugout',
+  keyPrefix: 'lst_own',
+  state: 'idle',
+  opensAt: '2026-10-02T20:00:00.000Z',
+  closesAt: null
+}
+
+const OTHER_CAMERA = {
+  id: 'lst_other',
+  gameId: 'gam_rtmp',
+  userId: 8,
+  ownerName: 'Sam',
+  slot: 1,
+  label: 'Third base',
+  keyPrefix: 'lst_other',
+  state: 'idle',
+  opensAt: '2026-10-02T20:00:00.000Z',
+  closesAt: null
+}
+
 let listed: Array<
   Omit<typeof GAME, 'awayScore' | 'homeScore' | 'venue'> & {
     awayScore: number | null
@@ -94,6 +122,7 @@ async function open(path: string, size: Size): Promise<Page> {
   page.on('request', request => {
     const url = new URL(request.url())
     if (request.method() === 'OPTIONS') {
+      const asked = request.headers()['access-control-request-headers']
       request
         .respond({
           status: 204,
@@ -101,7 +130,8 @@ async function open(path: string, size: Size): Promise<Page> {
             'access-control-allow-origin': WEB,
             'access-control-allow-credentials': 'true',
             'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-            'access-control-allow-headers': '*'
+            'access-control-allow-headers':
+              asked != null && asked !== '' ? asked : 'content-type'
           }
         })
         .catch(() => undefined)
@@ -122,6 +152,15 @@ async function open(path: string, size: Size): Promise<Page> {
       return
     }
     const pathName = url.pathname
+    if (
+      request.method() === 'POST' &&
+      pathName === '/api/v1/games/gam_rtmp/live-streams/lst_own/reveal'
+    ) {
+      request
+        .respond(cors(200, { ...OWN_CAMERA, url: RTMP_URL }))
+        .catch(() => undefined)
+      return
+    }
     if (request.method() !== 'GET') {
       request.respond(cors(404, { error: 'not found' })).catch(() => undefined)
       return
@@ -192,6 +231,43 @@ async function open(path: string, size: Size): Promise<Page> {
               }
             ],
             pitching: []
+          })
+        )
+        .catch(() => undefined)
+      return
+    }
+    if (pathName === '/api/v1/games/gam_rtmp') {
+      request
+        .respond(
+          cors(200, {
+            id: 'gam_rtmp',
+            homeTeamId: 'tem_home',
+            awayTeamId: 'tem_away',
+            homeTeamName: 'Sox',
+            awayTeamName: 'Badgers',
+            seasonId: null,
+            startAt: '2026-10-04T23:45:00.000Z',
+            venue: null,
+            status: 'final',
+            homeScore: 0,
+            awayScore: 4,
+            ingestStatus: 'done',
+            ingestMessage: null,
+            videos: []
+          })
+        )
+        .catch(() => undefined)
+      return
+    }
+    if (pathName === '/api/v1/games/gam_rtmp/live-streams') {
+      request
+        .respond(
+          cors(200, {
+            gameId: 'gam_rtmp',
+            mine: [OWN_CAMERA],
+            others: [OTHER_CAMERA],
+            canAdd: 3,
+            maxCameras: 4
           })
         )
         .catch(() => undefined)
@@ -721,6 +797,58 @@ describe('list screens', function () {
       expect(text).not.includes('No individual lines')
       expect(text).includes('Owls')
       expect(text).includes('Hawks')
+      await page.close()
+    })
+
+    it(`RTMP at ${size.width}×${size.height}`, async function () {
+      const page = await open('/games/gam_rtmp', size)
+      await page.evaluate(() => {
+        const recorded: string[] = []
+        const view = window as { __copied?: string[] }
+        view.__copied = recorded
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            async writeText(text: string): Promise<void> {
+              recorded.push(text)
+            }
+          }
+        })
+      })
+      const before = await until('the stream address', async () => {
+        const read = await page.evaluate(address => {
+          const text = document.body.textContent
+          if (text == null) return undefined
+          if (!text.includes(address)) return undefined
+          if (!text.includes('Tap to copy')) return undefined
+          if (!text.includes('Sam')) return undefined
+          if (!text.includes('Third base')) return undefined
+          return { count: text.split('rtmp://').length - 1 }
+        }, RTMP_URL)
+        if (read == null) return undefined
+        if (read.count !== 1) return undefined
+        return read
+      })
+      expect(before.count).equals(1)
+      await page.evaluate(() => {
+        const found = document.querySelector(
+          '[aria-label="Copy the URL for Dugout"]'
+        )
+        if (found instanceof HTMLElement) found.click()
+      })
+      const copied = await until('copied', async () => {
+        const read = await page.evaluate(() => {
+          const text = document.body.textContent
+          const held = (window as { __copied?: string[] }).__copied
+          if (text == null) return undefined
+          if (held == null) return undefined
+          if (!text.includes('Copied')) return undefined
+          if (held.length === 0) return undefined
+          return held[0]
+        })
+        return read
+      })
+      expect(copied).equals(RTMP_URL)
       await page.close()
     })
   }
