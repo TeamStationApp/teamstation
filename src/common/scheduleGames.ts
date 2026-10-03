@@ -7,6 +7,7 @@
  * answer, and the rest still apply.
  */
 
+import { asExternalIdAt, type ExternalIdBody } from './externalIds'
 import { isFenceDistance, MAX_FENCE_DISTANCE_FT } from './fenceDistance'
 
 /** At most this many rows per call. */
@@ -15,7 +16,12 @@ export const SCHEDULE_GAMES_MAX = 200
 export type ScheduleSide = 'home' | 'away'
 export type ScheduleStatus = 'scheduled' | 'cancelled'
 
-export type ScheduleOpponent = { teamId: string } | { name: string }
+/**
+ * The team a row plays: one TeamStation names, or one named as a schedule
+ * names it, with the id another system has for it when the row knows it.
+ */
+export type ScheduleOpponent =
+  { teamId: string } | { name: string; externalId?: ExternalIdBody }
 
 export interface ScheduleExternalId {
   system: string
@@ -103,6 +109,9 @@ function asOpponent(raw: unknown): ScheduleOpponent {
     if (typeof raw.teamId !== 'string' || raw.teamId.trim() === '') {
       fail('opponent.teamId must be a non-empty string')
     }
+    if (raw.externalId !== undefined) {
+      fail('opponent.externalId goes with opponent.name, not teamId')
+    }
     return { teamId: raw.teamId.trim() }
   }
   if (typeof raw.name !== 'string') fail('opponent.name must be a string')
@@ -110,7 +119,11 @@ function asOpponent(raw: unknown): ScheduleOpponent {
   if (name.length < 1 || name.length > 120) {
     fail('opponent.name must be 1-120 characters')
   }
-  return { name }
+  if (raw.externalId === undefined) return { name }
+  return {
+    name,
+    externalId: asExternalIdAt(raw.externalId, 'opponent.externalId')
+  }
 }
 
 function asExternalId(raw: unknown): ScheduleExternalId {
