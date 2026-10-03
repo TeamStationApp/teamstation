@@ -957,6 +957,124 @@ describe('api client', function () {
     expect(JSON.parse(approved.calls[0].body ?? '')).deep.equals(approval)
   })
 
+  it('reads epochs, makes one, and lists and fills grant requests', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const epochs = {
+      latest: 2,
+      needsRotation: false,
+      noHolder: false,
+      epochs: [
+        {
+          epoch: 2,
+          createdByUserId: 7,
+          identityId: 'cid_1',
+          previousKeyBox: 'PK',
+          chainBreak: false,
+          signature: 'SG',
+          createdAt: 'now'
+        }
+      ],
+      boxes: [
+        {
+          epoch: 2,
+          identityId: 'cid_2',
+          pukGeneration: 1,
+          box: 'BX',
+          grantedByUserId: null
+        }
+      ]
+    }
+    const read = client(epochs)
+    expect(await read.client.chatEpochs('cnv 1', 1)).deep.equals(epochs)
+    expect(read.calls[0].url).equals(
+      'http://x/api/v1/chat/conversations/cnv%201/epochs?after=1'
+    )
+    await client(epochs).client.chatEpochs('cnv_1')
+
+    const publication = {
+      epoch: 3,
+      previousKeyBox: 'PK',
+      signature: 'SG',
+      boxes: [{ userId: 7, pukGeneration: 1, box: 'BX' }]
+    }
+    const made = client({
+      epoch: 3,
+      chainBreak: false,
+      boxed: 1,
+      grantRequests: 0
+    })
+    expect(
+      (await made.client.postChatEpoch('cnv_1', publication)).epoch
+    ).equals(3)
+    expect(made.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/conversations/cnv_1/epochs'
+    })
+    expect(JSON.parse(made.calls[0].body ?? '')).deep.equals(publication)
+
+    const request = {
+      id: 1,
+      conversationId: 'cnv_1',
+      epoch: 3,
+      userId: 8,
+      identityId: 'cid_3',
+      identityKey: 'IK',
+      pukGeneration: 1,
+      pukPublicKey: 'PP',
+      pukSignature: 'PS',
+      identityReset: true,
+      canApprove: false,
+      openedAt: 'now'
+    }
+    const listed = client([request])
+    expect(await listed.client.chatGrants()).deep.equals([request])
+    expect(listed.calls[0].url).equals('http://x/api/v1/chat/grants')
+
+    const boxes = [
+      {
+        conversationId: 'cnv_1',
+        epoch: 3,
+        userId: 8,
+        identityId: 'cid_3',
+        pukGeneration: 1,
+        box: 'BX'
+      }
+    ]
+    const answer = {
+      filled: 0,
+      skipped: [
+        {
+          conversationId: 'cnv_1',
+          userId: 8,
+          identityId: 'cid_3',
+          pukGeneration: 1,
+          reason: 'notOpen'
+        }
+      ]
+    }
+    const filled = client(answer)
+    expect(await filled.client.postChatGrants(boxes)).deep.equals(answer)
+    expect(filled.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/grants'
+    })
+    expect(JSON.parse(filled.calls[0].body ?? '')).deep.equals({ boxes })
+  })
+
   it('reads isPlayer on team grants, and season and league grants without it', function () {
     expect(
       asScopeGrant({
