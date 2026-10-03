@@ -172,7 +172,7 @@ async function standingsOf(
 }
 
 /** The latest epoch of a conversation, 0 when it has none. */
-async function latestEpoch(
+export async function latestEpoch(
   db: Kysely<Database>,
   conversationId: string
 ): Promise<number> {
@@ -205,8 +205,8 @@ async function holdersOf(
   return new Set(rows.map(row => Number(row.userId)))
 }
 
-/** The conversation's row, locked until the transaction ends. */
-async function lockConversation(
+/** The conversation's row, locked until the transaction ends; 404 when missing. */
+export async function lockConversation(
   trx: Kysely<Database>,
   conversationId: string
 ): Promise<{

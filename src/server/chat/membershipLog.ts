@@ -41,13 +41,21 @@ export interface LogEntry {
   reason: string | null
 }
 
-/** `pg_notify('chat_changes', { c, k })`, sent when the transaction commits. */
+/**
+ * `pg_notify('chat_changes', { c, k, seq? })`, sent when the transaction
+ * commits. `seq` is a new message's, or a moved read cursor's.
+ */
 export async function notifyChat(
   trx: Kysely<Database>,
   conversationId: string,
-  kind: ChatChangeKind
+  kind: ChatChangeKind,
+  seq?: number
 ): Promise<void> {
-  const payload = JSON.stringify({ c: conversationId, k: kind })
+  const payload = JSON.stringify(
+    seq == null
+      ? { c: conversationId, k: kind }
+      : { c: conversationId, k: kind, seq }
+  )
   await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(trx)
 }
 
