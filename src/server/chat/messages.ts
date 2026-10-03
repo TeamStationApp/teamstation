@@ -78,9 +78,10 @@ export const DELETE_KINDS: readonly EnvelopeKind[] = [
 ]
 
 /**
- * Where attachment objects live. Deletes remove the objects of the
- * attachments they clear through it; without one (no Space) the attachment
- * rows are left for the orphan purge.
+ * Where attachment objects live (`spaceObjectStore` in `attachments.ts`).
+ * Deletes remove the objects of the attachments they clear through it;
+ * without one (no Space) the attachment rows are left for the orphan purge,
+ * which takes attachments only cleared messages reference.
  */
 export interface ChatObjectStore {
   deleteObjects: (objectKeys: string[]) => Promise<void>
@@ -447,6 +448,10 @@ async function checkAttachments(
     .where('conversation_id', '=', conversationId)
     .where('uploader_user_id', '=', userId)
     .where('completed_at', 'is not', null)
+    // Held until the post commits, so the orphan purge (which takes these
+    // rows `for update`) either waits and finds them referenced, or has
+    // already deleted them and the post is refused.
+    .forShare()
     .execute()
   if (rows.length !== body.attachmentIds.length) {
     throw badRequest('Attach only your own finished uploads in this chat', {

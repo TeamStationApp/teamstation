@@ -1,4 +1,7 @@
+import { rm } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import express from 'express'
 import type { Kysely } from 'kysely'
@@ -15,13 +18,16 @@ import { type Database, makeDatabase } from '../db/database'
 import { type ChatSeed, chatSeed } from '../dev/chatSeed'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
+import type { SpaceSettings } from '../media/spacesHls'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { chatRoutes } from '../routes/chat'
+import { chatAttachmentRoutes } from '../routes/chatAttachments'
 import { chatEpochRoutes } from '../routes/chatEpochs'
 import { chatKeyRoutes } from '../routes/chatKeys'
 import { chatMessageRoutes } from '../routes/chatMessages'
+import { spaceObjectStore } from './attachments'
 import { drainDirty } from './reconciler'
 
 /**
@@ -43,6 +49,10 @@ export interface ChatFixture {
   /** What the routes and the reconciler take as now. */
   now: Date
   url: string
+  /** The API's base, `http://127.0.0.1:<port>/api/v1`. */
+  api: string
+  /** Where attachment parts wait. */
+  uploadsDir: string
   id: (key: string) => number
   /** The seed key of a user id, or the id itself. */
   keyOf: (userId: number) => string
@@ -90,7 +100,12 @@ export const TEST_MEDIA: MediaContext = {
 /** Opens the fixture, or undefined when there is no test cluster. */
 export async function openChatFixture(
   label: string,
-  options: { now?: Date; reconcile?: boolean } = {}
+  options: {
+    now?: Date
+    reconcile?: boolean
+    /** The Space attachments go to (none by default); deletes reach it too. */
+    space?: SpaceSettings
+  } = {}
 ): Promise<ChatFixture | undefined> {
   const adminPool = new Pool({ connectionString: testDatabaseUrl })
   try {
@@ -139,11 +154,16 @@ export async function openChatFixture(
     await signIn(person.key, person.userId)
   }
 
+  const space = options.space ?? TEST_MEDIA.space
+  const uploadsDir = join(tmpdir(), `${name}_uploads`)
+  const store = options.space == null ? undefined : spaceObjectStore(space)
   const fixture: ChatFixture = {
     db,
     seed,
     now: start,
     url,
+    api: '',
+    uploadsDir,
     id: key => {
       const person = seed.people[key]
       if (person != null) return person.userId
@@ -225,6 +245,7 @@ export async function openChatFixture(
     close: async () => {
       server.close()
       await db.destroy()
+      await rm(uploadsDir, { recursive: true, force: true })
       await adminPool.query(`drop database if exists ${name} with (force)`)
       await adminPool.end()
     }
@@ -252,15 +273,25 @@ export async function openChatFixture(
       clock: () => fixture.now,
       objects: {
         deleteObjects: async keys => {
+          await store?.deleteObjects(keys)
           fixture.deletedObjects.push(...keys)
         }
       }
+    })
+  )
+  app.use(
+    '/api/v1',
+    chatAttachmentRoutes(db, {
+      space,
+      uploadsDir,
+      clock: () => fixture.now
     })
   )
   app.use(errorHandler)
   const server = app.listen(0, '127.0.0.1')
   await new Promise<void>(resolve => server.once('listening', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
+  fixture.api = base
 
   if (options.reconcile !== false) await fixture.drain()
   return fixture
