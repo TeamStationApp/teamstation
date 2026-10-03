@@ -250,8 +250,6 @@ export const enUs = {
   // Box score and stats
   stats_title: 'Stats',
   game_pitching: 'Pitching',
-  box_no_roster:
-    'No individual lines for this side: its players are not known here.',
   stats_player: 'Player',
   stats_season: 'Season',
   stats_career: 'Career',
