@@ -4,7 +4,7 @@ import { expect } from 'chai'
 import express from 'express'
 import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
@@ -674,6 +674,171 @@ describe('scheduling a team’s games over HTTP', function () {
       ['invalid', 'opponent.externalId.kind must be a non-empty string'],
       ['invalid', 'opponent.externalId.id must be a non-empty string']
     ])
+  })
+
+  const sidesOf = async (
+    gameId: string
+  ): Promise<{
+    home_team_id: string
+    away_team_id: string
+    home_score: number | null
+    away_score: number | null
+  }> =>
+    await db!
+      .selectFrom('games')
+      .select(['home_team_id', 'away_team_id', 'home_score', 'away_score'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+  /** A Hawks home game against Diablos, held under `id`. */
+  const sidedGame = async (
+    id: string
+  ): Promise<{ row: object; gameId: string; diablos: string }> => {
+    const row = {
+      ...springRow(),
+      externalId: { system: 'otherLeague', id }
+    }
+    const made = await schedule('owner', { games: [row] })
+    const gameId: string = made.body.results[0].gameId
+    return { row, gameId, diablos: await awayTeamOf(gameId) }
+  }
+  const playOn = async (gameId: string): Promise<void> => {
+    const play = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'stolen_base', awayScore: null, homeScore: null }
+    }
+    await sql`insert into events (id, "gameId", "battingTeamId", gumbo)
+      values (${makeId('event')}, ${gameId}, ${hawks}, ${JSON.stringify(play)}::jsonb)`.execute(
+      db!
+    )
+  }
+
+  it('swaps home and away on a matched game with no plays, and announces it', async function () {
+    const { row, gameId, diablos } = await sidedGame('side-1')
+    const listener = new Client({ connectionString: scratchUrl })
+    await listener.connect()
+    const heard: unknown[] = []
+    listener.on('notification', message => {
+      if (message.channel === 'game_changes' && message.payload != null) {
+        heard.push(JSON.parse(message.payload))
+      }
+    })
+    await listener.query('LISTEN game_changes')
+    try {
+      const announced = { game: gameId, kind: 'game' }
+      const hear = async (): Promise<void> => {
+        for (let tries = 0; tries < 50 && heard.length === 0; tries++) {
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+      }
+
+      // The same side changes nothing, and says nothing.
+      const same = await schedule('owner', {
+        games: [{ ...row, side: 'home' }]
+      })
+      expect(same.body.results[0].result).equals('unchanged')
+      await hear()
+      expect(heard).deep.equals([])
+
+      // Scores a game without plays should not have still follow their teams.
+      await db!
+        .updateTable('games')
+        .set({ home_score: 1, away_score: 4 })
+        .where('id', '=', gameId)
+        .execute()
+      const swapped = await schedule('owner', {
+        games: [{ ...row, side: 'away' }]
+      })
+      expect(swapped.body.results[0]).deep.include({
+        result: 'updated',
+        gameId,
+        status: 'scheduled'
+      })
+      expect(await sidesOf(gameId)).deep.equals({
+        home_team_id: diablos,
+        away_team_id: hawks,
+        home_score: 4,
+        away_score: 1
+      })
+      await hear()
+      expect(heard).deep.equals([announced])
+
+      // A cancelled game with no plays swaps back.
+      const back = await schedule('owner', {
+        games: [{ ...row, side: 'home', status: 'cancelled' }]
+      })
+      expect(back.body.results[0]).deep.include({
+        result: 'updated',
+        status: 'cancelled'
+      })
+      expect(await sidesOf(gameId)).deep.include({
+        home_team_id: hawks,
+        away_team_id: diablos
+      })
+    } finally {
+      await listener.end()
+    }
+  })
+
+  it('keeps the sides of a game with plays stored or under way', async function () {
+    const { row, gameId, diablos } = await sidedGame('side-2')
+    const kept = { home_team_id: hawks, away_team_id: diablos }
+    await playOn(gameId)
+    const stored = await schedule('owner', {
+      games: [{ ...row, side: 'away' }]
+    })
+    expect(stored.status).equals(200)
+    expect(stored.body.results[0].result).equals('unchanged')
+    expect(await sidesOf(gameId)).deep.include(kept)
+
+    // An at-bat under way is a play too, though none is stored yet. Other
+    // fields still apply.
+    await db!.deleteFrom('events').where('gameId', '=', gameId).execute()
+    await sql`update games set "currentPlay" = '{}'::jsonb where id = ${gameId}`.execute(
+      db!
+    )
+    const current = await schedule('owner', {
+      games: [{ ...row, side: 'away', venue: 'Field 9' }]
+    })
+    expect(current.body.results[0].result).equals('updated')
+    expect(await sidesOf(gameId)).deep.include(kept)
+  })
+
+  it('keeps the sides of a game between two full teams', async function () {
+    const row = {
+      ...springRow(),
+      opponent: { teamId: gulls },
+      externalId: { system: 'otherLeague', id: 'side-4' }
+    }
+    const made = await schedule('owner', { games: [row] })
+    const gameId: string = made.body.results[0].gameId
+    const answer = await schedule('owner', {
+      games: [{ ...row, side: 'away' }]
+    })
+    expect(answer.body.results[0].result).equals('unchanged')
+    expect(await sidesOf(gameId)).deep.include({
+      home_team_id: hawks,
+      away_team_id: gulls
+    })
+  })
+
+  it('keeps the sides of a final game', async function () {
+    const { row, gameId, diablos } = await sidedGame('side-3')
+    await db!
+      .updateTable('games')
+      .set({ status: 'final' })
+      .where('id', '=', gameId)
+      .execute()
+    const answer = await schedule('owner', {
+      games: [{ ...row, side: 'away' }]
+    })
+    expect(answer.body.results[0]).deep.include({
+      result: 'unchanged',
+      status: 'final'
+    })
+    expect(await sidesOf(gameId)).deep.include({
+      home_team_id: hawks,
+      away_team_id: diablos
+    })
   })
 
   async function setField(

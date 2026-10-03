@@ -1589,8 +1589,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'may only schedule into a season they administer: a row into ' +
             'another season is `forbidden`.\n\n' +
             '**A row:** `opponent` (`{teamId}`, or `{name, externalId?}` with ' +
-            'a name of 1-120 characters) and `side` (`home` or `away`, the side this team plays on) are ' +
-            'needed to create a game and ignored for a matched one. ' +
+            'a name of 1-120 characters) and `side` (`home` or `away`, the ' +
+            'side this team plays on) are needed to create a game. On a ' +
+            'matched one, `opponent` lends only its `externalId` and `side` ' +
+            'may swap the sides (below). ' +
             '`startAt` is required, an ISO 8601 date-time with `Z` or an ' +
             'offset. `seasonId` is optional and must be a season the team is ' +
             "in; without it the season whose dates hold the game's UTC day " +
@@ -1607,8 +1609,15 @@ export function openApiDocument(version: string): OpenApiDocument {
             'that system and id (of any kind) is matched: an `inProgress` or ' +
             '`final` game is left as it is; a `scheduled` or `cancelled` one ' +
             "takes the row's time, venue, status and fence distance, and " +
-            'is `updated` when any of them changed. Teams, season and ' +
-            'scores never change. Without a match, a game in the same season ' +
+            'is `updated` when any of them changed. When the row gives a ' +
+            '`side` other than the one this team plays on, the other team is ' +
+            'an external one and the game has no plays (none stored and no ' +
+            'at-bat under way), its home and away teams swap, their scores ' +
+            'with them, and the row is `updated`. A game with plays, or ' +
+            'between two full teams, keeps its sides, and the row is ' +
+            'answered by its other fields. The season never changes, and a ' +
+            'game matched by time rather than by id keeps its sides. ' +
+            'Without a match, a game in the same season ' +
             'between the same two teams at the same time takes the id. ' +
             'Otherwise the row creates a game. A row without `externalId` ' +
             'always creates one. An opponent named by `name` is a team of the ' +

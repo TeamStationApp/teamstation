@@ -18,6 +18,7 @@ import {
   recordExternalId
 } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
+import { notifyGameChange } from '../socket/gameChanges'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
 
@@ -275,7 +276,7 @@ async function applyRow(
         return { result: 'unchanged', gameId: held.id, status: held.status }
       }
       const idWritten = await recordExternalId(trx, 'game', held.id, externalId)
-      return await updateHeld(trx, held, row, startAt, idWritten)
+      return await updateHeld(trx, held, row, startAt, idWritten, teamId)
     }
   }
 
@@ -370,21 +371,39 @@ function mustMaySchedule(
 
 /**
  * Moves, cancels or restores a scheduled or cancelled game, or resizes its
- * field while it has no plays. Its teams, season and scores are never
- * touched, and a venue or fence the row does not give is kept.
+ * field while it has no plays. A venue or fence the row does not give is
+ * kept, and its season never changes.
+ *
+ * `sidesFor` is the team whose row the game's own id matched: when the row
+ * puts that team on the other side, the other team is external and the game
+ * has no plays — none stored and none under way — its home and away teams,
+ * and their scores, swap. Between two full teams each schedules the game
+ * under its own id and may claim the same side, so neither row moves it.
+ * Otherwise its teams and scores are never touched.
  */
 async function updateHeld(
   trx: Transaction<Database>,
   held: HeldGame,
   row: ScheduleGameRow,
   startAt: Date,
-  alreadyWritten: boolean
+  alreadyWritten: boolean,
+  sidesFor?: string
 ): Promise<Applied> {
   // A post may be storing the game's first plays: wait for it, read the game
   // as it left it, then its plays in a statement of their own.
   const locked = await trx
     .selectFrom('games')
-    .select(['start_at', 'venue', 'status', 'fence_distance_ft'])
+    .select([
+      'home_team_id',
+      'away_team_id',
+      'home_score',
+      'away_score',
+      'currentPlay',
+      'start_at',
+      'venue',
+      'status',
+      'fence_distance_ft'
+    ])
     .where('id', '=', held.id)
     .forUpdate()
     .executeTakeFirstOrThrow()
@@ -398,11 +417,31 @@ async function updateHeld(
   }
   const played = await gameHasPlays(trx, held.id)
   const changes: {
+    home_team_id?: string
+    away_team_id?: string
+    home_score?: number | null
+    away_score?: number | null
     start_at?: Date
     venue?: string
     status?: 'scheduled' | 'cancelled'
     fence_distance_ft?: number
   } = {}
+  if (
+    sidesFor != null &&
+    row.side != null &&
+    (game.home_team_id === sidesFor) !== (row.side === 'home') &&
+    !played &&
+    game.currentPlay == null &&
+    (await isExternal(
+      trx,
+      game.home_team_id === sidesFor ? game.away_team_id : game.home_team_id
+    ))
+  ) {
+    changes.home_team_id = game.away_team_id
+    changes.away_team_id = game.home_team_id
+    changes.home_score = game.away_score
+    changes.away_score = game.home_score
+  }
   if (new Date(game.start_at).getTime() !== startAt.getTime()) {
     changes.start_at = startAt
   }
@@ -423,6 +462,9 @@ async function updateHeld(
       .set({ ...changes, updated_at: new Date() })
       .where('id', '=', held.id)
       .execute()
+    // A screen holding the game open, a scorer's among them, learns of it
+    // when this commits: above all of a swap, or it credits the wrong side.
+    await notifyGameChange(trx, { game: held.id, kind: 'game' })
   }
   const written = alreadyWritten || Object.keys(changes).length > 0
   return {
