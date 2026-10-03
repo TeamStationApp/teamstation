@@ -113,6 +113,10 @@ export type Route =
    * everywhere else that address is home.
    */
   | { name: 'chatBench' }
+  /** Chat devices: this device's enrolment, the others, and link requests. */
+  | { name: 'chatDevices' }
+  /** Linking this device to the user's chat keys, or resetting them. */
+  | { name: 'chatLink' }
 
 const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
@@ -256,6 +260,11 @@ export function parseRoute(path: string, search = ''): Route {
         ...(angles.length > 0 && zoom != null ? { zoom } : {})
       }
     }
+    case 'chat':
+      if (parts[2] != null) return { name: 'home' }
+      if (id === 'devices') return { name: 'chatDevices' }
+      if (id === 'link') return { name: 'chatLink' }
+      return { name: 'home' }
     case 'dev':
       return parseDevRoute(parts)
     default:
@@ -369,6 +378,10 @@ export function routePath(route: Route): string {
       return `/i/${route.code}`
     case 'chatBench':
       return chatBenchPath ?? '/'
+    case 'chatDevices':
+      return '/chat/devices'
+    case 'chatLink':
+      return '/chat/link'
     case 'signIn':
       return route.next == null
         ? '/sign-in'

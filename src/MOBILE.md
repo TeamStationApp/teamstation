@@ -81,6 +81,8 @@ sibling is for. What exists twice:
 | `screens/GameWatchLayout` | the one forked **region**, below |
 | `field/FieldCanvas` | a `<canvas>` and WebGL2 there; expo-gl's `GLView` here, below |
 | `scoring/OutcomePicker`, `scoring/MoreMenu` | the web's drop menus; here `DropMenuView` over `dropMenu.ts`: tap opens above the button, drag up and release chooses, with hover and submenus |
+| `chat/keyStore` | the chat key record in IndexedDB `ts-chat`, sealed under a non-extractable AES-GCM `CryptoKey`, there; one Keychain / Keystore item through `react-native-keychain` (`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`) here. Both keep `chat/keyRecord.ts`'s JSON |
+| `chat/thisDevice` | the user agent's browser and system there; "iPhone", "iPad" or the Android maker and model here |
 
 **A native sibling may not import from its own web twin.** Metro resolves
 `./foo` inside `foo.native.tsx` back to `foo.native.tsx`, and the binding is

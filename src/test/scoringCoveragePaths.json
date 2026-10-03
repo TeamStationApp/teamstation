@@ -133,5 +133,7 @@
   "src/app/dev/ChatBenchScreen.tsx",
   "src/app/dev/chatBenchRun.ts",
   "src/app/dev/chatBench.ts",
-  "src/app/dev/chatBench.native.ts"
+  "src/app/dev/chatBench.native.ts",
+  "src/app/chat/**/*.ts",
+  "src/app/chat/**/*.tsx"
 ]

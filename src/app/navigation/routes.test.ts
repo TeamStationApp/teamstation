@@ -184,6 +184,21 @@ describe('addresses', function () {
     expect(routePath({ name: 'followTeam' })).equals('/teams/follow')
   })
 
+  it('reads and writes Chat devices and linking at /chat/devices and /chat/link', function () {
+    expect(parseRoute('/chat/devices')).deep.equals({ name: 'chatDevices' })
+    expect(parseRoute('/chat/link')).deep.equals({ name: 'chatLink' })
+    expect(routePath({ name: 'chatDevices' })).equals('/chat/devices')
+    expect(routePath({ name: 'chatLink' })).equals('/chat/link')
+    expect(roundTrip({ name: 'chatDevices' })).deep.equals({
+      name: 'chatDevices'
+    })
+    expect(roundTrip({ name: 'chatLink' })).deep.equals({ name: 'chatLink' })
+    // Nothing else under /chat yet.
+    expect(parseRoute('/chat')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/other')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/devices/more')).deep.equals({ name: 'home' })
+  })
+
   it('has no chat bench outside a phone build made for it', function () {
     // The web and the tests read `chatBench.ts`, which has no bench.
     expect(parseRoute('/dev/chat-bench')).deep.equals({ name: 'home' })
