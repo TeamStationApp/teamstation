@@ -6,6 +6,7 @@ import {
   asObject,
   asOptional,
   asString,
+  asValue,
   type Cleaner
 } from 'cleaners'
 
@@ -550,6 +551,43 @@ export const asChatMessage = asObject({
   createdAt: asString
 })
 export type ChatMessage = ReturnType<typeof asChatMessage>
+
+/**
+ * An encrypted attachment still arriving (`completed: false`, with the parts
+ * `missing`, numbered from 0, each `partSize` bytes but the last), or a
+ * finished one (`completed: true`; `url`, a presigned GET good for 10
+ * minutes, and `expiresAt` only when read). `digest` is the blob's SHA-256,
+ * base64url.
+ */
+export const asChatAttachment = asEither(
+  asObject({
+    id: asString,
+    conversationId: asString,
+    size: asNumber,
+    completed: asValue(false),
+    partSize: asNumber,
+    parts: asNumber,
+    missing: asArray(asNumber)
+  }),
+  asObject({
+    id: asString,
+    conversationId: asString,
+    size: asNumber,
+    digest: asString,
+    completed: asValue(true),
+    url: asOptional(asString),
+    expiresAt: asOptional(asString)
+  })
+)
+export type ChatAttachment = ReturnType<typeof asChatAttachment>
+
+/** What a part's upload answers: how many have landed, and what is left. */
+export const asChatAttachmentParts = asObject({
+  received: asNumber,
+  parts: asNumber,
+  missing: asArray(asNumber)
+})
+export type ChatAttachmentParts = ReturnType<typeof asChatAttachmentParts>
 
 /**
  * A message to post, sealed and signed by the device. `targetIds` only on
@@ -3435,6 +3473,58 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Opens an attachment upload: the sealed blob's size in bytes and its
+   * SHA-256 (base64url), in a chat the caller may post in.
+   */
+  async createChatAttachment(upload: {
+    conversationId: string
+    size: number
+    digest: string
+  }): Promise<ChatAttachment> {
+    return await this.request(
+      'POST',
+      '/chat/attachments',
+      asChatAttachment,
+      upload
+    )
+  }
+
+  /** Sends part `index` (from 0) of an attachment; again is harmless. */
+  async putChatAttachmentPart(
+    attachmentId: string,
+    index: number,
+    bytes: Uint8Array
+  ): Promise<ChatAttachmentParts> {
+    return await this.request(
+      'PUT',
+      `${attachmentPath(attachmentId)}/parts/${index}`,
+      asChatAttachmentParts,
+      bytes
+    )
+  }
+
+  /** Every part sent: the server checks the digest and keeps the blob. */
+  async completeChatAttachment(attachmentId: string): Promise<ChatAttachment> {
+    return await this.request(
+      'POST',
+      `${attachmentPath(attachmentId)}/complete`,
+      asChatAttachment
+    )
+  }
+
+  /**
+   * A finished attachment with a presigned URL to fetch its blob, or, to its
+   * uploader, an unfinished one with the parts still missing.
+   */
+  async chatAttachment(attachmentId: string): Promise<ChatAttachment> {
+    return await this.request(
+      'GET',
+      attachmentPath(attachmentId),
+      asChatAttachment
+    )
+  }
+
   /** Reported messages (site administrators); only unresolved with `open`. */
   async chatReports(open = false): Promise<ChatReport[]> {
     return await this.request(
@@ -3831,7 +3921,12 @@ export class TeamStationClient {
     body?: unknown
   ): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' }
-    if (body !== undefined) headers['content-type'] = 'application/json'
+    // Bytes (an attachment's part) go as they are; anything else as JSON.
+    const bytes = body instanceof Uint8Array ? body : undefined
+    if (body !== undefined) {
+      headers['content-type'] =
+        bytes != null ? 'application/octet-stream' : 'application/json'
+    }
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
     // `fetch` rejects with a bare TypeError when the request never leaves the
@@ -3850,7 +3945,12 @@ export class TeamStationClient {
         // it when the app and the API are different origins, as they are in
         // development.
         credentials: 'include',
-        body: body === undefined ? undefined : JSON.stringify(body)
+        body:
+          bytes != null
+            ? new Uint8Array(bytes)
+            : body === undefined
+              ? undefined
+              : JSON.stringify(body)
       })
     } catch (caught: unknown) {
       throw new HttpError(
@@ -3879,6 +3979,10 @@ function guardiansPath(teamId: string, userId: number | string): string {
 
 function walkUpSongPath(teamId: string, userId: number | string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
+}
+
+function attachmentPath(attachmentId: string): string {
+  return `/chat/attachments/${encodeURIComponent(attachmentId)}`
 }
 
 /** For the endpoints whose body carries nothing a caller needs. */

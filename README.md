@@ -71,6 +71,10 @@ and every setting has a default; by default it uses the database
 
 To run the app on a phone instead, see [`src/MOBILE.md`](src/MOBILE.md).
 
+The local `npm run fake-space` also holds encrypted chat attachments
+(`chat/<conversationId>/<attachmentId>`, deleted with a presigned DELETE).
+Its host and port can be set with `TS_FAKE_SPACE_HOST` and `TS_FAKE_SPACE_PORT`.
+
 ## Contributing
 
 How the code is laid out, its conventions, testing, and how the live-streaming
