@@ -2,6 +2,8 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { scheduleDate } from './screens/format'
+
 /**
  * The list-screen checks, against the web app on :8080 with the API
  * intercepted. Chrome is `TS_CHROME_PATH` when that is set.
@@ -392,6 +394,125 @@ describe('list screens', function () {
         expect(pill.chevronOnFirst).equals(true)
         expect(pill.secondPastPill).equals(true)
       }
+      await page.close()
+    })
+
+    it(`Schedule row at ${size.width}×${size.height}`, async function () {
+      const finalStart = '2026-10-04T23:45:00.000Z'
+      const dated = scheduleDate(finalStart)
+      listed = [
+        {
+          ...GAME,
+          id: 'gam_final',
+          startAt: finalStart,
+          status: 'final',
+          awayScore: 4,
+          homeScore: 0,
+          videoCount: 1,
+          isLive: false
+        },
+        {
+          ...GAME,
+          id: 'gam_now',
+          awayTeamName: 'Comets',
+          homeTeamName: 'Hawks',
+          startAt: '2026-10-04T20:00:00.000Z',
+          status: 'inProgress',
+          awayScore: 2,
+          homeScore: 1,
+          videoCount: 0,
+          isLive: false
+        },
+        {
+          ...GAME,
+          id: 'gam_next',
+          awayTeamName: 'Rivals',
+          homeTeamName: 'Oaks',
+          startAt: '2026-10-20T23:00:00.000Z',
+          status: 'scheduled',
+          awayScore: null,
+          homeScore: null,
+          videoCount: 0,
+          isLive: true,
+          venue: null
+        }
+      ]
+      const page = await open('/schedule?when=all', size)
+      const read = await until('the schedule rows', async () => {
+        const rows = await page.evaluate(() => {
+          const buttons = Array.from(
+            document.querySelectorAll('[role="button"]')
+          )
+          const games = buttons.filter(function (node) {
+            const label = node.getAttribute('aria-label')
+            if (label === null) return false
+            return label.includes(' @ ')
+          })
+          if (games.length < 3) return undefined
+          return games.map(function (node) {
+            const label = node.getAttribute('aria-label')
+            const live = Array.from(node.querySelectorAll('*')).find(
+              function (child) {
+                return (
+                  child.children.length === 0 && child.textContent === 'LIVE'
+                )
+              }
+            )
+            let badge: Element | null = null
+            if (live !== undefined) badge = live.parentElement
+            let spoken = ''
+            if (label !== null) spoken = label
+            let body = ''
+            if (node.textContent !== null) body = node.textContent
+            let liveColor = ''
+            if (badge !== null) {
+              liveColor = getComputedStyle(badge).backgroundColor
+            }
+            return {
+              label: spoken,
+              text: body,
+              images: node.querySelectorAll('img').length,
+              video: node.querySelector('[aria-label="Video"]') !== null,
+              liveColor
+            }
+          })
+        })
+        return rows
+      })
+      for (const game of read) expect(game.images).equals(0)
+      const final = read.find(game => game.label.includes('Bandits'))
+      const now = read.find(game => game.label.includes('Comets'))
+      const next = read.find(game => game.label.includes('Rivals'))
+      if (final == null || now == null || next == null) {
+        throw new Error('a schedule row is missing')
+      }
+      expect(final.text).includes(dated.month)
+      expect(final.text).includes(dated.day)
+      expect(final.text).includes(dated.when)
+      expect(final.text).includes('4–0')
+      expect(final.video).equals(true)
+      expect(now.text).includes('LIVE')
+      expect(now.text).not.includes('2–1')
+      expect(now.liveColor).equals('rgb(210, 43, 43)')
+      expect(next.text).not.includes('LIVE')
+      expect(next.video).equals(false)
+      const place = await page.evaluate(() => {
+        const row = document.querySelector('[aria-label^="Bandits"]')
+        if (row === null) return undefined
+        const camera = row.querySelector('[aria-label="Video"]')
+        if (camera === null) return undefined
+        const rowBox = row.getBoundingClientRect()
+        const cameraBox = camera.getBoundingClientRect()
+        return {
+          fromRight: rowBox.right - cameraBox.right,
+          fromBottom: rowBox.bottom - cameraBox.bottom,
+          belowMiddle: cameraBox.top > rowBox.top + rowBox.height / 2
+        }
+      })
+      if (place == null) throw new Error('no camera')
+      expect(place.fromRight).lessThan(16)
+      expect(place.fromBottom).lessThan(16)
+      expect(place.belowMiddle).equals(true)
       await page.close()
     })
   }

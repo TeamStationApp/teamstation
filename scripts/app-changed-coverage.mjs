@@ -84,6 +84,10 @@ const check = spawnSync(
     '.tsx',
     '--exclude',
     '**/*.native.tsx',
+    // The test bundle resolves a barrel import to the implementation, so
+    // src/app/components/index.ts has no coverage record of its own.
+    '--exclude',
+    'src/app/components/index.ts',
     'src/app'
   ],
   { stdio: 'inherit' }
