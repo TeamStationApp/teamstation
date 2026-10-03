@@ -1074,6 +1074,125 @@ describe('api client', function () {
     })
     expect(JSON.parse(filled.calls[0].body ?? '')).deep.equals({ boxes })
   })
+  it('posts and pages chat messages, moves read cursors, and reports', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const message = {
+      id: 'msg_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+      conversationId: 'cnv_1',
+      seq: 3,
+      epoch: 1,
+      senderUserId: 7,
+      senderIdentityId: 'cid_1',
+      kind: 'delete',
+      targetIds: ['msg_bbbbbbbbbbbbbbbbbbbbbbbbbb'],
+      nonce: 'NN',
+      ciphertext: 'CT',
+      signature: 'SG',
+      attachmentIds: [],
+      clearedAt: null,
+      createdAt: '2027-04-10T12:00:00.000Z'
+    }
+    const envelope = {
+      id: message.id,
+      epoch: 1,
+      kind: 'delete' as const,
+      senderIdentityId: 'cid_1',
+      targetIds: message.targetIds,
+      nonce: 'NN',
+      ciphertext: 'CT',
+      signature: 'SG'
+    }
+    const posted = client(message)
+    expect(await posted.client.postChatMessage('cnv 1', envelope)).deep.equals(
+      message
+    )
+    expect(posted.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/conversations/cnv%201/messages'
+    })
+    expect(JSON.parse(posted.calls[0].body ?? '')).deep.equals(envelope)
+
+    const paged = client([message])
+    expect(await paged.client.chatMessages('cnv_1')).deep.equals([message])
+    await paged.client.chatMessages('cnv_1', { after: 2, limit: 50 })
+    await paged.client.chatMessages('cnv_1', { before: 9 })
+    expect(paged.calls.map(call => call.url)).deep.equals([
+      'http://x/api/v1/chat/conversations/cnv_1/messages',
+      'http://x/api/v1/chat/conversations/cnv_1/messages?after=2&limit=50',
+      'http://x/api/v1/chat/conversations/cnv_1/messages?before=9'
+    ])
+
+    const read = client({ seq: 3 })
+    expect(await read.client.markChatRead('cnv_1', 2)).deep.equals({ seq: 3 })
+    expect(read.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/chat/conversations/cnv_1/read'
+    })
+    expect(JSON.parse(read.calls[0].body ?? '')).deep.equals({ seq: 2 })
+
+    const disclosure = {
+      messageId: message.id,
+      plaintext: '{"type":"text"}',
+      messageKey: 'MK'
+    }
+    const reported = client({ id: 'crp_1', verified: true })
+    expect(await reported.client.reportChatMessage(disclosure)).deep.equals({
+      id: 'crp_1',
+      verified: true
+    })
+    expect(reported.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/reports'
+    })
+    expect(JSON.parse(reported.calls[0].body ?? '')).deep.equals(disclosure)
+
+    const report = {
+      id: 'crp_1',
+      conversation: {
+        id: 'cnv_1',
+        kind: 'teamMembers',
+        title: 'Hawks Members'
+      },
+      messageId: message.id,
+      reporter: { userId: 8, shortName: 'Blair B' },
+      sender: { userId: 7, shortName: 'Casey C' },
+      kind: 'post',
+      sentAt: '2027-04-10T12:00:00.000Z',
+      plaintext: '{"type":"text"}',
+      verified: true,
+      createdAt: '2027-04-10T12:01:00.000Z',
+      resolvedAt: null
+    }
+    const listed = client([report])
+    expect(await listed.client.chatReports()).deep.equals([report])
+    await listed.client.chatReports(true)
+    expect(listed.calls.map(call => call.url)).deep.equals([
+      'http://x/api/v1/admin/chat/reports',
+      'http://x/api/v1/admin/chat/reports?open=true'
+    ])
+    const resolved = client({ ...report, resolvedAt: 'later' })
+    expect(
+      (await resolved.client.resolveChatReport('crp 1')).resolvedAt
+    ).equals('later')
+    expect(resolved.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/admin/chat/reports/crp%201/resolve'
+    })
+  })
 
   it('reads isPlayer on team grants, and season and league grants without it', function () {
     expect(

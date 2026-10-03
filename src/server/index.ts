@@ -52,6 +52,7 @@ import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { chatRoutes } from './routes/chat'
 import { chatEpochRoutes } from './routes/chatEpochs'
 import { chatKeyRoutes } from './routes/chatKeys'
+import { chatMessageRoutes } from './routes/chatMessages'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
@@ -544,6 +545,8 @@ function runWorker(): void {
   app.use('/api/v1', chatRoutes(db, mediaContext))
   app.use('/api/v1', chatKeyRoutes(db))
   app.use('/api/v1', chatEpochRoutes(db))
+  // Attachment objects are deleted through the Space from M10 on.
+  app.use('/api/v1', chatMessageRoutes(db, mediaContext))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
