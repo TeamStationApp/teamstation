@@ -133,4 +133,8 @@ Three things are worth knowing before changing any of it:
 
 Locally, `npm run fake-space` stands in for the object store with
 signatures enforced, so the whole path — live, ended, packed up, uploaded,
-verified, swept — runs on one machine with no network and no bill.
+verified, swept — runs on one machine with no network and no bill. It also
+holds encrypted chat attachments (`chat/<conversationId>/<attachmentId>`,
+deleted with a presigned DELETE). It listens on `127.0.0.1:9199`; set
+`TS_FAKE_SPACE_HOST=0.0.0.0` when phones on the LAN must reach it, and
+`TS_FAKE_SPACE_PORT` when 9199 is taken.

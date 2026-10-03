@@ -4371,6 +4371,106 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/chat/attachments': {
+        post: {
+          summary: 'Open an encrypted attachment upload',
+          description:
+            'In a chat the caller may post in (404 for a non-member, 403 ' +
+            '`readOnly` for an Announcements reader or a closed chat): ' +
+            '`{conversationId, size, digest}`, the sealed blob’s length (1 ' +
+            'to what a 100 MiB file seals to) and its SHA-256 (base64url, ' +
+            '32 bytes). Answers 201 `{id, conversationId, size, completed: ' +
+            'false, partSize, parts, missing}`: send `parts` parts of ' +
+            '`partSize` (8 MiB) bytes, the last short. 400 `noSpace` when ' +
+            'the server has no Space. Needs a signed-in session. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            conversationId: { type: 'string' },
+            size: { type: 'integer', minimum: 1 },
+            digest: b64
+          }),
+          responses: {
+            201: { description: 'Opened' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/attachments/{attachmentId}': {
+        get: {
+          summary: 'An encrypted attachment',
+          description:
+            'For a member of its chat: a finished attachment as `{id, ' +
+            'conversationId, size, digest, completed: true, url, ' +
+            'expiresAt}`, `url` a presigned GET of the blob good for 10 ' +
+            'minutes. To its uploader, an unfinished one as `{…, completed: ' +
+            'false, partSize, parts, missing}`, so an interrupted upload ' +
+            'sends only what is missing. Anybody else gets 404.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('attachmentId')],
+          responses: {
+            200: { description: 'The attachment' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/attachments/{attachmentId}/parts/{index}': {
+        put: {
+          summary: 'One part of an attachment',
+          description:
+            'The uploader’s, while unfinished: the raw bytes of part ' +
+            '`index` (from 0), exactly `partSize` bytes but the last. ' +
+            'Sending one again replaces it. Answers `{received, parts, ' +
+            'missing}`. 400 `part` for a wrong index or length, 413 `part` ' +
+            'over 9 MiB, 409 `completed` once finished. Not audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('attachmentId'), pathParam('index')],
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Stored' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse,
+            413: errorResponse
+          }
+        }
+      },
+      '/chat/attachments/{attachmentId}/complete': {
+        post: {
+          summary: 'Finish an attachment',
+          description:
+            'The uploader’s, with every part sent (409 `partsMissing` with ' +
+            '`missing` otherwise): the parts are joined and must hash to the ' +
+            'declared digest (400 `digestMismatch`, and the parts are ' +
+            'dropped), then the blob goes to the Space at ' +
+            '`chat/<conversationId>/<attachmentId>`. Answers `{id, ' +
+            'conversationId, size, digest, completed: true}`; again, the ' +
+            'same. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('attachmentId')],
+          responses: {
+            200: { description: 'Finished' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
       '/admin/chat/reports': {
         get: {
           summary: 'Reported messages',
