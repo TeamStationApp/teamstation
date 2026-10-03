@@ -5,7 +5,9 @@ import { appendPcm, bytesFromBase64 } from './pcmFrames'
 export interface PcmModule {
   start: () => Promise<void>
   stop: () => void
-  onPcm: (listener: (event: { pcm: string }) => void) => { remove: () => void }
+  onPcm: (
+    listener: (event: { pcm?: string; error?: string }) => void
+  ) => { remove: () => void }
 }
 
 /**
@@ -15,10 +17,14 @@ export interface PcmModule {
  * frame that arrives split is sent whole.
  */
 export function makeOpenMicrophone(module: PcmModule): OpenMicrophone {
-  return async onPcm => {
+  return async (onPcm, onEnded) => {
     let rest = new Uint8Array(0)
     const subscription = module.onPcm(event => {
-      if (event.pcm === '') return
+      if (event.error != null && event.error !== '') {
+        onEnded?.(event.error)
+        return
+      }
+      if (event.pcm == null || event.pcm === '') return
       const taken = appendPcm(rest, bytesFromBase64(event.pcm))
       rest = taken.rest
       for (const frame of taken.frames) onPcm(frame)
