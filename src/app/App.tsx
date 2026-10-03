@@ -14,6 +14,8 @@ import { GameSocket } from '../common/gameSocket'
 import { coachesTeam, keepsSongs } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
+import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
+import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import {
   AppHeader,
   AppNav,
@@ -130,6 +132,10 @@ type Pushed =
       zoom?: string
     }
   | { name: 'account' }
+  /** Chat devices, from the account screen or `/chat/devices`. */
+  | { name: 'chatDevices' }
+  /** Linking this device for chat, or resetting the user's chat keys. */
+  | { name: 'chatLink' }
   /**
    * One player, and what their stats are narrowed to.
    *
@@ -883,6 +889,25 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGame={openGame}
         />
       )
+    ) : top.name === 'chatDevices' ? (
+      session == null ? null : (
+        <ChatDevicesScreen client={client} userId={session.user.id} />
+      )
+    ) : top.name === 'chatLink' ? (
+      session == null ? null : (
+        <LinkDeviceScreen
+          client={client}
+          userId={session.user.id}
+          onDone={() => {
+            // Linked or reset: the devices list takes this screen's place,
+            // so Back does not return to a finished link.
+            setStacks(current => ({
+              ...current,
+              [tab]: [...current[tab].slice(0, -1), { name: 'chatDevices' }]
+            }))
+          }}
+        />
+      )
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
@@ -892,6 +917,9 @@ function Shell(props: AppProps): React.ReactElement {
           )
         }}
         session={session}
+        onChatDevices={() => {
+          push({ name: 'chatDevices' })
+        }}
         onSignOut={() => {
           client.signOut().catch(() => undefined)
           rememberSession(undefined)
@@ -1310,6 +1338,8 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  if (route.name === 'chatDevices') return { [tab]: [{ name: 'chatDevices' }] }
+  if (route.name === 'chatLink') return { [tab]: [{ name: 'chatLink' }] }
   if (route.name === 'followTeam') return { [tab]: [{ name: 'followTeam' }] }
   if (route.name === 'player') {
     return {
@@ -1379,6 +1409,8 @@ function routeOf(
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'chatDevices') return { name: 'chatDevices' }
+    if (top.name === 'chatLink') return { name: 'chatLink' }
     if (top.name === 'followTeam') return { name: 'followTeam' }
     if (top.name === 'player') {
       return {
@@ -1436,6 +1468,8 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
+    if (top.name === 'chatDevices') return lstrings.chat_devices_title
+    if (top.name === 'chatLink') return lstrings.chat_link_title
     if (top.name === 'followTeam') return 'Follow a team'
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {
