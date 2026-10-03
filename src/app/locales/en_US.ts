@@ -480,6 +480,29 @@ export const enUs = {
   override_close_picker: 'Close the picker',
   override_reset: 'Reset Game State',
 
+  // Dictation
+  dictation_button: 'Dictation',
+  dictation_status: 'Dictation status',
+  dictation_log: 'Dictation log',
+  dictation_said: 'Dictated text',
+  dictation_play: 'Dictated play',
+  dictation_message: 'Dictation message',
+  dictation_question: 'Dictation question',
+  dictation_connecting: 'Connecting…',
+  dictation_listening: 'Listening…',
+  dictation_working: 'Working it out…',
+  dictation_push: 'Push to talk',
+  dictation_ellipsis: '…',
+  dictation_dismiss_question: 'Dismiss question',
+  dictation_neither: 'Neither — dismiss',
+  dictation_record: 'Record',
+  dictation_record_nobody: 'Record — nobody out',
+  dictation_dismiss_score: 'Dismiss — score nothing',
+  dictation_dropped:
+    'The connection dropped and that was not scored. Say it again.',
+  dictation_left_out: 'Left out: %s',
+  dictation_mic_unavailable: 'The microphone is not available: %s',
+
   // Shared
   common_done: 'Done',
   common_back: 'Back',

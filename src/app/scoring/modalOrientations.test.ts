@@ -26,9 +26,9 @@ describe('scoring modals', function () {
     // The sheets, the More and Ball in Play drop menus, and a dictation
     // question.
     expect(tags.map(tag => tag.file).sort()).deep.equals([
-      'DictationButton.tsx',
       'DropMenuView.tsx',
-      'ScoringSheet.tsx'
+      'ScoringSheet.tsx',
+      'dictationControls.tsx'
     ])
     for (const { file, tag } of tags)
       expect(tag, file).includes('supportedOrientations={MODAL_ORIENTATIONS}')
