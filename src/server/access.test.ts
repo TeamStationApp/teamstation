@@ -380,19 +380,28 @@ describe('role flags', function () {
     expect(site.isAdmin).equals(true)
   })
 
-  it('leaves changing the name to the player, a guardian and a site admin', async function () {
+  it('gives the name to the player, a guardian, a site admin and the staff of their team', async function () {
     const player = idOf('player')
     const about = { isAdmin: false }
-    for (const flag of ROLE_FLAGS) {
-      expect(
-        await mayEditName(db, idOf(`${flag}@tem_a2`), player, about),
-        flag
-      ).equals(false)
+    // Every role, set on the team or carried down from its season or league.
+    for (const role of ['admin', ...ROLE_FLAGS]) {
+      for (const height of HEIGHTS) {
+        const name = `${role}@${height.id}`
+        expect(await mayEditName(db, idOf(name), player, about), name).equals(
+          true
+        )
+      }
     }
-    expect(await mayEditName(db, idOf('admin@tem_a2'), player, about)).equals(
-      false
-    )
+    // Staff of other teams, and a member who is not staff.
+    for (const name of ['manager', 'owner', 'union', 'member']) {
+      expect(await mayEditName(db, idOf(name), player, about), name).equals(
+        false
+      )
+    }
     expect(await mayEditName(db, idOf('guardian'), player, about)).equals(true)
     expect(await mayEditName(db, player, player, about)).equals(true)
+    expect(
+      await mayEditName(db, idOf('member'), player, { isAdmin: true })
+    ).equals(true)
   })
 })
