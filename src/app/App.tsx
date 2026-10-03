@@ -17,7 +17,10 @@ import { managesRoster } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
+import { ChatEngine } from './chat/engine/engine'
+import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
+import { thisDevice } from './chat/thisDevice'
 import {
   AppHeader,
   AppNav,
@@ -491,6 +494,37 @@ function Shell(props: AppProps): React.ReactElement {
     },
     [gameSocket]
   )
+  /**
+   * The chat engine, for as long as somebody is signed in. It hears the
+   * socket's chat hints from the start, so they arrive on every screen; it
+   * touches no keys until a chat screen starts it.
+   */
+  const chatEngine = useMemo(
+    () =>
+      signedInAs == null || gameSocket == null
+        ? undefined
+        : new ChatEngine({
+            client,
+            store: keyStore,
+            userId: signedInAs,
+            device: thisDevice(),
+            socket: gameSocket
+          }),
+    [client, gameSocket, signedInAs]
+  )
+  useEffect(() => {
+    if (chatEngine == null) return
+    let stopListening = (): void => {}
+    try {
+      stopListening = chatEngine.listen()
+    } catch {
+      // A platform with no socket address has no live chat hints.
+    }
+    return () => {
+      stopListening()
+      chatEngine.stop()
+    }
+  }, [chatEngine])
   useEffect(() => {
     setRoleSnapshot(undefined)
     if (signedInAs == null) return

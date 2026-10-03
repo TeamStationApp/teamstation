@@ -29,7 +29,17 @@ describe('chat key record', function () {
           { generation: 1, keys: newPukKey() }
         ],
         pendingLinkId: 'clk_x',
-        pins: { 7: 'AAAA' }
+        pins: { 7: 'AAAA' },
+        previousPins: { 7: 'BBBB' },
+        logs: {
+          cnv_1: {
+            seq: 4,
+            hash: 'CCCC',
+            members: [7, 42],
+            resets: [{ userId: 7, seq: 3, at: 1000 }],
+            broken: false
+          }
+        }
       },
       'cnv_1',
       3,
@@ -48,6 +58,8 @@ describe('chat key record', function () {
     expect(back.puks.map(puk => puk.generation)).deep.equals([1, 2])
     expect(back.pendingLinkId).equals('clk_x')
     expect(back.pins).deep.equals({ 7: 'AAAA' })
+    expect(back.previousPins).deep.equals({ 7: 'BBBB' })
+    expect(back.logs).deep.equals(record.logs)
     expect([...epochKeyOf(back, 'cnv_1', 3)!]).deep.equals([1, 2, 3])
   })
 
@@ -58,7 +70,26 @@ describe('chat key record', function () {
     expect(back.pendingLinkId).equals(undefined)
     expect(back.pins).deep.equals({})
     expect(back.epochKeys).deep.equals({})
+    expect(back.previousPins).deep.equals({})
+    expect(back.logs).deep.equals({})
     expect(latestPuk(back)).equals(undefined)
+  })
+
+  it('reads a record written before pins changed or logs were kept', function () {
+    const { previousPins, logs, ...older } = JSON.parse(
+      recordToJson(newRecord(1, 'cdv_old', device))
+    )
+    expect(previousPins).deep.equals({})
+    expect(logs).deep.equals({})
+    const back = recordFromJson(
+      JSON.stringify({
+        ...older,
+        logs: { cnv_a: { seq: 1, hash: 'AA', members: [1], broken: true } }
+      })
+    )
+    expect(back.previousPins).deep.equals({})
+    expect(back.logs.cnv_a.resets).deep.equals([])
+    expect(recordFromJson(JSON.stringify(older)).logs).deep.equals({})
   })
 
   it('refuses what it did not write', function () {
@@ -87,6 +118,7 @@ describe('chat key record', function () {
     const changed = pinIdentity(pinned.record, 5, Uint8Array.of(1))
     expect(changed.seen).equals('changed')
     expect(changed.record.pins[5]).equals(b64(Uint8Array.of(1)))
+    expect(changed.record.previousPins[5]).equals(b64(first))
   })
 
   it('caches epoch keys per conversation and epoch', function () {
