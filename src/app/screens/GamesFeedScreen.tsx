@@ -7,6 +7,7 @@ import {
   GameRow,
   HandoffView,
   PillTabs,
+  ScheduleRow,
   Screen,
   SectionHeader,
   useBreakpoint,
@@ -205,51 +206,64 @@ export function GamesFeedScreen(
       <View style={styles.grid}>
         {sorted.map(game => {
           const lines = matchupLines(game)
-          // The time used to be the badge, which made an unplayed game look as
-          // though it had a result. It belongs on the detail line with the date.
-          const detail = [
-            narrow ? shortDateNoWeekday(game.startAt) : shortDate(game.startAt),
-            shortTime(game.startAt),
-            videoCountLabel(game.videoCount)
-          ]
-            .filter(part => part !== '')
-            .join(' · ')
           return (
             <View
               key={game.id}
               style={[styles.cell, { width: `${100 / columns}%` }]}
             >
               <Card>
-                <GameRow
-                  first={lines.first}
-                  second={lines.second}
-                  detail={detail}
-                  venue={game.venue}
-                  posterUrl={game.posterUrl}
-                  length={
-                    game.durationSec == null
-                      ? undefined
-                      : clock(game.durationSec)
-                  }
-                  // A game being played now says so instead of showing a
-                  // score that is still changing.
-                  badgeLabel={
-                    game.isLive
-                      ? 'live'
-                      : game.awayScore == null
+                {mode === 'schedule' ? (
+                  <ScheduleRow
+                    first={lines.first}
+                    second={lines.second}
+                    startAt={game.startAt}
+                    venue={game.venue}
+                    status={game.status}
+                    awayScore={game.awayScore}
+                    homeScore={game.homeScore}
+                    isLive={game.isLive}
+                    videoCount={game.videoCount}
+                    onPress={() => {
+                      onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+                        autoPlay: game.videoCount > 0
+                      })
+                    }}
+                  />
+                ) : (
+                  <GameRow
+                    first={lines.first}
+                    second={lines.second}
+                    detail={[
+                      narrow
+                        ? shortDateNoWeekday(game.startAt)
+                        : shortDate(game.startAt),
+                      shortTime(game.startAt),
+                      videoCountLabel(game.videoCount)
+                    ]
+                      .filter(part => part !== '')
+                      .join(' · ')}
+                    venue={game.venue}
+                    posterUrl={game.posterUrl}
+                    length={
+                      game.durationSec == null
                         ? undefined
-                        : `${game.awayScore}–${game.homeScore}`
-                  }
-                  badgeTone={game.isLive ? 'live' : 'neutral'}
-                  onPress={() => {
-                    // Tapping a video starts it. Somebody pressing a row with a
-                    // picture and a length on it has asked to watch, not to read
-                    // about it.
-                    onOpenGame(game.id, `${lines.first} ${lines.second}`, {
-                      autoPlay: game.videoCount > 0
-                    })
-                  }}
-                />
+                        : clock(game.durationSec)
+                    }
+                    badgeLabel={
+                      game.isLive
+                        ? 'live'
+                        : game.awayScore == null
+                          ? undefined
+                          : `${game.awayScore}–${game.homeScore}`
+                    }
+                    badgeTone={game.isLive ? 'live' : 'neutral'}
+                    onPress={() => {
+                      onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+                        autoPlay: game.videoCount > 0
+                      })
+                    }}
+                  />
+                )}
               </Card>
             </View>
           )
