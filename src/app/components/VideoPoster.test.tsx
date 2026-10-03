@@ -4,7 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { ThemeProvider } from '../theme/ThemeContext'
-import { VideoPoster } from './VideoPoster'
+import { applyCoverCrop, VideoPoster } from './VideoPoster'
 
 let root: Root | undefined
 let host: HTMLElement | undefined
@@ -50,6 +50,19 @@ function ratioOf(value: string): number {
   const height = parts[1] ?? 1
   return width / height
 }
+
+describe('applyCoverCrop', function () {
+  it('does nothing to a host node that has no CSS style', function () {
+    const node = document.createElement('div')
+    Object.defineProperty(node, 'style', {
+      configurable: true,
+      get() {
+        return undefined
+      }
+    })
+    expect(applyCoverCrop(node)).equals(undefined)
+  })
+})
 
 describe('VideoPoster', function () {
   it('keeps a hero at 16:9', async function () {
