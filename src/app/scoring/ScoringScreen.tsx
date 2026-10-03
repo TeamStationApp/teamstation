@@ -566,6 +566,7 @@ function ScoringPanel(props: {
   const dictation = useDictationControls({
     health: props.persistent ? health : noDictation,
     url: socketUrl,
+    token: props.client.token,
     gameId: props.gameId,
     model: dictationModel,
     session,

@@ -15,7 +15,8 @@
     },
     "ios": {
       "modulesProvider": {
-        "WalkUpMusic": "RCTWalkUpMusic"
+        "WalkUpMusic": "RCTWalkUpMusic",
+        "DictationMicrophone": "RCTDictationMicrophone"
       }
     }
   },

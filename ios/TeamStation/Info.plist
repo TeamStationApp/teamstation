@@ -46,6 +46,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TeamStation uses the microphone to score a game from what you say.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>TeamStation searches Apple Music and your library for walk-up songs, and plays each player's clip when they come up to bat.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
