@@ -522,6 +522,71 @@ export const asChatGrantsPosted = asObject({
 })
 export type ChatGrantsPosted = ReturnType<typeof asChatGrantsPosted>
 
+/** What the server sees of a message: its envelope `kind`. */
+export const asChatEnvelopeKind = asLiteral(
+  'post',
+  'reaction',
+  'edit',
+  'delete',
+  'moderatorDelete'
+)
+export type ChatEnvelopeKind = ReturnType<typeof asChatEnvelopeKind>
+
+/** One message, from `GET …/messages`; `ciphertext` is empty once cleared. */
+export const asChatMessage = asObject({
+  id: asString,
+  conversationId: asString,
+  seq: asNumber,
+  epoch: asNumber,
+  senderUserId: asUserId,
+  senderIdentityId: asString,
+  kind: asChatEnvelopeKind,
+  targetIds: asNullable(asArray(asString)),
+  nonce: asString,
+  ciphertext: asString,
+  signature: asString,
+  attachmentIds: asArray(asString),
+  clearedAt: asNullable(asString),
+  createdAt: asString
+})
+export type ChatMessage = ReturnType<typeof asChatMessage>
+
+/**
+ * A message to post, sealed and signed by the device. `targetIds` only on
+ * the two deletes, `attachmentIds` only on posts. Bytes are base64url.
+ */
+export interface ChatMessageEnvelope {
+  id: string
+  epoch: number
+  kind: ChatEnvelopeKind
+  senderIdentityId: string
+  targetIds?: string[]
+  attachmentIds?: string[]
+  nonce: string
+  ciphertext: string
+  signature: string
+}
+
+/** A reported message, as site administrators see it. */
+export const asChatReport = asObject({
+  id: asString,
+  conversation: asObject({
+    id: asString,
+    kind: asChatKind,
+    title: asNullable(asString)
+  }),
+  messageId: asString,
+  reporter: asObject({ userId: asUserId, shortName: asString }),
+  sender: asObject({ userId: asUserId, shortName: asString }),
+  kind: asChatEnvelopeKind,
+  sentAt: asString,
+  plaintext: asString,
+  verified: asBoolean,
+  createdAt: asString,
+  resolvedAt: asNullable(asString)
+})
+export type ChatReport = ReturnType<typeof asChatReport>
+
 export const asGameSummary = asObject({
   id: asString,
   homeTeamId: asString,
@@ -3306,6 +3371,86 @@ export class TeamStationClient {
     return await this.request('POST', '/chat/grants', asChatGrantsPosted, {
       boxes
     })
+  }
+
+  /** Posts a sealed message; a repeat of its id answers the stored one. */
+  async postChatMessage(
+    conversationId: string,
+    envelope: ChatMessageEnvelope
+  ): Promise<ChatMessage> {
+    return await this.request(
+      'POST',
+      `${chatPath(conversationId)}/messages`,
+      asChatMessage,
+      envelope
+    )
+  }
+
+  /**
+   * A page of a chat's messages, oldest first: after `after`, or the last
+   * ones before `before`.
+   */
+  async chatMessages(
+    conversationId: string,
+    page: { after?: number; before?: number; limit?: number } = {}
+  ): Promise<ChatMessage[]> {
+    const query = (['after', 'before', 'limit'] as const)
+      .flatMap(name =>
+        page[name] == null
+          ? []
+          : [`${name}=${encodeURIComponent(page[name] ?? 0)}`]
+      )
+      .join('&')
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/messages${query === '' ? '' : `?${query}`}`,
+      asArray(asChatMessage)
+    )
+  }
+
+  /** Moves the caller's read cursor on to `seq`; it never moves back. */
+  async markChatRead(
+    conversationId: string,
+    seq: number
+  ): Promise<{ seq: number }> {
+    return await this.request(
+      'PUT',
+      `${chatPath(conversationId)}/read`,
+      asObject({ seq: asNumber }),
+      { seq }
+    )
+  }
+
+  /** Reports one message, disclosing its text and its own key. */
+  async reportChatMessage(report: {
+    messageId: string
+    plaintext: string
+    messageKey: string
+  }): Promise<{ id: string; verified: boolean }> {
+    return await this.request(
+      'POST',
+      '/chat/reports',
+      asObject({ id: asString, verified: asBoolean }),
+      report
+    )
+  }
+
+  /** Reported messages (site administrators); only unresolved with `open`. */
+  async chatReports(open = false): Promise<ChatReport[]> {
+    return await this.request(
+      'GET',
+      `/admin/chat/reports${open ? '?open=true' : ''}`,
+      asArray(asChatReport)
+    )
+  }
+
+  /** Marks a report resolved (site administrators). */
+  async resolveChatReport(reportId: string): Promise<ChatReport> {
+    return await this.request(
+      'PUT',
+      `/admin/chat/reports/${encodeURIComponent(reportId)}/resolve`,
+      asChatReport
+    )
   }
 
   /** One person: their picture, their name, their handedness, their teams. */
