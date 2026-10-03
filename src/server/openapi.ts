@@ -1588,8 +1588,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'neither see nor administer gets 404. A season or league admin ' +
             'may only schedule into a season they administer: a row into ' +
             'another season is `forbidden`.\n\n' +
-            '**A row:** `opponent` (`{teamId}` or `{name}`, 1-120 characters) ' +
-            'and `side` (`home` or `away`, the side this team plays on) are ' +
+            '**A row:** `opponent` (`{teamId}`, or `{name, externalId?}` with ' +
+            'a name of 1-120 characters) and `side` (`home` or `away`, the side this team plays on) are ' +
             'needed to create a game and ignored for a matched one. ' +
             '`startAt` is required, an ISO 8601 date-time with `Z` or an ' +
             'offset. `seasonId` is optional and must be a season the team is ' +
@@ -1614,6 +1614,20 @@ export function openApiDocument(version: string): OpenApiDocument {
             'always creates one. An opponent named by `name` is a team of the ' +
             'season with that name or coach, else an external team of that ' +
             'name, else a new external team.\n\n' +
+            "**An opponent's id:** `opponent.externalId` is `{system, kind, " +
+            'id}`, `system` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` and ' +
+            '`id` non-empty, the id another system has for the opponent. A ' +
+            'team already holding it (an external or a full one, followed ' +
+            'through merges) is the opponent, whatever the name says. ' +
+            'Otherwise the opponent is found by name, and an external team ' +
+            'found or made that way takes the id when nothing holds it. On a ' +
+            "matched game, the game's opponent takes the id when it is an " +
+            "external team, the row's `name` finds it by that same rule, and " +
+            "nothing holds the id; the game's opponent never changes. A full " +
+            'team never takes an id here, and an id something already holds ' +
+            'never moves, except one left on a team that no longer exists, ' +
+            'which the team found takes over. Recording an opponent id alone ' +
+            'leaves the row `unchanged`: the answer describes the game.\n\n' +
             '**Answers:** `result` is `created`, `updated`, `unchanged` or ' +
             "`error`, with `gameId` and the game's `status` after the row. " +
             'Error codes: `invalid`, `notFound`, `conflict`, `noSeason`, ' +
@@ -1651,6 +1665,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                                     type: 'string',
                                     minLength: 1,
                                     maxLength: 120
+                                  },
+                                  externalId: {
+                                    type: 'object',
+                                    required: ['system', 'kind', 'id'],
+                                    properties: {
+                                      system: {
+                                        type: 'string',
+                                        pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                                      },
+                                      kind: { type: 'string', minLength: 1 },
+                                      id: { type: 'string', minLength: 1 }
+                                    }
                                   }
                                 }
                               }

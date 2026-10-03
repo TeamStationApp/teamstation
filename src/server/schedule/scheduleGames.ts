@@ -12,7 +12,11 @@ import {
 import { adminScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
-import { recordExternalId } from '../db/externalIds'
+import {
+  type ExternalIdKey,
+  externalIdLockKey,
+  recordExternalId
+} from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
@@ -209,10 +213,18 @@ async function applyRow(
   const { teamId } = context
   const startAt = new Date(row.startAt)
   const externalId = row.externalId
+  const opponentKey = opponentExternalId(row)
+
+  // Two posts of one new id at once make one game, not two; two rows naming
+  // one opponent's id at once record it once, on one team.
+  const keys: string[] = []
+  if (externalId != null) {
+    keys.push(`schedule:${externalId.system}:${externalId.id}`)
+  }
+  if (opponentKey != null) keys.push(externalIdLockKey(opponentKey))
+  await lockKeys(trx, keys)
 
   if (externalId != null) {
-    // Two posts of one new id at once make one game, not two.
-    await lockKeys(trx, [`schedule:${externalId.system}:${externalId.id}`])
     const held = await trx
       .selectFrom('external_ids')
       .innerJoin('games', 'games.id', 'external_ids.entity_id')
@@ -238,6 +250,27 @@ async function applyRow(
         )
       }
       mustMaySchedule(context, held.season_id)
+      if (
+        opponentKey != null &&
+        row.opponent != null &&
+        'name' in row.opponent
+      ) {
+        // Only when the row's name finds the game's own opponent: a game
+        // held against a placeholder or a since-corrected opponent must not
+        // hand that team the real opponent's id.
+        const holder = await idHolder(trx, opponentKey)
+        const opponent = await followMerges(
+          trx,
+          held.home_team_id === teamId ? held.away_team_id : held.home_team_id
+        )
+        if (
+          holder.free &&
+          (await isExternal(trx, opponent)) &&
+          (await nameFinds(trx, row.opponent.name, held.season_id, opponent))
+        ) {
+          await takeId(trx, opponent, opponentKey, holder)
+        }
+      }
       if (held.status === 'inProgress' || held.status === 'final') {
         return { result: 'unchanged', gameId: held.id, status: held.status }
       }
@@ -478,14 +511,23 @@ async function resolveRowOpponent(
     return found.id
   }
 
-  const seasonTeams = await trx
-    .selectFrom('season_teams')
-    .innerJoin('teams', 'teams.id', 'season_teams.team_id')
-    .select(['teams.id as id', 'teams.name as name'])
-    .where('season_teams.season_id', '=', seasonId)
-    .execute()
+  // A team holding the opponent's id is that opponent, whatever the row
+  // calls it. An id held by anything else is left where it is.
+  const key = opponent.externalId
+  const holder = key == null ? undefined : await idHolder(trx, key)
+  if (key != null && holder?.free === false && holder.teamId != null) {
+    const id = await followMerges(trx, holder.teamId)
+    if (id === teamId) {
+      throw new RowError(
+        'conflict',
+        `${key.system} ${key.id} is ${context.teamName} itself`
+      )
+    }
+    return id
+  }
+
   const resolved = await resolveOpponent(trx, opponent.name, {
-    seasonTeams,
+    seasonTeams: await seasonTeamsOf(trx, seasonId),
     known,
     createdFrom: 'api'
   })
@@ -496,5 +538,134 @@ async function resolveRowOpponent(
       `${opponent.name} is ${context.teamName} itself`
     )
   }
+  if (key != null && holder?.free === true) {
+    await recordOnExternalTeam(trx, id, key, holder)
+  }
   return id
+}
+
+/** The teams of a season, by id and stored name. */
+async function seasonTeamsOf(
+  trx: Transaction<Database>,
+  seasonId: string | null
+): Promise<Array<{ id: string; name: string }>> {
+  if (seasonId == null) return []
+  return await trx
+    .selectFrom('season_teams')
+    .innerJoin('teams', 'teams.id', 'season_teams.team_id')
+    .select(['teams.id as id', 'teams.name as name'])
+    .where('season_teams.season_id', '=', seasonId)
+    .execute()
+}
+
+/**
+ * Whether `name` finds `teamId` by the rule a new game's opponent is found
+ * by — a team of the season by name or coach, else an external team by
+ * name — without making a team when it finds none.
+ */
+async function nameFinds(
+  trx: Transaction<Database>,
+  name: string,
+  seasonId: string | null,
+  teamId: string
+): Promise<boolean> {
+  const resolved = await resolveOpponent(trx, name, {
+    seasonTeams: await seasonTeamsOf(trx, seasonId),
+    createdFrom: 'api',
+    dryRun: true
+  })
+  if (resolved.found === 'created') return false
+  return (await followMerges(trx, resolved.id)) === teamId
+}
+
+/** The id a row gives for its opponent, when it names one by name. */
+function opponentExternalId(row: ScheduleGameRow): ExternalIdKey | undefined {
+  const opponent = row.opponent
+  if (opponent == null || !('name' in opponent)) return undefined
+  return opponent.externalId
+}
+
+/**
+ * What holds an external id. `free` when nothing does, or when only an
+ * orphan does: a row naming a team that no longer exists, which names
+ * nothing and so is taken over, as `createTeam` takes one over. Otherwise
+ * the team holding it, or, held by something other than a team, nothing
+ * more.
+ */
+type IdHolder =
+  { free: true; orphanId?: string } | { free: false; teamId?: string }
+
+async function idHolder(
+  trx: Transaction<Database>,
+  key: ExternalIdKey
+): Promise<IdHolder> {
+  const held = await trx
+    .selectFrom('external_ids')
+    .leftJoin('teams', join =>
+      join
+        .onRef('teams.id', '=', 'external_ids.entity_id')
+        .on('external_ids.entity_type', '=', 'team')
+    )
+    .select([
+      'external_ids.id as rowId',
+      'external_ids.entity_type as entityType',
+      'teams.id as teamId'
+    ])
+    .where('external_ids.system', '=', key.system)
+    .where('external_ids.kind', '=', key.kind)
+    .where('external_ids.external_id', '=', key.id)
+    .executeTakeFirst()
+  if (held == null) return { free: true }
+  if (held.teamId != null) return { free: false, teamId: held.teamId }
+  if (held.entityType === 'team') return { free: true, orphanId: held.rowId }
+  return { free: false }
+}
+
+/**
+ * Records an opponent's id on its team when that team is external, taking
+ * over an orphaned row of it rather than adding one. A full team's ids are
+ * its own admins' to give, never a schedule's. The caller has locked the id
+ * and found it free.
+ */
+async function recordOnExternalTeam(
+  trx: Transaction<Database>,
+  teamId: string,
+  key: ExternalIdKey,
+  holder: { orphanId?: string }
+): Promise<void> {
+  if (await isExternal(trx, teamId)) await takeId(trx, teamId, key, holder)
+}
+
+/** Whether a team is an external one, from outside every season. */
+async function isExternal(
+  trx: Transaction<Database>,
+  teamId: string
+): Promise<boolean> {
+  const team = await trx
+    .selectFrom('teams')
+    .select(['kind'])
+    .where('id', '=', teamId)
+    .executeTakeFirst()
+  return team?.kind === 'external'
+}
+
+/**
+ * Records a free id on a team the caller has found external, taking over
+ * the orphaned row of it when there is one.
+ */
+async function takeId(
+  trx: Transaction<Database>,
+  teamId: string,
+  key: ExternalIdKey,
+  holder: { orphanId?: string }
+): Promise<void> {
+  if (holder.orphanId == null) {
+    await recordExternalId(trx, 'team', teamId, key)
+    return
+  }
+  await trx
+    .updateTable('external_ids')
+    .set({ entity_id: teamId })
+    .where('id', '=', holder.orphanId)
+    .execute()
 }
