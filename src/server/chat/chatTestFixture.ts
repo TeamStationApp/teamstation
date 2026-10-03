@@ -21,6 +21,7 @@ import { errorHandler } from '../middleware/withErrors'
 import { chatRoutes } from '../routes/chat'
 import { chatEpochRoutes } from '../routes/chatEpochs'
 import { chatKeyRoutes } from '../routes/chatKeys'
+import { chatMessageRoutes } from '../routes/chatMessages'
 import { drainDirty } from './reconciler'
 
 /**
@@ -64,6 +65,8 @@ export interface ChatFixture {
   ) => Promise<number>
   /** Takes and reconciles every mark. */
   drain: () => Promise<number>
+  /** The attachment object keys the message routes deleted, in order. */
+  deletedObjects: string[]
   close: () => Promise<void>
 }
 
@@ -211,6 +214,7 @@ export async function openChatFixture(
       return minted.userId
     },
     drain: async () => await drainDirty(db, fixture.now),
+    deletedObjects: [],
     close: async () => {
       server.close()
       await db.destroy()
@@ -234,6 +238,17 @@ export async function openChatFixture(
   app.use(
     '/api/v1',
     chatEpochRoutes(db, () => fixture.now)
+  )
+  app.use(
+    '/api/v1',
+    chatMessageRoutes(db, TEST_MEDIA, {
+      clock: () => fixture.now,
+      objects: {
+        deleteObjects: async keys => {
+          fixture.deletedObjects.push(...keys)
+        }
+      }
+    })
   )
   app.use(errorHandler)
   const server = app.listen(0, '127.0.0.1')
