@@ -9,13 +9,17 @@ import Svg, {
   Stop
 } from 'react-native-svg'
 
-import { CONTROL_COLORS, type ControlKind } from './scoringControlStyle'
+import {
+  type BackdropKind,
+  CONTROL_COLORS,
+  type ControlKind
+} from './scoringControlStyle'
 
 /** Decorative art stays inside each button; the field beneath stays untouched. */
 export const ControlBackdrop = memo(function ControlBackdrop({
   kind
 }: {
-  kind: ControlKind
+  kind: BackdropKind
 }): React.ReactElement {
   const id = useId().replace(/:/g, '')
   const colors = CONTROL_COLORS[kind]

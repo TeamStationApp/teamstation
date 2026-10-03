@@ -47,6 +47,8 @@ export interface UseDictationOptions {
     undo?: boolean
   ) => void
   model?: DictationModel
+  /** The session token a phone puts on the socket. The browser uses its cookie. */
+  token?: string
   /** How long audio keeps flowing after a release. Tests shorten it. */
   tailMs?: number
   openSocket?: (url: string) => DictationSocket
@@ -109,6 +111,11 @@ export interface DictationButtonProps {
   ) => void
   /** The LLM the scorer picked in settings; absent, the server's own. */
   model?: DictationModel
+  /**
+   * The session token. A phone sends it as a bearer header, because it has
+   * no cookie. The browser's socket ignores it and sends the cookie.
+   */
+  token?: string
   openSocket?: (url: string) => DictationSocket
   openMicrophone?: OpenMicrophone
 }
