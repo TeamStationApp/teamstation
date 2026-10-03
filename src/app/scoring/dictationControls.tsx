@@ -139,6 +139,9 @@ export function useDictationControls(props: DictationButtonProps): {
     }).start()
   }, [fade, linger])
   const pressed = useRef<number | null>(null)
+  // Pointer events and the responder system can each report one press.
+  // The second report in the same turn is the same press.
+  const pressTurn = useRef(false)
   // A press becomes a hold once it outlasts a tap; a tap never starts one.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
@@ -160,6 +163,29 @@ export function useDictationControls(props: DictationButtonProps): {
 
   const { enabled, connected, holding, busy, ask } = dictation
   const ready = enabled && connected && !busy
+  const beginPress = (capture?: () => void): void => {
+    if (pressTurn.current) return
+    pressTurn.current = true
+    queueMicrotask(() => {
+      pressTurn.current = false
+    })
+    const since = Date.now()
+    pressed.current = since
+    capture?.()
+    if (!ready) return
+    if (tapMs <= 0) dictation.hold(since)
+    else
+      pressTimer.current = setTimeout(() => {
+        if (pressed.current === since) keys.current.hold(since)
+      }, tapMs)
+  }
+  const finishPress = (): void => {
+    const since = endPress()
+    if (since == null) return
+    if (!enabled) dictation.setEnabled(true)
+    else if (Date.now() - since < tapMs) dictation.setEnabled(false)
+    else dictation.release()
+  }
   const status = !enabled
     ? null
     : !connected
@@ -240,36 +266,51 @@ export function useDictationControls(props: DictationButtonProps): {
         accessibilityState={{ selected: enabled }}
         aria-pressed={enabled}
         focusable
+        accessibilityActions={[
+          { name: 'activate' },
+          { name: 'pushToTalk', label: lstrings.dictation_push }
+        ]}
         onAccessibilityTap={() => {
           dictation.setEnabled(!enabled)
         }}
+        onAccessibilityAction={event => {
+          if (event.nativeEvent.actionName !== 'pushToTalk') return
+          if (!enabled) {
+            dictation.setEnabled(true)
+            return
+          }
+          if (holding) dictation.release()
+          else if (ready) dictation.hold(Date.now())
+        }}
         onPointerDown={event => {
-          const since = Date.now()
-          pressed.current = since
-          const target = event.currentTarget as unknown as {
-            setPointerCapture?: (id: number) => void
-          }
-          try {
-            // Keeps the release on this button when the finger drifts off it.
-            target.setPointerCapture?.(event.nativeEvent.pointerId)
-          } catch {
-            /* A pointer the browser no longer knows; the press still counts. */
-          }
-          if (!ready) return
-          if (tapMs <= 0) dictation.hold(since)
-          else
-            pressTimer.current = setTimeout(() => {
-              if (pressed.current === since) keys.current.hold(since)
-            }, tapMs)
+          beginPress(() => {
+            const target = event.currentTarget as unknown as {
+              setPointerCapture?: (id: number) => void
+            }
+            try {
+              // Keeps the release on this button when the finger drifts off it.
+              target.setPointerCapture?.(event.nativeEvent.pointerId)
+            } catch {
+              /* A pointer the browser no longer knows; the press still counts. */
+            }
+          })
         }}
         onPointerUp={() => {
-          const since = endPress()
-          if (since == null) return
-          if (!enabled) dictation.setEnabled(true)
-          else if (Date.now() - since < tapMs) dictation.setEnabled(false)
-          else dictation.release()
+          finishPress()
         }}
         onPointerCancel={() => {
+          endPress()
+          dictation.release()
+        }}
+        onStartShouldSetResponder={() => true}
+        onResponderTerminationRequest={() => false}
+        onResponderGrant={() => {
+          beginPress()
+        }}
+        onResponderRelease={() => {
+          finishPress()
+        }}
+        onResponderTerminate={() => {
           endPress()
           dictation.release()
         }}
