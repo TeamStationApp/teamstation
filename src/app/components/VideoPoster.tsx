@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
 
 import { attachHls } from '../player/attachHls'
@@ -34,6 +40,15 @@ export interface VideoPosterProps {
   size?: 'hero' | 'thumb'
   /** How wide a thumb is, in rem. Narrower on a phone, where words are short. */
   width?: number
+  /** 16:9 for a hero or a highlight. 4:3 for a list row, which then grows taller. */
+  aspect?: '16:9' | '4:3'
+  /**
+   * The frame's width in pixels. The height is that width at 4:3.
+   *
+   * Not `width`: that prop is a rem count (`theme.rem(width)`). A list row
+   * already knows its text height in pixels and passes the frame here.
+   */
+  frameWidth?: number
   /**
    * Take the height of the row and let the width follow from 16:9.
    *
@@ -73,6 +88,8 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     onPlay,
     size = 'thumb',
     width,
+    aspect = '16:9',
+    frameWidth,
     fillHeight = false,
     children
   } = props
@@ -80,6 +97,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const styles = getStyles(theme)
   const hero = size === 'hero'
   const hasPicture = uri != null && uri !== ''
+  const frameRef = useRef<React.ComponentRef<typeof View>>(null)
   const [moving, setMoving] = useState(false)
   const teardown = useRef<(() => void) | undefined>(undefined)
 
@@ -121,14 +139,46 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     return () => teardown.current?.()
   }, [])
 
+  // The picture is a center crop. On the web that image is added after the
+  // first paint, so the fit is applied then as well as now.
+  useLayoutEffect(() => {
+    const root: unknown = frameRef.current
+    const Host = globalThis.HTMLElement
+    if (Host == null || !(root instanceof Host)) return
+    const paint = (node: HTMLElement): void => {
+      node.style.objectFit = 'cover'
+      node.style.objectPosition = 'center'
+      for (const child of node.children) {
+        if (child instanceof Host) paint(child)
+      }
+    }
+    paint(root)
+    const observer = new MutationObserver(() => {
+      paint(root)
+    })
+    observer.observe(root, { childList: true, subtree: true })
+    return () => {
+      observer.disconnect()
+    }
+  }, [uri, hasPicture])
+
   return (
     <View
+      ref={frameRef}
       style={[
         styles.frame,
+        aspect === '4:3' ? { aspectRatio: 4 / 3 } : undefined,
         hero ? styles.frameHero : styles.frameThumb,
         !hero && fillHeight ? styles.frameFill : undefined,
         !hero && !fillHeight && width != null
           ? { width: theme.rem(width) }
+          : undefined,
+        !hero && frameWidth != null
+          ? {
+              width: frameWidth,
+              height: frameWidth * (3 / 4),
+              aspectRatio: 4 / 3
+            }
           : undefined
       ]}
     >
