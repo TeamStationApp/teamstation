@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface TSDictationMicrophone : NSObject
 @property (nonatomic, copy, nullable) void (^onPcm)(NSString *pcm);
+@property (nonatomic, copy, nullable) void (^onEnded)(NSString *message);
 - (void)start:(void (^)(NSString *_Nullable message))done;
 - (void)stop;
 @end
@@ -36,6 +37,9 @@ RCT_EXPORT_MODULE(DictationMicrophone)
     __weak RCTDictationMicrophone *weakSelf = self;
     _microphone.onPcm = ^(NSString *pcm) {
       [weakSelf emitOnPcm:@{@"pcm" : pcm}];
+    };
+    _microphone.onEnded = ^(NSString *message) {
+      [weakSelf emitOnPcm:@{@"error" : message}];
     };
   }
   return self;

@@ -10,6 +10,7 @@ import Foundation
 @objc(TSDictationMicrophone)
 final class TSDictationMicrophone: NSObject {
   @objc var onPcm: ((String) -> Void)?
+  @objc var onEnded: ((String) -> Void)?
 
   private let engine = AVAudioEngine()
   private let queue = DispatchQueue(label: "app.teamstation.dictation-microphone")
@@ -18,6 +19,7 @@ final class TSDictationMicrophone: NSObject {
   private var pending = Data()
   private var tapped = false
   private var running = false
+  private var reported = false
   private var savedCategory: AVAudioSession.Category?
   private var savedMode: AVAudioSession.Mode?
   private var savedOptions: AVAudioSession.CategoryOptions = []
@@ -55,6 +57,7 @@ final class TSDictationMicrophone: NSObject {
 
   @objc func stop() {
     running = false
+    reported = false
     if tapped {
       engine.inputNode.removeTap(onBus: 0)
       tapped = false
@@ -76,6 +79,7 @@ final class TSDictationMicrophone: NSObject {
 
   private func begin() throws {
     if running { return }
+    reported = false
     let session = AVAudioSession.sharedInstance()
     savedCategory = session.category
     savedMode = session.mode
@@ -115,6 +119,15 @@ final class TSDictationMicrophone: NSObject {
     engine.prepare()
     try engine.start()
     running = true
+  }
+
+  /// One failure is enough. The scoring screen turns dictation off from it.
+  private func reportStopped() {
+    if reported { return }
+    reported = true
+    DispatchQueue.main.async { [weak self] in
+      self?.onEnded?("the microphone stopped")
+    }
   }
 
   /// Copies the tap's buffer before the audio thread reuses it, then converts
@@ -166,7 +179,11 @@ final class TSDictationMicrophone: NSObject {
       status.pointee = .haveData
       return buffer
     }
-    guard error == nil, let samples = output.int16ChannelData else { return }
+    if error != nil {
+      reportStopped()
+      return
+    }
+    guard let samples = output.int16ChannelData else { return }
     let count = Int(output.frameLength) * MemoryLayout<Int16>.size
     if count == 0 { return }
     pending.append(Data(bytes: samples[0], count: count))
