@@ -568,6 +568,226 @@ describe('the dictation control', function () {
     expect(text('Dictation status')).equals('Push to talk')
   })
 
+  it('ignores a close from a socket that has already been replaced', async function () {
+    this.timeout(10000)
+    const h = harness()
+    await h.render()
+    const first = await enable(h)
+    await act(async () => {
+      first.readyState = 3
+      first.onclose?.()
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    expect(h.sockets).to.have.length(2)
+    const second = h.sockets[1]
+    await opened(second)
+    expect(text('Dictation status')).equals('Push to talk')
+    await act(async () => {
+      first.onclose?.()
+    })
+    expect(text('Dictation status')).equals('Push to talk')
+    expect(second.closed).equals(false)
+    expect(h.sockets).to.have.length(2)
+  })
+
+  it('does not stop a microphone a newer open already owns', async function () {
+    let resolveFirst: ((mic: { stop: () => void }) => void) | undefined
+    const stops: string[] = []
+    const h = harness(fresh(), {
+      tapMs: 5000,
+      openMicrophone: async () =>
+        await new Promise(resolve => {
+          if (resolveFirst == null) {
+            resolveFirst = resolve
+            return
+          }
+          resolve({
+            stop: () => {
+              stops.push('second')
+            }
+          })
+        })
+    })
+    await h.render()
+    await tap()
+    await tap()
+    await tap()
+    expect(stops).deep.equals([])
+    await act(async () => {
+      resolveFirst?.({
+        stop: () => {
+          stops.push('first')
+        }
+      })
+    })
+    expect(stops).deep.equals([])
+    await tap()
+    expect(stops).deep.equals(['second'])
+  })
+
+  it('stops a microphone that opens after dictation was switched off', async function () {
+    let resolveOpen: ((mic: { stop: () => void }) => void) | undefined
+    const stops: string[] = []
+    const h = harness(fresh(), {
+      tapMs: 5000,
+      openMicrophone: async () =>
+        await new Promise(resolve => {
+          resolveOpen = resolve
+        })
+    })
+    await h.render()
+    await tap()
+    await tap()
+    await act(async () => {
+      resolveOpen?.({
+        stop: () => {
+          stops.push('only')
+        }
+      })
+    })
+    expect(stops).deep.equals(['only'])
+  })
+
+  it('ends the utterance when a reply is not a dictation frame', async function () {
+    const h = harness()
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    await act(async () => {
+      socket.onmessage?.({ data: '{not json' })
+    })
+    expect(text('Dictation message')).equals(
+      'The connection dropped and that was not scored. Say it again.'
+    )
+    expect(text('Dictation status')).equals('Push to talk')
+    await pointer('pointerdown')
+    expect(
+      socket.frames.filter(frame => frame.kind === 'start')
+    ).to.have.length(2)
+  })
+
+  it('ends a later sentence after the first is settled during its tail', async function () {
+    const h = harness(fresh(), { tailMs: 80, tapMs: 0 })
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const first = socket.frames.at(-1)!
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'error',
+      id: first.id,
+      message: 'Nothing was heard'
+    })
+    await pointer('pointerdown')
+    const second = socket.frames.at(-1)!
+    await pointer('pointerup')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 200))
+    })
+    expect(socket.frames.filter(frame => frame.kind === 'release')).deep.equals(
+      [{ kind: 'release', id: second.id }]
+    )
+  })
+
+  it('ignores an open and a frame from a socket that is no longer current', async function () {
+    this.timeout(10000)
+    const h = harness()
+    await h.render()
+    const first = await enable(h)
+    await act(async () => {
+      first.readyState = 3
+      first.onclose?.()
+    })
+    expect(text('Dictation status')).equals('Connecting…')
+    await act(async () => {
+      first.readyState = 1
+      first.onopen?.()
+    })
+    expect(text('Dictation status')).equals('Connecting…')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    const second = h.sockets[1]
+    await opened(second)
+    await pointer('pointerdown')
+    expect(text('Dictation status')).equals('Listening…')
+    await act(async () => {
+      first.onmessage?.({ data: '{not json' })
+    })
+    expect(text('Dictation status')).equals('Listening…')
+    expect(text('Dictation message')).equals(null)
+  })
+
+  it('keeps dictation on when a superseded microphone open fails', async function () {
+    let rejectFirst: ((error: Error) => void) | undefined
+    const h = harness(fresh(), {
+      tapMs: 5000,
+      openMicrophone: async () =>
+        await new Promise((resolve, reject) => {
+          if (rejectFirst == null) {
+            rejectFirst = reject
+            return
+          }
+          resolve({ stop: () => undefined })
+        })
+    })
+    await h.render()
+    await tap()
+    await tap()
+    await tap()
+    await act(async () => {
+      rejectFirst?.(new Error('late'))
+    })
+    expect(find('Dictation')?.getAttribute('aria-pressed')).equals('true')
+    expect(text('Dictation message')).equals(null)
+  })
+
+  it('can end a later sentence after a release tail was cancelled', async function () {
+    const h = harness(fresh(), { tailMs: 200, tapMs: 0 })
+    await h.render()
+    const first = await enable(h)
+    await pointer('pointerdown')
+    await pointer('pointerup')
+    await act(async () => {
+      find('Dictation')!.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      )
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 250))
+    })
+    expect(first.frames.some(frame => frame.kind === 'release')).equals(false)
+    const second = await enable(h)
+    await pointer('pointerdown')
+    await pointer('pointerup')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 250))
+    })
+    expect(
+      second.frames.filter(frame => frame.kind === 'release')
+    ).to.have.length(1)
+  })
+
+  it('shows the button once a failed health check succeeds', async function () {
+    this.timeout(5000)
+    let calls = 0
+    const h = harness(fresh(), {
+      health: async () => {
+        calls++
+        if (calls === 1) throw new Error('down')
+        return await healthy()
+      }
+    })
+    await h.render()
+    expect(find('Dictation')).equals(null)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    expect(find('Dictation')).not.equal(null)
+  })
+
   it('closes the socket and the microphone when the screen goes mid-utterance', async function () {
     const h = harness()
     await h.render()
