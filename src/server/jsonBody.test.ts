@@ -13,6 +13,13 @@ describe('the JSON body limit', function () {
 
   before(async function () {
     const app = express()
+    // Signed in when the request says so, as `withActor` would have it.
+    app.use((req, res, next) => {
+      if (req.header('x-signed-in') != null) {
+        req.actor = { userId: 1, isAdmin: false, scopes: [] }
+      }
+      next()
+    })
     app.use(jsonBody)
     app.use((req, res) => {
       res.json({ keys: Object.keys(req.body ?? {}) })
@@ -49,6 +56,45 @@ describe('the JSON body limit', function () {
 
   it("takes a whole game's plays in one post", async function () {
     expect(await post('/api/v1/games/gam_one/events')).equals(200)
+  })
+
+  const put = async (path: string, length: number): Promise<number> =>
+    (
+      await fetch(`${base}${path}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-signed-in': '1' },
+        body: JSON.stringify({
+          image: { contentType: 'image/png', base64: 'A'.repeat(length) },
+          source: 'upload'
+        })
+      })
+    ).status
+
+  it('takes a 10 MiB picture as base64, and nothing past 14 MB', async function () {
+    // 10 MiB of bytes is 13,981,016 characters of base64.
+    const tenMiB = 4 * Math.ceil((10 * 1024 * 1024) / 3)
+    for (const path of [
+      '/api/v1/teams/tem_one/logo',
+      '/api/v1/teams/tem_one/players/123/avatar'
+    ]) {
+      expect(await put(path, tenMiB), path).equals(200)
+      expect(await put(path, 15_000_000), path).equals(413)
+    }
+    // Only a PUT of a picture: a POST there is held to 1 MB.
+    expect(await post('/api/v1/teams/tem_one/logo')).equals(413)
+  })
+
+  it('answers 401 to a picture from nobody, without reading its body', async function () {
+    const started = Date.now()
+    const response = await fetch(`${base}/api/v1/teams/tem_one/logo`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      // Not JSON at all, and as large as a picture may be: parsed, it
+      // would be a 400.
+      body: '{'.repeat(14_000_000)
+    })
+    expect(response.status).equals(401)
+    expect(Date.now() - started).lessThan(5000)
   })
 
   it('holds every other route to 1 MB', async function () {

@@ -29,6 +29,7 @@ import { scheduleRoutes } from './routes/schedule'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
+import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
@@ -128,6 +129,7 @@ describe('the API document', function () {
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
+      ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
       ...routesOf(logRoutes()),
@@ -165,6 +167,7 @@ describe('the API document', function () {
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
+      ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
       ...routesOf(logRoutes()),

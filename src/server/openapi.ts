@@ -104,6 +104,107 @@ const namedThing = {
   properties: { id: { type: 'string' }, name: { type: 'string' } }
 }
 
+/** An id another system has for a person, by the rules `POST /teams` uses. */
+const memberExternalId = {
+  type: 'object',
+  required: ['system', 'kind', 'id'],
+  properties: {
+    system: { type: 'string', pattern: '^[a-z][a-zA-Z0-9]{0,31}$' },
+    kind: { type: 'string', minLength: 1 },
+    id: { type: 'string', minLength: 1 }
+  }
+}
+
+/** A person's two names, trimmed; either may be empty. */
+const personNames = {
+  firstName: { type: 'string', maxLength: 100 },
+  lastName: { type: 'string', maxLength: 100 }
+}
+
+/** Why one row of a roster call was refused while the others applied. */
+const memberRowError = {
+  type: 'object',
+  required: ['code', 'message'],
+  properties: {
+    code: { type: 'string', enum: ['conflict'] },
+    message: { type: 'string' }
+  }
+}
+
+/** The body both picture routes take. */
+const pictureBody = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['image', 'source'],
+        properties: {
+          image: {
+            type: 'object',
+            required: ['contentType', 'base64'],
+            properties: {
+              contentType: {
+                type: 'string',
+                enum: ['image/jpeg', 'image/png', 'image/webp']
+              },
+              base64: {
+                type: 'string',
+                pattern: '^[A-Za-z0-9+/]+={0,2}$',
+                description:
+                  'The bytes, as strict base64 whose length divides by 4; ' +
+                  'at most 10 MiB decoded'
+              }
+            }
+          },
+          source: { type: 'string', enum: ['import', 'upload'] }
+        }
+      }
+    }
+  }
+}
+
+/** What both picture routes answer. */
+const pictureAnswer = {
+  description:
+    'Stored, with the signed URL of the 192 px rendition; or not stored, ' +
+    'because it was the picture already held, or because an import met an ' +
+    'uploaded picture (`kept: upload`)',
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['stored'],
+        properties: {
+          stored: { type: 'boolean' },
+          url: { type: 'string' },
+          kept: { type: 'string', enum: ['upload'] }
+        }
+      }
+    }
+  }
+}
+
+/** How both picture routes are described, after their first line. */
+const pictureRules =
+  '**Who may call:** an administrator of the team (set on the team, its ' +
+  'season or its league, or its owner or manager) or a site ' +
+  'administrator. Anyone else gets 403; a team the caller cannot see gets ' +
+  '404.\n\n' +
+  '**The body:** `image` `{contentType, base64}` and `source` (`import` or ' +
+  '`upload`). A content type other than `image/jpeg`, `image/png` or ' +
+  '`image/webp` is 415. `base64` that is empty, outside the alphabet or of ' +
+  'a length that does not divide by 4 is 400. More than 10 MiB decoded is ' +
+  '413. Bytes that do not begin with the declared type\u2019s signature ' +
+  '(JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF`, a length, ' +
+  '`WEBP`) are 415, as are bytes that are not a picture TeamStation can ' +
+  'read.\n\n' +
+  '**What is stored:** the picture is normalised to square PNGs of 96 and ' +
+  '192 px, named by the hash of their bytes. The same picture again uploads ' +
+  'nothing and answers `stored: false`. An `import` never replaces a picture ' +
+  'whose source is `upload`, and answers `stored: false, kept: upload`. ' +
+  'No picture store configured, or one that does not answer, is 503.'
+
 const sorted = (codes: ReadonlySet<string>): string[] => [...codes].sort()
 
 /** A player a play names: his TeamStation user id, or only a name. */
@@ -1317,24 +1418,37 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         },
         post: {
-          summary: 'Make a team, in a season, known by external ids',
+          summary:
+            'Make a team, standalone or in a season, known by external ids',
           description:
-            'Site administrators only; anybody else gets 403.\n\n' +
+            '**Who may call:** anybody signed in. The caller becomes the ' +
+            'administrator of the team, and of a season the call makes, and, ' +
+            'unless they are a site administrator, the team\u2019s owner, so ' +
+            'it lists among their teams. ' +
+            'Putting the team in an existing season takes an administrator ' +
+            'of that season or its league, or a site administrator.\n\n' +
             '**The body:** `name` is trimmed and 1-100 characters. `season` ' +
-            'is `{id}`, an existing season (404 when there is none), or ' +
-            '`{name, year}`: the season with that name in that year, ignoring ' +
-            'case and outer spaces, else a new one in no league. `name` is ' +
+            'is optional; without it the team is standalone, in no season. ' +
+            'It is `{id}`, an existing season (404 when there is none, 403 ' +
+            'when the caller does not administer it or its league), or ' +
+            '`{name, year}`: the first season with that name in that year, ' +
+            'ignoring case and outer spaces, that the caller administers, ' +
+            'else a new one in no league. `name` is ' +
             '1-100 characters after trimming and `year` a whole year from ' +
             '1900 to 2200. `externalIds` is optional, at most 20 of ' +
             '`{system, id, kind}`, with `system` matching ' +
             '`^[a-z][a-zA-Z0-9]{0,31}$` and `id` and `kind` non-empty.\n\n' +
             '**What it does:** when any of the external ids (the same ' +
-            'system, kind and id) already names a team, nothing is made and ' +
-            'the answer is 200 with that team (the one it was merged into, ' +
-            'if it was) and `season: null`. An id already on something ' +
-            'other than a team is 409. Otherwise, in one transaction, a full ' +
-            'team is made, put in the season, and given the ids, and the ' +
-            'answer is 201 with the season and whether this call made it.',
+            'system, kind and id) already names a team the caller can see, ' +
+            'nothing is made and the answer is 200 with that team (the one ' +
+            'it was merged into, if it was) and `season: null`. The ' +
+            'body\u2019s other ids nothing holds are recorded on it only when ' +
+            'the caller administers it. An id on a ' +
+            'team the caller cannot see, or on something other than a team, ' +
+            'is 409, and nothing is made. Otherwise, in one transaction, a ' +
+            'full team is made, put in the season, and given the ids, and ' +
+            'the answer is 201 with the season and whether this call made ' +
+            'it, or `season: null` for a standalone team.',
           security: [{ bearer: [] }],
           requestBody: {
             required: true,
@@ -1342,10 +1456,11 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['name', 'season'],
+                  required: ['name'],
                   properties: {
                     name: { type: 'string', minLength: 1, maxLength: 100 },
                     season: {
+                      nullable: true,
                       oneOf: [
                         {
                           type: 'object',
@@ -1411,7 +1526,9 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             201: {
-              description: 'The team was made, in this season',
+              description:
+                'The team was made, in this season or, with `season: null`, ' +
+                'standalone',
               content: {
                 'application/json': {
                   schema: {
@@ -1423,6 +1540,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                       created: { type: 'boolean', enum: [true] },
                       season: {
                         type: 'object',
+                        nullable: true,
                         required: ['id', 'name', 'year', 'created'],
                         properties: {
                           id: { type: 'string' },
@@ -1653,6 +1771,325 @@ export function openApiDocument(version: string): OpenApiDocument {
             401: errorResponse,
             403: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players': {
+        post: {
+          summary: "Add a team's players by external id",
+          description:
+            'Adds 1 to 200 players in one call, in one transaction, and ' +
+            'answers each row in order. Each row is a person another system ' +
+            'knows by `externalId`.\n\n' +
+            '**Who may call:** an administrator of the team (set on the ' +
+            'team, its season or its league, or its owner or manager) or a ' +
+            'site administrator. Anyone else gets 403; a team the caller ' +
+            'cannot see gets 404. A person an external id already names is ' +
+            'added to the team wherever else they are.\n\n' +
+            '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
+            'characters, either may be empty), `jersey` (at most 3 ' +
+            'characters), `bats` (`left`, `right` or `switch`), `throws` ' +
+            '(`left` or `right`) and `externalId` `{system, kind, id}`, with ' +
+            '`system` matching `^[a-z][a-zA-Z0-9]{0,31}$`. One malformed row ' +
+            'refuses the call with a 400 naming it.\n\n' +
+            '**What a row does:** the user holding the external id (merged ' +
+            'accounts followed to the one they became) is the player; ' +
+            'otherwise a new user is made, who cannot sign in, named `first ' +
+            'last` or `Unknown player`, with the id recorded on them. That ' +
+            "user's membership of the team is made a player's: a new one is " +
+            'a `member` with the jersey, and an existing one keeps its jersey ' +
+            'unless it had none. Each of `bats` and `throws` sent replaces ' +
+            'an imported one and is never written over a coach\u2019s; a ' +
+            'hand not sent is left as it is. An id held by something that ' +
+            "is not a user is that row's `conflict`; the other rows still " +
+            'apply.\n\n' +
+            '**Answers:** `result` is `created` (a new user), `joined` (an ' +
+            'existing user newly a player here), `unchanged` (already a ' +
+            'player here) or `error`, with the `userId`.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['players'],
+                  properties: {
+                    players: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['externalId'],
+                        properties: {
+                          ...personNames,
+                          jersey: { type: 'string', maxLength: 3 },
+                          bats: {
+                            type: 'string',
+                            enum: ['left', 'right', 'switch']
+                          },
+                          throws: { type: 'string', enum: ['left', 'right'] },
+                          externalId: memberExternalId
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'One answer per row, in order, and the counts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['results', 'counts'],
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['index', 'result'],
+                          properties: {
+                            index: { type: 'integer' },
+                            result: {
+                              type: 'string',
+                              enum: ['created', 'joined', 'unchanged', 'error']
+                            },
+                            userId: { type: 'integer' },
+                            error: memberRowError
+                          }
+                        }
+                      },
+                      counts: {
+                        type: 'object',
+                        properties: {
+                          created: { type: 'integer' },
+                          joined: { type: 'integer' },
+                          unchanged: { type: 'integer' },
+                          error: { type: 'integer' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/adults': {
+        post: {
+          summary: "Add a team's parents, followers and staff by external id",
+          description:
+            'Adds 1 to 200 adults in one call, in one transaction, and ' +
+            'answers each row in order. Nobody is mailed, and nothing is ' +
+            'ever taken away. Add the players first, so guardian links find ' +
+            'them.\n\n' +
+            '**Who may call:** an administrator of the team (set on the ' +
+            'team, its season or its league, or its owner or manager) or a ' +
+            'site administrator. Anyone else gets 403; a team the caller ' +
+            'cannot see gets 404.\n\n' +
+            '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
+            'characters, either may be empty), `email` (optional; trimmed, ' +
+            'lower-cased, with an `@`), `externalId` `{system, kind, id}`, ' +
+            "`guardianOf` (the players' external ids, possibly none) and " +
+            '`staff` (true or false). One malformed row refuses the call with ' +
+            'a 400 naming it.\n\n' +
+            '**Who a row is:** the user holding the external id (merged ' +
+            'accounts followed); otherwise the user holding the address, ' +
+            'who then gets the external id only when the caller is a site ' +
+            'administrator (otherwise the row says `externalIdNotAttached`); ' +
+            'otherwise a new user, named ' +
+            '`first last` or `Unknown adult`, who may sign in by e-mail code ' +
+            "when there is an address. An existing user's sign-in setting is " +
+            'never changed.\n\n' +
+            '**The address:** already theirs, nothing changes. Held by ' +
+            'nobody, it is attached, as their primary address, to an account ' +
+            'this call made; to an account already here only when the ' +
+            'caller is a site administrator and the account has no address ' +
+            'at all. Otherwise it is left off and the row says ' +
+            '`emailNotAttached`. Held by somebody else, it stays there and ' +
+            'the row says `emailHeldElsewhere`.\n\n' +
+            '**What a row gains:** a membership of the team when they have ' +
+            'none, as a `member` and a spectator unless they are staff who ' +
+            'guard nobody (an existing membership only gains the spectator ' +
+            'flag, and its role is never raised); a guardian link, which ' +
+            'may manage, to each `guardianOf` player of this team (an id ' +
+            'naming no player here is counted in `guardiansMissing`); and, ' +
+            'for staff, the `coach` and `scorekeeper` roles on the team. ' +
+            'Roles are only ever added, and `admin` never is.\n\n' +
+            '**Answers:** `result` is `created` (a new user), `matched` (an ' +
+            'existing user who gained something here), `unchanged` or ' +
+            '`error`. `counts.guardianLinks` is the links this call made, and ' +
+            '`counts.staff` the adults who gained a role in it; posting the ' +
+            'same body again answers both as 0.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['adults'],
+                  properties: {
+                    adults: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['externalId'],
+                        properties: {
+                          ...personNames,
+                          email: { type: 'string', maxLength: 254 },
+                          externalId: memberExternalId,
+                          guardianOf: {
+                            type: 'array',
+                            maxItems: 50,
+                            items: memberExternalId
+                          },
+                          staff: { type: 'boolean', default: false }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'One answer per row, in order, and the counts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['results', 'counts'],
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: [
+                            'index',
+                            'result',
+                            'joined',
+                            'guardianLinks',
+                            'guardiansMissing',
+                            'rolesAdded'
+                          ],
+                          properties: {
+                            index: { type: 'integer' },
+                            result: {
+                              type: 'string',
+                              enum: ['created', 'matched', 'unchanged', 'error']
+                            },
+                            userId: { type: 'integer' },
+                            joined: { type: 'boolean' },
+                            guardianLinks: { type: 'integer' },
+                            guardiansMissing: { type: 'integer' },
+                            rolesAdded: {
+                              type: 'array',
+                              items: {
+                                type: 'string',
+                                enum: ['coach', 'scorekeeper']
+                              }
+                            },
+                            emailHeldElsewhere: {
+                              type: 'boolean',
+                              enum: [true]
+                            },
+                            emailNotAttached: {
+                              type: 'boolean',
+                              enum: [true]
+                            },
+                            externalIdNotAttached: {
+                              type: 'boolean',
+                              enum: [true]
+                            },
+                            error: memberRowError
+                          }
+                        }
+                      },
+                      counts: {
+                        type: 'object',
+                        properties: {
+                          created: { type: 'integer' },
+                          matched: { type: 'integer' },
+                          unchanged: { type: 'integer' },
+                          error: { type: 'integer' },
+                          guardianLinks: { type: 'integer' },
+                          staff: { type: 'integer' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/logo': {
+        put: {
+          summary: "Store a team's logo",
+          description:
+            'Stores the team\u2019s logo, padded to a square so a wide ' +
+            'badge keeps its shape and a transparent one stays transparent.' +
+            '\n\n' +
+            pictureRules,
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: pictureBody,
+          responses: {
+            200: pictureAnswer,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            413: errorResponse,
+            415: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/avatar': {
+        put: {
+          summary: "Store a player's headshot",
+          description:
+            'Stores the headshot of a player of this team, cropped to a ' +
+            'square. It is the person\u2019s own picture, so it shows on ' +
+            'every team they are on. A user who is not a player of this ' +
+            'team is 404. A headshot whose source is `upload` is replaced ' +
+            'only by a site administrator\u2019s upload; anybody else\u2019s ' +
+            'answers `stored: false, kept: upload`.\n\n' +
+            pictureRules,
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          requestBody: pictureBody,
+          responses: {
+            200: pictureAnswer,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            413: errorResponse,
+            415: errorResponse,
+            503: errorResponse
           }
         }
       },

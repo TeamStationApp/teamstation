@@ -126,9 +126,9 @@ export function playerRoutes(
    * The name in full, for the one thing it is for: changing it.
    *
    * A separate request, deliberately, so that reading a player's page cannot
-   * carry a surname to a screen by accident. A parent or an administrator
-   * opening the name field asks for it; everybody else is answered 404, and
-   * the page they were reading never had it.
+   * carry a surname to a screen by accident. A parent, the team's staff or
+   * a site administrator opening the name field asks for it; everybody else
+   * is answered 404, and the page they were reading never had it.
    */
   router.get(
     '/players/:userId/name',

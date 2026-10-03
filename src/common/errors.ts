@@ -122,6 +122,14 @@ export const rateLimited = (
   retryAfterSec: number
 ): HttpError => new HttpError('rateLimited', message, { retryAfterSec })
 
+/** A body, or a part of one, heavier than this route takes. */
+export const tooLarge = (message: string): HttpError =>
+  new HttpError('tooLarge', message)
+
+/** A body of a kind this route cannot read. */
+export const unsupportedMedia = (message: string): HttpError =>
+  new HttpError('unsupportedMedia', message)
+
 /** Something the answer needs is away for now, and will be back. */
 export const unavailable = (message: string): HttpError =>
   new HttpError('unavailable', message)

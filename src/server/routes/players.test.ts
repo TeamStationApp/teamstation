@@ -27,11 +27,12 @@ import { teamRoutes } from './teams'
  * Who may read a child's whole name, who may **change** it, and which teams a
  * player has played for.
  *
- * The app draws `Jordan P` for everybody. The whole name goes to a coach or
- * an administrator of the child's team, a parent, the child and a site
- * administrator, and changing it is narrower still. Both fail silently in
- * the wrong direction — nobody complains that a name was shortened, so a
- * gate that had quietly opened would stay open.
+ * The app draws `Jordan P` for everybody. The whole name, to read and to
+ * change, goes to the staff of the child's team — anybody holding a role on
+ * it, set there or on its season or league — a parent, the child and a site
+ * administrator. It fails silently in the wrong direction — nobody
+ * complains that a name was shortened, so a gate that had quietly opened
+ * would stay open.
  */
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_players_${Date.now()}`
@@ -369,13 +370,35 @@ describe('a player, and who may change their name', function () {
     expect(await mayEditName(db, childId, childId, about)).equals(true)
   })
 
-  // Paul's rule, 2026-09-19: an administrator or a parent, and nobody else.
-  // A coach runs the team and still has no business with the surname, and
-  // neither does whoever administers the season above it.
-  it('refuses a coach, a season administrator and a team-mate', async function () {
-    expect(await mayEditName(db, coachId, childId, about)).equals(false)
-    expect(await mayEditName(db, seasonAdminId, childId, about)).equals(false)
-    expect(await mayEditName(db, strangerId, childId, about)).equals(false)
+  // Paul's rule, 2026-10-02: team admins, coaches and other staff can see
+  // and edit a child's full name. A team-mate, a parent of somebody else and
+  // the staff of another team cannot.
+  it('lets the staff of the child’s team change it, and nobody else', async function () {
+    for (const staff of [
+      coachId,
+      seasonAdminId,
+      teamCoachId,
+      scorekeeperId,
+      songkeeperId,
+      videographerId,
+      leagueCoachId
+    ]) {
+      expect(
+        await mayEditName(db, staff, childId, about),
+        String(staff)
+      ).equals(true)
+    }
+    for (const outsider of [strangerId, otherCoachId]) {
+      expect(
+        await mayEditName(db, outsider, childId, about),
+        String(outsider)
+      ).equals(false)
+    }
+    // The Legends' coach has the Legends' player, and the Badgers' staff
+    // do not.
+    expect(await mayEditName(db, otherCoachId, legendId, about)).equals(true)
+    expect(await mayEditName(db, teamCoachId, legendId, about)).equals(false)
+    expect(await mayEditName(db, parentId, legendId, about)).equals(false)
   })
 
   const get = async (
@@ -425,18 +448,29 @@ describe('a player, and who may change their name', function () {
     }
   })
 
-  it('keeps the name field from a coach, who may read the name but not change it', async function () {
-    for (const viewer of [teamCoachId, leagueCoachId]) {
-      expect(await mayEditName(db, viewer, childId, about)).equals(false)
+  it('gives the name field to the staff of the team, and to nobody else on it', async function () {
+    for (const viewer of [teamCoachId, scorekeeperId, coachId, leagueCoachId]) {
       const answer = await get(`/players/${childId}/name`, viewer)
-      expect(answer.status).equals(404)
+      expect(answer.status, String(viewer)).equals(200)
+      expect(answer.body).deep.include({
+        firstName: 'Jordan',
+        lastName: 'Pujols'
+      })
       const detail = asPlayerDetail(
         (await get(`/players/${childId}`, viewer)).body
       )
-      expect(detail.canEditName).equals(false)
+      expect(detail.canEditName, String(viewer)).equals(true)
     }
-    const parent = await get(`/players/${childId}/name`, parentId)
-    expect(parent.status).equals(200)
+    // A parent on another team asks for the name alone.
+    expect((await get(`/players/${childId}/name`, parentId)).status).equals(200)
+    for (const viewer of [strangerId, otherCoachId]) {
+      const answer = await get(`/players/${childId}/name`, viewer)
+      expect(answer.status, String(viewer)).equals(404)
+      const detail = asPlayerDetail(
+        (await get(`/players/${childId}`, viewer)).body
+      )
+      expect(detail.canEditName, String(viewer)).equals(false)
+    }
   })
 
   const put = async (

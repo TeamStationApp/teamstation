@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
 import { asCreateTeamBody } from '../../common/createTeam'
-import { forbidden, notFound, unauthorized } from '../../common/errors'
+import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { scoreboardOpen } from '../../common/scoreboard'
 import {
@@ -224,9 +224,11 @@ export function teamRoutes(
   )
 
   /**
-   * Makes a team, in a season, known by the ids another system has for it.
-   * Site administrators only. A body whose external id already names a team
-   * makes nothing and answers that team with 200.
+   * Makes a team, standalone or in a season, known by the ids another
+   * system has for it. Anybody signed in may; the caller becomes the team's
+   * administrator. Putting it in an existing season takes an administrator
+   * of that season or its league. A body whose external id already names a
+   * team the caller can see makes nothing and answers that team with 200.
    */
   router.post(
     '/teams',
@@ -234,11 +236,8 @@ export function teamRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      if (!actor.isAdmin) {
-        throw forbidden('Only a site administrator may create a team')
-      }
       const body = cleanBody(asCreateTeamBody, req.body)
-      const answer = await createTeam(db, body)
+      const answer = await createTeam(db, body, actor)
 
       setAudit(res.locals, {
         entityType: 'team',
@@ -246,8 +245,8 @@ export function teamRoutes(
         after: answer.created
           ? {
               name: answer.name,
-              seasonId: answer.season.id,
-              seasonCreated: answer.season.created,
+              seasonId: answer.season?.id ?? null,
+              seasonCreated: answer.season?.created ?? false,
               externalIds: body.externalIds
             }
           : undefined
