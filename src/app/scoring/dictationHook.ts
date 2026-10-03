@@ -219,6 +219,9 @@ export function useDictation(options: UseDictationOptions): Dictation {
     const generation = ++openGeneration.current
     ;(latest.current.openMicrophone ?? browserMicrophone)(
       pcm => {
+        // An open that lost the race, or one that finished after dictation
+        // went off, must not feed the utterance that replaced it.
+        if (!live || generation !== openGeneration.current) return
         if (holdingNow.current && utterance.current != null) {
           send(pcm)
           return
@@ -236,10 +239,9 @@ export function useDictation(options: UseDictationOptions): Dictation {
       }
     ).then(
       opened => {
-        // A newer open owns the one shared recorder. Stopping here would
-        // silence that one.
-        if (generation !== openGeneration.current) return
-        if (!live) {
+        // A newer open has its own listener. This one drops its listener.
+        // The phone recorder stops only when that was the last listener.
+        if (generation !== openGeneration.current || !live) {
           opened.stop()
           return
         }

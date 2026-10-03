@@ -594,7 +594,7 @@ describe('the dictation control', function () {
     expect(h.sockets).to.have.length(2)
   })
 
-  it('does not stop a microphone a newer open already owns', async function () {
+  it('releases a microphone a newer open has replaced', async function () {
     let resolveFirst: ((mic: { stop: () => void }) => void) | undefined
     const stops: string[] = []
     const h = harness(fresh(), {
@@ -624,9 +624,9 @@ describe('the dictation control', function () {
         }
       })
     })
-    expect(stops).deep.equals([])
+    expect(stops).deep.equals(['first'])
     await tap()
-    expect(stops).deep.equals(['second'])
+    expect(stops).deep.equals(['first', 'second'])
   })
 
   it('stops a microphone that opens after dictation was switched off', async function () {

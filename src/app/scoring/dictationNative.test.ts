@@ -230,6 +230,38 @@ describe('dictation on the phone', function () {
     expect(ended).deep.equals(['the microphone stopped'])
   })
 
+  it('stops the recorder when the last listener is gone', async function () {
+    let stopped = 0
+    const listeners: Array<(event: { pcm?: string; error?: string }) => void> =
+      []
+    const module: PcmModule = {
+      async start() {},
+      stop() {
+        stopped++
+      },
+      onPcm(next) {
+        listeners.push(next)
+        return {
+          remove() {
+            const index = listeners.indexOf(next)
+            if (index >= 0) listeners.splice(index, 1)
+          }
+        }
+      }
+    }
+    const open = makeOpenMicrophone(module)
+    const first = await open(() => undefined)
+    const second = await open(() => undefined)
+    first.stop()
+    expect(stopped).equals(0)
+    expect(listeners).to.have.length(1)
+    second.stop()
+    expect(stopped).equals(1)
+    expect(listeners).to.have.length(0)
+    second.stop()
+    expect(stopped).equals(1)
+  })
+
   it('forwards a late microphone failure through the phone opener', async function () {
     const nativeSpec = require.resolve('../walkup/NativeDictationMicrophone')
     const ended: string[] = []
