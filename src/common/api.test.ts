@@ -1115,6 +1115,89 @@ describe('api client', function () {
     })
   })
 
+  it('uploads attachment parts as bytes and reads attachments', async function () {
+    const client = (
+      body: unknown
+    ): {
+      client: TeamStationClient
+      calls: Call[]
+    } => {
+      const stub = stubFetch(200, body)
+      return {
+        client: new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stub.fetch
+        }),
+        calls: stub.calls
+      }
+    }
+    const upload = {
+      id: 'cat_1',
+      conversationId: 'cnv_1',
+      size: 9,
+      completed: false,
+      partSize: 8388608,
+      parts: 1,
+      missing: [0]
+    }
+    const opened = client(upload)
+    const request = { conversationId: 'cnv_1', size: 9, digest: 'DG' }
+    expect(await opened.client.createChatAttachment(request)).deep.equals(
+      upload
+    )
+    expect(opened.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/attachments'
+    })
+    expect(JSON.parse(opened.calls[0].body ?? '')).deep.equals(request)
+
+    const part = client({ received: 1, parts: 1, missing: [] })
+    const bytes = new Uint8Array([1, 2, 3])
+    expect(
+      await part.client.putChatAttachmentPart('cat 1', 0, bytes)
+    ).deep.equals({ received: 1, parts: 1, missing: [] })
+    expect(part.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/chat/attachments/cat%201/parts/0'
+    })
+    expect(part.calls[0].headers['content-type']).equals(
+      'application/octet-stream'
+    )
+    expect([...(part.calls[0].body as unknown as Uint8Array)]).deep.equals([
+      1, 2, 3
+    ])
+
+    const finished = {
+      id: 'cat_1',
+      conversationId: 'cnv_1',
+      size: 9,
+      digest: 'DG',
+      completed: true
+    }
+    const completed = client(finished)
+    expect(
+      await completed.client.completeChatAttachment('cat_1')
+    ).to.deep.include(finished)
+    expect(completed.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/attachments/cat_1/complete'
+    })
+
+    const readable = {
+      ...finished,
+      url: 'http://space/x',
+      expiresAt: '2027-04-10T12:10:00.000Z'
+    }
+    const read = client(readable)
+    expect(await read.client.chatAttachment('cat_1')).deep.equals(readable)
+    expect(read.calls[0]).deep.include({
+      method: 'GET',
+      url: 'http://x/api/v1/chat/attachments/cat_1'
+    })
+    const unfinished = client(upload)
+    expect(await unfinished.client.chatAttachment('cat_1')).deep.equals(upload)
+  })
+
   it('reads isPlayer on team grants, and season and league grants without it', function () {
     expect(
       asScopeGrant({
