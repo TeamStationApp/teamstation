@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type {
@@ -53,15 +53,33 @@ export function StreamPanel(
   props: StreamPanelProps
 ): React.ReactElement | null {
   const { client, gameId } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   const [streams, setStreams] = useState<GameLiveStreams | undefined>(undefined)
   /** The URLs revealed this session, by camera. Never kept anywhere else. */
   const [urls, setUrls] = useState<Record<string, string>>({})
+  const heldUrls = useRef<Record<string, string>>({})
+  const asked = useRef(new Set<string>())
+  const gameIdRef = useRef(gameId)
+  gameIdRef.current = gameId
+  const remember = useCallback((id: string, url: string): void => {
+    if (heldUrls.current[id] === url) return
+    heldUrls.current = { ...heldUrls.current, [id]: url }
+    setUrls(heldUrls.current)
+  }, [])
   const [allowed, setAllowed] = useState(true)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  /**
+   * Which of the two jobs last wrote `error`.
+   *
+   * A reveal finishing must not wipe the message from rotate, end, remove, or
+   * delete: those share this one string, and a reveal that succeeds has not
+   * fixed the action that failed.
+   */
+  const errorFrom = useRef<'action' | 'reveal' | undefined>(undefined)
   /**
    * Which destructive button is waiting to be pressed again, by camera.
    *
@@ -73,9 +91,25 @@ export function StreamPanel(
    */
   const [armed, setArmed] = useState<string | undefined>(undefined)
   const [cameraName, setCameraName] = useState('')
+  // A different game starts empty. Doing this while rendering, rather than in
+  // an effect, drops the previous cameras before any reveal can run.
+  const [seenGame, setSeenGame] = useState(gameId)
+  if (seenGame !== gameId) {
+    setSeenGame(gameId)
+    setStreams(undefined)
+    setUrls({})
+    setError(undefined)
+    setAllowed(true)
+    heldUrls.current = {}
+    asked.current = new Set()
+    errorFrom.current = undefined
+  }
 
   const reload = useCallback(async (): Promise<void> => {
-    setStreams(await client.liveStreams(gameId))
+    const forGame = gameId
+    const next = await client.liveStreams(forGame)
+    if (gameIdRef.current !== forGame) return
+    setStreams(next)
   }, [client, gameId])
 
   const run = useCallback(
@@ -83,22 +117,25 @@ export function StreamPanel(
     // nothing: removing a camera and deleting a recording both end with a
     // reload and have no key to remember.
     async (work: () => Promise<LiveStream | undefined>): Promise<void> => {
+      const forGame = gameId
       setBusy(true)
       setError(undefined)
+      errorFrom.current = undefined
       try {
         const next = await work()
+        if (gameIdRef.current !== forGame) return
         const url = next?.url
-        if (url != null && next != null) {
-          setUrls(held => ({ ...held, [next.id]: url }))
-        }
+        if (url != null && next != null) remember(next.id, url)
         await reload()
       } catch (caught: unknown) {
+        if (gameIdRef.current !== forGame) return
+        errorFrom.current = 'action'
         setError(caught instanceof Error ? caught.message : 'That did not work')
       } finally {
         setBusy(false)
       }
     },
-    [reload]
+    [gameId, reload, remember]
   )
 
   useEffect(() => {
@@ -106,17 +143,75 @@ export function StreamPanel(
     client
       .liveStreams(gameId)
       .then(found => {
-        if (!cancelled) setStreams(found)
+        if (!cancelled && found.gameId === gameId) setStreams(found)
       })
       .catch(() => {
         // A 404 here is the ordinary answer for somebody who does not run this
         // team, and the panel simply is not drawn.
-        if (!cancelled) setAllowed(false)
+        if (!cancelled && gameIdRef.current === gameId) setAllowed(false)
       })
     return () => {
       cancelled = true
     }
   }, [client, gameId])
+
+  // The list omits the address. Ask for each of ours that we do not already
+  // hold, together, and leave anybody else's camera unnamed by a key.
+  useEffect(() => {
+    if (streams?.gameId !== gameId) return
+    const askedIds = asked.current
+    for (const stream of streams.mine) {
+      if (stream.url != null) remember(stream.id, stream.url)
+    }
+    const pending = streams.mine.filter(
+      stream =>
+        stream.url == null &&
+        heldUrls.current[stream.id] == null &&
+        !askedIds.has(stream.id)
+    )
+    if (pending.length === 0) return
+    for (const stream of pending) askedIds.add(stream.id)
+    let cancelled = false
+    // One camera's failure must not hide an address that did come back.
+    Promise.allSettled(
+      pending.map(
+        async stream => await client.revealLiveStream(gameId, stream.id)
+      )
+    )
+      .then(results => {
+        if (cancelled || gameIdRef.current !== gameId) return
+        let failure: unknown
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            const url = result.value.url
+            if (url != null) remember(result.value.id, url)
+          } else {
+            failure ??= result.reason
+          }
+        }
+        // An action's failure is about that action. A reveal that finishes
+        // afterwards has not resolved it, so it leaves the message alone.
+        if (errorFrom.current === 'action') return
+        if (failure == null) {
+          if (errorFrom.current === 'reveal') {
+            errorFrom.current = undefined
+            setError(undefined)
+          }
+          return
+        }
+        errorFrom.current = 'reveal'
+        setError(
+          failure instanceof Error ? failure.message : 'That did not work'
+        )
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+      for (const stream of pending) {
+        if (heldUrls.current[stream.id] == null) askedIds.delete(stream.id)
+      }
+    }
+  }, [client, gameId, remember, streams])
 
   const all = [...(streams?.mine ?? []), ...(streams?.others ?? [])]
   const anyPublishing = all.some(row => row.state === 'publishing')
@@ -144,7 +239,7 @@ export function StreamPanel(
         client
           .liveStreams(gameId)
           .then(next => {
-            if (!cancelled) setStreams(next)
+            if (!cancelled && next.gameId === gameId) setStreams(next)
           })
           .catch(() => undefined)
       },
@@ -247,37 +342,26 @@ export function StreamPanel(
             </View>
           )}
 
-          <Pressable
-            style={styles.urlBox}
-            accessibilityRole="button"
-            accessibilityLabel={
-              urls[stream.id] == null
-                ? `Show the URL for ${stream.label}`
-                : `Copy the URL for ${stream.label}`
-            }
-            onPress={() => {
-              const held = urls[stream.id]
-              if (held == null) {
-                run(
-                  async () => await client.revealLiveStream(gameId, stream.id)
-                ).catch(() => undefined)
-                return
-              }
-              copyToClipboard(held)
-              setCopied(stream.id)
-            }}
-          >
-            <Text style={styles.url} selectable numberOfLines={2}>
-              {urls[stream.id] ?? `••••••••  ${stream.keyPrefix}…`}
-            </Text>
-            <Text style={styles.hint}>
-              {urls[stream.id] == null
-                ? 'Tap to show'
-                : copied === stream.id
-                  ? 'Copied'
-                  : 'Tap to copy'}
-            </Text>
-          </Pressable>
+          {urls[stream.id] != null && (
+            <Pressable
+              style={styles.urlBox}
+              accessibilityRole="button"
+              accessibilityLabel={`Copy the URL for ${stream.label}`}
+              onPress={() => {
+                const held = urls[stream.id]
+                if (held == null) return
+                copyToClipboard(held)
+                setCopied(stream.id)
+              }}
+            >
+              <Text style={styles.url} selectable numberOfLines={2}>
+                {urls[stream.id]}
+              </Text>
+              <Text style={styles.hint}>
+                {copied === stream.id ? 'Copied' : 'Tap to copy'}
+              </Text>
+            </Pressable>
+          )}
 
           {urls[stream.id] != null && (
             // Worth saying once, where somebody is about to paste it: most
@@ -327,27 +411,6 @@ export function StreamPanel(
                 }}
               />
             )}
-            {/*
-              Removing a camera is not ending one. Ending it stops it; this
-              takes it off the game and gives its number back, which is what
-              somebody who added a fourth by mistake actually wants.
-            */}
-            {stream.state !== 'publishing' && (
-              <Button
-                label="Remove camera"
-                kind="text"
-                style={styles.action}
-                disabled={busy}
-                onPress={() => {
-                  pressOnce('remove', stream, () => {
-                    run(async () => {
-                      await client.removeLiveStream(gameId, stream.id)
-                      return undefined
-                    }).catch(() => undefined)
-                  })
-                }}
-              />
-            )}
           </View>
 
           {/*
@@ -363,6 +426,8 @@ export function StreamPanel(
                   : 'Delete the recording'
               }
               kind="text"
+              textColor={theme.dangerColor}
+              style={styles.textAction}
               disabled={busy}
               onPress={() => {
                 // Always armed, whatever the camera is doing: this one cannot
@@ -379,6 +444,28 @@ export function StreamPanel(
                   await client.deleteVideo(videoId)
                   return undefined
                 }).catch(() => undefined)
+              }}
+            />
+          )}
+
+          {/*
+            Removing a camera is not ending one. Ending it stops it; this
+            takes it off the game and gives its number back, which is what
+            somebody who added a fourth by mistake actually wants.
+          */}
+          {stream.state !== 'publishing' && (
+            <Button
+              label="Remove camera"
+              kind="text"
+              style={styles.textAction}
+              disabled={busy}
+              onPress={() => {
+                pressOnce('remove', stream, () => {
+                  run(async () => {
+                    await client.removeLiveStream(gameId, stream.id)
+                    return undefined
+                  }).catch(() => undefined)
+                })
               }}
             />
           )}
@@ -407,11 +494,9 @@ export function StreamPanel(
               const label = cameraNameToSend(cameraName)
               if (label == null) return
               run(async () => {
-                await client.addLiveStream(gameId, label)
+                const added = await client.addLiveStream(gameId, label)
                 setCameraName('')
-                // The key stays masked until it is asked for. The reply
-                // carries it, and keeping that reply would print it.
-                return undefined
+                return added
               }).catch(() => undefined)
             }}
           />
@@ -550,10 +635,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   actions: {
     flexDirection: 'row',
-    gap: theme.rem(theme.spaceSmRem)
+    gap: theme.rem(1)
   },
   action: {
-    flex: 1
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  textAction: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 0
   },
   note: {
     fontFamily: theme.regularTextFont,
