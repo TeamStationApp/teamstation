@@ -377,12 +377,15 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
 }
 
 /**
- * Whether somebody may **change** a player's name.
+ * Whether somebody may see and **change** a player's whole name.
  *
- * Narrow by Paul's instruction of 2026-09-19: a site administrator, a parent
- * — a `user_links` row of kind `guardian` or `family` — or the player
- * themselves, whose own name is their own business. Not a coach, and not a
- * season or league administrator.
+ * A site administrator, a parent — a `user_links` row of kind `guardian` or
+ * `family` — the player themselves, whose own name is their own business,
+ * and the staff of a team the person plays for: anybody holding any role on
+ * it, an administrator, coach, scorekeeper, songkeeper or videographer, set
+ * on the team or carried down from its season or league, and its owner or
+ * manager. Paul, 2026-10-02: team admins, coaches and other staff can see
+ * and edit a child's full name.
  *
  * This is also the only way to **read** the whole name: it is sent nowhere
  * but `GET /players/:userId/name`, which this guards. Everything else — the
@@ -404,5 +407,17 @@ export async function mayEditName(
     .where('related_user_id', '=', playerUserId)
     .where('kind', 'in', ['guardian', 'family'])
     .executeTakeFirst()
-  return parent != null
+  if (parent != null) return true
+
+  const scopes = await roleScopes(db, actorUserId, false)
+  const staffOf = new Set(ROLES.flatMap(role => [...scopes[role].teamIds]))
+  if (staffOf.size === 0) return false
+  const plays = await db
+    .selectFrom('memberships')
+    .select(['id'])
+    .where('user_id', '=', playerUserId)
+    .where('is_player', '=', true)
+    .where('team_id', 'in', [...staffOf])
+    .executeTakeFirst()
+  return plays != null
 }

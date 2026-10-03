@@ -42,7 +42,19 @@ export const IMAGE_SIZES = [96, 192] as const
 export type ImageSize = (typeof IMAGE_SIZES)[number]
 
 /** The most a picture may weigh before we refuse to believe it is one. */
-const MAX_SOURCE_BYTES = 10 * 1024 * 1024
+export const MAX_SOURCE_BYTES = 10 * 1024 * 1024
+
+/**
+ * The bytes are not a picture FFmpeg can read: empty, too heavy, refused, or
+ * rendered as nothing. Its own class, so a caller can tell the picture's
+ * fault from the Space's, which `storeImage` throws as a plain `Error`.
+ */
+export class UnreadableImage extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'UnreadableImage'
+  }
+}
 
 export interface NormalisedImage {
   /** SHA-256 of the largest rendition, which is what the key is named for. */
@@ -83,9 +95,11 @@ export async function normaliseImage(options: {
   kind: ImageKind
 }): Promise<NormalisedImage> {
   const { ffmpegPath, source, kind } = options
-  if (source.length === 0) throw new Error('Empty image')
+  if (source.length === 0) throw new UnreadableImage('Empty image')
   if (source.length > MAX_SOURCE_BYTES) {
-    throw new Error(`Image is ${source.length} bytes, which is not a picture`)
+    throw new UnreadableImage(
+      `Image is ${source.length} bytes, which is not a picture`
+    )
   }
 
   const dir = await mkdtemp(join(tmpdir(), 'tsImage-'))
@@ -112,18 +126,39 @@ export async function normaliseImage(options: {
           output
         ],
         { maxBuffer: 1 << 22 }
-      )
+      ).catch((error: unknown) => {
+        if (!ffmpegStarted(error)) throw error
+        throw new UnreadableImage('FFmpeg could not read the image', {
+          cause: error
+        })
+      })
       const bytes = await readFile(output)
-      if (bytes.length === 0) throw new Error('FFmpeg produced no image')
+      if (bytes.length === 0) {
+        throw new UnreadableImage('FFmpeg produced no image')
+      }
       bySize.set(size, bytes)
     }
 
     const largest = bySize.get(IMAGE_SIZES[IMAGE_SIZES.length - 1])
-    if (largest == null) throw new Error('No rendition was produced')
+    if (largest == null) throw new UnreadableImage('No rendition was produced')
     return { sha256: sha256Of(largest), bySize }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+}
+
+/**
+ * Whether an `execFile` failure came from an FFmpeg that ran: an exit
+ * status, death by a signal, or more output than `maxBuffer` holds. Each of
+ * those is FFmpeg failing on these bytes, which is the image's fault. Only
+ * a failure to start FFmpeg at all — not there, not executable — is this
+ * server's.
+ */
+function ffmpegStarted(error: unknown): boolean {
+  const { code, signal } = error as { code?: unknown; signal?: unknown }
+  if (typeof code === 'number') return true
+  if (code == null && typeof signal === 'string') return true
+  return code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
 }
 
 function filterFor(kind: ImageKind, size: ImageSize): string {

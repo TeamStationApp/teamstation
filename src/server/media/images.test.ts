@@ -12,12 +12,14 @@ import {
   IMAGE_SIZES,
   imageKey,
   imagePathPrefix,
+  MAX_SOURCE_BYTES,
   normaliseImage,
   putObject,
   putObjectFile,
   putObjectMultipart,
   sha256Of,
-  storeImage
+  storeImage,
+  UnreadableImage
 } from './images'
 
 const run = promisify(execFile)
@@ -120,17 +122,127 @@ describe('stored images', function () {
   })
 
   it('refuses something that is not a picture', async function () {
-    let failed = false
+    let failed: unknown
     try {
       await normaliseImage({
         ffmpegPath: FFMPEG,
         source: Buffer.from('this is not a picture'),
         kind: 'user'
       })
-    } catch {
-      failed = true
+    } catch (error) {
+      failed = error
     }
-    expect(failed, 'a text file is not accepted as a face').equals(true)
+    expect(failed, 'a text file is not accepted as a face').instanceOf(
+      UnreadableImage
+    )
+  })
+
+  it('refuses one too heavy to be a picture without reaching for FFmpeg', async function () {
+    let failed: unknown
+    try {
+      await normaliseImage({
+        ffmpegPath: '/does/not/exist',
+        source: Buffer.alloc(MAX_SOURCE_BYTES + 1),
+        kind: 'team'
+      })
+    } catch (error) {
+      failed = error
+    }
+    expect(failed).instanceOf(UnreadableImage)
+  })
+
+  it('does not blame the picture when there is no FFmpeg to run', async function () {
+    let failed: unknown
+    try {
+      await normaliseImage({
+        ffmpegPath: '/does/not/exist',
+        source: Buffer.from('any bytes at all'),
+        kind: 'team'
+      })
+    } catch (error) {
+      failed = error
+    }
+    expect(failed).instanceOf(Error)
+    expect(failed).not.instanceOf(UnreadableImage)
+    expect((failed as { code?: unknown }).code).equals('ENOENT')
+  })
+
+  describe('an FFmpeg that started and failed', function () {
+    let stubs = ''
+
+    before(async function () {
+      stubs = await mkdtemp(join(tmpdir(), 'tsFfmpegStubs-'))
+    })
+
+    after(async function () {
+      await rm(stubs, { recursive: true, force: true })
+    })
+
+    /** A stand-in FFmpeg: a shell script, executable unless told not to be. */
+    async function stub(
+      name: string,
+      body: string,
+      mode = 0o755
+    ): Promise<string> {
+      const path = join(stubs, name)
+      await writeFile(path, `#!/bin/sh\n${body}\n`, { mode })
+      return path
+    }
+
+    async function failureOf(ffmpegPath: string): Promise<unknown> {
+      try {
+        await normaliseImage({
+          ffmpegPath,
+          source: Buffer.from('any bytes at all'),
+          kind: 'user'
+        })
+      } catch (error) {
+        return error
+      }
+      throw new Error('normaliseImage did not fail')
+    }
+
+    it('blames the picture when FFmpeg exits with a status', async function () {
+      const failed = await failureOf(await stub('exits', 'exit 1'))
+      expect(failed).instanceOf(UnreadableImage)
+    })
+
+    it('blames the picture when FFmpeg is killed by a signal', async function () {
+      const failed = await failureOf(await stub('killed', 'kill -9 $$'))
+      expect(failed).instanceOf(UnreadableImage)
+      const cause = (failed as Error).cause as {
+        code?: unknown
+        signal?: unknown
+      }
+      expect(cause.code).equals(null)
+      expect(cause.signal).equals('SIGKILL')
+    })
+
+    it('blames the picture when FFmpeg says more than the buffer holds', async function () {
+      const failed = await failureOf(
+        await stub('chatty', 'head -c 5000000 /dev/zero >&2\nexit 0')
+      )
+      expect(failed).instanceOf(UnreadableImage)
+      expect(((failed as Error).cause as { code?: unknown }).code).equals(
+        'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+      )
+    })
+
+    it('blames the picture when FFmpeg succeeds and writes nothing', async function () {
+      const failed = await failureOf(
+        await stub('silent', 'for arg; do last=$arg; done\n: > "$last"')
+      )
+      expect(failed).instanceOf(UnreadableImage)
+      expect((failed as Error).message).equals('FFmpeg produced no image')
+    })
+
+    it('does not blame the picture when FFmpeg cannot be started', async function () {
+      const failed = await failureOf(
+        await stub('notExecutable', 'exit 0', 0o644)
+      )
+      expect(failed).not.instanceOf(UnreadableImage)
+      expect((failed as { code?: unknown }).code).equals('EACCES')
+    })
   })
 
   it('refuses an empty one without reaching for FFmpeg', async function () {
