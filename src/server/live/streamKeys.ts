@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import type { Kysely } from 'kysely'
 
+import { badRequest } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { rtmpOrigin } from '../../common/primaryUrl'
 import { hashToken } from '../auth/tokens'
@@ -109,6 +110,44 @@ export const MAX_CAMERAS = 4
 /** What a camera is called when nobody has said. */
 export function labelFor(row: { slot: number; label: string | null }): string {
   return row.label ?? `Camera ${row.slot}`
+}
+
+/** How long a camera name may be, counted after trimming. */
+export const CAMERA_NAME_MAX = 80
+
+/**
+ * The split `angleLabels` uses. A name that contains it would show as only
+ * the words after the last one.
+ */
+const CAMERA_NAME_SEPARATOR = ' — '
+
+/**
+ * What to store for a camera-name field.
+ *
+ * `undefined` means the field was absent, so a caller leaves the stored name
+ * alone. `null` means it was sent and blank, which is a clear on a rename and
+ * "no name" on a create. Anything else is the trimmed name.
+ */
+export function cameraLabelOf(
+  raw: string | undefined
+): string | null | undefined {
+  if (raw == null) return undefined
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  if (trimmed.length > CAMERA_NAME_MAX) {
+    throw badRequest('A camera name can be at most 80 characters.')
+  }
+  if (trimmed.includes(CAMERA_NAME_SEPARATOR)) {
+    throw badRequest('A camera name cannot contain " — ".')
+  }
+  return trimmed
+}
+
+/** The video title with its camera-name suffix replaced, or added. */
+export function titledWith(title: string, officialName: string): string {
+  const at = title.lastIndexOf(CAMERA_NAME_SEPARATOR)
+  const stem = at === -1 ? title : title.slice(0, at)
+  return `${stem}${CAMERA_NAME_SEPARATOR}${officialName}`
 }
 
 const STREAM_FIELDS = [
@@ -294,6 +333,48 @@ export async function createLiveStream(
     lastError: null,
     key: key.key
   }
+}
+
+/**
+ * Writes the camera's name onto the stream and onto its video, together.
+ *
+ * The video title is what the angle strip reads. Changing the label alone
+ * would leave the strip showing the name the key was created with. The suffix
+ * is the official name after this write, so a cleared label becomes
+ * `Camera <slot>`.
+ */
+export async function setCameraName(
+  db: Kysely<Database>,
+  id: string,
+  label: string | null
+): Promise<void> {
+  const now = new Date()
+  await db.transaction().execute(async trx => {
+    const row = await trx
+      .selectFrom('live_streams')
+      .select(['slot', 'video_id as videoId'])
+      .where('id', '=', id)
+      .executeTakeFirst()
+    await trx
+      .updateTable('live_streams')
+      .set({ label, updated_at: now })
+      .where('id', '=', id)
+      .execute()
+    if (row?.videoId == null) return
+    const video = await trx
+      .selectFrom('videos')
+      .select(['title'])
+      .where('id', '=', row.videoId)
+      .executeTakeFirstOrThrow()
+    await trx
+      .updateTable('videos')
+      .set({
+        title: titledWith(video.title, labelFor({ slot: row.slot, label })),
+        updated_at: now
+      })
+      .where('id', '=', row.videoId)
+      .execute()
+  })
 }
 
 /**
