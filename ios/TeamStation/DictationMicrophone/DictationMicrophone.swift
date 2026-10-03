@@ -80,10 +80,12 @@ final class TSDictationMicrophone: NSObject {
     savedCategory = session.category
     savedMode = session.mode
     savedOptions = session.categoryOptions
+    // The microphone and walk-up music share this session. Mixing lets the
+    // music keep playing while dictation is on.
     try session.setCategory(
       .playAndRecord,
-      mode: .voiceChat,
-      options: [.defaultToSpeaker, .allowBluetoothHFP]
+      mode: .default,
+      options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers]
     )
     try session.setActive(true)
 
