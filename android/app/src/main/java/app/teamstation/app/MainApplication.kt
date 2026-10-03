@@ -10,7 +10,6 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.common.assets.ReactFontManager
-import com.facebook.react.config.ReactFeatureFlags
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 
 class MainApplication : Application(), ReactApplication {
@@ -35,10 +34,6 @@ class MainApplication : Application(), ReactApplication {
   }
 
   override fun onCreate() {
-    // The dictation button is the web control: it listens for pointerdown.
-    // The surface builds its pointer dispatcher from this flag, and only at
-    // construction, so it has to be on before any surface exists.
-    ReactFeatureFlags.dispatchPointerEvents = true
     super.onCreate()
     registerFonts()
     loadReactNative(this)
