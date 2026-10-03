@@ -58,6 +58,8 @@ export interface ChatFixture {
   apiToken: (who: string, key: string) => Promise<void>
   /** The session id behind `who`. */
   sessionOf: (who: string) => string
+  /** The bearer token `who` calls with, for a socket. */
+  tokenOf: (who: string) => string
   /** Makes a person (an account unless `account: false`) with a session. */
   person: (
     key: string,
@@ -163,6 +165,11 @@ export async function openChatFixture(
           created_at: new Date()
         })
         .execute()
+    },
+    tokenOf: who => {
+      const token = tokens.get(who)
+      if (token == null) throw new Error(`no token called ${who}`)
+      return token
     },
     sessionOf: who => {
       const sessionId = sessions.get(who)
