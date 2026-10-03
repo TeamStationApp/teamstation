@@ -330,6 +330,10 @@ export const enUs = {
   account_chat_devices_detail: 'The devices that can read your chats',
   account_sign_out: 'Sign out',
 
+  // A DM's name once everybody else has left it
+  chat_dm_left: '%s (left)',
+  chat_dm_just_you: 'Just you',
+
   // Chat devices, linking and reset
   chat_devices_title: 'Chat devices',
   chat_devices_intro:

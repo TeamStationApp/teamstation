@@ -1,5 +1,6 @@
 import {
   asArray,
+  asBoolean,
   asNumber,
   asObject,
   asOptional,
@@ -38,6 +39,28 @@ export interface ChatKeyRecord {
   pins: Record<string, string>
   /** Opened epoch keys: conversation id → epoch → key (base64url). */
   epochKeys: Record<string, Record<string, string>>
+  /**
+   * A pinned identity key that was replaced, by user id: what the person's
+   * safety number was before it changed (base64url).
+   */
+  previousPins: Record<string, string>
+  /** How far each chat's membership log is verified, by conversation id. */
+  logs: Record<string, ChatLogHead>
+}
+
+/**
+ * What this device has verified of one chat's membership log: the last
+ * verified row and its hash, the members the verified rows leave (a `join`
+ * with no later `leave`), and the identity resets they record. `broken`
+ * once a row failed: the chat's membership cannot be trusted from then on.
+ */
+export interface ChatLogHead {
+  seq: number
+  /** base64url. */
+  hash: string
+  members: number[]
+  resets: Array<{ userId: number; seq: number; at: number }>
+  broken: boolean
 }
 
 /** Where a device keeps its record. */
@@ -55,6 +78,17 @@ export const unb64 = (text: string): Uint8Array =>
   base64url.parse(text, { loose: true })
 
 const asKeyPair = asObject({ secretKey: asString, publicKey: asString })
+
+const asLogHead = asObject({
+  seq: asNumber,
+  hash: asString,
+  members: asArray(asNumber),
+  resets: asOptional(
+    asArray(asObject({ userId: asNumber, seq: asNumber, at: asNumber })),
+    []
+  ),
+  broken: asBoolean
+})
 
 const asStoredRecord = asObject({
   version: asValue(1),
@@ -74,6 +108,14 @@ const asStoredRecord = asObject({
         string,
         Record<string, string>
       >,
+    {}
+  ),
+  previousPins: asOptional(
+    (raw: unknown) => asObject(asString)(raw) as Record<string, string>,
+    {}
+  ),
+  logs: asOptional(
+    (raw: unknown) => asObject(asLogHead)(raw) as Record<string, ChatLogHead>,
     {}
   )
 })
@@ -107,7 +149,9 @@ export function recordToJson(record: ChatKeyRecord): string {
     })),
     pendingLinkId: record.pendingLinkId,
     pins: record.pins,
-    epochKeys: record.epochKeys
+    epochKeys: record.epochKeys,
+    previousPins: record.previousPins,
+    logs: record.logs
   })
 }
 
@@ -127,7 +171,9 @@ export function recordFromJson(text: string): ChatKeyRecord {
       .sort((a, b) => a.generation - b.generation),
     pendingLinkId: raw.pendingLinkId,
     pins: raw.pins,
-    epochKeys: raw.epochKeys
+    epochKeys: raw.epochKeys,
+    previousPins: raw.previousPins,
+    logs: raw.logs
   }
 }
 
@@ -145,7 +191,9 @@ export function newRecord(
     puks: [],
     pendingLinkId: undefined,
     pins: {},
-    epochKeys: {}
+    epochKeys: {},
+    previousPins: {},
+    logs: {}
   }
 }
 
@@ -159,7 +207,9 @@ export function latestPuk(
 /**
  * Trust on first use. The first identity key seen for a user is pinned; a
  * later one that differs is reported as `changed`, so the screens can say
- * that the person's safety number changed, and is pinned in its place.
+ * that the person's safety number changed, and is pinned in its place. The
+ * key it replaced is kept in `previousPins`, for the approval prompt's old
+ * safety number.
  */
 export function pinIdentity(
   record: ChatKeyRecord,
@@ -170,7 +220,14 @@ export function pinIdentity(
   const pinned = record.pins[String(userId)]
   if (pinned === key) return { record, seen: 'same' }
   return {
-    record: { ...record, pins: { ...record.pins, [String(userId)]: key } },
+    record: {
+      ...record,
+      pins: { ...record.pins, [String(userId)]: key },
+      previousPins:
+        pinned == null
+          ? record.previousPins
+          : { ...record.previousPins, [String(userId)]: pinned }
+    },
     seen: pinned == null ? 'new' : 'changed'
   }
 }
