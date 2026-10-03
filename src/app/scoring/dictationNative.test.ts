@@ -230,6 +230,31 @@ describe('dictation on the phone', function () {
     expect(ended).deep.equals(['the microphone stopped'])
   })
 
+  it('forwards a late microphone failure through the phone opener', async function () {
+    const nativeSpec = require.resolve('../walkup/NativeDictationMicrophone')
+    const ended: string[] = []
+    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
+    const fake: PcmModule = {
+      async start() {},
+      stop() {},
+      onPcm(next) {
+        listener = next
+        return { remove() {} }
+      }
+    }
+    const prior = require.cache[nativeSpec]
+    require.cache[nativeSpec] = cachedModule(nativeSpec, { default: fake })
+    try {
+      await openMicrophone(() => undefined, message => {
+        ended.push(message)
+      })
+      listener?.({ error: 'the microphone stopped' })
+      expect(ended).deep.equals(['the microphone stopped'])
+    } finally {
+      restoreCache(nativeSpec, prior)
+    }
+  })
+
   it('unsubscribes when the microphone refuses to start', async function () {
     let removed = 0
     const module: PcmModule = {

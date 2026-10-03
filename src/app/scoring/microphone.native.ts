@@ -48,13 +48,14 @@ function loadNative(): PcmModule {
   return require('../walkup/NativeDictationMicrophone').default as PcmModule
 }
 
-/** Opens the phone's microphone. Tests pass a module and never reach this. */
+/** Opens the phone's microphone. Tests pass a module and never reach the require. */
 export async function openPhoneMicrophone(
   onPcm: (pcm: ArrayBuffer) => void,
-  module?: PcmModule
+  module?: PcmModule,
+  onEnded?: (message: string) => void
 ): Promise<Microphone> {
-  return await makeOpenMicrophone(module ?? loadNative())(onPcm)
+  return await makeOpenMicrophone(module ?? loadNative())(onPcm, onEnded)
 }
 
-export const openMicrophone: OpenMicrophone = async onPcm =>
-  await openPhoneMicrophone(onPcm)
+export const openMicrophone: OpenMicrophone = async (onPcm, onEnded) =>
+  await openPhoneMicrophone(onPcm, undefined, onEnded)
