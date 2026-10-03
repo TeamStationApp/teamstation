@@ -32,9 +32,17 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const ADMIN = 'tok_teams_admin_00000000000000000000'
 const MEMBER = 'tok_teams_member_0000000000000000000'
+const SEASON_ADMIN = 'tok_teams_seasonadmin_00000000000000'
+const LEAGUE_ADMIN = 'tok_teams_leagueadmin_00000000000000'
 
 const admin = mintUserId(() => false)
 const member = mintUserId(id => id === admin.userId)
+const seasonAdmin = mintUserId(id =>
+  [admin, member].some(one => one.userId === id)
+)
+const leagueAdmin = mintUserId(id =>
+  [admin, member, seasonAdmin].some(one => one.userId === id)
+)
 
 interface Answer {
   status: number
@@ -49,6 +57,8 @@ describe('teams by external id, and making one', function () {
   let server: ReturnType<express.Express['listen']> | undefined
   let base = ''
   const force = makeId('season')
+  const circuit = makeId('league')
+  const circuitSeason = makeId('season')
   const hawks = makeId('team')
   const gulls = makeId('team')
   const rivals = makeId('team')
@@ -81,7 +91,9 @@ describe('teams by external id, and making one', function () {
       .values(
         [
           { made: admin, name: 'Ada', isAdmin: true },
-          { made: member, name: 'Cam', isAdmin: false }
+          { made: member, name: 'Cam', isAdmin: false },
+          { made: seasonAdmin, name: 'Sam', isAdmin: false },
+          { made: leagueAdmin, name: 'Lee', isAdmin: false }
         ].map(person => ({
           id: person.made.userId,
           legacyId: person.made.legacyId,
@@ -98,7 +110,9 @@ describe('teams by external id, and making one', function () {
         (
           [
             [ADMIN, admin.userId],
-            [MEMBER, member.userId]
+            [MEMBER, member.userId],
+            [SEASON_ADMIN, seasonAdmin.userId],
+            [LEAGUE_ADMIN, leagueAdmin.userId]
           ] as Array<[string, number]>
         ).map(([token, userId]) => ({
           id: makeId('authSession'),
@@ -110,8 +124,43 @@ describe('teams by external id, and making one', function () {
       )
       .execute()
     await db
+      .insertInto('leagues')
+      .values({ id: circuit, name: 'Circuit' })
+      .execute()
+    await db
       .insertInto('seasons')
-      .values({ id: force, name: 'Titan Force 2026', year: 2026 })
+      .values([
+        { id: force, name: 'Titan Force 2026', year: 2026 },
+        {
+          id: circuitSeason,
+          name: 'Circuit 2026',
+          year: 2026,
+          league_id: circuit
+        }
+      ])
+      .execute()
+    // An administrator of the Force season, and one of the Circuit league,
+    // neither a site administrator.
+    await db
+      .insertInto('scope_roles')
+      .values([
+        {
+          id: makeId('scopeRole'),
+          user_id: seasonAdmin.userId,
+          scope_type: 'season',
+          scope_id: force,
+          role: 'admin',
+          granted_at: now
+        },
+        {
+          id: makeId('scopeRole'),
+          user_id: leagueAdmin.userId,
+          scope_type: 'league',
+          scope_id: circuit,
+          role: 'admin',
+          granted_at: now
+        }
+      ])
       .execute()
     await db
       .insertInto('teams')
@@ -321,15 +370,190 @@ describe('teams by external id, and making one', function () {
   })
 
   describe('POST /teams', function () {
-    it('answers 401 to nobody and 403 to anybody but a site administrator', async function () {
-      const body = { name: 'Owls', season: { id: force } }
-      expect((await create(null, body)).status).equals(401)
-      const refused = await create(MEMBER, body)
-      expect(refused.status).equals(403)
-      expect(refused.body).deep.include({
-        code: 'forbidden',
-        message: 'Only a site administrator may create a team'
+    /** The administrators `scope_roles` gives of one team or season. */
+    async function adminsOf(
+      scopeType: 'season' | 'team',
+      scopeId: string
+    ): Promise<Array<{ user_id: number; granted_by: number | null }>> {
+      return await database()
+        .selectFrom('scope_roles')
+        .select(['user_id', 'granted_by'])
+        .where('scope_type', '=', scopeType)
+        .where('scope_id', '=', scopeId)
+        .where('role', '=', 'admin')
+        .execute()
+    }
+
+    it('answers 401 to nobody', async function () {
+      expect((await create(null, { name: 'Owls' })).status).equals(401)
+    })
+
+    it('lets a member make a standalone team, and makes them its administrator', async function () {
+      const before = await counts()
+      const made = await create(MEMBER, {
+        name: 'Owls on their own',
+        externalIds: [{ system: 'otherLeague', kind: 'team', id: 'ext-solo' }]
       })
+      expect(made.status).equals(201)
+      expect(made.body).deep.include({
+        name: 'Owls on their own',
+        created: true,
+        season: null
+      })
+      expect(await counts()).deep.equals({
+        teams: before.teams + 1,
+        seasons: before.seasons
+      })
+      const seasons = await database()
+        .selectFrom('season_teams')
+        .select('season_id')
+        .where('team_id', '=', made.body.id)
+        .execute()
+      expect(seasons).deep.equals([])
+      expect(await adminsOf('team', made.body.id)).deep.equals([
+        { user_id: member.userId, granted_by: member.userId }
+      ])
+      // Its owner, so it is among their teams.
+      const owners = await database()
+        .selectFrom('memberships')
+        .select(['user_id', 'role'])
+        .where('team_id', '=', made.body.id)
+        .execute()
+      expect(owners).deep.equals([{ user_id: member.userId, role: 'owner' }])
+      expect(ids(await list(MEMBER))).includes(made.body.id)
+
+      // Theirs to post again.
+      const again = await create(MEMBER, {
+        name: 'Owls again',
+        season: null,
+        externalIds: [{ system: 'otherLeague', kind: 'team', id: 'ext-solo' }]
+      })
+      expect(again.status).equals(200)
+      expect(again.body).deep.include({ id: made.body.id, created: false })
+    })
+
+    it('refuses to put a team in a season the caller does not administer', async function () {
+      const before = await counts()
+      for (const [token, season] of [
+        [MEMBER, force],
+        [LEAGUE_ADMIN, force],
+        [SEASON_ADMIN, circuitSeason]
+      ]) {
+        const refused = await create(token, {
+          name: 'Gatecrashers',
+          season: { id: season }
+        })
+        expect(refused.status, `${token} ${season}`).equals(403)
+        expect(refused.body).deep.equals({
+          code: 'forbidden',
+          message:
+            'Only an administrator of the season or its league may add a team to it'
+        })
+      }
+      expect(await counts()).deep.equals(before)
+    })
+
+    it('lets a season administrator and a league administrator put a team in their season', async function () {
+      for (const [token, userId, season] of [
+        [SEASON_ADMIN, seasonAdmin.userId, force],
+        [LEAGUE_ADMIN, leagueAdmin.userId, circuitSeason]
+      ] as const) {
+        const seasonAdmins = await adminsOf('season', season)
+        const made = await create(token, {
+          name: `Kites of ${token}`,
+          season: { id: season }
+        })
+        expect(made.status, token).equals(201)
+        expect(made.body.season).deep.include({ id: season, created: false })
+        const joined = await database()
+          .selectFrom('season_teams')
+          .select('season_id')
+          .where('team_id', '=', made.body.id)
+          .execute()
+        expect(joined).deep.equals([{ season_id: season }])
+        expect(await adminsOf('team', made.body.id)).deep.equals([
+          { user_id: userId, granted_by: userId }
+        ])
+        // Nothing is given on a season this call did not make.
+        expect(await adminsOf('season', season), token).deep.equals(
+          seasonAdmins
+        )
+      }
+    })
+
+    it('reuses a season by name only for a caller who administers it', async function () {
+      const asked = { name: 'Titan Force 2026', year: 2026 }
+      const mine = await create(MEMBER, { name: 'Jays', season: asked })
+      expect(mine.status).equals(201)
+      expect(mine.body.season).deep.include({
+        name: 'Titan Force 2026',
+        year: 2026,
+        created: true
+      })
+      expect(mine.body.season.id).not.equals(force)
+      const season = await database()
+        .selectFrom('seasons')
+        .select(['league_id'])
+        .where('id', '=', mine.body.season.id)
+        .executeTakeFirstOrThrow()
+      expect(season.league_id).equals(null)
+      expect(await adminsOf('season', mine.body.season.id)).deep.equals([
+        { user_id: member.userId, granted_by: member.userId }
+      ])
+
+      // The member's own season is theirs to reuse; the Force is its
+      // administrator's.
+      const again = await create(MEMBER, { name: 'Jays B', season: asked })
+      expect(again.body.season).deep.include({
+        id: mine.body.season.id,
+        created: false
+      })
+      const theirs = await create(SEASON_ADMIN, {
+        name: 'Jays C',
+        season: asked
+      })
+      expect(theirs.body.season).deep.include({ id: force, created: false })
+    })
+
+    it('answers 409, and makes and records nothing, for an id on a team the caller cannot see', async function () {
+      const before = await counts()
+      const refused = await create(MEMBER, {
+        name: 'Gulls',
+        externalIds: [
+          { system: 'otherLeague', kind: 'alias', id: 'nick-gulls' },
+          { system: 'otherLeague', kind: 'team', id: 'ext-gulls' }
+        ]
+      })
+      expect(refused.status).equals(409)
+      expect(refused.body).deep.equals({
+        code: 'conflict',
+        message: 'That id is already on a team you cannot see'
+      })
+      expect(await counts()).deep.equals(before)
+      const alias = await database()
+        .selectFrom('external_ids')
+        .select('id')
+        .where('external_id', '=', 'nick-gulls')
+        .execute()
+      expect(alias).deep.equals([])
+
+      // A team the member is on is answered as it is to anybody, but an
+      // id nothing holds is not recorded on a team they do not administer.
+      const seen = await create(MEMBER, {
+        name: 'Hawks',
+        externalIds: [
+          { system: 'otherLeague', kind: 'team', id: 'ext-hawks' },
+          { system: 'otherLeague', kind: 'alias', id: 'nick-hawks-2' }
+        ]
+      })
+      expect(seen.status).equals(200)
+      expect(seen.body).deep.include({ id: hawks, created: false })
+      const unrecorded = await database()
+        .selectFrom('external_ids')
+        .select('id')
+        .where('external_id', '=', 'nick-hawks-2')
+        .execute()
+      expect(unrecorded).deep.equals([])
     })
 
     it('refuses a malformed body, naming the field', async function () {
@@ -339,7 +563,7 @@ describe('teams by external id, and making one', function () {
         [{ season }, 'name must be a string'],
         [{ name: '   ', season }, 'name must be 1-100 characters'],
         [{ name: 'x'.repeat(101), season }, 'name must be 1-100 characters'],
-        [{ name: 'Owls' }, 'season must be an object'],
+        [{ name: 'Owls', season: 'Spring' }, 'season must be an object'],
         [
           { name: 'Owls', season: {} },
           'season needs either id, or name and year'
@@ -478,6 +702,16 @@ describe('teams by external id, and making one', function () {
         .where('team_id', '=', made.body.id)
         .execute()
       expect(joined).deep.equals([{ season_id: made.body.season.id }])
+      // A site administrator administers it, and belongs to no team.
+      expect(await adminsOf('team', made.body.id)).deep.equals([
+        { user_id: admin.userId, granted_by: admin.userId }
+      ])
+      const members = await database()
+        .selectFrom('memberships')
+        .select('id')
+        .where('team_id', '=', made.body.id)
+        .execute()
+      expect(members).deep.equals([])
       const held = await database()
         .selectFrom('external_ids')
         .select(['entity_type', 'system', 'kind', 'external_id'])
@@ -759,6 +993,41 @@ describe('teams by external id, and making one', function () {
       })
       expect(after.status).equals(409)
       expect(await counts()).deep.equals(before)
+    })
+
+    it('answers a member’s second post of a new id with the team the first made', async function () {
+      const body = {
+        name: 'Racing owls',
+        externalIds: [{ system: 'otherLeague', kind: 'team', id: 'ext-race' }]
+      }
+      const answers = await Promise.all([
+        create(MEMBER, body),
+        create(MEMBER, body)
+      ])
+      expect(
+        answers.map(answer => answer.status).sort((a, b) => a - b)
+      ).deep.equals([200, 201])
+      expect(new Set(answers.map(answer => answer.body.id)).size).equals(1)
+    })
+
+    it('makes one season when a member posts two teams in the same new season at once', async function () {
+      const before = await counts()
+      const season = { name: 'Racing 2031', year: 2031 }
+      const answers = await Promise.all([
+        create(MEMBER, { name: 'Racers A', season }),
+        create(MEMBER, { name: 'Racers B', season })
+      ])
+      expect(answers.map(answer => answer.status)).deep.equals([201, 201])
+      expect(new Set(answers.map(answer => answer.body.season.id)).size).equals(
+        1
+      )
+      expect(
+        answers.map(answer => answer.body.season.created as boolean)
+      ).to.have.members([false, true])
+      expect(await counts()).deep.equals({
+        teams: before.teams + 2,
+        seasons: before.seasons + 1
+      })
     })
 
     it('makes one team when the same new id is posted twice at once', async function () {

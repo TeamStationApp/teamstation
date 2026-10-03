@@ -12,6 +12,15 @@ export interface ExternalIdKey {
 }
 
 /**
+ * The advisory-lock key of an external id, the same whatever it is to be
+ * on, so a team and a person claiming one id at once queue rather than both
+ * finding it free.
+ */
+export function externalIdLockKey(externalId: ExternalIdKey): string {
+  return `extid:${externalId.system}:${externalId.kind}:${externalId.id}`
+}
+
+/**
  * Records an external id on a row, unless that system and kind hold the id
  * already. True when this call wrote it.
  */

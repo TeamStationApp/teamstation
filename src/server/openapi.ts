@@ -1317,24 +1317,37 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         },
         post: {
-          summary: 'Make a team, in a season, known by external ids',
+          summary:
+            'Make a team, standalone or in a season, known by external ids',
           description:
-            'Site administrators only; anybody else gets 403.\n\n' +
+            '**Who may call:** anybody signed in. The caller becomes the ' +
+            'administrator of the team, and of a season the call makes, and, ' +
+            'unless they are a site administrator, the team\u2019s owner, so ' +
+            'it lists among their teams. ' +
+            'Putting the team in an existing season takes an administrator ' +
+            'of that season or its league, or a site administrator.\n\n' +
             '**The body:** `name` is trimmed and 1-100 characters. `season` ' +
-            'is `{id}`, an existing season (404 when there is none), or ' +
-            '`{name, year}`: the season with that name in that year, ignoring ' +
-            'case and outer spaces, else a new one in no league. `name` is ' +
+            'is optional; without it the team is standalone, in no season. ' +
+            'It is `{id}`, an existing season (404 when there is none, 403 ' +
+            'when the caller does not administer it or its league), or ' +
+            '`{name, year}`: the first season with that name in that year, ' +
+            'ignoring case and outer spaces, that the caller administers, ' +
+            'else a new one in no league. `name` is ' +
             '1-100 characters after trimming and `year` a whole year from ' +
             '1900 to 2200. `externalIds` is optional, at most 20 of ' +
             '`{system, id, kind}`, with `system` matching ' +
             '`^[a-z][a-zA-Z0-9]{0,31}$` and `id` and `kind` non-empty.\n\n' +
             '**What it does:** when any of the external ids (the same ' +
-            'system, kind and id) already names a team, nothing is made and ' +
-            'the answer is 200 with that team (the one it was merged into, ' +
-            'if it was) and `season: null`. An id already on something ' +
-            'other than a team is 409. Otherwise, in one transaction, a full ' +
-            'team is made, put in the season, and given the ids, and the ' +
-            'answer is 201 with the season and whether this call made it.',
+            'system, kind and id) already names a team the caller can see, ' +
+            'nothing is made and the answer is 200 with that team (the one ' +
+            'it was merged into, if it was) and `season: null`. The ' +
+            'body\u2019s other ids nothing holds are recorded on it only when ' +
+            'the caller administers it. An id on a ' +
+            'team the caller cannot see, or on something other than a team, ' +
+            'is 409, and nothing is made. Otherwise, in one transaction, a ' +
+            'full team is made, put in the season, and given the ids, and ' +
+            'the answer is 201 with the season and whether this call made ' +
+            'it, or `season: null` for a standalone team.',
           security: [{ bearer: [] }],
           requestBody: {
             required: true,
@@ -1342,10 +1355,11 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['name', 'season'],
+                  required: ['name'],
                   properties: {
                     name: { type: 'string', minLength: 1, maxLength: 100 },
                     season: {
+                      nullable: true,
                       oneOf: [
                         {
                           type: 'object',
@@ -1411,7 +1425,9 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             201: {
-              description: 'The team was made, in this season',
+              description:
+                'The team was made, in this season or, with `season: null`, ' +
+                'standalone',
               content: {
                 'application/json': {
                   schema: {
@@ -1423,6 +1439,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                       created: { type: 'boolean', enum: [true] },
                       season: {
                         type: 'object',
+                        nullable: true,
                         required: ['id', 'name', 'year', 'created'],
                         properties: {
                           id: { type: 'string' },

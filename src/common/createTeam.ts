@@ -1,7 +1,8 @@
 /**
  * The body and answer of `POST /api/v1/teams`, which makes a team, puts it in
- * a season, and records the ids another system knows it by. Shared by the
- * server and any client, so both refuse the same bodies with the same words.
+ * a season when one is asked for, and records the ids another system knows it
+ * by. Shared by the server and any client, so both refuse the same bodies
+ * with the same words.
  */
 
 /** A team's name is at most this long, after trimming. */
@@ -23,7 +24,8 @@ export interface CreateTeamExternalId {
 
 export interface CreateTeamBody {
   name: string
-  season: CreateTeamSeason
+  /** None for a standalone team, in no season. */
+  season?: CreateTeamSeason
   externalIds: CreateTeamExternalId[]
 }
 
@@ -36,11 +38,17 @@ export interface CreatedTeamSeason {
 }
 
 /**
- * 201 when the team was made; 200, with `season: null`, when one of the
- * external ids already named a team, which is then the one answered.
+ * 201 when the team was made, with its season, or `season: null` for a
+ * standalone team; 200, with `season: null`, when one of the external ids
+ * already named a team, which is then the one answered.
  */
 export type CreateTeamResponse =
-  | { id: string; name: string; created: true; season: CreatedTeamSeason }
+  | {
+      id: string
+      name: string
+      created: true
+      season: CreatedTeamSeason | null
+    }
   | { id: string; name: string; created: false; season: null }
 
 /** The rule `external_ids.system` holds everywhere. */
@@ -109,7 +117,7 @@ function asExternalId(raw: unknown, index: number): CreateTeamExternalId {
 export function asCreateTeamBody(raw: unknown): CreateTeamBody {
   if (!isRecord(raw)) fail('The body must be an object')
   const name = asTrimmed(raw.name, 'name', TEAM_NAME_MAX)
-  const season = asSeason(raw.season)
+  const season = raw.season == null ? undefined : asSeason(raw.season)
   let externalIds: CreateTeamExternalId[] = []
   if (raw.externalIds !== undefined) {
     if (!Array.isArray(raw.externalIds)) fail('externalIds must be an array')
@@ -118,5 +126,5 @@ export function asCreateTeamBody(raw: unknown): CreateTeamBody {
     }
     externalIds = raw.externalIds.map(asExternalId)
   }
-  return { name, season, externalIds }
+  return season == null ? { name, externalIds } : { name, season, externalIds }
 }
