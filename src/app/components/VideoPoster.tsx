@@ -63,6 +63,35 @@ export interface VideoPosterProps {
 }
 
 /**
+ * Center-crop the picture on the web, including an image inserted after paint.
+ *
+ * A React Native host node is an `HTMLElement` and has no CSS `style`. Writing
+ * `objectFit` there throws, and React Native treats that throw as fatal. The
+ * native picture already crops with `resizeMode`.
+ */
+export function applyCoverCrop(root: unknown): (() => void) | undefined {
+  const Host = globalThis.HTMLElement
+  if (Host == null || !(root instanceof Host) || root.style == null) return
+  const paint = (node: HTMLElement): void => {
+    if (node.style != null) {
+      node.style.objectFit = 'cover'
+      node.style.objectPosition = 'center'
+    }
+    for (const child of node.children) {
+      if (child instanceof Host) paint(child)
+    }
+  }
+  paint(root)
+  const observer = new MutationObserver(() => {
+    paint(root)
+  })
+  observer.observe(root, { childList: true, subtree: true })
+  return () => {
+    observer.disconnect()
+  }
+}
+
+/**
  * A frame of a video, with the things that are always drawn on one.
  *
  * The bottom of the picture is darkened with a gradient and the time is set on
@@ -142,24 +171,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   // The picture is a center crop. On the web that image is added after the
   // first paint, so the fit is applied then as well as now.
   useLayoutEffect(() => {
-    const root: unknown = frameRef.current
-    const Host = globalThis.HTMLElement
-    if (Host == null || !(root instanceof Host)) return
-    const paint = (node: HTMLElement): void => {
-      node.style.objectFit = 'cover'
-      node.style.objectPosition = 'center'
-      for (const child of node.children) {
-        if (child instanceof Host) paint(child)
-      }
-    }
-    paint(root)
-    const observer = new MutationObserver(() => {
-      paint(root)
-    })
-    observer.observe(root, { childList: true, subtree: true })
-    return () => {
-      observer.disconnect()
-    }
+    return applyCoverCrop(frameRef.current)
   }, [uri, hasPicture])
 
   return (
