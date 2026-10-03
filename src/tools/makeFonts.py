@@ -14,9 +14,9 @@ each written into the one family `Space Grotesk`, so `fontFamily` plus
 
 Material Symbols is 10.6 MB of every icon Google has ever published. It is
 pinned to exactly the instance `app/web/index.html` asks the CDN for, then
-subset to the icons in `app/components/Icon.tsx`. The `rlig` feature is kept
-and nothing else is: that is the one that turns the text `chevron_right` into
-the glyph, which is how `Icon` is written.
+subset to the icons in `app/components/Icon.tsx`. The `rlig` feature is kept,
+which is how the web draws an icon from its name, and each icon's private-use
+character is kept too, which is how the phone draws it.
 
 **Adding a name to `IconName` means running this again.** The list below is
 checked against the source file, so a name added there and not here fails
@@ -154,6 +154,21 @@ def build_material_symbols() -> None:
             if coverage is not None:
                 coverage.glyphs = [g for g in coverage.glyphs if g in ligatures]
 
+    # Each icon glyph already has a private-use character in Google's font.
+    # The phone draws that character. The ligature spelling (`mic`) is what
+    # iOS shows as letters when the substitution does not run, which is the
+    # dictation button filled with "MIC".
+    codepoints: dict[str, int] = {}
+    for codepoint, glyph in font.getBestCmap().items():
+        if glyph not in keep:
+            continue
+        current = codepoints.get(glyph)
+        if current is None or codepoint < current:
+            codepoints[glyph] = codepoint
+    missing_code = [name for name in wanted if name not in codepoints]
+    if missing_code:
+        raise SystemExit(f"Material Symbols has no character for {missing_code}")
+
     options = subset.Options()
     # `rlig`, not `liga`: Material Symbols files its ligatures as *required*
     # ones, and a subset keeping only `liga` throws every icon away.
@@ -164,7 +179,11 @@ def build_material_symbols() -> None:
     options.notdef_outline = True
     options.glyph_names = True
     subsetter = subset.Subsetter(options=options)
-    subsetter.populate(glyphs=wanted, text="".join(sorted(set("".join(wanted)))))
+    subsetter.populate(
+        glyphs=wanted,
+        unicodes=set(codepoints.values()),
+        text="".join(sorted(set("".join(wanted)))),
+    )
     subsetter.subset(font)
 
     set_names(
@@ -179,7 +198,29 @@ def build_material_symbols() -> None:
     )
     out = OUT / "MaterialSymbolsOutlined.ttf"
     font.save(out)
+    write_codepoints(wanted, codepoints)
     print(f"{out.name}  {out.stat().st_size:>8,} bytes  {len(wanted)} icons")
+
+
+def write_codepoints(names: list[str], codepoints: dict[str, int]) -> None:
+    """The map the phone uses to draw an icon without a ligature."""
+    lines = [
+        "/**",
+        " * One character per icon, the private-use point Google assigned it.",
+        " * `makeFonts.py` writes this file and the phone font together: the",
+        " * phone draws the character, and the web keeps drawing the ligature",
+        " * name because Google's CDN font is what the browser loads.",
+        " */",
+        "import type { IconName } from './Icon'",
+        "",
+        "export const iconCodepoints: Record<IconName, number> = {",
+    ]
+    for name in names:
+        lines.append(f"  {name}: 0x{codepoints[name]:x},")
+    lines.append("}")
+    lines.append("")
+    path = HERE.parent / "app" / "components" / "iconCodepoints.ts"
+    path.write_text("\n".join(lines))
 
 
 if __name__ == "__main__":

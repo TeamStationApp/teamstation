@@ -3,6 +3,7 @@ import { Text } from 'react-native'
 
 import { fonts } from '../theme/fonts'
 import { useTheme } from '../theme/ThemeContext'
+import { iconText } from './iconText'
 
 /**
  * The icons the app uses, by the name Material Symbols knows them.
@@ -41,6 +42,8 @@ export type IconName =
   | 'music_note'
   | 'description'
   | 'stop'
+  | 'mic'
+  | 'mic_off'
 
 export interface IconProps {
   name: IconName
@@ -50,9 +53,9 @@ export interface IconProps {
 }
 
 /**
- * Material Symbols is a ligature font: the text `chevron_right` is drawn as
- * the glyph. That means no icon components, no sprite sheet and no build step —
- * and it means the name in the source is the name in the design.
+ * Material Symbols draws an icon from its name on the web. A phone draws the
+ * character `iconText` returns, because the name is what appears as letters
+ * when that substitution does not happen.
  */
 export function Icon(props: IconProps): React.ReactElement {
   const theme = useTheme()
@@ -76,7 +79,7 @@ export function Icon(props: IconProps): React.ReactElement {
         color
       }}
     >
-      {name}
+      {iconText(name)}
     </Text>
   )
 }
