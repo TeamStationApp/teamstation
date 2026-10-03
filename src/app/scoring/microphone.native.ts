@@ -16,10 +16,41 @@ export interface PcmModule {
  * already emit 3200-byte frames. A short leftover is still joined here, so a
  * frame that arrives split is sent whole.
  */
+/** How many opens of this module are still listening. The module is one recorder. */
+const occupancyOf = new WeakMap<PcmModule, { listeners: number }>()
+
+function occupancy(module: PcmModule): { listeners: number } {
+  const found = occupancyOf.get(module)
+  if (found != null) return found
+  const created = { listeners: 0 }
+  occupancyOf.set(module, created)
+  return created
+}
+
+/**
+ * Drops this open's listener. The recorder stops when the last listener is
+ * gone, so an open that lost the race does not silence the one that won.
+ */
+function releaseListener(
+  module: PcmModule,
+  subscription: { remove: () => void }
+): void {
+  subscription.remove()
+  const count = occupancy(module)
+  count.listeners -= 1
+  if (count.listeners > 0) return
+  count.listeners = 0
+  module.stop()
+}
+
 export function makeOpenMicrophone(module: PcmModule): OpenMicrophone {
   return async (onPcm, onEnded) => {
+    const count = occupancy(module)
+    count.listeners += 1
     let rest = new Uint8Array(0)
+    let released = false
     const subscription = module.onPcm(event => {
+      if (released) return
       if (event.error != null && event.error !== '') {
         onEnded?.(event.error)
         return
@@ -29,18 +60,18 @@ export function makeOpenMicrophone(module: PcmModule): OpenMicrophone {
       rest = taken.rest
       for (const frame of taken.frames) onPcm(frame)
     })
+    const release = (): void => {
+      if (released) return
+      released = true
+      releaseListener(module, subscription)
+    }
     try {
       await module.start()
     } catch (error) {
-      subscription.remove()
+      release()
       throw error
     }
-    return {
-      stop(): void {
-        subscription.remove()
-        module.stop()
-      }
-    }
+    return { stop: release }
   }
 }
 
