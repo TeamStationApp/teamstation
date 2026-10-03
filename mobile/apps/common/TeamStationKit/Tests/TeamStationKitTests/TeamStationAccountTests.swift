@@ -8,6 +8,7 @@ import Testing
 private final class ClaimServer: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var refuse = false
   nonisolated(unsafe) static var asked: [String] = []
+  nonisolated(unsafe) static var bodies: [String] = []
 
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -15,6 +16,10 @@ private final class ClaimServer: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     let path = request.url!.path()
     Self.asked.append("\(request.httpMethod ?? "GET") \(path)")
+    let bytes = Self.requestBody(request)
+    if let text = String(data: bytes, encoding: .utf8), !text.isEmpty {
+      Self.bodies.append(text)
+    }
     let gameId = path.split(separator: "/").dropLast().last.map(String.init) ?? ""
     let status = Self.refuse ? 409 : 200
     let body = Self.refuse
@@ -32,6 +37,23 @@ private final class ClaimServer: URLProtocol, @unchecked Sendable {
   }
 
   override func stopLoading() {}
+
+  /// URLSession hands a protocol the body as a stream, not as `httpBody`.
+  private static func requestBody(_ request: URLRequest) -> Data {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return Data() }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
+    defer { buffer.deallocate() }
+    while stream.hasBytesAvailable {
+      let count = stream.read(buffer, maxLength: 1024)
+      if count <= 0 { break }
+      data.append(buffer, count: count)
+    }
+    return data
+  }
 }
 
 @MainActor
@@ -41,6 +63,7 @@ private func makeAccount(
 ) -> TeamStationAccount {
   ClaimServer.refuse = false
   ClaimServer.asked = []
+  ClaimServer.bodies = []
   keychain.setToken("tok")
   let configuration = URLSessionConfiguration.ephemeral
   configuration.protocolClasses = [ ClaimServer.self ]
@@ -104,6 +127,18 @@ struct ChooseTests {
     #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1")
     await account.choose(event: event("g2"), claim: false)
     #expect(account.chosen?.streamURL == nil)
+  }
+
+  @Test func claimPostsTheCameraNameIncludingAnEmptyOne() async {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1"), cameraName: "Center Field"))
+    #expect(await account.claimChosen(cameraName: ""))
+    await account.refreshChosen(cameraName: "Left Field")
+    #expect(ClaimServer.bodies == [
+      #"{"cameraName":"Center Field"}"#,
+      #"{"cameraName":""}"#,
+      #"{"cameraName":"Left Field"}"#
+    ])
   }
 
   @Test func claimsByDefaultAndWhenAsked() async {

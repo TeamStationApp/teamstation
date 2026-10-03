@@ -6,6 +6,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { angleLabels } from '../../app/player/multiCam/takes'
 import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -202,7 +203,9 @@ describe('a game’s stream key over the API', function () {
       'gam_11',
       'gam_12',
       'gam_13',
-      'gam_14'
+      'gam_14',
+      'gam_15',
+      'gam_16'
     ]) {
       await db
         .insertInto('games')
@@ -282,6 +285,53 @@ describe('a game’s stream key over the API', function () {
     return {
       status: response.status,
       body: text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
+    }
+  }
+
+  async function send(
+    path: string,
+    token: string,
+    method: string,
+    body: unknown
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    })
+    const text = await response.text()
+    return {
+      status: response.status,
+      body: text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
+    }
+  }
+
+  async function cameraRow(streamId: string): Promise<{
+    label: string | null
+    title: string | null
+    videoId: string | null
+  }> {
+    const stream = await db
+      ?.selectFrom('live_streams')
+      .select(['label', 'video_id as videoId'])
+      .where('id', '=', streamId)
+      .executeTakeFirst()
+    if (stream == null) throw new Error(`no stream ${streamId}`)
+    if (stream.videoId == null) {
+      return { label: stream.label, title: null, videoId: null }
+    }
+    const video = await db
+      ?.selectFrom('videos')
+      .select(['title'])
+      .where('id', '=', stream.videoId)
+      .executeTakeFirst()
+    return {
+      label: stream.label,
+      title: video?.title ?? null,
+      videoId: stream.videoId
     }
   }
 
@@ -772,5 +822,152 @@ describe('a game’s stream key over the API', function () {
       expect(live[0].homeTeamName).equals('Demo Home')
       expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
+  })
+
+  it('stores a camera name on the stream and on its video', async function () {
+    if (db == null) this.skip()
+    const blank = await send('/games/gam_15/live-streams', MANAGER, 'POST', {
+      label: '   '
+    })
+    expect(blank.status).equals(201)
+    expect(blank.body.label).equals('Camera 1')
+    const blankRow = await cameraRow(String(blank.body.id))
+    expect(blankRow.label).equals(null)
+    expect(blankRow.title?.endsWith(' — Camera 1')).equals(true)
+
+    const made = await send('/games/gam_15/live-streams', MANAGER, 'POST', {
+      label: '  First Base  '
+    })
+    expect(made.status).equals(201)
+    expect(made.body.label).equals('First Base')
+    const named = await cameraRow(String(made.body.id))
+    expect(named.label).equals('First Base')
+    expect(named.title?.endsWith(' — First Base')).equals(true)
+    expect(named.title?.startsWith('Demo Away at Demo Home — ')).equals(true)
+    const angles = angleLabels([
+      {
+        id: named.videoId ?? '',
+        title: named.title ?? '',
+        status: 'processing',
+        numCameras: 1,
+        durationSec: null
+      }
+    ])
+    expect(angles[0].name).equals('First Base')
+
+    const hyphen = await send('/games/gam_15/live-streams', MANAGER, 'POST', {
+      label: 'First-Base'
+    })
+    expect(hyphen.status).equals(201)
+    expect(hyphen.body.label).equals('First-Base')
+    const dash = await send('/games/gam_15/live-streams', MANAGER, 'POST', {
+      label: 'Left—Field'
+    })
+    expect(dash.status).equals(201)
+    expect(dash.body.label).equals('Left—Field')
+  })
+
+  it('refuses a camera name that is too long or contains the angle separator', async function () {
+    if (db == null) this.skip()
+    const exact = 'A'.repeat(80)
+    const padded = ` ${'B'.repeat(80)} `
+    const tooLong = 'C'.repeat(81)
+
+    const first = await send('/games/gam_16/live-streams', MANAGER, 'POST', {
+      label: exact
+    })
+    expect(first.status).equals(201)
+    expect(first.body.label).equals(exact)
+    expect(
+      (await cameraRow(String(first.body.id))).title?.endsWith(` — ${exact}`)
+    ).equals(true)
+
+    const second = await send('/games/gam_16/live-streams', MANAGER, 'POST', {
+      label: padded
+    })
+    expect(second.status).equals(201)
+    expect(second.body.label).equals('B'.repeat(80))
+
+    const refused = await send('/games/gam_16/live-streams', MANAGER, 'POST', {
+      label: ` ${tooLong} `
+    })
+    expect(refused.status).equals(400)
+    expect(String(refused.body.message)).equals(
+      'A camera name can be at most 80 characters.'
+    )
+    const split = await send('/games/gam_16/live-streams', MANAGER, 'POST', {
+      label: 'Home — Plate'
+    })
+    expect(split.status).equals(400)
+    expect(String(split.body.message)).equals(
+      'A camera name cannot contain " — ".'
+    )
+    const still = await cameraRow(String(first.body.id))
+    expect(still.label).equals(exact)
+
+    const path = `/games/gam_16/live-streams/${String(first.body.id)}`
+    const patchLong = await send(path, MANAGER, 'PATCH', {
+      label: ` ${tooLong}`
+    })
+    expect(patchLong.status).equals(400)
+    expect(String(patchLong.body.message)).equals(
+      'A camera name can be at most 80 characters.'
+    )
+    expect((await cameraRow(String(first.body.id))).label).equals(exact)
+
+    const patchSplit = await send(path, MANAGER, 'PATCH', {
+      label: 'Home — Plate'
+    })
+    expect(patchSplit.status).equals(400)
+    expect(String(patchSplit.body.message)).equals(
+      'A camera name cannot contain " — ".'
+    )
+    expect(
+      (await cameraRow(String(first.body.id))).title?.endsWith(` — ${exact}`)
+    ).equals(true)
+
+    const renamed = await send(path, MANAGER, 'PATCH', { label: 'Dugout' })
+    expect(renamed.status).equals(200)
+    expect(renamed.body.label).equals('Dugout')
+    const afterRename = await cameraRow(String(first.body.id))
+    expect(afterRename.label).equals('Dugout')
+    expect(afterRename.title).equals('Demo Away at Demo Home — Dugout')
+
+    const cleared = await send(path, MANAGER, 'PATCH', { label: '  ' })
+    expect(cleared.status).equals(200)
+    expect(cleared.body.label).equals('Camera 1')
+    const afterClear = await cameraRow(String(first.body.id))
+    expect(afterClear.label).equals(null)
+    expect(afterClear.title).equals('Demo Away at Demo Home — Camera 1')
+
+    const eighty = await send(path, MANAGER, 'PATCH', { label: padded })
+    expect(eighty.status).equals(200)
+    expect(eighty.body.label).equals('B'.repeat(80))
+    expect(
+      (await cameraRow(String(first.body.id))).title?.endsWith(
+        ` — ${'B'.repeat(80)}`
+      )
+    ).equals(true)
+
+    await db
+      ?.updateTable('videos')
+      .set({ title: 'Just a game', updated_at: new Date() })
+      .where('id', '=', afterClear.videoId ?? '')
+      .execute()
+    const plain = await send(path, MANAGER, 'PATCH', { label: 'Mound' })
+    expect(plain.status).equals(200)
+    expect((await cameraRow(String(first.body.id))).title).equals(
+      'Just a game — Mound'
+    )
+
+    await db
+      ?.updateTable('live_streams')
+      .set({ video_id: null, updated_at: new Date() })
+      .where('id', '=', String(first.body.id))
+      .execute()
+    const noVideo = await send(path, MANAGER, 'PATCH', { label: 'Bullpen' })
+    expect(noVideo.status).equals(200)
+    expect(noVideo.body.label).equals('Bullpen')
+    expect((await cameraRow(String(first.body.id))).label).equals('Bullpen')
   })
 })

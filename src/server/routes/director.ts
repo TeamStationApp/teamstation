@@ -1,14 +1,18 @@
+import { asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canFilm, roleScopes } from '../access'
 import type { Database } from '../db/database'
+import { cleanBody } from '../jsonBody'
 import {
+  cameraLabelOf,
   createLiveStream,
   type LiveStreamRow,
   myLiveStreams,
   revealKey,
+  setCameraName,
   streamUrlFor
 } from '../live/streamKeys'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -52,6 +56,8 @@ function readKey(sessionSecret: string, row: LiveStreamRow): string {
     )
   }
 }
+
+const asClaim = asObject({ cameraName: asOptional(asString) })
 
 export function directorRoutes(
   db: Kysely<Database>,
@@ -100,6 +106,11 @@ export function directorRoutes(
         throw badRequest('Live streaming is switched off on this server.')
       }
 
+      // Refused before any row is written, so a too-long name or one that
+      // contains the angle separator leaves a stored name as it was.
+      const claim = cleanBody(asClaim, req.body ?? {})
+      const cameraName = cameraLabelOf(claim.cameraName) ?? undefined
+
       // Taking a game twice is the ordinary case, not the exception: the same
       // Director claims it again on every redial. It gets **its own account's**
       // camera — its first one — so a second Director signed in as somebody
@@ -108,23 +119,25 @@ export function directorRoutes(
       const mine = await myLiveStreams(db, game.id, actor.userId)
       const existing = mine.find(row => row.slot === 1) ?? mine[0]
       let key: string
+      let streamId: string
       if (existing != null) {
         key = readKey(options.sessionSecret, existing)
+        streamId = existing.id
       } else {
         try {
-          key = (
-            await createLiveStream(db, {
-              gameId: game.id,
-              teamId,
-              startAt: new Date(game.startAt),
-              userId: actor.userId,
-              slot: 1,
-              label: options.deviceLabel,
-              live: options.live,
-              sessionSecret: options.sessionSecret,
-              videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
-            })
-          ).key
+          const created = await createLiveStream(db, {
+            gameId: game.id,
+            teamId,
+            startAt: new Date(game.startAt),
+            userId: actor.userId,
+            slot: 1,
+            label: cameraName ?? options.deviceLabel,
+            live: options.live,
+            sessionSecret: options.sessionSecret,
+            videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
+          })
+          key = created.key
+          streamId = created.id
         } catch (error) {
           // Two Directors signed in as the same account, claiming at the same
           // moment: one of them wins slot one and the other lands here.
@@ -133,7 +146,13 @@ export function directorRoutes(
           )
           if (raced == null) throw error
           key = readKey(options.sessionSecret, raced)
+          streamId = raced.id
         }
+      }
+      // A later claim with no name, including `{ "cameraName": "" }`, leaves
+      // a name already stored. Clearing stays the live-stream PATCH.
+      if (cameraName != null) {
+        await setCameraName(db, streamId, cameraName)
       }
 
       const row =

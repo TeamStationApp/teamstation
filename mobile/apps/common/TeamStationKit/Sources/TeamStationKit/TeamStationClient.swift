@@ -222,11 +222,14 @@ public struct TeamStationClient: Sendable {
   }
 
   /// Takes a game, and gets the URL to publish it to.
-  public func claim(gameId: String) async throws -> TeamStationClaim {
+  ///
+  /// `cameraName` is always sent, including when it is empty. The server treats
+  /// an empty name as "leave the stored name alone".
+  public func claim(gameId: String, cameraName: String) async throws -> TeamStationClaim {
     try await send(
       "director/events/\(escape(gameId))/claim",
       method: "POST",
-      body: [:]
+      body: [ "cameraName": cameraName ]
     )
   }
 
