@@ -2,11 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  type ChatSocketEvent,
   GameSocket,
   type GameSocketEvent,
   RECONNECT_DELAYS_MS,
   RESUBSCRIBE_DELAYS_MS,
   socketUrl,
+  TYPING_INTERVAL_MS,
   type WebSocketLike
 } from './gameSocket'
 
@@ -82,7 +84,9 @@ function manualTimers(): {
   }
 }
 
-function makeSocket(options: { token?: string; baseUrl?: string } = {}): {
+function makeSocket(
+  options: { token?: string; baseUrl?: string; now?: () => number } = {}
+): {
   socket: GameSocket
   timers: ReturnType<typeof manualTimers>
 } {
@@ -93,7 +97,8 @@ function makeSocket(options: { token?: string; baseUrl?: string } = {}): {
     token: options.token,
     WebSocketImpl: FakeSocket,
     setTimer: timers.setTimer,
-    clearTimer: timers.clearTimer
+    clearTimer: timers.clearTimer,
+    now: options.now
   })
   return { socket, timers }
 }
@@ -480,6 +485,8 @@ describe('GameSocket (U16)', function () {
 
     it('asks once, when another subscribe for the game is already out', function () {
       const { socket, timers } = makeSocket()
+      // Chat keeps the socket open while g1 has no listener.
+      socket.onChat(() => undefined)
       const first = socket.subscribe('g1', () => undefined)
       last().open()
       first()
@@ -520,5 +527,205 @@ describe('GameSocket (U16)', function () {
       waiting.socket.close()
       expect(waiting.timers.pending()).equals(0)
     })
+  })
+})
+
+/** U9: chat on the same socket, against a fake WebSocket. */
+describe('GameSocket chat (U9)', function () {
+  const hint = {
+    type: 'chat',
+    conversationId: 'cnv_1',
+    kind: 'message',
+    seq: 4,
+    at: '2027-04-10T12:00:00.000Z'
+  }
+
+  it('opens the socket with no game subscribed, and closes it when the last listener of either kind goes', function () {
+    const { socket } = makeSocket({ token: 'tok_phone' })
+    expect(FakeSocket.made).lengthOf(0)
+    const statuses: boolean[] = []
+    socket.onStatus(connected => statuses.push(connected))
+    const stopChat = socket.onChat(() => undefined)
+    expect(FakeSocket.made).lengthOf(1)
+    expect(last().options).deep.equals({
+      headers: { Authorization: 'Bearer tok_phone' }
+    })
+    last().open()
+    expect(socket.connected).equals(true)
+    // A game too, then the chat listener goes: still open for the game.
+    const stopGame = socket.subscribe('g1', () => undefined)
+    const second = socket.onChat(() => undefined)
+    stopChat()
+    stopChat()
+    second()
+    expect(last().closedWith).equals(undefined)
+    expect(socket.connected).equals(true)
+    // The game goes last: it is unsubscribed, then the socket closes.
+    stopGame()
+    expect(last().sent.slice(-1)).deep.equals([
+      { type: 'unsubscribe', gameId: 'g1', id: 'c2' }
+    ])
+    expect(last().closedWith).equals(1000)
+    expect(last().onmessage).equals(null)
+    expect(socket.connected).equals(false)
+    expect(statuses).deep.equals([true, false])
+    // A new listener opens a new socket, with nothing to resync.
+    const heard: ChatSocketEvent[] = []
+    const again = socket.onChat(event => heard.push(event))
+    expect(FakeSocket.made).lengthOf(2)
+    last().open()
+    expect(heard).deep.equals([])
+    again()
+    socket.close()
+  })
+
+  it('stops waiting to reconnect when the last listener goes', function () {
+    const { socket, timers } = makeSocket()
+    const stop = socket.onChat(() => undefined)
+    last().drop()
+    expect(timers.pending()).equals(1)
+    stop()
+    expect(timers.pending()).equals(0)
+    // Nobody missed anything, so the next connection does not resync.
+    const heard: ChatSocketEvent[] = []
+    socket.onChat(event => heard.push(event))
+    expect(FakeSocket.made).lengthOf(2)
+    last().open()
+    expect(heard).deep.equals([])
+    socket.close()
+  })
+
+  it('hands chat frames to chat listeners only, and game frames to games only', function () {
+    const { socket } = makeSocket()
+    const chat: ChatSocketEvent[] = []
+    const game: GameSocketEvent[] = []
+    socket.onChat(event => chat.push(event))
+    socket.subscribe('g1', event => game.push(event))
+    last().open()
+    const { seq: _seq, ...noSeq } = hint
+    const frames = [
+      hint,
+      { ...noSeq, kind: 'members' },
+      { type: 'chatUser', kind: 'devices' },
+      { type: 'chatTyping', conversationId: 'cnv_1', userId: 7 },
+      { type: 'resync' }
+    ]
+    for (const frame of frames) last().receive(frame)
+    // Frames that do not read reach nobody.
+    last().receive({ ...hint, kind: 'weather' })
+    last().receive({ ...hint, seq: 'four' })
+    last().receive({ type: 'chatUser', kind: 'everything' })
+    last().receive({ type: 'chatTyping', conversationId: 'cnv_1' })
+    last().receive({ type: 'typed', conversationId: 'cnv_1', id: 'c9' })
+    last().receive({ type: 'typed', conversationId: 'cnv_1' })
+    expect(chat).deep.equals(frames)
+    expect(Object.keys(chat[1])).not.include('seq')
+    expect(game).deep.equals([])
+    const change = {
+      type: 'change',
+      gameId: 'g1',
+      kind: 'game',
+      at: 'x',
+      data: {}
+    }
+    last().receive(change)
+    expect(game).deep.equals([change])
+    expect(chat).lengthOf(frames.length)
+    socket.close()
+  })
+
+  it('tells chat listeners to resync after a reconnect, and not on the first connection', function () {
+    const { socket, timers } = makeSocket()
+    const heard: ChatSocketEvent[] = []
+    const games: GameSocketEvent[] = []
+    socket.onChat(event => heard.push(event))
+    socket.subscribe('g1', event => games.push(event))
+    last().open()
+    expect(heard).deep.equals([])
+    last().drop()
+    timers.fire()
+    last().open()
+    expect(heard).deep.equals([{ type: 'resync' }])
+    expect(games).deep.equals([{ type: 'resync', gameId: 'g1' }])
+    socket.close()
+  })
+
+  it('sends typing only while open, at most once every three seconds', function () {
+    let now = 50_000
+    const { socket } = makeSocket({ now: () => now })
+    const heard: ChatSocketEvent[] = []
+    socket.onChat(event => heard.push(event))
+    expect(socket.sendTyping('cnv_1')).equals(false)
+    last().open()
+    expect(TYPING_INTERVAL_MS).equals(3000)
+    expect(socket.sendTyping('cnv_1')).equals(true)
+    now += TYPING_INTERVAL_MS - 1
+    expect(socket.sendTyping('cnv_2')).equals(false)
+    now += 1
+    expect(socket.sendTyping('cnv_2')).equals(true)
+    expect(last().sent).deep.equals([
+      { type: 'typing', conversationId: 'cnv_1', id: 'c1' },
+      { type: 'typing', conversationId: 'cnv_2', id: 'c2' }
+    ])
+    last().receive({ type: 'typed', conversationId: 'cnv_1', id: 'c1' })
+    expect(heard).deep.equals([])
+    socket.close()
+    expect(socket.sendTyping('cnv_1')).equals(false)
+    expect(() => socket.onChat(() => undefined)).throws(/closed/)
+  })
+
+  it('gives a refused typing hint to chat listeners, never to every game', function () {
+    let now = 0
+    const { socket } = makeSocket({ now: () => now })
+    const chat: ChatSocketEvent[] = []
+    const game: GameSocketEvent[] = []
+    socket.onChat(event => chat.push(event))
+    socket.subscribe('g1', event => game.push(event))
+    last().open()
+    socket.sendTyping('cnv_1')
+    // By its id alone.
+    last().receive({
+      type: 'error',
+      id: 'c2',
+      code: 'forbidden',
+      message: 'Only those who may post here may type'
+    })
+    // By the conversation it names.
+    last().receive({
+      type: 'error',
+      conversationId: 'cnv_2',
+      code: 'notFound',
+      message: 'No such conversation'
+    })
+    // The id has been answered: a repeat is anybody's error, as before.
+    last().receive({ type: 'error', id: 'c2', code: 'tooMany', message: 'x' })
+    expect(chat).deep.equals([
+      {
+        type: 'error',
+        conversationId: 'cnv_1',
+        code: 'forbidden',
+        message: 'Only those who may post here may type'
+      },
+      {
+        type: 'error',
+        conversationId: 'cnv_2',
+        code: 'notFound',
+        message: 'No such conversation'
+      }
+    ])
+    expect(game).deep.equals([
+      { type: 'error', gameId: 'g1', code: 'tooMany', message: 'x' }
+    ])
+    now += TYPING_INTERVAL_MS
+    socket.close()
+  })
+
+  it('throws for a relative base with no page before listening', function () {
+    const socket = new GameSocket({
+      baseUrl: '/api/v1',
+      pageHref: undefined,
+      WebSocketImpl: FakeSocket
+    })
+    expect(() => socket.onChat(() => undefined)).throws(/relative/)
   })
 })
