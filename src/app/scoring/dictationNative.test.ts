@@ -98,10 +98,10 @@ describe('dictation on the phone', function () {
     })
   })
 
-  it('draws the button on the web and on iPhone, and not on Android', function () {
+  it('draws the button on the web, on iPhone and on Android', function () {
     expect(dictationOn('web')).equals(true)
     expect(dictationOn('ios')).equals(true)
-    expect(dictationOn('android')).equals(false)
+    expect(dictationOn('android')).equals(true)
     expect(dictationOn('')).equals(false)
   })
 

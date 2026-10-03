@@ -3,12 +3,14 @@ package app.teamstation.app
 import android.app.Application
 import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.orientation.OrientationPackage
+import app.teamstation.app.walkup.DictationMicrophonePackage
 import app.teamstation.app.walkup.WalkUpMusicPackage
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.common.assets.ReactFontManager
+import com.facebook.react.config.ReactFeatureFlags
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 
 class MainApplication : Application(), ReactApplication {
@@ -21,8 +23,9 @@ class MainApplication : Application(), ReactApplication {
           // Expo's modules are linked by `expo-autolinking`, not by React
           // Native's autolinking, so they are added by hand.
           add(ExpoModulesPackage())
-          // The app's own TurboModule, which autolinking does not see.
+          // The app's own TurboModules, which autolinking does not see.
           add(WalkUpMusicPackage())
+          add(DictationMicrophonePackage())
           // The backdrop blur under the scoring menu button.
           add(GlassPackage())
           // Lets the multi-camera view turn sideways in an upright app.
@@ -32,6 +35,10 @@ class MainApplication : Application(), ReactApplication {
   }
 
   override fun onCreate() {
+    // The dictation button is the web control: it listens for pointerdown.
+    // The surface builds its pointer dispatcher from this flag, and only at
+    // construction, so it has to be on before any surface exists.
+    ReactFeatureFlags.dispatchPointerEvents = true
     super.onCreate()
     registerFonts()
     loadReactNative(this)

@@ -9,6 +9,12 @@
     <uses-permission
       android:name="android.permission.READ_EXTERNAL_STORAGE"
       android:maxSdkVersion="32" />
+    <!--
+      Dictation: the microphone, so a game can be scored from what is said.
+      Not required, so a handset without one can still be installed.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
       android:name=".MainApplication"
