@@ -25,7 +25,9 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
  * `databaseUrl` of the local `serverConfig.json`. Each browser is one
  * device of one person, with its own profile in
  * `<artifacts>/profiles/<person>-<n>`, so what a device keeps survives from
- * one scenario to the next. Screenshots go to `<artifacts>/shots`.
+ * one scenario to the next — a browser's chat keys included (E5). Pages call
+ * the API themselves at `TS_CHAT_API_URL` (default the API above) for what
+ * the screens do not show. Screenshots go to `<artifacts>/shots`.
  *
  * Scenarios run in the order they are written, each on the state the ones
  * before it left.
@@ -36,6 +38,9 @@ const WEB = (process.env.TS_CHAT_WEB_URL ?? 'http://127.0.0.1:8080').replace(
   ''
 )
 const SHOTS = join(ARTIFACTS, 'shots')
+const API = (
+  process.env.TS_CHAT_API_URL ?? 'http://127.0.0.1:9100/api/v1'
+).replace(/\/+$/, '')
 const API_LOG = process.env.TS_CHAT_API_LOG ?? ''
 
 interface Seed {
@@ -199,6 +204,28 @@ function localDatabase(): Pool {
 
 async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(SHOTS, `${name}.png`), fullPage: true })
+}
+
+/**
+ * A GET of the API from inside the page, with the page's own session, as
+ * the app itself would make it.
+ */
+async function apiGet(page: Page, path: string): Promise<any> {
+  return await page.evaluate(async (url: string) => {
+    const response = await fetch(url, { credentials: 'include' })
+    return { status: response.status, body: await response.json() }
+  }, `${API}${path}`)
+}
+
+/** The digits in the first `[aria-label^="<prefix>"]`, once it is there. */
+async function codeOn(page: Page, prefix: string): Promise<string> {
+  return await until(`the six digits on the page`, async () => {
+    const node = await page.$(`[aria-label^="${prefix}"]`)
+    const label = await node?.evaluate(found =>
+      found.getAttribute('aria-label')
+    )
+    return /(\d{6})$/.exec(label ?? '')?.[1]
+  })
 }
 
 /** The team page's own sections, not the app's navigation. */
@@ -435,5 +462,73 @@ describe('chat scenarios in the browser', function () {
     } finally {
       await db.end()
     }
+  })
+  /**
+   * E5: parent B opens Chat devices in a first browser, which enrols. A
+   * second browser signed in as B opens it too and asks to be linked; both
+   * show the same six digits, and the first approves. Then both list the
+   * same two devices, and both sessions hold the same identity key.
+   */
+  it('E5: a second device is linked by matching six digits', async function () {
+    const first = await device('B', 1)
+    await signIn(first, seed, 'B')
+    await first.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
+    await waitForText(first, 'YOUR DEVICES')
+    await waitForText(first, '(this device)')
+    const enrolled = await apiGet(first, '/chat/me/keys')
+    expect(enrolled.status).equals(200)
+    expect(enrolled.body.linked).equals(true)
+    await shot(first, 'e5-1-b1-enrolled')
+
+    const second = await device('B', 2)
+    await signIn(second, seed, 'B')
+    await second.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
+    await waitForText(second, 'Link this device')
+    const shown = await codeOn(second, 'Six-digit code ')
+    await shot(second, 'e5-2-b2-code')
+
+    const asked = await codeOn(first, 'Code ')
+    expect(asked).equals(shown)
+    await shot(first, 'e5-3-b1-request')
+    console.log(`      E5 six digits: B-1 ${asked}, B-2 ${shown}`)
+    const pending = await apiGet(first, '/chat/links')
+    expect(pending.body).length(1)
+    await press(first, `Approve ${pending.body[0].newDevice.name as string}`)
+
+    await waitForText(second, 'YOUR DEVICES')
+    for (const page of [first, second]) {
+      await until('both devices linked on the screen', async () =>
+        (await bodyText(page)).split('· Linked').length - 1 === 2
+          ? true
+          : undefined
+      )
+    }
+    await shot(first, 'e5-4-b1-devices')
+    await shot(second, 'e5-5-b2-devices')
+
+    const devices = async (page: Page): Promise<string[]> =>
+      (
+        (await apiGet(page, '/chat/devices')).body as Array<{
+          id: string
+          linked: boolean
+          revokedAt: string | null
+        }>
+      )
+        .filter(row => row.revokedAt == null && row.linked)
+        .map(row => row.id)
+        .sort()
+    const listedFirst = await devices(first)
+    expect(listedFirst).length(2)
+    expect(await devices(second)).deep.equals(listedFirst)
+
+    const keysFirst = (await apiGet(first, '/chat/me/keys')).body
+    const keysSecond = (await apiGet(second, '/chat/me/keys')).body
+    expect(keysFirst.linked).equals(true)
+    expect(keysSecond.linked).equals(true)
+    expect(keysFirst.deviceId).not.equals(keysSecond.deviceId)
+    expect(keysSecond.identity.publicKey).equals(keysFirst.identity.publicKey)
+    console.log(
+      `      E5 identity key on both: ${keysFirst.identity.publicKey as string}`
+    )
   })
 })

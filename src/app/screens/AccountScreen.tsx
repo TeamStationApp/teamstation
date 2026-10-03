@@ -8,6 +8,9 @@ import {
   type ClientPasswordCosts,
   newPasswordRequirements
 } from '../../common/passwordProtocol'
+import { leaveChat } from '../chat/engine/links'
+import type { ChatKeyStore } from '../chat/keyRecord'
+import { keyStore } from '../chat/keyStore'
 import {
   Button,
   Card,
@@ -16,6 +19,7 @@ import {
   Icon,
   initialsOf,
   ListCard,
+  ListRow,
   Screen,
   SectionHeader,
   TextField
@@ -35,8 +39,16 @@ import {
 
 export interface AccountScreenProps {
   session: Session
+  /**
+   * The signed-in client. Signing out first removes this device from chat
+   * and wipes its chat keys.
+   */
   client: TeamStationClient
   onAccountChanged?: (user: SessionUser) => void
+  /** This device's chat key store; the platform's own by default. */
+  chatStore?: ChatKeyStore
+  /** Opens Chat devices. */
+  onChatDevices?: () => void
   onSignOut: () => void
   onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
@@ -49,6 +61,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const {
     session,
     client,
+    onChatDevices,
     onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
@@ -57,6 +70,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const chatStore = props.chatStore ?? keyStore
   const [walkUp, setWalkUp] = useWalkUpPreferences()
   const [appleMusicSetup, setAppleMusicSetup] = useState(false)
   // Mounted once opened, so it can slide away; never on a visit without it.
@@ -199,6 +213,19 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       setCode('')
       setNotice({ section: 'email', message: `A code was sent to ${address}` })
     })
+  }
+  const [signingOut, setSigningOut] = useState(false)
+
+  /**
+   * This device leaves chat before the session ends: the server revokes it
+   * (which ends the session too) and its keys are wiped, so whoever signs in
+   * on it next reads nothing of this person's chats.
+   */
+  const signOut = (): void => {
+    setSigningOut(true)
+    leaveChat({ client, store: chatStore })
+      .finally(onSignOut)
+      .catch(() => undefined)
   }
 
   return (
@@ -643,6 +670,20 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           Saving…
         </Text>
       )}
+
+      {onChatDevices != null && (
+        <View style={styles.section}>
+          <SectionHeader title={lstrings.account_chat} />
+          <Card>
+            <ListRow
+              title={lstrings.account_chat_devices}
+              subtitle={lstrings.account_chat_devices_detail}
+              emblemIcon="settings"
+              onPress={onChatDevices}
+            />
+          </Card>
+        </View>
+      )}
       {Platform.OS === 'ios' && (
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_walkup} />
@@ -695,11 +736,12 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         </View>
       )}
       <Button
-        label="Sign out"
+        label={lstrings.account_sign_out}
         kind="secondary"
         block
-        disabled={busy !== ''}
-        onPress={onSignOut}
+        busy={signingOut}
+        disabled={busy !== '' || signingOut}
+        onPress={signOut}
       />
     </Screen>
   )
