@@ -72,6 +72,32 @@ export function shortTime(iso: string | null): string {
 }
 
 /**
+ * The date on a schedule row: a short month over a two-digit day, and the
+ * weekday and time on their own line. Always en-US, so a phone set to
+ * another language still reads `Oct` and `4:45 PM`.
+ */
+export function scheduleDate(iso: string | null): {
+  month: string
+  day: string
+  when: string
+} {
+  if (iso == null) return { month: '\u2014', day: '', when: '' }
+  const when = new Date(iso)
+  if (Number.isNaN(when.getTime()))
+    return { month: '\u2014', day: '', when: '' }
+  const weekday = when.toLocaleDateString('en-US', { weekday: 'short' })
+  const time = when.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+  return {
+    month: when.toLocaleDateString('en-US', { month: 'short' }),
+    day: when.toLocaleDateString('en-US', { day: '2-digit' }),
+    when: `${weekday} \u00b7 ${time}`
+  }
+}
+
+/**
  * What to write across the middle of a scoreboard.
  *
  * A game with no score is not 0–0, it is a game that has not happened, so it

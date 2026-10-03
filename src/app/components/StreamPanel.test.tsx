@@ -155,8 +155,45 @@ class FakeServer {
   maxCameras = 4
   /** Answered to the next request, whatever it is, instead of the list. */
   failNext: { status: number; body: string } | undefined
+  /** Answered to the next reveal, so the list itself can still load. */
+  failReveal: { status: number; body: string } | undefined
+  /** This camera's reveal keeps failing. The others still answer. */
+  failRevealId: string | undefined
   /** Held unanswered, for the moment before the list arrives. */
   hang = false
+  /** Reveal replies wait here until `releaseReveals`, so an action can fail first. */
+  holdReveal = false
+  private readonly heldReveals: Array<{
+    path: string
+    resolve: (response: Response) => void
+  }> = []
+
+  /** List replies wait here until `releaseLists`, so a game change can land first. */
+  holdList = false
+  private readonly heldLists: Array<{
+    path: string
+    resolve: (response: Response) => void
+  }> = []
+
+  /** Answers every reveal that `holdReveal` kept waiting. */
+  releaseReveals(): void {
+    this.holdReveal = false
+    for (const held of this.heldReveals.splice(0)) {
+      held.resolve(
+        answer(200, JSON.stringify(this.route('POST', held.path, undefined)))
+      )
+    }
+  }
+
+  /** Answers every list that `holdList` kept waiting. */
+  releaseLists(): void {
+    this.holdList = false
+    for (const held of this.heldLists.splice(0)) {
+      held.resolve(
+        answer(200, JSON.stringify(this.route('GET', held.path, undefined)))
+      )
+    }
+  }
 
   constructor(mine: LiveStream[] = [], others: LiveStream[] = []) {
     this.mine = mine
@@ -190,6 +227,36 @@ class FakeServer {
     const path = url.pathname.replace(/^\/api\/v1/, '')
     this.requests.push({ method, path, body })
     if (this.hang) return await new Promise<Response>(() => undefined)
+    if (method === 'GET' && path.endsWith('/live-streams') && this.holdList) {
+      return await new Promise<Response>(resolve => {
+        this.heldLists.push({ path, resolve })
+      })
+    }
+    if (method === 'POST' && path.endsWith('/reveal') && this.holdReveal) {
+      return await new Promise<Response>(resolve => {
+        this.heldReveals.push({ path, resolve })
+      })
+    }
+    if (
+      method === 'POST' &&
+      path.endsWith('/reveal') &&
+      this.failRevealId != null &&
+      path.includes(`/${this.failRevealId}/reveal`)
+    ) {
+      return answer(
+        500,
+        JSON.stringify({ code: 'internal', message: 'The ingest is down' })
+      )
+    }
+    if (
+      method === 'POST' &&
+      path.endsWith('/reveal') &&
+      this.failReveal != null
+    ) {
+      const failed = this.failReveal
+      this.failReveal = undefined
+      return answer(failed.status, failed.body)
+    }
     const failed = this.failNext
     if (failed != null) {
       this.failNext = undefined
@@ -199,8 +266,20 @@ class FakeServer {
   }
 
   private route(method: string, path: string, body: unknown): unknown {
+    const listed = /^\/games\/([^/]+)\/live-streams$/.exec(path)
+    if (method === 'GET' && listed != null) {
+      if (listed[1] !== 'gam_1') {
+        return {
+          gameId: listed[1],
+          mine: [],
+          others: [],
+          canAdd: this.maxCameras,
+          maxCameras: this.maxCameras
+        }
+      }
+      return this.list()
+    }
     const base = '/games/gam_1/live-streams'
-    if (method === 'GET' && path === base) return this.list()
     if (method === 'POST' && path === base) {
       const sent = body as { label?: string } | undefined
       const trimmed = sent?.label?.trim() ?? ''
@@ -363,9 +442,8 @@ describe('the stream panel', function () {
     await press(button('Create a stream URL'))
     expect(sent(server)).deep.equals(['POST /games/gam_1/live-streams'])
     expect(text()).not.includes('Give yourself a stream URL')
-    expect(text()).includes('••••')
-    expect(text()).includes('Tap to show')
-    await press(labelled('Show the URL for Camera'))
+    expect(text()).not.includes('••••')
+    expect(text()).not.includes('Tap to show')
     expect(text()).includes('rtmp://ingest.example/live/lst_1-key')
     expect(text()).includes('Tap to copy')
     expect(text()).includes('The whole address goes in your software’s')
@@ -476,9 +554,11 @@ describe('the stream panel', function () {
     expect(page).includes('Closed')
     expect(page).includes('The encoder went away')
     expect(page.match(/Ready/g)).has.lengthOf(2)
-    // The key is never on screen until it is asked for.
-    expect(page).includes('••••••••  live…')
-    expect(page).includes('Tap to show')
+    expect(page).includes('rtmp://ingest.example/live/lst_live-key')
+    expect(page).includes('Tap to copy')
+    expect(page).not.includes('••••')
+    expect(page).not.includes('Tap to show')
+    expect(page).not.includes('lst_other-key')
     // All four are used.
     expect(page).includes(
       'That is all 4 of your cameras on this game. End one to add another.'
@@ -503,11 +583,11 @@ describe('the stream panel', function () {
     try {
       const server = new FakeServer([camera('lst_1', 'Dugout')])
       await mount(server)
-      await press(labelled('Show the URL for Dugout'))
       expect(sent(server)).deep.equals([
         'POST /games/gam_1/live-streams/lst_1/reveal'
       ])
       expect(text()).includes('rtmp://ingest.example/live/lst_1-key')
+      expect(text()).includes('Tap to copy')
 
       await press(labelled('Copy the URL for Dugout'))
       expect(copies).deep.equals(['rtmp://ingest.example/live/lst_1-key'])
@@ -542,7 +622,7 @@ describe('the stream panel', function () {
 
     await timers.poll()
     expect(text()).includes('Third base')
-    labelled('Show the URL for Third base')
+    labelled('Copy the URL for Third base')
   })
 
   it('asks twice before a new key cuts off a camera on the air', async function () {
@@ -554,7 +634,9 @@ describe('the stream panel', function () {
     expect(timers.polls()).deep.equals([3000])
 
     await press(button('New key'))
-    expect(sent(server)).deep.equals([])
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal'
+    ])
     expect(text()).includes('Tap again: this cuts it off')
 
     // Left alone, it goes back to being safe.
@@ -563,6 +645,7 @@ describe('the stream panel', function () {
     await press(button('New key'))
     await press(button('Tap again: this cuts it off'))
     expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
       'POST /games/gam_1/live-streams/lst_1/rotate'
     ])
     expect(text()).includes('rtmp://ingest.example/live/lst_1-new')
@@ -574,6 +657,7 @@ describe('the stream panel', function () {
     await mount(server)
     await press(button('New key'))
     expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
       'POST /games/gam_1/live-streams/lst_1/rotate'
     ])
     expect(text()).includes('rtmp://ingest.example/live/lst_1-new')
@@ -586,15 +670,22 @@ describe('the stream panel', function () {
     ])
     await mount(server)
     await press(button('End stream', 0))
-    expect(sent(server)).deep.equals([])
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
+      'POST /games/gam_1/live-streams/lst_2/reveal'
+    ])
     await press(button('Tap again to end it'))
     expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
+      'POST /games/gam_1/live-streams/lst_2/reveal',
       'POST /games/gam_1/live-streams/lst_1/end'
     ])
     expect(text()).includes('Finished')
 
     await press(button('End stream'))
     expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
+      'POST /games/gam_1/live-streams/lst_2/reveal',
       'POST /games/gam_1/live-streams/lst_1/end',
       'POST /games/gam_1/live-streams/lst_2/end'
     ])
@@ -608,7 +699,11 @@ describe('the stream panel', function () {
     ])
     await mount(server)
     await press(button('Remove camera', 1))
-    expect(sent(server)).deep.equals(['DELETE /games/gam_1/live-streams/lst_2'])
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
+      'POST /games/gam_1/live-streams/lst_2/reveal',
+      'DELETE /games/gam_1/live-streams/lst_2'
+    ])
     expect(text()).includes('Home plate')
     expect(text()).not.includes('Dugout')
   })
@@ -627,9 +722,14 @@ describe('the stream panel', function () {
     expect(timers.polls()).deep.equals([])
 
     await press(button('Delete the recording'))
-    expect(sent(server)).deep.equals([])
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal'
+    ])
     await press(button('Tap again to delete it'))
-    expect(sent(server)).deep.equals(['DELETE /videos/vid_9'])
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal',
+      'DELETE /videos/vid_9'
+    ])
     expect(buttonsNamed('Delete the recording')).has.lengthOf(0)
   })
 
@@ -664,6 +764,145 @@ describe('the stream panel', function () {
       'POST /games/gam_1/live-streams/lst_8/end'
     ])
     expect(buttonsNamed('End this stream')).has.lengthOf(0)
+  })
+
+  it('says what went wrong when a reveal fails', async function () {
+    const server = new FakeServer([camera('lst_1', 'Dugout')])
+    server.failReveal = {
+      status: 500,
+      body: JSON.stringify({
+        code: 'internal',
+        message: 'The ingest is down'
+      })
+    }
+    await mount(server)
+    expect(text()).includes('The ingest is down')
+    expect(text()).not.includes('rtmp://')
+    expect(text()).not.includes('Tap to copy')
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal'
+    ])
+  })
+
+  it('does not reveal the previous game after the game changes', async function () {
+    const server = new FakeServer([camera('lst_1', 'Dugout')])
+    const client = await mount(server)
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal'
+    ])
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <StreamPanel client={client} gameId="gam_2" />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    expect(sent(server)).deep.equals([
+      'POST /games/gam_1/live-streams/lst_1/reveal'
+    ])
+    expect(text()).not.includes('Dugout')
+    expect(text()).not.includes('lst_1-key')
+    expect(text()).includes('Give yourself a stream URL')
+  })
+
+  it('drops a reveal that finishes after the game changes', async function () {
+    const server = new FakeServer([camera('lst_1', 'Dugout')])
+    server.holdReveal = true
+    const client = await mount(server)
+    expect(text()).not.includes('rtmp://')
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <StreamPanel client={client} gameId="gam_2" />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    await act(async () => {
+      server.releaseReveals()
+      await delay(20)
+    })
+    expect(text()).not.includes('lst_1-key')
+    expect(text()).not.includes('Dugout')
+    expect(text()).includes('Give yourself a stream URL')
+  })
+
+  it('drops a reload that finishes after the game changes', async function () {
+    const server = new FakeServer([camera('lst_1', 'Dugout')])
+    const client = await mount(server)
+    server.holdList = true
+    await press(button('End stream'))
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <StreamPanel client={client} gameId="gam_2" />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    await act(async () => {
+      server.releaseLists()
+      await delay(20)
+    })
+    expect(text()).not.includes('Dugout')
+    expect(text()).includes('Give yourself a stream URL')
+  })
+
+  it('shows the address that arrived when another reveal failed', async function () {
+    timers = heldTimers()
+    const server = new FakeServer([
+      camera('lst_ok', 'Dugout'),
+      camera('lst_bad', 'Home plate')
+    ])
+    server.failRevealId = 'lst_bad'
+    await mount(server)
+    expect(text()).includes('rtmp://ingest.example/live/lst_ok-key')
+    expect(text()).includes('The ingest is down')
+    expect(text()).not.includes('lst_bad-key')
+    const afterFirst = sent(server)
+    await timers.poll()
+    expect(text()).includes('rtmp://ingest.example/live/lst_ok-key')
+    expect(text()).includes('The ingest is down')
+    expect(text()).not.includes('lst_bad-key')
+    expect(sent(server)).deep.equals([
+      ...afterFirst,
+      'POST /games/gam_1/live-streams/lst_bad/reveal'
+    ])
+  })
+
+  it('clears a reveal error once that address arrives', async function () {
+    timers = heldTimers()
+    const server = new FakeServer([camera('lst_1', 'Dugout')])
+    server.failRevealId = 'lst_1'
+    await mount(server)
+    expect(text()).includes('The ingest is down')
+    server.failRevealId = undefined
+    await timers.poll()
+    expect(text()).includes('rtmp://ingest.example/live/lst_1-key')
+    expect(text()).not.includes('The ingest is down')
+  })
+
+  it('keeps an action error after a reveal succeeds', async function () {
+    const server = new FakeServer([camera('lst_1', 'Dugout')])
+    server.holdReveal = true
+    await mount(server)
+    expect(text()).not.includes('rtmp://')
+    server.failNext = {
+      status: 409,
+      body: JSON.stringify({
+        code: 'conflict',
+        message: 'That camera has already ended'
+      })
+    }
+    await press(button('End stream'))
+    expect(text()).includes('That camera has already ended')
+    await act(async () => {
+      server.releaseReveals()
+      await delay(10)
+    })
+    expect(text()).includes('rtmp://ingest.example/live/lst_1-key')
+    expect(text()).includes('That camera has already ended')
   })
 
   it('says what went wrong when an action fails', async function () {
