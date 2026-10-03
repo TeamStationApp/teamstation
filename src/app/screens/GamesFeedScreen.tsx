@@ -43,8 +43,8 @@ export interface GamesFeedScreenProps {
 }
 
 const WHEN_TABS = [
-  { id: 'past' as const, label: 'Past' },
   { id: 'upcoming' as const, label: 'Upcoming' },
+  { id: 'past' as const, label: 'Past' },
   { id: 'all' as const, label: 'All' }
 ]
 
@@ -71,9 +71,16 @@ export function GamesFeedScreen(
   // eye runs down a list of dates rather than across a wall of pictures.
   const columns = mode === 'videos' ? columnsForWidth(width) : 1
 
-  // Both lists open on what has happened. A schedule of fixtures is the
-  // rarer question; what somebody opens the app for is the game just played.
-  const [when, setWhen] = useState<When>(initialWhen ?? 'past')
+  // Videos opens on what has happened. Schedule opens on what is coming,
+  // which is the question that tab is for.
+  const [when, setWhen] = useState<When>(
+    initialWhen ?? (mode === 'schedule' ? 'upcoming' : 'past')
+  )
+  // The shell can change the address — Back, or a sign-in next link — while
+  // this screen stays mounted. The pills and the list follow that address.
+  useEffect(() => {
+    if (initialWhen != null) setWhen(initialWhen)
+  }, [initialWhen])
   // The filter row slides into the header as it goes under, and still filters
   // from up there: it is the same component with the same handler, not a
   // second row that would drift the day a fourth filter is added. This screen

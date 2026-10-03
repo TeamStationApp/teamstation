@@ -120,10 +120,9 @@ export function parseRoute(path: string, search = ''): Route {
     case 'videos':
       return { name: 'videos', when: whenOf(query.get('when'), 'past') }
     case 'schedule':
-      // Past, like the videos list: both open on what has happened, and a
-      // schedule address that said `upcoming` put the filter back every time
-      // somebody followed one.
-      return { name: 'schedule', when: whenOf(query.get('when'), 'past') }
+      // Upcoming: a schedule is the question of what is still to come. An
+      // address that names past or all still opens on that filter.
+      return { name: 'schedule', when: whenOf(query.get('when'), 'upcoming') }
     case 'account':
       return { name: 'account' }
     case 'sign-in':
@@ -255,7 +254,7 @@ export function routePath(route: Route): string {
     case 'videos':
       return route.when === 'past' ? '/videos' : `/videos?when=${route.when}`
     case 'schedule':
-      return route.when === 'past'
+      return route.when === 'upcoming'
         ? '/schedule'
         : `/schedule?when=${route.when}`
     case 'account':

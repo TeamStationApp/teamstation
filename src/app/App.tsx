@@ -25,6 +25,12 @@ import {
 import { StandaloneField } from './field/StandaloneField'
 import { lstrings, sprintf } from './locales/strings'
 import { parseRoute, type Route, type When } from './navigation/routes'
+import {
+  filtersForRoute,
+  initialTabFilters,
+  type TabFilters,
+  withFilter
+} from './navigation/tabFilters'
 import { stacksAfterTabPress } from './navigation/tabPress'
 import {
   currentRoute,
@@ -223,12 +229,17 @@ function Shell(props: AppProps): React.ReactElement {
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.
   const [askedAboutSession, setAskedAboutSession] = useState(false)
-  // The chosen filter belongs to the shell, because the shell is what writes
-  // the address. Left in the screen, the rewrite stripped `?when=` the moment
-  // the screen mounted.
-  const [when, setWhen] = useState<When | undefined>(() =>
-    whenOf(currentRoute())
+  // Each list keeps its own filter. One value was how Videos, which opens on
+  // Past, left Schedule on Past the next time it was opened.
+  const [filters, setFilters] = useState<TabFilters>(() =>
+    initialTabFilters(currentRoute())
   )
+  const setVideosWhen = useCallback((next: When): void => {
+    setFilters(current => withFilter(current, 'videos', next))
+  }, [])
+  const setScheduleWhen = useCallback((next: When): void => {
+    setFilters(current => withFilter(current, 'schedule', next))
+  }, [])
   /**
    * The invite code in the address, if the app was opened on one.
    *
@@ -450,10 +461,13 @@ function Shell(props: AppProps): React.ReactElement {
     if (joining != null) return
     // Nor between a team or season link arriving and its screen being pushed.
     if (resolvingLink.current) return
-    showRoute(routeOf(tab, top, when), firstRender.current || inPlace.current)
+    showRoute(
+      routeOf(tab, top, filters),
+      firstRender.current || inPlace.current
+    )
     firstRender.current = false
     inPlace.current = false
-  }, [joining, session, tab, top, when])
+  }, [joining, session, tab, top, filters])
 
   const goToRoute = useCallback((route: Route): void => {
     setRoute(route)
@@ -464,6 +478,10 @@ function Shell(props: AppProps): React.ReactElement {
       ...current,
       [next]: stackFor(route)[next] ?? []
     }))
+    // The shell writes the address from these filters. Leaving them stale
+    // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
+    // would open Upcoming.
+    setFilters(current => filtersForRoute(current, route))
   }, [])
   useBrowserBack(goToRoute)
 
@@ -473,7 +491,7 @@ function Shell(props: AppProps): React.ReactElement {
     setStacks(current => stacksAfterTabPress(current, tab, next))
     if (session == null || props.fieldPreview === true) {
       if (next === tab) return
-      const destination = routeOf(next, undefined)
+      const destination = routeOf(next, undefined, filters)
       setRoute(destination)
       setJoining(undefined)
       showRoute(destination)
@@ -738,18 +756,20 @@ function Shell(props: AppProps): React.ReactElement {
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen
+          key="videos"
           client={client}
           mode="videos"
-          initialWhen={when}
-          onWhenChange={setWhen}
+          initialWhen={filters.videos}
+          onWhenChange={setVideosWhen}
           onOpenGame={openGame}
         />
       ) : (
         <GamesFeedScreen
+          key="schedule"
           client={client}
           mode="schedule"
-          initialWhen={when}
-          onWhenChange={setWhen}
+          initialWhen={filters.schedule}
+          onWhenChange={setScheduleWhen}
           onOpenGame={openGame}
         />
       )
@@ -1206,13 +1226,6 @@ function gameUnder(
   return { name: 'game', gameId, title: '', tab: section }
 }
 
-/** The filter an address asks for, if it asks for one. */
-function whenOf(route: Route): 'upcoming' | 'past' | 'all' | undefined {
-  return route.name === 'videos' || route.name === 'schedule'
-    ? route.when
-    : undefined
-}
-
 /** Which tab an address belongs to. */
 function tabOf(route: Route): NavTabId {
   if (route.name === 'videos') return 'videos'
@@ -1221,7 +1234,11 @@ function tabOf(route: Route): NavTabId {
 }
 
 /** The address of wherever the app currently is. */
-function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
+function routeOf(
+  tab: NavTabId,
+  top: Pushed | undefined,
+  filters: TabFilters
+): Route {
   if (top != null) {
     if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
     if (top.name === 'scoreGame' || top.name === 'scoreboardOverride') {
@@ -1278,8 +1295,8 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       zoom: top.zoom
     }
   }
-  if (tab === 'videos') return { name: 'videos', when: when ?? 'past' }
-  if (tab === 'schedule') return { name: 'schedule', when: when ?? 'past' }
+  if (tab === 'videos') return { name: 'videos', when: filters.videos }
+  if (tab === 'schedule') return { name: 'schedule', when: filters.schedule }
   return { name: 'home' }
 }
 

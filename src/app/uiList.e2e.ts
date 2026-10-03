@@ -141,6 +141,27 @@ async function open(path: string, size: Size): Promise<Page> {
       request.respond(cors(200, listed)).catch(() => undefined)
       return
     }
+    if (pathName === '/api/v1/seasons') {
+      request
+        .respond(
+          cors(200, [
+            {
+              id: 'sea_1',
+              leagueId: null,
+              name: 'Spring 2026',
+              year: 2026,
+              term: null,
+              ageGroup: null,
+              teams: 2,
+              games: 2,
+              videos: 0,
+              logoUrl: null
+            }
+          ])
+        )
+        .catch(() => undefined)
+      return
+    }
     request.respond(cors(200, [])).catch(() => undefined)
   })
   await page.goto(`${WEB}${path}`, { waitUntil: 'networkidle0' })
@@ -515,5 +536,188 @@ describe('list screens', function () {
       expect(place.belowMiddle).equals(true)
       await page.close()
     })
+
+    it(`Schedule filter at ${size.width}×${size.height}`, async function () {
+      listed = [
+        {
+          ...GAME,
+          id: 'gam_final',
+          status: 'final',
+          awayScore: 4,
+          homeScore: 0,
+          videoCount: 1,
+          isLive: false
+        },
+        {
+          ...GAME,
+          id: 'gam_now',
+          awayTeamName: 'Comets',
+          homeTeamName: 'Hawks',
+          status: 'inProgress',
+          awayScore: 2,
+          homeScore: 1,
+          videoCount: 0,
+          isLive: false
+        },
+        {
+          ...GAME,
+          id: 'gam_next',
+          awayTeamName: 'Rivals',
+          homeTeamName: 'Oaks',
+          startAt: '2026-10-20T23:00:00.000Z',
+          status: 'scheduled',
+          awayScore: null,
+          homeScore: null,
+          videoCount: 0,
+          isLive: false,
+          venue: null
+        }
+      ]
+      const page = await open('/schedule', size)
+      const strip = await until(
+        'the schedule filter',
+        async () => await whenStrip(page)
+      )
+      expect(strip.selected).equals('Upcoming')
+      expect(strip.upcoming).lessThan(strip.past)
+      expect(strip.past).lessThan(strip.all)
+      const upcomingRows = await until('the upcoming row', async () => {
+        const labels = await rowLabels(page)
+        if (!labels.some(label => label.includes('Rivals'))) return undefined
+        return labels
+      })
+      expect(upcomingRows.some(label => label.includes('Badgers'))).equals(
+        false
+      )
+      await pressLabel(page, 'Past')
+      const pastRows = await until('the past rows', async () => {
+        const labels = await rowLabels(page)
+        if (!labels.some(label => label.includes('Badgers'))) return undefined
+        if (labels.some(label => label.includes('Rivals'))) return undefined
+        return labels
+      })
+      expect(pastRows.some(label => label.includes('Comets'))).equals(true)
+      await page.close()
+
+      const round = await open('/videos', size)
+      await until('the videos list', async () => {
+        const ready = await round.evaluate(() => {
+          const text = document.body.textContent
+          if (text === null) return false
+          if (!text.includes('GAME VIDEOS')) return false
+          return document.querySelector('[aria-label="Upcoming"]') === null
+        })
+        if (!ready) return undefined
+        return true
+      })
+      await pressLabel(round, 'Schedule')
+      await until('schedule upcoming', async () => {
+        const read = await whenStrip(round)
+        if (read == null) return undefined
+        if (read.selected !== 'Upcoming') return undefined
+        return read
+      })
+      await pressLabel(round, 'Past')
+      await until('past selected', async () => {
+        const read = await whenStrip(round)
+        if (read == null) return undefined
+        if (read.selected !== 'Past') return undefined
+        return read
+      })
+      await pressLabel(round, 'Videos')
+      const videosAddress = await until('videos address', async () => {
+        const url = new URL(round.url())
+        if (url.pathname !== '/videos') return undefined
+        return url.pathname + url.search
+      })
+      expect(videosAddress).equals('/videos')
+      await pressLabel(round, 'Schedule')
+      const back = await until('schedule still past', async () => {
+        const read = await whenStrip(round)
+        if (read == null) return undefined
+        if (read.selected !== 'Past') return undefined
+        return read
+      })
+      expect(back.selected).equals('Past')
+      await round.close()
+
+      const season = await open('/seasons/sea_1', size)
+      const seasonStrip = await until('the season filter', async () => {
+        const read = await whenStrip(season)
+        if (read == null) return undefined
+        if (read.selected !== 'Past') return undefined
+        return read
+      })
+      expect(seasonStrip.past).lessThan(seasonStrip.upcoming)
+      await season.close()
+    })
   }
 })
+
+interface WhenStrip {
+  upcoming: number
+  past: number
+  all: number
+  selected: string
+}
+
+async function whenStrip(page: Page): Promise<WhenStrip | undefined> {
+  return await page.evaluate(() => {
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+    const leftOf = function (label: string): number | undefined {
+      const nodes = tabs.filter(function (item) {
+        return item.getAttribute('aria-label') === label
+      })
+      for (const node of nodes) {
+        const rect = node.getBoundingClientRect()
+        if (rect.width > 0) return rect.left
+      }
+      return undefined
+    }
+    const upcoming = leftOf('Upcoming')
+    const past = leftOf('Past')
+    const all = leftOf('All')
+    if (upcoming == null || past == null || all == null) return undefined
+    let selected = ''
+    for (const tab of tabs) {
+      if (tab.getAttribute('aria-selected') !== 'true') continue
+      const label = tab.getAttribute('aria-label')
+      if (label === 'Upcoming' || label === 'Past' || label === 'All') {
+        selected = label
+        break
+      }
+    }
+    if (selected === '') return undefined
+    return { upcoming, past, all, selected }
+  })
+}
+
+async function rowLabels(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('[role="button"]'))
+      .map(function (node) {
+        const label = node.getAttribute('aria-label')
+        if (label === null) return ''
+        return label
+      })
+      .filter(function (label) {
+        return label.includes(' @ ')
+      })
+  })
+}
+
+async function pressLabel(page: Page, label: string): Promise<void> {
+  const clicked = await page.evaluate(name => {
+    const found = Array.from(document.querySelectorAll('[role="tab"]')).find(
+      function (node) {
+        return node.getAttribute('aria-label') === name
+      }
+    )
+    if (found instanceof HTMLElement) {
+      found.click()
+      return true
+    }
+    return false
+  }, label)
+  expect(clicked, label).equals(true)
+}
