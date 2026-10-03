@@ -19,6 +19,7 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { chatRoutes } from '../routes/chat'
+import { chatEpochRoutes } from '../routes/chatEpochs'
 import { chatKeyRoutes } from '../routes/chatKeys'
 import { drainDirty } from './reconciler'
 
@@ -229,6 +230,10 @@ export async function openChatFixture(
   app.use(
     '/api/v1',
     chatKeyRoutes(db, () => fixture.now)
+  )
+  app.use(
+    '/api/v1',
+    chatEpochRoutes(db, () => fixture.now)
   )
   app.use(errorHandler)
   const server = app.listen(0, '127.0.0.1')

@@ -433,6 +433,20 @@ export async function moderatorsOf(
   return new Set((await survivors(db, raw)).values())
 }
 
+/**
+ * Whether `userId` approves history for a member whose identity was reset
+ * in this conversation: a moderator in `teamMembers`, `teamFans` and
+ * `seasonAnnouncements`, any member in every other kind.
+ */
+export async function isApprover(
+  db: Kysely<Database>,
+  conversation: { kind: ChatKind; scope_id: string | null },
+  userId: number
+): Promise<boolean> {
+  if (!MODERATED_APPROVALS.includes(conversation.kind)) return true
+  return (await moderatorsOf(db, conversation, [userId])).has(userId)
+}
+
 const ROLE_WORDS: Record<string, string> = {
   admin: 'Admin',
   coach: 'Coach',

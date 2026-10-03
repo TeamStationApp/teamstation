@@ -4112,6 +4112,143 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/chat/conversations/{conversationId}/epochs': {
+        get: {
+          summary: "A chat's epochs and the caller's boxes",
+          description:
+            'For members only. `{latest, needsRotation, noHolder, epochs, ' +
+            'boxes}`: `epochs` after `after` (0 for all), oldest first, each ' +
+            '`{epoch, createdByUserId, identityId, previousKeyBox, ' +
+            'chainBreak, signature, createdAt}`; `boxes` are the caller’s ' +
+            'epoch keys under their current identity, from epoch `after` on, ' +
+            'each `{epoch, identityId, pukGeneration, box, grantedByUserId}` ' +
+            '(HPKE `epoch`, or `grant` when `grantedByUserId` is set). Bytes ' +
+            'are base64url.',
+          security: [{ bearer: [] }],
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'after',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          responses: {
+            200: { description: 'The epochs and boxes' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Make the next epoch',
+          description:
+            'From a member’s linked device (403 `notHolder` otherwise): ' +
+            '`{epoch, previousKeyBox, signature, boxes: [{userId, ' +
+            'pukGeneration, box}]}`. `epoch` is the latest plus 1 (409 ' +
+            '`epochTaken` when somebody made it first; 400 `epochGap` past ' +
+            'it). Epoch 1 has no `previousKeyBox` and may come from any ' +
+            'eligible member. A later one needs a creator holding the latest ' +
+            'epoch and its `previousKeyBox` (403 `notHolder`), unless no ' +
+            'current member holds it: then any member with an identity makes ' +
+            'it with no `previousKeyBox`, as a chain break, which supersedes ' +
+            'every open grant request. The signature is the creator’s current ' +
+            'identity’s (400 `badSignature`). The boxes name exactly the ' +
+            'eligible members (at a chain break, every member with an ' +
+            'identity) at their current generations (400 `boxSet`). Clears ' +
+            '`needs_rotation`, fills the boxed members’ requests, opens ' +
+            'requests for the rest, notifies `epoch`. A closed chat is 409 ' +
+            '`closed`. Answers `{epoch, chainBreak, boxed, grantRequests}`. ' +
+            'Audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: keyBody({
+            epoch: { type: 'integer', minimum: 1 },
+            previousKeyBox: { ...b64, nullable: true },
+            signature: b64,
+            boxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  userId: { type: 'integer' },
+                  pukGeneration: { type: 'integer' },
+                  box: b64
+                }
+              }
+            }
+          }),
+          responses: {
+            201: { description: 'Made' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/grants': {
+        get: {
+          summary: 'Open grant requests in the caller’s chats',
+          description:
+            'Every open request of a current member in a chat the caller is ' +
+            'in, oldest first: `{id, conversationId, epoch, userId, ' +
+            'identityId, identityKey, pukGeneration, pukPublicKey, ' +
+            'pukSignature, identityReset, canApprove, openedAt}`. `epoch` is ' +
+            'the latest, the one to box; `identityReset` marks an identity ' +
+            'that replaced one the chat had seen, which only an approver ' +
+            '(`canApprove`) may fill; `canApprove` is false on the caller’s ' +
+            'own reset request.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'The requests' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        post: {
+          summary: 'Fill grant requests',
+          description:
+            'From a linked device (403 `notHolder`): `{boxes: [{conversationId, ' +
+            'epoch, userId, identityId, pukGeneration, box}]}`, 1 to 500 (400 ' +
+            'otherwise), each the latest epoch’s key boxed (HPKE `grant`) to ' +
+            'an open request. The caller must be a member holding the latest ' +
+            'epoch of each chat named (404, 403 `notHolder`) and an approver ' +
+            'for a reset identity other than their own (403 `notApprover`); ' +
+            'any refusal refuses the ' +
+            'whole batch. A box for an older epoch or a request no longer ' +
+            'open is skipped. Closes each request it fills and notifies ' +
+            '`grant`. Answers `{filled, skipped: [{conversationId, userId, ' +
+            'identityId, pukGeneration, reason}]}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            boxes: {
+              type: 'array',
+              maxItems: 500,
+              items: {
+                type: 'object',
+                properties: {
+                  conversationId: { type: 'string' },
+                  epoch: { type: 'integer' },
+                  userId: { type: 'integer' },
+                  identityId: { type: 'string' },
+                  pukGeneration: { type: 'integer' },
+                  box: b64
+                }
+              }
+            }
+          }),
+          responses: {
+            200: { description: 'Filled' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/players/{userId}/settings': {
         put: {
           summary: "Set a player's jersey, positions, bats and throws",
