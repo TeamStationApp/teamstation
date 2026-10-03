@@ -217,17 +217,24 @@ export function useDictation(options: UseDictationOptions): Dictation {
     }
     connect()
     const generation = ++openGeneration.current
-    ;(latest.current.openMicrophone ?? browserMicrophone)(pcm => {
-      if (holdingNow.current && utterance.current != null) {
-        send(pcm)
-        return
+    ;(latest.current.openMicrophone ?? browserMicrophone)(
+      pcm => {
+        if (holdingNow.current && utterance.current != null) {
+          send(pcm)
+          return
+        }
+        const now = Date.now()
+        recent.current = [
+          ...recent.current.filter(frame => now - frame.at < PRE_ROLL_MS),
+          { at: now, pcm }
+        ]
+      },
+      message => {
+        if (!live || generation !== openGeneration.current) return
+        setMessage(sprintf(lstrings.dictation_mic_unavailable, message))
+        setEnabledState(false)
       }
-      const now = Date.now()
-      recent.current = [
-        ...recent.current.filter(frame => now - frame.at < PRE_ROLL_MS),
-        { at: now, pcm }
-      ]
-    }).then(
+    ).then(
       opened => {
         // A newer open owns the one shared recorder. Stopping here would
         // silence that one.

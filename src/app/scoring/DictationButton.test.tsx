@@ -71,6 +71,7 @@ interface Harness {
   }>
   microphone: {
     pcm?: (pcm: ArrayBuffer) => void
+    fail?: (message: string) => void
     stopped: boolean
     opened: number
   }
@@ -116,8 +117,9 @@ function harness(
     // the tap, tail and linger tests set their own.
     tapMs: 0,
     tailMs: 0,
-    openMicrophone: async onPcm => {
+    openMicrophone: async (onPcm, onEnded) => {
       microphone.pcm = onPcm
+      microphone.fail = onEnded
       microphone.opened++
       return {
         stop: () => {
@@ -799,6 +801,19 @@ describe('the dictation control', function () {
     root = undefined
     expect(socket.closed).equals(true)
     expect(h.microphone.stopped).equals(true)
+  })
+
+  it('switches itself off when the microphone stops after it has started', async function () {
+    const h = harness()
+    await h.render()
+    await enable(h)
+    await act(async () => {
+      h.microphone.fail?.('the microphone stopped')
+    })
+    expect(text('Dictation message')).equals(
+      'The microphone is not available: the microphone stopped'
+    )
+    expect(find('Dictation')?.getAttribute('aria-pressed')).not.equal('true')
   })
 
   it('switches itself off when the microphone is refused', async function () {

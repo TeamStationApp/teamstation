@@ -177,7 +177,7 @@ describe('dictation on the phone', function () {
 
   it('forwards whole frames from the microphone and drops an empty chunk', async function () {
     const frames: ArrayBuffer[] = []
-    let listener: ((event: { pcm: string }) => void) | undefined
+    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
     let removed = 0
     let stopped = 0
     const module: PcmModule = {
@@ -208,6 +208,28 @@ describe('dictation on the phone', function () {
     expect(stopped).equals(1)
   })
 
+  it('reports a microphone that stops after it has started', async function () {
+    const ended: string[] = []
+    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
+    const module: PcmModule = {
+      async start() {},
+      stop() {},
+      onPcm(next) {
+        listener = next
+        return { remove() {} }
+      }
+    }
+    await makeOpenMicrophone(module)(
+      () => undefined,
+      message => {
+        ended.push(message)
+      }
+    )
+    listener?.({ error: 'the microphone stopped' })
+    listener?.({ pcm: '' })
+    expect(ended).deep.equals(['the microphone stopped'])
+  })
+
   it('unsubscribes when the microphone refuses to start', async function () {
     let removed = 0
     const module: PcmModule = {
@@ -236,7 +258,7 @@ describe('dictation on the phone', function () {
   it('loads the native module when no stand-in is passed', async function () {
     const nativeSpec = require.resolve('../walkup/NativeDictationMicrophone')
     const frames: ArrayBuffer[] = []
-    let listener: ((event: { pcm: string }) => void) | undefined
+    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
     let removed = 0
     const fake: PcmModule = {
       async start() {},

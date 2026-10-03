@@ -197,10 +197,17 @@ class DictationMicrophoneModule(reactContext: ReactApplicationContext) :
         val count = opened.read(buffer, 0, buffer.size)
         if (!running) break
         if (count < 0) {
-          // `start` has already resolved, and the module has no error event,
-          // so the scoring screen keeps an open microphone that will send
-          // nothing until dictation is switched off and on again.
+          // `start` has already resolved. The frame event carries the failure
+          // so the scoring screen can turn the microphone off.
           Log.w(TAG, "read $count")
+          val message = "the microphone stopped"
+          main.post {
+            try {
+              emitOnPcm(Arguments.createMap().apply { putString("error", message) })
+            } catch (error: Exception) {
+              Log.w(TAG, "No listener for PCM", error)
+            }
+          }
           break
         }
         if (count == 0) continue
