@@ -14,6 +14,7 @@ import { latestEpoch, lockConversation } from './epochs'
 import { type ChatCaller, requireHolder } from './keys'
 import { chatPeople, moderatorsOf } from './listing'
 import { notifyChat } from './membershipLog'
+import { memberNow } from './reconciler'
 import { titlesOf } from './titles'
 import { b64 } from './wire'
 
@@ -216,6 +217,37 @@ const refuse = (reason: string, message: string): Error =>
 function violates(error: unknown, constraint: string): boolean {
   const pgError = error as { code?: string; constraint?: string }
   return pgError?.code === '23505' && pgError.constraint === constraint
+}
+
+/**
+ * Where somebody stands for posting in a conversation now, by the rules a
+ * post is checked against that need no keys: a member of an open
+ * conversation who may post there (`poster`); a member who may not, because
+ * it is closed or they are an Announcements reader (`reader`); or somebody
+ * who is not a member at all, or a conversation that does not exist
+ * (`stranger`). Typing hints are for posters only.
+ */
+export type PostingStanding = 'poster' | 'reader' | 'stranger'
+
+export async function mayPost(
+  db: Kysely<Database>,
+  conversationId: string,
+  userId: number,
+  now: Date
+): Promise<PostingStanding> {
+  if (!(await memberNow(db, conversationId, userId, now))) return 'stranger'
+  const conversation = await db
+    .selectFrom('chat_conversations')
+    .select(['kind', 'scope_id', 'closed_at'])
+    .where('id', '=', conversationId)
+    .executeTakeFirstOrThrow()
+  if (conversation.closed_at != null) return 'reader'
+  if (
+    conversation.kind === 'seasonAnnouncements' &&
+    !(await moderatorsOf(db, conversation, [userId])).has(userId)
+  )
+    return 'reader'
+  return 'poster'
 }
 
 /**
