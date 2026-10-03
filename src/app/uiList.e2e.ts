@@ -141,6 +141,62 @@ async function open(path: string, size: Size): Promise<Page> {
       request.respond(cors(200, listed)).catch(() => undefined)
       return
     }
+    if (pathName === '/api/v1/games/gam_box') {
+      request
+        .respond(
+          cors(200, {
+            id: 'gam_box',
+            homeTeamId: 'home',
+            awayTeamId: 'away',
+            homeTeamName: 'Hawks',
+            awayTeamName: 'Owls',
+            seasonId: null,
+            startAt: null,
+            venue: null,
+            status: 'final',
+            homeScore: 0,
+            awayScore: 1,
+            ingestStatus: 'done',
+            ingestMessage: null,
+            videos: [],
+            linescore: {
+              away: { runs: [1], r: 1, h: 2, e: 0 },
+              home: { runs: [0], r: 0, h: 1, e: 0 }
+            }
+          })
+        )
+        .catch(() => undefined)
+      return
+    }
+    if (pathName === '/api/v1/games/gam_box/box-score') {
+      request
+        .respond(
+          cors(200, {
+            batting: [
+              {
+                userId: 1,
+                shortName: 'Alex',
+                teamId: 'away',
+                pa: 2,
+                ab: 2,
+                h: 1,
+                singles: 1,
+                doubles: 0,
+                triples: 0,
+                hr: 0,
+                bb: 0,
+                k: 1,
+                hbp: 0,
+                rbi: 1,
+                rates: { avg: 0.5, obp: 0.5, slg: 0.5, ops: 1 }
+              }
+            ],
+            pitching: []
+          })
+        )
+        .catch(() => undefined)
+      return
+    }
     if (pathName === '/api/v1/seasons') {
       request
         .respond(
@@ -650,6 +706,22 @@ describe('list screens', function () {
       })
       expect(seasonStrip.past).lessThan(seasonStrip.upcoming)
       await season.close()
+    })
+
+    it(`Box score at ${size.width}×${size.height}`, async function () {
+      const page = await open('/games/gam_box?tab=boxScore', size)
+      const text = await until('the box score', async () => {
+        const body = await page.evaluate(() => document.body.textContent)
+        if (body == null) return undefined
+        if (!body.includes('Alex')) return undefined
+        return body
+      })
+      expect(text).includes('Batting')
+      expect(text).not.includes('Pitching')
+      expect(text).not.includes('No individual lines')
+      expect(text).includes('Owls')
+      expect(text).includes('Hawks')
+      await page.close()
     })
   }
 })
