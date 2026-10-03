@@ -435,6 +435,93 @@ export interface ChatLinkApproval {
   pukBoxes: Array<{ generation: number; box: string }>
 }
 
+/** One epoch of a chat, from `GET /chat/conversations/:id/epochs`. */
+export const asChatEpoch = asObject({
+  epoch: asNumber,
+  createdByUserId: asUserId,
+  identityId: asString,
+  previousKeyBox: asNullable(asString),
+  chainBreak: asBoolean,
+  signature: asString,
+  createdAt: asString
+})
+export type ChatEpoch = ReturnType<typeof asChatEpoch>
+
+/** A chat's epochs after `after`, and the caller's boxes from `after` on. */
+export const asChatEpochs = asObject({
+  latest: asNumber,
+  needsRotation: asBoolean,
+  noHolder: asBoolean,
+  epochs: asArray(asChatEpoch),
+  boxes: asArray(
+    asObject({
+      epoch: asNumber,
+      identityId: asString,
+      pukGeneration: asNumber,
+      box: asString,
+      grantedByUserId: asNullable(asUserId)
+    })
+  )
+})
+export type ChatEpochs = ReturnType<typeof asChatEpochs>
+
+/** Epoch n+1, signed, boxed to the eligible members. Bytes are base64url. */
+export interface ChatEpochPublication {
+  epoch: number
+  previousKeyBox: string | null
+  signature: string
+  boxes: Array<{ userId: number; pukGeneration: number; box: string }>
+}
+
+export const asChatEpochMade = asObject({
+  epoch: asNumber,
+  chainBreak: asBoolean,
+  boxed: asNumber,
+  grantRequests: asNumber
+})
+export type ChatEpochMade = ReturnType<typeof asChatEpochMade>
+
+/** An open grant request, from `GET /chat/grants`. */
+export const asChatGrantRequest = asObject({
+  id: asNumber,
+  conversationId: asString,
+  epoch: asNumber,
+  userId: asUserId,
+  identityId: asString,
+  identityKey: asString,
+  pukGeneration: asNumber,
+  pukPublicKey: asString,
+  pukSignature: asString,
+  identityReset: asBoolean,
+  canApprove: asBoolean,
+  openedAt: asString
+})
+export type ChatGrantRequest = ReturnType<typeof asChatGrantRequest>
+
+/** One box filling a grant request: the latest epoch's key (HPKE `grant`). */
+export interface ChatGrantBox {
+  conversationId: string
+  epoch: number
+  userId: number
+  identityId: string
+  pukGeneration: number
+  box: string
+}
+
+export const asChatGrantsPosted = asObject({
+  filled: asNumber,
+  skipped: asArray(
+    asObject({
+      conversationId: asString,
+      userId: asUserId,
+      identityId: asString,
+      pukGeneration: asNumber,
+      reason: asLiteral('notOpen', 'staleEpoch')
+    })
+  )
+})
+export type ChatGrantsPosted = ReturnType<typeof asChatGrantsPosted>
+
 export const asGameSummary = asObject({
   id: asString,
   homeTeamId: asString,
@@ -3181,6 +3268,44 @@ export class TeamStationClient {
       asChatLink,
       approval
     )
+  }
+
+  /** A chat's epochs after `after` (0 for all), and the caller's boxes. */
+  async chatEpochs(conversationId: string, after = 0): Promise<ChatEpochs> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/epochs?after=${encodeURIComponent(after)}`,
+      asChatEpochs
+    )
+  }
+
+  /** Makes a chat's next epoch from this (linked) device. */
+  async postChatEpoch(
+    conversationId: string,
+    epoch: ChatEpochPublication
+  ): Promise<ChatEpochMade> {
+    return await this.request(
+      'POST',
+      `${chatPath(conversationId)}/epochs`,
+      asChatEpochMade,
+      epoch
+    )
+  }
+
+  /** The open grant requests in the caller's chats. */
+  async chatGrants(): Promise<ChatGrantRequest[]> {
+    return await this.request(
+      'GET',
+      '/chat/grants',
+      asArray(asChatGrantRequest)
+    )
+  }
+
+  /** Fills grant requests, at most 500 boxes at once. */
+  async postChatGrants(boxes: ChatGrantBox[]): Promise<ChatGrantsPosted> {
+    return await this.request('POST', '/chat/grants', asChatGrantsPosted, {
+      boxes
+    })
   }
 
   /** One person: their picture, their name, their handedness, their teams. */
