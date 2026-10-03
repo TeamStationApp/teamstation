@@ -41,6 +41,7 @@ import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { chatRoutes } from './routes/chat'
+import { chatEpochRoutes } from './routes/chatEpochs'
 import { chatKeyRoutes } from './routes/chatKeys'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
@@ -490,6 +491,7 @@ function runWorker(): void {
   app.use('/api/v1', followRoutes(db, mediaContext))
   app.use('/api/v1', chatRoutes(db, mediaContext))
   app.use('/api/v1', chatKeyRoutes(db))
+  app.use('/api/v1', chatEpochRoutes(db))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
