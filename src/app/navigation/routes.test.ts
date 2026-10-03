@@ -226,11 +226,20 @@ describe('addresses', function () {
     expect(parseRoute('/teams')).deep.equals({ name: 'home' })
   })
 
-  it('opens a schedule on what has happened, like the videos list', function () {
+  it('opens a schedule on what is coming', function () {
     expect(parseRoute('/schedule')).deep.equals({
       name: 'schedule',
-      when: 'past'
+      when: 'upcoming'
     })
+    expect(routePath({ name: 'schedule', when: 'upcoming' })).equals(
+      '/schedule'
+    )
+    expect(routePath({ name: 'schedule', when: 'past' })).equals(
+      '/schedule?when=past'
+    )
+    expect(routePath({ name: 'schedule', when: 'all' })).equals(
+      '/schedule?when=all'
+    )
   })
 
   it('keeps a filter that was asked for', function () {
@@ -248,6 +257,10 @@ describe('addresses', function () {
     expect(parseRoute('/videos', 'when=sideways')).deep.equals({
       name: 'videos',
       when: 'past'
+    })
+    expect(parseRoute('/schedule', 'when=sideways')).deep.equals({
+      name: 'schedule',
+      when: 'upcoming'
     })
   })
 })

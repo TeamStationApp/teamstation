@@ -4,7 +4,12 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import { asBattingRow, TeamStationClient } from '../../common/api'
+import {
+  asBattingRow,
+  asPitchingRow,
+  type PitchingRow,
+  TeamStationClient
+} from '../../common/api'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -41,7 +46,24 @@ function pinned(container: HTMLElement, text: string): HTMLElement[] {
   )
 }
 
-async function boxScore(): Promise<HTMLElement> {
+const BLAIR = asPitchingRow({
+  userId: 2,
+  shortName: 'Blair',
+  teamId: 'away',
+  ip: '5.0',
+  outs: 15,
+  bf: 20,
+  h: 4,
+  hr: 0,
+  hbp: 0,
+  r: 1,
+  er: 1,
+  bb: 1,
+  k: 6,
+  rates: {}
+})
+
+async function boxScore(pitching: PitchingRow[] = []): Promise<HTMLElement> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({
     ...gameFixture,
@@ -72,7 +94,7 @@ async function boxScore(): Promise<HTMLElement> {
         rates: { avg: 0.5, obp: 0.5, slg: 0.5, ops: 1 }
       })
     ],
-    pitching: []
+    pitching
   })
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -116,5 +138,29 @@ describe('the box score', function () {
     expect(getComputedStyle(alex).backgroundColor).equals(
       rgb(tsBallpark.backgroundColor)
     )
+  })
+
+  it('omits a table with no lines and keeps the batting that has them', async function () {
+    this.timeout(10000)
+    const container = await boxScore()
+    const text = container.textContent ?? ''
+    expect(text).includes('Batting — Owls')
+    expect(text).includes('Alex')
+    expect(text).not.includes('Pitching')
+    expect(text).not.includes('No individual lines')
+    expect(text).not.includes('Batting — Hawks')
+    expect(text).includes('Hawks')
+  })
+
+  it('keeps pitching when that side has a line, and still omits the empty side', async function () {
+    this.timeout(10000)
+    const container = await boxScore([BLAIR])
+    const text = container.textContent ?? ''
+    expect(text).includes('Batting — Owls')
+    expect(text).includes('Pitching — Owls')
+    expect(text).includes('Blair')
+    expect(text).not.includes('Pitching — Hawks')
+    expect(text).not.includes('Batting — Hawks')
+    expect(text).not.includes('No individual lines')
   })
 })

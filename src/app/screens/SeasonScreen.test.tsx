@@ -11,7 +11,7 @@ import type {
   TeamSummary
 } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { shortDate, shortDateNoWeekday } from './format'
+import { scheduleDate } from './format'
 import { SeasonScreen } from './SeasonScreen'
 import type { When } from './whenFilter'
 
@@ -451,18 +451,25 @@ describe('the season screen', function () {
     // Nothing to correct: no tab was asked for.
     expect(calls.tabs).deep.equals([])
     expect(text()).includes('2 games')
-    // The live game is newest, so it is first, and says it is live rather
-    // than giving a score that is still changing.
+    // Newest first. A camera publishing on a finished game is the score,
+    // not a LIVE pill, and the row carries the date instead of a thumbnail.
     const rows = gameRows()
+    const liveDate = scheduleDate(LIVE.startAt)
+    const playedDate = scheduleDate(PLAYED.startAt)
     expect(rows).has.lengthOf(2)
     expect(rows[0]).includes('Rivals @ Comets')
-    expect(rows[0]).includes('1 video')
+    expect(rows[0]).includes(liveDate.when)
     expect(rows[1]).includes('AAA Hawks @ Black Sox')
-    expect(rows[1]).includes('2 videos')
-    expect(text()).includes('live')
+    expect(rows[1]).includes(playedDate.when)
+    expect(text()).includes(liveDate.month)
+    expect(text()).includes(liveDate.day)
+    expect(text()).includes('1–0')
     expect(text()).includes('7–4')
-    expect(text()).includes('1:30:00')
     expect(text()).includes('Field 3')
+    expect(text()).not.includes('1 video')
+    expect(text()).not.includes('2 videos')
+    expect(text()).not.includes('1:30:00')
+    expect(text()).not.includes('LIVE')
     expect(text()).not.includes('Comets @ AAA Hawks')
   })
 
@@ -521,13 +528,13 @@ describe('the season screen', function () {
 
   it('drops the weekday from a game’s date on a phone, and keeps it wider', async function () {
     await mount({ games: async () => [PLAYED] })
-    const phone = gameRows()[0]
-    expect(phone).includes(shortDateNoWeekday(PLAYED.startAt))
-    expect(phone).not.includes(shortDate(PLAYED.startAt))
+    const when = scheduleDate(PLAYED.startAt).when
+    expect(gameRows()[0]).includes(when)
+    expect(text()).includes(when)
 
     await setWidth(1200)
-    const wide = gameRows()[0]
-    expect(wide).includes(shortDate(PLAYED.startAt))
+    expect(gameRows()[0]).includes(when)
+    expect(text()).includes(when)
   })
 
   it('switches to the teams, with each record or short name, and opens one', async function () {

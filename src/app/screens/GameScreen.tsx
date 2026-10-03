@@ -1274,7 +1274,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                     team: everybody else is answered `404` and sees nothing
                     here at all.
                   */}
-                  <StreamPanel client={client} gameId={gameId} />
+                  <StreamPanel key={gameId} client={client} gameId={gameId} />
                 </>
               }
               layout={layout}
@@ -1341,11 +1341,8 @@ interface BoxScoreProps {
  * is no room for two columns, so the four tables run one under another, home
  * first, which is a scroll rather than four decisions.
  *
- * A side whose players were never imported has no lines to show. That is
- * common: an opponent invented from a name on somebody else's schedule has no
- * roster here, and its plays name nobody. The totals from the plays are still
- * true, so the line score above stands, and the table says plainly why it is
- * empty rather than showing nothing at all.
+ * A side with no batting lines, or no pitching lines, leaves that section
+ * out. The totals are still in the line score above.
  */
 function BoxScore(props: BoxScoreProps): React.ReactElement {
   const { game, box, theme, sideBySide, onOpenPlayer } = props
@@ -1555,8 +1552,9 @@ function BattingTable(props: {
   rows: BattingRow[]
   theme: Theme
   onOpenPlayer?: (userId: number, name: string) => void
-}): React.ReactElement {
+}): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
+  if (rows.length === 0) return null
   const styles = getStyles(theme)
   // Best day first, which is who somebody is looking for.
   const lines = [...rows].sort((a, b) =>
@@ -1567,46 +1565,42 @@ function BattingTable(props: {
       <Text style={styles.heading}>
         {lstrings.game_batting} — {name}
       </Text>
-      {lines.length === 0 ? (
-        <Text style={styles.message}>{lstrings.box_no_roster}</Text>
-      ) : (
-        <WideTable>
-          <View style={[styles.tableRow, styles.tableHead]}>
-            <Text style={[styles.cellName, styles.cellHead]}>
-              {lstrings.stats_player}
+      <WideTable>
+        <View style={[styles.tableRow, styles.tableHead]}>
+          <Text style={[styles.cellName, styles.cellHead]}>
+            {lstrings.stats_player}
+          </Text>
+          {battingColumns.map(column => (
+            <Text
+              key={column.label}
+              style={[
+                styles.cell,
+                styles.cellHead,
+                column.wide === true && styles.cellWide
+              ]}
+              numberOfLines={1}
+            >
+              {column.label}
             </Text>
-            {battingColumns.map(column => (
-              <Text
-                key={column.label}
-                style={[
-                  styles.cell,
-                  styles.cellHead,
-                  column.wide === true && styles.cellWide
-                ]}
-                numberOfLines={1}
-              >
-                {column.label}
-              </Text>
-            ))}
-          </View>
-          {lines.map(line => (
-            <StatRow
-              key={line.userId}
-              name={line.shortName ?? ''}
-              cells={battingColumns.map(column => column.value(line))}
-              wide={battingColumns.map(column => column.wide === true)}
-              theme={theme}
-              onPress={
-                onOpenPlayer == null
-                  ? undefined
-                  : () => {
-                      onOpenPlayer(line.userId, line.shortName ?? '')
-                    }
-              }
-            />
           ))}
-        </WideTable>
-      )}
+        </View>
+        {lines.map(line => (
+          <StatRow
+            key={line.userId}
+            name={line.shortName ?? ''}
+            cells={battingColumns.map(column => column.value(line))}
+            wide={battingColumns.map(column => column.wide === true)}
+            theme={theme}
+            onPress={
+              onOpenPlayer == null
+                ? undefined
+                : () => {
+                    onOpenPlayer(line.userId, line.shortName ?? '')
+                  }
+            }
+          />
+        ))}
+      </WideTable>
     </View>
   )
 }
@@ -1616,45 +1610,42 @@ function PitchingTable(props: {
   rows: PitchingRow[]
   theme: Theme
   onOpenPlayer?: (userId: number, name: string) => void
-}): React.ReactElement {
+}): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
+  if (rows.length === 0) return null
   const styles = getStyles(theme)
   return (
     <View style={styles.table}>
       <Text style={styles.heading}>
         {lstrings.game_pitching} — {name}
       </Text>
-      {rows.length === 0 ? (
-        <Text style={styles.message}>{lstrings.box_no_roster}</Text>
-      ) : (
-        <WideTable>
-          <View style={[styles.tableRow, styles.tableHead]}>
-            <Text style={[styles.cellName, styles.cellHead]}>
-              {lstrings.stats_player}
+      <WideTable>
+        <View style={[styles.tableRow, styles.tableHead]}>
+          <Text style={[styles.cellName, styles.cellHead]}>
+            {lstrings.stats_player}
+          </Text>
+          {pitchingColumns.map(column => (
+            <Text key={column.label} style={[styles.cell, styles.cellHead]}>
+              {column.label}
             </Text>
-            {pitchingColumns.map(column => (
-              <Text key={column.label} style={[styles.cell, styles.cellHead]}>
-                {column.label}
-              </Text>
-            ))}
-          </View>
-          {rows.map(line => (
-            <StatRow
-              key={line.userId}
-              name={line.shortName ?? ''}
-              cells={pitchingColumns.map(column => column.value(line))}
-              theme={theme}
-              onPress={
-                onOpenPlayer == null
-                  ? undefined
-                  : () => {
-                      onOpenPlayer(line.userId, line.shortName ?? '')
-                    }
-              }
-            />
           ))}
-        </WideTable>
-      )}
+        </View>
+        {rows.map(line => (
+          <StatRow
+            key={line.userId}
+            name={line.shortName ?? ''}
+            cells={pitchingColumns.map(column => column.value(line))}
+            theme={theme}
+            onPress={
+              onOpenPlayer == null
+                ? undefined
+                : () => {
+                    onOpenPlayer(line.userId, line.shortName ?? '')
+                  }
+            }
+          />
+        ))}
+      </WideTable>
     </View>
   )
 }

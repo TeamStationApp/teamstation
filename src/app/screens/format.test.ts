@@ -6,6 +6,7 @@ import {
   gameStatusLine,
   matchupLines,
   resultFor,
+  scheduleDate,
   winnerOf
 } from './format'
 
@@ -101,5 +102,41 @@ describe('a date on a record', function () {
     // Never signed in is a fact, not a date to be confirmed.
     expect(calendarDate(null)).equals('\u2014')
     expect(calendarDate('not a date')).equals('\u2014')
+  })
+})
+
+describe('a date on a schedule row', function () {
+  const iso = '2026-10-04T23:45:00.000Z'
+  const when = new Date(iso)
+
+  it('uses en-US for the month, the day, and the weekday and time', function () {
+    const written = scheduleDate(iso)
+    expect(written.month).equals(
+      when.toLocaleDateString('en-US', { month: 'short' })
+    )
+    expect(written.day).equals(
+      when.toLocaleDateString('en-US', { day: '2-digit' })
+    )
+    expect(written.day).matches(/^\d{2}$/)
+    expect(written.when).equals(
+      `${when.toLocaleDateString('en-US', { weekday: 'short' })} \u00b7 ${when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+    )
+    expect(written.when).matches(/AM|PM/)
+    expect(written.month).not.equals(
+      when.toLocaleDateString('fr-FR', { month: 'short' })
+    )
+  })
+
+  it('says nothing it does not know', function () {
+    expect(scheduleDate(null)).deep.equals({
+      month: '\u2014',
+      day: '',
+      when: ''
+    })
+    expect(scheduleDate('not a date')).deep.equals({
+      month: '\u2014',
+      day: '',
+      when: ''
+    })
   })
 })

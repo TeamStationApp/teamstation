@@ -12,25 +12,18 @@ import {
   Badge,
   Card,
   Emblem,
-  GameRow,
   initialsOf,
   ListRow,
   ManageGear,
   PillTabs,
+  ScheduleRow,
   Screen,
   SectionHeader,
-  StatGrid,
-  useBreakpoint
+  StatGrid
 } from '../components'
-import { gameCountLabel, videoCountLabel } from '../locales/strings'
+import { gameCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import {
-  clock,
-  matchupLines,
-  shortDate,
-  shortDateNoWeekday,
-  shortTime
-} from './format'
+import { matchupLines } from './format'
 import { gamesFor, type When } from './whenFilter'
 
 export interface SeasonScreenProps {
@@ -102,7 +95,6 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
     onManage
   } = props
   const styles = getStyles(useTheme())
-  const narrow = useBreakpoint() === 'phone'
 
   const [tab, setTab] = useState<TabId>(tabOf(initialTab))
   const [when, setWhen] = useState<When>(initialWhen ?? 'past')
@@ -231,38 +223,18 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
           ) : (
             shown.map(game => {
               const lines = matchupLines(game)
-              const detail = [
-                narrow
-                  ? shortDateNoWeekday(game.startAt)
-                  : shortDate(game.startAt),
-                shortTime(game.startAt),
-                videoCountLabel(game.videoCount)
-              ]
-                .filter(part => part !== '')
-                .join(' · ')
               return (
                 <Card key={game.id}>
-                  <GameRow
+                  <ScheduleRow
                     first={lines.first}
                     second={lines.second}
-                    detail={detail}
+                    startAt={game.startAt}
                     venue={game.venue}
-                    posterUrl={game.posterUrl}
-                    length={
-                      game.durationSec == null
-                        ? undefined
-                        : clock(game.durationSec)
-                    }
-                    // A game being played now says so instead of showing a
-                    // score that is still changing.
-                    badgeLabel={
-                      game.isLive
-                        ? 'live'
-                        : game.awayScore == null
-                          ? undefined
-                          : `${game.awayScore}–${game.homeScore}`
-                    }
-                    badgeTone={game.isLive ? 'live' : 'neutral'}
+                    status={game.status}
+                    awayScore={game.awayScore}
+                    homeScore={game.homeScore}
+                    isLive={game.isLive}
+                    videoCount={game.videoCount}
                     onPress={() => {
                       onOpenGame(game.id, `${lines.first} ${lines.second}`, {
                         autoPlay: game.videoCount > 0
