@@ -4233,6 +4233,169 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/chat/conversations/{conversationId}/messages': {
+        get: {
+          summary: "A chat's messages",
+          description:
+            'For members only, oldest first: the first `limit` (default ' +
+            '100, at most 500) with `seq` after `after`, or, given only ' +
+            '`before`, the last `limit` before it. Each is `{id, ' +
+            'conversationId, seq, epoch, senderUserId, senderIdentityId, ' +
+            'kind, targetIds, nonce, ciphertext, signature, attachmentIds, ' +
+            'clearedAt, createdAt}`; a cleared message has an empty ' +
+            '`ciphertext`. Bytes are base64url.',
+          security: [{ bearer: [] }],
+          parameters: [
+            conversationIdParam,
+            ...['after', 'before', 'limit'].map(name => ({
+              name,
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 0 }
+            }))
+          ],
+          responses: {
+            200: { description: 'The messages' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Post a message',
+          description:
+            'From a member’s linked device (403 `notHolder`): `{id, epoch, ' +
+            'kind, senderIdentityId, targetIds?, attachmentIds?, nonce, ' +
+            'ciphertext, signature}`. `id` is the client’s `msg_` id: a ' +
+            'repeat by the same sender in the same chat answers 200 with the ' +
+            'stored row, the id anywhere else is 409 `idTaken`. `kind` is ' +
+            '`post`, `reaction`, `edit`, `delete` or `moderatorDelete`; ' +
+            '`targetIds` come with the two deletes and nothing else, ' +
+            '`attachmentIds` (completed uploads by the sender in this chat, ' +
+            '400 `attachment`) with posts only (400 otherwise). The ' +
+            'ciphertext is at most 64 KiB. 409: `closed`, `staleIdentity` ' +
+            '(not the sender’s current identity), `staleEpoch` (not the ' +
+            'latest epoch), `locked` (no box for it). In Announcements only ' +
+            'season staff post, edit and delete (403 `notStaff`); anybody ' +
+            'reacts. `delete` targets the sender’s own messages (403 ' +
+            '`notYours`), `moderatorDelete` needs a moderator (403 ' +
+            '`notModerator`); targets are posts, edits or reactions in this ' +
+            'chat (400 `target`). Both clear their targets and delete the ' +
+            'attachments only those referenced. The signature is the ' +
+            'sender identity’s (400 `badSignature`). Notifies `message` with ' +
+            'the `seq`. Answers 201 with the message. Not audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: keyBody({
+            id: { type: 'string', pattern: '^msg_[a-z2-7]{26}$' },
+            epoch: { type: 'integer', minimum: 1 },
+            kind: {
+              type: 'string',
+              enum: ['post', 'reaction', 'edit', 'delete', 'moderatorDelete']
+            },
+            senderIdentityId: { type: 'string' },
+            nonce: b64,
+            ciphertext: b64,
+            signature: b64
+          }),
+          responses: {
+            200: { description: 'The stored message, for a repeat' },
+            201: { description: 'Posted' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/read': {
+        put: {
+          summary: 'Move the read cursor',
+          description:
+            'For members only: `{seq}`, at most the chat’s last `seq` (400 ' +
+            '`seq`). The cursor never moves back; a move notifies `read`. ' +
+            'Answers `{seq}` as the cursor stands. Not audited.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: keyBody({ seq: { type: 'integer', minimum: 0 } }),
+          responses: {
+            200: { description: 'The cursor' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/reports': {
+        post: {
+          summary: 'Report a message',
+          description:
+            'By a member of its chat (404 otherwise): `{messageId, ' +
+            'plaintext, messageKey}`, the message’s own key (base64url, 32 ' +
+            'bytes), never the epoch’s. The server copies the message into ' +
+            'the report and stores it `verified` when the sender’s signature ' +
+            'holds and opening the ciphertext with the key gives exactly the ' +
+            'plaintext. A deleted message is 409 `cleared`. Answers 201 ' +
+            '`{id, verified}`. Audited.',
+          security: [{ bearer: [] }],
+          requestBody: keyBody({
+            messageId: { type: 'string' },
+            plaintext: { type: 'string' },
+            messageKey: b64
+          }),
+          responses: {
+            201: { description: 'Reported' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/admin/chat/reports': {
+        get: {
+          summary: 'Reported messages',
+          description:
+            'Site administrators only. Newest first, at most 500; only the ' +
+            'unresolved with `open=true`. Each is `{id, conversation: {id, ' +
+            'kind, title}, messageId, reporter: {userId, shortName}, sender: ' +
+            '{userId, shortName}, kind, sentAt, plaintext, verified, ' +
+            'createdAt, resolvedAt}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'open',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean' }
+            }
+          ],
+          responses: {
+            200: { description: 'The reports' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/admin/chat/reports/{reportId}/resolve': {
+        put: {
+          summary: 'Resolve a report',
+          description:
+            'Site administrators only. Marks the report resolved (once) and ' +
+            'answers it as the list shows it. Audited.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('reportId')],
+          responses: {
+            200: { description: 'The report' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/players/{userId}/settings': {
         put: {
           summary: "Set a player's jersey, positions, bats and throws",

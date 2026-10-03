@@ -19,6 +19,7 @@ import { authRoutes } from './routes/auth'
 import { chatRoutes } from './routes/chat'
 import { chatEpochRoutes } from './routes/chatEpochs'
 import { chatKeyRoutes } from './routes/chatKeys'
+import { chatMessageRoutes } from './routes/chatMessages'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
@@ -149,6 +150,7 @@ describe('the API document', function () {
       ...routesOf(chatRoutes(db, media)),
       ...routesOf(chatKeyRoutes(db)),
       ...routesOf(chatEpochRoutes(db)),
+      ...routesOf(chatMessageRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
@@ -196,6 +198,7 @@ describe('the API document', function () {
       ...routesOf(chatRoutes(db, media)),
       ...routesOf(chatKeyRoutes(db)),
       ...routesOf(chatEpochRoutes(db)),
+      ...routesOf(chatMessageRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
