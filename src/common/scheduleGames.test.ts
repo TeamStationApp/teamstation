@@ -59,6 +59,21 @@ describe('schedule rows', function () {
     })
   })
 
+  it('cleans an opponent’s external id, kind and all', function () {
+    expect(
+      asScheduleGameRow({
+        startAt: START,
+        opponent: {
+          name: ' Rattlers ',
+          externalId: { system: 'otherLeague', kind: 'opponent', id: 'r-1' }
+        }
+      }).opponent
+    ).deep.equals({
+      name: 'Rattlers',
+      externalId: { system: 'otherLeague', kind: 'opponent', id: 'r-1' }
+    })
+  })
+
   it('defaults an external id kind to event', function () {
     expect(
       asScheduleGameRow({
@@ -85,6 +100,57 @@ describe('schedule rows', function () {
       [
         { startAt: START, opponent: { name: 'x'.repeat(121) } },
         'opponent.name'
+      ],
+      [
+        {
+          startAt: START,
+          opponent: {
+            teamId: 't',
+            externalId: { system: 'o', kind: 'opponent', id: 'x' }
+          }
+        },
+        'opponent.externalId'
+      ],
+      [
+        { startAt: START, opponent: { name: 'n', externalId: 'x' } },
+        'opponent.externalId'
+      ],
+      [
+        {
+          startAt: START,
+          opponent: {
+            name: 'n',
+            externalId: { system: 'Other', kind: 'opponent', id: 'x' }
+          }
+        },
+        'opponent.externalId.system'
+      ],
+      [
+        {
+          startAt: START,
+          opponent: { name: 'n', externalId: { system: 'o', id: 'x' } }
+        },
+        'opponent.externalId.kind'
+      ],
+      [
+        {
+          startAt: START,
+          opponent: {
+            name: 'n',
+            externalId: { system: 'o', kind: '', id: 'x' }
+          }
+        },
+        'opponent.externalId.kind'
+      ],
+      [
+        {
+          startAt: START,
+          opponent: {
+            name: 'n',
+            externalId: { system: 'o', kind: 'opponent', id: '' }
+          }
+        },
+        'opponent.externalId.id'
       ],
       [{ startAt: START, seasonId: '' }, 'seasonId'],
       [{ startAt: START, venue: 'v'.repeat(201) }, 'venue'],

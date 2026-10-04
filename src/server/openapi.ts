@@ -1588,9 +1588,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'neither see nor administer gets 404. A season or league admin ' +
             'may only schedule into a season they administer: a row into ' +
             'another season is `forbidden`.\n\n' +
-            '**A row:** `opponent` (`{teamId}` or `{name}`, 1-120 characters) ' +
-            'and `side` (`home` or `away`, the side this team plays on) are ' +
-            'needed to create a game and ignored for a matched one. ' +
+            '**A row:** `opponent` (`{teamId}`, or `{name, externalId?}` with ' +
+            'a name of 1-120 characters) and `side` (`home` or `away`, the ' +
+            'side this team plays on) are needed to create a game. On a ' +
+            'matched one, `opponent` lends only its `externalId` and `side` ' +
+            'may swap the sides (below). ' +
             '`startAt` is required, an ISO 8601 date-time with `Z` or an ' +
             'offset. `seasonId` is optional and must be a season the team is ' +
             "in; without it the season whose dates hold the game's UTC day " +
@@ -1607,13 +1609,34 @@ export function openApiDocument(version: string): OpenApiDocument {
             'that system and id (of any kind) is matched: an `inProgress` or ' +
             '`final` game is left as it is; a `scheduled` or `cancelled` one ' +
             "takes the row's time, venue, status and fence distance, and " +
-            'is `updated` when any of them changed. Teams, season and ' +
-            'scores never change. Without a match, a game in the same season ' +
+            'is `updated` when any of them changed. When the row gives a ' +
+            '`side` other than the one this team plays on, the other team is ' +
+            'an external one and the game has no plays (none stored and no ' +
+            'at-bat under way), its home and away teams swap, their scores ' +
+            'with them, and the row is `updated`. A game with plays, or ' +
+            'between two full teams, keeps its sides, and the row is ' +
+            'answered by its other fields. The season never changes, and a ' +
+            'game matched by time rather than by id keeps its sides. ' +
+            'Without a match, a game in the same season ' +
             'between the same two teams at the same time takes the id. ' +
             'Otherwise the row creates a game. A row without `externalId` ' +
             'always creates one. An opponent named by `name` is a team of the ' +
             'season with that name or coach, else an external team of that ' +
             'name, else a new external team.\n\n' +
+            "**An opponent's id:** `opponent.externalId` is `{system, kind, " +
+            'id}`, `system` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` and ' +
+            '`id` non-empty, the id another system has for the opponent. A ' +
+            'team already holding it (an external or a full one, followed ' +
+            'through merges) is the opponent, whatever the name says. ' +
+            'Otherwise the opponent is found by name, and an external team ' +
+            'found or made that way takes the id when nothing holds it. On a ' +
+            "matched game, the game's opponent takes the id when it is an " +
+            "external team, the row's `name` finds it by that same rule, and " +
+            "nothing holds the id; the game's opponent never changes. A full " +
+            'team never takes an id here, and an id something already holds ' +
+            'never moves, except one left on a team that no longer exists, ' +
+            'which the team found takes over. Recording an opponent id alone ' +
+            'leaves the row `unchanged`: the answer describes the game.\n\n' +
             '**Answers:** `result` is `created`, `updated`, `unchanged` or ' +
             "`error`, with `gameId` and the game's `status` after the row. " +
             'Error codes: `invalid`, `notFound`, `conflict`, `noSeason`, ' +
@@ -1651,6 +1674,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                                     type: 'string',
                                     minLength: 1,
                                     maxLength: 120
+                                  },
+                                  externalId: {
+                                    type: 'object',
+                                    required: ['system', 'kind', 'id'],
+                                    properties: {
+                                      system: {
+                                        type: 'string',
+                                        pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                                      },
+                                      kind: { type: 'string', minLength: 1 },
+                                      id: { type: 'string', minLength: 1 }
+                                    }
                                   }
                                 }
                               }
