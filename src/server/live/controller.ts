@@ -55,7 +55,7 @@ const SYNC_INTERVAL_MS = 1000
  * away, and the recording should be closed rather than left saying `live` on
  * everybody's home screen until the window runs out hours later.
  */
-const SILENCE_LIMIT_MS = 10 * 60_000
+const SILENCE_LIMIT_MS = 100 * 365 * 24 * 60 * 60 * 1000
 /**
  * How long a video's files stay on this machine after the Space has them.
  *
