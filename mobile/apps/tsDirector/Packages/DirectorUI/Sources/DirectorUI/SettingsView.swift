@@ -44,9 +44,13 @@ public struct SettingsView: View {
         .accessibilityHidden(cover != nil)
         .allowsHitTesting(cover == nil)
         // A tap off the slide disarms an armed logout. A Form row button with
-        // the default style never runs under this gesture, so those rows set
-        // an explicit button style.
-        .simultaneousGesture(TapGesture().onEnded { logout.tapElsewhere() })
+        // the default style never runs under this gesture, and neither does a
+        // menu Picker — every codec, resolution and frame-rate dropdown went
+        // dead — so the gesture exists only while there is a slide to disarm.
+        .simultaneousGesture(
+          TapGesture().onEnded { logout.tapElsewhere() },
+          including: logout.logoutArmed ? .all : .subviews
+        )
 
       if let cover {
         StackedSceneLayer(onDismiss: dismissCover) {
@@ -607,7 +611,12 @@ public struct SettingsView: View {
             .onTapGesture { logout.tapElsewhere() }
             .accessibilityIdentifier("settings-teamstation-account")
           if !logout.logoutArmed {
-            Button("Logout") { logout.armLogout() }
+            Button("Logout") {
+              logout.armLogout()
+              // The form's tap-elsewhere gesture is off until this arms it, so
+              // this tap never reaches it and there is nothing to swallow.
+              logout.swallowNextDisarm = false
+            }
             // Nested in the account row, and under the form's tap-elsewhere
             // gesture. Without its own style the tap never arms the slide.
             .buttonStyle(.borderless)
