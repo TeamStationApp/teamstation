@@ -4640,6 +4640,7 @@ public final class AppEnvironment {
         tile.soundLargestStepMilliseconds = (status.timeline.largestStepSeconds * 10_000).rounded() / 10
         tile.soundSteps = status.timeline.steps
         tile.soundReanchors = status.timeline.reanchors
+        tile.soundDriftPartsPerMillion = (status.timeline.driftPartsPerMillion * 10).rounded() / 10
         tile.soundGaps = status.timeline.gaps
         tile.soundErrorMilliseconds = (status.timeline.lastErrorSeconds * 10_000).rounded() / 10
       }

@@ -18,13 +18,20 @@ import Foundation
 /// | Mapping's error against the write head | Action |
 /// |---|---|
 /// | under 4 ms | ignored |
-/// | 4–100 ms | left to the drift loop (D3); nothing moves here |
+/// | 4–100 ms | absorbed by the drift loop |
 /// | over 100 ms for a second | one step: a new run at the mapped place, under a fade |
 /// | over 1 s, or a new session | a new timeline: a new run at the mapped place |
 ///
 /// A run that had to start on arrival time, because the session's first sender report had not come
 /// yet, is re-anchored once to the first capture time that disagrees with it by 4 ms or more: the
 /// guess is replaced, not steered.
+///
+/// The drift loop: each camera's sample clock runs tens of ppm off the iPad's, which without a loop
+/// would build up until a step. A second-order loop on the mapping's error (the median of the last
+/// two seconds, smoothed over a quarter)
+/// steers a fractional resampler between the camera's samples and the master positions, clamped to
+/// ±500 ppm. It converges in about 15 s and is reset by every step or new timeline. It runs only on
+/// capture times; sound placed by arrival carries arrival's jitter, which would only wobble it.
 ///
 /// A run that steps or starts again supersedes anything an older run left ahead of it. A gap in the
 /// source's own sample count (a lost packet) is left as a gap, which a reader fades around.
@@ -48,6 +55,12 @@ public final class SourceSoundTimeline: @unchecked Sendable {
   public static let maximumLeadSeconds = 1.0
   /// How much sound the ring holds: the recording's five-second wait, the live lead and a margin.
   public static let capacitySeconds = 12.0
+  /// The drift loop: natural frequency (rad/s), damping, the error's smoothing and the clamp.
+  public static let driftNaturalFrequency = 0.3
+  public static let driftDamping = 0.9
+  public static let driftSmoothingSeconds = 0.25
+  public static let driftMedianSeconds = 2.0
+  public static let driftLimit = 500e-6
 
   public struct Statistics: Sendable, Equatable {
     /// Runs started for a new session or an error over a second, the first one included.
@@ -72,6 +85,9 @@ public final class SourceSoundTimeline: @unchecked Sendable {
     /// The mapping's last error against the write head, positive when the mapping puts the sound
     /// later than the run does.
     public var lastErrorSeconds: Double = 0
+    /// The drift loop's correction: how much faster than its own count the camera's sound is laid
+    /// down, in parts per million. Zero after a step or a new timeline.
+    public var driftPartsPerMillion: Double = 0
     /// Where the newest sample sits, nil before any.
     public var writeEnd: Int64?
 
@@ -119,7 +135,11 @@ public final class SourceSoundTimeline: @unchecked Sendable {
   private var runID = 0
   private var session: UInt64?
   private var expectedSourcePosition: Int64?
-  private var writeHead: Int64?
+  /// The next sample's master position, fractional while the drift loop is steering.
+  private var writeHead: Double?
+  /// The previous buffer's last sample, so the resampler interpolates across buffers.
+  private var lastSample: (Int16, Int16)?
+  private var drift = DriftLoop()
   private var offTargetSince: Double?
   /// The current run was placed by arrival, and the first capture time will move it.
   private var provisional = false
@@ -213,9 +233,10 @@ public final class SourceSoundTimeline: @unchecked Sendable {
       ?? position(ofWall: frame.wallClock.seconds + trim)
     let sourceEnd = frame.sourceSamplePosition.map { $0 + Int64(count) }
     var startsRun = writeHead == nil || frame.sessionID != session
-    var place = mapped
+    var place = Double(mapped)
 
     if !startsRun, var head = writeHead {
+      let ratio = drift.ratio
       if let source = frame.sourceSamplePosition, let expected = expectedSourcePosition {
         let gap = source - expected
         if gap < 0 {
@@ -231,13 +252,14 @@ public final class SourceSoundTimeline: @unchecked Sendable {
         } else if gap > 0 {
           // However long: the same session counts on the same clock, so a lost stretch is a gap
           // where it was lost. A new timeline is for a new session, or a mapping a second out.
-          head += gap
+          head += Double(gap) * ratio
+          lastSample = nil
           statistics.gaps &+= 1
           statistics.gapSeconds += Double(gap) / Self.sampleRate
         }
       }
       if !startsRun {
-        let error = Double(mapped - head) / Self.sampleRate
+        let error = (Double(mapped) - head) / Self.sampleRate
         statistics.lastErrorSeconds = error
         place = head
         if provisional, frame.isCaptureTime {
@@ -246,7 +268,8 @@ public final class SourceSoundTimeline: @unchecked Sendable {
             runID += 1
             statistics.reanchors &+= 1
             offTargetSince = nil
-            place = mapped
+            place = Double(mapped)
+            restartRun()
           }
         } else if abs(error) > Self.newTimelineSeconds {
           startsRun = true
@@ -258,13 +281,17 @@ public final class SourceSoundTimeline: @unchecked Sendable {
               statistics.steps &+= 1
               if abs(error) > abs(statistics.largestStepSeconds) { statistics.largestStepSeconds = error }
               offTargetSince = nil
-              place = mapped
+              place = Double(mapped)
+              restartRun()
             }
           } else {
             offTargetSince = at
           }
         } else {
           offTargetSince = nil
+        }
+        if frame.isCaptureTime, !provisional, place == head {
+          drift.update(errorSeconds: error, over: Double(count) / Self.sampleRate)
         }
       }
     }
@@ -273,36 +300,73 @@ public final class SourceSoundTimeline: @unchecked Sendable {
       statistics.timelines &+= 1
       if writeHead == nil || frame.sessionID != session { statistics.sessionTimelines &+= 1 }
       offTargetSince = nil
-      place = mapped
+      place = Double(mapped)
       provisional = !frame.isCaptureTime
+      restartRun()
     }
     session = frame.sessionID
     expectedSourcePosition = sourceEnd
-    writeHead = place + Int64(count)
+    let ratio = drift.ratio
+    statistics.driftPartsPerMillion = drift.correction * 1_000_000
+    let previous = lastSample
+    writeHead = place + Double(count) * ratio
+    let first = samples.startIndex
+    lastSample = (samples[first + (count - 1) * Self.channelCount], samples[first + (count - 1) * Self.channelCount + 1])
 
-    if place > now + Int64(Self.maximumLeadSeconds * Self.sampleRate) {
+    // Master positions this buffer covers: after the previous buffer's last sample (place - ratio)
+    // up to its own last (place + (count - 1) * ratio).
+    let low = Int64((place - ratio).rounded(.down)) + 1
+    let high = Int64((place + Double(count - 1) * ratio).rounded(.down))
+    guard high >= low else { return }
+    if Double(low) > Double(now) + Self.maximumLeadSeconds * Self.sampleRate {
       statistics.futureBuffers &+= 1
       return
     }
-    if place + Int64(count) <= now - Int64(capacityFrames) + Int64(Self.sampleRate) {
+    if high < now - Int64(capacityFrames) + Int64(Self.sampleRate) {
       statistics.staleBuffers &+= 1
       return
     }
     statistics.appendedBuffers &+= 1
-    for (reader, head) in readHeads where place + Int64(count) <= head {
+    for (reader, head) in readHeads where high < head {
       lateByReader[reader, default: 0] &+= 1
     }
 
-    var index = samples.startIndex
-    for offset in 0 ..< count {
-      let slot = slot(place + Int64(offset)) * Self.channelCount
-      ring[slot] = samples[index]
-      ring[slot + 1] = samples[index + 1]
-      index += Self.channelCount
+    func input(_ index: Int) -> (Double, Double) {
+      if index < 0 {
+        let held = previous ?? (samples[first], samples[first + 1])
+        return (Double(held.0), Double(held.1))
+      }
+      let at = first + min(index, count - 1) * Self.channelCount
+      return (Double(samples[at]), Double(samples[at + 1]))
     }
-    record(Segment(run: runID, start: place, end: place + Int64(count)))
-    statistics.writeEnd = max(statistics.writeEnd ?? Int64.min, place + Int64(count))
+    for position in low ... high {
+      let x = (Double(position) - place) / ratio
+      let whole = Int(x.rounded(.down))
+      let fraction = x - Double(whole)
+      let a = input(whole)
+      let slot = slot(position) * Self.channelCount
+      if fraction < 1e-9 {
+        ring[slot] = Int16(a.0)
+        ring[slot + 1] = Int16(a.1)
+      } else {
+        let b = input(whole + 1)
+        ring[slot] = Self.sample(a.0 + (b.0 - a.0) * fraction)
+        ring[slot + 1] = Self.sample(a.1 + (b.1 - a.1) * fraction)
+      }
+    }
+    record(Segment(run: runID, start: low, end: high + 1))
+    statistics.writeEnd = max(statistics.writeEnd ?? Int64.min, high + 1)
     prune(before: (statistics.writeEnd ?? now) - Int64(capacityFrames) + Int64(Self.sampleRate))
+  }
+
+  /// A new run: the resampler and the drift loop start again.
+  private func restartRun() {
+    lastSample = nil
+    drift = DriftLoop()
+  }
+
+  private static func sample(_ value: Double) -> Int16 {
+    Int16(max(Double(Int16.min), min(Double(Int16.max), value.rounded())))
   }
 
   /// Extends the run's last segment or adds one, and cuts every older run off where this one
@@ -338,6 +402,8 @@ public final class SourceSoundTimeline: @unchecked Sendable {
     lock.lock()
     segments.removeAll()
     writeHead = nil
+    lastSample = nil
+    drift = DriftLoop()
     provisional = false
     session = nil
     expectedSourcePosition = nil
@@ -554,5 +620,40 @@ public final class SourceSoundTimelines: @unchecked Sendable {
     let current = timelines
     lock.unlock()
     for (id, timeline) in current { timeline.trimSeconds = values[id] ?? 0 }
+  }
+}
+
+/// The second-order loop that steers one camera's resampler: proportional and integral on the
+/// mapping's error, smoothed over `driftSmoothingSeconds`, clamped to `driftLimit` either way.
+struct DriftLoop {
+  /// The last `driftMedianSeconds` of errors, oldest first, each with the seconds it covers. The
+  /// loop is driven by their median: a sender report that moves the mapping for a moment (seen on
+  /// the bench at -72 ms for one report) would otherwise throw the correction to its clamp. Two
+  /// seconds rejects a jump lasting up to a second and still converges within 15 s.
+  private var recent: [(error: Double, seconds: Double)] = []
+  private var recentSeconds = 0.0
+  private(set) var smoothedError = 0.0
+  private(set) var integral = 0.0
+  private(set) var correction = 0.0
+
+  /// Output samples per input sample.
+  var ratio: Double { 1 + correction }
+
+  mutating func update(errorSeconds error: Double, over seconds: Double) {
+    guard seconds > 0 else { return }
+    let omega = SourceSoundTimeline.driftNaturalFrequency
+    let limit = SourceSoundTimeline.driftLimit
+    recent.append((error, seconds))
+    recentSeconds += seconds
+    while recentSeconds > SourceSoundTimeline.driftMedianSeconds + 1e-9, recent.count > 1 {
+      recentSeconds -= recent.removeFirst().seconds
+    }
+    let sorted = recent.map(\.error).sorted()
+    let median = sorted[sorted.count / 2]
+    let alpha = seconds / (SourceSoundTimeline.driftSmoothingSeconds + seconds)
+    smoothedError += alpha * (median - smoothedError)
+    integral = min(limit, max(-limit, integral + omega * omega * smoothedError * seconds))
+    let proportional = 2 * SourceSoundTimeline.driftDamping * omega * smoothedError
+    correction = min(limit, max(-limit, proportional + integral))
   }
 }

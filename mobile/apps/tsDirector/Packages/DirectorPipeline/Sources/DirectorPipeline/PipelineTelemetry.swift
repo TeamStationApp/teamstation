@@ -308,6 +308,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var soundReanchors: UInt64 = 0
   public var soundGaps: UInt64 = 0
   public var soundErrorMilliseconds: Double = 0
+  /// The drift loop's correction for this camera, in parts per million: how much faster than its
+  /// own count its sound is laid down. Settles within 15 s of a new timeline; ±500 is the clamp.
+  public var soundDriftPartsPerMillion: Double = 0
   /// Pictures not shown because they were older than the display cap. The monitor is worthless
   /// showing action that has already happened, so these are skipped and the last good picture
   /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable
