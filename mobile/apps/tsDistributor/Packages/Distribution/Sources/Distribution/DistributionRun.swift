@@ -58,6 +58,18 @@ public struct TeamStationPlan: Sendable {
     case .combined: "combined"
     }
   }
+
+  /// The recording's files this upload sends as they are. The combined video is not among them:
+  /// what it is made from is the combined plan's to say.
+  public func files(of recording: RecordingListing) -> [Track] {
+    tracks.compactMap { track in
+      switch track {
+      case .primary: recording.hasPrimary ? .primary : nil
+      case .camera(let name): recording.cameras.first { $0.name == name }.map { .camera($0.sourceID) }
+      case .combined: nil
+      }
+    }
+  }
 }
 
 public enum UploadState: Sendable, Equatable {
@@ -86,12 +98,17 @@ public struct CombinedPlan: Sendable {
     self.frames = frames
     self.audioCamera = audioCamera
   }
+
+  /// The files it is made from.
+  public var tracks: [Track] { inputs.map(\.track) }
 }
 
 /// Where one file of an export has got to.
 public enum TrackState: Sendable, Equatable {
   case queued
   case fetching(received: Int64, total: Int64)
+  /// Everything it is stitched from is on this Mac, waiting its turn to be stitched.
+  case fetched
   case stitching(fraction: Double)
   case downloading(received: Int64, total: Int64)
   case done(URL)
@@ -107,6 +124,14 @@ public enum TrackState: Sendable, Equatable {
 
 /// One export of one recording: the chosen tracks, stitched on the Mac and
 /// saved into `<destination>/<yyyy-MM-dd>/` under the names TS Director gives them.
+///
+/// In three steps, each started only once the one before is over: everything the export needs
+/// comes off the iPad, then the Mac stitches the files and makes the combined video, then the
+/// uploads go. TS Director is held off recording only for the first, and the rest need only this
+/// Mac, so the iPad can be unplugged as soon as the files are in without stopping the export.
+///
+/// The steps are driven by a `DistributionBatch`, which takes several recordings through each step
+/// together; `run()` is a batch of this one.
 @MainActor
 @Observable
 public final class DistributionRun {
@@ -114,7 +139,6 @@ public final class DistributionRun {
   public let tracks: [Track]
   public private(set) var states: [Track: TrackState]
   public private(set) var isFinished = false
-  /// Which worker stitched each track, for the record.
   /// The combined video, when one was asked for.
   public let combined: CombinedPlan?
   public private(set) var combinedState: TrackState?
@@ -129,7 +153,6 @@ public final class DistributionRun {
   private let jobs: JobWatcher
   private let destination: URL
   private let reprocess: Bool
-  private var plan = DistributionPlan(tracks: [])
   private var downloads: [Task<Void, Never>] = []
 
   public init(
@@ -147,7 +170,6 @@ public final class DistributionRun {
     self.lockRenewal = lockRenewal
     self.spaceCheck = spaceCheck
     self.recording = recording
-    self.tracks = tracks
     self.combined = combined
     self.combinedState = combined == nil ? nil : .queued
     self.teamStation = teamStation
@@ -158,7 +180,24 @@ public final class DistributionRun {
     self.jobs = jobs
     self.destination = destination
     self.reprocess = reprocess
+    let tracks = Self.tracks(of: recording, asked: tracks, combined: combined, teamStation: teamStation)
+    self.tracks = tracks
     self.states = Dictionary(uniqueKeysWithValues: tracks.map { ($0, TrackState.queued) })
+  }
+
+  /// Every file an export has to have on this Mac: the ones asked for, the ones its uploads send,
+  /// and the ones its combined video is made from — so nothing is uploaded or combined short of a
+  /// file that is still on the iPad. In the recording's order: the primary output, then its cameras.
+  public nonisolated static func tracks(
+    of recording: RecordingListing,
+    asked: [Track],
+    combined: CombinedPlan?,
+    teamStation: TeamStationPlan?
+  ) -> [Track] {
+    let wanted = Set(asked + (combined?.tracks ?? []) + (teamStation?.files(of: recording) ?? []))
+    let every = (recording.hasPrimary ? [ Track.primary ] : []) + recording.cameras.map { Track.camera($0.sourceID) }
+    // A track the recording does not list stays at the end rather than go missing.
+    return every.filter(wanted.contains) + asked.filter { !every.contains($0) }
   }
 
   /// The folder this export's files go in.
@@ -184,198 +223,256 @@ public final class DistributionRun {
 
   /// True once `cancel()` was called.
   public private(set) var wasCancelled = false
-  private var work: Task<Void, Never>?
-  /// How often the export lock is renewed. TS Director drops one left unrenewed for half a minute.
+  /// How often a run of this export alone renews the export lock.
   private let lockRenewal: Duration
-  /// Asked before the export writes anything.
+  /// Asked, by a run of this export alone, before it writes anything.
   private let spaceCheck: SpaceCheck
-  /// TS Director dropped the export lock, so it may record or stream at any moment.
-  private var lostLock = false
+  /// The batch driving this export's steps, once it runs.
+  weak var batch: DistributionBatch?
 
-  /// This Mac stopped renewing the lock for long enough that TS Director dropped it (a Mac that was
-  /// asleep or hung). The export stops rather than go on alongside a recording or a stream.
-  private func lockLost() {
-    guard !isFinished, !wasCancelled else { return }
-    lostLock = true
-    cancel()
-  }
+  /// The files still to stitch from segments, and the files the iPad already stitched, as
+  /// `prepare()` sorted them.
+  private var toStitch: [Track] = []
+  private var toFetch: [Track] = []
+  /// Where this take's segments are kept: they wait there between coming off the iPad and being
+  /// stitched, and stay, so a file can be stitched again with no iPad (see `KeptSegments`).
+  private var segments: URL?
+  /// The tracks whose segments are on this Mac, waiting to be stitched, and the window every file
+  /// is cut to.
+  private var fetched: [MacStitcher.Fetched] = []
+  private var window: ExportWindow?
+  /// This export goes no further: something it needed from the iPad could not be had, or there is
+  /// no room for it.
+  private var stopped = false
 
+  /// Exports this recording alone, in its three steps.
   public func run() async {
-    // Work the user asked for: macOS neither naps the app nor lets the Mac idle to sleep while an
-    // export runs, whether or not the window is in front.
-    let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Exporting a recording")
-    defer { ProcessInfo.processInfo.endActivity(activity) }
-    guard !wasCancelled else {
-      markCancelled()
-      isFinished = true
-      return
-    }
-    let work = Task { await self.perform() }
-    self.work = work
-    await work.value
+    await DistributionBatch(runs: [ self ], connection: connection, lockRenewal: lockRenewal, spaceCheck: spaceCheck).run()
   }
 
-  /// Stops the export: stitching on both sides, downloads and uploads. Files already saved stay,
-  /// and a download stopped part way resumes next time.
+  /// Stops the export: stitching, downloads and uploads, and every other export of its batch. Files
+  /// already saved stay, and a download stopped part way resumes next time.
   public func cancel() {
+    if let batch {
+      batch.cancel()
+    } else {
+      stop()
+    }
+  }
+
+  /// Stops this export's own work; the batch stops the step it is in.
+  func stop() {
     guard !isFinished, !wasCancelled else { return }
     wasCancelled = true
-    work?.cancel()
     for download in downloads { download.cancel() }
   }
 
-  private func markCancelled() {
-    let reason = lostLock ? "Stopped: TS Director no longer held off recording" : "Cancelled"
-    for track in tracks where !(states[track]?.isFinal ?? false) {
-      states[track] = .failed(reason)
-    }
-    if let state = combinedState, !state.isFinal { combinedState = .failed(reason) }
-    for (track, state) in uploadStates {
-      switch state {
-      case .done, .failed: continue
-      default: uploadStates[track] = .failed(reason)
+  /// The export is over. `cancelled` says why, when it was stopped before the end.
+  func finish(cancelled reason: String?) {
+    // Segments a fetch did not finish go; whole ones stay, cancelled or not.
+    if let segments { KeptSegments.removeIncomplete(in: segments) }
+    if let reason {
+      for track in tracks where !(states[track]?.isFinal ?? false) {
+        states[track] = .failed(reason)
+      }
+      if let state = combinedState, !state.isFinal { combinedState = .failed(reason) }
+      for (track, state) in uploadStates {
+        switch state {
+        case .done, .failed: continue
+        default: uploadStates[track] = .failed(reason)
+        }
       }
     }
+    isFinished = true
   }
 
-  private func perform() async {
-    defer {
-      if wasCancelled { markCancelled() }
-      isFinished = true
-    }
+  // MARK: - Steps
+
+  /// Makes the export's folder and sorts its files: already here, which need nothing; with their
+  /// segments kept here, which are stitched from them; already stitched on the iPad, which need only
+  /// fetching; and the rest, stitched here from segments off the iPad.
+  func prepare() {
     do {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     } catch {
       for track in tracks { states[track] = .failed("\(error)") }
+      stopped = true
       return
     }
-
-    // Files already here need nothing; files already stitched on the iPad need only fetching.
-    var toStitch: [Track] = []
-    var toFetch: [Track] = []
+    // Beside the files, on the disk they are saved to, so that disk is the only one that needs the
+    // room and a stitched file is saved by renaming it.
+    let segments = KeptSegments.folder(for: recording, in: destination)
+    self.segments = segments
+    KeptSegments.removeIncomplete(in: segments)
     for track in tracks {
       let target = folder.appendingPathComponent(filename(for: track))
       if !reprocess, Self.size(of: target) > 0 {
         states[track] = .done(target)
+      } else if let kept = KeptSegments.fetched(track, in: segments) {
+        fetched.append(kept)
+        states[track] = .fetched
       } else if !reprocess, recording.preparedTracks.contains(track) {
         toFetch.append(track)
       } else {
         toStitch.append(track)
       }
     }
-
-    if toStitch.isEmpty && toFetch.isEmpty {
-      // Every file is already here, so the combined video and the uploads need only this Mac: the
-      // iPad is asked for nothing, and this runs while TS Director records or streams.
-      if let shortfall = await roomForCombinedAlone() {
-        combinedState = .failed(shortfall)
-        return
-      }
-    } else if let connection {
-      guard await workWithIPad(toStitch: toStitch, toFetch: toFetch, connection: connection) else { return }
-    } else {
-      // Nothing can come from an iPad that is not there; what is here is still combined and
-      // uploaded as far as it goes.
-      for track in toStitch + toFetch { states[track] = .failed(Self.noIPad) }
-    }
-    if let combined, !wasCancelled { await renderCombined(combined) }
-    if let teamStation, !wasCancelled { await uploadAllToTeamStation(teamStation) }
   }
 
-  /// Why a file the iPad would have to provide was not made.
-  public nonisolated static let noIPad = "Not on this Mac, and no iPad is attached to get it from"
+  /// Whether anything of this export has to come from the iPad.
+  var needsIPad: Bool { !stopped && !(toStitch.isEmpty && toFetch.isEmpty) }
 
-  /// Stitches `toStitch` on the Mac and fetches `toFetch` from the iPad, holding TS
-  /// Director's export lock throughout. False when the export stops here.
-  private func workWithIPad(toStitch: [Track], toFetch: [Track], connection: DirectorConnection) async -> Bool {
-    let needed = toStitch + toFetch
-    let scratch = FileManager.default.temporaryDirectory
-      .appendingPathComponent("tsDistributor-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: scratch) }
+  /// What has to come from the iPad cannot, for `reason`, so the export goes no further.
+  func stop(fetching reason: String) {
+    for track in toStitch + toFetch { states[track] = .failed(reason) }
+    if combinedState != nil { combinedState = .failed(reason) }
+    stopped = true
+  }
 
-    // TS Director records and streams nothing while the export works with the iPad, and grants
-    // none of it while it does either. Handed back once every file is saved; the combined video and
-    // the uploads need only this Mac.
-    let lock: UUID
-    do {
-      lock = try await connection.beginExport()
-    } catch {
-      for track in needed { states[track] = .failed("\(error)") }
-      if combinedState != nil { combinedState = .failed("\(error)") }
-      return false
-    }
-    var released = false
-    // Renewed while the export works with the iPad: TS Director drops a lock left unrenewed, so a
-    // Mac that dies mid-export cannot keep it from recording.
-    let every = lockRenewal
-    let renewing = Task.detached { [weak self] in
-      while !Task.isCancelled {
-        try? await Task.sleep(for: every)
-        guard !Task.isCancelled else { return }
-        // A refusal, not a failed request: the lock is gone, and the export must not go on.
-        if let held = try? await connection.renewExport(lock), !held {
-          await self?.lockLost()
-          return
-        }
-      }
-    }
-    // Handed back from a task of its own: a cancelled export's task would have URLSession refuse
-    // the request, and TS Director would stay locked until the lease ran out.
-    func release() async {
-      guard !released else { return }
-      released = true
-      renewing.cancel()
-      await Task.detached { try? await connection.endExport(lock) }.value
-    }
-    defer {
-      renewing.cancel()
-      if !released { Task.detached { try? await connection.endExport(lock) } }
-    }
+  /// No iPad is attached, so what would come from it fails; what is here is still combined and
+  /// uploaded as far as it goes.
+  func failWithoutIPad() {
+    for track in toStitch + toFetch { states[track] = .failed(Self.noIPad) }
+  }
 
+  /// The room this export needs on the disk its files go to.
+  struct Need {
+    /// What each file it fetches comes to.
+    var trackBytes: [Int64] = []
+    var combinedBytes: Int64 = 0
+  }
+
+  /// With TS Director's export lock held: the window every file is cut to, from the iPad, and the
+  /// room the export needs. Nil when the export stops here. An iPad that cannot say how large the
+  /// files are is not a reason to stop, so that needs no room.
+  func measure(connection: DirectorConnection) async -> Need? {
+    guard needsIPad, let segments else { return nil }
     let window: ExportWindow
     do {
-      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(at: segments, withIntermediateDirectories: true)
       window = try await connection.manifest(recordingID: recording.id, tracks: []).window
     } catch {
       // A cancelled export's requests fail too; the cancellation says why, not the request.
       if !wasCancelled {
-        for track in needed { states[track] = .failed("\(error)") }
+        for track in toStitch + toFetch { states[track] = .failed("\(error)") }
       }
-      await release()
-      return false
+      stopped = true
+      return nil
     }
-
-    // Nothing is written until the whole export is known to fit.
-    if let shortfall = await roomShortfall(for: needed, window: window, connection: connection) {
-      for track in needed { states[track] = .failed(shortfall) }
-      if combinedState != nil { combinedState = .failed(shortfall) }
-      await release()
-      return false
+    self.window = window
+    guard let manifest = try? await connection.manifest(recordingID: recording.id, tracks: toStitch + toFetch) else {
+      return Need()
     }
-    for track in toFetch { fetchPrepared(track) }
-    plan = DistributionPlan(tracks: toStitch)
-
-    // Every track, on the Mac.
-    let mac = MacStitcher(connection: connection, scratch: scratch)
-    await macLoop(mac, first: plan.next(), window: window)
-    for download in downloads { await download.value }
-    await release()
-    return true
+    let combinedBytes = combined.map {
+      ExportSpace.combinedBytes(seconds: (window.end ?? window.start).seconds - window.start.seconds, cameras: $0.inputs.count)
+    } ?? 0
+    return Need(trackBytes: ExportSpace.bytesPerTrack(manifest.files), combinedBytes: combinedBytes)
   }
 
-  /// With every file already here, whether the combined video still to be made fits. Its length
-  /// comes from a saved file, since the iPad is not asked.
-  private func roomForCombinedAlone() async -> String? {
-    guard let combined, Self.size(of: folder.appendingPathComponent(combinedFilename)) == 0,
+  /// With TS Director's export lock held: the segments of every file still to stitch and the
+  /// iPad's own files, onto this Mac. The iPad's own files download beside the segments, one
+  /// camera's segments at a time.
+  func fetch(connection: DirectorConnection) async {
+    guard needsIPad, window != nil, let segments else { return }
+    for track in toFetch { fetchPrepared(track, from: connection) }
+    let stitcher = MacStitcher(connection: connection, scratch: segments)
+    for track in toStitch {
+      guard !Task.isCancelled else { break }
+      do {
+        let root = KeptSegments.folder(for: track, in: segments)
+        fetched.append(try await stitcher.fetch(recording: recording, track: track, into: root) { received, total in
+          Task { @MainActor in
+            // A late report never takes a fetched track back to fetching.
+            switch self.states[track] {
+            case .queued, .fetching: self.states[track] = .fetching(received: received, total: total)
+            default: break
+            }
+          }
+        })
+        states[track] = .fetched
+      } catch {
+        if !wasCancelled { states[track] = .failed("\(error)") }
+      }
+    }
+    for download in downloads { await download.value }
+  }
+
+  /// With every file already here, whether the combined video still to be made fits; when it does
+  /// not, the export goes no further. Its length comes from a saved file, since the iPad is not
+  /// asked.
+  func checkRoomForCombined(_ spaceCheck: SpaceCheck) async {
+    guard !stopped, !needsIPad, let combined,
+          Self.size(of: folder.appendingPathComponent(combinedFilename)) == 0,
           let first = combined.inputs.first, case .done(let url) = states[first.track],
           let length = try? await AVURLAsset(url: url).load(.duration).seconds
-    else { return nil }
-    return spaceCheck.shortfall(
+    else { return }
+    let shortfall = spaceCheck.shortfall(
       trackBytes: [],
       combinedBytes: ExportSpace.combinedBytes(seconds: length, cameras: combined.inputs.count),
       destination: folder,
       scratch: FileManager.default.temporaryDirectory
     )
+    if let shortfall {
+      combinedState = .failed(shortfall)
+      stopped = true
+    }
+  }
+
+  /// Stitches what came off the iPad, and what was kept from before, on this Mac alone. Every file
+  /// is cut to one window: the iPad's for this export, or with nothing asked of the iPad, the one
+  /// the kept segments were fetched with.
+  func stitch() async {
+    guard !stopped, !wasCancelled, let window = window ?? fetched.first?.response.window else { return }
+    await stitchAll(fetched, window: window)
+  }
+
+  /// Makes the combined video, when one was asked for, from the saved files.
+  func makeCombined() async {
+    guard !stopped, !wasCancelled, let combined else { return }
+    await renderCombined(combined)
+  }
+
+  /// Sends what was asked for to TeamStation.
+  func upload() async {
+    guard !stopped, !wasCancelled, let teamStation else { return }
+    await uploadAllToTeamStation(teamStation)
+  }
+
+  /// What the name of a work folder an older export used starts with. Hidden, so it is never taken
+  /// for one of the files.
+  nonisolated static let workPrefix = ".tsDistributor-work-"
+
+  nonisolated static func removeWorkFolders(in folder: URL) {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+    for name in names where name.hasPrefix(workPrefix) {
+      try? FileManager.default.removeItem(at: folder.appendingPathComponent(name, isDirectory: true))
+    }
+  }
+
+  /// Why a file the iPad would have to provide was not made.
+  public nonisolated static let noIPad = "Not on this Mac, and no iPad is attached to get it from"
+
+  /// Stitches each fetched track from what is already on this Mac, and saves it under its name.
+  private func stitchAll(_ fetched: [MacStitcher.Fetched], window: ExportWindow) async {
+    var plan = DistributionPlan(tracks: fetched.map(\.track))
+    while !Task.isCancelled, let track = plan.next() {
+      guard let work = fetched.first(where: { $0.track == track }) else { continue }
+      states[track] = .stitching(fraction: 0)
+      do {
+        let stitched = try await MacStitcher.stitch(work, recording: recording, window: window) { fraction in
+          Task { @MainActor in
+            if case .stitching = self.states[track] { self.states[track] = .stitching(fraction: fraction) }
+          }
+        }
+        let target = folder.appendingPathComponent(filename(for: track))
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: stitched, to: target)
+        states[track] = .done(target)
+      } catch {
+        if !wasCancelled { states[track] = .failed("\(error)") }
+      }
+      plan.finish(track)
+    }
   }
 
   /// Every saved file of this export, to one game on TeamStation.
@@ -431,25 +528,6 @@ public final class DistributionRun {
     }
     if case .done(let url) = state { return url }
     return nil
-  }
-
-  /// Nil when the export fits on this Mac; otherwise why it does not. An iPad that cannot say how
-  /// large the files are is not a reason to stop.
-  private func roomShortfall(for work: [Track], window: ExportWindow, connection: DirectorConnection) async -> String? {
-    var trackBytes: [Int64] = []
-    if !work.isEmpty {
-      guard let manifest = try? await connection.manifest(recordingID: recording.id, tracks: work) else { return nil }
-      trackBytes = ExportSpace.bytesPerTrack(manifest.files)
-    }
-    let combinedBytes = combined.map {
-      ExportSpace.combinedBytes(seconds: (window.end ?? window.start).seconds - window.start.seconds, cameras: $0.inputs.count)
-    } ?? 0
-    return spaceCheck.shortfall(
-      trackBytes: trackBytes,
-      combinedBytes: combinedBytes,
-      destination: folder,
-      scratch: FileManager.default.temporaryDirectory
-    )
   }
 
   public var combinedFilename: String { Self.combinedFilename(of: recording) }
@@ -508,53 +586,12 @@ public final class DistributionRun {
     }
   }
 
-  // MARK: - Workers
-
-  private func macLoop(_ stitcher: MacStitcher, first: Track?, window: ExportWindow) async {
-    var track = first
-    while !Task.isCancelled {
-      if track == nil { track = plan.next() }
-      guard let current = track else { return }
-      track = nil
-      do {
-        let stitched = try await stitcher.stitch(recording: recording, track: current, window: window) { stage in
-          Task { @MainActor in
-            switch stage {
-            case let .fetching(received, total):
-              self.states[current] = .fetching(received: received, total: total)
-            case let .stitching(fraction):
-              self.states[current] = .stitching(fraction: fraction)
-            }
-          }
-        }
-        let target = folder.appendingPathComponent(filename(for: current))
-        try? FileManager.default.removeItem(at: target)
-        try FileManager.default.moveItem(at: stitched, to: target)
-        // The segments it was stitched from go now rather than at the end of the export, so the
-        // Mac holds one camera's working copy at a time.
-        if let work = stitcher.workFolder(of: stitched) { try? FileManager.default.removeItem(at: work) }
-        states[current] = .done(target)
-      } catch {
-        if !wasCancelled { states[current] = .failed("\(error)") }
-      }
-      plan.finish(current)
-    }
-  }
-
-
   // MARK: - Downloads
 
-  private func fetchPrepared(_ track: Track) {
+  private func fetchPrepared(_ track: Track, from connection: DirectorConnection) {
     let path = "rec-\(recording.id)/\(filename(for: track))"
-    fetch(RemoteFile(root: .prepared, path: path, bytes: 0), for: track)
-  }
-
-  private func fetch(_ file: RemoteFile, for track: Track) {
+    let file = RemoteFile(root: .prepared, path: path, bytes: 0)
     let target = folder.appendingPathComponent(filename(for: track))
-    guard let connection = self.connection else {
-      states[track] = .failed(Self.noIPad)
-      return
-    }
     downloads.append(Task { [weak self] in
       do {
         try await connection.download(file, to: target) { received, total in

@@ -106,6 +106,12 @@ public struct RecordingListing: Codable, Equatable, Sendable {
   /// were 43.9 s and 46.8 s short, the Director said so at Stop, and it said so only to memory.
   /// See `ProgramSoundCheck`.
   public var soundShortfall: Double?
+  /// The TeamStation game TS Director filed this take under: the event chosen in its Settings while
+  /// the take was recording. What its files are uploaded to, with nobody asked; nil for a take
+  /// recorded with no event chosen, and from a TS Director that does not say.
+  public var gameId: String?
+  /// That game's dated title, `2026-09-20 Mission Trails at Bandits`, which titles its videos.
+  public var gameTitle: String?
 
   public init(
     id: Int64,
@@ -115,7 +121,9 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     hasPrimary: Bool,
     cameras: [CameraListing],
     preparedTracks: [Track],
-    soundShortfall: Double? = nil
+    soundShortfall: Double? = nil,
+    gameId: String? = nil,
+    gameTitle: String? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -125,6 +133,8 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     self.cameras = cameras
     self.preparedTracks = preparedTracks
     self.soundShortfall = soundShortfall
+    self.gameId = gameId
+    self.gameTitle = gameTitle
   }
 }
 

@@ -12,13 +12,18 @@ final class FakeActions: DistributorActions {
   var runs: [UUID: APIRun] = [:]
   var startFailure: HTTPError?
   var patches: [APISettingsPatch] = []
+  /// Recordings whose segments a run is using.
+  var segmentsInUse: Set<Int64> = []
+  var segmentsDeleted: [Int64] = []
 
   static let recording = APIRecording(
     id: 361,
     startedAt: Date(timeIntervalSince1970: 1_787_533_500),
     endedAt: nil,
     isLive: false,
-    files: [ APIFile(track: "primary", name: "Primary output", onMac: "saved", bytesOnMac: 10, path: "/Movies/2026-08-23/a.mov", preparedOnIPad: false) ],
+    files: [
+      APIFile(track: "primary", name: "Primary output", onMac: "saved", bytesOnMac: 10, path: "/Movies/2026-08-23/a.mov", preparedOnIPad: false, segmentsOnMac: true)
+    ],
     combined: APIFile(track: "combined", name: "Combined video", onMac: "missing", bytesOnMac: nil, path: nil, preparedOnIPad: false),
     folder: "/Movies/2026-08-23"
   )
@@ -45,10 +50,21 @@ final class FakeActions: DistributorActions {
     return ids.filter { $0 == 1 }
   }
 
+  func deleteSegments(_ id: Int64) throws(HTTPError) -> APISegmentsDeleted {
+    guard id == 361 else { throw HTTPError.notFound("no recording \(id)") }
+    if segmentsInUse.contains(id) { throw HTTPError(409, "segmentsInUse", "a run is exporting it") }
+    let removed = !segmentsDeleted.contains(id)
+    segmentsDeleted.append(id)
+    return APISegmentsDeleted(recording: id, removed: removed, bytes: removed ? 2_048 : 0)
+  }
+
   func startRun(_ request: APIRunRequest) async throws(HTTPError) -> APIRun {
     if let startFailure { throw startFailure }
     started.append(request)
-    let run = APIRun(id: UUID(), recording: request.recording ?? 0, folder: "/Movies", isFinished: false, wasCancelled: false, files: [], combined: nil, uploads: [])
+    let takes = ((try? request.perTake()) ?? []).map { take in
+      APIRunTake(recording: take.recording ?? 0, folder: "/Movies", files: [], combined: nil, uploads: [])
+    }
+    let run = APIRun(id: UUID(), isFinished: false, wasCancelled: false, step: "fetching", isDoneWithIPad: false, takes: takes)
     runs[run.id] = run
     return run
   }
@@ -113,6 +129,7 @@ struct DistributorAPITests {
     #expect(routes == [
       "GET /api/v1", "GET /api/v1/status", "GET /api/v1/events",
       "GET /api/v1/recordings", "DELETE /api/v1/recordings", "GET /api/v1/recordings/{id}", "GET /api/v1/recordings/{id}/still",
+      "DELETE /api/v1/recordings/{id}/segments",
       "POST /api/v1/recordings/{id}/download", "POST /api/v1/recordings/{id}/export",
       "POST /api/v1/recordings/{id}/combined", "POST /api/v1/recordings/{id}/upload",
       "POST /api/v1/runs", "GET /api/v1/runs/current", "GET /api/v1/runs/{id}", "DELETE /api/v1/runs/{id}",
@@ -157,6 +174,70 @@ struct DistributorAPITests {
     #expect(try JSONDecoder.api.decode(APIRun.self, from: cancelled.data).wasCancelled)
   }
 
+  @Test("A run of several recordings starts as one request, and each take reads as one recording's request")
+  func severalTakes() async throws {
+    let actions = FakeActions()
+    let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
+    let body = #"""
+      {"kind": "export", "combined": false, "upload": {"tracks": ["primary"]},
+       "takes": [{"recording": 101, "upload": {"game": "gam_1"}},
+                 {"recording": 102, "upload": {"game": "gam_2", "tracks": ["primary", "home"]}},
+                 {"recording": 103, "combined": {"include": ["home", "away"]}}]}
+      """#
+    let answer = try await Self.call(router, "POST", "/api/v1/runs", body: body)
+    #expect(answer.status == 202)
+    let run = try JSONDecoder.api.decode(APIRun.self, from: answer.data)
+    #expect(run.takes.map(\.recording) == [ 101, 102, 103 ])
+    #expect(run.recording == 101)
+
+    let takes = try #require(try actions.started.first?.perTake())
+    #expect(takes.map(\.recording) == [ 101, 102, 103 ])
+    #expect(takes.allSatisfy { $0.kind == .export && $0.takes == nil })
+    #expect(takes.map(\.upload?.game) == [ "gam_1", "gam_2", nil ])
+    #expect(takes.map(\.upload?.tracks) == [ [ "primary" ], [ "primary", "home" ], [ "primary" ] ])
+    #expect(takes[0].combined == .off && takes[1].combined == .off)
+    #expect(takes[2].combined == APICombinedRequest(include: [ "home", "away" ]))
+
+    let list = try APIRunRequest(kind: .download, recordings: [ 1, 2 ], tracks: [ "primary" ]).perTake()
+    #expect(list.map(\.recording) == [ 1, 2 ])
+    #expect(list.allSatisfy { $0.tracks == [ "primary" ] && $0.upload == nil && $0.combined == nil })
+
+    for wrong in [
+      #"{"recording": 101, "recordings": [102]}"#,
+      #"{"recordings": []}"#,
+      #"{"takes": [{"recording": 101}, {"recording": 101}]}"#
+    ] {
+      #expect(try await Self.call(router, "POST", "/api/v1/runs", body: wrong).status == 400, "\(wrong)")
+    }
+    // The routes of one recording take one: the path names it.
+    #expect(try await Self.call(router, "POST", "/api/v1/recordings/101/download", body: #"{"recordings": [102]}"#).status == 400)
+  }
+
+  @Test("combined is false for none, true for one as the settings lay it out, or what goes in it")
+  func combinedChoice() throws {
+    func decode(_ json: String) throws -> APICombinedRequest? {
+      try JSONDecoder.api.decode(APIRunRequest.self, from: Data(json.utf8)).combined
+    }
+    #expect(try decode(#"{"combined": false}"#) == .off)
+    #expect(try decode(#"{"combined": true}"#) == APICombinedRequest())
+    #expect(try decode(#"{"combined": {"audioCamera": "home"}}"#) == APICombinedRequest(audioCamera: "home"))
+    #expect(try decode(#"{}"#) == nil)
+    let encoded = try JSONEncoder.api.encode(APIRunRequest(recording: 1, combined: .off))
+    #expect(try decode(String(decoding: encoded, as: UTF8.self)) == .off)
+  }
+
+  @Test("The settings change can turn the combined video's upload off, leaving the rest of the choice")
+  func uploadChoicePatch() async throws {
+    let actions = FakeActions()
+    let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
+    let answer = try await Self.call(router, "PATCH", "/api/v1/settings", body: #"{"createCombined": false, "upload": {"choice": {"combined": false}}}"#)
+    #expect(answer.status == 200)
+    let patch = try #require(actions.patches.first)
+    #expect(patch == APISettingsPatch(createCombined: false, upload: APIUploadSettingsPatch(choice: APIUploadChoicePatch(combined: false))))
+    let choice = UploadChoice(primary: true, cameras: [ "home" ], combined: true)
+    #expect(patch.upload?.choice?.applied(to: choice) == UploadChoice(primary: true, cameras: [ "home" ], combined: false))
+  }
+
   @Test("A refusal from the app reaches the caller with its status and code")
   func refusal() async throws {
     let actions = FakeActions()
@@ -182,6 +263,29 @@ struct DistributorAPITests {
     let body = try Self.json(confirmed.data)
     #expect(body["deleted"] as? [Int] == [ 2 ])
     #expect(body["refused"] as? [Int] == [ 1 ])
+  }
+
+  @Test("A recording's kept segments are removed on request, and not while a run is exporting it")
+  func deleteSegments() async throws {
+    let actions = FakeActions()
+    let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
+    actions.segmentsInUse = [ 361 ]
+    let busy = try await Self.call(router, "DELETE", "/api/v1/recordings/361/segments")
+    #expect(busy.status == 409)
+    #expect(try Self.json(busy.data)["error"] as? String == "segmentsInUse")
+    #expect(actions.segmentsDeleted.isEmpty)
+    actions.segmentsInUse = []
+    let first = try await Self.call(router, "DELETE", "/api/v1/recordings/361/segments")
+    #expect(first.status == 200)
+    #expect(try JSONDecoder.api.decode(APISegmentsDeleted.self, from: first.data) == APISegmentsDeleted(recording: 361, removed: true, bytes: 2_048))
+    let again = try await Self.call(router, "DELETE", "/api/v1/recordings/361/segments")
+    #expect(try JSONDecoder.api.decode(APISegmentsDeleted.self, from: again.data).removed == false)
+    #expect(try await Self.call(router, "DELETE", "/api/v1/recordings/9/segments").status == 404)
+    #expect(try await Self.call(router, "DELETE", "/api/v1/recordings/x/segments").status == 400)
+    // Each file says whether its segments are kept.
+    let one = try await Self.call(router, "GET", "/api/v1/recordings/361")
+    let files = try #require(try Self.json(one.data)["files"] as? [[String: Any]])
+    #expect(files.first?["segmentsOnMac"] as? Bool == true)
   }
 
   @Test("Recordings, stills, settings and TeamStation answer as the app says")

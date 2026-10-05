@@ -3,9 +3,12 @@ import Foundation
 
 /// Whether an export fits on this Mac, asked before it writes anything.
 ///
-/// The saved files and the combined video go to the download folder. While the Mac stitches a
-/// camera it also holds that camera's segments in the temporary folder, one camera at a time.
-/// Some room is always left over, so an export never takes a disk to its last byte.
+/// The saved files and the combined video go to the download folder. Every camera's segments come
+/// off the iPad into a work folder before any is stitched, and each camera's go once its file is
+/// saved. With the work folder on the same disk, as an export keeps it, that peaks at everything
+/// saved plus the largest camera's file being written; on another disk, the work folder holds every
+/// camera's segments at once. Some room is always left over, so an export never takes a disk to its
+/// last byte.
 public struct SpaceCheck: Sendable {
   public var freeBytes: @Sendable (URL) -> Int64?
   public var volume: @Sendable (URL) -> String?
@@ -32,12 +35,11 @@ public struct SpaceCheck: Sendable {
   /// Nil when the export fits; otherwise what to tell the user.
   public func shortfall(trackBytes: [Int64], combinedBytes: Int64, destination: URL, scratch: URL) -> String? {
     let saved = trackBytes.reduce(0, +) + combinedBytes
-    let working = trackBytes.max() ?? 0
     let destinationVolume = volume(destination)
     let sameDisk = destinationVolume != nil && destinationVolume == volume(scratch)
     let needs: [(url: URL, bytes: Int64)] = sameDisk
-      ? [ (destination, saved + working) ]
-      : [ (destination, saved), (scratch, working) ]
+      ? [ (destination, saved + (trackBytes.max() ?? 0)) ]
+      : [ (destination, saved), (scratch, trackBytes.reduce(0, +)) ]
     for need in needs where need.bytes > 0 {
       guard let free = freeBytes(need.url) else { continue }
       let wanted = need.bytes + Self.margin

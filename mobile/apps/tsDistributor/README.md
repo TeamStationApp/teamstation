@@ -11,8 +11,12 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
 - **Protocol.** `Packages/DirectorClient` calls the routes and downloads files resumably; the
   message types are in `../common/DistributorWire`. The routes are listed in
   [docs/protocol.md](docs/protocol.md).
-- **Stitching.** `../common/DirectorExport` is the same package TS Director exports with. The Mac
-  takes the first file, the iPad the second, then whichever is free.
+- **Stitching.** `../common/DirectorExport` is the same package TS Director exports with. An export
+  takes everything it needs off the iPad first, holding TS Director off recording and streaming only
+  while it does; then the Mac stitches, makes the combined video and uploads, needing the iPad for
+  none of it, so the iPad can be unplugged as soon as the files are in. Several recordings exported
+  together (through the API) go through each step together: every file of every one comes off the
+  iPad before any is stitched (`Packages/Distribution`, `DistributionBatch`).
 - **Combined video.** `Packages/CombinedVideo` puts up to four cameras on a 4K canvas as HEVC at
   4 Mb/s per camera, with one camera's sound.
 - **TeamStation.** `../common/TeamStationKit` signs this Mac in and sends each file to one game,
@@ -37,7 +41,8 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
    sends).
 3. Pick a recording, tick its files, Export. With the combined video on, lay the cameras out first;
    then the game it belongs to and which of its files go up — or Export Without Uploading, which
-   saves them and stops there. Each video is titled from the game, with the camera's name after it,
+   saves them and stops there. The game starts as the one TS Director recorded the take for (the
+   event chosen in its Settings), which the take's row shows; another can be picked. Each video is titled from the game, with the camera's name after it,
    because that is how the library tells one angle of a take from another.
 4. Each file shows whether it is already on this Mac. Files already here need nothing from the iPad,
    so a cut-off export (an upload that failed, a combined video never made) can be picked up with
