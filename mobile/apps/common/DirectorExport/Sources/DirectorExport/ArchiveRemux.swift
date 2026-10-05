@@ -234,7 +234,11 @@ public enum ArchiveRemux {
     guard let first = segments.first(where: { !$0.isEmpty }),
           let last = segments.last(where: { !$0.isEmpty })
     else { return nil }
-    let audible = CMTimeRange(start: first.timeMapping.target.start, end: last.timeMapping.target.end)
+    let reported = last.timeMapping.target.end
+    let audible = CMTimeRange(
+      start: first.timeMapping.target.start,
+      end: CMTimeMaximum(reported, playedEnd(of: source, in: asset, reported: reported) ?? reported)
+    )
     let start = CMTimeMaximum(audible.start, range.start)
     guard audible.end > start else { return nil }
     return SoundPiece(
@@ -243,6 +247,37 @@ public enum ArchiveRemux {
       span: CMTimeRange(start: start, end: audible.end),
       place: CMTimeAdd(time, CMTimeSubtract(start, range.start))
     )
+  }
+
+  /// Where `track`'s sound really stops: what a reader decodes, not what the track reports.
+  ///
+  /// The two differ for an archive segment. Its sound is the camera's AAC copied as it came, with no
+  /// word of the encoder's priming, and `AVAssetWriter` writes such a track with three copies of its
+  /// first packet in front to warm the decoder and an edit list that starts 960 samples into them.
+  /// Played, the track runs to the end of that edit. Reported -- in its segments and its time range
+  /// -- it is taken to start 2,112 samples in, the priming an Apple encoder leaves, and to end 1,152
+  /// samples (24 ms at 48 kHz) sooner. A piece cut at the reported end stopped 24 ms before the next
+  /// segment's sound began, and the render filled every seam with silence: an iPhone's export had
+  /// a hole of one AAC packet or so at 734 of its 1,202 seams. A track whose priming is as reported
+  /// plays exactly to its reported end, and this changes nothing for it.
+  ///
+  /// Decodes the last tenth of a second or so; nil when the track cannot be read.
+  static func playedEnd(of track: AVAssetTrack, in asset: AVAsset, reported: CMTime) -> CMTime? {
+    guard let reader = try? AVAssetReader(asset: asset) else { return nil }
+    let from = CMTimeMaximum(.zero, CMTimeSubtract(reported, CMTime(value: 1, timescale: 10)))
+    reader.timeRange = CMTimeRange(start: from, duration: .positiveInfinity)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+    guard reader.canAdd(output) else { return nil }
+    reader.add(output)
+    guard reader.startReading() else { return nil }
+    var end: CMTime?
+    while let buffer = output.copyNextSampleBuffer() {
+      guard CMSampleBufferGetNumSamples(buffer) > 0 else { continue }
+      let stop = CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer), CMSampleBufferGetDuration(buffer))
+      if stop.isNumeric { end = end.map { CMTimeMaximum($0, stop) } ?? stop }
+    }
+    guard reader.status == .completed else { return nil }
+    return end
   }
 
   /// Every piece of sound where it happened, each stopping where the next begins.
