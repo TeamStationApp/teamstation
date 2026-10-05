@@ -12,6 +12,8 @@ public protocol DistributorActions: AnyObject, Sendable {
   func still(recording: Int64, track: String, at seconds: Double) async throws(HTTPError) -> Data
   /// Deletes on the iPad and returns the ids it refused: the take in progress, if it was asked.
   func deleteRecordings(_ ids: [Int64]) async throws(HTTPError) -> [Int64]
+  /// Removes the segments kept on this Mac for one recording; 409 while a run is exporting it.
+  func deleteSegments(_ id: Int64) throws(HTTPError) -> APISegmentsDeleted
   func startRun(_ request: APIRunRequest) async throws(HTTPError) -> APIRun
   func run(_ id: UUID) -> APIRun?
   func currentRun() -> APIRun?
@@ -33,7 +35,8 @@ public enum DistributorAPI {
     export folder, makes the combined video, and uploads to a game on TeamStation. A recording's files are named \
     by track: "primary", or "camera:<source id>"; a camera's name also works. Starting work answers \
     202 with the run; follow it with GET /api/v1/runs/{id} or /api/v1/events. One run at a time: a \
-    second answers 409. Work that needs the iPad answers 412 iPadNotAttached while none is attached, \
+    second answers 409, and several recordings go in one run: POST /api/v1/runs with recordings or \
+    takes. Work that needs the iPad answers 412 iPadNotAttached while none is attached, \
     and 423 while TS Director records or streams; files already on this Mac need no iPad.
     """
 
@@ -67,6 +70,9 @@ public enum DistributorAPI {
     router.add("GET", "/api/v1/recordings/{id}", summary: "One recording and what of it is on this Mac") { _, parameters in
       .apiJSON(try await actions.recording(try parameters.int64("id")))
     }
+    router.add("DELETE", "/api/v1/recordings/{id}/segments", summary: "Removes the segments kept on this Mac for re-stitching one recording without the iPad; 409 while a run is exporting it") { _, parameters in
+      .apiJSON(try await actions.deleteSegments(try parameters.int64("id")))
+    }
     router.add("GET", "/api/v1/recordings/{id}/still", summary: "One JPEG of a file about ?at=<seconds> in (default 10): ?track=primary|camera:<id>|<name>") { request, parameters in
       let jpeg = try await actions.still(
         recording: try parameters.int64("id"),
@@ -77,22 +83,23 @@ public enum DistributorAPI {
     }
 
     let verbs: [(String, APIRunKind, String)] = [
-      ("download", .download, "Brings files onto this Mac, stitched on the Mac and the iPad: {tracks?, reprocess?}"),
-      ("export", .export, "Files, then the combined video and uploads as the settings say: {tracks?, reprocess?, combined?, upload?}"),
+      ("download", .download, "Brings files onto this Mac, every one off the iPad before any is stitched: {tracks?, reprocess?}"),
+      ("export", .export, "Files, then the combined video as the settings say, then uploads to the take's game when signed in: {tracks?, reprocess?, combined?, upload?}"),
       ("combined", .combined, "Makes the combined video, fetching any file it needs: {combined: {include?, audioCamera?}}"),
-      ("upload", .upload, "Uploads files already on this Mac to a game on TeamStation: {upload: {game, tracks?, title?}}")
+      ("upload", .upload, "Uploads to the take's game on TeamStation, fetching any file not on this Mac first: {upload?: {game?, tracks?, title?}}")
     ]
     for (verb, kind, summary) in verbs {
       router.add("POST", "/api/v1/recordings/{id}/\(verb)", summary: summary) { request, parameters in
         var body: APIRunRequest = try request.decode()
         body.kind = kind
         body.recording = try parameters.int64("id")
+        _ = try body.perTake()
         return .apiJSON(try await actions.startRun(body), status: 202)
       }
     }
-    router.add("POST", "/api/v1/runs", summary: "Starts exactly the run described: {kind?, recording, tracks?, reprocess?, combined?, upload?}") { request, _ in
+    router.add("POST", "/api/v1/runs", summary: "Starts exactly the run described, of one recording or several, every file of every one off the iPad first: {kind?, recording | recordings | takes: [{recording, tracks?, combined?, upload?}], tracks?, reprocess?, combined?, upload?}") { request, _ in
       var body: APIRunRequest = try request.decode()
-      guard body.recording != nil else { throw HTTPError.badRequest("recording is required") }
+      _ = try body.perTake()
       body.kind = body.kind ?? .custom
       return .apiJSON(try await actions.startRun(body), status: 202)
     }
@@ -100,7 +107,7 @@ public enum DistributorAPI {
       guard let run = await actions.currentRun() else { throw HTTPError.notFound("nothing has run since TS Distributor started") }
       return .apiJSON(run)
     }
-    router.add("GET", "/api/v1/runs/{id}", summary: "One run: each file, the combined video and each upload, and where they have got to") { _, parameters in
+    router.add("GET", "/api/v1/runs/{id}", summary: "One run: for each of its recordings, each file, the combined video and each upload, and where they have got to") { _, parameters in
       guard let id = UUID(uuidString: parameters["id"] ?? "") else { throw HTTPError.badRequest("a run id is a UUID") }
       guard let run = await actions.run(id) else { throw HTTPError.notFound("no run \(id)") }
       return .apiJSON(run)
@@ -113,7 +120,7 @@ public enum DistributorAPI {
     router.add("GET", "/api/v1/settings", summary: "The settings, as this Mac holds them") { _, _ in
       .apiJSON(await actions.settings())
     }
-    router.add("PATCH", "/api/v1/settings", summary: "Changes settings; what is left out stays: {destination?, createCombined?}") { request, _ in
+    router.add("PATCH", "/api/v1/settings", summary: "Changes settings; what is left out stays: {destination?, createCombined?, upload?: {choice?: {primary?, cameras?, combined?}}}") { request, _ in
       .apiJSON(try await actions.updateSettings(try request.decode()))
     }
 

@@ -45,10 +45,10 @@ struct RecordingsView: View {
       filesColumn
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
-    .sheet(isPresented: Binding(get: { model.run != nil }, set: { if !$0 { model.dismissRun() } })) {
-      if let run = model.run {
-        ExportProgressView(run: run) { model.dismissRun() }
-          .interactiveDismissDisabled(!run.isFinished)
+    .sheet(isPresented: Binding(get: { model.batch != nil }, set: { if !$0 { model.dismissRun() } })) {
+      if let batch = model.batch {
+        ExportProgressView(batch: batch) { model.dismissRun() }
+          .interactiveDismissDisabled(!batch.isFinished)
       }
     }
     .confirmationDialog(
@@ -94,6 +94,14 @@ struct RecordingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text(Self.stamp(recording.startedAt.date))
               .font(.body.monospacedDigit())
+            // The game TS Director recorded it for, which its uploads go to.
+            if let game = recording.gameTitle {
+              Text(game)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier("recording-game-\(recording.id)")
+            }
             TimelineView(.periodic(from: .now, by: 1)) { context in
               Text(Self.length(of: recording, now: context.date))
                 .font(.caption.monospacedDigit())

@@ -4,23 +4,85 @@ import DistributorWire
 import SwiftUI
 
 /// Each file of an export as it goes: where it is being stitched, how far along, and where it
-/// landed.
+/// landed. An export of several recordings lists each under its own heading.
 struct ExportProgressView: View {
-  let run: DistributionRun
+  let batch: DistributionBatch
   let done: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text(run.isFinished ? (run.wasCancelled ? "Export cancelled" : "Export finished") : "Exporting")
+      Text(batch.isFinished ? (batch.wasCancelled ? "Export cancelled" : "Export finished") : "Exporting")
         .font(.title2.bold())
-      Text(run.folder.path)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
+      if batch.runs.count > 1 {
+        if !batch.isFinished {
+          Text(stepLine)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("export-step")
+        }
+        ScrollView {
+          VStack(alignment: .leading, spacing: 20) {
+            ForEach(batch.runs, id: \.recording.id) { run in
+              take(run)
+            }
+          }
+        }
+        .frame(maxHeight: 560)
+      } else if let run = batch.runs.first {
+        take(run)
+      }
+
+      HStack {
+        if batch.isFinished, !savedFiles.isEmpty {
+          Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting(savedFiles)
+          }
+        }
+        Spacer()
+        if !batch.isFinished {
+          Button("Cancel Export", role: .cancel) { batch.cancel() }
+            .disabled(batch.wasCancelled)
+            .accessibilityIdentifier("export-cancel")
+        }
+        Button("Done") { done() }
+          .keyboardShortcut(.defaultAction)
+          .disabled(!batch.isFinished)
+          .accessibilityIdentifier("export-done")
+      }
+    }
+    .padding(24)
+    .frame(width: 580)
+  }
+
+  /// Which step every recording is at, and whether the iPad is still needed.
+  private var stepLine: String {
+    switch batch.step {
+    case .fetching: "Taking every recording's files off the iPad"
+    case .stitching: "Off the iPad, which can be unplugged. Stitching"
+    case .combining: "Off the iPad, which can be unplugged. Making the combined videos"
+    case .uploading: "Off the iPad, which can be unplugged. Uploading"
+    case .finished: ""
+    }
+  }
+
+  /// One recording: its files, its combined video and its uploads.
+  @ViewBuilder
+  private func take(_ run: DistributionRun) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      VStack(alignment: .leading, spacing: 2) {
+        if batch.runs.count > 1 {
+          Text(RecordingsView.stamp(run.recording.startedAt.date))
+            .font(.headline.monospacedDigit())
+        }
+        Text(run.folder.path)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
 
       ForEach(run.tracks, id: \.self) { track in
-        row(track)
+        row(label: label(track, in: run), state: run.states[track] ?? .queued)
       }
       if let state = run.combinedState {
         row(label: run.combinedSound.map { "Combined video, sound from \($0)" } ?? "Combined video", state: state)
@@ -33,49 +95,27 @@ struct ExportProgressView: View {
           uploadRow(title: upload.title(for: track), state: run.uploadStates[track] ?? .queued)
         }
       }
-
-      HStack {
-        if run.isFinished, !savedFiles.isEmpty {
-          Button("Show in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting(savedFiles)
-          }
-        }
-        Spacer()
-        if !run.isFinished {
-          Button("Cancel Export", role: .cancel) { run.cancel() }
-            .disabled(run.wasCancelled)
-            .accessibilityIdentifier("export-cancel")
-        }
-        Button("Done") { done() }
-          .keyboardShortcut(.defaultAction)
-          .disabled(!run.isFinished)
-          .accessibilityIdentifier("export-done")
-      }
     }
-    .padding(24)
-    .frame(width: 580)
   }
 
   private var savedFiles: [URL] {
-    var files = run.tracks.compactMap { track -> URL? in
-      if case .done(let url) = run.states[track] { return url }
-      return nil
+    batch.runs.flatMap { run in
+      var files = run.tracks.compactMap { track -> URL? in
+        if case .done(let url) = run.states[track] { return url }
+        return nil
+      }
+      if case .done(let url) = run.combinedState { files.append(url) }
+      return files
     }
-    if case .done(let url) = run.combinedState { files.append(url) }
-    return files
   }
 
-  private func label(_ track: Track) -> String {
+  private func label(_ track: Track, in run: DistributionRun) -> String {
     switch track {
     case .primary:
       return "Primary output"
     case .camera(let sourceID):
       return run.recording.cameras.first { $0.sourceID == sourceID }?.name ?? sourceID.rawValue
     }
-  }
-
-  private func row(_ track: Track) -> some View {
-    row(label: label(track), state: run.states[track] ?? .queued)
   }
 
   @ViewBuilder
@@ -141,6 +181,8 @@ struct ExportProgressView: View {
       return "Waiting"
     case let .fetching(received, total):
       return "Fetching, \(Self.megabytes(received)) of \(Self.megabytes(total))"
+    case .fetched:
+      return "Off the iPad, waiting to be stitched"
     case .stitching:
       return "Stitching"
     case let .downloading(received, _):

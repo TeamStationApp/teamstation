@@ -20,6 +20,8 @@ public struct ExportInventory: Equatable, Sendable {
   /// Each file the recording has: its primary output, if it has one, and its cameras.
   public let files: [Track: FileState]
   public let combined: FileState
+  /// The files whose segments are kept on this Mac, so they can be stitched again without the iPad.
+  public let segmentsOnMac: Set<Track>
 
   public init(recording: RecordingListing, destination: URL) {
     let folder = DistributionRun.folder(for: recording, in: destination)
@@ -31,6 +33,7 @@ public struct ExportInventory: Equatable, Sendable {
       files[track] = Self.state(of: file, cutOff: file.appendingPathExtension("partial"))
     }
     self.files = files
+    segmentsOnMac = KeptSegments.tracks(of: recording, in: destination)
     let name = DistributionRun.combinedFilename(of: recording)
     combined = Self.state(
       of: folder.appendingPathComponent(name),
@@ -38,10 +41,12 @@ public struct ExportInventory: Equatable, Sendable {
     )
   }
 
-  /// Whether exporting `tracks` needs the iPad: a file not yet whole here has to come from it, and
-  /// reprocessing stitches every file again.
+  /// Whether exporting `tracks` needs the iPad: a file not yet whole here, or reprocessed, has to
+  /// be stitched again from its segments, which come from the iPad unless they are kept here.
   public func needsIPad(_ tracks: [Track], reprocess: Bool = false) -> Bool {
-    reprocess || tracks.contains { !(files[$0]?.isSaved ?? false) }
+    tracks.contains { track in
+      !segmentsOnMac.contains(track) && (reprocess || !(files[track]?.isSaved ?? false))
+    }
   }
 
   static func state(of file: URL, cutOff: URL) -> FileState {

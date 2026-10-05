@@ -5,7 +5,8 @@ import TeamStationKit
 import SwiftUI
 
 /// Before an export that uploads: which game it belongs to and which files go
-/// up. Each file's video is titled from the game and what the file is — the
+/// up. The game starts as the one TS Director filed the take under, so a take
+/// recorded with an event chosen needs nobody to remember which game it was. Each file's video is titled from the game and what the file is — the
 /// primary output takes the game's title unchanged, a camera adds its name —
 /// because that suffix is how the library tells one angle of a take from
 /// another. The ticked files are remembered on the iPad and start the sheet
@@ -73,13 +74,16 @@ struct UploadSheet: View {
     .onAppear {
       choice = model.settings.upload.choice
         .applied(hasPrimary: hasPrimary, cameras: cameraNames, makesCombined: makesCombined)
-      title = UploadTitle.initialTitle(for: recording.startedAt.date)
+      gameId = recording.gameId
+      title = recording.gameTitle ?? UploadTitle.initialTitle(for: recording.startedAt.date)
       filledIn = title
       titleFocused = true
       loadingEvents = true
       Task {
         await model.teamStation.refreshFinishedEvents()
         loadingEvents = false
+        // The take's game, retitled as TeamStation has it now.
+        nameAfterTheGame()
       }
       // Focusing a field selects all of it; the cursor goes after the date instead, so typing adds
       // to the title rather than replacing the date.
@@ -125,11 +129,22 @@ struct UploadSheet: View {
     } else {
       Picker("Game", selection: $gameId) {
         Text("Choose a game").tag(String?.none)
+        // The take's own game, though it is not among the games this account has played: TS
+        // Director chose it, and the list is only where another is picked from.
+        if let marked = recording.gameId, !model.teamStation.finishedEvents.contains(where: { $0.gameId == marked }) {
+          Text(recording.gameTitle ?? marked).tag(String?.some(marked))
+        }
         ForEach(model.teamStation.finishedEvents) { event in
           Text("\(event.title) — \(Self.when(event.startAt))").tag(String?.some(event.gameId))
         }
       }
       .accessibilityIdentifier("upload-game")
+      if recording.gameId != nil, gameId == recording.gameId {
+        Text("The game TS Director recorded this take for.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("upload-game-from-director")
+      }
     }
   }
 
@@ -144,12 +159,16 @@ struct UploadSheet: View {
   /// the upload quietly used the game's.
   private func nameAfterTheGame() {
     guard let gameId,
-      let event = model.teamStation.finishedEvents.first(where: { $0.gameId == gameId }),
       title.trimmingCharacters(in: .whitespaces) == filledIn.trimmingCharacters(in: .whitespaces)
     else { return }
-    let day = DateFormatter()
-    day.dateFormat = "yyyy-MM-dd"
-    title = "\(day.string(from: event.startAt)) \(event.title)"
+    // The game as TeamStation has it now, then as TS Director filed the take.
+    if let event = model.teamStation.finishedEvents.first(where: { $0.gameId == gameId }) {
+      title = "\(UploadTitle.datePrefix(for: event.startAt)) \(event.title)"
+    } else if gameId == recording.gameId, let marked = recording.gameTitle {
+      title = marked
+    } else {
+      return
+    }
     filledIn = title
   }
 
