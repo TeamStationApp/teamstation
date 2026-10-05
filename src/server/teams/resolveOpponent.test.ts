@@ -149,6 +149,63 @@ describe('resolving an opponent by name', function () {
     expect(row.created_from).equals('api')
   })
 
+  it('finds the older of two external teams of one name, every time', async function () {
+    const newer = makeId('team')
+    const older = makeId('team')
+    // Written newer first, so the table's own order would find it.
+    await db!
+      .insertInto('teams')
+      .values([
+        {
+          id: newer,
+          name: 'Demo Otters',
+          kind: 'external',
+          created_at: new Date('2026-02-02T00:00:00Z')
+        },
+        {
+          id: older,
+          name: 'DEMO OTTERS',
+          kind: 'external',
+          created_at: new Date('2026-01-01T00:00:00Z')
+        }
+      ])
+      .execute()
+    const found = await resolveOpponent(db!, 'demo otters', {
+      seasonTeams: [],
+      createdFrom: 'import'
+    })
+    expect(found).deep.equals({
+      id: older,
+      name: 'DEMO OTTERS',
+      found: 'external'
+    })
+  })
+
+  it('finds no team by a coach when asked not to', async function () {
+    const herons = makeId('team')
+    const options = {
+      seasonTeams: [{ id: herons, name: 'Demo Herons' }],
+      createdFrom: 'import' as const,
+      dryRun: true
+    }
+    expect((await resolveOpponent(db!, 'Coastal Herons', options)).id).equals(
+      herons
+    )
+    const strict = await resolveOpponent(db!, 'Coastal Herons', {
+      ...options,
+      byCoach: false
+    })
+    expect(strict.found).equals('created')
+    expect(
+      (
+        await resolveOpponent(db!, 'demo herons', {
+          ...options,
+          byCoach: false
+        })
+      ).id
+    ).equals(herons)
+  })
+
   it('writes nothing on a dry run', async function () {
     const found = await resolveOpponent(db!, 'Nobody Anywhere', {
       seasonTeams: [],

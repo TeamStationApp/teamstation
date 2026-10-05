@@ -6,6 +6,7 @@ import { notFound, unauthorized, unavailable } from '../../common/errors'
 import { adminScopes, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { eventWindow, parseEventListQuery } from '../events/eventListQuery'
+import { opponentFixed, scoredInTeamStation } from '../games/opponentFixed'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
@@ -33,6 +34,8 @@ export interface EventListItem extends SeasonGame {
   homeLogoUrl: string | null
   awayLogoUrl: string | null
   liveState: 'none' | 'idle' | 'publishing' | 'ended'
+  /** A schedule can never change this game's opponent (`opponentFixed`). */
+  opponentFixed: boolean
 }
 
 /**
@@ -85,6 +88,10 @@ async function withDirectorFields(
           )
           .where('state', '<>', 'revoked')
           .execute()
+  const scored = await scoredInTeamStation(
+    db,
+    rows.map(row => row.id)
+  )
 
   return rows.map(row => {
     const { homeLogoPath, awayLogoPath, ...game } = row
@@ -94,7 +101,8 @@ async function withDirectorFields(
       gameId: game.id,
       homeLogoUrl: imageUrl(media.space, homeLogoPath),
       awayLogoUrl: imageUrl(media.space, awayLogoPath),
-      liveState: liveStateOf(onThisGame)
+      liveState: liveStateOf(onThisGame),
+      opponentFixed: opponentFixed(game, scored.has(game.id))
     }
   })
 }

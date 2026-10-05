@@ -2,7 +2,7 @@ import type { AddressInfo } from 'node:net'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Insertable, Kysely } from 'kysely'
+import { type Insertable, type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -392,6 +392,70 @@ describe('every game somebody can see', function () {
       externalIds: string[]
     }>
     expect(all.find(game => game.id === olderGame)?.externalIds).deep.equals([])
+  })
+
+  it('marks each game whose opponent a schedule can never change', async function () {
+    const fixed = async (query = ''): Promise<Record<string, boolean>> =>
+      Object.fromEntries(
+        (
+          (await games(ADMIN, query)).body as Array<{
+            id: string
+            opponentFixed: boolean
+          }>
+        ).map(game => [game.id, game.opponentFixed])
+      )
+    // Nothing scored yet: only the game between two full teams is fixed.
+    expect(await fixed()).deep.equals({
+      [fallGame]: false,
+      [crowsGame]: false,
+      [owlsGame]: false,
+      [looseGame]: true,
+      [springGame]: false,
+      [olderGame]: false
+    })
+
+    // Scored in TeamStation, three ways.
+    await db!
+      .updateTable('games')
+      .set({ scoringOwner: 'teamstation' })
+      .where('id', '=', olderGame)
+      .execute()
+    await sql`update games set "currentPlay" = '{}'::jsonb where id = ${owlsGame}`.execute(
+      db!
+    )
+    const play = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'stolen_base', awayScore: null, homeScore: null },
+      teamStation: { version: 1 }
+    }
+    const playId = makeId('event')
+    await sql`insert into events (id, "gameId", "battingTeamId", gumbo)
+      values (${playId}, ${fallGame}, ${rivals}, ${JSON.stringify(play)}::jsonb)`.execute(
+      db!
+    )
+    try {
+      expect(await fixed()).deep.equals({
+        [fallGame]: true,
+        [crowsGame]: false,
+        [owlsGame]: true,
+        [looseGame]: true,
+        [springGame]: false,
+        [olderGame]: true
+      })
+      expect(await fixed('?externalId=ext-fall')).deep.equals({
+        [fallGame]: true
+      })
+      expect(await fixed('?externalId=ext-spring')).deep.equals({
+        [springGame]: false
+      })
+    } finally {
+      await db!.deleteFrom('events').where('id', '=', playId).execute()
+      await db!
+        .updateTable('games')
+        .set({ scoringOwner: null, currentPlay: null })
+        .where('id', 'in', [olderGame, owlsGame])
+        .execute()
+    }
   })
 
   it('answers an empty list to somebody who can see nothing, and 401 to nobody', async function () {
