@@ -94,6 +94,14 @@ struct RecordingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text(Self.stamp(recording.startedAt.date))
               .font(.body.monospacedDigit())
+            // The game TS Director recorded it for, which its uploads go to.
+            if let game = recording.gameTitle {
+              Text(game)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier("recording-game-\(recording.id)")
+            }
             TimelineView(.periodic(from: .now, by: 1)) { context in
               Text(Self.length(of: recording, now: context.date))
                 .font(.caption.monospacedDigit())

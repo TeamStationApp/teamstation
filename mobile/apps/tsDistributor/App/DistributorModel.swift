@@ -241,8 +241,10 @@ final class DistributorModel {
     guard !isExporting else { throw .exporting }
     guard let destination else { throw .noDestination }
     // Files already on this Mac need nothing from the iPad, so only an export that does needs it
-    // attached and waits while it records or streams.
-    let needsIPad = ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess)
+    // attached and waits while it records or streams. That counts every file its uploads and its
+    // combined video need, which the export fetches along with those asked for.
+    let needed = DistributionRun.tracks(of: recording, asked: tracks, combined: combined, teamStation: teamStation)
+    let needsIPad = ExportInventory(recording: recording, destination: destination).needsIPad(needed, reprocess: reprocess)
     if needsIPad, connection == nil { throw .noIPad }
     if needsIPad, let reason = exportBlockedReason { throw .directorBusy(reason) }
     let run = DistributionRun(

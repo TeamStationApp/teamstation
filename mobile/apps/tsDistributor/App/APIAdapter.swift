@@ -136,7 +136,9 @@ final class APIAdapter: DistributorActions {
         path: folder?.appendingPathComponent(DistributionRun.combinedFilename(of: recording)).path,
         preparedOnIPad: false
       ),
-      folder: folder?.path
+      folder: folder?.path,
+      gameId: recording.gameId,
+      gameTitle: recording.gameTitle
     )
   }
 
@@ -191,37 +193,29 @@ final class APIAdapter: DistributorActions {
         combined = try automaticCombined(recording, tracks: tracks, request: request.combined ?? APICombinedRequest(), required: request.combined != nil)
       }
       if let asked = request.upload {
-        upload = try uploadPlan(recording, request: asked, makesCombined: combined != nil)
+        upload = try await uploadPlan(recording, request: asked, makesCombined: combined != nil)
+      } else if recording.gameId != nil, model.teamStation.isSignedIn {
+        // TS Director said which game the take is of, so its files go there with nobody asked.
+        upload = try await uploadPlan(recording, request: APIUploadRequest(), makesCombined: combined != nil)
       }
     case .upload:
-      // Only what is already on this Mac goes up; nothing is stitched or made for it.
+      // What goes up and is not on this Mac yet is fetched first; the run adds those files itself.
+      // A combined video already here is kept as it is, so its layout does not matter; one that is
+      // not is made from every file, as the settings lay it out.
       let saved = savedTracks(of: recording)
       let hasCombined = model.inventory(of: recording)?.combined.isSaved ?? false
-      upload = try uploadPlan(recording, request: request.upload ?? APIUploadRequest(), makesCombined: hasCombined)
-      let wanted = upload?.tracks ?? []
-      for track in wanted {
-        switch track {
-        case .combined:
-          guard hasCombined else { throw Self.notOnMac("the combined video") }
-        case .primary:
-          guard saved.contains(.primary) else { throw Self.notOnMac("the primary output") }
-        case .camera(let name):
-          guard let camera = recording.cameras.first(where: { $0.name == name }), saved.contains(.camera(camera.sourceID)) else {
-            throw Self.notOnMac(name)
-          }
-        }
-      }
-      tracks = saved
-      if wanted.contains(.combined) {
-        // The saved combined video is found where it is and kept, so its layout does not matter.
-        combined = CombinedPlan.automatic(for: recording, tracks: saved, saved: model.settings.combinedLayout)
+      let makeable = CombinedPlan.automatic(for: recording, tracks: everyFile, saved: model.settings.combinedLayout)
+      upload = try await uploadPlan(recording, request: request.upload ?? APIUploadRequest(), makesCombined: hasCombined || makeable != nil)
+      tracks = []
+      if upload?.tracks.contains(.combined) == true {
+        combined = (hasCombined ? CombinedPlan.automatic(for: recording, tracks: saved, saved: model.settings.combinedLayout) : nil) ?? makeable
       }
     case .custom:
       if let request = request.combined {
         combined = try automaticCombined(recording, tracks: tracks, request: request, required: true)
       }
       if let request = request.upload {
-        upload = try uploadPlan(recording, request: request, makesCombined: combined != nil)
+        upload = try await uploadPlan(recording, request: request, makesCombined: combined != nil)
       }
     }
 
@@ -328,23 +322,38 @@ final class APIAdapter: DistributorActions {
 
   /// The upload an API request asks for: which files, to which game.
   ///
-  /// The game is required and named by id, because this is the one thing the
-  /// caller knows that the Mac cannot work out. The title is the game's own,
-  /// dated, unless the request says otherwise — the library reads these titles
-  /// to tell a take's primary output from its cameras.
+  /// The game is the one TS Director filed the take under, unless the request
+  /// names another by id. The title is the game's own, dated, unless the
+  /// request says otherwise — the library reads these titles to tell a take's
+  /// primary output from its cameras.
   private func uploadPlan(
     _ recording: RecordingListing,
     request: APIUploadRequest,
     makesCombined: Bool
-  ) throws(HTTPError) -> TeamStationPlan {
+  ) async throws(HTTPError) -> TeamStationPlan {
     guard model.teamStation.isSignedIn else {
       throw HTTPError(412, "teamStationSignedOut", "this Mac is not signed in to TeamStation: sign in from Settings in the app, which takes a code from an e-mail")
     }
-    guard let gameId = request.game else {
-      throw HTTPError.badRequest("upload.game is required: a game id from GET /api/v1/teamstation")
+    let gameId: String
+    let gameTitle: String
+    await model.teamStation.refreshFinishedEvents()
+    // A game's title as TeamStation has it now, which a game edited since TS Director filed the
+    // take under it (its sides swapped, say) has changed.
+    func current(_ id: String) -> String? {
+      model.teamStation.finishedEvents.first { $0.gameId == id }
+        .map { "\(UploadTitle.datePrefix(for: $0.startAt)) \($0.title)" }
     }
-    guard let game = model.teamStation.finishedEvents.first(where: { $0.gameId == gameId }) else {
-      throw HTTPError.badRequest("no game \(gameId) among the games this account runs that have been played: GET /api/v1/teamstation")
+    if let named = request.game, named != recording.gameId {
+      guard let title = current(named) else {
+        throw HTTPError.badRequest("no game \(named) among the games this account runs that have been played: GET /api/v1/teamstation")
+      }
+      gameId = named
+      gameTitle = title
+    } else if let marked = recording.gameId {
+      gameId = marked
+      gameTitle = current(marked) ?? recording.gameTitle ?? UploadTitle.datePrefix(for: recording.startedAt.date)
+    } else {
+      throw HTTPError(412, "noGame", "TS Director filed recording \(recording.id) under no game: name one with upload.game, a game id from GET /api/v1/teamstation")
     }
 
     let tracks: [UploadTrack]
@@ -360,11 +369,9 @@ final class APIAdapter: DistributorActions {
     }
     guard !tracks.isEmpty else { throw HTTPError.badRequest("nothing to upload: list upload.tracks, or tick files to upload in the app") }
 
-    let day = DateFormatter()
-    day.dateFormat = "yyyy-MM-dd"
     return model.teamStationPlan(
       gameId: gameId,
-      title: request.title ?? "\(day.string(from: game.startAt)) \(game.title)",
+      title: request.title ?? gameTitle,
       tracks: tracks,
       startedAt: recording.startedAt.date
     )
@@ -411,10 +418,6 @@ final class APIAdapter: DistributorActions {
   // MARK: - Names
 
   static let noIPad = HTTPError(412, "iPadNotAttached", DistributorModel.noIPadNotice)
-
-  static func notOnMac(_ what: String) -> HTTPError {
-    HTTPError(412, "notOnMac", "\(what) is not on this Mac yet: download it first with POST /api/v1/recordings/{id}/download")
-  }
 
   static func name(_ track: Track) -> String {
     switch track {
