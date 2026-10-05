@@ -33,13 +33,14 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var audioSequence: UInt16 = 0
   private var videoPacketCount: UInt32 = 0
   private var videoOctetCount: UInt32 = 0
-  private var audioFrameIndex = 0
+  /// Audio stamps by capture position; made at the first frame, when the rate is known.
+  private var audioStamps: AudioStampClock?
   private var audioPacketCount: UInt32 = 0
   private var audioOctetCount: UInt32 = 0
-  private var lastAudioReportTime = Date.distantPast
+  private var audioReports = SenderReportSchedule()
   private var firstVideoPresentationTime: Double?
   private var videoTimestamps = RTPTimestampSequencer()
-  private var lastReportTime = Date.distantPast
+  private var videoReports = SenderReportSchedule()
 
   private(set) var sendQueue = StreamSendQueue()
   private var congestion = CongestionMeter()
@@ -162,7 +163,9 @@ final class RTSPClientConnection: @unchecked Sendable {
         // starts at zero and RTP-Info can promise that.
         firstVideoPresentationTime = nil
         videoTimestamps.reset()
-        audioFrameIndex = 0
+        audioStamps = nil
+        videoReports.reset()
+        audioReports.reset()
 
         var response = outcome.response
         response.headers.append((
@@ -257,6 +260,10 @@ final class RTSPClientConnection: @unchecked Sendable {
       // presentation time, so the sent timestamp is forced to advance — measured on the 32-bit
       // circle, because the field's own rollover is a forward step and not a repeat.
       let timestamp = videoTimestamps.next(natural: natural)
+      // The session's first picture goes out behind a sender report, so the receiver can place it.
+      if videoReports.reportBeforeFirstPacket(at: Date()) {
+        sendVideoReport(setup: setup, rtpTimestamp: timestamp, captureTime: frame.presentationTime)
+      }
 
       let writer = RTPPacketWriter(payloadType: SDPBuilder.videoPayloadType, ssrc: videoSSRC)
       var batch = Data()
@@ -278,7 +285,9 @@ final class RTSPClientConnection: @unchecked Sendable {
       }
 
       sendMedia(batch)
-      sendReportIfDue(setup: setup, rtpTimestamp: timestamp, captureTime: frame.presentationTime)
+      if videoReports.reportIsDue(at: Date()) {
+        sendVideoReport(setup: setup, rtpTimestamp: timestamp, captureTime: frame.presentationTime)
+      }
     }
   }
 
@@ -288,7 +297,15 @@ final class RTSPClientConnection: @unchecked Sendable {
       guard let payload = AACPacketizer().payload(for: frame) else { return }
 
       let writer = RTPPacketWriter(payloadType: SDPBuilder.audioPayloadType, ssrc: audioSSRC)
-      let timestamp = AACPacketizer.timestamp(forFrameIndex: audioFrameIndex)
+      // Stamped by where its samples were captured: a dropout becomes a skip in the stamps at the
+      // place it happened, rather than every later stamp sitting early by it.
+      var stamps = audioStamps ?? AudioStampClock(sampleRate: Double(frame.sampleRate))
+      let capture = (frame.captureTime ?? frame.presentationTime) + AudioStampClock.captureTrimSeconds
+      let timestamp = stamps.next(capture: capture).timestamp
+      audioStamps = stamps
+      if audioReports.reportBeforeFirstPacket(at: Date()) {
+        sendAudioReport(setup: setup, rtpTimestamp: timestamp, captureTime: capture)
+      }
       let packet = writer.packet(
         sequenceNumber: audioSequence,
         timestamp: timestamp,
@@ -296,7 +313,6 @@ final class RTSPClientConnection: @unchecked Sendable {
         payload: payload
       )
       audioSequence &+= 1
-      audioFrameIndex += 1
       audioPacketCount &+= 1
       audioOctetCount &+= UInt32(truncatingIfNeeded: payload.count)
 
@@ -306,11 +322,9 @@ final class RTSPClientConnection: @unchecked Sendable {
       congestion.offered(bytes: framed.count)
       sendQueue.enqueueAudio(bytes: framed.count)
       sendMedia(framed)
-      sendAudioReportIfDue(
-        setup: setup,
-        rtpTimestamp: timestamp,
-        captureTime: frame.captureTime ?? frame.presentationTime
-      )
+      if audioReports.reportIsDue(at: Date()) {
+        sendAudioReport(setup: setup, rtpTimestamp: timestamp, captureTime: capture)
+      }
     }
   }
 
@@ -373,11 +387,7 @@ final class RTSPClientConnection: @unchecked Sendable {
   /// Only the picture used to have one, so a receiver could tie the audio's RTP timeline to a wall
   /// clock only through when its first packet arrived. Paired from the frame's capture time and put
   /// on wall time through the same offset as the video's, so both streams share one mapping.
-  private func sendAudioReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
-    let now = Date()
-    guard now.timeIntervalSince(lastAudioReportTime) >= 1 else { return }
-    lastAudioReportTime = now
-
+  private func sendAudioReport(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
     let captureWall = Date(timeIntervalSince1970: captureTime + captureToWallOffset)
     let writer = RTCPWriter(ssrc: audioSSRC, identity: identity())
     let report = writer.compoundPacket(
@@ -391,11 +401,7 @@ final class RTSPClientConnection: @unchecked Sendable {
     }
   }
 
-  private func sendReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
-    let now = Date()
-    guard now.timeIntervalSince(lastReportTime) >= 1 else { return }
-    lastReportTime = now
-
+  private func sendVideoReport(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
     // Stamped from the frame's capture time, not from `Date()` here.
     //
     // The RTP timestamp in this report is derived from capture; pairing it with the wall clock at

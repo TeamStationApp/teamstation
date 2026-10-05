@@ -252,7 +252,7 @@ struct RTSPServerStatusTests {
 }
 
 /// The least client that can hold a socket open and read one response per request.
-private final class LoopbackRTSPClient: @unchecked Sendable {
+final class LoopbackRTSPClient: @unchecked Sendable {
   private let connection: NWConnection
   private let queue = DispatchQueue(label: "loopback-rtsp-client")
   private var buffer = Data()
@@ -284,6 +284,21 @@ private final class LoopbackRTSPClient: @unchecked Sendable {
   }
 
   func close() { connection.cancel() }
+
+  /// Whatever has arrived, waiting up to `seconds` for at least `bytes` of it.
+  func read(atLeast bytes: Int, seconds: Double = 3) async throws -> Data {
+    let deadline = Date().addingTimeInterval(seconds)
+    while buffer.count < bytes, Date() < deadline {
+      let chunk: Data = try await withCheckedThrowingContinuation { continuation in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, _, error in
+          if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: data ?? Data()) }
+        }
+      }
+      buffer.append(chunk)
+    }
+    defer { buffer.removeAll() }
+    return buffer
+  }
 
   func exchange(_ text: String) async throws -> RTSPResponse {
     connection.send(content: Data(text.utf8), completion: .contentProcessed { _ in })
