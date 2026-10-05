@@ -3,6 +3,7 @@ import DirectorCore
 import DirectorDVR
 import DirectorExport
 import DirectorLink
+import DirectorPipeline
 import DistributorWire
 import Foundation
 import ImageIO
@@ -93,9 +94,18 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
         preparedTracks: preparedTracks(of: recording, cameras: cameras),
         soundShortfall: Self.soundShortfall(of: recording),
         gameId: recording.gameId,
-        gameTitle: recording.gameTitle
+        gameTitle: recording.gameTitle,
+        telemetry: telemetry(of: recording.id)
       )
     }
+  }
+
+  /// The take's telemetry log, when it kept one.
+  private func telemetry(of recording: Int64) -> RemoteFile? {
+    let name = TakeTelemetryLog.filename(for: recording)
+    let url = roots.program.appendingPathComponent(name)
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    return RemoteFile(root: .program, path: name, bytes: Self.size(of: url))
   }
 
   /// Nil for a take with no verdict — never checked is not the same as whole.

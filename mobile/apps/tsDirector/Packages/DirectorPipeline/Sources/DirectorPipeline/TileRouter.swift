@@ -663,6 +663,10 @@ public final class TileRouter: @unchecked Sendable {
   private var programPictures = ProgrammePictureQueue<ProgramPicture>(
     delaySeconds: AudioMixer.defaultLiveReadLagSeconds
   )
+  /// The programme clock's worst lateness since `programmeTickStatistics` was last read, and the
+  /// ticks it has missed, for the take's telemetry.
+  private var tickLatenessMax: Double = 0
+  private var missedTicks: UInt64 = 0
   /// The picture the recording last took, so a repeat can be told from a new one.
   private var lastRecordedSequence: UInt64?
   /// Programme pictures left out because the compositor could not make one.
@@ -748,9 +752,13 @@ public final class TileRouter: @unchecked Sendable {
     let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
     let wallNow = clock.now.seconds
     lock.lock()
-    guard let tick = programmeClock.tick(at: now),
-          let entry = programPictures.pick(at: wallNow, period: 1 / Double(programmeClock.rate))
-    else {
+    guard let tick = programmeClock.tick(at: now) else {
+      lock.unlock()
+      return
+    }
+    tickLatenessMax = max(tickLatenessMax, tick.lateness)
+    missedTicks &+= UInt64(max(0, tick.ticksMissed))
+    guard let entry = programPictures.pick(at: wallNow, period: 1 / Double(programmeClock.rate)) else {
       lock.unlock()
       return
     }
@@ -1010,6 +1018,16 @@ public final class TileRouter: @unchecked Sendable {
     lock.lock()
     programPictures.setDelay(seconds: seconds)
     lock.unlock()
+  }
+
+  /// The programme clock's worst lateness since the last read, in seconds, which this read resets,
+  /// and the ticks it has missed in all.
+  public func programmeTickStatistics() -> (latenessMax: Double, missed: UInt64) {
+    lock.lock()
+    defer { lock.unlock() }
+    let result = (tickLatenessMax, missedTicks)
+    tickLatenessMax = 0
+    return result
   }
 
   /// Programme pictures dropped for arriving more than a tick after their moment, and pictures

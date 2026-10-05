@@ -319,6 +319,8 @@ public final class AppEnvironment {
   /// settings as they are now. Behind a lock because exports read it off the main actor.
   private let exportFallbackEncoding: OSAllocatedUnfairLock<TakeEncoding>
   private let stateDumper = StateDumper()
+  /// The take's once-a-second telemetry, beside its programme master.
+  private let takeTelemetry = TakeTelemetryLog(directory: DirectorPaths.program)
   private var controlServer: ControlServer?
   /// TS Distributor's way in: a loopback server the Mac reaches over the cable.
   private var linkServer: LinkServer?
@@ -4604,6 +4606,9 @@ public final class AppEnvironment {
       $0.recordingMixFutureBuffers = recordingMix.futureBuffers
       $0.liveSoundDelayMilliseconds = (mix.readLagSeconds * 1_000).rounded()
       let pictures = self.router.programmePictureCounts
+      let ticks = self.router.programmeTickStatistics()
+      $0.programmeTickLatenessMaxMilliseconds = (ticks.latenessMax * 10_000).rounded() / 10
+      $0.programmeMissedTicks = ticks.missed
       $0.programmeLatePictures = pictures.late
       $0.programmeSkippedPictures = pictures.skipped
       $0.programmeComposeMisses = self.router.programmeComposeMisses
@@ -4811,6 +4816,7 @@ public final class AppEnvironment {
       }
     }
     applyProgramOverlays()
+    takeTelemetry.note(recording: activeRecordingID, snapshot: next, at: clock.now.seconds)
   }
 
   /// HUD numbers can wait a second. The yellow replay-offset pill cannot — it should tick about

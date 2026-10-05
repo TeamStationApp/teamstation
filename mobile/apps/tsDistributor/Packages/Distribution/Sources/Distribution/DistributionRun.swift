@@ -322,6 +322,29 @@ public final class DistributionRun {
   /// Whether anything of this export has to come from the iPad.
   var needsIPad: Bool { !stopped && !(toStitch.isEmpty && toFetch.isEmpty) }
 
+  /// Where the take's telemetry log was saved, once it was.
+  public private(set) var telemetryFile: URL?
+
+  /// `2026-01-02-13-04-05-telemetry.jsonl`: the programme's name, beside the take's files.
+  public nonisolated static func telemetryFilename(of recording: RecordingListing) -> String {
+    let programme = RecordingExport.programFilename(startedAt: recording.startedAt)
+    return (programme as NSString).deletingPathExtension + "-telemetry.jsonl"
+  }
+
+  /// Saves the take's telemetry log beside its files. A small file and only read, so it needs no
+  /// export lock; fetched afresh each time, because a take still recording keeps adding to it.
+  func fetchTelemetry(_ connection: DirectorConnection) async {
+    guard let file = recording.telemetry else { return }
+    let target = folder.appendingPathComponent(Self.telemetryFilename(of: recording))
+    try? FileManager.default.removeItem(at: target)
+    do {
+      try await connection.download(file, to: target)
+      telemetryFile = target
+    } catch {
+      // Diagnostics only: a take without its telemetry is still the take.
+    }
+  }
+
   /// What has to come from the iPad cannot, for `reason`, so the export goes no further.
   func stop(fetching reason: String) {
     for track in toStitch + toFetch { states[track] = .failed(reason) }

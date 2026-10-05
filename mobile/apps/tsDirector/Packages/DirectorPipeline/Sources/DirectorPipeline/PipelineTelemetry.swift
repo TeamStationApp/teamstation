@@ -589,6 +589,9 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// Programme pictures dropped for arriving more than a tick after their moment, and pictures
   /// never shown because a newer one was due on the same tick.
   public var programmeLatePictures: UInt64 = 0
+  /// The programme clock's worst lateness since the last poll, and ticks it has missed in all.
+  public var programmeTickLatenessMaxMilliseconds: Double = 0
+  public var programmeMissedTicks: UInt64 = 0
   public var programmeSkippedPictures: UInt64 = 0
   /// Programme pictures left out because the compositor could not make one.
   public var programmeComposeMisses: UInt64 = 0

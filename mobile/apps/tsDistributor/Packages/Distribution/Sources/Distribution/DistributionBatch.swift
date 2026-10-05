@@ -116,6 +116,11 @@ public final class DistributionBatch {
         for run in fromIPad { run.failWithoutIPad() }
       }
     }
+    // Each take's telemetry log: small and only read, so it is fetched whenever an iPad is there,
+    // whether or not any file had to come from it.
+    if let connection {
+      for run in runs where !wasCancelled { await run.fetchTelemetry(connection) }
+    }
     isDoneWithIPad = true
 
     // 2. The files, then the combined videos, on this Mac alone.
