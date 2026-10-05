@@ -489,6 +489,8 @@ final class APIAdapter: DistributorActions {
       return APIRunStep(track: track, name: name, state: "queued")
     case let .fetching(received, total):
       return APIRunStep(track: track, name: name, state: "fetching", fraction: fraction(received, total))
+    case .fetched:
+      return APIRunStep(track: track, name: name, state: "fetched", detail: "off the iPad, waiting to be stitched")
     case let .stitching(fraction):
       return APIRunStep(track: track, name: name, state: "stitching", fraction: fraction)
     case let .downloading(received, total):

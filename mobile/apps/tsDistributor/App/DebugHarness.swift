@@ -234,6 +234,7 @@ final class DebugHarness {
     switch state {
     case .queued: "queued"
     case let .fetching(received, total): "fetching \(received)/\(total)"
+    case .fetched: "fetched"
     case let .stitching(fraction): String(format: "stitching %.2f", fraction)
     case let .downloading(received, total): "downloading \(received)/\(total)"
     case .done(let url): "done \(url.path)"
