@@ -286,12 +286,12 @@ struct SourceSoundTimelineTests {
     #expect(mixer.reader(for: SourceID("camera"))?.phase == .playing)
   }
 
-  @Test("The live sound delay is the display cap, 500 ms when it is off, within 0.1–2 s")
+  @Test("The live sound delay is the display cap, 1 s when it is off, within 0.1–2 s")
   func liveSoundDelayFromCap() {
     #expect(TileRouter.liveSoundDelaySeconds(capEnabled: true, capMilliseconds: 500) == 0.5)
     #expect(TileRouter.liveSoundDelaySeconds(capEnabled: true, capMilliseconds: 800) == 0.8)
-    #expect(TileRouter.liveSoundDelaySeconds(capEnabled: false, capMilliseconds: 800) == 0.5)
-    #expect(TileRouter.liveSoundDelaySeconds(capEnabled: true, capMilliseconds: 0) == 0.5)
+    #expect(TileRouter.liveSoundDelaySeconds(capEnabled: false, capMilliseconds: 800) == 1)
+    #expect(TileRouter.liveSoundDelaySeconds(capEnabled: true, capMilliseconds: 0) == 1)
     #expect(TileRouter.liveSoundDelaySeconds(capEnabled: true, capMilliseconds: 20) == 0.1)
     #expect(TileRouter.liveSoundDelaySeconds(capEnabled: true, capMilliseconds: 9_000) == 2)
   }

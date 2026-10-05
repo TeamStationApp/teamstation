@@ -378,4 +378,14 @@ struct SubnetScanCommandTests {
     )
     #expect(ControlChannel.command(from: URL(string: "tsdirector://test/subnet-scan")!) == nil)
   }
+
+  @Test("The display latency cap is saved over the control channel, 0 turning it off")
+  func displayLatencyCapCommand() {
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/display-latency-cap?ms=1000")!)
+      == .setDisplayLatencyCap(milliseconds: 1_000))
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/displaylatencycap?ms=0")!)
+      == .setDisplayLatencyCap(milliseconds: 0))
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/display-latency-cap?ms=-5")!) == nil)
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/display-latency-cap")!) == nil)
+  }
 }

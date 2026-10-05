@@ -56,9 +56,14 @@ struct FrameLatencyGateTests {
     #expect(FrameLatencyGate.age(captured: nil, now: now) == nil)
   }
 
-  @Test("Caps come from the operator's settings, and are off until switched on")
+  @Test("Caps come from the operator's settings, and are off when switched off")
   func capsFromConfig() {
     var config = AppConfig()
+    // A new install has both on since D7: 1 s and 20 s.
+    #expect(FrameLatencyGate.Caps(config: config).displaySeconds == 1)
+    #expect(FrameLatencyGate.Caps(config: config).diskSeconds == 20)
+    config.displayLatencyCapEnabled = false
+    config.diskLatencyCapEnabled = false
     #expect(FrameLatencyGate.Caps(config: config).displaySeconds == nil)
     #expect(FrameLatencyGate.Caps(config: config).diskSeconds == nil)
 

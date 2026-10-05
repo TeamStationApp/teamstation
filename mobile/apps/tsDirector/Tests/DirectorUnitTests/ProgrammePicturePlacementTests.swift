@@ -10,9 +10,9 @@ import Testing
 /// 30 and 60 fps from heat, stuttered: the programme took whatever picture was newest.
 @Suite("Programme picture placement")
 struct ProgrammePicturePlacementTests {
-  @Test("The delay line never holds past D, cap on or off: off holds it to 500 ms, as D is")
+  @Test("The delay line never holds past D, cap on or off: off holds it to 1 s, as D is")
   func playoutCapIsD() {
-    #expect(TileRouter.playoutCapMilliseconds(capEnabled: false, capMilliseconds: 2_000) == 500)
+    #expect(TileRouter.playoutCapMilliseconds(capEnabled: false, capMilliseconds: 2_000) == 1_000)
     #expect(TileRouter.playoutCapMilliseconds(capEnabled: true, capMilliseconds: 400) == 400)
     #expect(TileRouter.playoutCapMilliseconds(capEnabled: true, capMilliseconds: 3_000) == 2_000)
     for (enabled, cap) in [ (false, 0.0), (true, 250.0), (true, 1_500.0) ] {

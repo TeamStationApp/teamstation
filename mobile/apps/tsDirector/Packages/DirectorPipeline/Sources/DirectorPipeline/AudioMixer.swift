@@ -20,7 +20,7 @@ import DirectorSources
 /// Each source's sound waits in its own `SourceSoundTimeline`, laid down by capture time as soon as
 /// it is decoded and shared by both mixes. Each chunk pulls from every contributing timeline at the
 /// counter position less `readLag`: the live mix hears a camera `readLag` (the display latency cap,
-/// 500 ms by default) after it captured the sound, and the recording's mix hears it at its capture
+/// 1 s by default) after it captured the sound, and the recording's mix hears it at its capture
 /// time but emits five seconds behind the live edge, so sound held up on the way still lands in its
 /// place. A source that underruns fades out and contributes silence; a source that returns fades in.
 ///
@@ -35,8 +35,9 @@ public final class AudioMixer: @unchecked Sendable {
   public static let mixDelaySeconds = 0.02
   /// Kept for callers that size a window; the timelines hold `SourceSoundTimeline.capacitySeconds`.
   public static let defaultWindowSeconds = 3.0
-  /// The live mix's read lag when nothing has set one: the display latency cap's default.
-  public static let defaultLiveReadLagSeconds = 0.5
+  /// The live mix's read lag when nothing has set one, and D with the display latency cap off: the
+  /// cap's default, so D is the same either way.
+  public static let defaultLiveReadLagSeconds = 1.0
   /// The most sound a quiet source must have waiting before it is heard again.
   public static let maximumReserveSeconds = 0.1
   private static let chunkSeconds = 0.02

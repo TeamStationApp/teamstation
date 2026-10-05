@@ -469,7 +469,7 @@ public final class AppEnvironment {
     // construction, and a frame gate that only took effect after the operator next opened Settings
     // would be off for the whole of the first session.
     self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
-    // And D, which the delay line's cap above was set to: a saved cap other than 500 ms would
+    // And D, which the delay line's cap above was set to: a saved cap other than the default would
     // otherwise hold pictures past a D still at its default until Settings next changed.
     self.router.setLiveSoundDelay(seconds: TileRouter.liveSoundDelaySeconds(
       capEnabled: session.displayLatencyCapEnabled,
@@ -4953,6 +4953,13 @@ public final class AppEnvironment {
     case .searchCameras:
       discovery?.sweepNow()
       discovery?.searchNow()
+    case let .setDisplayLatencyCap(milliseconds):
+      // Saved, as the Performance sheet saves it; a launch or /configure cap overlays it for a session.
+      if milliseconds > 0 {
+        setDisplayLatencyCapMilliseconds(milliseconds)
+      } else {
+        setDisplayLatencyCap(enabled: false)
+      }
     case let .setSubnetScan(subnet, on):
       // Through `update(config:)`, like the Settings switch it stands in for, so a bench set up this
       // way is still set up after a relaunch. Turning it on without a usable subnet is refused

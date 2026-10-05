@@ -614,7 +614,7 @@ public final class TileRouter: @unchecked Sendable {
   public let audioMixer: AudioMixer
   /// The recording's own mix, which feeds only the programme master.
   ///
-  /// The live mix hears each camera half a second after capture, and sound later than that is
+  /// The live mix hears each camera D after capture (a second by default), and sound later than that is
   /// silence on the stream and the speakers: take 365's programme went quiet for 2.7–4.2 s of every
   /// 4 s while the Pixel's sound came in clumps, though the Pixel's own file kept it. The recording
   /// is watched afterwards, so its mix reads sound at its capture time and waits
@@ -1045,7 +1045,7 @@ public final class TileRouter: @unchecked Sendable {
     return composeMisses
   }
 
-  /// The live sound delay for a display latency cap: the cap itself when it is on, 500 ms when it
+  /// The live sound delay for a display latency cap: the cap itself when it is on, 1 s when it
   /// is off, and never under 100 ms or over 2 s, the delay line's own ceiling.
   public static func liveSoundDelaySeconds(capEnabled: Bool, capMilliseconds: Double) -> Double {
     let milliseconds = capEnabled && capMilliseconds > 0

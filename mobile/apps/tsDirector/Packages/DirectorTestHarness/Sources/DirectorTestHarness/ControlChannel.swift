@@ -42,6 +42,9 @@ public enum ControlCommand: Sendable, Equatable {
   case searchCameras
   /// Sweep this /24 for cameras instead of the local subnet, or stop. Saved, like the Settings switch.
   case setSubnetScan(subnet: String?, on: Bool?)
+  /// The display latency cap, and so the live delay D, in milliseconds; 0 turns it off. Saved, like
+  /// the Performance sheet's switch and slider, so it holds across launches.
+  case setDisplayLatencyCap(milliseconds: Double)
   /// Opens or closes the Cameraman control screen on a 0-based source.
   case cameraControl(source: Int, open: Bool)
   /// Director's own zoom on a 0-based source's picture, 1 for none.
@@ -181,6 +184,10 @@ public enum ControlChannel {
       let on = query["on"].flatMap { LaunchConfiguration.boolean($0) }
       guard query["subnet"] != nil || on != nil else { return nil }
       return .setSubnetScan(subnet: query["subnet"], on: on)
+    case "display-latency-cap", "displaylatencycap":
+      guard let milliseconds = query["ms"].flatMap({ Double($0) }), milliseconds.isFinite, milliseconds >= 0
+      else { return nil }
+      return .setDisplayLatencyCap(milliseconds: milliseconds)
     case "camera-control", "cameracontrol":
       guard let source = Self.slot(query) else { return nil }
       return .cameraControl(source: source - 1, open: LaunchConfiguration.boolean(query["open"]) ?? true)

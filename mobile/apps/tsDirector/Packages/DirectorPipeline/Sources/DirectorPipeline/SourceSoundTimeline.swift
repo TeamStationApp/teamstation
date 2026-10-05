@@ -10,7 +10,7 @@ import Foundation
 /// mixers count on. A buffer's position comes from its capture time (`AudioFrame.wallClock`, which
 /// for an RTSP camera is the stream's own sender-report mapping onto the iPad clock) plus a
 /// per-camera `trimSeconds`. Each mix reads the sample captured `readLag` before the moment it is
-/// emitting: the live mix half a second, the recording's mix none but five seconds later.
+/// emitting: the live mix D (a second by default), the recording's mix none but five seconds later.
 ///
 /// The mapping only steers. Within one continuous run the sound is laid down by sample count, so
 /// the jitter in each sender report and in arrival never reaches the mix:
