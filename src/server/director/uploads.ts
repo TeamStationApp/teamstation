@@ -90,49 +90,75 @@ export function purgeDateFor(now: Date): Date {
  * *is*, and the only thing this upload is certainly a better copy of is the
  * stream it was recorded alongside.
  *
- * **And only if it actually covers it.** The claim is "a better copy of the
- * same game", which a recording that is minutes long when the stream is hours
- * long is plainly not. A 107-second bench clip uploaded to a game hid its
- * two-hour live recording and dated it for deletion, which is the whole of
- * that game gone from the page in exchange for a clip. So the upload has to
- * be about as long as what it displaces — shorter by a couple of minutes is
- * ordinary, since a stream is usually started after the recording and stopped
- * before it, but shorter by an hour is a different recording.
+ * **And only if it actually reaches the end of it.** The claim is "a better
+ * copy of the same game", which a recording that stops an hour before the
+ * stream did is plainly not: a 107-second bench clip uploaded to a game once
+ * hid its two-hour live recording and dated it for deletion, the whole of
+ * that game gone from the page in exchange for a clip. So coverage is judged
+ * by where the two sit in time, not by how long they are. The upload has to
+ * start before the stream ended, and its end has to come within
+ * `COVERAGE_TOLERANCE_SEC` of the stream's end or later: a stream is often
+ * stopped a minute or two before the recording, or after it.
+ *
+ * **The start is free.** A stream that went live half an hour before the iPad
+ * started recording — pre-game, warm-ups, an empty field — is still covered
+ * by the recording of the game. Comparing lengths refused exactly that case:
+ * a stream 28 minutes longer than its upload stayed on the page and became
+ * the game's default.
  *
  * A recording already hidden is not touched: it is not in anybody's way, and
  * giving it a fresh purge date would restart a clock that may be nearly up.
- * A live recording whose length is unknown is left alone too — with nothing to
- * compare, there is no evidence the upload covers it.
+ * A recording whose start or length is unknown is left alone too — with
+ * nothing to compare, there is no evidence the upload covers it.
  */
 export const COVERAGE_TOLERANCE_SEC = 120
 
+/** Where a recording sits in time, as its row says. */
+export interface RecordingSpan {
+  startAt?: Date | string | null
+  durationSec?: number | null
+}
+
 export function liveToReplace(
-  videos: Array<{
-    id: string
-    kind: string
-    hidden: boolean
-    durationSec?: number | null
-  }>,
+  videos: Array<
+    RecordingSpan & {
+      id: string
+      kind: string
+      hidden: boolean
+    }
+  >,
   uploadedId: string,
-  uploadedSeconds?: number | null
+  uploaded?: RecordingSpan | null
 ): string[] {
   return videos
     .filter(one => one.id !== uploadedId && one.kind === 'live' && !one.hidden)
-    .filter(one => covers(uploadedSeconds, one.durationSec))
+    .filter(one => covers(uploaded, one))
     .map(one => one.id)
 }
 
-/** Whether an upload of this length can be said to cover that recording. */
+/** Whether an upload sitting here in time can be said to cover that stream. */
 export function covers(
-  uploadedSeconds: number | null | undefined,
-  liveSeconds: number | null | undefined
+  uploaded: RecordingSpan | null | undefined,
+  live: RecordingSpan | null | undefined
 ): boolean {
-  // Nothing to compare: an upload that does not know its own length, or a
-  // live recording that does not know its. Both are unusual, and neither is
-  // evidence of covering anything.
-  if (uploadedSeconds == null || liveSeconds == null) return false
-  if (uploadedSeconds <= 0 || liveSeconds <= 0) return false
-  return uploadedSeconds + COVERAGE_TOLERANCE_SEC >= liveSeconds
+  const upload = spanOf(uploaded)
+  const stream = spanOf(live)
+  // Nothing to compare: a start or a length that is not known. Both are
+  // unusual, and neither is evidence of covering anything.
+  if (upload == null || stream == null) return false
+  if (upload.startMs >= stream.endMs) return false
+  return upload.endMs >= stream.endMs - COVERAGE_TOLERANCE_SEC * 1000
+}
+
+/** A row's start and end in milliseconds, or nothing when either is unknown. */
+function spanOf(
+  span: RecordingSpan | null | undefined
+): { startMs: number; endMs: number } | undefined {
+  if (span?.startAt == null || span.durationSec == null) return undefined
+  if (!(span.durationSec > 0)) return undefined
+  const startMs = new Date(span.startAt).getTime()
+  if (Number.isNaN(startMs)) return undefined
+  return { startMs, endMs: startMs + span.durationSec * 1000 }
 }
 
 /**

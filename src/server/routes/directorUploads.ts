@@ -502,14 +502,20 @@ export async function replaceLiveRecording(
 ): Promise<string[]> {
   const videos = await db
     .selectFrom('videos')
-    .select(['id', 'kind', 'hidden', 'duration_sec as durationSec'])
+    .select([
+      'id',
+      'kind',
+      'hidden',
+      'start_at as startAt',
+      'duration_sec as durationSec'
+    ])
     .where('game_id', '=', gameId)
     .execute()
 
-  // How long the upload turned out to be, which is what says whether it
-  // covers the stream it would displace.
+  // Where the upload sits in time, which is what says whether it reaches the
+  // end of the stream it would displace.
   const uploaded = videos.find(one => one.id === uploadedId)
-  const replaced = liveToReplace(videos, uploadedId, uploaded?.durationSec)
+  const replaced = liveToReplace(videos, uploadedId, uploaded)
   if (replaced.length === 0) return []
 
   const now = new Date()

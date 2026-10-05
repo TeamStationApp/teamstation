@@ -482,23 +482,39 @@ describe('the live stream stepping aside for a better copy', function () {
         updated_at: now
       })
       .execute()
-    // Lengths matter: an upload only displaces a recording it actually
-    // covers, so every row here has to say how long it is.
-    for (const [id, kind, seconds] of [
-      ['vid_live', 'live', 7000],
-      ['vid_camera', 'program', 7200],
-      ['vid_upload', 'program', 7200],
-      ['vid_clip', 'program', 107]
+    await db
+      .insertInto('games')
+      .values({
+        id: 'gam_two',
+        home_team_id: 'tem_a',
+        away_team_id: 'tem_b',
+        start_at: now,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    // Where each sits in time matters: an upload only displaces a stream whose
+    // end it reaches, so every row here says when it started and how long it
+    // is. On `gam_two` the stream went live 28 minutes before the recording.
+    const at = (sec: number): Date => new Date(now.getTime() + sec * 1000)
+    for (const [id, game, kind, from, seconds] of [
+      ['vid_live', 'gam_one', 'live', 0, 7000],
+      ['vid_camera', 'gam_one', 'program', 0, 7200],
+      ['vid_upload', 'gam_one', 'program', -200, 7200],
+      ['vid_clip', 'gam_one', 'program', 600, 107],
+      ['vid_early', 'gam_two', 'live', 0, 6663],
+      ['vid_take', 'gam_two', 'program', 1687, 5001]
     ] as const) {
       await db
         .insertInto('videos')
         .values({
           id,
-          game_id: 'gam_one',
+          game_id: game,
           kind,
           title: id,
           storage: 'spaces',
           status: 'ready',
+          start_at: at(from),
           duration_sec: seconds,
           created_at: now,
           updated_at: now
@@ -561,6 +577,13 @@ describe('the live stream stepping aside for a better copy', function () {
       .executeTakeFirstOrThrow()
     expect(camera.hidden).equals(false)
     expect(camera.purgeAfter).equals(null)
+  })
+
+  it('takes the place of a stream that went live before the recording', async function () {
+    if (db == null) this.skip()
+    expect(await replaceLiveRecording(db, 'gam_two', 'vid_take')).deep.equals([
+      'vid_early'
+    ])
   })
 
   it('does nothing the second time, so a retry costs nothing', async function () {
