@@ -14,6 +14,11 @@ files. Work that is not pushed is work he cannot review.
 
 If a change is not ready to push, it is not finished; say so rather than leaving it on disk.
 
+## API design
+
+Before adding or changing a route under `/api/v1`, read [docs/api.md](docs/api.md). A filter
+or a search is a query parameter on the collection that already exists, never a new path.
+
 ## TS Director: pass the device UDID
 
 Whenever Paul asks to **fix, change, or finish** TS Director (`mobile/apps/tsDirector`), treat
