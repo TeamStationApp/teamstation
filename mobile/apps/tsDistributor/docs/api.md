@@ -32,10 +32,11 @@ plugged in.
 | `GET /api/v1` | `APIIndex`: the routes and a paragraph about the API |
 | `GET /api/v1/status` | `APIStatus`: the iPad (`none`, `waitingForDirector`, `attached`, `failed`, with whether TS Director records or streams), the export folder, the run under way or the last one, and the TeamStation account (without its games — see `GET /api/v1/teamstation`) |
 | `GET /api/v1/events` | The status as newline-delimited JSON (`APIEvent`), once on connecting and again each time it changes |
-| `GET /api/v1/recordings` | `APIRecordingList`: the attached iPad's takes (`source: "iPad"`), else the last list seen from one (`source: "cache"`, with `savedAt`). Each take lists its files with `onMac` (`saved`, `interrupted`, `missing`), their paths, whether the iPad has already stitched them, the combined video, and `gameId` and `gameTitle`: the TeamStation game TS Director filed it under |
+| `GET /api/v1/recordings` | `APIRecordingList`: the attached iPad's takes (`source: "iPad"`), else the last list seen from one (`source: "cache"`, with `savedAt`). Each take lists its files with `onMac` (`saved`, `interrupted`, `missing`), their paths, whether the iPad has already stitched them, whether their segments are kept here (`segmentsOnMac`, see [kept segments](#kept-segments)), the combined video, and `gameId` and `gameTitle`: the TeamStation game TS Director filed it under |
 | `GET /api/v1/recordings/{id}` | One `APIRecording` |
 | `GET /api/v1/recordings/{id}/still?track=&at=` | One JPEG (at most 640×360) from the iPad, `at` seconds in (default 10) |
 | `DELETE /api/v1/recordings?ids=361,362&confirm=true` | `{deleted, refused}`: deletes takes on the iPad; the take being recorded is refused |
+| `DELETE /api/v1/recordings/{id}/segments` | `{recording, removed, bytes}`: removes the segments [kept](#kept-segments) on this Mac for the take, and says how much room that gave back; 409 `segmentsInUse` while a run is exporting it. The saved files stay |
 | `POST /api/v1/recordings/{id}/download` | 202 `APIRun`: the files onto this Mac — everything off the iPad first, then stitched here. Body `{tracks?, reprocess?}` |
 | `POST /api/v1/recordings/{id}/export` | 202 `APIRun`: the files, then the combined video if the settings make one (see [the combined video](#the-combined-video)), then — with this Mac signed in and the take filed under a game — uploads to that game. Body `{tracks?, reprocess?, combined?, upload?}` overrides |
 | `POST /api/v1/recordings/{id}/combined` | 202 `APIRun`: the combined video, fetching any file it needs. Body `{combined: {include?, audioCamera?}}` |
@@ -64,6 +65,17 @@ ones its uploads send, and the ones its combined video is made from. TS Director
 recording and streaming only while they come off; then this Mac stitches the files and makes the
 combined video, then the uploads go. None of that needs the iPad, so it can be unplugged once the
 files are in (`isDoneWithIPad`) and the run carries on.
+
+## Kept segments
+
+A file is stitched on this Mac from the take's archive segments, which come off the iPad first.
+They stay afterwards, in `<day>/.tsDistributor-segments/<recording>/`, one folder per file, laid
+out as the iPad lays its own out (`index.sqlite` beside `Archives/`), so a file can be stitched
+again — `reprocess: true`, or a saved file that went missing — with no iPad attached: nothing of
+such a run needs the iPad, and it never asks TS Director to hold off recording. A cancelled run
+keeps the segments of every file that was wholly off the iPad; a fetch cut short leaves nothing.
+They take as much room as the files stitched from them, so remove a take's once its files are
+right: `DELETE /api/v1/recordings/{id}/segments`.
 
 ## Several recordings in one run
 

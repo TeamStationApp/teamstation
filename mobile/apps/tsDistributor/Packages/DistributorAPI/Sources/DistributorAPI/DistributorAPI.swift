@@ -12,6 +12,8 @@ public protocol DistributorActions: AnyObject, Sendable {
   func still(recording: Int64, track: String, at seconds: Double) async throws(HTTPError) -> Data
   /// Deletes on the iPad and returns the ids it refused: the take in progress, if it was asked.
   func deleteRecordings(_ ids: [Int64]) async throws(HTTPError) -> [Int64]
+  /// Removes the segments kept on this Mac for one recording; 409 while a run is exporting it.
+  func deleteSegments(_ id: Int64) throws(HTTPError) -> APISegmentsDeleted
   func startRun(_ request: APIRunRequest) async throws(HTTPError) -> APIRun
   func run(_ id: UUID) -> APIRun?
   func currentRun() -> APIRun?
@@ -67,6 +69,9 @@ public enum DistributorAPI {
     }
     router.add("GET", "/api/v1/recordings/{id}", summary: "One recording and what of it is on this Mac") { _, parameters in
       .apiJSON(try await actions.recording(try parameters.int64("id")))
+    }
+    router.add("DELETE", "/api/v1/recordings/{id}/segments", summary: "Removes the segments kept on this Mac for re-stitching one recording without the iPad; 409 while a run is exporting it") { _, parameters in
+      .apiJSON(try await actions.deleteSegments(try parameters.int64("id")))
     }
     router.add("GET", "/api/v1/recordings/{id}/still", summary: "One JPEG of a file about ?at=<seconds> in (default 10): ?track=primary|camera:<id>|<name>") { request, parameters in
       let jpeg = try await actions.still(

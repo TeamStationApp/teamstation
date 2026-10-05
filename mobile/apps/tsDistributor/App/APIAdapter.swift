@@ -115,7 +115,8 @@ final class APIAdapter: DistributorActions {
         onMac: Self.word(state),
         bytesOnMac: Self.bytes(state),
         path: folder?.appendingPathComponent(DistributionRun.filename(for: track, of: recording)).path,
-        preparedOnIPad: recording.preparedTracks.contains(track)
+        preparedOnIPad: recording.preparedTracks.contains(track),
+        segmentsOnMac: inventory?.segmentsOnMac.contains(track) ?? false
       )
     }
     var files: [APIFile] = []
@@ -165,6 +166,27 @@ final class APIAdapter: DistributorActions {
       return refused
     } catch {
       throw HTTPError(502, "iPadFailed", "the iPad did not delete them: \(error)")
+    }
+  }
+
+  func deleteSegments(_ id: Int64) throws(HTTPError) -> APISegmentsDeleted {
+    let recording = try listing(id)
+    guard let destination = model.destination else {
+      return APISegmentsDeleted(recording: id, removed: false, bytes: 0)
+    }
+    let removal: KeptSegments.Removal
+    do {
+      removal = try KeptSegments.remove(recording, in: destination, unlessUsedBy: model.batch)
+    } catch {
+      throw HTTPError(500, "removeFailed", "the segments could not be removed: \(error)")
+    }
+    switch removal {
+    case .inUse:
+      throw HTTPError(409, "segmentsInUse", "the run under way is exporting recording \(id); remove its segments once it finishes")
+    case .none:
+      return APISegmentsDeleted(recording: id, removed: false, bytes: 0)
+    case .removed(let bytes):
+      return APISegmentsDeleted(recording: id, removed: true, bytes: bytes)
     }
   }
 

@@ -234,9 +234,9 @@ public final class DistributionRun {
   /// `prepare()` sorted them.
   private var toStitch: [Track] = []
   private var toFetch: [Track] = []
-  /// Where the segments of the files still to stitch wait between coming off the iPad and being
-  /// stitched.
-  private var scratch: URL?
+  /// Where this take's segments are kept: they wait there between coming off the iPad and being
+  /// stitched, and stay, so a file can be stitched again with no iPad (see `KeptSegments`).
+  private var segments: URL?
   /// The tracks whose segments are on this Mac, waiting to be stitched, and the window every file
   /// is cut to.
   private var fetched: [MacStitcher.Fetched] = []
@@ -269,7 +269,8 @@ public final class DistributionRun {
 
   /// The export is over. `cancelled` says why, when it was stopped before the end.
   func finish(cancelled reason: String?) {
-    if let scratch { try? FileManager.default.removeItem(at: scratch) }
+    // Segments a fetch did not finish go; whole ones stay, cancelled or not.
+    if let segments { KeptSegments.removeIncomplete(in: segments) }
     if let reason {
       for track in tracks where !(states[track]?.isFinal ?? false) {
         states[track] = .failed(reason)
@@ -287,8 +288,9 @@ public final class DistributionRun {
 
   // MARK: - Steps
 
-  /// Makes the export's folder and sorts its files: already here, which need nothing; already
-  /// stitched on the iPad, which need only fetching; and the rest, stitched here from segments.
+  /// Makes the export's folder and sorts its files: already here, which need nothing; with their
+  /// segments kept here, which are stitched from them; already stitched on the iPad, which need only
+  /// fetching; and the rest, stitched here from segments off the iPad.
   func prepare() {
     do {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -297,20 +299,24 @@ public final class DistributionRun {
       stopped = true
       return
     }
+    // Beside the files, on the disk they are saved to, so that disk is the only one that needs the
+    // room and a stitched file is saved by renaming it.
+    let segments = KeptSegments.folder(for: recording, in: destination)
+    self.segments = segments
+    KeptSegments.removeIncomplete(in: segments)
     for track in tracks {
       let target = folder.appendingPathComponent(filename(for: track))
       if !reprocess, Self.size(of: target) > 0 {
         states[track] = .done(target)
+      } else if let kept = KeptSegments.fetched(track, in: segments) {
+        fetched.append(kept)
+        states[track] = .fetched
       } else if !reprocess, recording.preparedTracks.contains(track) {
         toFetch.append(track)
       } else {
         toStitch.append(track)
       }
     }
-    // Beside the files, on the disk they are saved to, so that disk is the only one that needs the
-    // room and a stitched file is saved by renaming it. Each camera's segments go as soon as its
-    // file is saved. The batch clears what an export that never finished left behind first.
-    scratch = folder.appendingPathComponent("\(Self.workPrefix)\(UUID().uuidString)", isDirectory: true)
   }
 
   /// Whether anything of this export has to come from the iPad.
@@ -340,10 +346,10 @@ public final class DistributionRun {
   /// room the export needs. Nil when the export stops here. An iPad that cannot say how large the
   /// files are is not a reason to stop, so that needs no room.
   func measure(connection: DirectorConnection) async -> Need? {
-    guard needsIPad, let scratch else { return nil }
+    guard needsIPad, let segments else { return nil }
     let window: ExportWindow
     do {
-      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(at: segments, withIntermediateDirectories: true)
       window = try await connection.manifest(recordingID: recording.id, tracks: []).window
     } catch {
       // A cancelled export's requests fail too; the cancellation says why, not the request.
@@ -367,13 +373,14 @@ public final class DistributionRun {
   /// iPad's own files, onto this Mac. The iPad's own files download beside the segments, one
   /// camera's segments at a time.
   func fetch(connection: DirectorConnection) async {
-    guard needsIPad, window != nil, let scratch else { return }
+    guard needsIPad, window != nil, let segments else { return }
     for track in toFetch { fetchPrepared(track, from: connection) }
-    let stitcher = MacStitcher(connection: connection, scratch: scratch)
+    let stitcher = MacStitcher(connection: connection, scratch: segments)
     for track in toStitch {
       guard !Task.isCancelled else { break }
       do {
-        fetched.append(try await stitcher.fetch(recording: recording, track: track) { received, total in
+        let root = KeptSegments.folder(for: track, in: segments)
+        fetched.append(try await stitcher.fetch(recording: recording, track: track, into: root) { received, total in
           Task { @MainActor in
             // A late report never takes a fetched track back to fetching.
             switch self.states[track] {
@@ -411,9 +418,11 @@ public final class DistributionRun {
     }
   }
 
-  /// Stitches what came off the iPad, on this Mac alone.
+  /// Stitches what came off the iPad, and what was kept from before, on this Mac alone. Every file
+  /// is cut to one window: the iPad's for this export, or with nothing asked of the iPad, the one
+  /// the kept segments were fetched with.
   func stitch() async {
-    guard !stopped, !wasCancelled, let window else { return }
+    guard !stopped, !wasCancelled, let window = window ?? fetched.first?.response.window else { return }
     await stitchAll(fetched, window: window)
   }
 
@@ -429,7 +438,8 @@ public final class DistributionRun {
     await uploadAllToTeamStation(teamStation)
   }
 
-  /// What a work folder's name starts with. Hidden, so it is never taken for one of the files.
+  /// What the name of a work folder an older export used starts with. Hidden, so it is never taken
+  /// for one of the files.
   nonisolated static let workPrefix = ".tsDistributor-work-"
 
   nonisolated static func removeWorkFolders(in folder: URL) {
@@ -461,9 +471,6 @@ public final class DistributionRun {
       } catch {
         if !wasCancelled { states[track] = .failed("\(error)") }
       }
-      // The segments it was stitched from go now rather than at the end of the export, so the Mac
-      // gives the room back camera by camera.
-      try? FileManager.default.removeItem(at: work.root)
       plan.finish(track)
     }
   }
