@@ -12,13 +12,18 @@ final class FakeActions: DistributorActions {
   var runs: [UUID: APIRun] = [:]
   var startFailure: HTTPError?
   var patches: [APISettingsPatch] = []
+  /// Recordings whose segments a run is using.
+  var segmentsInUse: Set<Int64> = []
+  var segmentsDeleted: [Int64] = []
 
   static let recording = APIRecording(
     id: 411,
     startedAt: Date(timeIntervalSince1970: 1_787_533_500),
     endedAt: nil,
     isLive: false,
-    files: [ APIFile(track: "primary", name: "Primary output", onMac: "saved", bytesOnMac: 10, path: "/Movies/2026-08-23/a.mov", preparedOnIPad: false) ],
+    files: [
+      APIFile(track: "primary", name: "Primary output", onMac: "saved", bytesOnMac: 10, path: "/Movies/2026-08-23/a.mov", preparedOnIPad: false, segmentsOnMac: true)
+    ],
     combined: APIFile(track: "combined", name: "Combined video", onMac: "missing", bytesOnMac: nil, path: nil, preparedOnIPad: false),
     folder: "/Movies/2026-08-23"
   )
@@ -43,6 +48,14 @@ final class FakeActions: DistributorActions {
   func deleteRecordings(_ ids: [Int64]) async throws(HTTPError) -> [Int64] {
     deleted += ids
     return ids.filter { $0 == 1 }
+  }
+
+  func deleteSegments(_ id: Int64) throws(HTTPError) -> APISegmentsDeleted {
+    guard id == 411 else { throw HTTPError.notFound("no recording \(id)") }
+    if segmentsInUse.contains(id) { throw HTTPError(409, "segmentsInUse", "a run is exporting it") }
+    let removed = !segmentsDeleted.contains(id)
+    segmentsDeleted.append(id)
+    return APISegmentsDeleted(recording: id, removed: removed, bytes: removed ? 2_048 : 0)
   }
 
   func startRun(_ request: APIRunRequest) async throws(HTTPError) -> APIRun {
@@ -116,6 +129,7 @@ struct DistributorAPITests {
     #expect(routes == [
       "GET /api/v1", "GET /api/v1/status", "GET /api/v1/events",
       "GET /api/v1/recordings", "DELETE /api/v1/recordings", "GET /api/v1/recordings/{id}", "GET /api/v1/recordings/{id}/still",
+      "DELETE /api/v1/recordings/{id}/segments",
       "POST /api/v1/recordings/{id}/download", "POST /api/v1/recordings/{id}/export",
       "POST /api/v1/recordings/{id}/combined", "POST /api/v1/recordings/{id}/upload",
       "POST /api/v1/runs", "GET /api/v1/runs/current", "GET /api/v1/runs/{id}", "DELETE /api/v1/runs/{id}",
@@ -249,6 +263,29 @@ struct DistributorAPITests {
     let body = try Self.json(confirmed.data)
     #expect(body["deleted"] as? [Int] == [ 2 ])
     #expect(body["refused"] as? [Int] == [ 1 ])
+  }
+
+  @Test("A recording's kept segments are removed on request, and not while a run is exporting it")
+  func deleteSegments() async throws {
+    let actions = FakeActions()
+    let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
+    actions.segmentsInUse = [ 411 ]
+    let busy = try await Self.call(router, "DELETE", "/api/v1/recordings/411/segments")
+    #expect(busy.status == 409)
+    #expect(try Self.json(busy.data)["error"] as? String == "segmentsInUse")
+    #expect(actions.segmentsDeleted.isEmpty)
+    actions.segmentsInUse = []
+    let first = try await Self.call(router, "DELETE", "/api/v1/recordings/411/segments")
+    #expect(first.status == 200)
+    #expect(try JSONDecoder.api.decode(APISegmentsDeleted.self, from: first.data) == APISegmentsDeleted(recording: 411, removed: true, bytes: 2_048))
+    let again = try await Self.call(router, "DELETE", "/api/v1/recordings/411/segments")
+    #expect(try JSONDecoder.api.decode(APISegmentsDeleted.self, from: again.data).removed == false)
+    #expect(try await Self.call(router, "DELETE", "/api/v1/recordings/9/segments").status == 404)
+    #expect(try await Self.call(router, "DELETE", "/api/v1/recordings/x/segments").status == 400)
+    // Each file says whether its segments are kept.
+    let one = try await Self.call(router, "GET", "/api/v1/recordings/411")
+    let files = try #require(try Self.json(one.data)["files"] as? [[String: Any]])
+    #expect(files.first?["segmentsOnMac"] as? Bool == true)
   }
 
   @Test("Recordings, stills, settings and TeamStation answer as the app says")

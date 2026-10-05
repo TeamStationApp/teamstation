@@ -43,20 +43,25 @@ public struct MacStitcher: Sendable {
     let response: ManifestResponse
   }
 
-  /// Fetches the index rows and the files `track` reads into a work folder of its own in `scratch`.
+  /// Fetches the index rows and the files `track` reads into `root`, or a work folder of its own in
+  /// `scratch`, and marks it whole by writing the manifest last (see `KeptSegments`).
   ///
-  /// Cancelling the task stops the downloads where they are, and the work folder goes with them:
-  /// nothing of a cancelled or failed fetch is left in `scratch`.
+  /// Cancelling the task stops the downloads where they are, and the folder goes with them: nothing
+  /// of a cancelled or failed fetch is left behind.
   public func fetch(
     recording: RecordingListing,
     track: Track,
+    into root: URL? = nil,
     progress: @escaping @Sendable (_ received: Int64, _ total: Int64) -> Void
   ) async throws -> Fetched {
     let response = try await connection.manifest(recordingID: recording.id, tracks: [ track ])
-    let root = scratch.appendingPathComponent("stitch-\(UUID().uuidString)", isDirectory: true)
+    let root = root ?? scratch.appendingPathComponent("stitch-\(UUID().uuidString)", isDirectory: true)
+    // Whatever an earlier fetch left here is replaced whole, never mixed with this one.
+    try? FileManager.default.removeItem(at: root)
     do {
       try await fetch(response.files, into: root, progress: progress)
       try Task.checkCancellation()
+      try KeptSegments.complete(root, response: response)
       return Fetched(track: track, root: root, response: response)
     } catch {
       try? FileManager.default.removeItem(at: root)
@@ -65,20 +70,15 @@ public struct MacStitcher: Sendable {
   }
 
   /// Stitches a fetched track with the window the whole export shares, and returns the file, still
-  /// inside the fetch's work folder. It reads only this Mac's disk, so it carries on with the iPad
-  /// gone. A cancelled or failed stitch leaves no work folder behind.
+  /// inside the fetch's folder. It reads only this Mac's disk, so it carries on with the iPad gone,
+  /// and leaves what it was stitched from as it was, so the track can be stitched from it again.
   public static func stitch(
     _ fetched: Fetched,
     recording: RecordingListing,
     window: ExportWindow,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> URL {
-    do {
-      return try await stitchFetched(fetched, recording: recording, window: window, progress: progress)
-    } catch {
-      try? FileManager.default.removeItem(at: fetched.root)
-      throw error
-    }
+    try await stitchFetched(fetched, recording: recording, window: window, progress: progress)
   }
 
   /// Fetches `track` and stitches it in one go, for a single file wanted at once.
@@ -140,7 +140,13 @@ public struct MacStitcher: Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> URL {
     let (archives, program, prepared) = folders(in: fetched.root)
-    let index = try ArchiveIndex(url: fetched.root.appendingPathComponent("index.sqlite"))
+    // The index is made afresh from the manifest each time: one an earlier stitch left holds the
+    // same rows already.
+    let indexURL = fetched.root.appendingPathComponent("index.sqlite")
+    for suffix in [ "", "-wal", "-shm" ] {
+      try? FileManager.default.removeItem(atPath: indexURL.path + suffix)
+    }
+    let index = try ArchiveIndex(url: indexURL)
     try index.importManifest(fetched.response.manifest)
     guard let summary = try index.recordings().first(where: { $0.id == recording.id }) else {
       throw DistributionError.nothingToStitch

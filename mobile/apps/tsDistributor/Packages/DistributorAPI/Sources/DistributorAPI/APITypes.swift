@@ -54,14 +54,41 @@ public struct APIFile: Codable, Equatable, Sendable {
   public var path: String?
   /// Already stitched on the iPad, so it needs only downloading.
   public var preparedOnIPad: Bool
+  /// What it is stitched from is kept on this Mac, so it can be stitched again (`reprocess`) with
+  /// no iPad attached.
+  public var segmentsOnMac: Bool
 
-  public init(track: String, name: String, onMac: String, bytesOnMac: Int64?, path: String?, preparedOnIPad: Bool) {
+  public init(
+    track: String,
+    name: String,
+    onMac: String,
+    bytesOnMac: Int64?,
+    path: String?,
+    preparedOnIPad: Bool,
+    segmentsOnMac: Bool = false
+  ) {
     self.track = track
     self.name = name
     self.onMac = onMac
     self.bytesOnMac = bytesOnMac
     self.path = path
     self.preparedOnIPad = preparedOnIPad
+    self.segmentsOnMac = segmentsOnMac
+  }
+}
+
+/// What `DELETE /api/v1/recordings/{id}/segments` did.
+public struct APISegmentsDeleted: Codable, Equatable, Sendable {
+  public var recording: Int64
+  /// False when there were none to remove.
+  public var removed: Bool
+  /// What removing them gave back.
+  public var bytes: Int64
+
+  public init(recording: Int64, removed: Bool, bytes: Int64) {
+    self.recording = recording
+    self.removed = removed
+    self.bytes = bytes
   }
 }
 
