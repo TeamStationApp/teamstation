@@ -1391,14 +1391,23 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/teams': {
         get: {
-          summary: 'The teams this person belongs to',
+          summary: 'The teams this person belongs to, or a season\u2019s teams',
           description:
-            'Full teams only, never an opponent from outside a season. A ' +
-            'site administrator gets every team; anybody else the teams they ' +
-            'may see. Each team carries `externalIds`, the ids other systems ' +
-            'know it by (any system or kind), sorted.\n\n' +
-            '`externalId` may be repeated, and narrows the list to teams ' +
-            'holding any of those ids, with what the caller may see ' +
+            'Without `season`: full teams only, never an opponent from ' +
+            'outside a season. A site administrator gets every team; anybody ' +
+            'else the teams they may see.\n\n' +
+            '`season` may be repeated, and lists the teams of those seasons ' +
+            'instead, whoever the caller belongs to: its full teams, and ' +
+            'with `kind=external` or `kind=any` the external teams on either ' +
+            'side of its games (`kind=external` lists only those). A season ' +
+            'the caller can neither see nor schedule games in answers 404. A ' +
+            'merged team is listed as the team it was merged into, and each ' +
+            'team once. `kind` defaults to `full`; any other value needs ' +
+            '`season` (400 `kind needs season`).\n\n' +
+            'Each team carries `externalIds`, the ids other systems know it ' +
+            'by (any system or kind), sorted, and `kind`, `full` or ' +
+            '`external`. `externalId` may be repeated, and narrows the list ' +
+            'to teams holding any of those ids, with what the caller may see ' +
             'unchanged; an empty one is refused.',
           security: [{ bearer: [] }],
           parameters: [
@@ -1409,12 +1418,36 @@ export function openApiDocument(version: string): OpenApiDocument {
               style: 'form',
               explode: true,
               description: "Another service's ids for the team"
+            },
+            {
+              name: 'season',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description:
+                'Seasons whose teams to list. Leaving it out lists the ' +
+                'teams this person belongs to.'
+            },
+            {
+              name: 'kind',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: ['full', 'external', 'any'],
+                default: 'full'
+              },
+              description:
+                'Which teams of the seasons: their own, the external teams ' +
+                'their games were played against, or both. Needs `season` ' +
+                'unless `full`.'
             }
           ],
           responses: {
-            200: { description: 'Their teams, which may be an empty list' },
+            200: { description: 'The teams, which may be an empty list' },
             400: errorResponse,
-            401: errorResponse
+            401: errorResponse,
+            404: errorResponse
           }
         },
         post: {
@@ -2745,13 +2778,31 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/seasons': {
         get: {
           summary: 'The seasons you may watch',
+          description:
+            'Each season carries `startsOn` and `endsOn` (`YYYY-MM-DD`, or ' +
+            'null), the days a game with no `seasonId` is placed by. ' +
+            '`team` may be repeated, and narrows the list to the seasons ' +
+            'those teams play in. Asked that way, a season the caller may ' +
+            'schedule games in counts as one they may see. Leaving it out ' +
+            'lists every season the caller may watch.',
           security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'team',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: 'Teams whose seasons to list'
+            }
+          ],
           responses: {
             200: {
               description:
                 'Being in a season grants every team in it; being on a team ' +
                 'is separate and stronger'
             },
+            400: errorResponse,
             401: errorResponse
           }
         }

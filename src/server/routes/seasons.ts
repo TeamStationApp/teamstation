@@ -21,6 +21,7 @@ import {
 } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { scheduleRights } from '../schedule/scheduleGames'
 import { teamRecords } from '../stats/records'
 
 /**
@@ -31,7 +32,14 @@ import { teamRecords } from '../stats/records'
  * team-first screen would show them nothing.
  *
  * An **external team** — an opponent from outside the season — is deliberately
- * absent from `/seasons/:id/teams`. It appears on a game, and nowhere else.
+ * absent from `/seasons/:id/teams`. It appears on a game, and through
+ * `GET /teams?season=…&kind=external`, which lists the external teams a
+ * season's games were played against.
+ *
+ * `GET /seasons?team=…` narrows the list to the seasons those teams play in.
+ * Asked that way, a season the caller may schedule games in counts as one
+ * they may see, so a team's administrator can read the seasons their team
+ * plays in even when nobody has opened them to spectators.
  */
 export function seasonRoutes(
   db: Kysely<Database>,
@@ -46,39 +54,46 @@ export function seasonRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      const teamIds = valuesAsked(req.query.team, 'team')
 
-      const seasons = scopes.isAdmin
-        ? await db
-            .selectFrom('seasons')
-            .select([
-              'id',
-              'league_id',
-              'name',
-              'year',
-              'term',
-              'age_group',
-              'logo_path'
+      // Asked by team, a season the caller may schedule in is one they may
+      // see; otherwise the list is exactly the seasons opened to them.
+      const visible = scopes.isAdmin
+        ? undefined
+        : teamIds == null
+          ? scopes.seasonIds
+          : new Set([
+              ...scopes.seasonIds,
+              ...(await schedulableSeasonIds(db, actor.userId, actor.isAdmin))
             ])
-            .orderBy('year', 'desc')
-            .orderBy('name')
-            .execute()
-        : scopes.seasonIds.size === 0
-          ? []
-          : await db
-              .selectFrom('seasons')
-              .select([
-                'id',
-                'league_id',
-                'name',
-                'year',
-                'term',
-                'age_group',
-                'logo_path'
-              ])
-              .where('id', 'in', [...scopes.seasonIds])
-              .orderBy('year', 'desc')
-              .orderBy('name')
-              .execute()
+
+      let query = db
+        .selectFrom('seasons')
+        .select([
+          'id',
+          'league_id',
+          'name',
+          'year',
+          'term',
+          'age_group',
+          'logo_path'
+        ])
+        .select([
+          sql<string | null>`to_char(starts_on, 'YYYY-MM-DD')`.as('startsOn'),
+          sql<string | null>`to_char(ends_on, 'YYYY-MM-DD')`.as('endsOn')
+        ])
+        .orderBy('year', 'desc')
+        .orderBy('name')
+      if (visible != null) query = query.where('id', 'in', [...visible])
+      if (teamIds != null) {
+        query = query.where('id', 'in', eb =>
+          eb
+            .selectFrom('season_teams')
+            .select('season_teams.season_id')
+            .where('season_teams.team_id', 'in', teamIds)
+        )
+      }
+      const seasons = visible?.size === 0 ? [] : await query.execute()
 
       // The counts a person actually wants on a card: how much is in here,
       // and is any of it watchable.
@@ -130,6 +145,10 @@ export function seasonRoutes(
           year: season.year,
           term: season.term,
           ageGroup: season.age_group,
+          // The days the season runs, `YYYY-MM-DD`, which is how a game with
+          // no `seasonId` is placed in one.
+          startsOn: season.startsOn,
+          endsOn: season.endsOn,
           logoUrl: imageUrl(media.space, season.logo_path),
           ...(counts.get(season.id) ?? { teams: 0, games: 0, videos: 0 })
         }))
@@ -188,6 +207,28 @@ export function seasonRoutes(
   )
 
   return router
+}
+
+/**
+ * The seasons a person may schedule games in: those they administer, a
+ * league's included, and every season a team they administer plays in.
+ */
+export async function schedulableSeasonIds(
+  db: Kysely<Database>,
+  userId: number,
+  isAdmin: boolean
+): Promise<Set<string>> {
+  const rights = await scheduleRights(db, userId, isAdmin)
+  const out = new Set(rights.seasonIds)
+  if (rights.teamAdminIds.size > 0) {
+    const played = await db
+      .selectFrom('season_teams')
+      .select('season_id')
+      .where('team_id', 'in', [...rights.teamAdminIds])
+      .execute()
+    for (const row of played) out.add(row.season_id)
+  }
+  return out
 }
 
 function pathParam(value: string | string[] | undefined): string {
@@ -439,14 +480,22 @@ export async function scheduleOf(
 }
 
 /**
- * The `externalId` filter of `GET /events` and `GET /users`: undefined when it
- * is not asked for, and otherwise every value, each a non-empty string.
+ * A repeatable query parameter: undefined when it is not asked for, and
+ * otherwise every value, each a non-empty string.
  */
-export function externalIdsAsked(asked: unknown): string[] | undefined {
+export function valuesAsked(
+  asked: unknown,
+  name: string
+): string[] | undefined {
   if (asked === undefined) return undefined
   const values = Array.isArray(asked) ? asked : [asked]
   if (values.some(value => typeof value !== 'string' || value === '')) {
-    throw badRequest('externalId must be a non-empty string')
+    throw badRequest(`${name} must be a non-empty string`)
   }
   return values as string[]
+}
+
+/** The `externalId` filter of `GET /events`, `GET /users` and `GET /teams`. */
+export function externalIdsAsked(asked: unknown): string[] | undefined {
+  return valuesAsked(asked, 'externalId')
 }

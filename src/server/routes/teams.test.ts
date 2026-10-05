@@ -322,9 +322,19 @@ describe('teams by external id, and making one', function () {
           logoPath: null,
           logoUrl: null,
           record: null,
-          externalIds: ['ext-hawks', 'nick-hawks']
+          externalIds: ['ext-hawks', 'nick-hawks'],
+          kind: 'full'
         }
       ])
+      // Asking for full teams is asking for nothing more.
+      expect((await list(MEMBER, '?kind=full')).body).deep.equals(
+        (await list(MEMBER)).body
+      )
+      expect(
+        (all.body as Array<{ kind: string }>).every(
+          team => team.kind === 'full'
+        )
+      ).equals(true)
     })
 
     it('narrows to the teams holding any of the ids, among those the caller may see', async function () {
@@ -366,6 +376,246 @@ describe('teams by external id, and making one', function () {
         })
       }
       expect((await list(null, '?externalId=ext-hawks')).status).equals(401)
+    })
+  })
+
+  describe('GET /teams?season=', function () {
+    // Bay 2026: two full teams, one merged into another, and the external
+    // teams its games were played against, one of them merged too. Cove
+    // 2026: one of each.
+    const bay = makeId('season')
+    const cove = makeId('season')
+    const herons = makeId('team')
+    const sealions = makeId('team')
+    const oldSealions = makeId('team')
+    const gullsLive = makeId('team')
+    const otters = makeId('team')
+    const oldOtters = makeId('team')
+    const bobcats = makeId('team')
+    const coyotes = makeId('team')
+    const visitors = makeId('team')
+
+    before(async function () {
+      const db = database()
+      await db
+        .insertInto('seasons')
+        .values([
+          { id: bay, name: 'Bay 2026', year: 2026 },
+          { id: cove, name: 'Cove 2026', year: 2026 }
+        ])
+        .execute()
+      await db
+        .insertInto('teams')
+        .values([
+          { id: herons, name: 'Harbor Herons' },
+          { id: sealions, name: 'Sea Lions' },
+          { id: oldSealions, name: 'Sea Lions (old)', merged_into: sealions },
+          { id: gullsLive, name: 'Gulls - Livestream', kind: 'external' },
+          { id: otters, name: 'Otters 1', kind: 'external' },
+          {
+            id: oldOtters,
+            name: 'Otters',
+            kind: 'external',
+            merged_into: otters
+          },
+          { id: bobcats, name: 'Bobcats' },
+          { id: coyotes, name: 'Coyotes', kind: 'external' },
+          // A full team of no season here that played one of Bay's games.
+          { id: visitors, name: 'Visiting Plovers' }
+        ])
+        .execute()
+      await db
+        .insertInto('season_teams')
+        .values([
+          { season_id: bay, team_id: herons },
+          { season_id: bay, team_id: sealions },
+          { season_id: bay, team_id: oldSealions },
+          { season_id: cove, team_id: bobcats }
+        ])
+        .execute()
+      const game = (
+        season: string,
+        home: string,
+        away: string,
+        day: number
+      ): Insertable<Database['games']> => ({
+        id: makeId('game'),
+        season_id: season,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date(Date.UTC(2026, 4, day, 17))
+      })
+      await db
+        .insertInto('games')
+        .values([
+          game(bay, herons, gullsLive, 2),
+          game(bay, gullsLive, sealions, 9),
+          game(bay, herons, oldOtters, 16),
+          game(bay, visitors, sealions, 20),
+          game(cove, bobcats, coyotes, 23)
+        ])
+        .execute()
+      await db
+        .insertInto('external_ids')
+        .values({
+          id: makeId('externalId'),
+          entity_type: 'team',
+          entity_id: gullsLive,
+          system: 'scoreKeeper',
+          kind: 'opponent',
+          external_id: 'opp-gulls-1',
+          created_at: new Date()
+        })
+        .execute()
+    })
+
+    const kinds = (answer: Answer): Array<[string, string]> =>
+      (answer.body as Array<{ id: string; kind: string }>)
+        .map((team): [string, string] => [team.id, team.kind])
+        .sort((a, b) => a[0].localeCompare(b[0]))
+    const sorted = (pairs: Array<[string, string]>): Array<[string, string]> =>
+      [...pairs].sort((a, b) => a[0].localeCompare(b[0]))
+
+    it('lists a season\u2019s full teams, and the external teams its games were against', async function () {
+      expect(kinds(await list(ADMIN, `?season=${bay}`))).deep.equals(
+        sorted([
+          [herons, 'full'],
+          [sealions, 'full']
+        ])
+      )
+      expect(kinds(await list(ADMIN, `?season=${bay}&kind=any`))).deep.equals(
+        sorted([
+          [herons, 'full'],
+          [sealions, 'full'],
+          [gullsLive, 'external'],
+          [otters, 'external']
+        ])
+      )
+      expect(
+        kinds(await list(ADMIN, `?season=${bay}&kind=external`))
+      ).deep.equals(
+        sorted([
+          [gullsLive, 'external'],
+          [otters, 'external']
+        ])
+      )
+      expect(
+        kinds(await list(ADMIN, `?season=${bay}&season=${cove}&kind=any`))
+      ).deep.equals(
+        sorted([
+          [herons, 'full'],
+          [sealions, 'full'],
+          [gullsLive, 'external'],
+          [otters, 'external'],
+          [bobcats, 'full'],
+          [coyotes, 'external']
+        ])
+      )
+      // An external team in the answer carries its ids, and `externalId`
+      // narrows the season's teams further.
+      const narrowed = await list(
+        ADMIN,
+        `?season=${bay}&kind=any&externalId=opp-gulls-1`
+      )
+      expect(narrowed.body).deep.equals([
+        {
+          id: gullsLive,
+          name: 'Gulls - Livestream',
+          shortName: null,
+          logoPath: null,
+          logoUrl: null,
+          record: null,
+          externalIds: ['opp-gulls-1'],
+          kind: 'external'
+        }
+      ])
+    })
+
+    it('lists a season\u2019s teams to anybody who may see or schedule in it, and 404s otherwise', async function () {
+      // An administrator of the Force season sees its teams, whoever they
+      // belong to; a league administrator, the league's season's.
+      expect(ids(await list(SEASON_ADMIN, `?season=${force}`))).deep.equals(
+        [hawks, gulls].sort()
+      )
+      expect(
+        ids(await list(LEAGUE_ADMIN, `?season=${circuitSeason}&kind=any`))
+      ).deep.equals([])
+      // The member can neither see nor schedule in Bay, nor in Force.
+      for (const query of [`?season=${bay}`, `?season=${force}&kind=any`]) {
+        expect((await list(MEMBER, query)).status, query).equals(404)
+      }
+      // One unseen season among seen ones is enough to refuse.
+      expect(
+        (await list(SEASON_ADMIN, `?season=${force}&season=${bay}`)).status
+      ).equals(404)
+      expect((await list(ADMIN, '?season=sea_nothere')).status).equals(404)
+    })
+
+    it('gives a team listed by season its record from the seasons asked only', async function () {
+      // Gulls also plays in Reef 2026, a season the season administrator
+      // cannot see, and won there; it has no finished game in Force.
+      const reef = makeId('season')
+      const db = database()
+      await db
+        .insertInto('seasons')
+        .values({ id: reef, name: 'Reef 2026', year: 2026 })
+        .execute()
+      await db
+        .insertInto('season_teams')
+        .values({ season_id: reef, team_id: gulls })
+        .execute()
+      await db
+        .insertInto('games')
+        .values({
+          id: makeId('game'),
+          season_id: reef,
+          home_team_id: gulls,
+          away_team_id: rivals,
+          start_at: new Date('2026-05-30T17:00:00Z'),
+          status: 'final',
+          home_score: 4,
+          away_score: 1
+        })
+        .execute()
+      const listed = await list(SEASON_ADMIN, `?season=${force}`)
+      const gullsListed = (
+        listed.body as Array<{ id: string; record: unknown }>
+      ).find(team => team.id === gulls)
+      expect(gullsListed?.record).equals(null)
+      // Asked by Reef, as the site administrator, the record is there.
+      const reefListed = (
+        (await list(ADMIN, `?season=${reef}`)).body as Array<{
+          id: string
+          record: unknown
+        }>
+      ).find(team => team.id === gulls)
+      expect(reefListed?.record).deep.equals({
+        w: 1,
+        l: 0,
+        t: 0,
+        seasonName: 'Reef 2026'
+      })
+    })
+
+    it('refuses kind without season, a kind it does not know, and nobody at all', async function () {
+      for (const query of ['?kind=external', '?kind=any']) {
+        const refused = await list(ADMIN, query)
+        expect(refused.status, query).equals(400)
+        expect(refused.body, query).deep.include({
+          message: 'kind needs season'
+        })
+      }
+      const unknown = await list(ADMIN, `?season=${bay}&kind=opponents`)
+      expect(unknown.status).equals(400)
+      expect(unknown.body).deep.include({
+        message: 'kind must be full, external or any'
+      })
+      const empty = await list(ADMIN, '?season=')
+      expect(empty.status).equals(400)
+      expect(empty.body).deep.include({
+        message: 'season must be a non-empty string'
+      })
+      expect((await list(null, `?season=${bay}`)).status).equals(401)
     })
   })
 
@@ -743,7 +993,8 @@ describe('teams by external id, and making one', function () {
           logoPath: null,
           logoUrl: null,
           record: null,
-          externalIds: ['ext-owls', 'nick-owls']
+          externalIds: ['ext-owls', 'nick-owls'],
+          kind: 'full'
         }
       ])
 

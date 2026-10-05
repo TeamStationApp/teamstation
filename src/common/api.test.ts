@@ -351,6 +351,53 @@ describe('api client', function () {
     expect(teams[0].shortName).equals(null)
   })
 
+  it('reads whether a listed team is full or external, full when not said', async function () {
+    const { fetch } = stubFetch(200, [
+      { id: 'tem_1', name: 'Ospreys', shortName: null, logoPath: null },
+      {
+        id: 'tem_2',
+        name: 'Gulls - Livestream',
+        shortName: null,
+        logoPath: null,
+        kind: 'external'
+      },
+      {
+        id: 'tem_3',
+        name: 'Herons',
+        shortName: null,
+        logoPath: null,
+        kind: 'full'
+      }
+    ])
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect((await client.teams()).map(team => team.kind)).deep.equals([
+      'full',
+      'external',
+      'full'
+    ])
+
+    const odd = stubFetch(200, [
+      {
+        id: 'tem_1',
+        name: 'Ospreys',
+        shortName: null,
+        logoPath: null,
+        kind: 'opponent'
+      }
+    ])
+    const refusing = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: odd.fetch
+    })
+    let refused: unknown
+    try {
+      await refusing.teams()
+    } catch (error: unknown) {
+      refused = error
+    }
+    expect(refused).instanceOf(Error)
+  })
+
   it('refuses a response of the wrong shape rather than passing it on', async function () {
     const { fetch } = stubFetch(200, [{ id: 'tem_1' }])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })

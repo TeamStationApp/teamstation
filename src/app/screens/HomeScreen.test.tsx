@@ -105,6 +105,7 @@ function team(
     logoPath: null,
     logoUrl: null,
     record: null,
+    kind: 'full',
     ...patch
   }
 }

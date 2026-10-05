@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
 import { asCreateTeamBody } from '../../common/createTeam'
-import { notFound, unauthorized } from '../../common/errors'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { scoreboardOpen } from '../../common/scoreboard'
 import {
@@ -56,8 +56,19 @@ import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
 import { createTeam } from '../teams/createTeam'
+import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
-import { externalIdsAsked } from './seasons'
+import { externalIdsAsked, schedulableSeasonIds, valuesAsked } from './seasons'
+
+/** The kinds of team `GET /teams?kind=` lists. */
+type TeamKindAsked = 'full' | 'external' | 'any'
+
+/** `kind`: `full` unless asked, and one of the three. */
+function kindAsked(asked: unknown): TeamKindAsked {
+  if (asked === undefined) return 'full'
+  if (asked === 'full' || asked === 'external' || asked === 'any') return asked
+  throw badRequest('kind must be full, external or any')
+}
 
 /**
  * The watch path: teams, then that team's games newest first, then one game
@@ -86,9 +97,26 @@ export function teamRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const externalIds = externalIdsAsked(req.query.externalId)
+      const seasonsAsked = valuesAsked(req.query.season, 'season')
+      const kind = kindAsked(req.query.kind)
+      if (kind !== 'full' && seasonsAsked == null) {
+        throw badRequest('kind needs season')
+      }
 
-      // External teams are opponents, not teams anybody belongs to: they
-      // appear on a game and nowhere else, admin or not.
+      // Asked by season: the season's own teams, and with `kind` the
+      // external teams its games were played against, whoever the caller
+      // belongs to, as `GET /seasons/:seasonId/teams` lists them. A season the
+      // caller can neither see nor schedule in is not there.
+      if (seasonsAsked != null) {
+        await mustSeeSeasons(seasonsAsked, actor.userId, actor.isAdmin, scopes)
+      }
+      const inSeasons =
+        seasonsAsked == null
+          ? undefined
+          : await seasonTeamIds(seasonsAsked, kind)
+
+      // Otherwise external teams are opponents, not teams anybody belongs
+      // to: they appear on a game and nowhere else, admin or not.
       let query = db
         .selectFrom('teams')
         .leftJoin('games', join =>
@@ -103,7 +131,8 @@ export function teamRoutes(
           'teams.id as id',
           'teams.name as name',
           'teams.short_name as short_name',
-          'teams.logo_path as logo_path'
+          'teams.logo_path as logo_path',
+          'teams.kind as kind'
         ])
         .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
         // Which ids other systems know the team by, so a caller that asked
@@ -122,12 +151,16 @@ export function teamRoutes(
             .whereRef('external_ids.entity_id', '=', 'teams.id')
             .as('externalIds')
         )
-        .where('teams.kind', '=', 'full')
         // A team merged into another is that team now: it has no games of
         // its own, and an id it still holds must not find it.
         .where('teams.merged_into', 'is', null)
-      if (!scopes.isAdmin) {
-        query = query.where('teams.id', 'in', [...scopes.teamIds])
+      if (inSeasons != null) {
+        query = query.where('teams.id', 'in', inSeasons)
+      } else {
+        query = query.where('teams.kind', '=', 'full')
+        if (!scopes.isAdmin) {
+          query = query.where('teams.id', 'in', [...scopes.teamIds])
+        }
       }
       if (externalIds != null) {
         query = query.where(eb =>
@@ -141,32 +174,42 @@ export function teamRoutes(
           )
         )
       }
-      const teams =
-        !scopes.isAdmin && scopes.teamIds.size === 0
-          ? []
-          : await query
-              .groupBy([
-                'teams.id',
-                'teams.name',
-                'teams.short_name',
-                'teams.logo_path'
-              ])
-              // A team has no season of its own to sort by — only a season
-              // does — so the honest ordering is when it last played. The team
-              // somebody is here to look at is almost always the one that
-              // played last night. A team that has never played has no date,
-              // and sorts to the bottom rather than to the top, which is where
-              // SQL puts a null by default on a descending sort.
-              .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
-              .orderBy('teams.name')
-              .execute()
+      const nothing =
+        inSeasons != null
+          ? inSeasons.length === 0
+          : !scopes.isAdmin && scopes.teamIds.size === 0
+      const teams = nothing
+        ? []
+        : await query
+            .groupBy([
+              'teams.id',
+              'teams.name',
+              'teams.short_name',
+              'teams.logo_path',
+              'teams.kind'
+            ])
+            // A team has no season of its own to sort by — only a season
+            // does — so the honest ordering is when it last played. The team
+            // somebody is here to look at is almost always the one that
+            // played last night. A team that has never played has no date,
+            // and sorts to the bottom rather than to the top, which is where
+            // SQL puts a null by default on a descending sort.
+            .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
+            .orderBy('teams.name')
+            .execute()
 
       // A record is per season, read from the finished games' scores, so it
       // moves the moment a game does. The most recent season is the one a team
       // page shows.
-      const counted = await teamRecords(db, {
-        teamIds: teams.map(team => team.id)
-      })
+      // Asked by season, a team's record is only from the seasons asked: the
+      // caller may see those, and maybe none of the team's others.
+      const counted = (
+        await teamRecords(db, { teamIds: teams.map(team => team.id) })
+      ).filter(
+        record =>
+          seasonsAsked == null ||
+          (record.seasonId != null && seasonsAsked.includes(record.seasonId))
+      )
       const seasonIds = [
         ...new Set(
           counted
@@ -216,12 +259,93 @@ export function teamRoutes(
                     t: record.t,
                     seasonName: record.seasonName
                   },
-            externalIds: team.externalIds ?? []
+            externalIds: team.externalIds ?? [],
+            kind: team.kind
           }
         })
       )
     })
   )
+
+  /** Refuses, as not there, a season the caller can neither see nor schedule. */
+  async function mustSeeSeasons(
+    seasonIds: string[],
+    userId: number,
+    isAdmin: boolean,
+    scopes: { seasonIds: Set<string> }
+  ): Promise<void> {
+    const found = await db
+      .selectFrom('seasons')
+      .select('id')
+      .where('id', 'in', seasonIds)
+      .execute()
+    if (found.length !== new Set(seasonIds).size) throw notFound()
+    if (isAdmin) return
+    const unseen = seasonIds.filter(id => !scopes.seasonIds.has(id))
+    if (unseen.length === 0) return
+    const schedulable = await schedulableSeasonIds(db, userId, isAdmin)
+    if (unseen.some(id => !schedulable.has(id))) throw notFound()
+  }
+
+  /**
+   * The teams of these seasons, of the kind asked: their own full teams, the
+   * external teams on either side of their games, or both. A merged team is
+   * the team it was merged into, and each is listed once.
+   */
+  async function seasonTeamIds(
+    seasonIds: string[],
+    kind: TeamKindAsked
+  ): Promise<string[]> {
+    // A season's own teams, and the external teams its games were played
+    // against: a full team that played one of its games from outside it is
+    // neither.
+    const members = new Set<string>()
+    const opponents = new Set<string>()
+    if (kind !== 'external') {
+      const rows = await db
+        .selectFrom('season_teams')
+        .select('team_id')
+        .where('season_id', 'in', seasonIds)
+        .execute()
+      for (const row of rows) members.add(row.team_id)
+    }
+    if (kind !== 'full') {
+      const games = await db
+        .selectFrom('games')
+        .select(['home_team_id', 'away_team_id'])
+        .where('season_id', 'in', seasonIds)
+        .execute()
+      for (const game of games) {
+        opponents.add(game.home_team_id)
+        opponents.add(game.away_team_id)
+      }
+    }
+    const found = [...new Set([...members, ...opponents])]
+    if (found.length === 0) return []
+    // Read once; only a merged team needs its merges followed.
+    const rows = await db
+      .selectFrom('teams')
+      .select(['id', 'kind', 'merged_into'])
+      .where('id', 'in', found)
+      .execute()
+    const followed = new Set<string>()
+    for (const row of rows) {
+      if (!members.has(row.id) && row.kind !== 'external') continue
+      followed.add(
+        row.merged_into == null ? row.id : await followMerges(db, row.id)
+      )
+    }
+    if (followed.size === 0) return []
+    const wanted: Array<'full' | 'external'> =
+      kind === 'any' ? ['full', 'external'] : [kind]
+    const kept = await db
+      .selectFrom('teams')
+      .select('id')
+      .where('id', 'in', [...followed])
+      .where('kind', 'in', wanted)
+      .execute()
+    return kept.map(row => row.id)
+  }
 
   /**
    * Makes a team, standalone or in a season, known by the ids another

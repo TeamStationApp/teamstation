@@ -279,7 +279,8 @@ describe('a player’s whole name is never shown', function () {
           shortName: null,
           logoPath: null,
           logoUrl: null,
-          record: null
+          record: null,
+          kind: 'full'
         }}
         initialTab="roster"
         onOpenGame={() => undefined}
