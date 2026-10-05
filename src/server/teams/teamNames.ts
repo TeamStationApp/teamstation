@@ -39,3 +39,12 @@ export function normaliseTeamName(name: string): string {
       .trim()
   )
 }
+
+/**
+ * Whether a name says a game's opponent is not known yet — `TBD`, `TBA`,
+ * `To be decided`, `To be announced`, `To be determined`, followed by
+ * anything, such as a date. Such a name names no team.
+ */
+export function isUndeterminedName(name: string): boolean {
+  return /^(tbd|tba|to be (decided|announced|determined))\b/i.test(name.trim())
+}
