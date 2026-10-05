@@ -202,6 +202,8 @@ public struct FrameDelivery: Sendable, Equatable {
   public var frameRate: Double
   public var swing: FrameRateSwing?
   public var wander: FrameRateWander?
+  /// The struggling-phone injection, which `StruggleInjector` applies beside the throttle.
+  public var struggle: Struggle?
 
   public static let off = FrameDelivery()
 
@@ -210,13 +212,19 @@ public struct FrameDelivery: Sendable, Equatable {
   public static let minimumRate = 1.0
   public static let maximumRate = 240.0
 
-  public init(frameRate: Double = 0, swing: FrameRateSwing? = nil, wander: FrameRateWander? = nil) {
+  public init(
+    frameRate: Double = 0,
+    swing: FrameRateSwing? = nil,
+    wander: FrameRateWander? = nil,
+    struggle: Struggle? = nil
+  ) {
     self.frameRate = frameRate
     self.swing = swing
     self.wander = wander
+    self.struggle = struggle
   }
 
-  public var isOff: Bool { wander == nil && swing == nil && frameRate <= 0 }
+  public var isOff: Bool { wander == nil && swing == nil && frameRate <= 0 && struggle == nil }
 
   /// The rate to deliver `elapsed` seconds after the throttle was configured. Nil when off. A
   /// wander is answered by `FrameDeliveryThrottle`, which keeps its schedule; here it starts high.
@@ -270,9 +278,10 @@ public final class FrameDeliveryThrottle: @unchecked Sendable {
   }
 
   /// Starts a new delivery pattern from the next frame. A swing starts at its `low`.
-  public func configure(_ delivery: FrameDelivery) {
+  public func configure(_ delivery: FrameDelivery, keepingClock: Bool = false) {
     lock.withLock {
       configured = delivery
+      guard !keepingClock else { return }
       anchor = nil
       due = nil
       schedule = delivery.wander.map(WanderSchedule.init)

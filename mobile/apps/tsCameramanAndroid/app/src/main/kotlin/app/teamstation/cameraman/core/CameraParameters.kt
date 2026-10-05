@@ -232,6 +232,12 @@ object CameraParameterName {
     const val testDeliveredFrameRateWander = "test.deliveredFrameRateWander"
 
     /**
+     * Test only: `mic:hold:slow[:seed]`, a healthy phone made to behave like a hot one (see
+     * [StruggleInjector]), or empty for none. Reads back with its seed.
+     */
+    const val testStruggle = "test.struggle"
+
+    /**
      * Frames per second actually reaching the encoder over the last two seconds, throttled or not;
      * empty until two have.
      */
@@ -245,7 +251,7 @@ object CameraParameterName {
     val writable: Set<String> = setOf(
         deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
         bitrateFloorKbps, adaptiveBitrate, audioEnabled, lensDisabled,
-        testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander
+        testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander, testStruggle
     )
 
     /**
@@ -265,7 +271,7 @@ object CameraParameterName {
         lensCount, lensDisabled,
         streamURL, streamClients,
         testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander,
-        testDeliveredFrameRateActual
+        testDeliveredFrameRateActual, testStruggle
     )
 
     internal val formatFields = listOf("width", "height", "frameRate", "multiLens")
@@ -350,6 +356,8 @@ data class CameraParameterWrite(
     val deliveredFrameRateSwing: String? = null,
     /** The test throttle's wander as canonical text with its seed, or empty to clear it. */
     val deliveredFrameRateWander: String? = null,
+    /** The struggling-phone injection as canonical text with its seed, or empty to clear it. */
+    val struggle: String? = null,
     /** The names in the request, in order, so the reply can echo exactly those. */
     val requestedNames: List<String> = emptyList()
 ) {
@@ -364,6 +372,10 @@ data class CameraParameterWrite(
      * the format, the session and the saved settings alone.
      */
     val touchesFrameDelivery: Boolean
+        get() = touchesFrameRate || struggle != null
+
+    /** True when the throttle's own rate, swing or wander is named, which restarts its clock. */
+    val touchesFrameRate: Boolean
         get() = deliveredFrameRate != null || deliveredFrameRateSwing != null || deliveredFrameRateWander != null
 
     /**
@@ -454,6 +466,7 @@ object CameraParameters {
             CameraParameterName.testDeliveredFrameRateActual,
             snapshot.deliveredFrameRate?.let { number(Math.round(it * 10) / 10.0) } ?: ""
         )
+        set.set(CameraParameterName.testStruggle, snapshot.frameDelivery.struggle?.text ?: "")
         return set
     }
 
@@ -576,7 +589,8 @@ object CameraParameters {
             frameDelivery = FrameDelivery(
                 frameRate = set[CameraParameterName.testDeliveredFrameRate]?.toDoubleOrNull() ?: 0.0,
                 swing = set[CameraParameterName.testDeliveredFrameRateSwing]?.let { FrameRateSwing.parse(it) },
-                wander = set[CameraParameterName.testDeliveredFrameRateWander]?.let { FrameRateWander.parse(it) }
+                wander = set[CameraParameterName.testDeliveredFrameRateWander]?.let { FrameRateWander.parse(it) },
+                struggle = set[CameraParameterName.testStruggle]?.let { Struggle.parse(it) }
             ),
             deliveredFrameRate = set[CameraParameterName.testDeliveredFrameRateActual]?.toDoubleOrNull()
         )
@@ -744,6 +758,12 @@ object CameraParameters {
                     write = write.copy(deliveredFrameRateWander = wander)
                 }
 
+                CameraParameterName.testStruggle -> {
+                    val struggle = if (value.isEmpty()) "" else Struggle.parse(value)?.text
+                        ?: return bad("expected mic:hold:slow[:seed], mic 0…0.5, hold 0…0.9, slow 0…0.95, or empty for none")
+                    write = write.copy(struggle = struggle)
+                }
+
                 else -> return ParameterOutcome.Failure(
                     CameraParameterError(CameraParameterError.Kind.READ_ONLY, name, "read-only parameter")
                 )
@@ -826,6 +846,7 @@ object CameraParameters {
         applying.deliveredFrameRate?.let { next = next.copy(frameRate = it) }
         applying.deliveredFrameRateSwing?.let { next = next.copy(swing = FrameRateSwing.parse(it)) }
         applying.deliveredFrameRateWander?.let { next = next.copy(wander = FrameRateWander.parse(it)) }
+        applying.struggle?.let { next = next.copy(struggle = Struggle.parse(it)) }
         return next
     }
 

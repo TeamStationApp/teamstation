@@ -32,6 +32,14 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
 
     var onFailure: ((String) -> Unit)? = null
 
+    /**
+     * Test only: whether a chunk captured at a time (seconds, or the count's own time when the
+     * microphone gives none) for a duration reaches the encoder. A chunk refused is lost as an
+     * overrun loses it: never encoded and never counted.
+     */
+    @Volatile
+    var keepsSound: ((Double, Double) -> Boolean)? = null
+
     @SuppressLint("MissingPermission")
     fun start(sampleRate: Int, channelCount: Int) {
         stop()
@@ -79,7 +87,10 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
         // One AAC frame per read, so the encoder never has to hold a partial one and the
         // presentation times line up with the access units exactly.
         val chunkBytes = AudioEncoder.samplesPerFrame * bytesPerFrame
+        // Every sample read, which places the capture time truthfully, and the samples encoded, which
+        // the count stamps by: they differ only by what the struggle injection drops.
         var framesRead = 0L
+        var framesEncoded = 0L
 
         thread = Thread({
             val buffer = ByteArray(chunkBytes)
@@ -96,7 +107,7 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
                 // Derived from the sample count rather than read from the clock: `AudioRecord`
                 // delivers in bursts, and timestamping on arrival would put that jitter straight
                 // into the RTP timestamps.
-                val presentationTime = framesRead.toDouble() / sampleRate.toDouble()
+                val presentationTime = framesEncoded.toDouble() / sampleRate.toDouble()
                 // And, beside it, when those samples were actually captured. The sample count alone
                 // cannot know about samples the system dropped when this thread fell behind, so every
                 // stamp after a drop is early; `AudioRecord`'s own timestamp can, and the sender
@@ -107,8 +118,13 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
                     } else {
                         null
                     }
+                val frames = read / bytesPerFrame
+                framesRead += frames
+                if (keepsSound?.invoke(captureTime ?: presentationTime, frames.toDouble() / sampleRate) == false) {
+                    continue
+                }
                 encoder.encode(buffer, read, presentationTime, captureTime)
-                framesRead += read / bytesPerFrame
+                framesEncoded += frames
             }
         }, "cameraman-mic").apply {
             priority = Thread.MAX_PRIORITY

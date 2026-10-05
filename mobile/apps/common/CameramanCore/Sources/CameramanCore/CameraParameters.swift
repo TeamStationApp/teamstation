@@ -192,6 +192,9 @@ public enum CameraParameterName {
   /// Test only: `low:high:minHold:maxHold[:seed]`, a delivered rate wandering at random, or empty
   /// for none. Reads back with its seed. Wins over the swing and the steady rate while set.
   public static let testDeliveredFrameRateWander = "test.deliveredFrameRateWander"
+  /// Test only: `mic:hold:slow[:seed]`, a healthy phone made to behave like a hot one (see
+  /// `StruggleInjector`), or empty for none. Reads back with its seed.
+  public static let testStruggle = "test.struggle"
   /// Frames per second actually reaching the encoder over the last two seconds, throttled or not;
   /// empty until two have.
   public static let testDeliveredFrameRateActual = "test.deliveredFrameRate.actual"
@@ -204,7 +207,7 @@ public enum CameraParameterName {
   public static let writable: Set<String> = [
     deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
     bitrateFloorKbps, adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled,
-    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander
+    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander, testStruggle
   ]
 
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
@@ -223,7 +226,7 @@ public enum CameraParameterName {
     lensCount, lensDisabled,
     streamURL, streamClients,
     testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander,
-    testDeliveredFrameRateActual
+    testDeliveredFrameRateActual, testStruggle
   ]
 
   static let formatFields = [ "width", "height", "frameRate", "multiLens" ]
@@ -348,6 +351,8 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public var deliveredFrameRateSwing: String?
   /// The test throttle's wander as canonical text with its seed, or empty to clear it.
   public var deliveredFrameRateWander: String?
+  /// The struggling-phone injection as canonical text with its seed, or empty to clear it.
+  public var struggle: String?
   /// The names in the request, in order, so the reply can echo exactly those.
   public var requestedNames: [String] = []
 
@@ -362,7 +367,10 @@ public struct CameraParameterWrite: Sendable, Equatable {
 
   /// True when the request names the test throttle. Never a settings change: the throttle leaves
   /// the format, the session and the saved settings alone.
-  public var touchesFrameDelivery: Bool {
+  public var touchesFrameDelivery: Bool { touchesFrameRate || struggle != nil }
+
+  /// True when the throttle's own rate, swing or wander is named, which restarts its clock.
+  public var touchesFrameRate: Bool {
     deliveredFrameRate != nil || deliveredFrameRateSwing != nil || deliveredFrameRateWander != nil
   }
 
@@ -445,6 +453,7 @@ public enum CameraParameters {
       CameraParameterName.testDeliveredFrameRateActual,
       snapshot.deliveredFrameRate.map { number(($0 * 10).rounded() / 10) } ?? ""
     )
+    set.set(CameraParameterName.testStruggle, snapshot.frameDelivery.struggle?.text ?? "")
     return set
   }
 
@@ -566,7 +575,8 @@ public enum CameraParameters {
       frameDelivery: FrameDelivery(
         frameRate: set[CameraParameterName.testDeliveredFrameRate].flatMap(Double.init) ?? 0,
         swing: set[CameraParameterName.testDeliveredFrameRateSwing].flatMap(FrameRateSwing.init(text:)),
-        wander: set[CameraParameterName.testDeliveredFrameRateWander].flatMap { FrameRateWander(text: $0) }
+        wander: set[CameraParameterName.testDeliveredFrameRateWander].flatMap { FrameRateWander(text: $0) },
+        struggle: set[CameraParameterName.testStruggle].flatMap { Struggle(text: $0) }
       ),
       deliveredFrameRate: set[CameraParameterName.testDeliveredFrameRateActual].flatMap(Double.init)
     )
@@ -715,6 +725,15 @@ public enum CameraParameters {
           return .failure(bad("expected low:high:periodSeconds with low ≤ high, or empty for none"))
         }
 
+      case CameraParameterName.testStruggle:
+        if value.isEmpty {
+          write.struggle = ""
+        } else if let struggle = Struggle(text: value) {
+          write.struggle = struggle.text
+        } else {
+          return .failure(bad("expected mic:hold:slow[:seed], mic 0…0.5, hold 0…0.9, slow 0…0.95, or empty for none"))
+        }
+
       case CameraParameterName.testDeliveredFrameRateWander:
         if value.isEmpty {
           write.deliveredFrameRateWander = ""
@@ -794,6 +813,7 @@ public enum CameraParameters {
     if let rate = write.deliveredFrameRate { next.frameRate = rate }
     if let swing = write.deliveredFrameRateSwing { next.swing = FrameRateSwing(text: swing) }
     if let wander = write.deliveredFrameRateWander { next.wander = FrameRateWander(text: wander) }
+    if let struggle = write.struggle { next.struggle = Struggle(text: struggle) }
     return next
   }
 

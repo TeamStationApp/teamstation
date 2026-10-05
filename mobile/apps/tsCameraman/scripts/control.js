@@ -30,7 +30,8 @@ const FRAME_DELIVERY_NAMES = [
   'test.deliveredFrameRate',
   'test.deliveredFrameRateSwing',
   'test.deliveredFrameRateWander',
-  'test.deliveredFrameRate.actual'
+  'test.deliveredFrameRate.actual',
+  'test.struggle'
 ]
 
 // The SET_PARAMETER lines for `frameDelivery <fps|low:high:period|off>`. Each form sets both names,
@@ -54,6 +55,13 @@ function frameDeliveryLines (value) {
   throw new Error('usage: control.js [--host H] [--rtsp-port P] frameDelivery <fps|low:high:period|wander:low:high:minHold:maxHold[:seed]|off>')
 }
 
+// The struggling-phone injection, `struggle <mic:hold:slow[:seed]|off>`, over the same port.
+function struggleLines (value) {
+  if (value === 'off') return ['test.struggle:']
+  if (/^\d+(?:\.\d+)?:\d+(?:\.\d+)?:\d+(?:\.\d+)?(?::\d+)?$/.test(value ?? '')) return [`test.struggle: ${value}`]
+  throw new Error('usage: control.js [--host H] [--rtsp-port P] struggle <mic:hold:slow[:seed]|off>')
+}
+
 function parseArguments (argv) {
   const options = { host: DEFAULT_HOST, port: DEFAULT_PORT, rtspPort: DEFAULT_RTSP_PORT, timeout: 5000 }
   const rest = []
@@ -74,6 +82,10 @@ function parseArguments (argv) {
   const [command, ...pairs] = rest
   if (command === 'frameDelivery') {
     options.frameDelivery = frameDeliveryLines(pairs[0])
+    return options
+  }
+  if (command === 'struggle') {
+    options.frameDelivery = struggleLines(pairs[0])
     return options
   }
   const query = pairs
@@ -137,7 +149,7 @@ async function main () {
   if (status !== 200) process.exitCode = 1
 }
 
-module.exports = { frameDeliveryLines, parseArguments }
+module.exports = { frameDeliveryLines, struggleLines, parseArguments }
 
 if (require.main === module) {
   main().catch(error => {

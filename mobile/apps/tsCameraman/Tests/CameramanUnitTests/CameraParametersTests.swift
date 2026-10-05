@@ -375,9 +375,10 @@ struct CameraParametersTests {
     #expect(plain["test.deliveredFrameRateSwing"] == "")
     #expect(plain["test.deliveredFrameRate.actual"] == "")
     #expect(plain["test.deliveredFrameRateWander"] == "")
-    #expect(plain.names.suffix(4) == [
+    #expect(plain["test.struggle"] == "")
+    #expect(plain.names.suffix(5) == [
       "test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRateWander",
-      "test.deliveredFrameRate.actual"
+      "test.deliveredFrameRate.actual", "test.struggle"
     ])
 
     var throttled = Self.snapshot()

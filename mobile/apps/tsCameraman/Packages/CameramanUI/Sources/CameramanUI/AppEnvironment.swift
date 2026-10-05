@@ -26,6 +26,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   /// The test throttle on frames reaching the encoder, set over `test.deliveredFrameRate*`. A new
   /// one at every launch, so it always starts off.
   public let frameThrottle = FrameDeliveryThrottle()
+  /// The struggling-phone injection, set over `test.struggle` beside the throttle. Off at launch.
+  public let struggle = StruggleInjector()
 
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
@@ -561,6 +563,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     audioEncoder.onFrame = { [weak server] frame in
       server?.send(audio: frame)
     }
+    server.sendDelay.setHoldRelease { [struggle] now in struggle.holdRelease(now: now) }
 
     server.start(
       port: UInt16(clamping: settingsLock.withLock { $0.port }),
@@ -602,14 +605,16 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     camera.onVideoFrame = { [weak self, videoEncoder, cleanFeed, frameThrottle, gate = encoderGate, sets = latestParameterSets] sample in
       let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
       let frame = SampleBufferRef(sample.buffer)
-      if Self.delivers(sample.buffer, through: frameThrottle), Self.shouldEncodeVideo(gate, parameterSets: sets) {
+      if Self.delivers(sample.buffer, through: frameThrottle, struggle: self?.struggle),
+         Self.shouldEncodeVideo(gate, parameterSets: sets) {
         videoEncoder.encode(frame, blank: blank)
       }
       cleanFeed.enqueue(frame, blank: blank)
       self?.noteCapturedFrame()
     }
-    camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings, gate = encoderGate] sample in
+    camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings, gate = encoderGate, struggle] sample in
       guard Self.shouldEncodeAudio(gate) else { return }
+      guard Self.keepsSound(sample.buffer, through: struggle) else { return }
       let silent = !settingsLock.withLock { $0.audioEnabled }
       audioEncoder.encode(SampleBufferRef(sample.buffer), silent: silent)
     }
@@ -630,8 +635,22 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   /// Whether a captured frame gets past the test throttle to the encoder, judged by its own capture
   /// time. Asked of every frame, encoder idle or not, so the throttle's clock and its measured rate
   /// follow the camera. The preview and the clean feed get every frame regardless.
-  nonisolated static func delivers(_ buffer: CMSampleBuffer, through throttle: FrameDeliveryThrottle) -> Bool {
-    throttle.shouldDeliver(captureTime: CMSampleBufferGetPresentationTimeStamp(buffer).seconds)
+  nonisolated static func delivers(
+    _ buffer: CMSampleBuffer,
+    through throttle: FrameDeliveryThrottle,
+    struggle: StruggleInjector? = nil
+  ) -> Bool {
+    let time = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+    let throttled = throttle.shouldDeliver(captureTime: time)
+    return (struggle?.keepsFrame(captureTime: time) ?? true) && throttled
+  }
+
+  /// Whether a buffer of microphone sound survives the struggle: a lost one is never encoded, as an
+  /// overrun loses it.
+  nonisolated static func keepsSound(_ buffer: CMSampleBuffer, through struggle: StruggleInjector) -> Bool {
+    let time = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+    let duration = CMSampleBufferGetDuration(buffer).seconds
+    return struggle.keepsSound(captureTime: time, duration: duration.isFinite ? duration : 0)
   }
 
   nonisolated private static func shouldEncodeAudio(_ gate: OSAllocatedUnfairLock<EncoderGate>) -> Bool {
@@ -755,7 +774,12 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
         if let position = write.position, position != cameraState.position { flip() }
         if let zoom = write.displayedZoom { setDisplayedZoom(zoom) }
         if write.touchesFrameDelivery {
-          frameThrottle.configure(CameraParameters.frameDelivery(applying: write, to: frameThrottle.delivery))
+          let current = frameThrottle.delivery
+          let next = CameraParameters.frameDelivery(applying: write, to: current)
+          // A write that names only the struggle leaves the throttle's own clock running; one that
+          // names only the throttle leaves the struggle's.
+          frameThrottle.configure(next, keepingClock: !write.touchesFrameRate)
+          if write.struggle != nil { struggle.configure(next.struggle) }
         }
         // One `applySettings()` for every encoder field in the request, exactly like Done.
         if write.touchesSettings { apply(CameraParameters.settings(applying: write, to: settings)) }
@@ -792,6 +816,12 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     public var wanderTarget: Double?
     /// Frames per second reaching the encoder over the last two seconds. Nil until measured.
     public var deliveredFrameRate: Double?
+    /// `mic:hold:slow:seed`, nil for none, and what it has done: seconds of sound dropped, holds
+    /// begun, pictures dropped.
+    public var struggle: String? = nil
+    public var struggleDroppedSoundSeconds: Double = 0
+    public var struggleHolds: Int = 0
+    public var struggleDroppedFrames: UInt64 = 0
   }
 
   public struct ExternalDisplayDump: Encodable, Sendable, Equatable {
@@ -924,7 +954,11 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
         swing: frameThrottle.delivery.swing?.text,
         wander: frameThrottle.delivery.wander?.text,
         wanderTarget: frameThrottle.wanderTarget.map { ($0 * 10).rounded() / 10 },
-        deliveredFrameRate: frameThrottle.deliveredFrameRate
+        deliveredFrameRate: frameThrottle.deliveredFrameRate,
+        struggle: struggle.struggle?.text,
+        struggleDroppedSoundSeconds: (struggle.summary.droppedSoundSeconds * 100).rounded() / 100,
+        struggleHolds: struggle.summary.holds,
+        struggleDroppedFrames: struggle.summary.droppedFrames
       )
     )
   }
@@ -1065,6 +1099,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
 
     case .reset:
       frameThrottle.configure(.off)
+      struggle.configure(nil)
       settings = launch.settings
       noteSettingsApplied()
       reconfigureVideoEncoder(settings)

@@ -167,9 +167,11 @@ data class FrameDelivery(
     val frameRate: Double = 0.0,
     val swing: FrameRateSwing? = null,
     /** Wins over the swing and the steady rate while set. */
-    val wander: FrameRateWander? = null
+    val wander: FrameRateWander? = null,
+    /** The struggling-phone injection, which [StruggleInjector] applies beside the throttle. */
+    val struggle: Struggle? = null
 ) {
-    val isOff: Boolean get() = wander == null && swing == null && frameRate <= 0
+    val isOff: Boolean get() = wander == null && swing == null && frameRate <= 0 && struggle == null
 
     /** The rate to deliver [elapsed] seconds after the throttle was configured. Null when off. */
     fun targetRate(elapsed: Double): Double? {
@@ -214,9 +216,13 @@ class FrameDeliveryThrottle(private val random: () -> Double = { Math.random() }
 
     val delivery: FrameDelivery get() = synchronized(lock) { configured }
 
-    /** Starts a new delivery pattern from the next frame. A swing starts at its `low`. */
-    fun configure(delivery: FrameDelivery) = synchronized(lock) {
+    /**
+     * Starts a new delivery pattern from the next frame. A swing starts at its `low`. With
+     * [keepingClock] only what it reports changes, for a write that names the struggle alone.
+     */
+    fun configure(delivery: FrameDelivery, keepingClock: Boolean = false) = synchronized(lock) {
         configured = delivery
+        if (keepingClock) return@synchronized
         anchor = null
         due = null
         schedule = delivery.wander?.let { WanderSchedule(it) }
