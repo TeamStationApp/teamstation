@@ -172,18 +172,21 @@ public enum ArchiveRemux {
 
   /// One file's sound and where on the output it belongs.
   private struct SoundPiece {
-    /// Held so the track stays usable: an `AVAssetTrack` does not keep its asset alive, and a
-    /// piece placed after the loop that opened its file otherwise fails every insert (-12780).
+    /// Held so the track stays usable: an `AVAssetTrack` does not keep its asset alive.
     var asset: AVURLAsset
     var source: AVAssetTrack
-    /// On the file's own timeline.
-    var span: CMTimeRange
-    /// Where `span.start` goes on the output.
+    /// Where the file's sound starts playing on its own timeline: after the empty stretch a
+    /// segment's sound track opens with.
+    var audibleStart: CMTime
+    /// Where on the file's own timeline the piece is used from: `audibleStart`, or later when the
+    /// file starts before the window.
+    var start: CMTime
+    /// Where `start` goes on the output.
     var place: CMTime
   }
 
-  /// The placed files' sound, laid where it happened in a composition of its own and rendered as one
-  /// continuous AAC track `length` long, written to `url`.
+  /// The placed files' sound, each where it happened, rendered as one continuous AAC track `length`
+  /// long, written to `url`.
   ///
   /// Returns false, leaving `url` alone, when none of the files has any sound.
   static func renderPlacedSound(
@@ -194,16 +197,12 @@ public enum ArchiveRemux {
   ) async throws -> Bool {
     var pieces: [SoundPiece] = []
     for placement in placements {
-      let range = CMTimeRange(start: placement.start, duration: placement.taken)
-      if let piece = try? await soundPiece(range, of: placement.asset, at: placement.at) {
+      if let piece = try? await soundPiece(from: placement.start, of: placement.asset, at: placement.at) {
         pieces.append(piece)
       }
     }
     guard !pieces.isEmpty else { return false }
-    let composition = AVMutableComposition()
-    try placeSound(pieces, until: length, in: composition)
-    guard let track = composition.tracks(withMediaType: .audio).first else { return false }
-    return try await renderSound(of: composition, track: track, length: length, to: url, progress: progress)
+    return try await renderSound(pieces.sorted { $0.place < $1.place }, length: length, to: url, progress: progress)
   }
 
   /// Whether any placed file has sound, without reading it.
@@ -216,119 +215,61 @@ public enum ArchiveRemux {
     return false
   }
 
-  /// The file's sound from where its picture's range starts to wherever the sound itself ends.
+  /// The file's sound from where its picture's range starts, `start` on its own timeline, placed so
+  /// that moment lands at `time`.
   ///
   /// A segment's sound starts a few tens of milliseconds after its first picture and ends as far
-  /// past its last one. Cut to the picture's range, every seam lost that tail and left a hole:
-  /// rec-409's Pixel export had 2,334 of them, 288 s of recorded sound missing.
-  private static func soundPiece(
-    _ range: CMTimeRange,
-    of asset: AVURLAsset,
-    at time: CMTime
-  ) async throws -> SoundPiece? {
+  /// past its last one, and all of it is used: cut to the picture's range, every seam lost that tail
+  /// and left a hole -- rec-409's Pixel export had 2,334 of them, 288 s of recorded sound missing.
+  private static func soundPiece(from start: CMTime, of asset: AVURLAsset, at time: CMTime) async throws -> SoundPiece? {
     guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return nil }
     // Where the sound is actually audible, not the track's whole range: a segment's sound track
-    // opens on an empty stretch before its first sample, and a piece placed from the start of
-    // that stretch cut the previous piece's overrun there and put silence in its place.
+    // opens on an empty stretch before its first sample.
     let segments = try await source.load(.segments)
-    guard let first = segments.first(where: { !$0.isEmpty }),
-          let last = segments.last(where: { !$0.isEmpty })
-    else { return nil }
-    let reported = last.timeMapping.target.end
-    let audible = CMTimeRange(
-      start: first.timeMapping.target.start,
-      end: CMTimeMaximum(reported, playedEnd(of: source, in: asset, reported: reported) ?? reported)
-    )
-    let start = CMTimeMaximum(audible.start, range.start)
-    guard audible.end > start else { return nil }
+    guard let first = segments.first(where: { !$0.isEmpty }) else { return nil }
+    let audibleStart = first.timeMapping.target.start
+    let used = CMTimeMaximum(audibleStart, start)
     return SoundPiece(
       asset: asset,
       source: source,
-      span: CMTimeRange(start: start, end: audible.end),
-      place: CMTimeAdd(time, CMTimeSubtract(start, range.start))
+      audibleStart: audibleStart,
+      start: used,
+      place: CMTimeAdd(time, CMTimeSubtract(used, start))
     )
   }
 
-  /// Where `track`'s sound really stops: what a reader decodes, not what the track reports.
-  ///
-  /// The two differ for an archive segment. Its sound is the camera's AAC copied as it came, with no
-  /// word of the encoder's priming, and `AVAssetWriter` writes such a track with three copies of its
-  /// first packet in front to warm the decoder and an edit list that starts 960 samples into them.
-  /// Played, the track runs to the end of that edit. Reported -- in its segments and its time range
-  /// -- it is taken to start 2,112 samples in, the priming an Apple encoder leaves, and to end 1,152
-  /// samples (24 ms at 48 kHz) sooner. A piece cut at the reported end stopped 24 ms before the next
-  /// segment's sound began, and the render filled every seam with silence: an iPhone's export had
-  /// a hole of one AAC packet or so at 734 of its 1,202 seams. A track whose priming is as reported
-  /// plays exactly to its reported end, and this changes nothing for it.
-  ///
-  /// Decodes the last tenth of a second or so; nil when the track cannot be read.
-  static func playedEnd(of track: AVAssetTrack, in asset: AVAsset, reported: CMTime) -> CMTime? {
-    guard let reader = try? AVAssetReader(asset: asset) else { return nil }
-    let from = CMTimeMaximum(.zero, CMTimeSubtract(reported, CMTime(value: 1, timescale: 10)))
-    reader.timeRange = CMTimeRange(start: from, duration: .positiveInfinity)
-    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
-    guard reader.canAdd(output) else { return nil }
-    reader.add(output)
-    guard reader.startReading() else { return nil }
-    var end: CMTime?
-    while let buffer = output.copyNextSampleBuffer() {
-      guard CMSampleBufferGetNumSamples(buffer) > 0 else { continue }
-      let stop = CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer), CMSampleBufferGetDuration(buffer))
-      if stop.isNumeric { end = end.map { CMTimeMaximum($0, stop) } ?? stop }
-    }
-    guard reader.status == .completed else { return nil }
-    return end
-  }
+  /// How far apart, at most, the end of one file's sound and the start of the next may be placed and
+  /// still be one stream the camera sent. Further apart, the archive has a gap there.
+  static let seamTolerance = 0.02
 
-  /// Every piece of sound where it happened, each stopping where the next begins.
+  /// The pieces' sound as one continuous AAC track, `length` long, written to `url`.
   ///
-  /// Placed only from each piece's own position, never from where the composition says the last
-  /// one ended: that end is rounded to the composition's timescale, and taking the next piece's
-  /// start from it lost a tick at every seam -- 531 ms per 1,000 s on rec-409's Pixel, sound
-  /// sliding steadily ahead of picture. A piece that would run into the next is cut at the next
-  /// one's start (inserting into a composition track shifts what follows, so nothing may overlap),
-  /// and nothing runs past `windowEnd`.
-  private static func placeSound(
-    _ pieces: [SoundPiece],
-    until windowEnd: CMTime?,
-    in composition: AVMutableComposition
-  ) throws {
-    let ordered = pieces.sorted { $0.place < $1.place }
-    for (index, piece) in ordered.enumerated() {
-      var stop = CMTimeAdd(piece.place, piece.span.duration)
-      if index + 1 < ordered.count { stop = CMTimeMinimum(stop, ordered[index + 1].place) }
-      if let windowEnd { stop = CMTimeMinimum(stop, windowEnd) }
-      let length = CMTimeSubtract(stop, piece.place)
-      guard length.seconds > 0.0005 else { continue }
-      guard let target = composition.tracks(withMediaType: .audio).first
-        ?? composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-      else { return }
-      try target.insertTimeRange(
-        CMTimeRange(start: piece.span.start, duration: length),
-        of: piece.source,
-        at: piece.place
-      )
-    }
-  }
-
-  /// The composition's sound as one continuous AAC track, `length` long, written to `url`.
+  /// Each file's packets are decoded and laid where the file was placed, every stretch nothing was
+  /// recorded for is filled with silence, the start and the end included, and the whole is encoded
+  /// once. One piece of sound, the length of the take, has no seams to get wrong. (A passthrough
+  /// export of sound laid down piece by piece does not keep it where it was put: measured on
+  /// rec-409's Pixel, it slid 531 ms per 1,000 s ahead of its picture.)
   ///
-  /// A passthrough export of sound laid down piece by piece does not keep it where it was put.
-  /// Measured on rec-409's Pixel: the composition's own sound, read back, held within 15 ms per
-  /// 1,000 s of its picture, and the same composition exported by `AVAssetExportSession` slid
-  /// 531 ms per 1,000 s ahead of it, with a hole of about one AAC packet at every seam -- where two
-  /// pieces meet, the exporter trims one and moves the next. So the sound is decoded exactly as
-  /// placed, every stretch nothing was recorded for is filled with silence, the start and the end
-  /// included, and it is encoded once. One piece of sound, the length of the take, has no seams to
-  /// get wrong.
+  /// A camera's sound is one AAC stream that TS Director's segment writer cuts into a file per
+  /// segment, copied without re-encoding, each file with copies of its first packet in front to warm
+  /// a decoder. Decoded file by file, every seam starts a fresh decoder on those copies, and the
+  /// first 21 ms after it comes out wrong: against a decode of the unbroken stream, -2.4 dB for its
+  /// first 256 samples and 2.3 dB to sample 1,024, a faint tick on tonal sound every few seconds.
+  /// So one decoder runs on, file after file, and a file that carries the stream on -- placed where
+  /// the last one's sound ended, give or take `seamTolerance` -- is fed from its first packet that
+  /// plays, its copies dropped. A gap in the archive, or a file of another kind, starts a fresh
+  /// decoder, and the gap is silence.
   ///
-  /// Stops at the next chunk when its task is cancelled, throwing `CancellationError` and leaving no
-  /// file behind.
+  /// Each file's sound still goes where its own placement puts it, so the sound keeps to the wall
+  /// clock as the pictures do. Where that is a few samples after the stream's last one, those
+  /// samples repeat rather than go silent; where it is before, the overlap is dropped.
+  ///
+  /// Stops at the next packet when its task is cancelled, throwing `CancellationError` and leaving
+  /// no file behind.
   ///
   /// Returns false, leaving `url` alone, when there is nothing to render.
   private static func renderSound(
-    of composition: AVMutableComposition,
-    track: AVMutableCompositionTrack,
+    _ pieces: [SoundPiece],
     length: CMTime,
     to url: URL,
     progress: (@Sendable (Double) -> Void)?
@@ -336,26 +277,15 @@ public enum ArchiveRemux {
     guard length.seconds > 0.05 else { return false }
     // The rate and layout of the sound that was recorded, so the render neither resamples nor folds.
     var rate = 48_000.0
-    var channels: UInt32 = 1
-    if let description = track.formatDescriptions.first,
-       let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description as! CMAudioFormatDescription)?.pointee {
+    var channels = 1
+    for piece in pieces {
+      guard let description = try? await piece.source.load(.formatDescriptions).first,
+            let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee
+      else { continue }
       if basic.mSampleRate > 0 { rate = basic.mSampleRate }
-      if basic.mChannelsPerFrame > 0 { channels = min(basic.mChannelsPerFrame, 2) }
+      if basic.mChannelsPerFrame > 0 { channels = Int(min(basic.mChannelsPerFrame, 2)) }
+      break
     }
-    let reader = try AVAssetReader(asset: composition)
-    reader.timeRange = CMTimeRange(start: .zero, duration: length)
-    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-      AVFormatIDKey: kAudioFormatLinearPCM,
-      AVLinearPCMBitDepthKey: 16,
-      AVLinearPCMIsFloatKey: false,
-      AVLinearPCMIsBigEndianKey: false,
-      AVLinearPCMIsNonInterleaved: false,
-      AVSampleRateKey: rate,
-      AVNumberOfChannelsKey: channels
-    ])
-    output.alwaysCopiesSampleData = false
-    guard reader.canAdd(output) else { return false }
-    reader.add(output)
 
     try? FileManager.default.removeItem(at: url)
     let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
@@ -373,10 +303,10 @@ public enum ArchiveRemux {
       mSampleRate: rate,
       mFormatID: kAudioFormatLinearPCM,
       mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
-      mBytesPerPacket: 2 * channels,
+      mBytesPerPacket: UInt32(2 * channels),
       mFramesPerPacket: 1,
-      mBytesPerFrame: 2 * channels,
-      mChannelsPerFrame: channels,
+      mBytesPerFrame: UInt32(2 * channels),
+      mChannelsPerFrame: UInt32(channels),
       mBitsPerChannel: 16,
       mReserved: 0
     )
@@ -385,15 +315,19 @@ public enum ArchiveRemux {
       allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil,
       magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &format
     )
-    guard let format, reader.startReading(), writer.startWriting() else { return false }
+    guard let format, writer.startWriting() else { return false }
     writer.startSession(atSourceTime: .zero)
 
-    let bytesPerFrame = Int(2 * channels)
+    let bytesPerFrame = 2 * channels
     let total = Int64((length.seconds * rate).rounded())
+    let bridge = Int((seamTolerance * rate).rounded())
     var written: Int64 = 0
     var reported = 0.0
-    /// Appends `frames` of `bytes` (or of silence, when nil) at the running sample position.
-    func append(_ bytes: Data?, frames: Int) async throws {
+    /// The last `bridge` frames written, to repeat across a seam placed a little after them.
+    var recent: [Int16] = []
+
+    /// Appends `samples` (or `frames` of silence, when nil) at the running sample position.
+    func append(_ samples: ArraySlice<Int16>?, frames: Int) async throws {
       var remaining = frames
       var offset = 0
       while remaining > 0 {
@@ -406,11 +340,11 @@ public enum ArchiveRemux {
           customBlockSource: nil, offsetToData: 0, dataLength: length,
           flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
         ) == noErr, let block else { throw Error.exportFailed("sound block") }
-        if let bytes {
-          bytes.withUnsafeBytes { raw in
+        if let samples {
+          samples.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
             CMBlockBufferReplaceDataBytes(
-              with: base.advanced(by: offset * bytesPerFrame), blockBuffer: block,
+              with: base.advanced(by: offset * 2), blockBuffer: block,
               offsetIntoDestination: 0, dataLength: length
             )
           }
@@ -435,7 +369,7 @@ public enum ArchiveRemux {
         }
         written += Int64(chunk)
         remaining -= chunk
-        offset += chunk
+        offset += chunk * channels
         // A percent at a time: an hour of sound is some forty thousand chunks.
         let fraction = total > 0 ? min(1, Double(written) / Double(total)) : 1
         if fraction - reported >= 0.01 || (fraction >= 1 && reported < 1) {
@@ -443,31 +377,121 @@ public enum ArchiveRemux {
           progress?(fraction)
         }
       }
+      let added = frames * channels
+      if let samples {
+        recent.append(contentsOf: samples.prefix(added))
+      } else {
+        recent.append(contentsOf: repeatElement(0, count: min(added, bridge * channels)))
+      }
+      if recent.count > bridge * channels { recent.removeFirst(recent.count - bridge * channels) }
+    }
+
+    /// Writes `samples`, whose first frame belongs at `at` on the output. Sound already written for a
+    /// stretch keeps its place, and the overlap is dropped. A stretch before `at` that nothing
+    /// covered is silence -- unless `carriesOn`, when it is a seam inside one stream that the
+    /// placement opened by a few samples, and the samples before it repeat.
+    func put(_ samples: ArraySlice<Int16>, at: Int64, carriesOn: Bool) async throws {
+      let frames = samples.count / channels
+      guard frames > 0, written < total else { return }
+      if at > written {
+        let gap = Int(min(at, total) - written)
+        if carriesOn, gap <= bridge, recent.count >= gap * channels {
+          try await append(recent.suffix(gap * channels), frames: gap)
+        } else {
+          try await append(nil, frames: gap)
+        }
+      }
+      let skip = Int(max(0, written - at))
+      let keep = min(frames - skip, Int(total - written))
+      guard keep > 0 else { return }
+      let from = samples.startIndex + skip * channels
+      try await append(samples[from..<(from + keep * channels)], frames: keep)
+    }
+
+    // The last frames of the file being decoded wait until the next file is placed: a file's sound
+    // is cut where the next one's is placed, so the next starts exactly there.
+    var pending: [Int16] = []
+    var pendingAt: Int64 = 0
+    /// Frames after `pending` that the file's edit trims: sound the camera sent, played only if the
+    /// next file carries the stream on.
+    var trimmed: [Int16] = []
+    /// Whether the file being decoded carries on the stream of the one before it.
+    var joined = false
+
+    /// Writes all but the last `bridge` frames waiting.
+    func settle() async throws {
+      let over = pending.count / channels - bridge
+      guard over > 0 else { return }
+      try await put(pending[0..<(over * channels)], at: pendingAt, carriesOn: joined)
+      pending.removeFirst(over * channels)
+      pendingAt += Int64(over)
+    }
+
+    /// Writes what is waiting, up to `next` (where the next file's sound is placed), with the trimmed
+    /// tail when the next file carries the stream on.
+    func close(before next: Int64?, carriesOn: Bool) async throws {
+      if carriesOn { pending += trimmed }
+      trimmed = []
+      let frames = pending.count / channels
+      let kept = next.map { Int(max(0, min(Int64(frames), $0 - pendingAt))) } ?? frames
+      try await put(pending[0..<(kept * channels)], at: pendingAt, carriesOn: joined)
+      pending = []
     }
 
     do {
-      while written < total, let buffer = output.copyNextSampleBuffer() {
+      var decoder: SoundDecoder?
+      var decoding: CMAudioFormatDescription?
+      /// Where the stream being decoded has got to on the output: just past its last frame.
+      var reached: Int64?
+      for piece in pieces {
         try Task.checkCancellation()
-        guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
-        let frames = CMSampleBufferGetNumSamples(buffer)
-        guard frames > 0 else { continue }
-        // Where this buffer was placed, in samples. Anything between the last sample written and here
-        // is a stretch no camera sound covered: silence, so what follows stays where it belongs.
-        let at = Int64((CMSampleBufferGetPresentationTimeStamp(buffer).seconds * rate).rounded())
-        if at > written { try await append(nil, frames: Int(min(at, total) - written)) }
-        // Sound already written for this stretch keeps its place; the overlap is dropped.
-        let skip = Int(max(0, written - at))
-        let keep = min(frames - skip, Int(total - written))
-        guard keep > 0 else { continue }
-        var data = Data(count: frames * bytesPerFrame)
-        let copied = data.withUnsafeMutableBytes { raw -> Bool in
-          guard let base = raw.baseAddress else { return false }
-          return CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: frames * bytesPerFrame, destination: base) == noErr
+        guard written < total else { break }
+        guard let sound = SoundPackets.read(piece.source, of: piece.asset),
+              let sourceRate = CMAudioFormatDescriptionGetStreamBasicDescription(sound.format)?.pointee.mSampleRate
+        else { continue }
+        let scale = rate / sourceRate
+        // Where the first frame that plays goes, and where the frames the window keeps start.
+        let first = Int64(((piece.place.seconds + piece.audibleStart.seconds - piece.start.seconds) * rate).rounded())
+        let from = first + Int64(((piece.start.seconds - piece.audibleStart.seconds) * rate).rounded())
+        let carriesOn = decoder != nil
+          && sound.preRoll > 0
+          && decoding.map { CMFormatDescriptionEqual($0, otherFormatDescription: sound.format) } == true
+          && reached.map { abs(first - $0) <= Int64(bridge) } == true
+        try await close(before: from, carriesOn: carriesOn)
+        joined = carriesOn
+        if !carriesOn {
+          decoder = SoundDecoder(sound.format, rate: rate, channels: channels)
+          decoding = sound.format
         }
-        guard copied else { continue }
-        try await append(data.subdata(in: (skip * bytesPerFrame)..<((skip + keep) * bytesPerFrame)), frames: keep)
+        reached = nil
+        guard let decoder else { continue }
+        let packets = carriesOn ? Array(sound.packets.dropFirst(sound.preRoll)) : sound.packets
+        let trimStart = carriesOn ? 0 : Int((Double(sound.trimStart) * scale).rounded())
+        let trimEnd = Int((Double(sound.trimEnd) * scale).rounded())
+        let decoded = Int((Double(packets.reduce(0) { $0 + $1.frames }) * scale).rounded())
+        // Output position of the next frame the decoder gives, and where the frames that play end.
+        var position = first - Int64(trimStart)
+        let end = position + Int64(decoded - trimEnd)
+        pendingAt = from
+        for packet in packets {
+          try Task.checkCancellation()
+          let samples = try decoder.decode(packet)
+          let frames = samples.count / channels
+          defer { position += Int64(frames) }
+          // Frames before the window or the edit are dropped; frames past the edit wait in `trimmed`.
+          let lead = Int(min(Int64(frames), max(0, from - position)))
+          let playing = Int(min(Int64(frames), max(Int64(lead), end - position)))
+          if playing > lead {
+            if pending.isEmpty { pendingAt = position + Int64(lead) }
+            pending += samples[(lead * channels)..<(playing * channels)]
+            try await settle()
+          }
+          if frames > playing { trimmed += samples[(playing * channels)...] }
+          if written >= total { break }
+        }
+        reached = position
       }
-      if reader.status == .failed { throw Error.exportFailed(reader.error?.localizedDescription ?? "sound read") }
+      try await close(before: nil, carriesOn: false)
       // To the end of the take, whatever the last camera sound reached.
       if written < total { try await append(nil, frames: Int(total - written)) }
       // The encoded file plays the encoder's priming -- 2,112 samples, 44 ms at 48 kHz -- short of
@@ -476,7 +500,6 @@ public enum ArchiveRemux {
       // silence goes in here, and `join` takes exactly the take's length back out of the file.
       try await append(nil, frames: 8_192)
     } catch {
-      reader.cancelReading()
       writer.cancelWriting()
       try? FileManager.default.removeItem(at: url)
       throw error
