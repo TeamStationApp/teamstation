@@ -1621,7 +1621,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'neither see nor administer gets 404. A season or league admin ' +
             'may only schedule into a season they administer: a row into ' +
             'another season is `forbidden`.\n\n' +
-            '**A row:** `opponent` (`{teamId}`, or `{name, externalId?}` with ' +
+            '**A row:** `opponent` (`{teamId, externalId?}`, or ' +
+            '`{name, externalId?}` with ' +
             'a name of 1-120 characters) and `side` (`home` or `away`, the ' +
             'side this team plays on) are needed to create a game. On a ' +
             'matched one, `opponent` may change the opponent and `side` may ' +
@@ -1660,7 +1661,14 @@ export function openApiDocument(version: string): OpenApiDocument {
             'name, else a new external team.\n\n' +
             "**An opponent's id:** `opponent.externalId` is `{system, kind, " +
             'id}`, `system` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` and ' +
-            '`id` non-empty, the id another system has for the opponent. A ' +
+            '`id` non-empty, the id another system has for the opponent. ' +
+            'With `teamId`, that team is the opponent (an unknown one is ' +
+            '`notFound`, this team itself and a merged team are `conflict`), ' +
+            'and it takes the id when it is an external team and nothing ' +
+            "holds the id. On a matched game, the game's opponent takes it " +
+            'the same way when `teamId` names that opponent, before anything ' +
+            'else, so a game scored in TeamStation records it too. With ' +
+            '`name`, a ' +
             'team already holding it (an external or a full one, followed ' +
             'through merges) is the opponent, whatever the name says, except ' +
             "an external team whose name differs from the row's once " +
@@ -1735,7 +1743,21 @@ export function openApiDocument(version: string): OpenApiDocument {
                               {
                                 type: 'object',
                                 required: ['teamId'],
-                                properties: { teamId: { type: 'string' } }
+                                properties: {
+                                  teamId: { type: 'string' },
+                                  externalId: {
+                                    type: 'object',
+                                    required: ['system', 'kind', 'id'],
+                                    properties: {
+                                      system: {
+                                        type: 'string',
+                                        pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                                      },
+                                      kind: { type: 'string', minLength: 1 },
+                                      id: { type: 'string', minLength: 1 }
+                                    }
+                                  }
+                                }
                               },
                               {
                                 type: 'object',

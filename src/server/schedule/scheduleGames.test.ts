@@ -699,6 +699,101 @@ describe('scheduling a team’s games', function () {
     expect(noOpponent.results[0]).deep.include({ result: 'error' })
   })
 
+  it('names an opponent by id and records the id it carries on it, when free', async function () {
+    const pelicans = makeId('team')
+    const cormorants = makeId('team')
+    const terns = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values([
+        { id: pelicans, name: 'Pelicans', kind: 'external' },
+        { id: cormorants, name: 'Cormorants', kind: 'external' },
+        { id: terns, name: 'Terns', kind: 'external' }
+      ])
+      .execute()
+    const key = (id: string): object => ({
+      system: 'scoreKeeper',
+      kind: 'opponent',
+      id
+    })
+    const holders = async (id: string): Promise<string[]> =>
+      (
+        await db!
+          .selectFrom('external_ids')
+          .select('entity_id')
+          .where('system', '=', 'scoreKeeper')
+          .where('kind', '=', 'opponent')
+          .where('external_id', '=', id)
+          .execute()
+      ).map(row => row.entity_id)
+    const row = (opponent: object): object => ({
+      opponent,
+      side: 'home',
+      startAt: nextStart()
+    })
+
+    // A free id goes on the external team the row names.
+    const first = await post([
+      row({ teamId: pelicans, externalId: key('sk-1') })
+    ])
+    expect(first.results[0]).deep.include({ result: 'created' })
+    expect((await game(idOf(first.results[0]))).away_team_id).equals(pelicans)
+    expect(await holders('sk-1')).deep.equals([pelicans])
+
+    // Held by another team, the id stays there, and the game goes on the
+    // team the row names.
+    const second = await post([
+      row({ teamId: cormorants, externalId: key('sk-1') })
+    ])
+    expect((await game(idOf(second.results[0]))).away_team_id).equals(
+      cormorants
+    )
+    expect(await holders('sk-1')).deep.equals([pelicans])
+
+    // A full team never takes one.
+    const full = await post([row({ teamId: rival, externalId: key('sk-2') })])
+    expect((await game(idOf(full.results[0]))).away_team_id).equals(rival)
+    expect(await holders('sk-2')).deep.equals([])
+
+    // Two rows in one call naming two teams with one free id: it is
+    // recorded once, on the first.
+    const both = await post([
+      row({ teamId: cormorants, externalId: key('sk-3') }),
+      row({ teamId: terns, externalId: key('sk-3') })
+    ])
+    expect(both.counts.created).equals(2)
+    expect(await holders('sk-3')).deep.equals([cormorants])
+
+    // Refused as a bare id is, recording nothing.
+    const refused = await post([
+      row({ teamId: makeId('team'), externalId: key('sk-4') }),
+      row({ teamId: titan, externalId: key('sk-4') }),
+      row({ teamId: merged, externalId: key('sk-4') })
+    ])
+    expect(
+      refused.results.map(result =>
+        result.result === 'error' ? result.error.code : result.result
+      )
+    ).deep.equals(['notFound', 'conflict', 'conflict'])
+    expect(await holders('sk-4')).deep.equals([])
+
+    // A placeholder names no team, so it takes no id, named by id or not.
+    const tbd = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({
+        id: tbd,
+        name: 'TBD 0a0b0c0d 2026-07-02 18:00',
+        kind: 'external'
+      })
+      .execute()
+    const placeholder = await post([
+      row({ teamId: tbd, externalId: key('sk-5') })
+    ])
+    expect((await game(idOf(placeholder.results[0]))).away_team_id).equals(tbd)
+    expect(await holders('sk-5')).deep.equals([])
+  })
+
   it('follows a merged team a name finds', async function () {
     const answer = await post([
       { opponent: { name: 'NP5 Maddux' }, side: 'home', startAt: nextStart() }

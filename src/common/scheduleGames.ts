@@ -21,7 +21,8 @@ export type ScheduleStatus = 'scheduled' | 'cancelled'
  * names it, with the id another system has for it when the row knows it.
  */
 export type ScheduleOpponent =
-  { teamId: string } | { name: string; externalId?: ExternalIdBody }
+  | { teamId: string; externalId?: ExternalIdBody }
+  | { name: string; externalId?: ExternalIdBody }
 
 export interface ScheduleExternalId {
   system: string
@@ -109,10 +110,12 @@ function asOpponent(raw: unknown): ScheduleOpponent {
     if (typeof raw.teamId !== 'string' || raw.teamId.trim() === '') {
       fail('opponent.teamId must be a non-empty string')
     }
-    if (raw.externalId !== undefined) {
-      fail('opponent.externalId goes with opponent.name, not teamId')
+    const teamId = raw.teamId.trim()
+    if (raw.externalId === undefined) return { teamId }
+    return {
+      teamId,
+      externalId: asExternalIdAt(raw.externalId, 'opponent.externalId')
     }
-    return { teamId: raw.teamId.trim() }
   }
   if (typeof raw.name !== 'string') fail('opponent.name must be a string')
   const name = raw.name.trim()

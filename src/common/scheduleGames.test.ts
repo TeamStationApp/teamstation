@@ -72,6 +72,19 @@ describe('schedule rows', function () {
       name: 'Rattlers',
       externalId: { system: 'otherLeague', kind: 'opponent', id: 'r-1' }
     })
+    // Beside a team TeamStation names, too.
+    expect(
+      asScheduleGameRow({
+        startAt: START,
+        opponent: {
+          teamId: ' tem_1 ',
+          externalId: { system: 'scoreKeeper', kind: 'opponent', id: 'sk-1' }
+        }
+      }).opponent
+    ).deep.equals({
+      teamId: 'tem_1',
+      externalId: { system: 'scoreKeeper', kind: 'opponent', id: 'sk-1' }
+    })
   })
 
   it('defaults an external id kind to event', function () {
@@ -106,11 +119,19 @@ describe('schedule rows', function () {
           startAt: START,
           opponent: {
             teamId: 't',
-            externalId: { system: 'o', kind: 'opponent', id: 'x' }
+            externalId: { system: 'O', kind: 'opponent', id: 'x' }
           }
         },
         'opponent.externalId'
       ],
+      [
+        {
+          startAt: START,
+          opponent: { teamId: 't', name: 'n', externalId: 'x' }
+        },
+        'opponent'
+      ],
+      [{ startAt: START, opponent: { teamId: '' } }, 'opponent.teamId'],
       [
         { startAt: START, opponent: { name: 'n', externalId: 'x' } },
         'opponent.externalId'

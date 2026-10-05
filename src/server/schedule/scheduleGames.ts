@@ -257,12 +257,13 @@ async function applyRow(
       if (
         opponentKey != null &&
         row.opponent != null &&
-        'name' in row.opponent &&
-        !isUndeterminedName(row.opponent.name)
+        !('name' in row.opponent && isUndeterminedName(row.opponent.name))
       ) {
-        // Only when the row's name finds the game's own opponent: a game
-        // held against a placeholder or a since-corrected opponent must not
-        // hand that team the real opponent's id.
+        // Only when the row finds the game's own opponent — by its id, or by
+        // a name that finds it: a game held against a placeholder or a
+        // since-corrected opponent must not hand that team the real
+        // opponent's id. Asked before the opponent can change, so a game
+        // TeamStation scored records it too.
         const holder = await idHolder(trx, opponentKey)
         const opponent = await followMerges(
           trx,
@@ -271,7 +272,10 @@ async function applyRow(
         if (
           holder.free &&
           (await isExternal(trx, opponent)) &&
-          (await nameFinds(trx, row.opponent.name, held.season_id, opponent))
+          ('name' in row.opponent
+            ? await nameFinds(trx, row.opponent.name, held.season_id, opponent)
+            : row.opponent.teamId === opponent &&
+              !(await isPlaceholderTeam(trx, opponent)))
         ) {
           await takeId(trx, opponent, opponentKey, holder)
         }
@@ -945,6 +949,14 @@ async function resolveRowOpponent(
         `Team ${found.id} was merged into ${found.merged_into}`
       )
     }
+    // The opponent's id goes on the team the row names, when nothing holds
+    // it; a held id stays where it is.
+    // A placeholder names no team, so it takes no team's id.
+    const key = opponent.externalId
+    if (key != null && !(await isPlaceholderTeam(trx, found.id))) {
+      const holder = await idHolder(trx, key)
+      if (holder.free) await recordOnExternalTeam(trx, found.id, key, holder)
+    }
     return found.id
   }
 
@@ -1025,11 +1037,9 @@ async function nameFinds(
   return (await followMerges(trx, resolved.id)) === teamId
 }
 
-/** The id a row gives for its opponent, when it names one by name. */
+/** The id a row gives for its opponent, whether it names it or its team. */
 function opponentExternalId(row: ScheduleGameRow): ExternalIdKey | undefined {
-  const opponent = row.opponent
-  if (opponent == null || !('name' in opponent)) return undefined
-  return opponent.externalId
+  return row.opponent?.externalId
 }
 
 /**
@@ -1081,6 +1091,19 @@ async function recordOnExternalTeam(
   holder: { orphanId?: string }
 ): Promise<void> {
   if (await isExternal(trx, teamId)) await takeId(trx, teamId, key, holder)
+}
+
+/** Whether a team's name says the opponent is not known yet. */
+async function isPlaceholderTeam(
+  trx: Transaction<Database>,
+  teamId: string
+): Promise<boolean> {
+  const team = await trx
+    .selectFrom('teams')
+    .select('name')
+    .where('id', '=', teamId)
+    .executeTakeFirstOrThrow()
+  return isUndeterminedName(team.name)
 }
 
 /** Whether a team is an external one, from outside every season. */

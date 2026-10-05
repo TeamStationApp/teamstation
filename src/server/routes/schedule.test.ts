@@ -1683,6 +1683,136 @@ describe('scheduling a team’s games over HTTP', function () {
     }
   })
 
+  it('keeps or moves a held game named by its opponent\u2019s id, and records the id that comes with it', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'by-id-1',
+      'Plovers'
+    )
+    const [other] = await teamsNamed('Plovers')
+    expect(other.id).equals(placeholder)
+    const sandpipers = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({ id: sandpipers, name: 'Sandpipers', kind: 'external' })
+      .execute()
+
+    // Its own opponent, by id: nothing changes, and the id is recorded.
+    const same = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          opponent: { teamId: placeholder, externalId: opponentKey('plv-1') }
+        }
+      ]
+    })
+    expect(same.body.results[0]).deep.equals({
+      index: 0,
+      result: 'unchanged',
+      gameId,
+      status: 'scheduled'
+    })
+    expect(await holdersOf('plv-1')).deep.equals([
+      { entity_type: 'team', entity_id: placeholder }
+    ])
+
+    // Another external team, by id: the game moves to it.
+    const moved = await schedule('owner', {
+      games: [{ ...row, opponent: { teamId: sandpipers } }]
+    })
+    expect(moved.body.results[0]).deep.include({ result: 'updated', gameId })
+    expect(await awayTeamOf(gameId)).equals(sandpipers)
+  })
+
+  it('gives a placeholder opponent no id, named by its id or not', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'by-id-tbd',
+      'TBD 0f0f0f0f 2026-05-02 18:00'
+    )
+    await db!
+      .updateTable('games')
+      .set({ scoringOwner: 'teamstation' })
+      .where('id', '=', gameId)
+      .execute()
+    const answer = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          opponent: { teamId: placeholder, externalId: opponentKey('tbd-1') }
+        }
+      ]
+    })
+    expect(answer.body.results[0]).deep.include({
+      result: 'unchanged',
+      gameId
+    })
+    expect(await holdersOf('tbd-1')).deep.equals([])
+
+    // A game moved onto it by its id leaves the id free too.
+    const other = await placeholderGame('by-id-tbd-2', 'Stints')
+    const moved = await schedule('owner', {
+      games: [
+        {
+          ...other.row,
+          opponent: { teamId: placeholder, externalId: opponentKey('tbd-2') }
+        }
+      ]
+    })
+    expect(moved.body.results[0]).deep.include({
+      result: 'updated',
+      gameId: other.gameId
+    })
+    expect(await awayTeamOf(other.gameId)).equals(placeholder)
+    expect(await holdersOf('tbd-2')).deep.equals([])
+  })
+
+  it('records the id of a scored game\u2019s own opponent, and moves it to no other', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'by-id-scored',
+      'Scored Avocets'
+    )
+    await db!
+      .updateTable('games')
+      .set({ scoringOwner: 'teamstation' })
+      .where('id', '=', gameId)
+      .execute()
+    const stilts = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({ id: stilts, name: 'Stilts', kind: 'external' })
+      .execute()
+
+    // Another team by id, with a free id and a new time: the opponent
+    // stays, the time moves, and nobody takes the id.
+    const later = new Date(Date.UTC(2026, 4, 3, 17, minute)).toISOString()
+    const other = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          startAt: later,
+          opponent: { teamId: stilts, externalId: opponentKey('avo-1') }
+        }
+      ]
+    })
+    expect(other.body.results[0]).deep.include({ result: 'updated', gameId })
+    expect(await awayTeamOf(gameId)).equals(placeholder)
+    expect(await holdersOf('avo-1')).deep.equals([])
+
+    // Its own opponent by id: the id is recorded on it.
+    const own = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          startAt: later,
+          opponent: { teamId: placeholder, externalId: opponentKey('avo-1') }
+        }
+      ]
+    })
+    expect(own.body.results[0]).deep.include({ result: 'unchanged', gameId })
+    expect(await holdersOf('avo-1')).deep.equals([
+      { entity_type: 'team', entity_id: placeholder }
+    ])
+  })
+
   it('moves a scheduled game, swaps its sides in the same row, and announces it', async function () {
     const { row, gameId, diablos } = await sidedGame('repoint-1')
     const listener = new Client({ connectionString: scratchUrl })
