@@ -609,6 +609,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var programAudioPlaying = false
   /// Programme RTMP publish is currently running. Distinct from `dvr.isRecording`.
   public var isStreaming = false
+  /// Where the Stream button publishes: `url` or `event`, and which one, without its stream key
+  /// (the URL up to its application, or the chosen game's id and title). Read before a test
+  /// streams, so a test never publishes to a real team's game.
+  public var streamDestination = ""
+  public var streamTarget = ""
   /// IDRs actually emitted on the RTMP encode, not camera keyframes.
   public var streamKeyframeCount: UInt64 = 0
   /// Seconds since the last RTMP IDR. HLS stalls when this climbs past `gopSeconds`.

@@ -2081,6 +2081,30 @@ public final class AppEnvironment {
     }
   }
 
+  /// Where a stream would go, without its key: the URL's scheme, host, port and application for a
+  /// typed URL, the game's id and title for an event. A test reads it before streaming.
+  var streamTargetDescription: String {
+    switch config.streamDestination {
+    case .url:
+      return Self.withoutStreamKey(config.streamURL)
+    case .event:
+      guard let chosen = teamStation.chosen else { return "" }
+      return "\(chosen.gameId) \(chosen.title)"
+    }
+  }
+
+  /// `rtmp://host:1935/live/key` → `rtmp://host:1935/live`. The key is the last path component.
+  static func withoutStreamKey(_ url: String) -> String {
+    guard var components = URLComponents(string: url), components.host != nil else { return "" }
+    components.user = nil
+    components.password = nil
+    components.query = nil
+    var path = components.path.split(separator: "/", omittingEmptySubsequences: true)
+    if path.count > 1 { path.removeLast() }
+    components.path = path.isEmpty ? "" : "/" + path.joined(separator: "/")
+    return components.string ?? ""
+  }
+
   public func startStreaming() {
     guard !isStreaming else { return }
     guard distributorExport == nil else {
@@ -4031,12 +4055,17 @@ public final class AppEnvironment {
 
   /// Launch arguments overlay the running session and are forgotten when the process exits.
   /// Writing them back is how a test flag became a saved setting, so they never touch disk.
-  private static func applying(_ launch: LaunchConfiguration, to config: AppConfig) -> AppConfig {
+  static func applying(_ launch: LaunchConfiguration, to config: AppConfig) -> AppConfig {
     var config = config
     if let seconds = launch.segmentSeconds { config.segmentSeconds = seconds }
     if let codec = launch.programCodec { config.programCodec = codec }
     if let hud = launch.debugHUD { config.showDebugHUD = hud }
-    if let url = launch.streamURL { config.streamURL = url }
+    if let url = launch.streamURL {
+      config.streamURL = url
+      // A run that names a URL streams there. Left on `event`, the stream went to whatever game
+      // Settings had chosen, which can be a real team's.
+      if !url.isEmpty { config.streamDestination = .url }
+    }
     if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
     if let rate = launch.programFrameRate { config.programFrameRate = rate }
     if let codec = launch.streamCodec { config.streamCodec = codec }
@@ -4577,6 +4606,8 @@ public final class AppEnvironment {
       $0.diskLatencyCapMilliseconds = (caps.diskSeconds ?? 0) * 1_000
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
       $0.isStreaming = self.isStreaming
+      $0.streamDestination = self.config.streamDestination.rawValue
+      $0.streamTarget = self.streamTargetDescription
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
       $0.pictureInPictureActive = self.pictureInPicture.isActive
       $0.sourceLayout = self.sourceLayout.displayOrder
