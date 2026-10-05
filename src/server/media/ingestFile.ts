@@ -9,6 +9,7 @@ import type { Kysely } from 'kysely'
 import { makeId } from '../../common/ids'
 import type { Database, VideosTable } from '../db/database'
 import {
+  AAC_PRIMING_SAMPLES,
   MASTER_PLAYLIST,
   MEDIA_PLAYLIST,
   probeDuration,
@@ -77,6 +78,17 @@ export interface ProbedFile {
    * angle grid lines up to.
    */
   preRollSec: number
+  /**
+   * AAC priming the file's sound starts with and does not declare, in
+   * samples: `AAC_PRIMING_SAMPLES` for an AAC-LC track whose priming nobody
+   * wrote down, 0 for everything else. The remux stamps those samples before
+   * zero, as it already does for priming a file declares.
+   *
+   * Every take TS Director and TS Distributor send is such a file. AVFoundation
+   * skips the priming when it plays one; FFmpeg did not, so the copy in the
+   * Space had its sound 44 ms behind where the iPad and the Mac play it.
+   */
+  soundPrimingSamples: number
 }
 
 /**
@@ -132,7 +144,7 @@ export async function probeVideoFile(
     '-show_entries',
     'packet=stream_index,dts_time',
     '-show_entries',
-    'stream=codec_type,codec_name,width,height',
+    'stream=index,codec_type,codec_name,profile,sample_rate,initial_padding,width,height',
     '-show_entries',
     'format=duration',
     '-of',
@@ -164,15 +176,18 @@ export async function probeVideoFile(
  * doing this at all.
  */
 export function preRollFrom(
-  packets: Array<{ stream_index?: number; dts_time?: string }>
+  packets: Array<{ stream_index?: number; dts_time?: string }>,
+  /** Seconds the remux will additionally move a stream back, by index. */
+  movedBack = new Map<number, number>()
 ): number {
   const earliest = new Map<number, number>()
   for (const packet of packets) {
     const at = Number(packet.dts_time)
     if (!Number.isFinite(at)) continue
     const stream = packet.stream_index ?? 0
+    const moved = at - (movedBack.get(stream) ?? 0)
     const seen = earliest.get(stream)
-    if (seen == null || at < seen) earliest.set(stream, at)
+    if (seen == null || moved < seen) earliest.set(stream, moved)
   }
   const first = Math.min(...earliest.values())
   // Not clamped at zero. `make_zero` puts the first timestamp at zero whatever
@@ -188,19 +203,22 @@ export function preRollFrom(
 /** The shape `ffprobe -of json` answers with, read into what this needs. */
 export function readProbe(stdout: string, file: string): ProbedFile {
   const parsed = JSON.parse(stdout) as {
-    streams?: Array<{
-      codec_type?: string
-      codec_name?: string
-      width?: number
-      height?: number
-    }>
+    streams?: ProbedStreamJson[]
     packets?: Array<{ stream_index?: number; dts_time?: string }>
     format?: { duration?: string }
   }
   const streams = parsed.streams ?? []
   const video = streams.find(one => one.codec_type === 'video')
   if (video?.codec_name == null) throw new Error(`no video stream in ${file}`)
-  const preRollSec = preRollFrom(parsed.packets ?? [])
+  // The sound the remux keeps is the first; its undeclared priming moves it
+  // back, which can make it the deepest stream of all.
+  const sound = streams.find(one => one.codec_type === 'audio')
+  const soundPrimingSamples = undeclaredPriming(sound)
+  const movedBack = new Map<number, number>()
+  if (soundPrimingSamples > 0 && sound?.index != null) {
+    movedBack.set(sound.index, soundPrimingSamples / Number(sound.sample_rate))
+  }
+  const preRollSec = preRollFrom(parsed.packets ?? [], movedBack)
   return {
     codecName: video.codec_name,
     width: video.width ?? 0,
@@ -209,9 +227,38 @@ export function readProbe(stdout: string, file: string): ProbedFile {
     // does not apply the edit list — so what ends up in the Space, and what
     // the player will scrub through, is this much longer.
     durationSec: Math.round(Number(parsed.format?.duration ?? 0) + preRollSec),
-    hasAudio: streams.some(one => one.codec_type === 'audio'),
-    preRollSec
+    hasAudio: sound != null,
+    preRollSec,
+    soundPrimingSamples
   }
+}
+
+interface ProbedStreamJson {
+  index?: number
+  codec_type?: string
+  codec_name?: string
+  profile?: string
+  sample_rate?: string
+  initial_padding?: number
+  width?: number
+  height?: number
+}
+
+/**
+ * The AAC priming a sound track starts with and does not declare.
+ *
+ * FFmpeg reports a declared priming as `initial_padding`. AAC-LC with none
+ * declared gets the delay Apple's encoders write, which is also what
+ * AVFoundation assumes when it plays the file. Any other codec, or a profile
+ * whose delay is not that, is left as the file says.
+ */
+export function undeclaredPriming(
+  stream: ProbedStreamJson | undefined
+): number {
+  if (stream?.codec_name !== 'aac' || stream.profile !== 'LC') return 0
+  if ((stream.initial_padding ?? 0) !== 0) return 0
+  if (!(Number(stream.sample_rate) > 0)) return 0
+  return AAC_PRIMING_SAMPLES
 }
 
 export interface IngestOptions {
@@ -290,7 +337,8 @@ export async function ingestVideoFile(
     await remuxToHls(ffmpegPath, {
       input: file,
       outDir: work,
-      videoTag: tagFor(probed.codecName)
+      videoTag: tagFor(probed.codecName),
+      soundPrimingSamples: probed.soundPrimingSamples
     })
 
     // How long it runs, read back off what was written rather than worked
