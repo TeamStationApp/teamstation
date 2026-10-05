@@ -23,9 +23,9 @@ describe('resolving an opponent by name', function () {
 
   let admin: Pool | undefined
   let db: Kysely<Database> | undefined
-  const mize = makeId('team')
-  const hawks = makeId('team')
-  const otters = makeId('team')
+  const sealions = makeId('team')
+  const herons = makeId('team')
+  const gulls = makeId('team')
 
   before(async function () {
     admin = new Pool({ connectionString: adminUrl })
@@ -45,9 +45,9 @@ describe('resolving an opponent by name', function () {
     await db
       .insertInto('teams')
       .values([
-        { id: mize, name: 'Bay Stars (Mize)' },
-        { id: hawks, name: 'Hawks' },
-        { id: otters, name: 'Otters', kind: 'external' }
+        { id: sealions, name: 'Sea Lions (Gehrig)' },
+        { id: herons, name: 'Harbor Herons' },
+        { id: gulls, name: 'Gulls - Livestream', kind: 'external' }
       ])
       .execute()
   })
@@ -61,55 +61,76 @@ describe('resolving an opponent by name', function () {
   })
 
   const season = [
-    { id: hawks, name: 'Hawks' },
-    { id: mize, name: 'Bay Stars (Mize)' }
+    { id: herons, name: 'Harbor Herons' },
+    { id: sealions, name: 'Sea Lions (Gehrig)' }
   ]
 
-  it('finds a team of the season by its coach', async function () {
-    const found = await resolveOpponent(db!, 'NP3 Mize', {
+  it('finds a team of the season by its name, in any case and spacing', async function () {
+    const found = await resolveOpponent(db!, ' HARBOR  herons ', {
       seasonTeams: season,
-      createdFrom: 'import'
+      createdFrom: 'import',
+      dryRun: true
     })
     expect(found).deep.equals({
-      id: mize,
-      name: 'Bay Stars (Mize)',
+      id: herons,
+      name: 'Harbor Herons',
       found: 'season'
     })
   })
 
-  it('finds a team of the season by its normalised name', async function () {
-    const found = await resolveOpponent(db!, 'hawks 2', {
-      seasonTeams: season,
-      createdFrom: 'import'
-    })
-    expect(found.id).equals(hawks)
-    expect(found.found).equals('season')
+  it('finds no team of the season by a coach, a number or a bracket', async function () {
+    for (const name of [
+      'NP3 Gehrig',
+      'Harbor Herons 2',
+      'Sea Lions',
+      'Sea Lions (Ruth)'
+    ]) {
+      const found = await resolveOpponent(db!, name, {
+        seasonTeams: season,
+        createdFrom: 'import',
+        dryRun: true
+      })
+      expect(found.found, name).equals('created')
+      expect(found.name, name).equals(name)
+    }
   })
 
-  it('finds an external team an earlier run made', async function () {
+  it('finds an external team an earlier run made, by its own name only', async function () {
     const known = new Map<string, string>()
-    const found = await resolveOpponent(db!, 'Otters - Livestream', {
+    // A looser spelling is another team.
+    const loose = await resolveOpponent(db!, 'Gulls', {
+      seasonTeams: season,
+      createdFrom: 'import',
+      dryRun: true
+    })
+    expect(loose.found).equals('created')
+
+    const found = await resolveOpponent(db!, 'gulls -  livestream', {
       seasonTeams: season,
       createdFrom: 'import',
       known
     })
     expect(found).deep.equals({
-      id: otters,
-      name: 'Otters',
+      id: gulls,
+      name: 'Gulls - Livestream',
       found: 'external'
     })
-    expect(known.get('otters')).equals(otters)
+    expect(known.get('gulls - livestream')).equals(gulls)
 
-    const again = await resolveOpponent(db!, 'Otters', {
+    const again = await resolveOpponent(db!, 'Gulls - Livestream', {
       seasonTeams: season,
       createdFrom: 'import',
       known
     })
-    expect(again).deep.equals({ id: otters, name: 'Otters', found: 'known' })
+    expect(again).deep.equals({
+      id: gulls,
+      name: 'Gulls - Livestream',
+      found: 'known'
+    })
   })
 
   it('makes an external team for a name nobody holds', async function () {
-    const found = await resolveOpponent(db!, 'Timberland', {
+    const found = await resolveOpponent(db!, 'Cormorant Cove', {
       seasonTeams: [],
       createdFrom: 'import'
     })
@@ -120,18 +141,18 @@ describe('resolving an opponent by name', function () {
       .where('id', '=', found.id)
       .executeTakeFirstOrThrow()
     expect(row).deep.equals({
-      name: 'Timberland',
+      name: 'Cormorant Cove',
       kind: 'external',
       created_from: 'import'
     })
 
-    const again = await resolveOpponent(db!, 'Timberland', {
+    const again = await resolveOpponent(db!, 'Cormorant Cove', {
       seasonTeams: [],
       createdFrom: 'import'
     })
     expect(again).deep.equals({
       id: found.id,
-      name: 'Timberland',
+      name: 'Cormorant Cove',
       found: 'external'
     })
   })
@@ -179,31 +200,6 @@ describe('resolving an opponent by name', function () {
       name: 'DEMO OTTERS',
       found: 'external'
     })
-  })
-
-  it('finds no team by a coach when asked not to', async function () {
-    const herons = makeId('team')
-    const options = {
-      seasonTeams: [{ id: herons, name: 'Demo Herons' }],
-      createdFrom: 'import' as const,
-      dryRun: true
-    }
-    expect((await resolveOpponent(db!, 'Coastal Herons', options)).id).equals(
-      herons
-    )
-    const strict = await resolveOpponent(db!, 'Coastal Herons', {
-      ...options,
-      byCoach: false
-    })
-    expect(strict.found).equals('created')
-    expect(
-      (
-        await resolveOpponent(db!, 'demo herons', {
-          ...options,
-          byCoach: false
-        })
-      ).id
-    ).equals(herons)
   })
 
   it('writes nothing on a dry run', async function () {

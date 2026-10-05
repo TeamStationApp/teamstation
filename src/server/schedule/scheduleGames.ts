@@ -23,7 +23,7 @@ import { notifyGameChange } from '../socket/gameChanges'
 import { requestGameStats } from '../statsBuilder/request'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
-import { isUndeterminedName, normaliseTeamName } from '../teams/teamNames'
+import { isUndeterminedName, teamNameKey } from '../teams/teamNames'
 
 /**
  * Who may write a team's schedule, and into which seasons.
@@ -160,7 +160,7 @@ export async function scheduleGames(
     rights
   }
 
-  // Normalised opponent name to team id, for the whole call. A team a row
+  // Opponent name key to team id, for the whole call. A team a row
   // makes joins it only once that row has committed.
   const known = new Map<string, string>()
   const results: ScheduleGameResult[] = []
@@ -557,11 +557,11 @@ function resolveSeason(
  * So is a row whose name says the opponent is not known yet
  * (`isUndeterminedName`): it never moves or renames the game's opponent.
  *
- * The row's opponent is found by its id, then by its name, though only by
- * a normalised name, never a coach's surname (`resolveRowOpponent`). When
- * that is the game's own opponent nothing moves, except that an id the
- * opponent holds renames it to a name that reads differently: the same team
- * under its real name, in every game it plays. It is not renamed when its
+ * The row's opponent is found by its id, then by its name, exactly
+ * (`resolveRowOpponent`). When that is the game's own opponent nothing
+ * moves, except that an id the opponent holds renames it to a name that
+ * reads differently: the same team under its real name, in every game it
+ * plays. It is not renamed when its
  * id does not stand for the row's name (`idStandsForName`); the game moves
  * to the team the name finds instead. A name that is the scheduling team's
  * own leaves the opponent as it is, and so does a game TeamStation scored,
@@ -584,7 +584,7 @@ async function changeOpponent(
   if ('name' in opponent && isUndeterminedName(opponent.name)) return false
   if (
     'name' in opponent &&
-    normaliseTeamName(opponent.name) === normaliseTeamName(context.teamName)
+    teamNameKey(opponent.name) === teamNameKey(context.teamName)
   ) {
     return false
   }
@@ -615,8 +615,7 @@ async function changeOpponent(
       holder?.free === false && holder.teamId != null
         ? await followMerges(trx, holder.teamId)
         : undefined
-    const sameName =
-      normaliseTeamName(opponent.name) === normaliseTeamName(current.name)
+    const sameName = teamNameKey(opponent.name) === teamNameKey(current.name)
     if (holderTeam === opponentId) {
       if (sameName) return false
       if (
@@ -647,7 +646,7 @@ async function changeOpponent(
     held.season_id,
     row,
     known,
-    { held: true, byName }
+    { byName }
   )
   if (named === opponentId) return false
   if (!(await isExternal(trx, named))) {
@@ -669,7 +668,7 @@ async function changeOpponent(
   return true
 }
 
-/** Whether a team's name is this one, once both are normalised. */
+/** Whether a team's name is this one, by `teamNameKey`. */
 async function isNamed(
   trx: Transaction<Database>,
   teamId: string,
@@ -680,7 +679,7 @@ async function isNamed(
     .select('name')
     .where('id', '=', teamId)
     .executeTakeFirstOrThrow()
-  return normaliseTeamName(team.name) === normaliseTeamName(name)
+  return teamNameKey(team.name) === teamNameKey(name)
 }
 
 /**
@@ -712,8 +711,7 @@ async function playsOthers(
 
 /**
  * Whether the external team holding a row's opponent id is the opponent the
- * row names. A full team always is, and so is any team when the names agree
- * once normalised. Otherwise not a placeholder, which an id should never
+ * row names. A full team always is, and so is any team of the same name. Otherwise not a placeholder, which an id should never
  * have been given, nor a team other teams' games share, for which one
  * schedule's id and name are not everybody's, nor one whose new name
  * already finds another team: it takes that name, in every game it plays,
@@ -732,16 +730,15 @@ async function idStandsForName(
     .where('id', '=', holderId)
     .executeTakeFirstOrThrow()
   if (holder.kind !== 'external') return true
-  if (normaliseTeamName(holder.name) === normaliseTeamName(name)) return true
+  if (teamNameKey(holder.name) === teamNameKey(name)) return true
   if (isUndeterminedName(holder.name)) return false
   if (await playsOthers(trx, holderId, scheduling.teamId)) return false
   return !(await nameFindsATeam(trx, name, scheduling.seasonId))
 }
 
 /**
- * Whether a name finds a team already by its normalised name — a team of the
- * season, or an external team — never by a coach's surname: then a team
- * renamed to it would be a second team of one name.
+ * Whether a name finds a team already — a team of the season, or an external
+ * team: then a team renamed to it would be a second team of one name.
  */
 async function nameFindsATeam(
   trx: Transaction<Database>,
@@ -751,8 +748,7 @@ async function nameFindsATeam(
   const resolved = await resolveOpponent(trx, name, {
     seasonTeams: await seasonTeamsOf(trx, seasonId),
     createdFrom: 'api',
-    dryRun: true,
-    byCoach: false
+    dryRun: true
   })
   return resolved.found !== 'created'
 }
@@ -908,14 +904,10 @@ async function repointOpponent(
 }
 
 /**
- * How a held game's row is resolved. `held`: its name finds a team only by
- * its normalised name, never by a coach's surname, so a confident id or
- * name is never traded for a guess at a team that cannot be moved off
- * again; a name that finds nothing makes an external team. `byName`: the
- * row's id is set aside and the row is found by its name alone.
+ * How a held game's row is resolved. `byName`: the row's id is set aside
+ * and the row is found by its name alone.
  */
 interface ResolveOptions {
-  held?: boolean
   byName?: boolean
 }
 
@@ -982,8 +974,7 @@ async function resolveRowOpponent(
   const resolved = await resolveOpponent(trx, opponent.name, {
     seasonTeams: await seasonTeamsOf(trx, seasonId),
     known,
-    createdFrom: 'api',
-    byCoach: options.held !== true
+    createdFrom: 'api'
   })
   const id = await followMerges(trx, resolved.id)
   if (id === teamId) {
@@ -1019,8 +1010,8 @@ async function seasonTeamsOf(
 
 /**
  * Whether `name` finds `teamId` by the rule a new game's opponent is found
- * by — a team of the season by name or coach, else an external team by
- * name — without making a team when it finds none.
+ * by — a team of the season, else an external team, by name — without
+ * making a team when it finds none.
  */
 async function nameFinds(
   trx: Transaction<Database>,

@@ -2,7 +2,7 @@ import type { Kysely, Transaction } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import type { Database, TeamCreatedFrom } from '../db/database'
-import { coachSurname, normaliseTeamName } from './teamNames'
+import { teamNameKey } from './teamNames'
 
 /** A team of the season a fixture is played in, by id and stored name. */
 interface SeasonTeam {
@@ -22,21 +22,19 @@ export interface ResolvedOpponent {
 }
 
 /**
- * The TeamStation team a schedule means by an opponent's name.
+ * The TeamStation team a schedule means by an opponent's name, found only by
+ * the name itself (`teamNameKey`: trimmed, spaces collapsed, any case). In
+ * order:
  *
- * A schedule names its opponent only by a name, and different teams write the
- * same club differently, so this rule lands every schedule's fixtures on the
- * same team. In order:
+ * 1. A team of the same season with that name.
+ * 2. A team this run already found or made by it (`known`).
+ * 3. The oldest external team, `kind = external`, with that name.
+ * 4. Otherwise a new external team with the raw name.
  *
- * 1. A team of the same season whose normalised name matches, or whose
- *    coach's surname matches — the Hawks' own schedule writes an opponent
- *    exactly as the organisation does, while other teams write `NP3 Mize`
- *    where the organisation says `Bay Stars (Mize)`.
- * 2. An external team, `kind = external`, whose normalised name matches.
- * 3. Otherwise a new external team with the raw name.
- *
- * `known` is a cache of normalised name to id that a caller resolving many
- * fixtures passes in, so one run asks the database once per opponent.
+ * A name written another way — a trailing number, a bracket, a coach's
+ * surname — is another team here; a client that knows better names the team
+ * by its id. `known` is a cache of name key to id that a caller resolving
+ * many fixtures passes in, so one run asks the database once per opponent.
  */
 export async function resolveOpponent(
   db: Kysely<Database> | Transaction<Database>,
@@ -47,18 +45,13 @@ export async function resolveOpponent(
     /** Where a team this makes came from, recorded on it. */
     createdFrom: TeamCreatedFrom
     dryRun?: boolean
-    /** Whether a coach's surname finds a team of the season. Default yes. */
-    byCoach?: boolean
   }
 ): Promise<ResolvedOpponent> {
   const { seasonTeams, known } = options
-  const wantedName = normaliseTeamName(rawName)
-  const wantedCoach = coachSurname(rawName)
-  const inSeason = seasonTeams.find(other => {
-    if (normaliseTeamName(other.name) === wantedName) return true
-    if (wantedCoach == null || options.byCoach === false) return false
-    return coachSurname(other.name) === wantedCoach
-  })
+  const wantedName = teamNameKey(rawName)
+  const inSeason = seasonTeams.find(
+    other => teamNameKey(other.name) === wantedName
+  )
   if (inSeason != null) {
     return { id: inSeason.id, name: inSeason.name, found: 'season' }
   }
@@ -66,9 +59,8 @@ export async function resolveOpponent(
   const held = known?.get(wantedName)
   if (held != null) return { id: held, name: rawName, found: 'known' }
 
-  // An external team already made by an earlier run, found by its
-  // normalised name rather than by an id no schedule gives. Two of one
-  // name resolve to the older, every time.
+  // An external team already made by an earlier run, found by its name.
+  // Two of one name resolve to the older, every time.
   const existing = await db
     .selectFrom('teams')
     .select(['id', 'name'])
@@ -76,7 +68,7 @@ export async function resolveOpponent(
     .orderBy('created_at')
     .orderBy('id')
     .execute()
-  const match = existing.find(row => normaliseTeamName(row.name) === wantedName)
+  const match = existing.find(row => teamNameKey(row.name) === wantedName)
   if (match != null) {
     known?.set(wantedName, match.id)
     return { id: match.id, name: match.name, found: 'external' }
