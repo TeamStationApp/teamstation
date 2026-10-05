@@ -18,8 +18,9 @@ struct SoundSeamTests {
   static let rate = 48_000.0
   static let samplesPerPacket = 1_024
 
-  /// A steady 440 Hz tone, `seconds` long, as raw AAC packets and the format they need.
-  static func tone(seconds: Double) throws -> (packets: [Data], format: CMAudioFormatDescription) {
+  /// A steady 440 Hz tone, `seconds` long, as raw AAC packets and the format they need; with
+  /// `sweep`, a tone gliding from 300 Hz to 900 Hz instead, which no shift of a few samples matches.
+  static func tone(seconds: Double, sweep: Bool = false) throws -> (packets: [Data], format: CMAudioFormatDescription) {
     var input = AudioStreamBasicDescription(
       mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
       mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
@@ -42,7 +43,11 @@ struct SoundSeamTests {
       init(_ samples: [Int16]) { self.samples = samples }
     }
     let count = Int(seconds * rate)
-    let source = Source((0..<count).map { Int16(8_000 * sin(Double($0) * 2 * .pi * 440 / rate)) })
+    let source = Source((0..<count).map { index in
+      let time = Double(index) / rate
+      let phase = sweep ? 300 * time + 300 * time * time / seconds : 440 * time
+      return Int16(8_000 * sin(2 * .pi * phase))
+    })
 
     var packets: [Data] = []
     while true {
@@ -230,12 +235,16 @@ struct SoundSeamTests {
     let streamEnd = 0.5 + Double(used * Self.samplesPerPacket) / Self.rate
     let length = streamEnd + 0.5
 
-    // The shape the archive has: AVFoundation reports each segment's sound ending before it plays.
-    let asset = AVURLAsset(url: files[1])
-    let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
-    let reported = try await track.load(.timeRange).end
-    let played = try #require(ArchiveRemux.playedEnd(of: track, in: asset, reported: reported))
-    #expect(played >= reported)
+    // The shape the archive has: each file opens with copies of its first packet, wholly trimmed,
+    // which a decoder carried over from the file before does without.
+    for (index, file) in files.enumerated() {
+      let asset = AVURLAsset(url: file)
+      let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+      let sound = try #require(SoundPackets.read(track, of: asset))
+      #expect(sound.preRoll > 0)
+      #expect(sound.packets.count - sound.preRoll == counts[index])
+      #expect(sound.trimStart == sound.preRoll * Self.samplesPerPacket)
+    }
 
     let plan = try await ArchiveRemux.place(
       files: files,
@@ -266,5 +275,254 @@ struct SoundSeamTests {
     // And the tone carries on to where the camera's sound ended.
     let tail = Self.silentRuns(in: sound, Int((streamEnd - 0.1) * Self.rate)..<Int((streamEnd - 0.03) * Self.rate), minimum: 48)
     #expect(tail.isEmpty, "the sound stops early: \(tail)")
+  }
+
+  /// Segments cut from `packets` as the archive cuts a camera's stream: segment `n` holds
+  /// `counts[n]` packets after `skips[n]` the archive never got, its sound `leads[n]` after its
+  /// picture, placed where it happened -- `jitter[n]` samples off, as a measured start can be.
+  struct Segmented {
+    var files: [URL] = []
+    var durations: [TimeInterval] = []
+    var walls: [WallClock] = []
+    /// Where each segment's first packet is in the stream, in packets.
+    var firsts: [Int] = []
+    var streamEnd = 0.0
+  }
+
+  static func cut(
+    _ packets: [Data],
+    format: CMAudioFormatDescription,
+    counts: [Int],
+    leads: [Double],
+    skips: [Int]? = nil,
+    jitter: [Int]? = nil,
+    windowStart: WallClock,
+    in root: URL
+  ) async throws -> Segmented {
+    var result = Segmented()
+    var used = 0
+    for (index, count) in counts.enumerated() {
+      used += skips?[index] ?? 0
+      let url = root.appendingPathComponent("seg-\(index).mp4")
+      try await segment(packets[used..<(used + count)], format: format, lead: leads[index], to: url)
+      let streamAt = 0.5 + Double(used * samplesPerPacket + (jitter?[index] ?? 0)) / rate
+      result.walls.append(windowStart + (streamAt - leads[index]))
+      result.files.append(url)
+      result.firsts.append(used)
+      used += count
+    }
+    for index in result.files.indices {
+      let next = index + 1 < result.walls.count
+        ? result.walls[index + 1] - result.walls[index]
+        : Double(counts[index] * samplesPerPacket) / rate
+      result.durations.append(next)
+    }
+    result.streamEnd = 0.5 + Double(used * samplesPerPacket) / rate
+    return result
+  }
+
+  /// The best signal-to-noise ratio, in dB, of `sound[at..<at + count]` against `reference` shifted
+  /// by `shift` give or take `search` samples.
+  static func snr(_ sound: [Int16], _ reference: [Int16], at: Int, count: Int, shift: Int, search: Int) -> Double {
+    var best = -Double.infinity
+    for lag in (shift - search)...(shift + search) {
+      guard at + lag >= 0, at + lag + count <= reference.count, at + count <= sound.count else { continue }
+      var signal = 0.0
+      var noise = 0.0
+      for index in at..<(at + count) {
+        let want = Double(reference[index + lag])
+        let error = Double(sound[index]) - want
+        signal += want * want
+        noise += error * error
+      }
+      best = max(best, 10 * log10(signal / max(noise, 1e-9)))
+    }
+    return best
+  }
+
+  @Test("A camera's sound decodes across seams as the one stream it was, its copies dropped")
+  func seamsDecodeAsOneStream() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("sound-decode-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let (packets, format) = try Self.tone(seconds: 12.5, sweep: true)
+    let counts = [ 141, 138, 143, 140 ]
+    let leads = [ 0.028, 0.018, 0.041, 0.023 ]
+    let windowStart = WallClock(seconds: 5_000)
+    // The second seam placed 5 samples after the stream's last one, the third 7 before it: starts
+    // measured a little off, which neither silences nor breaks the stream.
+    let cut = try await Self.cut(
+      packets, format: format, counts: counts, leads: leads,
+      jitter: [ 0, 0, 5, -7 ], windowStart: windowStart, in: root
+    )
+    // The stream decoded whole, from one file: what the camera sent.
+    let whole = root.appendingPathComponent("whole.mp4")
+    let lead = 0.5
+    try await Self.segment(packets[0..<counts.reduce(0, +)], format: format, lead: lead, to: whole)
+    let reference = try await Self.samples(of: whole)
+
+    let length = cut.streamEnd + 0.5
+    let plan = try await ArchiveRemux.place(
+      files: cut.files, fileDurations: cut.durations, startWalls: cut.walls,
+      windowStart: windowStart, length: length
+    )
+    let out = root.appendingPathComponent("sound.m4a")
+    #expect(try await ArchiveRemux.renderPlacedSound(
+      plan.placements, length: CMTime(seconds: length, preferredTimescale: 600), to: out, progress: nil
+    ))
+    let sound = try await Self.samples(of: out)
+    // The whole window, and the little more `join` takes the encoder's priming back out of.
+    #expect(sound.count >= Int((length * Self.rate).rounded()))
+
+    // The output at 0.5 s is the whole file at `lead`: both are where the stream's first packet plays.
+    let shift = Int(((lead - 0.5) * Self.rate).rounded())
+    for (index, first) in cut.firsts.enumerated().dropFirst() {
+      let seam = Int((0.5 * Self.rate).rounded()) + first * Self.samplesPerPacket
+      let opening = Self.snr(sound, reference, at: seam, count: 1_024, shift: shift, search: 64)
+      let later = Self.snr(sound, reference, at: seam + 4_096, count: 1_024, shift: shift, search: 64)
+      #expect(opening >= 25, "seam \(index): \(opening) dB in its first 1,024 samples, \(later) dB later")
+    }
+    let holes = Self.silentRuns(
+      in: sound, Int(0.6 * Self.rate)..<Int((cut.streamEnd - 0.1) * Self.rate), minimum: 24
+    )
+    #expect(holes.isEmpty, "holes at \(holes)")
+  }
+
+  @Test("A gap in the archive is silence, and the sound after it decodes afresh")
+  func archiveGapIsSilence() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("sound-gap-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let (packets, format) = try Self.tone(seconds: 12.5, sweep: true)
+    let counts = [ 141, 138, 140 ]
+    let leads = [ 0.028, 0.018, 0.023 ]
+    let windowStart = WallClock(seconds: 5_000)
+    // Ten packets, 213 ms, never reached the archive before the third segment.
+    let cut = try await Self.cut(
+      packets, format: format, counts: counts, leads: leads,
+      skips: [ 0, 0, 10 ], windowStart: windowStart, in: root
+    )
+    let length = cut.streamEnd + 0.5
+    let plan = try await ArchiveRemux.place(
+      files: cut.files, fileDurations: cut.durations, startWalls: cut.walls,
+      windowStart: windowStart, length: length
+    )
+    let out = root.appendingPathComponent("sound.m4a")
+    #expect(try await ArchiveRemux.renderPlacedSound(
+      plan.placements, length: CMTime(seconds: length, preferredTimescale: 600), to: out, progress: nil
+    ))
+    let sound = try await Self.samples(of: out)
+    let gapStart = 0.5 + Double(cut.firsts[2] - 10) * Double(Self.samplesPerPacket) / Self.rate
+    let gapEnd = 0.5 + Double(cut.firsts[2] * Self.samplesPerPacket) / Self.rate
+    let runs = Self.silentRuns(
+      in: sound, Int(0.6 * Self.rate)..<Int((cut.streamEnd - 0.1) * Self.rate), minimum: 24
+    )
+    #expect(runs.count == 1, "runs \(runs)")
+    let run = try #require(runs.first)
+    // The gap, give or take the edges a re-encode blurs.
+    #expect(abs(Double(run.0) / Self.rate - gapStart) < 0.03)
+    #expect(abs(Double(run.0 + run.1) / Self.rate - gapEnd) < 0.03)
+    // And sound again after it.
+    let after = sound[Int((gapEnd + 0.1) * Self.rate)..<Int((gapEnd + 0.2) * Self.rate)]
+    #expect(after.contains { abs($0) > 4_000 })
+  }
+
+  @Test("Sound an encoder wrote renders exactly where AVFoundation plays it")
+  func encodedSoundKeepsItsPlace() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("sound-encoded-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // Sound encoded into its file, with an encoder's priming, as a programme part has: one file
+    // rendered on its own must be what AVFoundation decodes from it.
+    let (packets, _) = try Self.tone(seconds: 3, sweep: true)
+    #expect(!packets.isEmpty)
+    let encoded = root.appendingPathComponent("encoded.m4a")
+    let decodedTone = try await Self.samples(of: try await Self.encode(seconds: 3, to: encoded))
+    let plan = try await ArchiveRemux.place(
+      files: [ encoded ], fileDurations: [], startWalls: [], windowStart: nil, length: nil
+    )
+    let out = root.appendingPathComponent("sound.m4a")
+    let length = CMTime(seconds: 3, preferredTimescale: 600)
+    #expect(try await ArchiveRemux.renderPlacedSound(plan.placements, length: length, to: out, progress: nil))
+    let sound = try await Self.samples(of: out)
+    // Unshifted: the render keeps every sample where AVFoundation plays it, from the first.
+    for at in [ 1_024, 48_000, 96_000 ] {
+      let exact = Self.snr(sound, decodedTone, at: at, count: 2_048, shift: 0, search: 0)
+      #expect(exact >= 25, "at \(at): \(exact) dB")
+    }
+  }
+
+  /// A 3 s glide encoded by `AVAssetWriter` into `url`, as TS Director's programme sound is.
+  static func encode(seconds: Double, to url: URL) async throws -> URL {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+    let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+      AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1,
+      AVEncoderBitRateKey: 128_000
+    ])
+    input.expectsMediaDataInRealTime = false
+    writer.add(input)
+    #expect(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+      mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0
+    )
+    var made: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(
+      allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+      extensions: nil, formatDescriptionOut: &made
+    )
+    let format = try #require(made)
+    let count = Int(seconds * rate)
+    var written = 0
+    while written < count {
+      let chunk = min(4_096, count - written)
+      var samples = (written..<(written + chunk)).map { index -> Int16 in
+        let time = Double(index) / rate
+        return Int16(8_000 * sin(2 * .pi * (300 * time + 300 * time * time / seconds)))
+      }
+      var block: CMBlockBuffer?
+      CMBlockBufferCreateWithMemoryBlock(
+        allocator: nil, memoryBlock: nil, blockLength: chunk * 2, blockAllocator: nil,
+        customBlockSource: nil, offsetToData: 0, dataLength: chunk * 2,
+        flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
+      )
+      let data = try #require(block)
+      samples.withUnsafeMutableBytes { raw in
+        _ = CMBlockBufferReplaceDataBytes(
+          with: raw.baseAddress!, blockBuffer: data, offsetIntoDestination: 0, dataLength: chunk * 2
+        )
+      }
+      var sample: CMSampleBuffer?
+      var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+        presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: CMTimeScale(rate)),
+        decodeTimeStamp: .invalid
+      )
+      var size = 2
+      CMSampleBufferCreateReady(
+        allocator: nil, dataBuffer: data, formatDescription: format, sampleCount: chunk,
+        sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1,
+        sampleSizeArray: &size, sampleBufferOut: &sample
+      )
+      for _ in 0..<2_500 where !input.isReadyForMoreMediaData {
+        try await Task.sleep(for: .milliseconds(2))
+      }
+      #expect(input.append(try #require(sample)))
+      written += chunk
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    #expect(writer.status == .completed)
+    return url
   }
 }
