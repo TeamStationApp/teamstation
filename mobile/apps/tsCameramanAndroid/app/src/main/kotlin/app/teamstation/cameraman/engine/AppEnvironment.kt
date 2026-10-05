@@ -25,6 +25,8 @@ import app.teamstation.cameraman.core.CameraSnapshot
 import app.teamstation.cameraman.core.CaptureFormatDescriptor
 import app.teamstation.cameraman.core.DeviceIdentity
 import app.teamstation.cameraman.core.DeviceIdentityProvider
+import app.teamstation.cameraman.core.FrameDelivery
+import app.teamstation.cameraman.core.FrameDeliveryThrottle
 import app.teamstation.cameraman.core.IdentityStore
 import app.teamstation.cameraman.core.InMemoryIdentityStore
 import app.teamstation.cameraman.core.LensSelection
@@ -119,6 +121,12 @@ class AppEnvironment(
 
     /** The same, for the audio only. See `ControlCommand.SetAudioDelay`. */
     val audioSendDelay = SendDelayLine()
+
+    /**
+     * The test throttle on frames reaching the encoder, set over `test.deliveredFrameRate*`. A new
+     * one at every launch, so it always starts off.
+     */
+    val frameThrottle = FrameDeliveryThrottle()
 
     private val radarLink = RadarLink(
         store = PreferencesRadarPairingStore(context),
@@ -475,6 +483,7 @@ class AppEnvironment(
         camera.onBlankChanged = { videoEncoder.requestKeyframe() }
         camera.onCaptureRotationChange = { videoEncoder.requestKeyframe() }
         camera.onVideoFrame = { capturedFrameCount.incrementAndGet() }
+        camera.deliversFrame = ::deliversFrame
 
         // The listener is the broadcast. The preview, the encoder and the radar link come up either
         // way, so the operator can frame the shot before anyone is watching.
@@ -824,9 +833,19 @@ class AppEnvironment(
                 lenses = lensCatalogState.value,
                 streamURL = streamURL,
                 clientCount = serverStatusState.value.clientCount,
-                currentBitrate = adaptiveBitrate?.status?.controller?.bitrate
+                currentBitrate = adaptiveBitrate?.status?.controller?.bitrate,
+                frameDelivery = frameThrottle.delivery,
+                deliveredFrameRate = frameThrottle.deliveredFrameRate
             )
         }
+
+    /**
+     * Whether the camera frame captured at [timestampNanos] gets past the test throttle to the
+     * encoder. Asked of every captured frame, so the throttle's clock and its measured rate follow
+     * the camera.
+     */
+    fun deliversFrame(timestampNanos: Long): Boolean =
+        frameThrottle.shouldDeliver(timestampNanos / 1_000_000_000.0)
 
     /**
      * Answers a `GET_PARAMETER` / `SET_PARAMETER` body. A write goes through the same methods the
@@ -855,6 +874,9 @@ class AppEnvironment(
                         write.name?.let { rename(it) }
                         write.position?.let { if (it != current.position) camera.flip() }
                         write.displayedZoom?.let { camera.setDisplayedZoom(it) }
+                        if (write.touchesFrameDelivery) {
+                            frameThrottle.configure(CameraParameters.frameDelivery(write, frameThrottle.delivery))
+                        }
                         if (write.touchesSettings) {
                             updateSettings(CameraParameters.settings(write, settingsState.value))
                             applySettings()
@@ -1011,6 +1033,7 @@ class AppEnvironment(
         }
 
         ControlCommand.Reset -> {
+            frameThrottle.configure(FrameDelivery.off)
             val next = launch.settings.copy()
             settingsState.value = next
             noteSettingsApplied(next)
@@ -1142,7 +1165,18 @@ class AppEnvironment(
             put("wakeLockHeld", wakeLock?.isHeld == true)
             put("wifiLockHeld", wifiLock?.isHeld == true)
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
+            put("frameDelivery", frameDeliveryJSON())
             RadarSnapshot.putInto(this, radarLink.state.value)
+        }
+    }
+
+    /** The test throttle: what it was told, and what is reaching the encoder. Same keys as iOS. */
+    fun frameDeliveryJSON(): JSONObject {
+        val delivery = frameThrottle.delivery
+        return JSONObject().apply {
+            put("frameRate", delivery.frameRate)
+            put("swing", delivery.swing?.text ?: JSONObject.NULL)
+            put("deliveredFrameRate", frameThrottle.deliveredFrameRate ?: JSONObject.NULL)
         }
     }
 

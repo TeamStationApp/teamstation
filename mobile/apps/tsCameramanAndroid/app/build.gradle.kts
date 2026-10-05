@@ -116,21 +116,26 @@ dependencies {
 
 kover {
     reports {
-        filters {
-            includes {
-                classes(
-                    "app.teamstation.cameraman.ui.SettingsBody",
-                    "app.teamstation.cameraman.ui.RadarSettingsCard",
-                    "app.teamstation.cameraman.ui.RadarSettingsCardKt",
-                    "app.teamstation.cameraman.ui.SpeedOverlay",
-                    "app.teamstation.cameraman.ui.LoginFlow",
-                    "app.teamstation.cameraman.radar.*"
-                )
+        // The total report is the UI and radar suite's own 90% gate. The debug variant's report is
+        // unfiltered: it is the JaCoCo XML that `COVERAGE=1 scripts/test-unit.sh` hands to the
+        // repository's changed-line gate, which needs every class a branch might touch.
+        total {
+            filters {
+                includes {
+                    classes(
+                        "app.teamstation.cameraman.ui.SettingsBody",
+                        "app.teamstation.cameraman.ui.RadarSettingsCard",
+                        "app.teamstation.cameraman.ui.RadarSettingsCardKt",
+                        "app.teamstation.cameraman.ui.SpeedOverlay",
+                        "app.teamstation.cameraman.ui.LoginFlow",
+                        "app.teamstation.cameraman.radar.*"
+                    )
+                }
             }
-        }
-        verify {
-            rule {
-                minBound(90)
+            verify {
+                rule {
+                    minBound(90)
+                }
             }
         }
     }

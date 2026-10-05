@@ -368,6 +368,64 @@ struct CameraParametersTests {
     #expect(failure("audioEncoder.enabled: maybe\r\n")?.statusCode == 400)
   }
 
+  @Test("The test throttle is on the wire: off by default, written without touching settings, echoed and decoded")
+  func frameDeliveryParameters() throws {
+    let plain = CameraParameters.encode(Self.snapshot())
+    #expect(plain["test.deliveredFrameRate"] == "0")
+    #expect(plain["test.deliveredFrameRateSwing"] == "")
+    #expect(plain["test.deliveredFrameRate.actual"] == "")
+    #expect(plain.names.suffix(3) == [
+      "test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRate.actual"
+    ])
+
+    var throttled = Self.snapshot()
+    throttled.frameDelivery = FrameDelivery(frameRate: 24, swing: FrameRateSwing(low: 30, high: 60, periodSeconds: 60))
+    throttled.deliveredFrameRate = 29.87
+    let encoded = CameraParameters.encode(throttled)
+    #expect(encoded["test.deliveredFrameRate"] == "24")
+    #expect(encoded["test.deliveredFrameRateSwing"] == "30:60:60")
+    #expect(encoded["test.deliveredFrameRate.actual"] == "29.9")
+    let decoded = try #require(CameraParameters.decodeSnapshot(try CameraParameterSet.decode(encoded.encoded).get()))
+    #expect(decoded.frameDelivery == throttled.frameDelivery)
+    #expect(decoded.deliveredFrameRate == 29.9)
+    let old = try #require(CameraParameters.decodeSnapshot(try CameraParameterSet.decode(
+      CameraParameterSet(plain.pairs.filter { !$0.name.hasPrefix("test.") }).encoded
+    ).get()))
+    #expect(old.frameDelivery == .off, "a phone that predates the throttle reads as off")
+    #expect(old.deliveredFrameRate == nil)
+
+    let rate = try set("test.deliveredFrameRate: 24\r\n")
+    #expect(rate.deliveredFrameRate == 24)
+    #expect(rate.touchesFrameDelivery)
+    #expect(!rate.touchesSettings, "no settings change, so no reconfigure and no new session")
+    #expect(!rate.isEmpty)
+    #expect(CameraParameters.settings(applying: rate, to: Self.snapshot().settings) == Self.snapshot().settings)
+    let applied = CameraParameters.snapshot(applying: rate, to: Self.snapshot())
+    #expect(applied.frameDelivery == FrameDelivery(frameRate: 24))
+    #expect(applied.settings == Self.snapshot().settings)
+    #expect(CameraParameters.echo(rate, applied: applied).encoded == "test.deliveredFrameRate: 24\r\n")
+
+    let swing = try set("test.deliveredFrameRateSwing: 24.0:60:20\r\n")
+    #expect(swing.deliveredFrameRateSwing == "24:60:20")
+    #expect(!swing.touchesSettings)
+    let swung = CameraParameters.frameDelivery(applying: swing, to: FrameDelivery(frameRate: 12))
+    #expect(swung == FrameDelivery(frameRate: 12, swing: FrameRateSwing(low: 24, high: 60, periodSeconds: 20)))
+    let cleared = CameraParameters.frameDelivery(applying: try set("test.deliveredFrameRateSwing:\r\n"), to: swung)
+    #expect(cleared == FrameDelivery(frameRate: 12))
+    let off = CameraParameters.frameDelivery(applying: try set("test.deliveredFrameRate: 0\r\n"), to: cleared)
+    #expect(off.isOff)
+
+    for bad in [ "-1", "0.5", "241", "abc", "nan" ] {
+      #expect(failure("test.deliveredFrameRate: \(bad)\r\n")?.statusCode == 400, "\(bad)")
+    }
+    for bad in [ "60:24:20", "24:60", "24:60:0", "x" ] {
+      let error = failure("test.deliveredFrameRateSwing: \(bad)\r\n")
+      #expect(error?.statusCode == 400, "\(bad)")
+      #expect(error?.name == "test.deliveredFrameRateSwing")
+    }
+    #expect(failure("test.deliveredFrameRate.actual: 24\r\n")?.statusCode == 458)
+  }
+
   @Test("Numbers print without trailing zeros")
   func numberFormatting() {
     #expect(CameraParameters.number(1) == "1")

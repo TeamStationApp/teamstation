@@ -104,6 +104,14 @@ internal class CaptureRenderer(
      */
     var onBlankChanged: (() -> Unit)? = null
 
+    /**
+     * Asked, with each frame's capture time in nanoseconds, whether that frame goes to the encoder.
+     * A frame it refuses is still consumed and still drawn to the preview; the encoder never sees
+     * it, so the stream carries fewer frames at their own capture times. See `FrameDeliveryThrottle`.
+     */
+    @Volatile
+    var deliverToEncoder: (Long) -> Boolean = { true }
+
     private var wasBlank = false
 
     /**
@@ -249,7 +257,7 @@ internal class CaptureRenderer(
             onBlankChanged?.invoke()
         }
 
-        encoderSurface?.let { surface ->
+        encoderSurface?.takeIf { deliverToEncoder(timestamp) }?.let { surface ->
             if (!egl.makeCurrent(surface)) {
                 egl.releaseSurface(surface)
                 encoderSurface = null

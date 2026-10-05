@@ -118,6 +118,13 @@ class CameraSession(private val context: Context) {
     /** One rendered frame reached the encoder's surface. */
     var onVideoFrame: (() -> Unit)? = null
 
+    /**
+     * Whether the frame captured at this many nanoseconds goes to the encoder. Every frame does
+     * unless the test throttle says otherwise; the preview gets every frame either way.
+     */
+    @Volatile
+    var deliversFrame: (Long) -> Boolean = { true }
+
     /** Blanking turned on or off, so the encoder can force the keyframe the transition needs. */
     var onBlankChanged: (() -> Unit)? = null
 
@@ -321,6 +328,7 @@ class CameraSession(private val context: Context) {
             renderer = try {
                 CaptureRenderer(settings.width, settings.height) { onVideoFrame?.invoke() }
                     .also { created ->
+                        created.deliverToEncoder = { deliversFrame(it) }
                         created.blankEncoder = !settings.videoEnabled
                         created.onBlankChanged = { onBlankChanged?.invoke() }
                     }

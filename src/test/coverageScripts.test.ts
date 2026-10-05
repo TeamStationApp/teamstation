@@ -7,7 +7,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
@@ -58,6 +58,17 @@ function countsOf(
   }
   writeFileSync(path, JSON.stringify(counts))
   return path
+}
+
+/** A diff touching `lines` of each file, one hunk a line. */
+function linesDiffOf(files: Record<string, number[]>): string {
+  return Object.entries(files)
+    .map(
+      ([path, lines]) =>
+        `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n` +
+        lines.map(line => `@@ -0,0 +${line} @@\n+x`).join('\n')
+    )
+    .join('\n')
 }
 
 interface Run {
@@ -297,13 +308,41 @@ describe('the changed-line check', function () {
     expect(run.log.some(line => line.includes('src/app/b.ts'))).equals(false)
   })
 
+  it('reads a JaCoCo report against its source roots', function () {
+    const root = 'mobile/apps/kt/app/src/main/kotlin'
+    const tally = `${root}/app/example/tally/Tally.kt`
+    const lost = 'mobile/apps/kt/app/src/other/Lost.kt'
+    const run = check(
+      [
+        '--jacoco',
+        resolve('src/test/fixtures/coverage/tally.jacoco.xml'),
+        '--source-root',
+        'apps/kt/app/src/main/kotlin',
+        '--ext',
+        '.kt',
+        '.'
+      ],
+      linesDiffOf({ [tally]: [4, 5, 6, 7, 8, 9], [lost]: [1] }),
+      [],
+      join(TOP, 'mobile')
+    )
+    expect(run.log).deep.includes(`  ${tally}: 75.0% (3/4)`)
+    expect(run.log).deep.includes('    uncovered: 7')
+    expect(run.log).deep.includes(`  ${lost}: no coverage record`)
+    expect(run.code).equals(1)
+  })
+
   it('refuses arguments it cannot use', function () {
     for (const argv of [
       ['--ext', '.ts', 'src'],
       ['--counts', 'x', '--coverage', 'y', '--ext', '.ts'],
       ['--counts', 'x', 'src'],
       ['--counts', 'x', '--ext'],
-      ['--counts', 'x', '--ext', '.ts', '--frobnicate']
+      ['--counts', 'x', '--ext', '.ts', '--frobnicate'],
+      ['--jacoco', 'x', '--ext', '.kt', 'src'],
+      ['--counts', 'x', '--source-root', 'y', '--ext', '.ts', 'src'],
+      ['--jacoco', 'x', '--counts', 'y', '--source-root', 'z', '--ext', '.kt'],
+      ['--jacoco', 'x', '--ext', '.kt', '--source-root']
     ]) {
       const run = check(argv, '')
       expect(run.code, argv.join(' ')).equals(2)

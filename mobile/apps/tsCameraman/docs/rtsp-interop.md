@@ -148,6 +148,9 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `lens.disabled` | rw comma list of ids | a `SET` that would disable the last lens at a position is a `400` |
 | `stream.url` | string | `rtsp://<ip>:<port><path>`, the string Settings copies |
 | `stream.clients` | int | playing sessions only; a control-only connection is not a viewer |
+| `test.deliveredFrameRate` | rw number | test only: fps to deliver to the encoder, `0` for every frame (off). Captured frames are dropped before encoding, each interval varied ±30%, so the stream carries fewer, uneven frames at their own capture times; format, declared rate, SDP, session and sound are untouched. Off at every launch, never saved |
+| `test.deliveredFrameRateSwing` | rw `low:high:period` | test only: the delivered rate ramps from `low` to `high` and back over each `period` seconds, starting at `low`; empty for none. Wins over `test.deliveredFrameRate` while set |
+| `test.deliveredFrameRate.actual` | number | fps actually reaching the encoder over the last two seconds, throttled or not; empty until measured |
 
 All video-encoder writes in one `SET_PARAMETER` are applied as one reconfigure, exactly like Done
 on the phone. Zoom, flip and name are live.
@@ -158,7 +161,10 @@ a client knows before connecting that this build answers the verbs. From the Mac
 ```bash
 node scripts/rtspParams.js --host <phone>                 # everything
 node scripts/rtspParams.js --host <phone> 'ptz.zoom: 3'   # the phone's rail moves to 3x
+node scripts/control.js --host <phone> frameDelivery 24   # a hot phone's 24 fps; also low:high:period, off
 ```
+
+Android's `scripts/control.sh frameDelivery …` does the same over `adb forward`.
 
 ## Checking it
 

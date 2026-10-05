@@ -23,6 +23,9 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   public let audioEncoder = AudioEncoder()
   /// The external display, fed from the same frames the encoder gets.
   public let cleanFeed = CleanFeedController()
+  /// The test throttle on frames reaching the encoder, set over `test.deliveredFrameRate*`. A new
+  /// one at every launch, so it always starts off.
+  public let frameThrottle = FrameDeliveryThrottle()
 
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
@@ -596,10 +599,10 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     camera.onCaptureRotationChange = { [videoEncoder] in
       videoEncoder.requestKeyframe()
     }
-    camera.onVideoFrame = { [weak self, videoEncoder, cleanFeed, gate = encoderGate, sets = latestParameterSets] sample in
+    camera.onVideoFrame = { [weak self, videoEncoder, cleanFeed, frameThrottle, gate = encoderGate, sets = latestParameterSets] sample in
       let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
       let frame = SampleBufferRef(sample.buffer)
-      if Self.shouldEncodeVideo(gate, parameterSets: sets) {
+      if Self.delivers(sample.buffer, through: frameThrottle), Self.shouldEncodeVideo(gate, parameterSets: sets) {
         videoEncoder.encode(frame, blank: blank)
       }
       cleanFeed.enqueue(frame, blank: blank)
@@ -622,6 +625,13 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       encodeWhenIdle: current.encodeWhenIdle,
       hasParameterSets: !parameterSets.withLock { $0.isEmpty }
     )
+  }
+
+  /// Whether a captured frame gets past the test throttle to the encoder, judged by its own capture
+  /// time. Asked of every frame, encoder idle or not, so the throttle's clock and its measured rate
+  /// follow the camera. The preview and the clean feed get every frame regardless.
+  nonisolated static func delivers(_ buffer: CMSampleBuffer, through throttle: FrameDeliveryThrottle) -> Bool {
+    throttle.shouldDeliver(captureTime: CMSampleBufferGetPresentationTimeStamp(buffer).seconds)
   }
 
   nonisolated private static func shouldEncodeAudio(_ gate: OSAllocatedUnfairLock<EncoderGate>) -> Bool {
@@ -672,10 +682,10 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     let synthetic = SyntheticCamera(configuration: SyntheticCamera.Configuration(settings))
     // The same fan-out as the camera path, so a simulator with a virtual external display draws
     // the pattern on it and dump-state's `framesEnqueued` climbs.
-    synthetic.onVideoFrame = { [weak self, videoEncoder, cleanFeed, gate = encoderGate, sets = latestParameterSets] buffer in
+    synthetic.onVideoFrame = { [weak self, videoEncoder, cleanFeed, frameThrottle, gate = encoderGate, sets = latestParameterSets] buffer in
       let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
       let frame = SampleBufferRef(buffer)
-      if Self.shouldEncodeVideo(gate, parameterSets: sets) {
+      if Self.delivers(buffer, through: frameThrottle), Self.shouldEncodeVideo(gate, parameterSets: sets) {
         videoEncoder.encode(frame, blank: blank)
       }
       cleanFeed.enqueue(frame, blank: blank)
@@ -718,7 +728,9 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       lenses: cameraState.availableLenses,
       streamURL: streamURL,
       clientCount: serverStatus.clientCount,
-      currentBitrate: adaptiveBitrate?.status.controller.bitrate
+      currentBitrate: adaptiveBitrate?.status.controller.bitrate,
+      frameDelivery: frameThrottle.delivery,
+      deliveredFrameRate: frameThrottle.deliveredFrameRate
     )
   }
 
@@ -742,6 +754,9 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
         if let name = write.name { rename(to: name) }
         if let position = write.position, position != cameraState.position { flip() }
         if let zoom = write.displayedZoom { setDisplayedZoom(zoom) }
+        if write.touchesFrameDelivery {
+          frameThrottle.configure(CameraParameters.frameDelivery(applying: write, to: frameThrottle.delivery))
+        }
         // One `applySettings()` for every encoder field in the request, exactly like Done.
         if write.touchesSettings { apply(CameraParameters.settings(applying: write, to: settings)) }
         let applied = CameraParameters.snapshot(applying: write, to: current)
@@ -766,6 +781,16 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   /// The external display as the app sees it. `framesEnqueued` climbing is the only proof the clean
   /// feed is being drawn: a display can be connected with the feed disabled, and a run reporting
   /// zero here while a display is attached has shown nothing on it.
+  /// The test throttle: what it was told, and what is reaching the encoder.
+  public struct FrameDeliveryDump: Encodable, Sendable, Equatable {
+    /// Frames per second, 0 for off.
+    public var frameRate: Double
+    /// `low:high:periodSeconds`, nil for none.
+    public var swing: String?
+    /// Frames per second reaching the encoder over the last two seconds. Nil until measured.
+    public var deliveredFrameRate: Double?
+  }
+
   public struct ExternalDisplayDump: Encodable, Sendable, Equatable {
     public var connected: Bool
     public var mode: String?
@@ -828,6 +853,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     public var sendDelayBurstMilliseconds: Double
     public var sendDelayHeldNow: Int
     public var sendDelayHeldTotal: UInt64
+    public var frameDelivery: FrameDeliveryDump
   }
 
   public var stateDump: StateDump {
@@ -889,7 +915,12 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       sendDelayJitterMilliseconds: sendDelaySummary.jitterMilliseconds,
       sendDelayBurstMilliseconds: sendDelaySummary.burstMilliseconds,
       sendDelayHeldNow: sendDelaySummary.held,
-      sendDelayHeldTotal: sendDelaySummary.totalHeld
+      sendDelayHeldTotal: sendDelaySummary.totalHeld,
+      frameDelivery: FrameDeliveryDump(
+        frameRate: frameThrottle.delivery.frameRate,
+        swing: frameThrottle.delivery.swing?.text,
+        deliveredFrameRate: frameThrottle.deliveredFrameRate
+      )
     )
   }
 
@@ -1023,6 +1054,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       return ok()
 
     case .reset:
+      frameThrottle.configure(.off)
       settings = launch.settings
       noteSettingsApplied()
       reconfigureVideoEncoder(settings)

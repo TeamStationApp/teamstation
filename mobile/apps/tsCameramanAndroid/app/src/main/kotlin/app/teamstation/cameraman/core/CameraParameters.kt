@@ -213,6 +213,24 @@ object CameraParameterName {
     const val streamURL = "stream.url"
     const val streamClients = "stream.clients"
 
+    /**
+     * Test only: frames per second to deliver to the encoder, `0` for every frame. See
+     * [FrameDeliveryThrottle]. Off at every launch.
+     */
+    const val testDeliveredFrameRate = "test.deliveredFrameRate"
+
+    /**
+     * Test only: `low:high:periodSeconds`, a delivered rate swinging between the two, or empty for
+     * none. Wins over `test.deliveredFrameRate` while set.
+     */
+    const val testDeliveredFrameRateSwing = "test.deliveredFrameRateSwing"
+
+    /**
+     * Frames per second actually reaching the encoder over the last two seconds, throttled or not;
+     * empty until two have.
+     */
+    const val testDeliveredFrameRateActual = "test.deliveredFrameRate.actual"
+
     const val wildcard = "*"
 
     fun format(index: Int, field: String): String = "format.$index.$field"
@@ -220,7 +238,8 @@ object CameraParameterName {
 
     val writable: Set<String> = setOf(
         deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-        bitrateFloorKbps, adaptiveBitrate, audioEnabled, lensDisabled
+        bitrateFloorKbps, adaptiveBitrate, audioEnabled, lensDisabled,
+        testDeliveredFrameRate, testDeliveredFrameRateSwing
     )
 
     /**
@@ -238,7 +257,8 @@ object CameraParameterName {
         currentBitrateKbps, formatCount,
         audioEnabled, audioSampleRate,
         lensCount, lensDisabled,
-        streamURL, streamClients
+        streamURL, streamClients,
+        testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateActual
     )
 
     internal val formatFields = listOf("width", "height", "frameRate", "multiLens")
@@ -288,7 +308,11 @@ data class CameraSnapshot(
      * What the encoder is running at, which is below `settings.bitrate` while adapting. Null from a
      * phone that predates adaptation, which always runs at `settings.bitrate`.
      */
-    val currentBitrate: Int? = null
+    val currentBitrate: Int? = null,
+    /** The test throttle's setting. Off from a phone that predates it. */
+    val frameDelivery: FrameDelivery = FrameDelivery.off,
+    /** Frames per second reaching the encoder. Null until measured, and from a phone that predates it. */
+    val deliveredFrameRate: Double? = null
 ) {
     val displayedZoom: Double get() = mapping.displayedZoom(deviceZoom)
 }
@@ -313,6 +337,10 @@ data class CameraParameterWrite(
     val adaptiveBitrate: Boolean? = null,
     val audioEnabled: Boolean? = null,
     val disabledLensIDs: Set<String>? = null,
+    /** Frames per second for the test throttle, 0 for off. */
+    val deliveredFrameRate: Double? = null,
+    /** The test throttle's swing as canonical `low:high:period` text, or empty to clear it. */
+    val deliveredFrameRateSwing: String? = null,
     /** The names in the request, in order, so the reply can echo exactly those. */
     val requestedNames: List<String> = emptyList()
 ) {
@@ -320,7 +348,14 @@ data class CameraParameterWrite(
         get() = name == null && position == null && displayedZoom == null && codec == null &&
             width == null && height == null && frameRate == null && bitrate == null &&
             bitrateFloor == null && adaptiveBitrate == null && audioEnabled == null &&
-            disabledLensIDs == null
+            disabledLensIDs == null && !touchesFrameDelivery
+
+    /**
+     * True when the request names the test throttle. Never a settings change: the throttle leaves
+     * the format, the session and the saved settings alone.
+     */
+    val touchesFrameDelivery: Boolean
+        get() = deliveredFrameRate != null || deliveredFrameRateSwing != null
 
     /**
      * True when anything in [StreamSettings] is named, i.e. the phone should run one
@@ -403,6 +438,12 @@ object CameraParameters {
         set.set(CameraParameterName.lensDisabled, s.disabledLensIDs.sorted().joinToString(","))
         set.set(CameraParameterName.streamURL, snapshot.streamURL)
         set.set(CameraParameterName.streamClients, snapshot.clientCount.toString())
+        set.set(CameraParameterName.testDeliveredFrameRate, number(snapshot.frameDelivery.frameRate))
+        set.set(CameraParameterName.testDeliveredFrameRateSwing, snapshot.frameDelivery.swing?.text ?: "")
+        set.set(
+            CameraParameterName.testDeliveredFrameRateActual,
+            snapshot.deliveredFrameRate?.let { number(Math.round(it * 10) / 10.0) } ?: ""
+        )
         return set
     }
 
@@ -521,7 +562,12 @@ object CameraParameters {
             lenses = lenses,
             streamURL = streamURL,
             clientCount = set[CameraParameterName.streamClients]?.toIntOrNull() ?: 0,
-            currentBitrate = set[CameraParameterName.currentBitrateKbps]?.toIntOrNull()?.let { it * 1000 }
+            currentBitrate = set[CameraParameterName.currentBitrateKbps]?.toIntOrNull()?.let { it * 1000 },
+            frameDelivery = FrameDelivery(
+                frameRate = set[CameraParameterName.testDeliveredFrameRate]?.toDoubleOrNull() ?: 0.0,
+                swing = set[CameraParameterName.testDeliveredFrameRateSwing]?.let { FrameRateSwing.parse(it) }
+            ),
+            deliveredFrameRate = set[CameraParameterName.testDeliveredFrameRateActual]?.toDoubleOrNull()
         )
     }
 
@@ -662,6 +708,23 @@ object CameraParameters {
                     write = write.copy(disabledLensIDs = ids)
                 }
 
+                CameraParameterName.testDeliveredFrameRate -> {
+                    val rate = value.toDoubleOrNull()
+                    if (rate == null || (rate != 0.0 && !FrameDelivery.accepts(rate))) {
+                        return bad(
+                            "expected 0 for off, or ${number(FrameDelivery.minimumRate)}…" +
+                                "${number(FrameDelivery.maximumRate)} frames per second"
+                        )
+                    }
+                    write = write.copy(deliveredFrameRate = rate)
+                }
+
+                CameraParameterName.testDeliveredFrameRateSwing -> {
+                    val swing = if (value.isEmpty()) "" else FrameRateSwing.parse(value)?.text
+                        ?: return bad("expected low:high:periodSeconds with low ≤ high, or empty for none")
+                    write = write.copy(deliveredFrameRateSwing = swing)
+                }
+
                 else -> return ParameterOutcome.Failure(
                     CameraParameterError(CameraParameterError.Kind.READ_ONLY, name, "read-only parameter")
                 )
@@ -738,6 +801,14 @@ object CameraParameters {
         return next
     }
 
+    /** The test throttle after a write. Fields not in the request keep their current values. */
+    fun frameDelivery(applying: CameraParameterWrite, to: FrameDelivery): FrameDelivery {
+        var next = to
+        applying.deliveredFrameRate?.let { next = next.copy(frameRate = it) }
+        applying.deliveredFrameRateSwing?.let { next = next.copy(swing = FrameRateSwing.parse(it)) }
+        return next
+    }
+
     /**
      * The snapshot as it will be once the write has taken: settings merged, zoom clamped to the
      * mapping, position and name replaced. Used to echo applied values in the `SET` reply before
@@ -752,7 +823,13 @@ object CameraParameters {
             ?: to.deviceZoom
         settings.cameraPosition = position
         settings.displayedZoom = to.mapping.displayedZoom(deviceZoom)
-        return to.copy(name = name, position = position, deviceZoom = deviceZoom, settings = settings)
+        return to.copy(
+            name = name,
+            position = position,
+            deviceZoom = deviceZoom,
+            settings = settings,
+            frameDelivery = frameDelivery(applying, to.frameDelivery)
+        )
     }
 
     /** The reply body for a successful `SET`: the requested names with their as-applied values. */

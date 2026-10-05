@@ -6,6 +6,7 @@ import { describe, it } from 'mocha'
 const {
   changedLines,
   istanbulCounts,
+  jacocoCounts,
   lcovCounts,
   lineReport,
   lineReportFromCounts,
@@ -125,6 +126,15 @@ describe('changed-line counts from every report', function () {
     expect(lcov[source]).deep.equals(executable)
     expect(Object.keys(lcov)).has.length(3)
     expect(lcov['/repo/Tally/Tests/TallyTests/TallyTests.swift'][5]).equals(1)
+  })
+
+  it('reads a JaCoCo XML report by package directory, a line counting its covered instructions', function () {
+    expect(jacocoCounts(fixture('tally.jacoco.xml'))).deep.equals({
+      'app/example/tally/Tally.kt': { 5: 3, 6: 4, 7: 0, 9: 2 },
+      'app/example/tally/Empty.kt': {},
+      'Root.kt': { 1: 5 }
+    })
+    expect(jacocoCounts('<report></report>')).deep.equals({})
   })
 
   it('resolves pathspecs to the top level from anywhere inside it', function () {
