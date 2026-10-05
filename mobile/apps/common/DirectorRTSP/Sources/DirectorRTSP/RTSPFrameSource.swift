@@ -58,14 +58,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// release by as much, which is a visible hitch of its own. Decoding early and holding the pixel
   /// buffer for the remainder costs two frames of memory and takes the decode off the clock.
   private static let decodeLead: TimeInterval = 0.06
-  /// How much video the compressed delay line may hold, in seconds.
+  /// How much more video the compressed delay line holds than the longest it may hold a picture
+  /// (the display latency cap, or the engine's 2 s ceiling without one).
   ///
   /// `PlayoutQueue` bounds a count rather than a duration, so this is turned into frames against
-  /// the measured rate. It has to be: a fixed cap was three seconds at 30 fps and only a second
-  /// and a half at 60, which is less than the two seconds `PlayoutController.Limits` allows the
-  /// buffer to grow to. Overflowing costs more than it sounds — the queue is ordered by due time
-  /// and trims from the front, so the pictures it discards are the ones about to be shown.
-  private static let pictureQueueSeconds: Double = 3
+  /// the measured rate. A fixed count was three seconds at 30 fps and only a second and a half at
+  /// 60; and overflowing costs more than it sounds — the queue is ordered by due time and trims from
+  /// the front, so the pictures it discards are the ones about to be shown.
+  private static let pictureQueueSpareSeconds: Double = 0.25
   /// The rate assumed for the dozen frames before `frameRateEstimator` has an answer, and after a
   /// reconnect if this camera has never reported a format. The faster of the two rates in the
   /// population, because both consumers fail worse when the guess is low: the delay line drops
@@ -611,19 +611,21 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// with `lock` held.
   private func pictureQueueCapacityLocked() -> Int {
     let rate = announcedFrameRate ?? frameRateEstimator.frameRate ?? Self.assumedFrameRate
-    return Int((rate * Self.pictureQueueSeconds).rounded(.up))
+    // Sized by the time it has to span: the longest the delay line may hold, plus a spare.
+    let ceiling = coordinator?.latencyCapMilliseconds ?? PlayoutController.Limits().maximumMilliseconds
+    return Int((rate * (ceiling / 1_000 + Self.pictureQueueSpareSeconds)).rounded(.up))
   }
 
   /// Releases whatever has come due, decodes it and publishes it.
   ///
   /// Runs on this source's own queue rather than on the network thread, so a keyframe's decode
   /// cannot hold up reading the socket, and video and audio reach the sinks in one serial order.
-  private func drain() {
+  func drain() {
     let now = Self.seconds(.now())
 
     lock.lock()
     if let coordinator {
-      playout.setFloor(milliseconds: coordinator.programMilliseconds)
+      playout.setFloor(milliseconds: coordinator.floorMilliseconds(excluding: sourceID))
       playout.setCeiling(milliseconds: coordinator.latencyCapMilliseconds)
     }
     playout.advance(to: now)
@@ -632,7 +634,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let lead = min(Self.decodeLead, playout.holdSeconds / 2)
     let toDecode = pictures.release(at: now + lead)
     let decoder = self.decoder
-    let buffer = playout.bufferMilliseconds
+    let buffer = playout.requirementMilliseconds
     let shouldReport = now - lastReportAt >= Self.reportInterval
     if shouldReport { lastReportAt = now }
     lock.unlock()

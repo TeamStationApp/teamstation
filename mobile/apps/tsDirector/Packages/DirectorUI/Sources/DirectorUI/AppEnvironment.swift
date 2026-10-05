@@ -437,11 +437,11 @@ public final class AppEnvironment {
     // The app target passes the same registry it gave to discovery; anything without a transport
     // gets its own, which is empty and harmless.
     let registry = cameras ?? CameraRegistry(store: CameraRecordStore(store: configStore))
-    registry.playout.setCap(
-      milliseconds: session.displayLatencyCapEnabled
-        ? session.displayLatencyCapMilliseconds
-        : nil
-    )
+    // Never past D, cap on or off, and before any camera is seeded from a saved hold.
+    registry.playout.setCap(milliseconds: TileRouter.playoutCapMilliseconds(
+      capEnabled: session.displayLatencyCapEnabled,
+      capMilliseconds: session.displayLatencyCapMilliseconds
+    ))
     // The delay line's cap above bounds how much latency is *added* deliberately. These bound how
     // old a picture may be and still be worth showing, or still be worth keeping — which nothing
     // enforced before, on either transport.
@@ -467,6 +467,12 @@ public final class AppEnvironment {
     // construction, and a frame gate that only took effect after the operator next opened Settings
     // would be off for the whole of the first session.
     self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
+    // And D, which the delay line's cap above was set to: a saved cap other than 500 ms would
+    // otherwise hold pictures past a D still at its default until Settings next changed.
+    self.router.setLiveSoundDelay(seconds: TileRouter.liveSoundDelaySeconds(
+      capEnabled: session.displayLatencyCapEnabled,
+      capMilliseconds: session.displayLatencyCapMilliseconds
+    ))
     // The programme clock's rates until a take or a stream says otherwise.
     self.router.setRecordingRate(session.programFrameRate)
     self.router.setStreamRate(session.streamFrameRate)
@@ -4110,11 +4116,11 @@ public final class AppEnvironment {
   }
 
   private func applyDisplayLatencyCap() {
-    cameras.playout.setCap(
-      milliseconds: config.displayLatencyCapEnabled
-        ? config.displayLatencyCapMilliseconds
-        : nil
-    )
+    // Never past D, cap on or off: a picture held longer reaches the programme after its moment.
+    cameras.playout.setCap(milliseconds: TileRouter.playoutCapMilliseconds(
+      capEnabled: config.displayLatencyCapEnabled,
+      capMilliseconds: config.displayLatencyCapMilliseconds
+    ))
     // Two different things share the word latency. The line above bounds how much delay the
     // delay line *adds* to smooth jitter; this bounds how old a picture may be and still be shown
     // or still be kept. Nothing enforced the second before, on either transport, which is how a
@@ -4597,6 +4603,10 @@ public final class AppEnvironment {
       $0.recordingMixLateBuffers = recordingMix.lateBuffers
       $0.recordingMixFutureBuffers = recordingMix.futureBuffers
       $0.liveSoundDelayMilliseconds = (mix.readLagSeconds * 1_000).rounded()
+      let pictures = self.router.programmePictureCounts
+      $0.programmeLatePictures = pictures.late
+      $0.programmeSkippedPictures = pictures.skipped
+      $0.programmeComposeMisses = self.router.programmeComposeMisses
       $0.audioMixFades = mix.fades
       $0.audioMixConcealedSeconds = (mix.concealedSeconds * 100).rounded() / 100
       $0.recordingMixFades = recordingMix.fades

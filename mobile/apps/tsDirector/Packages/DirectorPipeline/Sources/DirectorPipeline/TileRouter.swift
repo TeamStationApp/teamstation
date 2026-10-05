@@ -652,17 +652,21 @@ public final class TileRouter: @unchecked Sendable {
     label: "app.teamstation.director.programme-clock",
     qos: .userInteractive
   )
-  /// The newest composited programme picture, waiting for the programme clock.
+  /// A composited programme picture, waiting for the programme clock.
   private struct ProgramPicture {
     let buffer: CVPixelBuffer
     /// When the picture on air was captured; nil for a replay.
     let captureWall: WallClock?
-    let sequence: UInt64
   }
-  private var programPicture: ProgramPicture?
-  private var programPictureSequence: UInt64 = 0
+  /// Composited pictures of the camera on air, each taken on the tick its capture time plus the
+  /// live delay D comes due: the same moment its sound plays. See `ProgrammePictureQueue`.
+  private var programPictures = ProgrammePictureQueue<ProgramPicture>(
+    delaySeconds: AudioMixer.defaultLiveReadLagSeconds
+  )
   /// The picture the recording last took, so a repeat can be told from a new one.
   private var lastRecordedSequence: UInt64?
+  /// Programme pictures left out because the compositor could not make one.
+  private var composeMisses: UInt64 = 0
 
   public init(
     telemetry: PipelineTelemetry,
@@ -742,17 +746,21 @@ public final class TileRouter: @unchecked Sendable {
   /// time. With nothing new since the last tick, the last picture goes again.
   private func programmeTick() {
     let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+    let wallNow = clock.now.seconds
     lock.lock()
-    guard let tick = programmeClock.tick(at: now), let picture = programPicture else {
+    guard let tick = programmeClock.tick(at: now),
+          let entry = programPictures.pick(at: wallNow, period: 1 / Double(programmeClock.rate))
+    else {
       lock.unlock()
       return
     }
+    let picture = entry.picture
     let streamRate = programmeClock.streamRate
     let recordingRate = programmeClock.recordingRate
     var freshForRecording = false
     if tick.recordingFrame != nil {
-      freshForRecording = picture.sequence != lastRecordedSequence
-      lastRecordedSequence = picture.sequence
+      freshForRecording = entry.sequence != lastRecordedSequence
+      lastRecordedSequence = entry.sequence
     }
     lock.unlock()
 
@@ -962,6 +970,10 @@ public final class TileRouter: @unchecked Sendable {
       }
     }
     if previous != sourceIndex {
+      // The old camera's pictures still waiting for their moment are not wanted after a cut.
+      lock.lock()
+      programPictures.removeQueued()
+      lock.unlock()
       programStreamer.requestKeyframe()
     }
     telemetry.mutate { snapshot in
@@ -995,6 +1007,24 @@ public final class TileRouter: @unchecked Sendable {
   /// same delay the pictures are held to. A change fades every source out and in again.
   public func setLiveSoundDelay(seconds: Double) {
     audioMixer.setReadLag(seconds: seconds)
+    lock.lock()
+    programPictures.setDelay(seconds: seconds)
+    lock.unlock()
+  }
+
+  /// Programme pictures dropped for arriving more than a tick after their moment, and pictures
+  /// never shown because a newer one was due on the same tick.
+  public var programmePictureCounts: (late: UInt64, skipped: UInt64) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (programPictures.latePictures, programPictures.skippedPictures)
+  }
+
+  /// Programme pictures left out because the compositor could not make one; the last repeated.
+  public var programmeComposeMisses: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return composeMisses
   }
 
   /// The live sound delay for a display latency cap: the cap itself when it is on, 500 ms when it
@@ -1004,6 +1034,14 @@ public final class TileRouter: @unchecked Sendable {
       ? capMilliseconds
       : AudioMixer.defaultLiveReadLagSeconds * 1_000
     return min(2, max(0.1, milliseconds / 1_000))
+  }
+
+  /// The most any camera's delay line may hold: the live delay D, cap on or off. Programme pictures
+  /// are placed at capture + D and reach the queue only after the preview's delay line, so a line
+  /// holding more than D delivers every picture after its moment and the programme freezes on its
+  /// last one. With the cap off the line could grow, and a saved hold be seeded, to 2 s.
+  public static func playoutCapMilliseconds(capEnabled: Bool, capMilliseconds: Double) -> Double {
+    liveSoundDelaySeconds(capEnabled: capEnabled, capMilliseconds: capMilliseconds) * 1_000
   }
 
   /// Per-camera constants added to each camera's capture times, for a camera whose sound is stamped
@@ -1077,11 +1115,27 @@ public final class TileRouter: @unchecked Sendable {
     presentationTime: CMTime,
     captureWall: WallClock? = nil
   ) {
-    let composed = compositor?.compose(program: pixelBuffer) ?? pixelBuffer
+    // With a compositor, only a composed picture goes on air: one without its overlays, from a
+    // compositor that could not make a picture just then, flickers the overlay off. The last
+    // composed picture repeats instead, which no one sees.
+    let composed: CVPixelBuffer
+    if let compositor {
+      guard let made = compositor.compose(program: pixelBuffer) else {
+        lock.lock()
+        composeMisses &+= 1
+        lock.unlock()
+        return
+      }
+      composed = made
+    } else {
+      composed = pixelBuffer
+    }
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
     lock.lock()
-    programPictureSequence &+= 1
-    programPicture = ProgramPicture(buffer: composed, captureWall: captureWall, sequence: programPictureSequence)
+    programPictures.add(
+      ProgramPicture(buffer: composed, captureWall: captureWall),
+      capture: captureWall?.seconds
+    )
     lock.unlock()
   }
 }

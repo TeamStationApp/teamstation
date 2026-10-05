@@ -450,7 +450,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private func drain() {
     let now = Self.seconds(.now())
     lock.lock()
-    if let coordinator { playout.setFloor(milliseconds: coordinator.programMilliseconds) }
+    if let coordinator { playout.setFloor(milliseconds: coordinator.floorMilliseconds(excluding: sourceID)) }
     // The pool bounds the hold, not only the queue. A ceiling the pool cannot honour would have the
     // line evicting its earliest-due picture on every arrival — nothing ever comes due, the tile
     // freezes and the archive keeps recording. Below the pool, the operator's cap wins.
@@ -472,7 +472,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     noteGapWindow(now: now)
     let handler = sinks.pixel
-    let buffer = playout.bufferMilliseconds
+    let buffer = playout.requirementMilliseconds
     let shouldReport = now - lastReportAt >= Self.reportInterval
     if shouldReport { lastReportAt = now }
     lock.unlock()

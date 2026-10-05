@@ -584,7 +584,14 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var recordingMixLateBuffers: UInt64 = 0
   public var recordingMixFutureBuffers: UInt64 = 0
   /// How long after capture the live mix plays each camera's sound (D): the display latency cap.
+  /// The programme's pictures are placed by the same delay.
   public var liveSoundDelayMilliseconds: Double = 0
+  /// Programme pictures dropped for arriving more than a tick after their moment, and pictures
+  /// never shown because a newer one was due on the same tick.
+  public var programmeLatePictures: UInt64 = 0
+  public var programmeSkippedPictures: UInt64 = 0
+  /// Programme pictures left out because the compositor could not make one.
+  public var programmeComposeMisses: UInt64 = 0
   /// Fades into silence and silence emitted in each mix, over every source.
   public var audioMixFades: UInt64 = 0
   public var audioMixConcealedSeconds: Double = 0

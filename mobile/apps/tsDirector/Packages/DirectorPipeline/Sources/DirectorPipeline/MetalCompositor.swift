@@ -36,7 +36,14 @@ public final class MetalCompositor: @unchecked Sendable {
   public let width: Int
   public let height: Int
 
-  public init?(width: Int = 1920, height: Int = 1080) {
+  /// How many composed pictures may be alive at once. Each waits in the programme's queue from when
+  /// it arrives until its capture time plus D (`ProgrammePictureQueue`), up to D plus a quarter second
+  /// of a 60 fps camera's pictures at D's ceiling of 2 s, and a few more are on screen or in an
+  /// encoder. The pool allocates only what is asked of it, so this is a ceiling, not a cost: at 32,
+  /// D at 1 s ran it dry and every picture composed past it went out without its overlay.
+  public static let maximumComposedPictures = Int(((2.0 + 0.25) * 60).rounded(.up)) + 8
+
+  public init?(width: Int = 1920, height: Int = 1080, maximumBuffers: Int = MetalCompositor.maximumComposedPictures) {
     guard
       let device = MTLCreateSystemDefaultDevice(),
       let commandQueue = device.makeCommandQueue(),
@@ -75,7 +82,8 @@ public final class MetalCompositor: @unchecked Sendable {
       width: width,
       height: height,
       pixelFormat: kCVPixelFormatType_32BGRA,
-      minimumBuffers: 4
+      minimumBuffers: 4,
+      maximumBuffers: maximumBuffers
     ) else { return nil }
 
     self.device = device

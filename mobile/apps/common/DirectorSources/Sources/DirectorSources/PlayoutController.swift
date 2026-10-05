@@ -99,6 +99,19 @@ public struct PlayoutController: Sendable {
     return (offset - fastest) * 1000
   }
 
+  /// What this camera needs on its own: the spread of its arrivals over the window plus the margin,
+  /// inside its limits and the ceiling, and without any floor its neighbours impose. This, not the
+  /// buffer it holds, is what it reports to the others: reporting the buffer let a floor a camera had
+  /// been given come back to it as its own need, so two cameras held each other at the highest delay
+  /// either had ever needed. TS Director's delay settled at its 2,000 ms ceiling in its first games
+  /// that way, after one burst.
+  public var requirementMilliseconds: Double {
+    let cap = ceilingSeconds.map { $0 * 1_000 } ?? limits.maximumMilliseconds
+    guard let fastest, let slowest else { return min(seedMilliseconds, cap) }
+    let need = (slowest - fastest) * 1_000 + limits.marginMilliseconds
+    return min(max(need, limits.minimumMilliseconds), cap)
+  }
+
   /// How long the delay line is holding pictures beyond this camera's best case.
   public var holdSeconds: Double { bufferMilliseconds / 1000 }
 
@@ -281,10 +294,14 @@ public final class PlayoutCoordinator: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// What this camera starts at, never above the cap: a hold one bad game ratcheted to the limit
+  /// must not be the next game's starting point. One game's saved 2,000 ms seeded the next, a
+  /// fresh launch with healthy cameras, and its live sound broke up all game.
   public func seedMilliseconds(for sourceID: SourceID) -> Double? {
     lock.lock()
     defer { lock.unlock() }
-    return seeds[sourceID]
+    guard let seed = seeds[sourceID] else { return nil }
+    return capMilliseconds.map { min(seed, $0) } ?? seed
   }
 
   /// Publishes one camera's requirement and returns the delay every camera should now be holding.
@@ -294,6 +311,14 @@ public final class PlayoutCoordinator: @unchecked Sendable {
     defer { lock.unlock() }
     reported[sourceID] = milliseconds
     return capped(reported.values.max() ?? milliseconds)
+  }
+
+  /// The floor for one camera: what every other camera needs, never its own. A camera that once
+  /// needed more is not held up by itself, so the shared delay falls when the cause goes away.
+  public func floorMilliseconds(excluding sourceID: SourceID) -> Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return capped(reported.filter { $0.key != sourceID }.values.max() ?? 0)
   }
 
   public var programMilliseconds: Double {
