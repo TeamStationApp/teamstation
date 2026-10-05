@@ -226,6 +226,12 @@ object CameraParameterName {
     const val testDeliveredFrameRateSwing = "test.deliveredFrameRateSwing"
 
     /**
+     * Test only: `low:high:minHold:maxHold[:seed]`, a delivered rate wandering at random, or empty
+     * for none. Reads back with its seed. Wins over the swing and the steady rate while set.
+     */
+    const val testDeliveredFrameRateWander = "test.deliveredFrameRateWander"
+
+    /**
      * Frames per second actually reaching the encoder over the last two seconds, throttled or not;
      * empty until two have.
      */
@@ -239,7 +245,7 @@ object CameraParameterName {
     val writable: Set<String> = setOf(
         deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
         bitrateFloorKbps, adaptiveBitrate, audioEnabled, lensDisabled,
-        testDeliveredFrameRate, testDeliveredFrameRateSwing
+        testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander
     )
 
     /**
@@ -258,7 +264,8 @@ object CameraParameterName {
         audioEnabled, audioSampleRate,
         lensCount, lensDisabled,
         streamURL, streamClients,
-        testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateActual
+        testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander,
+        testDeliveredFrameRateActual
     )
 
     internal val formatFields = listOf("width", "height", "frameRate", "multiLens")
@@ -341,6 +348,8 @@ data class CameraParameterWrite(
     val deliveredFrameRate: Double? = null,
     /** The test throttle's swing as canonical `low:high:period` text, or empty to clear it. */
     val deliveredFrameRateSwing: String? = null,
+    /** The test throttle's wander as canonical text with its seed, or empty to clear it. */
+    val deliveredFrameRateWander: String? = null,
     /** The names in the request, in order, so the reply can echo exactly those. */
     val requestedNames: List<String> = emptyList()
 ) {
@@ -355,7 +364,7 @@ data class CameraParameterWrite(
      * the format, the session and the saved settings alone.
      */
     val touchesFrameDelivery: Boolean
-        get() = deliveredFrameRate != null || deliveredFrameRateSwing != null
+        get() = deliveredFrameRate != null || deliveredFrameRateSwing != null || deliveredFrameRateWander != null
 
     /**
      * True when anything in [StreamSettings] is named, i.e. the phone should run one
@@ -440,6 +449,7 @@ object CameraParameters {
         set.set(CameraParameterName.streamClients, snapshot.clientCount.toString())
         set.set(CameraParameterName.testDeliveredFrameRate, number(snapshot.frameDelivery.frameRate))
         set.set(CameraParameterName.testDeliveredFrameRateSwing, snapshot.frameDelivery.swing?.text ?: "")
+        set.set(CameraParameterName.testDeliveredFrameRateWander, snapshot.frameDelivery.wander?.text ?: "")
         set.set(
             CameraParameterName.testDeliveredFrameRateActual,
             snapshot.deliveredFrameRate?.let { number(Math.round(it * 10) / 10.0) } ?: ""
@@ -565,7 +575,8 @@ object CameraParameters {
             currentBitrate = set[CameraParameterName.currentBitrateKbps]?.toIntOrNull()?.let { it * 1000 },
             frameDelivery = FrameDelivery(
                 frameRate = set[CameraParameterName.testDeliveredFrameRate]?.toDoubleOrNull() ?: 0.0,
-                swing = set[CameraParameterName.testDeliveredFrameRateSwing]?.let { FrameRateSwing.parse(it) }
+                swing = set[CameraParameterName.testDeliveredFrameRateSwing]?.let { FrameRateSwing.parse(it) },
+                wander = set[CameraParameterName.testDeliveredFrameRateWander]?.let { FrameRateWander.parse(it) }
             ),
             deliveredFrameRate = set[CameraParameterName.testDeliveredFrameRateActual]?.toDoubleOrNull()
         )
@@ -725,6 +736,14 @@ object CameraParameters {
                     write = write.copy(deliveredFrameRateSwing = swing)
                 }
 
+                CameraParameterName.testDeliveredFrameRateWander -> {
+                    val wander = if (value.isEmpty()) "" else FrameRateWander.parse(value)?.text
+                        ?: return bad(
+                            "expected low:high:minHold:maxHold[:seed] with low ≤ high and 0 < minHold ≤ maxHold, or empty for none"
+                        )
+                    write = write.copy(deliveredFrameRateWander = wander)
+                }
+
                 else -> return ParameterOutcome.Failure(
                     CameraParameterError(CameraParameterError.Kind.READ_ONLY, name, "read-only parameter")
                 )
@@ -806,6 +825,7 @@ object CameraParameters {
         var next = to
         applying.deliveredFrameRate?.let { next = next.copy(frameRate = it) }
         applying.deliveredFrameRateSwing?.let { next = next.copy(swing = FrameRateSwing.parse(it)) }
+        applying.deliveredFrameRateWander?.let { next = next.copy(wander = FrameRateWander.parse(it)) }
         return next
     }
 

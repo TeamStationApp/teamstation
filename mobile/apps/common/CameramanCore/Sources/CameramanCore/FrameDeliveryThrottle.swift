@@ -47,12 +47,161 @@ public struct FrameRateSwing: Sendable, Equatable {
   }
 }
 
-/// What the throttle is told to do: a steady rate, a swing, or nothing. A swing wins over a steady
-/// rate when both are set.
+/// SplitMix64: a small generator whose sequence is the same on every platform, so a wander's seed
+/// replays the same schedule on the iPhone and the Pixel.
+public struct SeededRandom: Sendable, Equatable {
+  private var state: UInt64
+
+  public init(seed: UInt64) {
+    state = seed
+  }
+
+  public mutating func next() -> UInt64 {
+    state &+= 0x9E37_79B9_7F4A_7C15
+    var z = state
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
+  }
+
+  /// Uniform in `0 ..< 1`.
+  public mutating func unit() -> Double {
+    Double(next() >> 11) / Double(UInt64(1) << 53)
+  }
+}
+
+/// A delivered rate that wanders at random, the way a phone's does as it heats on a solid network:
+/// it holds a rate for `minHold`–`maxHold` seconds, then moves to a target picked uniformly in
+/// `low`–`high`, as a step or a 1–5 s ramp (even odds); about one move in eight is a deep dip to
+/// 8–15 fps for 1–4 s, recovering by a 1–5 s ramp. It starts at `high`. The schedule is a function
+/// of the seed alone, so a run can be replayed exactly. On the wire it is
+/// `low:high:minHold:maxHold:seed`; without a seed one is picked and reported.
+public struct FrameRateWander: Sendable, Equatable {
+  public var low: Double
+  public var high: Double
+  public var minHoldSeconds: Double
+  public var maxHoldSeconds: Double
+  public var seed: UInt64
+
+  public static let dipProbability = 1.0 / 8
+  public static let dipRates = 8.0 ... 15.0
+  public static let dipSeconds = 1.0 ... 4.0
+  public static let rampSeconds = 1.0 ... 5.0
+
+  public init(low: Double, high: Double, minHoldSeconds: Double, maxHoldSeconds: Double, seed: UInt64) {
+    self.low = low
+    self.high = high
+    self.minHoldSeconds = minHoldSeconds
+    self.maxHoldSeconds = maxHoldSeconds
+    self.seed = seed
+  }
+
+  /// Parses `low:high:minHold:maxHold[:seed]`. Nil for anything else, including `low` above `high`,
+  /// a rate `FrameDelivery` refuses, or holds that are not `0 < minHold ≤ maxHold`.
+  public init?(text: String, randomSeed: () -> UInt64 = { UInt64.random(in: 1 ... UInt64.max) }) {
+    let parts = text.split(separator: ":", omittingEmptySubsequences: false)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+    guard parts.count == 4 || parts.count == 5 else { return nil }
+    let numbers = parts.prefix(4).map(Double.init)
+    guard let low = numbers[0], let high = numbers[1], let minHold = numbers[2], let maxHold = numbers[3],
+          FrameDelivery.accepts(rate: low), FrameDelivery.accepts(rate: high), low <= high,
+          minHold.isFinite, maxHold.isFinite, minHold > 0, minHold <= maxHold
+    else { return nil }
+    let seed: UInt64
+    if parts.count == 5 {
+      guard let parsed = UInt64(parts[4]) else { return nil }
+      seed = parsed
+    } else {
+      seed = randomSeed()
+    }
+    self.init(low: low, high: high, minHoldSeconds: minHold, maxHoldSeconds: maxHold, seed: seed)
+  }
+
+  public var text: String {
+    ([ low, high, minHoldSeconds, maxHoldSeconds ].map(CameraParameters.number) + [ String(seed) ])
+      .joined(separator: ":")
+  }
+}
+
+/// A wander's schedule, generated from its seed as far as it has been asked about: segments over
+/// which the rate is constant or a straight ramp.
+public struct WanderSchedule: Sendable, Equatable {
+  public struct Segment: Sendable, Equatable {
+    public var start: Double
+    public var end: Double
+    public var from: Double
+    public var to: Double
+    /// True for a deep dip's floor.
+    public var isDip: Bool
+  }
+
+  public let wander: FrameRateWander
+  public private(set) var segments: [Segment] = []
+  private var random: SeededRandom
+  private var time = 0.0
+  private var rate: Double
+  /// Moves made, and how many of them were deep dips.
+  public private(set) var moves = 0
+  public private(set) var dips = 0
+
+  public init(_ wander: FrameRateWander) {
+    self.wander = wander
+    random = SeededRandom(seed: wander.seed)
+    rate = wander.high
+  }
+
+  /// The rate `elapsed` seconds in.
+  public mutating func rate(atElapsed elapsed: Double) -> Double {
+    extend(through: elapsed)
+    guard let segment = segments.last(where: { $0.start <= elapsed }) else { return wander.high }
+    guard segment.end > segment.start, segment.from != segment.to else { return segment.from }
+    let fraction = min(1, max(0, (elapsed - segment.start) / (segment.end - segment.start)))
+    return segment.from + (segment.to - segment.from) * fraction
+  }
+
+  /// Generates segments until they cover `elapsed`.
+  public mutating func extend(through elapsed: Double) {
+    while time <= elapsed {
+      let w = wander
+      let hold = w.minHoldSeconds + (w.maxHoldSeconds - w.minHoldSeconds) * random.unit()
+      append(hold, from: rate, to: rate, isDip: false)
+      moves += 1
+      if random.unit() < FrameRateWander.dipProbability {
+        dips += 1
+        let dip = draw(FrameRateWander.dipRates)
+        append(draw(FrameRateWander.dipSeconds), from: dip, to: dip, isDip: true)
+        let target = w.low + (w.high - w.low) * random.unit()
+        append(draw(FrameRateWander.rampSeconds), from: dip, to: target, isDip: false)
+        rate = target
+      } else {
+        let target = w.low + (w.high - w.low) * random.unit()
+        if random.unit() < 0.5 {
+          rate = target
+        } else {
+          append(draw(FrameRateWander.rampSeconds), from: rate, to: target, isDip: false)
+          rate = target
+        }
+      }
+    }
+  }
+
+  private mutating func draw(_ range: ClosedRange<Double>) -> Double {
+    range.lowerBound + (range.upperBound - range.lowerBound) * random.unit()
+  }
+
+  private mutating func append(_ duration: Double, from: Double, to: Double, isDip: Bool) {
+    segments.append(Segment(start: time, end: time + duration, from: from, to: to, isDip: isDip))
+    time += duration
+  }
+}
+
+/// What the throttle is told to do: a steady rate, a swing, a wander, or nothing. A wander wins over
+/// a swing, and a swing over a steady rate, when more than one is set.
 public struct FrameDelivery: Sendable, Equatable {
   /// Frames per second, 0 for off.
   public var frameRate: Double
   public var swing: FrameRateSwing?
+  public var wander: FrameRateWander?
 
   public static let off = FrameDelivery()
 
@@ -61,15 +210,21 @@ public struct FrameDelivery: Sendable, Equatable {
   public static let minimumRate = 1.0
   public static let maximumRate = 240.0
 
-  public init(frameRate: Double = 0, swing: FrameRateSwing? = nil) {
+  public init(frameRate: Double = 0, swing: FrameRateSwing? = nil, wander: FrameRateWander? = nil) {
     self.frameRate = frameRate
     self.swing = swing
+    self.wander = wander
   }
 
-  public var isOff: Bool { swing == nil && frameRate <= 0 }
+  public var isOff: Bool { wander == nil && swing == nil && frameRate <= 0 }
 
-  /// The rate to deliver `elapsed` seconds after the throttle was configured. Nil when off.
+  /// The rate to deliver `elapsed` seconds after the throttle was configured. Nil when off. A
+  /// wander is answered by `FrameDeliveryThrottle`, which keeps its schedule; here it starts high.
   public func targetRate(atElapsed elapsed: Double) -> Double? {
+    if let wander {
+      var schedule = WanderSchedule(wander)
+      return schedule.rate(atElapsed: elapsed)
+    }
     if let swing { return swing.rate(atElapsed: elapsed) }
     return frameRate > 0 ? frameRate : nil
   }
@@ -103,6 +258,7 @@ public final class FrameDeliveryThrottle: @unchecked Sendable {
   private var due: Double?
   private var lastSeen: Double?
   private var delivered: [Double] = []
+  private var schedule: WanderSchedule?
 
   /// `random` returns values in `0 ..< 1`; tests pass a seeded generator.
   public init(random: @escaping @Sendable () -> Double = { Double.random(in: 0 ..< 1) }) {
@@ -119,6 +275,7 @@ public final class FrameDeliveryThrottle: @unchecked Sendable {
       configured = delivery
       anchor = nil
       due = nil
+      schedule = delivery.wander.map(WanderSchedule.init)
     }
   }
 
@@ -140,6 +297,16 @@ public final class FrameDeliveryThrottle: @unchecked Sendable {
     }
   }
 
+  /// The rate a wander is asking for now, nil without one.
+  public var wanderTarget: Double? {
+    lock.withLock {
+      guard var current = schedule, let anchor, let lastSeen else { return nil }
+      let rate = current.rate(atElapsed: lastSeen - anchor)
+      schedule = current
+      return rate
+    }
+  }
+
   /// Frames per second reaching the encoder over the last two seconds of capture time, whether or
   /// not a throttle is set. Nil until two frames have been delivered.
   public var deliveredFrameRate: Double? {
@@ -153,7 +320,14 @@ public final class FrameDeliveryThrottle: @unchecked Sendable {
   private func keep(_ time: Double) -> Bool {
     let start = anchor ?? time
     anchor = start
-    guard let rate = configured.targetRate(atElapsed: time - start) else { return true }
+    let rate: Double
+    if schedule != nil {
+      rate = schedule!.rate(atElapsed: time - start)
+    } else if let steady = configured.targetRate(atElapsed: time - start) {
+      rate = steady
+    } else {
+      return true
+    }
     let next = due ?? time
     guard time + Self.earlyTolerance >= next else { return false }
     let mean = 1 / rate

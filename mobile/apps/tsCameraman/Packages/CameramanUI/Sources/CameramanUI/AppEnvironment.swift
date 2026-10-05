@@ -787,6 +787,9 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     public var frameRate: Double
     /// `low:high:periodSeconds`, nil for none.
     public var swing: String?
+    /// `low:high:minHold:maxHold:seed`, nil for none, and the rate it asks for now.
+    public var wander: String?
+    public var wanderTarget: Double?
     /// Frames per second reaching the encoder over the last two seconds. Nil until measured.
     public var deliveredFrameRate: Double?
   }
@@ -919,6 +922,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       frameDelivery: FrameDeliveryDump(
         frameRate: frameThrottle.delivery.frameRate,
         swing: frameThrottle.delivery.swing?.text,
+        wander: frameThrottle.delivery.wander?.text,
+        wanderTarget: frameThrottle.wanderTarget.map { ($0 * 10).rounded() / 10 },
         deliveredFrameRate: frameThrottle.deliveredFrameRate
       )
     )

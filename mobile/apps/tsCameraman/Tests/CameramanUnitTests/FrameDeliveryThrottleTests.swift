@@ -250,7 +250,9 @@ struct FrameDeliveryThrottleTests {
     first.frameThrottle.configure(FrameDelivery(frameRate: 12))
     let second = AppEnvironment(broadcastStore: InMemorySettingsStore())
     #expect(second.frameThrottle.delivery == .off)
-    #expect(second.stateDump.frameDelivery == AppEnvironment.FrameDeliveryDump(frameRate: 0, swing: nil, deliveredFrameRate: nil))
+    #expect(second.stateDump.frameDelivery == AppEnvironment.FrameDeliveryDump(
+      frameRate: 0, swing: nil, wander: nil, wanderTarget: nil, deliveredFrameRate: nil
+    ))
     let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(second.stateDump)) as? [String: Any]
     let delivery = json?["frameDelivery"] as? [String: Any]
     #expect(delivery?["frameRate"] as? Double == 0)

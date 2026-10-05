@@ -1176,6 +1176,8 @@ class AppEnvironment(
         return JSONObject().apply {
             put("frameRate", delivery.frameRate)
             put("swing", delivery.swing?.text ?: JSONObject.NULL)
+            put("wander", delivery.wander?.text ?: JSONObject.NULL)
+            put("wanderTarget", frameThrottle.wanderTarget?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL)
             put("deliveredFrameRate", frameThrottle.deliveredFrameRate ?: JSONObject.NULL)
         }
     }

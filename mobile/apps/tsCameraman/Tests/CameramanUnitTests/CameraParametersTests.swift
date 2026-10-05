@@ -374,16 +374,23 @@ struct CameraParametersTests {
     #expect(plain["test.deliveredFrameRate"] == "0")
     #expect(plain["test.deliveredFrameRateSwing"] == "")
     #expect(plain["test.deliveredFrameRate.actual"] == "")
-    #expect(plain.names.suffix(3) == [
-      "test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRate.actual"
+    #expect(plain["test.deliveredFrameRateWander"] == "")
+    #expect(plain.names.suffix(4) == [
+      "test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRateWander",
+      "test.deliveredFrameRate.actual"
     ])
 
     var throttled = Self.snapshot()
-    throttled.frameDelivery = FrameDelivery(frameRate: 24, swing: FrameRateSwing(low: 30, high: 60, periodSeconds: 60))
+    throttled.frameDelivery = FrameDelivery(
+      frameRate: 24,
+      swing: FrameRateSwing(low: 30, high: 60, periodSeconds: 60),
+      wander: FrameRateWander(low: 20, high: 60, minHoldSeconds: 2, maxHoldSeconds: 20, seed: 42)
+    )
     throttled.deliveredFrameRate = 29.87
     let encoded = CameraParameters.encode(throttled)
     #expect(encoded["test.deliveredFrameRate"] == "24")
     #expect(encoded["test.deliveredFrameRateSwing"] == "30:60:60")
+    #expect(encoded["test.deliveredFrameRateWander"] == "20:60:2:20:42")
     #expect(encoded["test.deliveredFrameRate.actual"] == "29.9")
     let decoded = try #require(CameraParameters.decodeSnapshot(try CameraParameterSet.decode(encoded.encoded).get()))
     #expect(decoded.frameDelivery == throttled.frameDelivery)

@@ -29,6 +29,7 @@ const DEFAULT_RTSP_PORT = 8554
 const FRAME_DELIVERY_NAMES = [
   'test.deliveredFrameRate',
   'test.deliveredFrameRateSwing',
+  'test.deliveredFrameRateWander',
   'test.deliveredFrameRate.actual'
 ]
 
@@ -37,15 +38,20 @@ const FRAME_DELIVERY_NAMES = [
 function frameDeliveryLines (value) {
   const number = '\\d+(?:\\.\\d+)?'
   if (value === 'off' || value === '0') {
-    return ['test.deliveredFrameRate: 0', 'test.deliveredFrameRateSwing:']
+    return ['test.deliveredFrameRate: 0', 'test.deliveredFrameRateSwing:', 'test.deliveredFrameRateWander:']
   }
   if (new RegExp(`^${number}$`).test(value ?? '')) {
-    return [`test.deliveredFrameRate: ${value}`, 'test.deliveredFrameRateSwing:']
+    return [`test.deliveredFrameRate: ${value}`, 'test.deliveredFrameRateSwing:', 'test.deliveredFrameRateWander:']
   }
   if (new RegExp(`^${number}:${number}:${number}$`).test(value ?? '')) {
-    return ['test.deliveredFrameRate: 0', `test.deliveredFrameRateSwing: ${value}`]
+    return ['test.deliveredFrameRate: 0', `test.deliveredFrameRateSwing: ${value}`, 'test.deliveredFrameRateWander:']
   }
-  throw new Error('usage: control.js [--host H] [--rtsp-port P] frameDelivery <fps|low:high:period|off>')
+  // wander:low:high:minHold:maxHold[:seed] — a random walk; the phone reports the seed it used.
+  const wander = new RegExp(`^wander:(${number}:${number}:${number}:${number}(?::\\d+)?)$`).exec(value ?? '')
+  if (wander) {
+    return ['test.deliveredFrameRate: 0', 'test.deliveredFrameRateSwing:', `test.deliveredFrameRateWander: ${wander[1]}`]
+  }
+  throw new Error('usage: control.js [--host H] [--rtsp-port P] frameDelivery <fps|low:high:period|wander:low:high:minHold:maxHold[:seed]|off>')
 }
 
 function parseArguments (argv) {

@@ -51,15 +51,129 @@ data class FrameRateSwing(val low: Double, val high: Double, val periodSeconds: 
  * What the throttle is told to do: a steady rate, a swing, or nothing. A swing wins over a steady
  * rate when both are set.
  */
+/**
+ * SplitMix64: the same sequence on every platform, so a wander's seed replays the same schedule on
+ * the Pixel and the iPhone.
+ */
+class SeededRandom(seed: Long) {
+    private var state = seed
+
+    fun next(): Long {
+        state += -0x61c8864680b583ebL
+        var z = state
+        z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L
+        z = (z xor (z ushr 27)) * -0x6b2fb644ecceee15L
+        return z xor (z ushr 31)
+    }
+
+    /** Uniform in `0 until 1`. */
+    fun unit(): Double = (next() ushr 11).toDouble() / (1L shl 53).toDouble()
+}
+
+/**
+ * A delivered rate that wanders at random, the way a phone's does as it heats on a solid network:
+ * hold a rate for `minHold`–`maxHold` s, then move to a target uniform in `low`–`high` as a step or
+ * a 1–5 s ramp (even odds); about one move in eight is a deep dip to 8–15 fps for 1–4 s, recovering
+ * by a 1–5 s ramp. It starts at `high`. A port of the iOS `FrameRateWander`, draw for draw, so a
+ * seed gives the same schedule on both. On the wire `low:high:minHold:maxHold:seed`, the seed as an
+ * unsigned 64-bit decimal.
+ */
+data class FrameRateWander(
+    val low: Double,
+    val high: Double,
+    val minHoldSeconds: Double,
+    val maxHoldSeconds: Double,
+    val seed: Long
+) {
+    val text: String
+        get() = (listOf(low, high, minHoldSeconds, maxHoldSeconds).map { CameraParameters.number(it) } +
+            java.lang.Long.toUnsignedString(seed)).joinToString(":")
+
+    companion object {
+        const val dipProbability = 1.0 / 8
+        val dipRates = 8.0..15.0
+        val dipSeconds = 1.0..4.0
+        val rampSeconds = 1.0..5.0
+
+        fun parse(text: String, randomSeed: () -> Long = { kotlin.random.Random.nextLong() }): FrameRateWander? {
+            val parts = text.split(":").map { it.trim() }
+            if (parts.size != 4 && parts.size != 5) return null
+            val numbers = parts.take(4).map { it.toDoubleOrNull() }
+            val low = numbers[0] ?: return null
+            val high = numbers[1] ?: return null
+            val minHold = numbers[2] ?: return null
+            val maxHold = numbers[3] ?: return null
+            if (!FrameDelivery.accepts(low) || !FrameDelivery.accepts(high) || low > high) return null
+            if (!minHold.isFinite() || !maxHold.isFinite() || minHold <= 0 || minHold > maxHold) return null
+            val seed = if (parts.size == 5) parts[4].toULongOrNull()?.toLong() ?: return null else randomSeed()
+            return FrameRateWander(low, high, minHold, maxHold, seed)
+        }
+    }
+}
+
+/** A wander's schedule, generated from its seed as far as it has been asked about. */
+class WanderSchedule(val wander: FrameRateWander) {
+    data class Segment(val start: Double, val end: Double, val from: Double, val to: Double, val isDip: Boolean)
+
+    val segments = ArrayList<Segment>()
+    private val random = SeededRandom(wander.seed)
+    private var time = 0.0
+    private var rate = wander.high
+    var moves = 0
+        private set
+    var dips = 0
+        private set
+
+    fun rate(elapsed: Double): Double {
+        extend(elapsed)
+        val segment = segments.lastOrNull { it.start <= elapsed } ?: return wander.high
+        if (segment.end <= segment.start || segment.from == segment.to) return segment.from
+        val fraction = ((elapsed - segment.start) / (segment.end - segment.start)).coerceIn(0.0, 1.0)
+        return segment.from + (segment.to - segment.from) * fraction
+    }
+
+    fun extend(elapsed: Double) {
+        while (time <= elapsed) {
+            val w = wander
+            val hold = w.minHoldSeconds + (w.maxHoldSeconds - w.minHoldSeconds) * random.unit()
+            append(hold, rate, rate, false)
+            moves += 1
+            if (random.unit() < FrameRateWander.dipProbability) {
+                dips += 1
+                val dip = draw(FrameRateWander.dipRates)
+                append(draw(FrameRateWander.dipSeconds), dip, dip, true)
+                val target = w.low + (w.high - w.low) * random.unit()
+                append(draw(FrameRateWander.rampSeconds), dip, target, false)
+                rate = target
+            } else {
+                val target = w.low + (w.high - w.low) * random.unit()
+                if (random.unit() >= 0.5) append(draw(FrameRateWander.rampSeconds), rate, target, false)
+                rate = target
+            }
+        }
+    }
+
+    private fun draw(range: ClosedFloatingPointRange<Double>): Double =
+        range.start + (range.endInclusive - range.start) * random.unit()
+
+    private fun append(duration: Double, from: Double, to: Double, isDip: Boolean) {
+        segments.add(Segment(time, time + duration, from, to, isDip))
+        time += duration
+    }
+}
+
 data class FrameDelivery(
     /** Frames per second, 0 for off. */
     val frameRate: Double = 0.0,
-    val swing: FrameRateSwing? = null
+    val swing: FrameRateSwing? = null,
+    /** Wins over the swing and the steady rate while set. */
+    val wander: FrameRateWander? = null
 ) {
-    val isOff: Boolean get() = swing == null && frameRate <= 0
+    val isOff: Boolean get() = wander == null && swing == null && frameRate <= 0
 
     /** The rate to deliver [elapsed] seconds after the throttle was configured. Null when off. */
     fun targetRate(elapsed: Double): Double? {
+        wander?.let { return WanderSchedule(it).rate(elapsed) }
         swing?.let { return it.rate(elapsed) }
         return if (frameRate > 0) frameRate else null
     }
@@ -96,6 +210,7 @@ class FrameDeliveryThrottle(private val random: () -> Double = { Math.random() }
     private var due: Double? = null
     private var lastSeen: Double? = null
     private val delivered = ArrayDeque<Double>()
+    private var schedule: WanderSchedule? = null
 
     val delivery: FrameDelivery get() = synchronized(lock) { configured }
 
@@ -104,7 +219,17 @@ class FrameDeliveryThrottle(private val random: () -> Double = { Math.random() }
         configured = delivery
         anchor = null
         due = null
+        schedule = delivery.wander?.let { WanderSchedule(it) }
     }
+
+    /** The rate a wander is asking for now, null without one. */
+    val wanderTarget: Double?
+        get() = synchronized(lock) {
+            val current = schedule ?: return@synchronized null
+            val start = anchor ?: return@synchronized null
+            val seen = lastSeen ?: return@synchronized null
+            current.rate(seen - start)
+        }
 
     /** Whether the frame captured at [captureTime] seconds should be encoded. */
     fun shouldDeliver(captureTime: Double): Boolean = synchronized(lock) {
@@ -135,7 +260,7 @@ class FrameDeliveryThrottle(private val random: () -> Double = { Math.random() }
     private fun keep(time: Double): Boolean {
         val start = anchor ?: time
         anchor = start
-        val rate = configured.targetRate(time - start) ?: return true
+        val rate = schedule?.rate(time - start) ?: configured.targetRate(time - start) ?: return true
         val next = due ?: time
         if (time + earlyTolerance < next) return false
         val mean = 1 / rate

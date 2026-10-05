@@ -189,6 +189,9 @@ public enum CameraParameterName {
   /// Test only: `low:high:periodSeconds`, a delivered rate swinging between the two, or empty for
   /// none. Wins over `test.deliveredFrameRate` while set.
   public static let testDeliveredFrameRateSwing = "test.deliveredFrameRateSwing"
+  /// Test only: `low:high:minHold:maxHold[:seed]`, a delivered rate wandering at random, or empty
+  /// for none. Reads back with its seed. Wins over the swing and the steady rate while set.
+  public static let testDeliveredFrameRateWander = "test.deliveredFrameRateWander"
   /// Frames per second actually reaching the encoder over the last two seconds, throttled or not;
   /// empty until two have.
   public static let testDeliveredFrameRateActual = "test.deliveredFrameRate.actual"
@@ -201,7 +204,7 @@ public enum CameraParameterName {
   public static let writable: Set<String> = [
     deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
     bitrateFloorKbps, adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled,
-    testDeliveredFrameRate, testDeliveredFrameRateSwing
+    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander
   ]
 
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
@@ -219,7 +222,8 @@ public enum CameraParameterName {
     videoOutputHDMIClean,
     lensCount, lensDisabled,
     streamURL, streamClients,
-    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateActual
+    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander,
+    testDeliveredFrameRateActual
   ]
 
   static let formatFields = [ "width", "height", "frameRate", "multiLens" ]
@@ -342,6 +346,8 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public var deliveredFrameRate: Double?
   /// The test throttle's swing as canonical `low:high:period` text, or empty to clear it.
   public var deliveredFrameRateSwing: String?
+  /// The test throttle's wander as canonical text with its seed, or empty to clear it.
+  public var deliveredFrameRateWander: String?
   /// The names in the request, in order, so the reply can echo exactly those.
   public var requestedNames: [String] = []
 
@@ -357,7 +363,7 @@ public struct CameraParameterWrite: Sendable, Equatable {
   /// True when the request names the test throttle. Never a settings change: the throttle leaves
   /// the format, the session and the saved settings alone.
   public var touchesFrameDelivery: Bool {
-    deliveredFrameRate != nil || deliveredFrameRateSwing != nil
+    deliveredFrameRate != nil || deliveredFrameRateSwing != nil || deliveredFrameRateWander != nil
   }
 
   /// True when anything in `StreamSettings` is named, i.e. the phone should run one
@@ -434,6 +440,7 @@ public enum CameraParameters {
     set.set(CameraParameterName.streamClients, String(snapshot.clientCount))
     set.set(CameraParameterName.testDeliveredFrameRate, number(snapshot.frameDelivery.frameRate))
     set.set(CameraParameterName.testDeliveredFrameRateSwing, snapshot.frameDelivery.swing?.text ?? "")
+    set.set(CameraParameterName.testDeliveredFrameRateWander, snapshot.frameDelivery.wander?.text ?? "")
     set.set(
       CameraParameterName.testDeliveredFrameRateActual,
       snapshot.deliveredFrameRate.map { number(($0 * 10).rounded() / 10) } ?? ""
@@ -558,7 +565,8 @@ public enum CameraParameters {
       currentBitrate: set[CameraParameterName.currentBitrateKbps].flatMap(Int.init).map { $0 * 1000 },
       frameDelivery: FrameDelivery(
         frameRate: set[CameraParameterName.testDeliveredFrameRate].flatMap(Double.init) ?? 0,
-        swing: set[CameraParameterName.testDeliveredFrameRateSwing].flatMap(FrameRateSwing.init(text:))
+        swing: set[CameraParameterName.testDeliveredFrameRateSwing].flatMap(FrameRateSwing.init(text:)),
+        wander: set[CameraParameterName.testDeliveredFrameRateWander].flatMap { FrameRateWander(text: $0) }
       ),
       deliveredFrameRate: set[CameraParameterName.testDeliveredFrameRateActual].flatMap(Double.init)
     )
@@ -707,6 +715,15 @@ public enum CameraParameters {
           return .failure(bad("expected low:high:periodSeconds with low ≤ high, or empty for none"))
         }
 
+      case CameraParameterName.testDeliveredFrameRateWander:
+        if value.isEmpty {
+          write.deliveredFrameRateWander = ""
+        } else if let wander = FrameRateWander(text: value) {
+          write.deliveredFrameRateWander = wander.text
+        } else {
+          return .failure(bad("expected low:high:minHold:maxHold[:seed] with low ≤ high and 0 < minHold ≤ maxHold, or empty for none"))
+        }
+
       default:
         return .failure(CameraParameterError(kind: .readOnly, name: name, detail: "read-only parameter"))
       }
@@ -776,6 +793,7 @@ public enum CameraParameters {
     var next = current
     if let rate = write.deliveredFrameRate { next.frameRate = rate }
     if let swing = write.deliveredFrameRateSwing { next.swing = FrameRateSwing(text: swing) }
+    if let wander = write.deliveredFrameRateWander { next.wander = FrameRateWander(text: wander) }
     return next
   }
 

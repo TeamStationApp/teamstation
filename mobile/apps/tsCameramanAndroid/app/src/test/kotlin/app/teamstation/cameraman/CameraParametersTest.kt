@@ -413,9 +413,13 @@ class CameraParametersTest {
         assertEquals("0", plain["test.deliveredFrameRate"])
         assertEquals("", plain["test.deliveredFrameRateSwing"])
         assertEquals("", plain["test.deliveredFrameRate.actual"])
+        assertEquals("", plain["test.deliveredFrameRateWander"])
         assertEquals(
-            listOf("test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRate.actual"),
-            plain.names.takeLast(3)
+            listOf(
+                "test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRateWander",
+                "test.deliveredFrameRate.actual"
+            ),
+            plain.names.takeLast(4)
         )
 
         val throttled = snapshot().copy(
