@@ -8,8 +8,10 @@ import { promisify } from 'util'
 
 import { serverConfig } from '../serverConfig'
 import {
+  AAC_PRIMING_SAMPLES,
   assertPinnedFfmpeg,
   ffmpegEncoders,
+  KEEP_STREAM_TIMES,
   probeFfmpeg,
   probeVideoStream,
   releaseOf,
@@ -237,6 +239,28 @@ describe('ffmpeg contract', function () {
     expect(carried.codecName).equals('hevc')
     expect(carried.width).equals(320)
     expect(carried.height).equals(240)
+  })
+
+  it('keeps every track at its own stream time', function () {
+    // Without it a sound track that starts late is stamped from 0 s, beside a
+    // picture that is minutes in.
+    const args = remuxToHlsArgs({ input: 'in.m3u8', outDir: '/tmp/out' })
+    const at = args.indexOf('-hls_segment_options')
+    expect(args.slice(at, at + 2)).deep.equals([...KEEP_STREAM_TIMES])
+    expect(KEEP_STREAM_TIMES[1]).contains('frag_discont')
+  })
+
+  it('stamps undeclared priming before zero, and only when asked', function () {
+    const plain = remuxToHlsArgs({ input: 'in.mov', outDir: '/tmp/out' })
+    expect(plain).does.not.contain('-bsf:a')
+    const primed = remuxToHlsArgs({
+      input: 'in.mov',
+      outDir: '/tmp/out',
+      soundPrimingSamples: AAC_PRIMING_SAMPLES
+    })
+    expect(primed[primed.indexOf('-bsf:a') + 1]).equals(
+      'setts=ts=TS-2112/(SR*TB)'
+    )
   })
 
   it('never writes the temporary name into a single-file playlist', function () {

@@ -14,6 +14,11 @@ import {
   verifyVideoDirectory
 } from '../media/spacesVideo'
 import { ensureStill } from '../media/stills'
+import {
+  checkTrackStarts,
+  isSoundStepProblem,
+  soundStepProblem
+} from '../media/trackStarts'
 import type { LiveSettings } from '../serverConfig'
 import { isRecordingShape, toRecording } from './finishVideo'
 import { openSecret } from './secrets'
@@ -728,12 +733,22 @@ export async function finishStream(
     return
   }
 
+  // A sound track stamped away from the picture it arrived with plays out of
+  // step for the whole recording. The video is still ready — the picture is
+  // whole — but the row and the log say so.
+  const soundProblem = soundStepProblem(
+    await checkTrackStarts(join(dir, LIVE_PLAYLIST_NAME)).catch(() => undefined)
+  )
+  if (soundProblem != null) {
+    ;(current.log ?? console.log)(`live: ${row.videoId}: ${soundProblem}`)
+  }
+
   // Watchable at once, from this machine, while the rest happens.
   await db
     .updateTable('videos')
     .set({
       status: 'ready',
-      status_message: null,
+      status_message: soundProblem ?? null,
       duration_sec: durationSec,
       published_at: now,
       updated_at: now
@@ -895,12 +910,23 @@ async function toTheSpace(
       return
     }
 
+    // What the finished stream's check said about its sound stays on the row.
+    // It cannot be found again in the recording: a remux of sound stamped from
+    // 0 s puts it at the start, where it looks like any other.
+    const before = await db
+      .selectFrom('videos')
+      .select('status_message as message')
+      .where('id', '=', videoId)
+      .executeTakeFirst()
+    const soundProblem = isSoundStepProblem(before?.message)
+      ? before?.message
+      : null
     const now = new Date()
     await db
       .updateTable('videos')
       .set({
         storage: 'spaces',
-        status_message: null,
+        status_message: soundProblem ?? null,
         spaces_verified_at: now,
         // The grace is for playback tokens already in somebody's player, which
         // point at this machine. They last six hours; so does the copy.

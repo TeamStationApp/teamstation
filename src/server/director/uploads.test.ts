@@ -117,66 +117,140 @@ describe('what the disk says has arrived', function () {
 
 describe('what an upload replaces', function () {
   const HOUR = 3600
+  /** The stream went live here. */
+  const T0 = Date.parse('2026-09-20T18:00:00.000Z')
+  const at = (sec: number): Date => new Date(T0 + sec * 1000)
+  const live = {
+    id: 'vid_live',
+    kind: 'live',
+    hidden: false,
+    startAt: at(0),
+    durationSec: 2 * HOUR
+  }
   const game = [
-    { id: 'vid_live', kind: 'live', hidden: false, durationSec: 2 * HOUR },
-    { id: 'vid_camera', kind: 'program', hidden: false, durationSec: 2 * HOUR },
+    live,
+    {
+      id: 'vid_camera',
+      kind: 'program',
+      hidden: false,
+      startAt: at(0),
+      durationSec: 2 * HOUR
+    },
     {
       id: 'vid_mosaic',
       kind: 'combined',
       hidden: false,
+      startAt: at(0),
       durationSec: 2 * HOUR
-    },
-    { id: 'vid_upload', kind: 'program', hidden: false, durationSec: 2 * HOUR }
+    }
   ]
+  /** An upload from `startSec` to `endSec` on the stream's clock. */
+  const upload = (
+    startSec: number,
+    endSec: number
+  ): { startAt: Date; durationSec: number } => ({
+    startAt: at(startSec),
+    durationSec: endSec - startSec
+  })
 
   it('takes the place of the live stream, and nothing else', function () {
-    expect(liveToReplace(game, 'vid_upload', 2 * HOUR)).deep.equals([
+    expect(liveToReplace(game, 'vid_upload', upload(0, 2 * HOUR))).deep.equals([
       'vid_live'
     ])
   })
 
-  it('never itself', function () {
-    const live = [
-      { id: 'vid_upload', kind: 'live', hidden: false, durationSec: HOUR }
-    ]
-    expect(liveToReplace(live, 'vid_upload', HOUR)).deep.equals([])
+  it('covers a stream that went live long before the recording started', function () {
+    // The game that showed it: the stream went live 28 minutes before the
+    // iPad started recording, and both stopped together. Comparing lengths
+    // left the stream on the page and made it the game's default.
+    expect(
+      liveToReplace(game, 'vid_upload', upload(28 * 60, 2 * HOUR))
+    ).deep.equals(['vid_live'])
   })
 
-  it('leaves a recording that is already hidden alone', function () {
-    // Its purge clock may be nearly up; starting it again would keep paying
-    // for a copy on no page.
-    const hidden = [
-      { id: 'vid_live', kind: 'live', hidden: true, durationSec: HOUR }
-    ]
-    expect(liveToReplace(hidden, 'vid_upload', HOUR)).deep.equals([])
+  it('does not cover a stream it stops three minutes short of', function () {
+    expect(
+      liveToReplace(game, 'vid_upload', upload(0, 2 * HOUR - 180))
+    ).deep.equals([])
+  })
+
+  it('allows the couple of minutes either way a stream ordinarily ends by', function () {
+    expect(
+      liveToReplace(game, 'vid_upload', upload(0, 2 * HOUR - 120))
+    ).deep.equals(['vid_live'])
+    expect(
+      liveToReplace(game, 'vid_upload', upload(0, 2 * HOUR - 121))
+    ).deep.equals([])
+    expect(
+      liveToReplace(game, 'vid_upload', upload(0, 2 * HOUR + 120))
+    ).deep.equals(['vid_live'])
+    // A recording left running after the stream stopped still has it all.
+    expect(
+      liveToReplace(game, 'vid_upload', upload(-600, 2 * HOUR + 1800))
+    ).deep.equals(['vid_live'])
+  })
+
+  it('does not cover a stream it starts after', function () {
+    expect(
+      liveToReplace(game, 'vid_upload', upload(2 * HOUR, 3 * HOUR))
+    ).deep.equals([])
+    expect(
+      liveToReplace(game, 'vid_upload', upload(2 * HOUR + 60, 2 * HOUR + 90))
+    ).deep.equals([])
   })
 
   it('will not let a clip displace a whole game', function () {
     // What actually happened: a 107-second bench recording uploaded to a game
     // hid its two-hour live recording and dated it for deletion. The claim an
     // upload makes is "a better copy of the same game", and this is not one.
-    expect(liveToReplace(game, 'vid_upload', 107)).deep.equals([])
+    expect(liveToReplace(game, 'vid_upload', upload(600, 707))).deep.equals([])
   })
 
-  it('allows the couple of minutes a stream is ordinarily short by', function () {
-    // The stream is started after the recording and stopped before it, so the
-    // upload being a little longer — or a little shorter — is the normal case.
-    expect(liveToReplace(game, 'vid_upload', 2 * HOUR - 90)).deep.equals([
-      'vid_live'
-    ])
-    expect(liveToReplace(game, 'vid_upload', 2 * HOUR + 600)).deep.equals([
-      'vid_live'
-    ])
+  it('never itself', function () {
+    const self = [{ ...live, id: 'vid_upload' }]
+    expect(liveToReplace(self, 'vid_upload', upload(0, 2 * HOUR))).deep.equals(
+      []
+    )
   })
 
-  it('replaces nothing when either length is unknown', function () {
+  it('leaves a recording that is already hidden alone', function () {
+    // Its purge clock may be nearly up; starting it again would keep paying
+    // for a copy on no page.
+    const hidden = [{ ...live, hidden: true }]
+    expect(
+      liveToReplace(hidden, 'vid_upload', upload(0, 2 * HOUR))
+    ).deep.equals([])
+  })
+
+  it('replaces nothing when a start or a length is unknown', function () {
     // With nothing to compare there is no evidence the upload covers the
     // stream, and hiding a game's only recording is not a thing to guess at.
-    const unknown = [
-      { id: 'vid_live', kind: 'live', hidden: false, durationSec: null }
-    ]
-    expect(liveToReplace(unknown, 'vid_upload', 2 * HOUR)).deep.equals([])
+    const whole = upload(0, 2 * HOUR)
+    for (const unknown of [
+      { ...live, durationSec: null },
+      { ...live, durationSec: 0 },
+      { ...live, startAt: null },
+      { ...live, startAt: 'not a time' }
+    ]) {
+      expect(liveToReplace([unknown], 'vid_upload', whole)).deep.equals([])
+    }
     expect(liveToReplace(game, 'vid_upload', null)).deep.equals([])
+    expect(
+      liveToReplace(game, 'vid_upload', { ...whole, durationSec: null })
+    ).deep.equals([])
+    expect(
+      liveToReplace(game, 'vid_upload', { ...whole, startAt: undefined })
+    ).deep.equals([])
+  })
+
+  it('reads a start written as text', function () {
+    const text = [{ ...live, startAt: at(0).toISOString() }]
+    expect(
+      liveToReplace(text, 'vid_upload', {
+        startAt: at(60).toISOString(),
+        durationSec: 2 * HOUR
+      })
+    ).deep.equals(['vid_live'])
   })
 })
 
