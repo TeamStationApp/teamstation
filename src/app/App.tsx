@@ -980,6 +980,9 @@ function Shell(props: AppProps): React.ReactElement {
         fadeAppleMusic={walkUpSettings.fadeAppleMusic}
         onExit={() => {
           inPlace.current = true
+          // The game opens under Home. Clear the tab we are leaving so its
+          // next visit cannot restore the scorer that was just exited.
+          setStacks(current => ({ ...current, [tab]: [] }))
           goToRoute({ name: 'game', gameId: top.gameId })
         }}
       />
