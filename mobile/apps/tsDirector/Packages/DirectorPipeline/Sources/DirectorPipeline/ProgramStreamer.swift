@@ -54,11 +54,15 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var sentVideoConfig = false
   private var sentAudioConfig = false
   private var sentMetadata = false
-  /// The timestamp of the last packet of sound sent, so the next is always after it.
-  /// Where the sound's own clock started, in wall-clock milliseconds.
-  private var audioEpochMs: UInt32?
-  /// How many AAC packets have gone out, which is that clock.
+  /// The wall clock (CFAbsoluteTime) of the first sample of mix fed to the AAC encoder since it was
+  /// reset: the mix is contiguous, so every later sample's time follows from it by count.
+  private var audioInputWall: CFAbsoluteTime?
+  /// How many AAC packets the encoder has produced since it was reset, sent or not, which is that
+  /// clock.
   private var audioPacketsSent = 0
+  /// Where the next frame of mix should start if the mix is contiguous, and the last stamp sent.
+  private var audioNextWall: CFAbsoluteTime?
+  private var audioLastStamp: UInt32?
   private var clock = StreamEncodeClock()
   /// When this stream started, so the watchdog can tell "no keyframe yet" from "no keyframe for a
   /// while". Zero until `start`.
@@ -88,9 +92,20 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var lastProgramFrameWall: CFAbsoluteTime = 0
   private var lastResetWall: CFAbsoluteTime = 0
 
-  public init(telemetry: PipelineTelemetry, converter: PixelConverter) {
+  /// `clock` is the one the mixes and the programme tick read (the steady wall clock in the app):
+  /// the stream's video stamps and its sound's epoch are both taken from it, so a step of the
+  /// device's own clock neither moves one against the other nor breaks the sound into a new epoch.
+  public init(telemetry: PipelineTelemetry, converter: PixelConverter, clock: DirectorClock = SystemClock()) {
     self.telemetry = telemetry
     self.converter = converter
+    self.wallClock = clock
+  }
+
+  private let wallClock: DirectorClock
+
+  /// Now on `clock`, as `CFAbsoluteTime`.
+  func absoluteNow() -> CFAbsoluteTime {
+    wallClock.now.seconds - kCFAbsoluteTimeIntervalSince1970
   }
 
   public var running: Bool {
@@ -171,8 +186,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentVideoConfig = false
     sentAudioConfig = false
     sentMetadata = false
-    audioEpochMs = nil
+    audioInputWall = nil
     audioPacketsSent = 0
+    audioNextWall = nil
+    audioLastStamp = nil
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
     pacer = StreamFramePacer(frameRate: frameRate)
     aac.reset()
@@ -180,7 +197,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     lastCallbackWall = 0
     lastProgramFrameWall = 0
     lastResetWall = 0
-    streamStartWall = CFAbsoluteTimeGetCurrent()
+    streamStartWall = absoluteNow()
     lastOutputWall = 0
     pendingEncodes = 0
     return true
@@ -287,7 +304,7 @@ public final class ProgramStreamer: @unchecked Sendable {
 
   public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
     lock.lock()
-    let admitted = pacer.admit(now: CFAbsoluteTimeGetCurrent())
+    let admitted = pacer.admit(now: absoluteNow())
     lock.unlock()
     guard admitted else { return }
     encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
@@ -355,7 +372,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       lock.unlock()
       return
     }
-    let now = CFAbsoluteTimeGetCurrent()
+    let now = absoluteNow()
     if !isIdle {
       lastProgramFrameWall = now
       telemetry.recordProgramFrameAge(0)
@@ -466,7 +483,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       lock.unlock()
       return
     }
-    let now = CFAbsoluteTimeGetCurrent()
+    let now = absoluteNow()
     telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
     telemetry.recordStreamPendingEncodes(pendingEncodes)
     telemetry.recordStreamEncodeCallbackAge(
@@ -514,7 +531,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     pendingEncodes = 0
     sentVideoConfig = false
     clock.requestKeyframe()
-    lastResetWall = CFAbsoluteTimeGetCurrent()
+    lastResetWall = absoluteNow()
     telemetry.recordStreamPendingEncodes(0)
     telemetry.recordStreamEncoderReset()
     lock.unlock()
@@ -534,34 +551,67 @@ public final class ProgramStreamer: @unchecked Sendable {
       lock.unlock()
       return
     }
+    let frameWall = frame.wallClock.seconds - kCFAbsoluteTimeIntervalSince1970
+    let frameSeconds = Double(CMSampleBufferGetNumSamples(frame.sampleBuffer)) / 48_000
+    // The count only holds while the mix arrives without a break; after one (the publish was down,
+    // and nothing was fed) the encoder starts again from this frame's own time.
+    if let expected = audioNextWall, abs(frameWall - expected) > 0.01 {
+      aac.reset()
+      audioInputWall = nil
+    }
+    if audioInputWall == nil {
+      audioInputWall = frameWall
+      audioPacketsSent = 0
+    }
+    audioNextWall = frameWall + frameSeconds
     let packets = aac.encode(frame.sampleBuffer)
     let cookie = aac.audioSpecificConfig
-    guard sentVideoConfig else {
+    let first = audioPacketsSent
+    audioPacketsSent += packets.count
+    guard sentVideoConfig, clock.startWall != 0, let inputWall = audioInputWall else {
       lock.unlock()
       return
+    }
+    // Each packet is stamped where the sound it decodes to belongs on the stream's clock: the mix
+    // says when its first sample plays (the picture of the same moment goes out on that tick), the
+    // count says where the packet sits after it, less the encoder's priming. It used to be stamped
+    // from the wall clock when the first packet happened to go out, which put the live sound about
+    // 110 ms after the picture it belongs with: the mix's 40 ms in hand, the encoder's 44 ms of
+    // priming, and the time to fill the first packet.
+    let epoch = Self.audioEpochMilliseconds(
+      inputWall: inputWall,
+      startWall: clock.startWall,
+      primingSamples: aac.primingSamples
+    )
+    let stamps = Self.audioTimestamps(count: packets.count, from: first, epoch: epoch)
+    // Never at or before what already went: a restart's priming reaches back over it.
+    var sendable: [(Data, UInt32)] = []
+    for (packet, stamp) in zip(packets, stamps) {
+      guard let stamp, stamp > (audioLastStamp ?? 0) || audioLastStamp == nil else { continue }
+      sendable.append((packet, stamp))
+      audioLastStamp = stamp
     }
     let sentAudio = sentAudioConfig
-    if !sentAudioConfig { sentAudioConfig = true }
-    let now = CFAbsoluteTimeGetCurrent()
-    if clock.startWall == 0 {
-      lock.unlock()
-      return
-    }
-    let newest = milliseconds(clock.timeNow(now: now))
-    // The wall clock is read once, for the first packet of the stream. After that the sound keeps
-    // its own time: reading the clock again every buffer is what made the stamps wander.
-    if audioEpochMs == nil { audioEpochMs = newest }
-    let epoch = audioEpochMs ?? newest
-    let stamps = Self.audioTimestamps(count: packets.count, from: audioPacketsSent, epoch: epoch)
-    audioPacketsSent += packets.count
+    if !sendable.isEmpty { sentAudioConfig = true }
     lock.unlock()
 
-    if !sentAudio {
-      client.sendAudio(timestampMs: stamps.first ?? newest, tag: FLVTag.audio(packetType: 0, payload: cookie))
+    if !sentAudio, let firstStamp = sendable.first?.1 {
+      client.sendAudio(timestampMs: firstStamp, tag: FLVTag.audio(packetType: 0, payload: cookie))
     }
-    for (packet, stamp) in zip(packets, stamps) {
+    for (packet, stamp) in sendable {
       client.sendAudio(timestampMs: stamp, tag: FLVTag.audio(packetType: 1, payload: packet))
     }
+  }
+
+  /// Where packet 0's decoded sound plays on the stream's clock, in milliseconds, negative when
+  /// that is before the stream began: the first sample's wall clock less the stream's start, less
+  /// the encoder's priming.
+  static func audioEpochMilliseconds(
+    inputWall: CFAbsoluteTime,
+    startWall: CFAbsoluteTime,
+    primingSamples: Int
+  ) -> Double {
+    (inputWall - startWall - Double(primingSamples) / 48_000) * 1_000
   }
 
   /// Timestamps, in milliseconds, for `count` packets of sound, counted on the sound's own clock.
@@ -586,11 +636,12 @@ public final class ProgramStreamer: @unchecked Sendable {
   ///
   /// `epoch` is the wall-clock millisecond the first packet went out, which is what keeps sound
   /// lined up with the picture; everything after it is counted, not measured.
-  static func audioTimestamps(count: Int, from index: Int, epoch: UInt32) -> [UInt32] {
+  /// A packet that would play before the stream began has none, and is not sent.
+  static func audioTimestamps(count: Int, from index: Int, epoch: Double) -> [UInt32?] {
     let packetMilliseconds = AACPacketizer.packetSeconds * 1000
     return (0 ..< count).map { offset in
-      let ahead = (Double(index + offset) * packetMilliseconds).rounded()
-      return epoch &+ UInt32(max(0, ahead))
+      let stamp = (epoch + Double(index + offset) * packetMilliseconds).rounded()
+      return stamp >= 0 ? UInt32(stamp) : nil
     }
   }
 
@@ -706,7 +757,7 @@ public final class ProgramStreamer: @unchecked Sendable {
   private func didEncode(sample: CMSampleBuffer?, status: OSStatus, flags: VTEncodeInfoFlags) {
     lock.lock()
     pendingEncodes = max(0, pendingEncodes - 1)
-    lastCallbackWall = CFAbsoluteTimeGetCurrent()
+    lastCallbackWall = absoluteNow()
     telemetry.recordStreamPendingEncodes(pendingEncodes)
     telemetry.recordStreamEncodeCallbackAge(0)
     if status != noErr {
@@ -721,7 +772,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       return
     }
     let encoded = sample
-    lastOutputWall = CFAbsoluteTimeGetCurrent()
+    lastOutputWall = absoluteNow()
     lock.unlock()
     guard let encoded, let dataBuffer = CMSampleBufferGetDataBuffer(encoded) else { return }
     var length = 0
@@ -735,7 +786,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     let codec = self.codec
     lock.unlock()
     let keyframe = Self.payloadContainsIDR(payload, codec: codec) || isKeyframe(encoded)
-    let now = CFAbsoluteTimeGetCurrent()
+    let now = absoluteNow()
 
     lock.lock()
     if keyframe {
@@ -933,6 +984,9 @@ final class AACPacketizer: @unchecked Sendable {
   private let frameSamples = 1024
   /// How long one packet of sound lasts: 1024 frames at 48 kHz.
   static let packetSeconds = 1024.0 / 48_000
+  /// The encoder's priming: packet N decodes to the input from this many samples before sample
+  /// N x 1024. Read from the converter; 2,112 for Apple's AAC-LC.
+  private(set) var primingSamples = 2_112
 
   func reset() {
     if let converter { AudioConverterDispose(converter) }
@@ -984,6 +1038,11 @@ final class AACPacketizer: @unchecked Sendable {
     )
     var converter: AudioConverterRef?
     guard AudioConverterNew(&input, &output, &converter) == noErr, let converter else { return }
+    var prime = AudioConverterPrimeInfo()
+    var primeSize = UInt32(MemoryLayout<AudioConverterPrimeInfo>.size)
+    if AudioConverterGetProperty(converter, kAudioConverterPrimeInfo, &primeSize, &prime) == noErr {
+      primingSamples = Int(prime.leadingFrames)
+    }
     var bitrate: UInt32 = 128_000
     AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &bitrate)
     // FLV AAC packet type 0 is AudioSpecificConfig (2 bytes), not Apple's MP4 magic cookie.

@@ -97,4 +97,32 @@ struct StallWatchdogTests {
       timeout: 5
     ) == 0)
   }
+
+  @Test("While the sound keeps arriving a missing picture is given a minute, doubling per reconnect; without sound, 5 s")
+  func soundKeepsAPictureStallConnected() {
+    let now = Date(timeIntervalSince1970: 2_000)
+    func timeout(soundAgo: Double?, reconnects: Int) -> TimeInterval {
+      StallWatchdog.pictureTimeout(
+        now: now,
+        lastSoundAt: soundAgo.map { now.addingTimeInterval(-$0) },
+        timeout: 5,
+        pictureOnlyTimeout: 60,
+        stallReconnects: reconnects
+      )
+    }
+    #expect(timeout(soundAgo: nil, reconnects: 0) == 5)
+    #expect(timeout(soundAgo: 6, reconnects: 0) == 5)
+    #expect(timeout(soundAgo: 0.2, reconnects: 0) == 60)
+    #expect(timeout(soundAgo: 0.2, reconnects: 1) == 120)
+    #expect(timeout(soundAgo: 0.2, reconnects: 3) == 480)
+    #expect(timeout(soundAgo: 0.2, reconnects: 40) == 3_840)
+    #expect(timeout(soundAgo: 0.2, reconnects: -1) == 60)
+    // Twenty seconds of picture lost with the sound still coming is no reason to reconnect.
+    #expect(!StallWatchdog.shouldReconnect(
+      now: now,
+      lastAccessUnitAt: now.addingTimeInterval(-20),
+      sessionStartedAt: nil,
+      timeout: timeout(soundAgo: 0.1, reconnects: 0)
+    ))
+  }
 }

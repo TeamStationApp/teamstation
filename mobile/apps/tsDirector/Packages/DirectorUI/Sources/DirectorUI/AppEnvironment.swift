@@ -453,8 +453,8 @@ public final class AppEnvironment {
       width: session.programResolution.width,
       height: session.programResolution.height
     )
-    self.programEncoder = ProgramEncoder(telemetry: telemetry, converter: converter, config: session)
-    self.programStreamer = ProgramStreamer(telemetry: telemetry, converter: converter)
+    self.programEncoder = ProgramEncoder(telemetry: telemetry, converter: converter, config: session, clock: clock)
+    self.programStreamer = ProgramStreamer(telemetry: telemetry, converter: converter, clock: clock)
     self.router = TileRouter(
       telemetry: telemetry,
       converter: converter,
@@ -4120,6 +4120,11 @@ public final class AppEnvironment {
     // or still be kept. Nothing enforced the second before, on either transport, which is how a
     // tile came to display frames two seconds behind the room.
     router.setLatencyCaps(FrameLatencyGate.Caps(config: config))
+    // The live mix plays each camera's sound this long after capture: the same cap.
+    router.setLiveSoundDelay(seconds: TileRouter.liveSoundDelaySeconds(
+      capEnabled: config.displayLatencyCapEnabled,
+      capMilliseconds: config.displayLatencyCapMilliseconds
+    ))
   }
 
   public func setDiskLatencyCapMilliseconds(_ milliseconds: Double) {
@@ -4591,6 +4596,11 @@ public final class AppEnvironment {
       $0.recordingMixSeconds = (recordingMix.emittedSeconds * 10).rounded() / 10
       $0.recordingMixLateBuffers = recordingMix.lateBuffers
       $0.recordingMixFutureBuffers = recordingMix.futureBuffers
+      $0.liveSoundDelayMilliseconds = (mix.readLagSeconds * 1_000).rounded()
+      $0.audioMixFades = mix.fades
+      $0.audioMixConcealedSeconds = (mix.concealedSeconds * 100).rounded() / 100
+      $0.recordingMixFades = recordingMix.fades
+      $0.recordingMixConcealedSeconds = (recordingMix.concealedSeconds * 100).rounded() / 100
       $0.cpuPercent = (cpu * 10).rounded() / 10
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
@@ -4614,6 +4624,26 @@ public final class AppEnvironment {
       $0.outputCorner = self.sourceLayout.programCorner.rawValue
     }
     telemetry.recordComposedFrames(composedFrames)
+    let sound = router.soundStatus()
+    for index in SourceIndex.all.map(\.value) {
+      telemetry.mutateTile(index) { tile in
+        guard let status = sound[index] else {
+          tile.soundState = ""
+          return
+        }
+        tile.soundState = status.live?.phase.rawValue ?? "silent"
+        tile.soundHeldMilliseconds = (status.heldSeconds * 1_000).rounded()
+        tile.soundFades = status.live?.fades ?? 0
+        tile.soundConcealedMilliseconds = ((status.live?.concealedSeconds ?? 0) * 1_000).rounded()
+        tile.soundTimelines = status.timeline.timelines
+        tile.soundSessionTimelines = status.timeline.sessionTimelines
+        tile.soundLargestStepMilliseconds = (status.timeline.largestStepSeconds * 10_000).rounded() / 10
+        tile.soundSteps = status.timeline.steps
+        tile.soundReanchors = status.timeline.reanchors
+        tile.soundGaps = status.timeline.gaps
+        tile.soundErrorMilliseconds = (status.timeline.lastErrorSeconds * 10_000).rounded() / 10
+      }
+    }
     var liveDecodeSessions = 0
     var countedBytesPerSecond = 0.0
     var uncountedTiles: [Int] = []
@@ -4668,7 +4698,6 @@ public final class AppEnvironment {
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
-        tile.audioReanchors = receive.audioReanchors
         tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
@@ -4679,6 +4708,8 @@ public final class AppEnvironment {
         tile.cameraClockOffsetSeconds = receive.cameraClockOffsetSeconds
         tile.cameraClockOffsetFilteredSeconds = receive.cameraClockOffsetFilteredSeconds
         tile.cameraClockOffsetSamples = receive.cameraClockOffsetSamples
+        tile.cameraClockSteps = receive.cameraClockSteps
+        tile.soundAwaitingClock = receive.soundAwaitingClock
         tile.correctedCaptureTime = receive.correctedCaptureTime
         tile.correctedCaptureAgeMilliseconds = receive.correctedCaptureAgeMilliseconds
       }

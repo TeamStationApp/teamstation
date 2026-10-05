@@ -145,14 +145,15 @@ struct RecordingSoundTests {
     ) { recording.add($0) }
     for mixer in [ liveMixer, recordingMixer ] {
       mixer.start()
-      mixer.append(Self.frame(Self.tone(0, seconds: 0.1), at: 10.0))
+      mixer.append(Self.frame(Self.tone(0, seconds: 0.1), at: 10.0, position: 0))
     }
     // 0.62 s on, the live mix has played up to 10.6 and the recording's nothing yet.
     clock.set(10.62)
     liveMixer.emitReadyChunks()
     recordingMixer.emitReadyChunks()
-    // Sound captured at 10.3 arrives only now.
-    let late = Self.frame(Self.tone(8_000, seconds: 0.04), at: 10.3)
+    // Sound the camera captured from 10.3 arrives only now; its own count puts it 0.2 s after the
+    // first buffer's end.
+    let late = Self.frame(Self.tone(8_000, seconds: 0.2), at: 10.3, position: 14_400)
     liveMixer.append(late)
     recordingMixer.append(late)
     clock.set(15.62)
@@ -162,7 +163,8 @@ struct RecordingSoundTests {
     #expect(liveMixer.currentStatistics.lateBuffers == 1)
     #expect(live.loudWalls.isEmpty)
     #expect(recordingMixer.currentStatistics.lateBuffers == 0)
-    #expect(recording.loudWalls == [ 10.3, 10.32 ])
+    let expected: [Double] = [ 10.3, 10.32, 10.34, 10.36, 10.38, 10.4, 10.42, 10.44, 10.46, 10.48 ]
+    #expect(recording.loudWalls == expected)
   }
 
   @Test("At Stop the recording's mix hands over everything it holds at once")
@@ -341,7 +343,7 @@ struct RecordingSoundTests {
     Array(repeating: value, count: Int(seconds * 48_000) * 2)
   }
 
-  static func frame(_ samples: [Int16], at wall: Double) -> AudioFrame {
+  static func frame(_ samples: [Int16], at wall: Double, position: Int64? = nil) -> AudioFrame {
     let format = AudioSampleBuilder.makeFormatDescription(
       AudioSampleBuilder.interleavedInt16Description(sampleRate: 48_000, channels: 2)
     )!
@@ -350,7 +352,12 @@ struct RecordingSoundTests {
       formatDescription: format,
       presentationTime: CMTime(seconds: wall, preferredTimescale: 48_000)
     )!
-    return AudioFrame(sourceID: SourceID("camera"), sampleBuffer: buffer, wallClock: WallClock(seconds: wall))
+    return AudioFrame(
+      sourceID: SourceID("camera"),
+      sampleBuffer: buffer,
+      wallClock: WallClock(seconds: wall),
+      sourceSamplePosition: position
+    )
   }
 
   /// Every chunk a mixer emitted: where it sits and whether it holds anything louder than silence.

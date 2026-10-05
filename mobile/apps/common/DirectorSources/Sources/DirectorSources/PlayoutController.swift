@@ -99,12 +99,10 @@ public struct PlayoutController: Sendable {
     return (offset - fastest) * 1000
   }
 
-  /// How long to hold anything that has no presentation time of its own. Live camera audio does
-  /// not use this: it is scheduled through `scheduleTime` against the same offset as the picture.
+  /// How long the delay line is holding pictures beyond this camera's best case.
   public var holdSeconds: Double { bufferMilliseconds / 1000 }
 
-  /// False until the first video frame has given the delay line an offset. Audio arriving before
-  /// that cannot be mapped onto the picture's timeline yet.
+  /// False until the first video frame has given the delay line an offset.
   public var hasOffset: Bool { offset != nil }
 
   /// Whether the window is full. Until it is, the buffer is a guess seeded from last time.
@@ -115,19 +113,6 @@ public struct PlayoutController: Sendable {
 
   public func dueTime(presentationSeconds: Double) -> Double {
     presentationSeconds + offsetSeconds
-  }
-
-  /// When this sample should be released, on the same uptime clock the delay line uses.
-  ///
-  /// Until the first video frame has sized the buffer, audio waits the seed delay from arrival so
-  /// it is not mixed at uptime zero. After that it follows its own RTP timeline through the same
-  /// offset as the picture, which is what keeps a keyframe burst from stacking a second of audio
-  /// onto one mix slot.
-  public func scheduleTime(presentationSeconds: Double, nowUptime: Double) -> Double {
-    guard hasOffset else {
-      return nowUptime + seedMilliseconds / 1_000
-    }
-    return dueTime(presentationSeconds: presentationSeconds)
   }
 
   // MARK: - Writing

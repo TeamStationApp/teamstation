@@ -5,8 +5,8 @@ import Testing
 /// The recording keeps what arrives late. A picture or a stretch of sound that reaches the iPad after
 /// its moment is still that moment's picture or sound, and it goes into the recording where it was
 /// captured; only the live monitor may refuse it. The archive is fed on arrival and placed by capture
-/// time, and a camera's late sound is re-anchored rather than dropped from the mix
-/// (`AudioPlayoutAnchorTests`). What stands between a late picture and the disk is one setting, and it
+/// time, and a camera's late sound waits on its own timeline for the recording's mix
+/// (`SourceSoundTimelineTests`). What stands between a late picture and the disk is one setting, and it
 /// has to stay off unless the operator turns it on.
 @Suite("Late material is kept")
 struct LateMaterialKeptTests {

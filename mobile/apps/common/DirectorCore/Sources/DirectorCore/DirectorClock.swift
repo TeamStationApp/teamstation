@@ -39,12 +39,19 @@ public protocol DirectorClock: AnyObject, Sendable {
   var now: WallClock { get }
 }
 
+/// The steady wall clock (`SteadyWall`): the device's wall clock carried forward on host uptime, so
+/// an NTP step of the iPad's clock moves nothing the live path times by it.
 public final class SystemClock: DirectorClock, @unchecked Sendable {
-  public init() {}
-  public var now: WallClock { WallClock(date: Date()) }
+  private let steady: SteadyWall
+
+  public init(steady: SteadyWall = .shared) {
+    self.steady = steady
+  }
+
+  public var now: WallClock { WallClock(seconds: steady.seconds()) }
 }
 
-/// System time plus a mutable offset. Advancing the offset makes the app believe time has
+/// The steady wall clock plus a mutable offset. Advancing the offset makes the app believe time has
 /// passed without stalling the frame path.
 public final class TestClock: DirectorClock, @unchecked Sendable {
   private let lock = NSLock()
@@ -55,7 +62,7 @@ public final class TestClock: DirectorClock, @unchecked Sendable {
   public var now: WallClock {
     lock.lock()
     defer { lock.unlock() }
-    return WallClock(date: Date()) + offset
+    return WallClock(seconds: SteadyWall.shared.seconds()) + offset
   }
 
   public var currentOffset: TimeInterval {
