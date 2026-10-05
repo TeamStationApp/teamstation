@@ -64,10 +64,14 @@ struct SpaceCheckTests {
     #expect(message?.hasPrefix("Not enough room on") == true)
     #expect(message?.contains("needs about") == true)
     #expect(message?.contains("is free") == true)
-    // On separate disks the download folder needs only what is saved.
+    // On separate disks the download folder needs only what is saved, and the work folder every
+    // camera's segments at once, since all of them are in before any is stitched.
     #expect(Self.check(free: 11 * Self.gigabyte, sameDisk: false).shortfall(
       trackBytes: tracks, combinedBytes: 0, destination: folder, scratch: URL(fileURLWithPath: "/tmp/scratch")
     ) == nil)
+    #expect(Self.check(free: 9 * Self.gigabyte, sameDisk: false).shortfall(
+      trackBytes: tracks, combinedBytes: 0, destination: folder, scratch: URL(fileURLWithPath: "/tmp/scratch")
+    ) != nil)
   }
 
   @Test("An export that does not fit stops before it writes anything, and says why")

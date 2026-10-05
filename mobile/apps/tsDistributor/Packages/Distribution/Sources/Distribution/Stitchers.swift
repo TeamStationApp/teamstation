@@ -6,9 +6,10 @@ import Foundation
 
 /// Stitches one track on this Mac with TS Director's own `ExportService`.
 ///
-/// It fetches the index rows and the files the track reads into a scratch folder laid out as the
-/// iPad lays them out, loads the rows into a scratch index, and exports with the window the whole
-/// export shares, so the file is the one the iPad would have made.
+/// In two steps, so an export can have everything off the iPad before it stitches anything: `fetch`
+/// brings the index rows and the files the track reads into a work folder laid out as the iPad lays
+/// them out; `stitch` loads the rows into a scratch index there and exports with the window the
+/// whole export shares, so the file is the one the iPad would have made.
 public struct MacStitcher: Sendable {
   public let connection: DirectorConnection
   public let scratch: URL
@@ -33,49 +34,83 @@ public struct MacStitcher: Sendable {
     case stitching(Double)
   }
 
-  /// Returns the stitched file, still inside `scratch`.
+  /// One track's files, fetched off the iPad into a folder of their own and laid out as the iPad
+  /// lays them out. Stitching it needs nothing more from the iPad.
+  public struct Fetched: Sendable {
+    public let track: Track
+    /// The work folder: everything the stitch reads, and where it writes.
+    public let root: URL
+    let response: ManifestResponse
+  }
+
+  /// Fetches the index rows and the files `track` reads into a work folder of its own in `scratch`.
   ///
-  /// Cancelling the task stops the downloads and the stitch where they are, and the work folder goes
-  /// with them: nothing of a cancelled or failed stitch is left in `scratch`.
-  public func stitch(
+  /// Cancelling the task stops the downloads where they are, and the work folder goes with them:
+  /// nothing of a cancelled or failed fetch is left in `scratch`.
+  public func fetch(
     recording: RecordingListing,
     track: Track,
-    window: ExportWindow,
-    progress: @escaping @Sendable (Stage) -> Void
-  ) async throws -> URL {
+    progress: @escaping @Sendable (_ received: Int64, _ total: Int64) -> Void
+  ) async throws -> Fetched {
     let response = try await connection.manifest(recordingID: recording.id, tracks: [ track ])
     let root = scratch.appendingPathComponent("stitch-\(UUID().uuidString)", isDirectory: true)
     do {
-      return try await stitch(
-        recording: recording,
-        track: track,
-        window: window,
-        response: response,
-        in: root,
-        progress: progress
-      )
+      try await fetch(response.files, into: root, progress: progress)
+      try Task.checkCancellation()
+      return Fetched(track: track, root: root, response: response)
     } catch {
       try? FileManager.default.removeItem(at: root)
       throw error
     }
   }
 
-  private func stitch(
+  /// Stitches a fetched track with the window the whole export shares, and returns the file, still
+  /// inside the fetch's work folder. It reads only this Mac's disk, so it carries on with the iPad
+  /// gone. A cancelled or failed stitch leaves no work folder behind.
+  public static func stitch(
+    _ fetched: Fetched,
+    recording: RecordingListing,
+    window: ExportWindow,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> URL {
+    do {
+      return try await stitchFetched(fetched, recording: recording, window: window, progress: progress)
+    } catch {
+      try? FileManager.default.removeItem(at: fetched.root)
+      throw error
+    }
+  }
+
+  /// Fetches `track` and stitches it in one go, for a single file wanted at once.
+  public func stitch(
     recording: RecordingListing,
     track: Track,
     window: ExportWindow,
-    response: ManifestResponse,
-    in root: URL,
     progress: @escaping @Sendable (Stage) -> Void
   ) async throws -> URL {
-    let archives = root.appendingPathComponent("Archives", isDirectory: true)
-    let program = root.appendingPathComponent("Program", isDirectory: true)
-    let prepared = root.appendingPathComponent("Prepared", isDirectory: true)
+    let fetched = try await fetch(recording: recording, track: track) { received, total in
+      progress(.fetching(received: received, total: total))
+    }
+    return try await Self.stitch(fetched, recording: recording, window: window) { progress(.stitching($0)) }
+  }
+
+  private static func folders(in root: URL) -> (archives: URL, program: URL, prepared: URL) {
+    (
+      root.appendingPathComponent("Archives", isDirectory: true),
+      root.appendingPathComponent("Program", isDirectory: true),
+      root.appendingPathComponent("Prepared", isDirectory: true)
+    )
+  }
+
+  private func fetch(
+    _ files: [RemoteFile],
+    into root: URL,
+    progress: @escaping @Sendable (Int64, Int64) -> Void
+  ) async throws {
+    let (archives, program, prepared) = Self.folders(in: root)
     for folder in [ archives, program, prepared ] {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
-
-    let files = response.files
     let tally = FetchTally(total: files.reduce(0) { $0 + $1.bytes }, report: progress)
     let connection = self.connection
     let width = max(1, parallelDownloads)
@@ -96,11 +131,17 @@ public struct MacStitcher: Sendable {
       for _ in 0..<width { start() }
       while try await group.next() != nil { start() }
     }
+  }
 
-    try Task.checkCancellation()
-
-    let index = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
-    try index.importManifest(response.manifest)
+  private static func stitchFetched(
+    _ fetched: Fetched,
+    recording: RecordingListing,
+    window: ExportWindow,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> URL {
+    let (archives, program, prepared) = folders(in: fetched.root)
+    let index = try ArchiveIndex(url: fetched.root.appendingPathComponent("index.sqlite"))
+    try index.importManifest(fetched.response.manifest)
     guard let summary = try index.recordings().first(where: { $0.id == recording.id }) else {
       throw DistributionError.nothingToStitch
     }
@@ -114,7 +155,7 @@ public struct MacStitcher: Sendable {
     )
     let cameras: [(sourceID: SourceID, name: String)]
     let includeProgram: Bool
-    switch track {
+    switch fetched.track {
     case .primary:
       cameras = []
       includeProgram = true
@@ -131,7 +172,7 @@ public struct MacStitcher: Sendable {
       preparedRoot: prepared,
       reprocess: true,
       window: window,
-      progress: { item in progress(.stitching(item.fraction)) }
+      progress: { item in progress(item.fraction) }
     )
     guard let url = urls.first else { throw DistributionError.nothingToStitch }
     return url
@@ -143,9 +184,9 @@ final class FetchTally: @unchecked Sendable {
   private let lock = NSLock()
   private var received: [String: Int64] = [:]
   private let total: Int64
-  private let report: @Sendable (MacStitcher.Stage) -> Void
+  private let report: @Sendable (Int64, Int64) -> Void
 
-  init(total: Int64, report: @escaping @Sendable (MacStitcher.Stage) -> Void) {
+  init(total: Int64, report: @escaping @Sendable (Int64, Int64) -> Void) {
     self.total = total
     self.report = report
   }
@@ -155,6 +196,6 @@ final class FetchTally: @unchecked Sendable {
       received[path] = bytes
       return received.values.reduce(0, +)
     }
-    report(.fetching(received: sum, total: total))
+    report(sum, total)
   }
 }

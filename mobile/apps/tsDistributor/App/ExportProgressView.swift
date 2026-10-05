@@ -141,6 +141,8 @@ struct ExportProgressView: View {
       return "Waiting"
     case let .fetching(received, total):
       return "Fetching, \(Self.megabytes(received)) of \(Self.megabytes(total))"
+    case .fetched:
+      return "Off the iPad, waiting to be stitched"
     case .stitching:
       return "Stitching"
     case let .downloading(received, _):
