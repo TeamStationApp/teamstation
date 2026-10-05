@@ -70,13 +70,14 @@ internal class RTSPClientConnection(
     private var audioSequence = 0
     private var videoPacketCount = 0L
     private var videoOctetCount = 0L
-    private var audioFrameIndex = 0
+    /** Audio stamps by capture position; made at the first frame, when the rate is known. */
+    private var audioStamps: AudioStampClock? = null
     private var audioPacketCount = 0L
     private var audioOctetCount = 0L
-    private var lastAudioReportMillis = 0L
+    private val audioReports = SenderReportSchedule()
     private var firstVideoPresentationTime: Double? = null
     private val videoTimestamps = RTPTimestampSequencer()
-    private var lastReportMillis = 0L
+    private val videoReports = SenderReportSchedule()
 
     /**
      * Wall clock minus the capture clock, sampled once per connection.
@@ -244,7 +245,9 @@ internal class RTSPClientConnection(
                 // in still starts at zero and RTP-Info can promise that.
                 firstVideoPresentationTime = null
                 videoTimestamps.reset()
-                audioFrameIndex = 0
+                audioStamps = null
+                videoReports.reset()
+                audioReports.reset()
 
                 val response = outcome.response.adding(
                     "RTP-Info",
@@ -381,6 +384,10 @@ internal class RTSPClientConnection(
             // repeat a presentation time, so the sent timestamp is forced to advance — measured on
             // the 32-bit circle, because the field's own rollover is a forward step, not a repeat.
             val timestamp = videoTimestamps.next(natural)
+            // The session's first picture goes out behind a sender report, so the receiver can place it.
+            if (videoReports.reportBeforeFirstPacket(System.currentTimeMillis())) {
+                sendVideoReport(setup, timestamp, frame.presentationTime)
+            }
 
             val writer = RTPPacketWriter(SDPBuilder.videoPayloadType, videoSSRC)
             val batch = ByteBuilder(bytes + payloads.size * 16)
@@ -400,7 +407,9 @@ internal class RTSPClientConnection(
             }
 
             sendMedia(batch.build())
-            sendReportIfDue(setup, timestamp, frame.presentationTime)
+            if (videoReports.reportIsDue(System.currentTimeMillis())) {
+                sendVideoReport(setup, timestamp, frame.presentationTime)
+            }
         }
     }
 
@@ -411,7 +420,14 @@ internal class RTSPClientConnection(
             val payload = AACPacketizer().payload(frame) ?: return@submit
 
             val writer = RTPPacketWriter(SDPBuilder.audioPayloadType, audioSSRC)
-            val timestamp = AACPacketizer.timestamp(audioFrameIndex)
+            // Stamped by where its samples were captured: a dropout becomes a skip in the stamps at
+            // the place it happened, rather than every later stamp sitting early by it.
+            val capture = (frame.captureTime ?: frame.presentationTime) + AudioStampClock.captureTrimSeconds
+            val stamps = audioStamps ?: AudioStampClock(frame.sampleRate.toDouble()).also { audioStamps = it }
+            val timestamp = stamps.next(capture)
+            if (audioReports.reportBeforeFirstPacket(System.currentTimeMillis())) {
+                sendAudioReport(setup, timestamp, capture)
+            }
             val packet = writer.packet(
                 sequenceNumber = audioSequence,
                 timestamp = timestamp,
@@ -419,7 +435,6 @@ internal class RTSPClientConnection(
                 payload = payload
             )
             audioSequence = (audioSequence + 1) and 0xFFFF
-            audioFrameIndex += 1
             audioPacketCount += 1
             audioOctetCount += payload.size
 
@@ -427,7 +442,7 @@ internal class RTSPClientConnection(
             synchronized(congestion) { congestion.offered(framed.size) }
             sendQueue.enqueueAudio(framed.size)
             sendMedia(framed)
-            frame.captureTime?.let { sendAudioReportIfDue(setup, timestamp.toLong(), it) }
+            if (audioReports.reportIsDue(System.currentTimeMillis())) sendAudioReport(setup, timestamp, capture)
         }
     }
 
@@ -461,15 +476,11 @@ internal class RTSPClientConnection(
      * A sender report about once a second, which is what RFC 3550 §6.2 recommends and what clients
      * use to derive a wall clock and to learn the CNAME.
      */
-    private fun sendReportIfDue(
+    private fun sendVideoReport(
         setup: RTSPResponder.Setup,
         rtpTimestamp: Long,
         captureTime: Double
     ) {
-        val now = System.currentTimeMillis()
-        if (now - lastReportMillis < 1000) return
-        lastReportMillis = now
-
         // Stamped from the frame's capture time, not from the clock at send.
         //
         // The RTP timestamp in this report is derived from capture; pairing it with the wall clock
@@ -498,15 +509,11 @@ internal class RTSPClientConnection(
      * count behind those timestamps fell behind real time. Paired from the frame's capture time and
      * put on wall time through the same offset as the video's, so both streams share one mapping.
      */
-    private fun sendAudioReportIfDue(
+    private fun sendAudioReport(
         setup: RTSPResponder.Setup,
         rtpTimestamp: Long,
         captureTime: Double
     ) {
-        val now = System.currentTimeMillis()
-        if (now - lastAudioReportMillis < 1000) return
-        lastAudioReportMillis = now
-
         val captureWallMillis = (captureTime * 1000).toLong() + captureToWallOffsetMillis
         val writer = RTCPWriter(audioSSRC, identity())
         val report = writer.compoundPacket(
