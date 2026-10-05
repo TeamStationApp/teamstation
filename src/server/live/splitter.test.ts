@@ -157,6 +157,34 @@ describe('live ingest', function () {
     expect(status?.ingress.publishing).equals(true)
   })
 
+  it('keeps a late sound track at its stream time in the HLS it writes', async function () {
+    // A stand-in that writes down what it was asked to do.
+    const argsFile = join(tmpdir(), 'ts-live-test-args.txt')
+    rmSync(argsFile, { force: true })
+    writeFileSync(
+      FAKE_FFMPEG,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\nexec sleep 30\n`
+    )
+    try {
+      setLive(KEY, spec())
+      forcePublishForTest(KEY, true)
+      let args: string[] = []
+      for (let i = 0; i < 100 && args.length === 0; i++) {
+        await new Promise(resolve => setTimeout(resolve, 20))
+        try {
+          args = readFileSync(argsFile, 'utf8').trim().split('\n')
+        } catch {}
+      }
+      const at = args.indexOf('-hls_segment_options')
+      expect(at, args.join(' ')).greaterThan(-1)
+      expect(args[at + 1]).equals('movflags=+frag_discont')
+      expect(args[args.indexOf('-f') + 1]).equals('hls')
+    } finally {
+      writeFileSync(FAKE_FFMPEG, '#!/bin/sh\nexec sleep 30\n')
+      rmSync(argsFile, { force: true })
+    }
+  })
+
   it('adds an onward destination as a second output, with its key hidden', function () {
     setLive(KEY, spec(['rtmp://relay.example.com/live/theirkey']))
     forcePublishForTest(KEY, true)

@@ -2,6 +2,8 @@ import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
 import { readdirSync, readFileSync, writeFileSync } from 'fs'
 
+import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
+
 /**
  * The RTMP ingest, and the split.
  *
@@ -591,6 +593,9 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     'fmp4',
     '-hls_fmp4_init_filename',
     'init.mp4',
+    // A sound track that starts after the picture keeps its RTMP time rather
+    // than being stamped from 0 s.
+    ...KEEP_STREAM_TIMES,
     '-hls_flags',
     flags.join('+'),
     '-start_number',

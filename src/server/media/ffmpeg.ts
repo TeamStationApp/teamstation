@@ -97,12 +97,32 @@ export const MEDIA_PLAYLIST = 'video.m3u8'
 export const VIDEO_FILE = 'video.mp4'
 
 /**
+ * Every fragment stamped with its own tracks' stream times.
+ *
+ * By default the MP4 muxer starts each track's fragment clock at that track's
+ * own first packet, so a sound track that begins 18 minutes into a stream is
+ * written as beginning at 0 s, beside a picture at 18 minutes, and plays out of
+ * step for the whole recording. `frag_discont` makes every fragment's `tfdt`
+ * the packet's own decode time instead, so a late track starts where it really
+ * starts and the gap before it is simply a stretch with no sound. A track that
+ * starts with the stream is stamped exactly as before.
+ *
+ * Both the live leg and the remux that turns a stream or an upload into a
+ * recording carry it: either one alone would put the sound back at 0 s.
+ */
+export const KEEP_STREAM_TIMES = [
+  '-hls_segment_options',
+  'movflags=+frag_discont'
+] as const
+
+/**
  * The arguments that turn a recording into HLS without re-encoding it.
  *
  * - `-c copy` is the whole point: no transcode, ever.
  * - `-tag:v hvc1` makes HEVC play in Safari and on Apple hardware. Without it
  *   the track is tagged `hev1` and Safari refuses it.
  * - fMP4, so one file format covers HEVC and H.264 alike.
+ * - `KEEP_STREAM_TIMES`, so a track that starts late keeps its real start.
  * - `single_file` writes **one** fragmented MP4 with a byte-range playlist,
  *   the shape PeerTube already uses. It is what lets a video in the Space
  *   need one presigned URL instead of one per segment, and it is what lets a
@@ -132,6 +152,7 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     'vod',
     '-hls_segment_type',
     'fmp4',
+    ...KEEP_STREAM_TIMES,
     '-hls_flags',
     'single_file+independent_segments',
     '-hls_segment_filename',

@@ -16,6 +16,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { addPerson } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import type { SpaceSettings } from '../media/spacesHls'
 import type { LiveControllerOptions } from './controller'
 import { finishStream, liveVideoDir, settleLiveWork } from './controller'
@@ -201,10 +202,29 @@ describe('the end of a live stream', function () {
       .execute()
   }
 
-  /** Six seconds of real HEVC, written the way the live output writes it. */
-  async function recordSomething(videoId: string): Promise<string> {
+  /**
+   * Six seconds of real HEVC, written the way the live output writes it.
+   *
+   * `lateSound` adds sound from 3 s, either kept at its stream time as the
+   * live leg writes it, or stamped from 0 s as it was before.
+   */
+  async function recordSomething(
+    videoId: string,
+    lateSound?: 'kept' | 'reset'
+  ): Promise<string> {
     const dir = liveVideoDir(mediaRoot, videoId)
     await mkdir(dir, { recursive: true })
+    const sound =
+      lateSound == null
+        ? []
+        : [
+            '-f',
+            'lavfi',
+            '-itsoffset',
+            '3',
+            '-i',
+            'sine=frequency=1000:sample_rate=48000:duration=3'
+          ]
     await run(
       FFMPEG,
       [
@@ -214,17 +234,20 @@ describe('the end of a live stream', function () {
         '-f',
         'lavfi',
         '-i',
-        'testsrc2=size=320x240:rate=30',
-        '-t',
-        '6',
+        'testsrc2=size=320x240:rate=30:duration=6',
+        ...sound,
         '-c:v',
         'libx265',
         '-x265-params',
         'log-level=none',
+        // A keyframe a second, so each 2 s segment is its own fragment.
+        '-g',
+        '30',
         '-tag:v',
         'hvc1',
         '-pix_fmt',
         'yuv420p',
+        ...(lateSound == null ? [] : ['-c:a', 'aac']),
         '-f',
         'hls',
         '-hls_time',
@@ -233,6 +256,7 @@ describe('the end of a live stream', function () {
         'event',
         '-hls_segment_type',
         'fmp4',
+        ...(lateSound === 'kept' ? KEEP_STREAM_TIMES : []),
         '-hls_flags',
         'independent_segments',
         '-hls_segment_filename',
@@ -327,5 +351,54 @@ describe('the end of a live stream', function () {
     const keys = [...held.keys()]
     expect(keys.some(key => key.endsWith('vid_played/video.mp4'))).equals(true)
     expect(keys.some(key => key.includes('seg000000'))).equals(false)
+  })
+  it('says so on the row when a late sound track was stamped from nought', async function () {
+    if (options == null) this.skip()
+    await makeStream({ id: 'liv_reset', videoId: 'vid_reset', published: true })
+    await recordSomething('vid_reset', 'reset')
+    const said: string[] = []
+
+    await finishStream(
+      { ...options, log: message => said.push(message) },
+      'liv_reset',
+      'the stream window closed'
+    )
+    const ready = await db
+      ?.selectFrom('videos')
+      .select(['status', 'status_message as message'])
+      .where('id', '=', 'vid_reset')
+      .executeTakeFirst()
+    // The picture is whole, so it is still watchable.
+    expect(ready?.status).equals('ready')
+    expect(ready?.message).matches(/^sound is stamped \d\.\d s ahead of/)
+    expect(
+      said.some(line => line.includes('vid_reset: sound is stamped'))
+    ).equals(true)
+
+    // Copying it to the Space does not wipe what was found.
+    await settleLiveWork()
+    const stored = await db
+      ?.selectFrom('videos')
+      .select(['storage', 'status_message as message'])
+      .where('id', '=', 'vid_reset')
+      .executeTakeFirst()
+    expect(stored?.storage).equals('spaces')
+    expect(stored?.message).matches(/^sound is stamped/)
+  })
+
+  it('says nothing about late sound kept at its stream time', async function () {
+    if (options == null) this.skip()
+    await makeStream({ id: 'liv_kept', videoId: 'vid_kept', published: true })
+    await recordSomething('vid_kept', 'kept')
+
+    await finishStream(options, 'liv_kept', 'the stream window closed')
+    await settleLiveWork()
+    const row = await db
+      ?.selectFrom('videos')
+      .select(['storage', 'status_message as message'])
+      .where('id', '=', 'vid_kept')
+      .executeTakeFirst()
+    expect(row?.storage).equals('spaces')
+    expect(row?.message).equals(null)
   })
 })
