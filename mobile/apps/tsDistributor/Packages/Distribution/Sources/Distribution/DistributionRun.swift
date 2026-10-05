@@ -58,6 +58,18 @@ public struct TeamStationPlan: Sendable {
     case .combined: "combined"
     }
   }
+
+  /// The recording's files this upload sends as they are. The combined video is not among them:
+  /// what it is made from is the combined plan's to say.
+  public func files(of recording: RecordingListing) -> [Track] {
+    tracks.compactMap { track in
+      switch track {
+      case .primary: recording.hasPrimary ? .primary : nil
+      case .camera(let name): recording.cameras.first { $0.name == name }.map { .camera($0.sourceID) }
+      case .combined: nil
+      }
+    }
+  }
 }
 
 public enum UploadState: Sendable, Equatable {
@@ -86,6 +98,9 @@ public struct CombinedPlan: Sendable {
     self.frames = frames
     self.audioCamera = audioCamera
   }
+
+  /// The files it is made from.
+  public var tracks: [Track] { inputs.map(\.track) }
 }
 
 /// Where one file of an export has got to.
@@ -156,7 +171,6 @@ public final class DistributionRun {
     self.lockRenewal = lockRenewal
     self.spaceCheck = spaceCheck
     self.recording = recording
-    self.tracks = tracks
     self.combined = combined
     self.combinedState = combined == nil ? nil : .queued
     self.teamStation = teamStation
@@ -167,7 +181,24 @@ public final class DistributionRun {
     self.jobs = jobs
     self.destination = destination
     self.reprocess = reprocess
+    let tracks = Self.tracks(of: recording, asked: tracks, combined: combined, teamStation: teamStation)
+    self.tracks = tracks
     self.states = Dictionary(uniqueKeysWithValues: tracks.map { ($0, TrackState.queued) })
+  }
+
+  /// Every file an export has to have on this Mac: the ones asked for, the ones its uploads send,
+  /// and the ones its combined video is made from — so nothing is uploaded or combined short of a
+  /// file that is still on the iPad. In the recording's order: the primary output, then its cameras.
+  public nonisolated static func tracks(
+    of recording: RecordingListing,
+    asked: [Track],
+    combined: CombinedPlan?,
+    teamStation: TeamStationPlan?
+  ) -> [Track] {
+    let wanted = Set(asked + (combined?.tracks ?? []) + (teamStation?.files(of: recording) ?? []))
+    let every = (recording.hasPrimary ? [ Track.primary ] : []) + recording.cameras.map { Track.camera($0.sourceID) }
+    // A track the recording does not list stays at the end rather than go missing.
+    return every.filter(wanted.contains) + asked.filter { !every.contains($0) }
   }
 
   /// The folder this export's files go in.

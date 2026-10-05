@@ -73,8 +73,23 @@ public struct APIRecording: Codable, Equatable, Sendable {
   public var combined: APIFile
   /// This recording's folder on the Mac; nil until an export folder is chosen.
   public var folder: String?
+  /// The TeamStation game TS Director filed this take under, which its uploads go to unless a
+  /// request names another; nil when it names none.
+  public var gameId: String?
+  /// That game's dated title, which its videos are called.
+  public var gameTitle: String?
 
-  public init(id: Int64, startedAt: Date, endedAt: Date?, isLive: Bool, files: [APIFile], combined: APIFile, folder: String?) {
+  public init(
+    id: Int64,
+    startedAt: Date,
+    endedAt: Date?,
+    isLive: Bool,
+    files: [APIFile],
+    combined: APIFile,
+    folder: String?,
+    gameId: String? = nil,
+    gameTitle: String? = nil
+  ) {
     self.id = id
     self.startedAt = startedAt
     self.endedAt = endedAt
@@ -82,6 +97,8 @@ public struct APIRecording: Codable, Equatable, Sendable {
     self.files = files
     self.combined = combined
     self.folder = folder
+    self.gameId = gameId
+    self.gameTitle = gameTitle
   }
 }
 
@@ -103,14 +120,16 @@ public struct APIRecordingList: Codable, Equatable, Sendable {
 
 /// Which run a request starts. Each is one export run with different parts in it.
 public enum APIRunKind: String, Codable, Sendable {
-  /// The chosen files onto the Mac, stitched on the Mac and the iPad; nothing else.
+  /// The chosen files onto the Mac, every one off the iPad before any is stitched; nothing else.
   case download
-  /// The files, then the combined video and the uploads as the settings say, unless the request
+  /// The files, then the combined video as the settings say, then the uploads to the game TS
+  /// Director filed the take under when this Mac is signed in to TeamStation — unless the request
   /// says otherwise.
   case export
   /// The combined video, made from the files, fetching any that are not here yet.
   case combined
-  /// Uploads of files already on the Mac.
+  /// Uploads to TeamStation, fetching first any file they send that is not on this Mac yet, and
+  /// making the combined video first when it goes up and is not here.
   case upload
   /// Exactly what the request lists.
   case custom
@@ -134,8 +153,8 @@ public struct APIUploadRequest: Codable, Equatable, Sendable {
   /// upload.
   public var tracks: [String]?
   /// The TeamStation game every file of this upload belongs to, as
-  /// `/api/v1/teamstation` lists them. Required: a recording with no game
-  /// named has nowhere to go.
+  /// `/api/v1/teamstation` lists them. Nil for the game TS Director filed the
+  /// take under; a take filed under none needs one named here.
   public var game: String?
   /// What the videos are called; each file adds its camera's name, or
   /// "combined". Nil for the game's own dated title, which is what the app

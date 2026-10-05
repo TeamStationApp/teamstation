@@ -77,10 +77,10 @@ public enum DistributorAPI {
     }
 
     let verbs: [(String, APIRunKind, String)] = [
-      ("download", .download, "Brings files onto this Mac, stitched on the Mac and the iPad: {tracks?, reprocess?}"),
-      ("export", .export, "Files, then the combined video and uploads as the settings say: {tracks?, reprocess?, combined?, upload?}"),
+      ("download", .download, "Brings files onto this Mac, every one off the iPad before any is stitched: {tracks?, reprocess?}"),
+      ("export", .export, "Files, then the combined video as the settings say, then uploads to the take's game when signed in: {tracks?, reprocess?, combined?, upload?}"),
       ("combined", .combined, "Makes the combined video, fetching any file it needs: {combined: {include?, audioCamera?}}"),
-      ("upload", .upload, "Uploads files already on this Mac to a game on TeamStation: {upload: {game, tracks?, title?}}")
+      ("upload", .upload, "Uploads to the take's game on TeamStation, fetching any file not on this Mac first: {upload?: {game?, tracks?, title?}}")
     ]
     for (verb, kind, summary) in verbs {
       router.add("POST", "/api/v1/recordings/{id}/\(verb)", summary: summary) { request, parameters in
