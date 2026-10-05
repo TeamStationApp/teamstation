@@ -1,8 +1,18 @@
 import { expect } from 'chai'
-import { describe, it } from 'mocha'
+import Hls from 'hls.js'
+import { afterEach, describe, it } from 'mocha'
 
-import { aheadControl } from './attachHls'
+import {
+  aheadControl,
+  APPLE_VENDOR,
+  attachHls,
+  attachNativeHls,
+  HLS_MIME_TYPE,
+  hlsEngine,
+  type RetryClock
+} from './attachHls'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
+import type { VideoHandle } from './videoHandle'
 
 /**
  * What happens to a live game when the stream stumbles.
@@ -82,5 +92,425 @@ describe('how far ahead a grid tile loads', function () {
     expect(config.maxMaxBufferLength).equals(20)
     control.setAheadSec(60)
     expect(config.maxMaxBufferLength).equals(30)
+  })
+})
+
+/** A `<video>` that records what it was told, for both paths. */
+class FakeVideo {
+  src = ''
+  error: { code: number } | null = null
+  paused = true
+  currentTime = 0
+  readyState = 0
+  loads = 0
+  plays = 0
+  removed: string[] = []
+  native: string
+  listeners = new Map<string, Set<() => void>>()
+  constructor(native = 'maybe') {
+    this.native = native
+  }
+
+  canPlayType(type: string): string {
+    return type === HLS_MIME_TYPE ? this.native : ''
+  }
+
+  load(): void {
+    this.loads += 1
+  }
+
+  async play(): Promise<void> {
+    this.plays += 1
+    this.paused = false
+  }
+
+  pause(): void {
+    this.paused = true
+  }
+
+  removeAttribute(name: string): void {
+    this.removed.push(name)
+    if (name === 'src') this.src = ''
+  }
+
+  addEventListener(
+    type: string,
+    listener: () => void,
+    options?: { once?: boolean }
+  ): void {
+    const set = this.listeners.get(type) ?? new Set()
+    const run =
+      options?.once === true
+        ? (): void => {
+            set.delete(run)
+            listener()
+          }
+        : listener
+    if (options?.once === true) onceOf.set(listener, run)
+    set.add(run)
+    this.listeners.set(type, set)
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    const set = this.listeners.get(type)
+    set?.delete(listener)
+    const once = onceOf.get(listener)
+    if (once != null) set?.delete(once)
+  }
+
+  emit(type: string): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener()
+  }
+
+  /** How many listeners are still attached, of any kind. */
+  attached(): number {
+    let total = 0
+    for (const set of this.listeners.values()) total += set.size
+    return total
+  }
+}
+const onceOf = new WeakMap<() => void, () => void>()
+
+/** A clock that only moves when the test says so. */
+function manualClock(): RetryClock & { advance: (ms: number) => void } {
+  let now = 1_000_000
+  let timers: Array<{ at: number; run: () => void; id: number }> = []
+  let next = 1
+  return {
+    now: () => now,
+    setTimeout: (run, ms) => {
+      const id = next++
+      timers.push({ at: now + ms, run, id })
+      return id
+    },
+    clearTimeout: id => {
+      timers = timers.filter(timer => timer.id !== id)
+    },
+    advance: ms => {
+      now += ms
+      const due = timers.filter(timer => timer.at <= now)
+      timers = timers.filter(timer => timer.at > now)
+      for (const timer of due) timer.run()
+    }
+  }
+}
+
+/** Runs `body` with `navigator.vendor` reading as given. */
+function asBrowser(vendor: string, body: () => void): void {
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { vendor }
+  })
+  try {
+    body()
+  } finally {
+    if (before == null) Reflect.deleteProperty(globalThis, 'navigator')
+    else Object.defineProperty(globalThis, 'navigator', before)
+  }
+}
+
+describe('who plays the playlist', function () {
+  it('is WebKit itself on Apple’s engine, even with Media Source', function () {
+    expect(
+      hlsEngine({ vendor: APPLE_VENDOR, nativeHls: true, mediaSource: true })
+    ).equals('native')
+  })
+
+  it('is hls.js on Apple’s engine when native HLS is missing', function () {
+    expect(
+      hlsEngine({ vendor: APPLE_VENDOR, nativeHls: false, mediaSource: true })
+    ).equals('hls.js')
+  })
+
+  it('is hls.js in Chrome, Edge, Brave and Firefox', function () {
+    // Chrome answers `maybe` for HLS whether or not it can play it.
+    for (const vendor of ['Google Inc.', '']) {
+      expect(hlsEngine({ vendor, nativeHls: true, mediaSource: true })).equals(
+        'hls.js'
+      )
+      expect(hlsEngine({ vendor, nativeHls: false, mediaSource: true })).equals(
+        'hls.js'
+      )
+    }
+  })
+
+  it('is the browser where there is no Media Source but native HLS', function () {
+    expect(
+      hlsEngine({ vendor: APPLE_VENDOR, nativeHls: true, mediaSource: false })
+    ).equals('native')
+    expect(
+      hlsEngine({ vendor: 'Google Inc.', nativeHls: true, mediaSource: false })
+    ).equals('native')
+  })
+
+  it('is nobody without either', function () {
+    expect(
+      hlsEngine({ vendor: APPLE_VENDOR, nativeHls: false, mediaSource: false })
+    ).equals('none')
+  })
+})
+
+describe('attaching in a browser', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+  type Stubbed = Record<string, unknown>
+  let saved: Stubbed = {}
+  let calls: string[] = []
+
+  /** hls.js as if Media Source were here, recording what it was asked. */
+  function withMediaSource(): void {
+    const proto = Hls.prototype as unknown as Stubbed
+    saved = {
+      isSupported: (Hls as unknown as Stubbed).isSupported,
+      loadSource: proto.loadSource,
+      attachMedia: proto.attachMedia,
+      destroy: proto.destroy
+    }
+    calls = []
+    Hls.isSupported = () => true
+    proto.loadSource = (source: string) => {
+      calls.push(`loadSource ${source}`)
+    }
+    proto.attachMedia = () => {
+      calls.push('attachMedia')
+    }
+    proto.destroy = () => {
+      calls.push('destroy')
+    }
+  }
+
+  afterEach(function () {
+    if (saved.isSupported == null) return
+    const proto = Hls.prototype as unknown as Stubbed
+    Hls.isSupported = saved.isSupported as typeof Hls.isSupported
+    proto.loadSource = saved.loadSource
+    proto.attachMedia = saved.attachMedia
+    proto.destroy = saved.destroy
+    saved = {}
+  })
+
+  it('hands Safari the address and takes it back on teardown', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    asBrowser(APPLE_VENDOR, () => {
+      const detach = attachHls(video as unknown as VideoHandle, url)
+      expect(video.src).equals(url)
+      expect(calls).deep.equals([])
+      detach()
+    })
+    expect(video.src).equals('')
+    expect(video.removed).deep.equals(['src'])
+    expect(video.loads).equals(1)
+    expect(video.attached()).equals(0)
+  })
+
+  it('uses hls.js in Chrome and destroys it on teardown', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    let control: unknown = 'unset'
+    asBrowser('Google Inc.', () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          buffer: {
+            aheadSec: 10,
+            onControl: next => {
+              control = next
+            }
+          }
+        }
+      )
+      expect(video.src).equals('')
+      expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia'])
+      expect(control).not.equals(null)
+      detach()
+    })
+    expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia', 'destroy'])
+    expect(control).equals(null)
+    expect(video.attached()).equals(0)
+  })
+
+  it('uses hls.js on WebKit without native HLS', function () {
+    withMediaSource()
+    const video = new FakeVideo('')
+    asBrowser(APPLE_VENDOR, () => {
+      attachHls(video as unknown as VideoHandle, url)()
+    })
+    expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia', 'destroy'])
+    expect(video.src).equals('')
+  })
+
+  it('leaves the element alone with neither', function () {
+    // No Media Source in Node, and this element plays no HLS.
+    const video = new FakeVideo('')
+    asBrowser('Google Inc.', () => {
+      attachHls(video as unknown as VideoHandle, url)()
+    })
+    expect(video.src).equals('')
+    expect(video.loads).equals(0)
+    expect(video.attached()).equals(0)
+  })
+})
+
+describe('the browser’s own player, when it stumbles', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+
+  function fail(video: FakeVideo, code = 2): void {
+    video.error = { code }
+    video.emit('error')
+  }
+
+  it('loads again after a second, back at the same moment, playing', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    let gaveUp = 0
+    attachNativeHls(video, url, () => (gaveUp += 1), undefined, clock)
+    video.emit('play')
+    video.paused = false
+    video.currentTime = 754.5
+    fail(video)
+    // The element resets itself after an error, and is paused.
+    video.paused = true
+    video.emit('pause')
+    video.currentTime = 0
+    clock.advance(999)
+    expect(video.loads).equals(0)
+    clock.advance(1)
+    expect(video.loads).equals(1)
+    video.emit('loadedmetadata')
+    expect(video.currentTime).equals(754.5)
+    video.emit('canplay')
+    expect(video.plays).equals(1)
+    expect(gaveUp).equals(0)
+  })
+
+  it('leaves a pause the viewer asked for alone', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    attachNativeHls(video, url, undefined, undefined, clock)
+    video.emit('pause')
+    fail(video)
+    clock.advance(1000)
+    video.emit('canplay')
+    expect(video.plays).equals(0)
+  })
+
+  it('asks the caller what the viewer wants when it is told to', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    let wants = false
+    attachNativeHls(video, url, undefined, { wantsToPlay: () => wants }, clock)
+    fail(video)
+    clock.advance(1000)
+    video.emit('canplay')
+    expect(video.plays).equals(0)
+    wants = true
+    fail(video)
+    clock.advance(2000)
+    video.emit('canplay')
+    expect(video.plays).equals(1)
+  })
+
+  it('ignores a load stopped on purpose, and a second error while waiting', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    attachNativeHls(video, url, undefined, undefined, clock)
+    fail(video, 1)
+    video.error = null
+    video.emit('error')
+    clock.advance(60_000)
+    expect(video.loads).equals(0)
+    fail(video)
+    fail(video)
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+  })
+
+  it('waits longer each time, and asks for a new address after three reloads', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    let gaveUp = 0
+    attachNativeHls(video, url, () => (gaveUp += 1), undefined, clock)
+    fail(video)
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+    fail(video)
+    clock.advance(1999)
+    expect(video.loads).equals(1)
+    clock.advance(1)
+    expect(video.loads).equals(2)
+    fail(video)
+    clock.advance(4000)
+    expect(video.loads).equals(3)
+    fail(video)
+    expect(gaveUp).equals(1)
+    fail(video)
+    clock.advance(60_000)
+    expect(gaveUp).equals(1)
+    expect(video.loads).equals(3)
+  })
+
+  it('starts the ladder again once pictures come back', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    let gaveUp = 0
+    attachNativeHls(video, url, () => (gaveUp += 1), undefined, clock)
+    for (let round = 0; round < 5; round++) {
+      fail(video)
+      clock.advance(1000)
+      video.emit('canplay')
+    }
+    expect(video.loads).equals(5)
+    expect(gaveUp).equals(0)
+  })
+
+  it('gives up on the clock when five minutes pass without pictures', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    let gaveUp = 0
+    attachNativeHls(video, url, () => (gaveUp += 1), undefined, clock)
+    fail(video)
+    clock.advance(5 * 60_000 + 1)
+    expect(gaveUp).equals(1)
+    expect(video.loads).equals(0)
+  })
+
+  it('gives up at once on an error after five minutes of trouble', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    let gaveUp = 0
+    attachNativeHls(video, url, () => (gaveUp += 1), undefined, clock)
+    fail(video)
+    clock.advance(1000)
+    clock.advance(5 * 60_000)
+    fail(video)
+    expect(gaveUp).equals(1)
+  })
+
+  it('stops waiting and lets go of the element on teardown', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    const detach = attachNativeHls(video, url, undefined, undefined, clock)
+    expect(video.src).equals(url)
+    fail(video)
+    detach()
+    clock.advance(60_000)
+    expect(video.loads).equals(1)
+    expect(video.src).equals('')
+    expect(video.attached()).equals(0)
+  })
+
+  it('runs on the real clock when none is given', function (done) {
+    const video = new FakeVideo()
+    const detach = attachNativeHls(video, url)
+    fail(video)
+    detach()
+    setTimeout(() => {
+      expect(video.loads).equals(1)
+      done()
+    }, 1100)
   })
 })

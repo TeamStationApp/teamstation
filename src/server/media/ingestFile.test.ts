@@ -1,7 +1,25 @@
-import { expect } from 'chai'
-import { describe, it } from 'mocha'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 
-import { ffprobeBeside, preRollFrom, readProbe, tagFor } from './ingestFile'
+import { expect } from 'chai'
+import { after, before, describe, it } from 'mocha'
+
+import { AAC_PRIMING_SAMPLES, ffmpegEncoders, remuxToHls } from './ffmpeg'
+import {
+  ffprobeBeside,
+  preRollFrom,
+  probeVideoFile,
+  readProbe,
+  tagFor,
+  undeclaredPriming
+} from './ingestFile'
+import { boxesInFile, readFragment, readTracks } from './trackStarts'
+
+const run = promisify(execFile)
+const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
 
 describe('the tag a remuxed track keeps', function () {
   it('gives HEVC the tag Safari insists on', function () {
@@ -185,6 +203,203 @@ describe('finding ffprobe', function () {
   it('leaves a path that does not end in the name alone', function () {
     expect(ffprobeBeside('/usr/bin/ffmpeg-static')).equals(
       '/usr/bin/ffmpeg-static'
+    )
+  })
+})
+
+describe('AAC priming a file does not declare', function () {
+  const aac = {
+    index: 1,
+    codec_type: 'audio',
+    codec_name: 'aac',
+    profile: 'LC',
+    sample_rate: '48000',
+    initial_padding: 0
+  }
+
+  it('is the 2,112 samples Apple’s encoders write, on AAC-LC that says nothing', function () {
+    expect(undeclaredPriming(aac)).equals(AAC_PRIMING_SAMPLES)
+    expect(AAC_PRIMING_SAMPLES).equals(2112)
+  })
+
+  it('is nothing where the file declares its own, or for anything else', function () {
+    expect(undeclaredPriming({ ...aac, initial_padding: 2112 })).equals(0)
+    expect(undeclaredPriming({ ...aac, initial_padding: 1024 })).equals(0)
+    expect(undeclaredPriming({ ...aac, profile: 'HE-AAC' })).equals(0)
+    expect(undeclaredPriming({ ...aac, codec_name: 'opus' })).equals(0)
+    expect(undeclaredPriming({ ...aac, sample_rate: undefined })).equals(0)
+    expect(undeclaredPriming({ ...aac, initial_padding: undefined })).equals(
+      AAC_PRIMING_SAMPLES
+    )
+    expect(undeclaredPriming(undefined)).equals(0)
+  })
+
+  const probe = (streams: unknown[], packets: unknown[]): string =>
+    JSON.stringify({ streams, packets, format: { duration: '4721.0' } })
+  const hevc = {
+    index: 0,
+    codec_type: 'video',
+    codec_name: 'hevc',
+    width: 1920,
+    height: 1080
+  }
+
+  it('moves the sound back, and the pre-roll with it where it is the deepest', function () {
+    // A camera angle: its B-frames start the picture one frame (33 ms) back,
+    // and the sound's undeclared priming is 44 ms, which is now the deepest.
+    const read = readProbe(
+      probe(
+        [hevc, aac],
+        [
+          { stream_index: 0, dts_time: '-0.033333' },
+          { stream_index: 1, dts_time: '0.000000' }
+        ]
+      ),
+      'angle.mov'
+    )
+    expect(read.soundPrimingSamples).equals(2112)
+    expect(read.preRollSec).closeTo(0.044, 0.000001)
+  })
+
+  it('leaves the pre-roll to the picture where the picture is deeper', function () {
+    // The programme: three B-frames, 67 ms back.
+    const read = readProbe(
+      probe(
+        [hevc, aac],
+        [
+          { stream_index: 0, dts_time: '-0.066667' },
+          { stream_index: 1, dts_time: '0.000000' }
+        ]
+      ),
+      'programme.mov'
+    )
+    expect(read.preRollSec).closeTo(0.066667, 0.000001)
+  })
+
+  it('changes nothing for a file that declares its priming', function () {
+    const read = readProbe(
+      probe(
+        [hevc, { ...aac, initial_padding: 2112 }],
+        [
+          { stream_index: 0, dts_time: '0.000000' },
+          { stream_index: 1, dts_time: '-0.044000' }
+        ]
+      ),
+      'declared.mov'
+    )
+    expect(read.soundPrimingSamples).equals(0)
+    expect(read.preRollSec).closeTo(0.044, 0.000001)
+  })
+
+  it('moves only the stream it is told to', function () {
+    expect(
+      preRollFrom(
+        [
+          { stream_index: 0, dts_time: '0' },
+          { stream_index: 1, dts_time: '0' }
+        ],
+        new Map([[1, 0.044]])
+      )
+    ).closeTo(0.044, 0.000001)
+  })
+})
+
+describe('a remux of sound whose priming is undeclared, through real ffmpeg', function () {
+  this.timeout(60_000)
+  let dir = ''
+  let file = ''
+
+  before(async function () {
+    let encoders: Set<string>
+    try {
+      encoders = await ffmpegEncoders(FFMPEG)
+    } catch {
+      this.skip()
+      return
+    }
+    if (!encoders.has('libx264') || !encoders.has('aac')) this.skip()
+    dir = await mkdtemp(join(tmpdir(), 'tsPriming-'))
+    // AAC carried as ADTS declares no priming, so muxed into a .mov it
+    // arrives the way TS Director's and TS Distributor's files do.
+    const adts = join(dir, 'sound.aac')
+    await run(FFMPEG, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=1000:sample_rate=48000:duration=3',
+      '-c:a',
+      'aac',
+      '-f',
+      'adts',
+      adts
+    ])
+    file = join(dir, 'take.mov')
+    await run(FFMPEG, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=160x120:rate=30:duration=3',
+      '-i',
+      adts,
+      '-c:v',
+      'libx264',
+      '-bf',
+      '0',
+      '-c:a',
+      'copy',
+      file
+    ])
+  })
+
+  after(async function () {
+    if (dir !== '') await rm(dir, { recursive: true, force: true })
+  })
+
+  /** How far the sound's first fragment starts after the picture's. */
+  async function soundAfterPicture(outDir: string): Promise<number> {
+    const path = join(outDir, 'video.mp4')
+    let tracks = readTracks(Buffer.alloc(0))
+    for await (const moov of boxesInFile(path, 'moov'))
+      tracks = readTracks(moov)
+    for await (const moof of boxesInFile(path, 'moof')) {
+      const runs = readFragment(moof, tracks)
+      const picture = runs.find(one => one.kind === 'video')
+      const sound = runs.find(one => one.kind === 'audio')
+      if (picture != null && sound != null) {
+        return sound.startSec - picture.startSec
+      }
+    }
+    throw new Error('no fragment carried both')
+  }
+
+  it('starts the real sound with the picture', async function () {
+    const probed = await probeVideoFile(FFMPEG, file)
+    expect(probed.soundPrimingSamples).equals(2112)
+
+    const asIs = join(dir, 'asIs')
+    await mkdir(asIs)
+    await remuxToHls(FFMPEG, { input: file, outDir: asIs, videoTag: null })
+    const honoured = join(dir, 'honoured')
+    await mkdir(honoured)
+    await remuxToHls(FFMPEG, {
+      input: file,
+      outDir: honoured,
+      videoTag: null,
+      soundPrimingSamples: probed.soundPrimingSamples
+    })
+
+    expect(await soundAfterPicture(asIs)).closeTo(0, 0.0001)
+    // The priming now plays before the first picture, so the first real
+    // sample is with it.
+    expect(await soundAfterPicture(honoured)).closeTo(-2112 / 48000, 0.0001)
+    expect(await readFile(join(honoured, 'video.m3u8'), 'utf8')).contains(
+      '#EXT-X-ENDLIST'
     )
   })
 })

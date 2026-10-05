@@ -8,11 +8,18 @@ import type { VideoHandle } from './videoHandle'
 /**
  * Points a `<video>` at an HLS playlist, whichever way this browser needs.
  *
- * Safari plays HLS itself, and does it with hardware decoding on iOS and the
- * Mac, so it is given the URL directly. Chrome and Firefox play no HLS at all
- * without help; hls.js feeds them the same segments through Media Source
- * Extensions, which is also where Chrome's HEVC hardware decoding lives. One
- * playlist, one set of files, both paths.
+ * Apple's engine plays HLS itself, with hardware decoding, and is given the
+ * URL directly. That is Safari on a Mac, an iPhone and an iPad, and every
+ * other browser on an iPhone or iPad, which all run it. WebKit offers Media
+ * Source too, and hls.js would happily use it there, but WebKit's Media Source
+ * decoder fails on open-GOP HEVC (CRA pictures with leading B-frames), which
+ * is what every camera angle and the TS Director programme carry: "Media
+ * failed to decode" a few seconds in, then a reset loop. Its own HLS player
+ * plays the same files.
+ *
+ * Chrome and Firefox play no HLS at all without help; hls.js feeds them the
+ * segments through Media Source Extensions, which is also where Chrome's HEVC
+ * hardware decoding lives. One playlist, one set of files, both paths.
  *
  * Returns the teardown, which the caller must run: hls.js holds a worker and
  * buffers ahead, and leaking one per visited game would eat the tab.
@@ -31,32 +38,232 @@ export function attachHls(
   intent?: PlayIntent
 ): () => void {
   // The one place the seam is crossed. `VideoHandle` is what the six modules
-  // that drive the picture agree on; the three lines below — `src`, `load`,
-  // `canPlayType` — and the element hls.js is handed are the browser's own,
+  // that drive the picture agree on; `src`, `load`, `canPlayType`, the
+  // element's `error` and the element hls.js is handed are the browser's own,
   // and they have no equivalent on a phone, which is why the whole of this
   // file has a native sibling rather than a branch inside it. The cast is
   // sound here and nowhere else: this file is only ever reached from the web
   // build, where the handle *is* the element.
   const video = handle as unknown as HTMLVideoElement
 
-  // Media Source first, which is the order hls.js itself recommends, and not
-  // `canPlayType`: Chrome answers `maybe` for HLS whether or not it can
-  // actually play it, so that answer decides nothing. Anything without Media
-  // Source — iOS Safari — falls through to the native path below, which is
-  // what it wants anyway.
-  if (!Hls.isSupported()) {
-    if (video.canPlayType('application/vnd.apple.mpegurl') === '') {
-      // Neither MSE nor native HLS. The element is left alone rather than
-      // handed a URL it cannot read.
-      return () => undefined
-    }
-    video.src = url
-    return () => {
-      video.removeAttribute('src')
-      video.load()
-    }
+  const engine = hlsEngine({
+    vendor: typeof navigator === 'undefined' ? '' : navigator.vendor,
+    nativeHls: video.canPlayType(HLS_MIME_TYPE) !== '',
+    mediaSource: Hls.isSupported()
+  })
+  // Neither Media Source nor native HLS. The element is left alone rather
+  // than handed a URL it cannot read.
+  if (engine === 'none') return () => undefined
+  if (engine === 'native') return attachNativeHls(video, url, onGiveUp, intent)
+  return attachHlsJs(handle, video, url, onGiveUp, intent)
+}
+
+/** What a browser that plays HLS itself answers `canPlayType` for. */
+export const HLS_MIME_TYPE = 'application/vnd.apple.mpegurl'
+
+/** `navigator.vendor` in every browser built on Apple's WebKit. */
+export const APPLE_VENDOR = 'Apple Computer, Inc.'
+
+/** Which player a playlist is handed to. */
+export type HlsEngine = 'native' | 'hls.js' | 'none'
+
+/**
+ * Who plays the playlist in this browser.
+ *
+ * - Apple WebKit with native HLS: the browser itself, even where Media Source
+ *   exists (iOS 17.1 and later, every Mac), because WebKit's Media Source
+ *   decoder is what fails on open-GOP HEVC.
+ * - Anything else with Media Source: hls.js. Chrome answers `maybe` for HLS
+ *   whether or not it can actually play it, so `canPlayType` decides nothing
+ *   outside WebKit.
+ * - No Media Source but native HLS (an older iPhone): the browser.
+ */
+export function hlsEngine(browser: {
+  /** `navigator.vendor`. */
+  vendor: string
+  /** `canPlayType` answered something other than `''` for HLS. */
+  nativeHls: boolean
+  /** hls.js can run here (`Hls.isSupported()`). */
+  mediaSource: boolean
+}): HlsEngine {
+  const { vendor, nativeHls, mediaSource } = browser
+  if (nativeHls && (vendor === APPLE_VENDOR || !mediaSource)) return 'native'
+  if (mediaSource) return 'hls.js'
+  return 'none'
+}
+
+/**
+ * The element as the native path drives it: the handle, plus the members only
+ * a browser's `<video>` has.
+ */
+export interface NativeHlsVideo {
+  src: string
+  readonly error: { readonly code: number } | null
+  readonly paused: boolean
+  currentTime: number
+  readonly readyState: number
+  load: () => void
+  play: () => Promise<void>
+  removeAttribute: (name: 'src') => void
+  addEventListener: (
+    type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
+    listener: () => void,
+    options?: { once?: boolean }
+  ) => void
+  removeEventListener: (
+    type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
+    listener: () => void
+  ) => void
+}
+
+/** The clock the native path waits on, replaceable in a test. */
+export interface RetryClock {
+  now: () => number
+  setTimeout: (run: () => void, ms: number) => unknown
+  clearTimeout: (timer: unknown) => void
+}
+
+const realClock: RetryClock = {
+  now: () => Date.now(),
+  setTimeout: (run, ms) => setTimeout(run, ms),
+  clearTimeout: timer => {
+    clearTimeout(timer as ReturnType<typeof setTimeout>)
+  }
+}
+
+/** `MediaError.MEDIA_ERR_ABORTED`: the load was stopped on purpose. */
+const MEDIA_ERR_ABORTED = 1
+
+/**
+ * The browser's own HLS player, with the same patience as hls.js gets.
+ *
+ * The browser loads the segments, refreshes a live playlist and rides out a
+ * slow network itself; what it does not do is come back from an error. So the
+ * ladder from the hls.js path is kept, number for number — try again, waiting
+ * longer each time up to ten seconds, for as long as five minutes — and "try
+ * again" means loading the playlist afresh and putting the playhead back where
+ * it was. A native player can raise one error for an expired token and then
+ * sit there, so the deadline is armed on the clock rather than on the next
+ * error, and three reloads that never get as far as a picture make the
+ * address the suspect: the caller is asked for a new one.
+ *
+ * How far ahead it loads is the browser's business here. A grid's buffer
+ * control is never handed out, so the grid leaves this tile's limit alone.
+ */
+export function attachNativeHls(
+  video: NativeHlsVideo,
+  url: string,
+  onGiveUp?: () => void,
+  intent?: PlayIntent,
+  clock: RetryClock = realClock
+): () => void {
+  const patience = 5 * 60_000
+  /** After this many, the address is the suspect whatever the error said. */
+  const MAX_RELOADS = 3
+  let firstFailureAt = 0
+  let gaveUp = false
+  let wait = 1000
+  let reloads = 0
+  let timer: unknown
+  /** Where the playhead was when the trouble started, to put it back. */
+  let resumeAtSec = 0
+
+  // The same split as the hls.js path: a pause during a recovery is the
+  // recovery's doing, any other is the viewer's.
+  let ownWantsToPlay = !video.paused
+  let recovering = false
+  const wantsToPlay = (): boolean =>
+    intent == null ? ownWantsToPlay : intent.wantsToPlay()
+  const onPlay = (): void => {
+    ownWantsToPlay = true
+  }
+  const onPause = (): void => {
+    if (!recovering) ownWantsToPlay = false
   }
 
+  const giveUp = (): void => {
+    if (gaveUp) return
+    gaveUp = true
+    onGiveUp?.()
+  }
+
+  const seekBack = (): void => {
+    if (resumeAtSec > 0) video.currentTime = resumeAtSec
+  }
+
+  const reload = (): void => {
+    video.removeEventListener('loadedmetadata', seekBack)
+    video.addEventListener('loadedmetadata', seekBack, { once: true })
+    video.load()
+  }
+
+  /** Pictures again: the trouble has passed, and it may resume. */
+  const recovered = (): void => {
+    firstFailureAt = 0
+    wait = 1000
+    reloads = 0
+    if (!recovering) return
+    const wanted = shouldResumeAfterRecovery({
+      recovering,
+      wantsToPlay: wantsToPlay(),
+      paused: video.paused
+    })
+    recovering = false
+    resumeAtSec = 0
+    if (wanted) video.play().catch(() => undefined)
+  }
+
+  const onError = (): void => {
+    // A load this file or the caller stopped on purpose is not trouble.
+    if (video.error == null || video.error.code === MEDIA_ERR_ABORTED) return
+    if (gaveUp || timer != null) return
+    const now = clock.now()
+    if (firstFailureAt === 0) firstFailureAt = now
+    reloads += 1
+    if (reloads > MAX_RELOADS || now - firstFailureAt > patience) {
+      giveUp()
+      return
+    }
+    if (!recovering && video.currentTime > 0) resumeAtSec = video.currentTime
+    recovering = true
+    timer = clock.setTimeout(() => {
+      timer = undefined
+      if (clock.now() - firstFailureAt > patience) {
+        giveUp()
+        return
+      }
+      wait = Math.min(wait * 2, 10_000)
+      reload()
+    }, wait)
+  }
+
+  video.addEventListener('play', onPlay)
+  video.addEventListener('pause', onPause)
+  video.addEventListener('canplay', recovered)
+  video.addEventListener('error', onError)
+  video.src = url
+
+  return () => {
+    if (timer != null) clock.clearTimeout(timer)
+    timer = undefined
+    video.removeEventListener('play', onPlay)
+    video.removeEventListener('pause', onPause)
+    video.removeEventListener('canplay', recovered)
+    video.removeEventListener('error', onError)
+    video.removeEventListener('loadedmetadata', seekBack)
+    video.removeAttribute('src')
+    video.load()
+  }
+}
+
+/** hls.js over Media Source: every browser that is not Apple's. */
+function attachHlsJs(
+  handle: VideoHandle,
+  video: HTMLVideoElement,
+  url: string,
+  onGiveUp?: () => void,
+  intent?: PlayIntent
+): () => void {
   // `maxBufferLength` is where hls.js starts, not where it stops: it loads
   // whenever the buffer is shorter than this and grows the target from there
   // as bandwidth allows, up to `maxMaxBufferLength`. A ceiling is the two set

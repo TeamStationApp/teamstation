@@ -89,12 +89,50 @@ export interface RemuxOptions {
    * a stream tagged as a codec it is not plays nowhere at all.
    */
   videoTag?: string | null
+  /**
+   * AAC encoder priming at the head of the sound that the file does not
+   * declare, in samples, or 0. See `AAC_PRIMING_SAMPLES`.
+   */
+  soundPrimingSamples?: number
 }
+
+/**
+ * The encoder delay every Apple AAC encoder puts at the head of its sound.
+ *
+ * A file normally declares it, in an edit list that starts its sound track
+ * this many samples in, and FFmpeg then stamps those samples before zero so
+ * a player decodes them and drops them. TS Director's and TS Distributor's
+ * files copy the camera's AAC and declare nothing: their sound tracks start at
+ * sample 0. AVFoundation assumes this much priming on any AAC track that says
+ * nothing, so on the iPad and the Mac the sound is where it was recorded; FFmpeg
+ * takes the track at its word and puts the priming at the picture's first
+ * frame, so every remux of those files delayed the real sound by 44 ms.
+ */
+export const AAC_PRIMING_SAMPLES = 2112
 
 /** What the remux writes, and what everything downstream expects to find. */
 export const MASTER_PLAYLIST = 'master.m3u8'
 export const MEDIA_PLAYLIST = 'video.m3u8'
 export const VIDEO_FILE = 'video.mp4'
+
+/**
+ * Every fragment stamped with its own tracks' stream times.
+ *
+ * By default the MP4 muxer starts each track's fragment clock at that track's
+ * own first packet, so a sound track that begins 18 minutes into a stream is
+ * written as beginning at 0 s, beside a picture at 18 minutes, and plays out of
+ * step for the whole recording. `frag_discont` makes every fragment's `tfdt`
+ * the packet's own decode time instead, so a late track starts where it really
+ * starts and the gap before it is simply a stretch with no sound. A track that
+ * starts with the stream is stamped exactly as before.
+ *
+ * Both the live leg and the remux that turns a stream or an upload into a
+ * recording carry it: either one alone would put the sound back at 0 s.
+ */
+export const KEEP_STREAM_TIMES = [
+  '-hls_segment_options',
+  'movflags=+frag_discont'
+] as const
 
 /**
  * The arguments that turn a recording into HLS without re-encoding it.
@@ -103,6 +141,9 @@ export const VIDEO_FILE = 'video.mp4'
  * - `-tag:v hvc1` makes HEVC play in Safari and on Apple hardware. Without it
  *   the track is tagged `hev1` and Safari refuses it.
  * - fMP4, so one file format covers HEVC and H.264 alike.
+ * - `KEEP_STREAM_TIMES`, so a track that starts late keeps its real start.
+ * - `soundPrimingSamples`, so sound whose AAC priming the file left undeclared
+ *   starts at its first real sample, not 44 ms late.
  * - `single_file` writes **one** fragmented MP4 with a byte-range playlist,
  *   the shape PeerTube already uses. It is what lets a video in the Space
  *   need one presigned URL instead of one per segment, and it is what lets a
@@ -114,7 +155,13 @@ export const VIDEO_FILE = 'video.mp4'
  * `video.mp4.tmp` that is renamed away the moment the remux finishes.
  */
 export function remuxToHlsArgs(options: RemuxOptions): string[] {
-  const { input, outDir, segmentSeconds = 6, videoTag = 'hvc1' } = options
+  const {
+    input,
+    outDir,
+    segmentSeconds = 6,
+    videoTag = 'hvc1',
+    soundPrimingSamples = 0
+  } = options
   return [
     '-hide_banner',
     '-loglevel',
@@ -124,6 +171,12 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     '-c',
     'copy',
     ...(videoTag == null ? [] : ['-tag:v', videoTag]),
+    // Undeclared priming is stamped before zero, as a declared one would be,
+    // so the real sound starts with the picture. `SR * TB` turns samples into
+    // the stream's own time base, whatever that is.
+    ...(soundPrimingSamples > 0
+      ? ['-bsf:a', `setts=ts=TS-${soundPrimingSamples}/(SR*TB)`]
+      : []),
     '-f',
     'hls',
     '-hls_time',
@@ -132,6 +185,7 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     'vod',
     '-hls_segment_type',
     'fmp4',
+    ...KEEP_STREAM_TIMES,
     '-hls_flags',
     'single_file+independent_segments',
     '-hls_segment_filename',
