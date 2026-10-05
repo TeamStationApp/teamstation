@@ -17,7 +17,6 @@ import {
   initialsOf,
   PillTabs,
   Screen,
-  type Stat,
   type StatFilter,
   StatFilterModal,
   StatGrid,
@@ -30,8 +29,8 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
 import { WalkUpTab } from '../walkup/WalkUpTab'
 import { battingLine, exactDateTime } from './format'
-import { average } from './GameScreen'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
+import { battingColumns, pitchingColumns, playerStats } from './statColumns'
 
 export interface PlayerScreenProps {
   client: TeamStationClient
@@ -492,7 +491,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           {stats?.batting != null && (
             <Card>
               <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
-              <StatGrid stats={battingStats(stats.batting)} columns={4} />
+              <StatGrid
+                stats={playerStats(stats.batting, battingColumns)}
+                columns={4}
+              />
             </Card>
           )}
 
@@ -511,14 +513,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           {stats?.pitching != null && (
             <Card>
               <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
-              <StatGrid stats={pitchingStats(stats.pitching)} columns={4} />
-            </Card>
-          )}
-
-          {stats?.pitching == null && stats?.batting != null && (
-            <Card>
-              <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
-              <Text style={styles.muted}>{lstrings.player_no_pitching}</Text>
+              <StatGrid
+                stats={playerStats(stats.pitching, pitchingColumns)}
+                columns={4}
+              />
             </Card>
           )}
         </View>
@@ -565,63 +563,6 @@ function scopeOf(stats: PlayerStats | undefined, filter: StatFilter): string {
           : lstrings.player_filter_career
   if (games === '') return named
   return sprintf(lstrings.player_stats_scope, games, named)
-}
-
-/**
- * A batting line as a block of figures.
- *
- * The four that a reader looks for first — average, on-base, slugging, OPS —
- * and then the counts they are made of, so the rate and its workings are on the
- * same card.
- */
-function battingStats(line: NonNullable<PlayerStats['batting']>): Stat[] {
-  return [
-    { label: lstrings.stats_average, value: average(line.rates.avg) },
-    { label: lstrings.stats_on_base, value: average(line.rates.obp) },
-    { label: lstrings.stats_slugging, value: average(line.rates.slg) },
-    { label: lstrings.stats_ops, value: average(line.rates.ops) },
-    { label: lstrings.stats_plate_appearances, value: String(line.pa) },
-    { label: lstrings.stats_at_bats, value: String(line.ab) },
-    { label: lstrings.stats_hits, value: String(line.h) },
-    { label: lstrings.stats_home_runs, value: String(line.hr) },
-    { label: lstrings.stats_runs, value: String(line.r) },
-    { label: lstrings.stats_runs_batted_in, value: String(line.rbi) },
-    { label: lstrings.stats_walks, value: String(line.bb) },
-    { label: lstrings.stats_strikeouts, value: String(line.k) },
-    { label: lstrings.stats_stolen_bases, value: String(line.sb) }
-  ]
-}
-
-/**
- * And a pitching line.
- *
- * The ERA is missing rather than zero for a pitcher with no outs.
- */
-function pitchingStats(line: NonNullable<PlayerStats['pitching']>): Stat[] {
-  return [
-    {
-      label: lstrings.stats_era,
-      value:
-        line.rates.era == null
-          ? lstrings.stats_no_average
-          : line.rates.era.toFixed(2)
-    },
-    { label: lstrings.stats_innings, value: line.ip },
-    { label: lstrings.stats_earned_runs, value: String(line.er) },
-    {
-      label: lstrings.stats_whip,
-      value:
-        line.rates.whip == null
-          ? lstrings.stats_no_average
-          : line.rates.whip.toFixed(2)
-    },
-    { label: lstrings.stats_games, value: String(line.g) },
-    { label: lstrings.stats_hits, value: String(line.h) },
-    { label: lstrings.stats_runs, value: String(line.r) },
-    { label: lstrings.stats_walks, value: String(line.bb) },
-    { label: lstrings.stats_strikeouts, value: String(line.k) },
-    { label: lstrings.stats_home_runs, value: String(line.hr) }
-  ]
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

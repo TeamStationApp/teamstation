@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import {
   asBattingRow,
   asPitchingRow,
+  type BattingRow,
   type PitchingRow,
   TeamStationClient
 } from '../../common/api'
@@ -63,7 +64,10 @@ const BLAIR = asPitchingRow({
   rates: {}
 })
 
-async function boxScore(pitching: PitchingRow[] = []): Promise<HTMLElement> {
+async function boxScore(
+  pitching: PitchingRow[] = [],
+  batting?: BattingRow[]
+): Promise<HTMLElement> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({
     ...gameFixture,
@@ -75,7 +79,7 @@ async function boxScore(pitching: PitchingRow[] = []): Promise<HTMLElement> {
   client.teams = async () => []
   client.boxScore = async () => ({
     stats: undefined,
-    batting: [
+    batting: batting ?? [
       asBattingRow({
         userId: 1,
         shortName: 'Alex',
@@ -162,5 +166,33 @@ describe('the box score', function () {
     expect(text).not.includes('Pitching — Hawks')
     expect(text).not.includes('Batting — Hawks')
     expect(text).not.includes('No individual lines')
+  })
+  it('preserves batting appearance order for both sides and player links', async function () {
+    this.timeout(10000)
+    const rows = ['away', 'home'].flatMap((teamId, side) =>
+      [0, 1].map(i =>
+        asBattingRow({
+          userId: 100 + side * 2 + i,
+          shortName: `${side === 0 ? 'Away' : 'Home'} ${i === 0 ? 'Lead' : 'Power'}`,
+          teamId,
+          pa: i + 1,
+          ab: i + 1,
+          h: i,
+          singles: i,
+          doubles: 0,
+          triples: 0,
+          hr: 0,
+          bb: 0,
+          k: 0,
+          hbp: 0,
+          rbi: 0,
+          rates: {}
+        })
+      )
+    )
+    const container = await boxScore([], rows)
+    const text = container.textContent ?? ''
+    expect(text.indexOf('Away Lead')).lessThan(text.indexOf('Away Power'))
+    expect(text.indexOf('Home Lead')).lessThan(text.indexOf('Home Power'))
   })
 })
