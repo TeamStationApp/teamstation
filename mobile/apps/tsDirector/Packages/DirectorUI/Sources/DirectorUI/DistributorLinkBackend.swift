@@ -91,7 +91,9 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
         hasPrimary: recording.programFilename != nil,
         cameras: cameras,
         preparedTracks: preparedTracks(of: recording, cameras: cameras),
-        soundShortfall: Self.soundShortfall(of: recording)
+        soundShortfall: Self.soundShortfall(of: recording),
+        gameId: recording.gameId,
+        gameTitle: recording.gameTitle
       )
     }
   }

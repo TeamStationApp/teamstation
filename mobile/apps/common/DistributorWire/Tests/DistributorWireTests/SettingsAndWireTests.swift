@@ -80,8 +80,20 @@ struct SettingsAndWireTests {
       isLive: true,
       hasPrimary: true,
       cameras: [ CameraListing(sourceID: SourceID("cam-a"), name: "Home", isNamed: true, bytes: 1_234) ],
-      preparedTracks: [ .primary ]
+      preparedTracks: [ .primary ],
+      gameId: "gam_1",
+      gameTitle: "2026-09-20 Home at Away"
     )
     #expect(try JSONDecoder().decode(RecordingListing.self, from: JSONEncoder().encode(listing)) == listing)
+  }
+
+  @Test("A listing from a TS Director that does not file takes under games names none")
+  func listingWithoutAGame() throws {
+    let json = """
+    {"id": 7, "startedAt": {"seconds": 1000}, "isLive": false, "hasPrimary": true, "cameras": [], "preparedTracks": []}
+    """
+    let listing = try JSONDecoder().decode(RecordingListing.self, from: Data(json.utf8))
+    #expect(listing.gameId == nil)
+    #expect(listing.gameTitle == nil)
   }
 }
