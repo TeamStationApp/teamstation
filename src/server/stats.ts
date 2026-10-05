@@ -1,3 +1,5 @@
+import { addStatCount, type StatExtras } from '../common/statExtras'
+
 // The figures on a screen, added up out of the stored stat lines.
 //
 // One row per player per game is written by a stats engine outside these
@@ -14,6 +16,7 @@
 export const DEFAULT_ERA_INNINGS = 6
 
 export interface StatRow {
+  extra?: StatExtras | null
   userId: number
   teamId: string | null
   /**
@@ -51,6 +54,10 @@ export interface StatRow {
 }
 
 export interface BattingLine {
+  roe: number | null
+  fc: number | null
+  pik: number | null
+  firstPa: number | null
   userId: number
   /** Null where the total spans more than one team, as a career does. */
   teamId: string | null
@@ -80,6 +87,16 @@ export interface BattingLine {
 }
 
 export interface PitchingLine {
+  gs: number | null
+  pitches: number | null
+  kl: number | null
+  pitchAb: number | null
+  wp: number | null
+  lob: number | null
+  bk: number | null
+  pik: number | null
+  cs: number | null
+  sb: number | null
   userId: number
   teamId: string | null
   g: number
@@ -123,7 +140,11 @@ function emptyBatting(userId: number, teamId: string | null): BattingLine {
     sb: 0,
     cs: 0,
     sf: 0,
-    sh: 0
+    sh: 0,
+    roe: 0,
+    fc: 0,
+    pik: 0,
+    firstPa: null
   }
 }
 
@@ -141,6 +162,16 @@ function emptyPitching(userId: number, teamId: string | null): PitchingLine {
     er: 0,
     bb: 0,
     k: 0,
+    wp: 0,
+    gs: 0,
+    pitches: 0,
+    kl: 0,
+    pitchAb: 0,
+    lob: 0,
+    bk: 0,
+    pik: 0,
+    cs: 0,
+    sb: 0,
     eraInnings: DEFAULT_ERA_INNINGS
   }
 }
@@ -170,14 +201,26 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
     held.cs += row.cs
     held.sf += row.sf
     held.sh += row.sh
+    held.roe = addStatCount(held.roe, row.extra?.roe)
+    held.fc = addStatCount(held.fc, row.extra?.fc)
+    held.pik = addStatCount(held.pik, row.extra?.pik)
+    if (row.extra?.firstPa != null)
+      held.firstPa = Math.min(held.firstPa ?? Infinity, row.extra.firstPa)
     byPlayer.set(row.userId, held)
   }
   return [...byPlayer.values()]
-    .filter(line => line.pa > 0 || line.r > 0 || line.sb > 0 || line.cs > 0)
+    .filter(
+      line =>
+        line.pa > 0 ||
+        line.r > 0 ||
+        line.sb > 0 ||
+        line.cs > 0 ||
+        (line.pik ?? 0) > 0
+    )
     .sort((a, b) => b.pa - a.pa)
 }
 
-/** And one per pitcher, most work first, which is the starter. */
+/** One per pitcher, most outs first; the starter is recorded separately. */
 export function pitchingLines(rows: StatRow[]): PitchingLine[] {
   const byPlayer = new Map<number, PitchingLine>()
   // The ERA divisor is weighted by the innings thrown under it, so a career
@@ -185,7 +228,12 @@ export function pitchingLines(rows: StatRow[]): PitchingLine[] {
   // rather than on whichever season came last.
   const weighted = new Map<number, { outs: number; product: number }>()
   for (const row of rows) {
-    if (row.pitchBf === 0 && row.pitchOuts === 0) continue
+    if (
+      row.pitchBf === 0 &&
+      row.pitchOuts === 0 &&
+      row.extra?.appeared !== true
+    )
+      continue
     const held =
       byPlayer.get(row.userId) ?? emptyPitching(row.userId, row.teamId)
     if (held.teamId !== row.teamId) held.teamId = null
@@ -199,6 +247,20 @@ export function pitchingLines(rows: StatRow[]): PitchingLine[] {
     held.er += row.pitchEr
     held.bb += row.pitchBb
     held.k += row.pitchK
+    for (const field of [
+      'gs',
+      'pitches',
+      'kl',
+      'pitchAb',
+      'lob',
+      'bk',
+      'wp'
+    ] as const) {
+      held[field] = addStatCount(held[field], row.extra?.[field])
+    }
+    held.pik = addStatCount(held.pik, row.extra?.pitchPik)
+    held.cs = addStatCount(held.cs, row.extra?.pitchCs)
+    held.sb = addStatCount(held.sb, row.extra?.pitchSb)
     byPlayer.set(row.userId, held)
 
     const sum = weighted.get(row.userId) ?? { outs: 0, product: 0 }
@@ -215,6 +277,7 @@ export function pitchingLines(rows: StatRow[]): PitchingLine[] {
 }
 
 export interface BattingRates {
+  sbPct?: number
   avg?: number
   obp?: number
   slg?: number
@@ -223,6 +286,7 @@ export interface BattingRates {
 
 export function battingRates(line: BattingLine): BattingRates {
   const rates: BattingRates = {}
+  if (line.sb + line.cs > 0) rates.sbPct = round3(line.sb / (line.sb + line.cs))
   if (line.ab > 0) {
     rates.avg = round3(line.h / line.ab)
     const bases =
@@ -242,6 +306,8 @@ export function battingRates(line: BattingLine): BattingRates {
 }
 
 export interface PitchingRates {
+  baa?: number
+  sbPct?: number
   /**
    * Earned runs per game — and a game is the season's `eraInnings`, six unless
    * the season or league says otherwise, not nine. Undefined with no outs.
@@ -253,6 +319,10 @@ export interface PitchingRates {
 
 export function pitchingRates(line: PitchingLine): PitchingRates {
   const rates: PitchingRates = {}
+  if (line.pitchAb != null && line.pitchAb > 0)
+    rates.baa = round3(line.h / line.pitchAb)
+  if (line.sb != null && line.cs != null && line.sb + line.cs > 0)
+    rates.sbPct = round3(line.sb / (line.sb + line.cs))
   if (line.outs === 0) return rates
   const innings = line.outs / 3
   rates.era = round2((line.eraInnings * line.er) / innings)

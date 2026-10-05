@@ -3,12 +3,17 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { mintUserId } from '../common/mintUserId'
-import { migrations } from './migrations'
+import { migrations as allMigrations } from './migrations'
 import { migration046ExternalCleanup } from './migrations/046externalCleanup'
 import { migration048DropStatRollups } from './migrations/048dropStatRollups'
 import { BASELINE, migrateDown, migrateUp } from './runner'
 import { schemaSnapshot } from './schemaSnapshot'
 import { testDatabaseUrl } from './testDatabase'
+
+// These scenarios exercise schema history only through migration 048.
+const migrations = allMigrations.filter(
+  migration => migration.name <= '048dropStatRollups'
+)
 
 /**
  * 046 over a database that ran an outside integration.

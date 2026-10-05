@@ -3018,10 +3018,19 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/teams/{teamId}/stats': {
         get: {
-          summary: "A team's batting",
+          summary: "A team's batting or pitching",
           security: [{ bearer: [] }],
           parameters: [
             teamIdParam,
+            {
+              name: 'kind',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: ['batting', 'pitching'],
+                default: 'batting'
+              }
+            },
             {
               name: 'seasonId',
               in: 'query',

@@ -156,7 +156,10 @@ export type GameStatResult =
 
 type FigureKey = Exclude<keyof PlayerGameLine, 'userId' | 'teamId'>
 
-function emptyLine(userId: number, teamId: string | null): PlayerGameLine {
+export function emptyLine(
+  userId: number,
+  teamId: string | null
+): PlayerGameLine {
   return {
     userId,
     teamId,

@@ -187,6 +187,33 @@ describe('statsBuilder drain', function () {
     expect(pit.team_id).equals(home)
   })
 
+  it('persists expanded details and replaces them after an edit', async function () {
+    const play = {
+      ...paPlay(batter, pitcher, { eventType: 'field_error' }),
+      playEvents: [{ index: 0, isPitch: true, details: { code: 'D' } }]
+    }
+    const gameId = await seedGame([play])
+    await drain(db, clock)
+    let rows = await statRows(db, { gameId })
+    expect(rows.find(row => row.userId === batter)!.extra?.roe).equals(1)
+    expect(rows.find(row => row.userId === pitcher)!.extra?.pitches).equals(1)
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [{ gumbo: paPlay(batter, pitcher), source: 'manual' }]
+    })
+    await drain(db, clock)
+    rows = await statRows(db, { gameId })
+    expect(rows.find(row => row.userId === batter)!.extra?.roe).equals(0)
+    expect(rows.find(row => row.userId === pitcher)!.extra?.pitches).equals(
+      null
+    )
+    await requestGameStats(db, gameId)
+    await drain(db, clock)
+    expect(await statRows(db, { gameId })).deep.equals(rows)
+  })
+
   it('stores a sacrifice bunt as sh, read back through statRows', async function () {
     const gameId = await seedGame([
       paPlay(batter, pitcher, { eventType: 'sac_bunt' })
