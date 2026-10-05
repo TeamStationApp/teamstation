@@ -39,8 +39,8 @@ final class DistributorModel {
   var destination: URL? {
     settings.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
   }
-  /// The export under way or just finished, if any.
-  private(set) var run: DistributionRun?
+  /// The export under way or just finished, if any: of one recording, or of several together.
+  private(set) var batch: DistributionBatch?
   /// Whether TS Director is recording right now. While it is, the iPad stitches nothing.
   private(set) var isRecording = false
   /// Whether TS Director is streaming. Nothing comes from the iPad while it records or streams.
@@ -64,7 +64,7 @@ final class DistributorModel {
   /// The iPad's stitching jobs, matched to their events.
   let jobs = JobWatcher()
 
-  var isExporting: Bool { run.map { !$0.isFinished } ?? false }
+  var isExporting: Bool { batch.map { !$0.isFinished } ?? false }
 
   /// This Mac's hardware UUID, which keys its download folder and stamps its changes.
   let macID = MacIdentity.platformUUID
@@ -205,8 +205,8 @@ final class DistributorModel {
     }
   }
 
-  /// Exports `tracks` of `recording` into this Mac's folder, the Mac and the iPad stitching side by
-  /// side. What stops it is shown in the window.
+  /// Exports `tracks` of `recording` into this Mac's folder, stitched on this Mac. What stops it is
+  /// shown in the window.
   func export(
     _ recording: RecordingListing,
     tracks: [Track],
@@ -216,11 +216,8 @@ final class DistributorModel {
   ) {
     do {
       try startExport(
-        recording,
-        tracks: tracks,
-        reprocess: reprocess,
-        combined: combined,
-        teamStation: teamStation
+        [ ExportTake(recording: recording, tracks: tracks, combined: combined, teamStation: teamStation) ],
+        reprocess: reprocess
       )
     } catch .exporting {
       // The window offers no second export while one runs.
@@ -229,40 +226,48 @@ final class DistributorModel {
     }
   }
 
-  /// Starts an export and returns it, or says why it cannot start.
+  /// One recording of an export: the files asked for, and what is made of them and sent.
+  struct ExportTake {
+    var recording: RecordingListing
+    var tracks: [Track]
+    var combined: CombinedPlan?
+    var teamStation: TeamStationPlan?
+  }
+
+  /// Starts an export of `takes`, every file of every one off the iPad before any is stitched, and
+  /// returns it, or says why it cannot start.
   @discardableResult
-  func startExport(
-    _ recording: RecordingListing,
-    tracks: [Track],
-    reprocess: Bool = false,
-    combined: CombinedPlan? = nil,
-    teamStation: TeamStationPlan? = nil
-  ) throws(ExportRefusal) -> DistributionRun {
+  func startExport(_ takes: [ExportTake], reprocess: Bool = false) throws(ExportRefusal) -> DistributionBatch {
     guard !isExporting else { throw .exporting }
     guard let destination else { throw .noDestination }
     // Files already on this Mac need nothing from the iPad, so only an export that does needs it
     // attached and waits while it records or streams. That counts every file its uploads and its
-    // combined video need, which the export fetches along with those asked for.
-    let needed = DistributionRun.tracks(of: recording, asked: tracks, combined: combined, teamStation: teamStation)
-    let needsIPad = ExportInventory(recording: recording, destination: destination).needsIPad(needed, reprocess: reprocess)
+    // combined videos need, which the export fetches along with those asked for.
+    let needsIPad = takes.contains { take in
+      let needed = DistributionRun.tracks(of: take.recording, asked: take.tracks, combined: take.combined, teamStation: take.teamStation)
+      return ExportInventory(recording: take.recording, destination: destination).needsIPad(needed, reprocess: reprocess)
+    }
     if needsIPad, connection == nil { throw .noIPad }
     if needsIPad, let reason = exportBlockedReason { throw .directorBusy(reason) }
-    let run = DistributionRun(
-      recording: recording,
-      tracks: tracks,
-      connection: connection,
-      jobs: jobs,
-      destination: destination,
-      reprocess: reprocess,
-      combined: combined,
-      teamStation: teamStation
-    )
-    self.run = run
+    let runs = takes.map { take in
+      DistributionRun(
+        recording: take.recording,
+        tracks: take.tracks,
+        connection: connection,
+        jobs: jobs,
+        destination: destination,
+        reprocess: reprocess,
+        combined: take.combined,
+        teamStation: take.teamStation
+      )
+    }
+    let batch = DistributionBatch(runs: runs, connection: connection)
+    self.batch = batch
     Task {
-      await run.run()
+      await batch.run()
       await reload()
     }
-    return run
+    return batch
   }
 
   /// One frame of a camera, for the combined video's previews; nil when the iPad has none.
@@ -301,7 +306,7 @@ final class DistributorModel {
 
   /// Puts away a finished export's progress.
   func dismissRun() {
-    if run?.isFinished == true { run = nil }
+    if batch?.isFinished == true { batch = nil }
   }
 
   // MARK: - Settings

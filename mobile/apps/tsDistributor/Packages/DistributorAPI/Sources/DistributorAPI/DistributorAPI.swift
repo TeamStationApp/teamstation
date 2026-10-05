@@ -33,7 +33,8 @@ public enum DistributorAPI {
     export folder, makes the combined video, and uploads to a game on TeamStation. A recording's files are named \
     by track: "primary", or "camera:<source id>"; a camera's name also works. Starting work answers \
     202 with the run; follow it with GET /api/v1/runs/{id} or /api/v1/events. One run at a time: a \
-    second answers 409. Work that needs the iPad answers 412 iPadNotAttached while none is attached, \
+    second answers 409, and several recordings go in one run: POST /api/v1/runs with recordings or \
+    takes. Work that needs the iPad answers 412 iPadNotAttached while none is attached, \
     and 423 while TS Director records or streams; files already on this Mac need no iPad.
     """
 
@@ -87,12 +88,13 @@ public enum DistributorAPI {
         var body: APIRunRequest = try request.decode()
         body.kind = kind
         body.recording = try parameters.int64("id")
+        _ = try body.perTake()
         return .apiJSON(try await actions.startRun(body), status: 202)
       }
     }
-    router.add("POST", "/api/v1/runs", summary: "Starts exactly the run described: {kind?, recording, tracks?, reprocess?, combined?, upload?}") { request, _ in
+    router.add("POST", "/api/v1/runs", summary: "Starts exactly the run described, of one recording or several, every file of every one off the iPad first: {kind?, recording | recordings | takes: [{recording, tracks?, combined?, upload?}], tracks?, reprocess?, combined?, upload?}") { request, _ in
       var body: APIRunRequest = try request.decode()
-      guard body.recording != nil else { throw HTTPError.badRequest("recording is required") }
+      _ = try body.perTake()
       body.kind = body.kind ?? .custom
       return .apiJSON(try await actions.startRun(body), status: 202)
     }
@@ -100,7 +102,7 @@ public enum DistributorAPI {
       guard let run = await actions.currentRun() else { throw HTTPError.notFound("nothing has run since TS Distributor started") }
       return .apiJSON(run)
     }
-    router.add("GET", "/api/v1/runs/{id}", summary: "One run: each file, the combined video and each upload, and where they have got to") { _, parameters in
+    router.add("GET", "/api/v1/runs/{id}", summary: "One run: for each of its recordings, each file, the combined video and each upload, and where they have got to") { _, parameters in
       guard let id = UUID(uuidString: parameters["id"] ?? "") else { throw HTTPError.badRequest("a run id is a UUID") }
       guard let run = await actions.run(id) else { throw HTTPError.notFound("no run \(id)") }
       return .apiJSON(run)
@@ -113,7 +115,7 @@ public enum DistributorAPI {
     router.add("GET", "/api/v1/settings", summary: "The settings, as this Mac holds them") { _, _ in
       .apiJSON(await actions.settings())
     }
-    router.add("PATCH", "/api/v1/settings", summary: "Changes settings; what is left out stays: {destination?, createCombined?}") { request, _ in
+    router.add("PATCH", "/api/v1/settings", summary: "Changes settings; what is left out stays: {destination?, createCombined?, upload?: {choice?: {primary?, cameras?, combined?}}}") { request, _ in
       .apiJSON(try await actions.updateSettings(try request.decode()))
     }
 
