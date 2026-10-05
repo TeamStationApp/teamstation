@@ -134,9 +134,17 @@ struct RecordingSoundTests {
     let clock = FixedClock(10.0)
     let live = Collected()
     let recording = Collected()
-    let liveMixer = AudioMixer(clock: clock) { live.add($0) }
-    let recordingMixer = AudioMixer(clock: clock, delaySeconds: 5, windowSeconds: 10) { recording.add($0) }
+    let uptime: @Sendable () -> Double = { clock.now.seconds }
+    let liveMixer = AudioMixer(clock: clock, uptime: uptime, runsTimer: false) { live.add($0) }
+    let recordingMixer = AudioMixer(
+      clock: clock,
+      delaySeconds: 5,
+      windowSeconds: 10,
+      uptime: uptime,
+      runsTimer: false
+    ) { recording.add($0) }
     for mixer in [ liveMixer, recordingMixer ] {
+      mixer.start()
       mixer.append(Self.frame(Self.tone(0, seconds: 0.1), at: 10.0))
     }
     // 0.62 s on, the live mix has played up to 10.6 and the recording's nothing yet.
@@ -159,9 +167,17 @@ struct RecordingSoundTests {
 
   @Test("At Stop the recording's mix hands over everything it holds at once")
   func flushAtStop() {
-    let clock = FixedClock(20.0)
+    let clock = FixedClock(19.0)
     let recording = Collected()
-    let mixer = AudioMixer(clock: clock, delaySeconds: 5, windowSeconds: 10) { recording.add($0) }
+    let mixer = AudioMixer(
+      clock: clock,
+      delaySeconds: 5,
+      windowSeconds: 10,
+      uptime: { clock.now.seconds },
+      runsTimer: false
+    ) { recording.add($0) }
+    mixer.start()
+    clock.set(20.0)
     mixer.append(Self.frame(Self.tone(8_000, seconds: 1), at: 19.0))
     mixer.emitReadyChunks()
     #expect(recording.count == 0)

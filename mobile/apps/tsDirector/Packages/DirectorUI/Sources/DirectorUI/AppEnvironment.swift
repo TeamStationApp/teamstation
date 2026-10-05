@@ -171,6 +171,7 @@ public final class AppEnvironment {
       distributorEvents.publish(.recordingStateChanged(isRecording: isRecording))
       distributorEvents.publish(.recordingsChanged)
       updateScoreboards()
+      holdProgrammeSound()
     }
   }
   /// TS Distributor is attached by cable and talking to this Director.
@@ -191,7 +192,15 @@ public final class AppEnvironment {
       guard isStreaming != oldValue else { return }
       distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
       updateScoreboards()
+      holdProgrammeSound()
     }
+  }
+
+  /// Keeps the programme's two mixes counting while a stream is wanted or a take is recording, so
+  /// both sound tracks run from go-live, silent until a camera speaks. A dropped stream that is
+  /// being redialled still holds them: its sound must carry on from the same counter.
+  private func holdProgrammeSound() {
+    router.setProgrammeSoundLive(isRecording || isStreaming || streamWanted)
   }
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
@@ -2208,6 +2217,7 @@ public final class AppEnvironment {
 
   public func stopStreaming() async {
     streamWanted = false
+    holdProgrammeSound()
     guard isStreaming || programStreamer.running else {
       isStreaming = false
       endLiveSession(streaming: true)

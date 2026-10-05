@@ -640,6 +640,9 @@ public final class TileRouter: @unchecked Sendable {
   /// Cameras whose PCM is summed into the programme mix. Every live pipeline still taps audio so
   /// the waveform can draw when AUDIO is off.
   private var mixContributorIDs: Set<SourceID> = []
+  /// Streaming or recording is on, so both mixes keep counting with no camera at all: their sound
+  /// tracks run from go-live, and a camera removed and added back must not restart the counter.
+  private var programmeSoundHeld = false
   /// Held so a camera enabled later inherits the caps rather than starting ungated.
   private var latencyCaps = FrameLatencyGate.Caps()
   public let clock: DirectorClock
@@ -865,17 +868,38 @@ public final class TileRouter: @unchecked Sendable {
       waveformMonitor.remove(source: pipeline.sourceID)
       pipeline.stop()
     }
-    audioMixer.stop()
-    recordingMixer.stop()
     lock.lock()
+    let held = programmeSoundHeld
     recordingSoundEnds.removeAll()
     lock.unlock()
+    if !held {
+      audioMixer.stop()
+      recordingMixer.stop()
+    }
     audioPlayer.stop()
     // Output's TileVideoView stays on screen — the grid is always the root. Detaching its
     // layer here freezes the last frame: SwiftUI will not call updateUIView because
     // `programRenderer` is the same object, and later cuts enqueue into nowhere.
     programRenderer.prepareForLive()
     telemetry.mutate { $0.programSource = nil }
+  }
+
+  /// Holds both mixes running while the programme is live (streaming or recording), and starts them
+  /// if no camera has yet. Their counters start at go-live at the latest, so the stream and the
+  /// master carry sound — silence until a camera speaks — from their first picture. Released with
+  /// no camera left, the mixes stop.
+  public func setProgrammeSoundLive(_ live: Bool) {
+    lock.lock()
+    programmeSoundHeld = live
+    let empty = pipelines.isEmpty
+    lock.unlock()
+    if live {
+      audioMixer.start()
+      recordingMixer.start()
+    } else if empty {
+      audioMixer.stop()
+      recordingMixer.stop()
+    }
   }
 
   /// Stops one tile without touching the others. Opening the camera list must not rebuild the grid.
@@ -890,7 +914,10 @@ public final class TileRouter: @unchecked Sendable {
       waveformMonitor.remove(source: pipeline.sourceID)
       pipeline.stop()
     }
-    if remaining.isEmpty {
+    lock.lock()
+    let held = programmeSoundHeld
+    lock.unlock()
+    if remaining.isEmpty, !held {
       audioMixer.stop()
       recordingMixer.stop()
     }
