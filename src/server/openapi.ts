@@ -1591,8 +1591,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             '**A row:** `opponent` (`{teamId}`, or `{name, externalId?}` with ' +
             'a name of 1-120 characters) and `side` (`home` or `away`, the ' +
             'side this team plays on) are needed to create a game. On a ' +
-            'matched one, `opponent` lends only its `externalId` and `side` ' +
-            'may swap the sides (below). ' +
+            'matched one, `opponent` may change the opponent and `side` may ' +
+            'swap the sides (below). ' +
             '`startAt` is required, an ISO 8601 date-time with `Z` or an ' +
             'offset. `seasonId` is optional and must be a season the team is ' +
             "in; without it the season whose dates hold the game's UTC day " +
@@ -1606,9 +1606,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`kind` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` defaulting ' +
             'to `event`.\n\n' +
             '**What a row does:** with an `externalId`, a game already holding ' +
-            'that system and id (of any kind) is matched: an `inProgress` or ' +
-            '`final` game is left as it is; a `scheduled` or `cancelled` one ' +
-            "takes the row's time, venue, status and fence distance, and " +
+            'that system and id (of any kind) is matched. Its opponent may ' +
+            'change, whatever its status (below); otherwise an `inProgress` ' +
+            'or `final` game is left as it is, and a `scheduled` or ' +
+            "`cancelled` one takes the row's time, venue, status and fence " +
+            'distance, and ' +
             'is `updated` when any of them changed. When the row gives a ' +
             '`side` other than the one this team plays on, the other team is ' +
             'an external one and the game has no plays (none stored and no ' +
@@ -1627,16 +1629,52 @@ export function openApiDocument(version: string): OpenApiDocument {
             'id}`, `system` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` and ' +
             '`id` non-empty, the id another system has for the opponent. A ' +
             'team already holding it (an external or a full one, followed ' +
-            'through merges) is the opponent, whatever the name says. ' +
-            'Otherwise the opponent is found by name, and an external team ' +
-            'found or made that way takes the id when nothing holds it. On a ' +
-            "matched game, the game's opponent takes the id when it is an " +
-            "external team, the row's `name` finds it by that same rule, and " +
-            "nothing holds the id; the game's opponent never changes. A full " +
-            'team never takes an id here, and an id something already holds ' +
-            'never moves, except one left on a team that no longer exists, ' +
-            'which the team found takes over. Recording an opponent id alone ' +
-            'leaves the row `unchanged`: the answer describes the game.\n\n' +
+            'through merges) is the opponent, whatever the name says, except ' +
+            "an external team whose name differs from the row's once " +
+            'normalised and which is named as a placeholder (below), is ' +
+            "shared by other teams' games, or would by that name be a second " +
+            'team of one name (the `name` already finds a team by its ' +
+            'normalised name). For those the opponent is found by `name` ' +
+            'alone. Otherwise the opponent is found by name, and an external ' +
+            'team found or made that way takes the id when nothing holds it ' +
+            'and the `name` is not a placeholder. On a matched game, the ' +
+            "game's opponent takes the id when it is an external team, the " +
+            "row's `name` finds it by that same rule, and nothing holds the " +
+            'id. A full team never takes an id here, and an id something ' +
+            'already holds never moves, except one left on a team that no ' +
+            'longer exists, which the team found takes over. Recording an ' +
+            'opponent id alone leaves the row `unchanged`: the answer ' +
+            'describes the game.\n\n' +
+            "**A matched game's opponent:** only an external opponent " +
+            'changes; a game against a full team keeps it. A placeholder ' +
+            '`name`, saying the opponent is not known yet (one starting ' +
+            '`TBD`, `TBA`, `To be decided`, `To be announced` or `To be ' +
+            'determined`, in any case), leaves the opponent as it is, and ' +
+            "takes no id. So does a `name` that is this team's own once " +
+            "normalised. A `name` that matches the opponent's once " +
+            "normalised changes nothing, whatever team holds the row's id. " +
+            "Otherwise the row's opponent is found by its id, as above, then " +
+            'by its `name`: a team of the season or an external team of that ' +
+            "normalised name (never by a coach's surname), else a new " +
+            "external team. When the row's id is held by the game's " +
+            "opponent and stands for the row's `name` by the rule above, " +
+            "that team is renamed to the row's `name`, in every game it " +
+            'plays, and the row is `updated`; otherwise it keeps its name, ' +
+            "and this game's opponent is found by the `name` alone. Any other " +
+            "team found or made becomes the game's opponent, even after plays " +
+            'and a final score, and the row is `updated`: the score, the ' +
+            "sides and the plays stay; the plays' batting team, player rows " +
+            'and credits, and a camera key filming that side, move to the ' +
+            "new team; the game's stats are rebuilt. A team found by the " +
+            "row's id takes the row's `name` too. The old team stays, with no " +
+            'game if it has none left. A game scored in TeamStation (scored ' +
+            'by its scorer, a play carrying its `teamStation` record, or an ' +
+            'at-bat under way) keeps its opponent, and the row is answered by ' +
+            'its other fields; `GET /events` marks such a game, and one ' +
+            'between two full teams, `opponentFixed`. A move onto a full ' +
+            'team already playing this team in the same season at the ' +
+            "game's time or the row's is a `conflict`: `<team> already has " +
+            'this game`.\n\n' +
             '**Answers:** `result` is `created`, `updated`, `unchanged` or ' +
             "`error`, with `gameId` and the game's `status` after the row. " +
             'Error codes: `invalid`, `notFound`, `conflict`, `noSeason`, ' +
@@ -3674,7 +3712,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'a score. `scoreboard=open` keeps games whose scoreboard is ' +
             'still open, and answers 503 while that store is away.\n\n' +
             'Each row is a schedule game plus `gameId`, both teams\u2019 logo ' +
-            'URLs, and `liveState`.',
+            'URLs, `liveState`, and `opponentFixed`: true when a schedule ' +
+            "can never change the game's opponent, because it was scored in " +
+            'TeamStation (scored by its scorer, a play carrying its ' +
+            '`teamStation` record, or an at-bat under way) or neither team ' +
+            'is an external one.',
           security: [{ bearer: [] }],
           parameters: [
             {

@@ -47,6 +47,8 @@ export async function resolveOpponent(
     /** Where a team this makes came from, recorded on it. */
     createdFrom: TeamCreatedFrom
     dryRun?: boolean
+    /** Whether a coach's surname finds a team of the season. Default yes. */
+    byCoach?: boolean
   }
 ): Promise<ResolvedOpponent> {
   const { seasonTeams, known } = options
@@ -54,7 +56,7 @@ export async function resolveOpponent(
   const wantedCoach = coachSurname(rawName)
   const inSeason = seasonTeams.find(other => {
     if (normaliseTeamName(other.name) === wantedName) return true
-    if (wantedCoach == null) return false
+    if (wantedCoach == null || options.byCoach === false) return false
     return coachSurname(other.name) === wantedCoach
   })
   if (inSeason != null) {
@@ -65,11 +67,14 @@ export async function resolveOpponent(
   if (held != null) return { id: held, name: rawName, found: 'known' }
 
   // An external team already made by an earlier run, found by its
-  // normalised name rather than by an id no schedule gives.
+  // normalised name rather than by an id no schedule gives. Two of one
+  // name resolve to the older, every time.
   const existing = await db
     .selectFrom('teams')
     .select(['id', 'name'])
     .where('kind', '=', 'external')
+    .orderBy('created_at')
+    .orderBy('id')
     .execute()
   const match = existing.find(row => normaliseTeamName(row.name) === wantedName)
   if (match != null) {

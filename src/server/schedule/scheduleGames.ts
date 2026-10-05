@@ -18,9 +18,12 @@ import {
   recordExternalId
 } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
+import { scoredInTeamStation } from '../games/opponentFixed'
 import { notifyGameChange } from '../socket/gameChanges'
+import { requestGameStats } from '../statsBuilder/request'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
+import { isUndeterminedName, normaliseTeamName } from '../teams/teamNames'
 
 /**
  * Who may write a team's schedule, and into which seasons.
@@ -254,7 +257,8 @@ async function applyRow(
       if (
         opponentKey != null &&
         row.opponent != null &&
-        'name' in row.opponent
+        'name' in row.opponent &&
+        !isUndeterminedName(row.opponent.name)
       ) {
         // Only when the row's name finds the game's own opponent: a game
         // held against a placeholder or a since-corrected opponent must not
@@ -272,11 +276,32 @@ async function applyRow(
           await takeId(trx, opponent, opponentKey, holder)
         }
       }
+      // Whatever its status: a game imported against a placeholder gets its
+      // real opponent once the schedule knows it, plays and score and all.
+      const opponentChanged = await changeOpponent(
+        trx,
+        context,
+        held,
+        row,
+        startAt,
+        known
+      )
       if (held.status === 'inProgress' || held.status === 'final') {
-        return { result: 'unchanged', gameId: held.id, status: held.status }
+        return {
+          result: opponentChanged ? 'updated' : 'unchanged',
+          gameId: held.id,
+          status: held.status
+        }
       }
       const idWritten = await recordExternalId(trx, 'game', held.id, externalId)
-      return await updateHeld(trx, held, row, startAt, idWritten, teamId)
+      return await updateHeld(
+        trx,
+        held,
+        row,
+        startAt,
+        idWritten || opponentChanged,
+        teamId
+      )
     }
   }
 
@@ -521,12 +546,382 @@ function resolveSeason(
   )
 }
 
+/**
+ * Gives a held game the opponent its row now names, and says whether it
+ * wrote anything. Only an external opponent changes: a full team's game
+ * belongs to an organisation, and the row is answered by its other fields.
+ * So is a row whose name says the opponent is not known yet
+ * (`isUndeterminedName`): it never moves or renames the game's opponent.
+ *
+ * The row's opponent is found by its id, then by its name, though only by
+ * a normalised name, never a coach's surname (`resolveRowOpponent`). When
+ * that is the game's own opponent nothing moves, except that an id the
+ * opponent holds renames it to a name that reads differently: the same team
+ * under its real name, in every game it plays. It is not renamed when its
+ * id does not stand for the row's name (`idStandsForName`); the game moves
+ * to the team the name finds instead. A name that is the scheduling team's
+ * own leaves the opponent as it is, and so does a game TeamStation scored,
+ * whose plays replay against the teams they were scored between: the row
+ * is answered by its other fields. Any other team takes the game's place
+ * for the opponent (`repointOpponent`), unless it is a full team that
+ * already has the game; a team found by the row's id also takes its name.
+ */
+async function changeOpponent(
+  trx: Transaction<Database>,
+  context: Context,
+  held: HeldGame,
+  row: ScheduleGameRow,
+  startAt: Date,
+  known: Map<string, string>
+): Promise<boolean> {
+  const { teamId } = context
+  const opponent = row.opponent
+  if (opponent == null) return false
+  if ('name' in opponent && isUndeterminedName(opponent.name)) return false
+  if (
+    'name' in opponent &&
+    normaliseTeamName(opponent.name) === normaliseTeamName(context.teamName)
+  ) {
+    return false
+  }
+  // A play being posted, a swap or a merge waits for this row, and this
+  // row for them; the game's teams are read as they leave them.
+  const game = await trx
+    .selectFrom('games')
+    .select(['id', 'home_team_id', 'away_team_id', 'start_at'])
+    .where('id', '=', held.id)
+    .forUpdate()
+    .executeTakeFirstOrThrow()
+  const storedOpponent =
+    game.home_team_id === teamId ? game.away_team_id : game.home_team_id
+  const opponentId = await followMerges(trx, storedOpponent)
+  const current = await trx
+    .selectFrom('teams')
+    .select(['name', 'kind'])
+    .where('id', '=', opponentId)
+    .executeTakeFirstOrThrow()
+  if (current.kind !== 'external') return false
+
+  let byName = false
+  let holderTeam: string | undefined
+  if ('name' in opponent) {
+    const key = opponent.externalId
+    const holder = key == null ? undefined : await idHolder(trx, key)
+    holderTeam =
+      holder?.free === false && holder.teamId != null
+        ? await followMerges(trx, holder.teamId)
+        : undefined
+    const sameName =
+      normaliseTeamName(opponent.name) === normaliseTeamName(current.name)
+    if (holderTeam === opponentId) {
+      if (sameName) return false
+      if (
+        await idStandsForName(trx, opponentId, opponent.name, {
+          teamId,
+          seasonId: held.season_id
+        })
+      ) {
+        await renameExternal(trx, opponentId, opponent.name)
+        return true
+      }
+      byName = true
+    } else if (sameName) {
+      // The same name is the same opponent, whichever team of that name a
+      // search would come to first, and whichever team holds the row's id:
+      // a game moved off a shared team keeps the team its name found.
+      return false
+    }
+  }
+
+  // Its plays replay against the teams they were scored between: the
+  // opponent stays, and the row is answered by its other fields. Asked
+  // before the row's opponent is found, so no team is made for nothing.
+  if ((await scoredInTeamStation(trx, [game.id])).has(game.id)) return false
+  const named = await resolveRowOpponent(
+    trx,
+    context,
+    held.season_id,
+    row,
+    known,
+    { held: true, byName }
+  )
+  if (named === opponentId) return false
+  if (!(await isExternal(trx, named))) {
+    await mustHaveNoTwin(trx, context, held.season_id, named, game.id, [
+      new Date(game.start_at),
+      startAt
+    ])
+  }
+  await repointOpponent(trx, game, storedOpponent, named)
+  // The team holding the row's id stood for its name: it takes the name now,
+  // as it would have had the game been on it already.
+  if (
+    'name' in opponent &&
+    named === holderTeam &&
+    !(await isNamed(trx, named, opponent.name))
+  ) {
+    await renameExternal(trx, named, opponent.name)
+  }
+  return true
+}
+
+/** Whether a team's name is this one, once both are normalised. */
+async function isNamed(
+  trx: Transaction<Database>,
+  teamId: string,
+  name: string
+): Promise<boolean> {
+  const team = await trx
+    .selectFrom('teams')
+    .select('name')
+    .where('id', '=', teamId)
+    .executeTakeFirstOrThrow()
+  return normaliseTeamName(team.name) === normaliseTeamName(name)
+}
+
+/**
+ * Whether a team plays any game the scheduling team does not: then other
+ * schedules share it, and one schedule's name for it is not everybody's.
+ */
+async function playsOthers(
+  trx: Transaction<Database>,
+  externalTeamId: string,
+  teamId: string
+): Promise<boolean> {
+  const other = await trx
+    .selectFrom('games')
+    .select('id')
+    .where(eb =>
+      eb.and([
+        eb.or([
+          eb('home_team_id', '=', externalTeamId),
+          eb('away_team_id', '=', externalTeamId)
+        ]),
+        eb('home_team_id', '!=', teamId),
+        eb('away_team_id', '!=', teamId)
+      ])
+    )
+    .limit(1)
+    .executeTakeFirst()
+  return other != null
+}
+
+/**
+ * Whether the external team holding a row's opponent id is the opponent the
+ * row names. A full team always is, and so is any team when the names agree
+ * once normalised. Otherwise not a placeholder, which an id should never
+ * have been given, nor a team other teams' games share, for which one
+ * schedule's id and name are not everybody's, nor one whose new name
+ * already finds another team: it takes that name, in every game it plays,
+ * only when no second team of that name would follow. A held game and a
+ * new one ask the same, so a row lands where a second press leaves it.
+ */
+async function idStandsForName(
+  trx: Transaction<Database>,
+  holderId: string,
+  name: string,
+  scheduling: { teamId: string; seasonId: string | null }
+): Promise<boolean> {
+  const holder = await trx
+    .selectFrom('teams')
+    .select(['name', 'kind'])
+    .where('id', '=', holderId)
+    .executeTakeFirstOrThrow()
+  if (holder.kind !== 'external') return true
+  if (normaliseTeamName(holder.name) === normaliseTeamName(name)) return true
+  if (isUndeterminedName(holder.name)) return false
+  if (await playsOthers(trx, holderId, scheduling.teamId)) return false
+  return !(await nameFindsATeam(trx, name, scheduling.seasonId))
+}
+
+/**
+ * Whether a name finds a team already by its normalised name — a team of the
+ * season, or an external team — never by a coach's surname: then a team
+ * renamed to it would be a second team of one name.
+ */
+async function nameFindsATeam(
+  trx: Transaction<Database>,
+  name: string,
+  seasonId: string | null
+): Promise<boolean> {
+  const resolved = await resolveOpponent(trx, name, {
+    seasonTeams: await seasonTeamsOf(trx, seasonId),
+    createdFrom: 'api',
+    dryRun: true,
+    byCoach: false
+  })
+  return resolved.found !== 'created'
+}
+
+/**
+ * Renames an external team, and tells every screen holding one of its games,
+ * when this commits.
+ */
+async function renameExternal(
+  trx: Transaction<Database>,
+  externalTeamId: string,
+  name: string
+): Promise<void> {
+  await trx
+    .updateTable('teams')
+    .set({ name, updated_at: new Date() })
+    .where('id', '=', externalTeamId)
+    .execute()
+  const games = await trx
+    .selectFrom('games')
+    .select('id')
+    .where(eb =>
+      eb.or([
+        eb('home_team_id', '=', externalTeamId),
+        eb('away_team_id', '=', externalTeamId)
+      ])
+    )
+    .orderBy('id')
+    .execute()
+  for (const { id } of games) {
+    await notifyGameChange(trx, { game: id, kind: 'game' })
+  }
+}
+
+/**
+ * Refuses to move a game onto a full team that already plays the scheduling
+ * team in the same season at either moment the game has — its own, or the
+ * row's — as the twin a new game would land on: two rows of one game would
+ * both count, and a full team's game never moves back.
+ */
+async function mustHaveNoTwin(
+  trx: Transaction<Database>,
+  context: Context,
+  seasonId: string | null,
+  fullTeamId: string,
+  gameId: string,
+  moments: Date[]
+): Promise<void> {
+  const { teamId } = context
+  const twin = await trx
+    .selectFrom('games')
+    .select('id')
+    .where('id', '!=', gameId)
+    .where('season_id', seasonId == null ? 'is' : '=', seasonId)
+    .where('start_at', 'in', moments)
+    .where(eb =>
+      eb.or([
+        eb.and([
+          eb('home_team_id', '=', teamId),
+          eb('away_team_id', '=', fullTeamId)
+        ]),
+        eb.and([
+          eb('home_team_id', '=', fullTeamId),
+          eb('away_team_id', '=', teamId)
+        ])
+      ])
+    )
+    .limit(1)
+    .executeTakeFirst()
+  if (twin == null) return
+  const team = await trx
+    .selectFrom('teams')
+    .select('name')
+    .where('id', '=', fullTeamId)
+    .executeTakeFirstOrThrow()
+  throw new RowError('conflict', `${team.name} already has this game`)
+}
+
+/**
+ * Moves a game from one opponent to another, with everything of that game
+ * that names the old one, in the order a team merge moves them: the game
+ * first, so the `events` trigger rebuilds each play's batter, runner and
+ * pitcher rows against the new teams; then the batting side, the fielder,
+ * catcher and scorer rows the trigger leaves alone, the credits in each
+ * play's document (and through the trigger `eventCredits`), and a camera
+ * key filming that side. The stats builder is asked to rebuild the game's
+ * lines, and every screen holding it hears of the change on commit.
+ *
+ * Scores, sides and the linescore are the game's, keyed by home and away,
+ * and stay. A team's record is counted from its games on each read. A
+ * video's title keeps the name it was given, and the old team stays, games
+ * or none. The caller holds the game row's lock.
+ */
+async function repointOpponent(
+  trx: Transaction<Database>,
+  game: { id: string; home_team_id: string; away_team_id: string },
+  oldTeamId: string,
+  newTeamId: string
+): Promise<void> {
+  await trx
+    .updateTable('games')
+    .set(
+      game.home_team_id === oldTeamId
+        ? { home_team_id: newTeamId, updated_at: new Date() }
+        : { away_team_id: newTeamId, updated_at: new Date() }
+    )
+    .where('id', '=', game.id)
+    .execute()
+  await trx
+    .updateTable('events')
+    .set({ battingTeamId: newTeamId })
+    .where('gameId', '=', game.id)
+    .where('battingTeamId', '=', oldTeamId)
+    .execute()
+  await trx
+    .updateTable('event_players')
+    .set({ team_id: newTeamId })
+    .where('team_id', '=', oldTeamId)
+    .where('event_id', 'in', eb =>
+      eb.selectFrom('events').select('id').where('gameId', '=', game.id)
+    )
+    .execute()
+  await sql`
+    update events
+    set gumbo = jsonb_set(gumbo, '{credits}', (
+      select jsonb_agg(
+        case when credit ->> 'teamId' = ${oldTeamId}
+          then jsonb_set(credit, '{teamId}', to_jsonb(${newTeamId}::text))
+          else credit
+        end
+        order by position
+      )
+      from jsonb_array_elements(gumbo -> 'credits')
+        with ordinality as listed (credit, position)
+    ))
+    where "gameId" = ${game.id}
+      and jsonb_typeof(gumbo -> 'credits') = 'array'
+      and exists (
+        select 1 from jsonb_array_elements(gumbo -> 'credits') as listed (credit)
+        where credit ->> 'teamId' = ${oldTeamId}
+      )
+  `.execute(trx)
+  await trx
+    .updateTable('live_streams')
+    .set({ team_id: newTeamId })
+    .where('game_id', '=', game.id)
+    .where('team_id', '=', oldTeamId)
+    .execute()
+  await requestGameStats(trx, game.id)
+  for (const kind of ['game', 'lineups', 'plays'] as const) {
+    await notifyGameChange(trx, { game: game.id, kind })
+  }
+}
+
+/**
+ * How a held game's row is resolved. `held`: its name finds a team only by
+ * its normalised name, never by a coach's surname, so a confident id or
+ * name is never traded for a guess at a team that cannot be moved off
+ * again; a name that finds nothing makes an external team. `byName`: the
+ * row's id is set aside and the row is found by its name alone.
+ */
+interface ResolveOptions {
+  held?: boolean
+  byName?: boolean
+}
+
 async function resolveRowOpponent(
   trx: Transaction<Database>,
   context: Context,
-  seasonId: string,
+  seasonId: string | null,
   row: ScheduleGameRow,
-  known: Map<string, string>
+  known: Map<string, string>,
+  options: ResolveOptions = {}
 ): Promise<string> {
   const opponent = row.opponent
   if (opponent == null) throw new Error('unreachable: no opponent')
@@ -554,8 +949,10 @@ async function resolveRowOpponent(
   }
 
   // A team holding the opponent's id is that opponent, whatever the row
-  // calls it. An id held by anything else is left where it is.
-  const key = opponent.externalId
+  // calls it, unless the id does not stand for the row's name: then the
+  // row is found by its name. An id held by anything else is left where
+  // it is.
+  const key = options.byName === true ? undefined : opponent.externalId
   const holder = key == null ? undefined : await idHolder(trx, key)
   if (key != null && holder?.free === false && holder.teamId != null) {
     const id = await followMerges(trx, holder.teamId)
@@ -565,13 +962,16 @@ async function resolveRowOpponent(
         `${key.system} ${key.id} is ${context.teamName} itself`
       )
     }
-    return id
+    if (await idStandsForName(trx, id, opponent.name, { teamId, seasonId })) {
+      return id
+    }
   }
 
   const resolved = await resolveOpponent(trx, opponent.name, {
     seasonTeams: await seasonTeamsOf(trx, seasonId),
     known,
-    createdFrom: 'api'
+    createdFrom: 'api',
+    byCoach: options.held !== true
   })
   const id = await followMerges(trx, resolved.id)
   if (id === teamId) {
@@ -580,7 +980,12 @@ async function resolveRowOpponent(
       `${opponent.name} is ${context.teamName} itself`
     )
   }
-  if (key != null && holder?.free === true) {
+  // A placeholder names no team, so it takes no team's id.
+  if (
+    key != null &&
+    holder?.free === true &&
+    !isUndeterminedName(opponent.name)
+  ) {
     await recordOnExternalTeam(trx, id, key, holder)
   }
   return id
