@@ -14,7 +14,9 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
 - **Stitching.** `../common/DirectorExport` is the same package TS Director exports with. An export
   takes everything it needs off the iPad first, holding TS Director off recording and streaming only
   while it does; then the Mac stitches, makes the combined video and uploads, needing the iPad for
-  none of it, so the iPad can be unplugged as soon as the files are in.
+  none of it, so the iPad can be unplugged as soon as the files are in. Several recordings exported
+  together (through the API) go through each step together: every file of every one comes off the
+  iPad before any is stitched (`Packages/Distribution`, `DistributionBatch`).
 - **Combined video.** `Packages/CombinedVideo` puts up to four cameras on a 4K canvas as HEVC at
   4 Mb/s per camera, with one camera's sound.
 - **TeamStation.** `../common/TeamStationKit` signs this Mac in and sends each file to one game,
