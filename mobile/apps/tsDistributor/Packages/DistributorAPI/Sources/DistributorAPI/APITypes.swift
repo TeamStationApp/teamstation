@@ -1,5 +1,6 @@
 import DistributorWire
 import Foundation
+import LoopbackHTTP
 
 // What the API sends and takes. Dates are ISO 8601; a file of a recording is named by its track:
 // "primary", or "camera:<source id>", and wherever a track is asked for a camera's name will do.
@@ -135,16 +136,49 @@ public enum APIRunKind: String, Codable, Sendable {
   case custom
 }
 
+/// `combined` in a request: `false` for no combined video whatever the settings say, `true` for one
+/// laid out as the settings lay it out, or what goes in it.
 public struct APICombinedRequest: Codable, Equatable, Sendable {
+  /// False when the request says `"combined": false`.
+  public var wanted: Bool
   /// Which videos go in, by name ("Primary output" for the primary output); nil for up to four,
   /// the primary output first.
   public var include: [String]?
   /// Whose sound it carries; nil for the one last chosen.
   public var audioCamera: String?
 
-  public init(include: [String]? = nil, audioCamera: String? = nil) {
+  public init(wanted: Bool = true, include: [String]? = nil, audioCamera: String? = nil) {
+    self.wanted = wanted
     self.include = include
     self.audioCamera = audioCamera
+  }
+
+  /// No combined video.
+  public static let off = APICombinedRequest(wanted: false)
+
+  enum CodingKeys: String, CodingKey { case include, audioCamera }
+
+  public init(from decoder: Decoder) throws {
+    if let wanted = try? decoder.singleValueContainer().decode(Bool.self) {
+      self.init(wanted: wanted)
+      return
+    }
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      include: try container.decodeIfPresent([String].self, forKey: .include),
+      audioCamera: try container.decodeIfPresent(String.self, forKey: .audioCamera)
+    )
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    guard wanted else {
+      var single = encoder.singleValueContainer()
+      try single.encode(false)
+      return
+    }
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(include, forKey: .include)
+    try container.encodeIfPresent(audioCamera, forKey: .audioCamera)
   }
 }
 
@@ -170,7 +204,14 @@ public struct APIUploadRequest: Codable, Equatable, Sendable {
 
 public struct APIRunRequest: Codable, Equatable, Sendable {
   public var kind: APIRunKind?
+  /// The one recording this run exports. A run of several names them in `recordings` or `takes`
+  /// instead.
   public var recording: Int64?
+  /// The recordings a run of several exports, each as the rest of the request says.
+  public var recordings: [Int64]?
+  /// The recordings a run of several exports, each with what it does differently from the rest
+  /// of the request — its own game, say.
+  public var takes: [APITakeRequest]?
   /// The files to have on the Mac first; nil for every file of the recording.
   public var tracks: [String]?
   /// Stitch again even what is already saved.
@@ -178,11 +219,74 @@ public struct APIRunRequest: Codable, Equatable, Sendable {
   public var combined: APICombinedRequest?
   public var upload: APIUploadRequest?
 
-  public init(kind: APIRunKind? = nil, recording: Int64? = nil, tracks: [String]? = nil, reprocess: Bool? = nil, combined: APICombinedRequest? = nil, upload: APIUploadRequest? = nil) {
+  public init(
+    kind: APIRunKind? = nil,
+    recording: Int64? = nil,
+    recordings: [Int64]? = nil,
+    takes: [APITakeRequest]? = nil,
+    tracks: [String]? = nil,
+    reprocess: Bool? = nil,
+    combined: APICombinedRequest? = nil,
+    upload: APIUploadRequest? = nil
+  ) {
     self.kind = kind
     self.recording = recording
+    self.recordings = recordings
+    self.takes = takes
     self.tracks = tracks
     self.reprocess = reprocess
+    self.combined = combined
+    self.upload = upload
+  }
+
+  /// The request as one request of one recording per take, in the order given: each take's own
+  /// `tracks`, `combined` and `upload` fields in place of the request's, field by field for
+  /// `upload`. Exactly one of `recording`, `recordings` and `takes` is given, and no recording is
+  /// named twice.
+  public func perTake() throws(HTTPError) -> [APIRunRequest] {
+    let named = [ recording != nil, recordings != nil, takes != nil ].filter { $0 }.count
+    guard named == 1 else {
+      throw HTTPError.badRequest("name the recordings with one of recording, recordings or takes")
+    }
+    let takes = self.takes ?? (recordings ?? recording.map { [ $0 ] } ?? []).map { APITakeRequest(recording: $0) }
+    guard !takes.isEmpty else { throw HTTPError.badRequest("recordings is empty") }
+    var seen = Set<Int64>()
+    for take in takes where !seen.insert(take.recording).inserted {
+      throw HTTPError.badRequest("recording \(take.recording) is named twice")
+    }
+    return takes.map { take in
+      var upload = upload
+      if let own = take.upload {
+        upload = APIUploadRequest(
+          tracks: own.tracks ?? upload?.tracks,
+          game: own.game ?? upload?.game,
+          title: own.title ?? upload?.title
+        )
+      }
+      return APIRunRequest(
+        kind: kind,
+        recording: take.recording,
+        tracks: take.tracks ?? tracks,
+        reprocess: reprocess,
+        combined: take.combined ?? combined,
+        upload: upload
+      )
+    }
+  }
+}
+
+/// One recording of a run of several, and what it does differently from the rest of the request.
+/// What it leaves out is the request's.
+public struct APITakeRequest: Codable, Equatable, Sendable {
+  public var recording: Int64
+  public var tracks: [String]?
+  public var combined: APICombinedRequest?
+  /// Its own game, files to send or title; each field left out is the request's.
+  public var upload: APIUploadRequest?
+
+  public init(recording: Int64, tracks: [String]? = nil, combined: APICombinedRequest? = nil, upload: APIUploadRequest? = nil) {
+    self.recording = recording
+    self.tracks = tracks
     self.combined = combined
     self.upload = upload
   }
@@ -193,9 +297,9 @@ public struct APIRunStep: Codable, Equatable, Sendable {
   /// A file's track, "combined", or an upload's track.
   public var track: String
   public var name: String
-  /// "queued", "fetching", "stitching", "downloading", "uploading",
-  /// "finishing" (every byte is up and the server is making a video of it),
-  /// "done" or "failed".
+  /// "queued", "fetching", "fetched" (off the iPad, waiting to be stitched), "stitching",
+  /// "downloading", "uploading", "finishing" (every byte is up and the server is making a video of
+  /// it), "done" or "failed".
   public var state: String
   /// How far along, 0 to 1, when that is known.
   public var fraction: Double?
@@ -214,25 +318,62 @@ public struct APIRunStep: Codable, Equatable, Sendable {
   }
 }
 
-public struct APIRun: Codable, Equatable, Sendable {
-  public var id: UUID
+/// One recording of a run: each of its files, its combined video and its uploads.
+public struct APIRunTake: Codable, Equatable, Sendable {
   public var recording: Int64
   public var folder: String
-  public var isFinished: Bool
-  public var wasCancelled: Bool
   public var files: [APIRunStep]
   public var combined: APIRunStep?
   public var uploads: [APIRunStep]
 
-  public init(id: UUID, recording: Int64, folder: String, isFinished: Bool, wasCancelled: Bool, files: [APIRunStep], combined: APIRunStep?, uploads: [APIRunStep]) {
-    self.id = id
+  public init(recording: Int64, folder: String, files: [APIRunStep], combined: APIRunStep?, uploads: [APIRunStep]) {
     self.recording = recording
     self.folder = folder
-    self.isFinished = isFinished
-    self.wasCancelled = wasCancelled
     self.files = files
     self.combined = combined
     self.uploads = uploads
+  }
+}
+
+public struct APIRun: Codable, Equatable, Sendable {
+  public var id: UUID
+  /// The first take's, as are `folder`, `files`, `combined` and `uploads`: all there is to a run of
+  /// one recording. A run of several lists every one in `takes`.
+  public var recording: Int64
+  public var folder: String
+  public var isFinished: Bool
+  public var wasCancelled: Bool
+  /// What every take is at, as one: "fetching" (off the iPad), "stitching", "combining",
+  /// "uploading", then "finished".
+  public var step: String
+  /// Nothing more will be asked of the iPad: it can be unplugged and the run carries on.
+  public var isDoneWithIPad: Bool
+  public var files: [APIRunStep]
+  public var combined: APIRunStep?
+  public var uploads: [APIRunStep]
+  /// Every recording of the run, in the order each step takes them.
+  public var takes: [APIRunTake]
+
+  public init(
+    id: UUID,
+    isFinished: Bool,
+    wasCancelled: Bool,
+    step: String,
+    isDoneWithIPad: Bool,
+    takes: [APIRunTake]
+  ) {
+    let first = takes.first
+    self.id = id
+    self.recording = first?.recording ?? 0
+    self.folder = first?.folder ?? ""
+    self.isFinished = isFinished
+    self.wasCancelled = wasCancelled
+    self.step = step
+    self.isDoneWithIPad = isDoneWithIPad
+    self.files = first?.files ?? []
+    self.combined = first?.combined
+    self.uploads = first?.uploads ?? []
+    self.takes = takes
   }
 }
 
@@ -275,10 +416,45 @@ public struct APIGame: Codable, Equatable, Sendable {
 public struct APISettingsPatch: Codable, Equatable, Sendable {
   public var destination: String?
   public var createCombined: Bool?
+  public var upload: APIUploadSettingsPatch?
 
-  public init(destination: String? = nil, createCombined: Bool? = nil) {
+  public init(destination: String? = nil, createCombined: Bool? = nil, upload: APIUploadSettingsPatch? = nil) {
     self.destination = destination
     self.createCombined = createCombined
+    self.upload = upload
+  }
+}
+
+/// `upload` in a settings change.
+public struct APIUploadSettingsPatch: Codable, Equatable, Sendable {
+  public var choice: APIUploadChoicePatch?
+
+  public init(choice: APIUploadChoicePatch? = nil) {
+    self.choice = choice
+  }
+}
+
+/// Which files an upload sends when a request does not list them; what is left out stays.
+public struct APIUploadChoicePatch: Codable, Equatable, Sendable {
+  public var primary: Bool?
+  /// Camera names.
+  public var cameras: [String]?
+  /// Whether the combined video goes up. On, an `upload` run makes one to send when none is saved.
+  public var combined: Bool?
+
+  public init(primary: Bool? = nil, cameras: [String]? = nil, combined: Bool? = nil) {
+    self.primary = primary
+    self.cameras = cameras
+    self.combined = combined
+  }
+
+  /// `choice` with what this changes changed.
+  public func applied(to choice: UploadChoice) -> UploadChoice {
+    UploadChoice(
+      primary: primary ?? choice.primary,
+      cameras: cameras ?? choice.cameras,
+      combined: combined ?? choice.combined
+    )
   }
 }
 

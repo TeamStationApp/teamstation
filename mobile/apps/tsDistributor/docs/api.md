@@ -20,7 +20,7 @@ plugged in.
 | 400 | `badRequest`, `confirmRequired` | The request is wrong; the message says what |
 | 404 | `notFound` | No such recording, run or route |
 | 405 | `methodNotAllowed` | The path exists, but not with that method |
-| 409 | `runInProgress` | One run at a time; the message names the one under way |
+| 409 | `runInProgress` | One run at a time; the message names the one under way. Several recordings go in one run instead |
 | 412 | `iPadNotAttached`, `noDestination`, `noGame`, `teamStationSignedOut` | Something has to happen first; the message says what |
 | 423 | `directorBusy` | TS Director is recording or streaming, and the run needs a file from it |
 | 502 | `iPadFailed` | The iPad did not do what was asked |
@@ -37,15 +37,15 @@ plugged in.
 | `GET /api/v1/recordings/{id}/still?track=&at=` | One JPEG (at most 640×360) from the iPad, `at` seconds in (default 10) |
 | `DELETE /api/v1/recordings?ids=361,362&confirm=true` | `{deleted, refused}`: deletes takes on the iPad; the take being recorded is refused |
 | `POST /api/v1/recordings/{id}/download` | 202 `APIRun`: the files onto this Mac — everything off the iPad first, then stitched here. Body `{tracks?, reprocess?}` |
-| `POST /api/v1/recordings/{id}/export` | 202 `APIRun`: the files, then the combined video if the settings make one, then — with this Mac signed in and the take filed under a game — uploads to that game. Body `{tracks?, reprocess?, combined?, upload?}` overrides |
+| `POST /api/v1/recordings/{id}/export` | 202 `APIRun`: the files, then the combined video if the settings make one (see [the combined video](#the-combined-video)), then — with this Mac signed in and the take filed under a game — uploads to that game. Body `{tracks?, reprocess?, combined?, upload?}` overrides |
 | `POST /api/v1/recordings/{id}/combined` | 202 `APIRun`: the combined video, fetching any file it needs. Body `{combined: {include?, audioCamera?}}` |
-| `POST /api/v1/recordings/{id}/upload` | 202 `APIRun`: uploads to the take's game on TeamStation. A file it sends that is not on this Mac yet is fetched first, and a combined video that goes up and is not here is made first. Body `{upload?: {game?, tracks?, title?}}`; `game` (an id from `GET /api/v1/teamstation`) is needed only for a take TS Director filed under no game, or to send it somewhere else |
-| `POST /api/v1/runs` | 202 `APIRun` for exactly the `APIRunRequest` given: `{kind?, recording, tracks?, reprocess?, combined?, upload?}` |
+| `POST /api/v1/recordings/{id}/upload` | 202 `APIRun`: uploads to the take's game on TeamStation. A file it sends that is not on this Mac yet is fetched first, and a combined video that goes up and is not here is made first. Body `{upload?: {game?, tracks?, title?}, combined?}`; `game` (an id from `GET /api/v1/teamstation`) is needed only for a take TS Director filed under no game, or to send it somewhere else |
+| `POST /api/v1/runs` | 202 `APIRun` for exactly the `APIRunRequest` given, of one recording or [several](#several-recordings-in-one-run): `{kind?, recording \| recordings \| takes, tracks?, reprocess?, combined?, upload?}`. `kind` is `custom` unless given |
 | `GET /api/v1/runs/current` | The run under way, or the last one |
-| `GET /api/v1/runs/{id}` | `APIRun`: each file, the combined video and each upload, with `state` (`queued`, `fetching`, `fetched`, `stitching`, `downloading`, `uploading`, `finishing`, `done`, `failed`), `fraction`, `detail` and `result` (the saved file, or the video's page) |
-| `DELETE /api/v1/runs/{id}` | Cancels. Saved files stay; a cut-off download resumes next time |
+| `GET /api/v1/runs/{id}` | `APIRun`: `step` and `isDoneWithIPad` for the whole run, and in `takes`, for each recording, each file, the combined video and each upload, with `state` (`queued`, `fetching`, `fetched`, `stitching`, `downloading`, `uploading`, `finishing`, `done`, `failed`), `fraction`, `detail` and `result` (the saved file, or the video's page). `recording`, `folder`, `files`, `combined` and `uploads` repeat the first take's |
+| `DELETE /api/v1/runs/{id}` | Cancels every recording of the run. Saved files stay; a cut-off download resumes next time |
 | `GET /api/v1/settings` | `DistributorSettings`, as this Mac holds them |
-| `PATCH /api/v1/settings` | `APISettingsPatch`: `destination`, `createCombined`; what is left out stays. Saved here and given to the iPad now or when it is next attached |
+| `PATCH /api/v1/settings` | `APISettingsPatch`: `destination`, `createCombined`, `upload: {choice: {primary?, cameras?, combined?}}` (the files an upload sends when a request does not list them); what is left out stays. Saved here and given to the iPad now or when it is next attached |
 | `GET /api/v1/teamstation` | `APITeamStation`: `signedIn` or `signedOut`, the e-mail, and the games already played that an upload can name. Signing in is done in the app — it takes a code from an e-mail |
 
 ## Upload titles
@@ -63,7 +63,44 @@ Every file a run needs comes off the iPad before anything else happens: the file
 ones its uploads send, and the ones its combined video is made from. TS Director is held off
 recording and streaming only while they come off; then this Mac stitches the files and makes the
 combined video, then the uploads go. None of that needs the iPad, so it can be unplugged once the
-files are in (`state` `fetched` or `downloading` done) and the run carries on.
+files are in (`isDoneWithIPad`) and the run carries on.
+
+## Several recordings in one run
+
+A run takes one recording or several. Several go through each step together, so the iPad is
+needed once however many there are: every file of every recording comes off the iPad under one
+hold on TS Director (`step` `fetching`), and only then does this Mac stitch them all
+(`stitching`), make the combined videos asked for (`combining`) and send the uploads
+(`uploading`), each step taking the recordings in the order given. The whole run has to fit on
+this Mac's disk before anything is written, since every recording's segments are here at once.
+
+Name the recordings with one of:
+
+- `recording`: one, as the routes under `/recordings/{id}` do;
+- `recordings: [101, 102]`: several, each as the rest of the request says;
+- `takes: [{recording, tracks?, combined?, upload?}]`: several, each with what it does differently
+  from the rest of the request. A take's `tracks` and `combined` replace the request's; its
+  `upload` replaces the request's field by field, so `{"upload": {"game": "gam_…"}}` sends that
+  take to its own game with the files the request lists.
+
+A request wrong about any recording (one not listed, named twice, a game not found) starts
+nothing. The run reports each recording in `takes`, in the order given.
+
+## The combined video
+
+A combined video is made only when asked for:
+
+| Run | Made when |
+|---|---|
+| `download` | Never |
+| `custom` | `combined` is `true` or `{include?, audioCamera?}`; absent or `false`, never |
+| `combined` | Always; that is what it is for (`false` answers 400) |
+| `export` | `combined` is `true` or `{include?, audioCamera?}`, or, left out, the settings' `createCombined` is on |
+| `upload` | It goes up and is not saved yet: `upload.tracks` lists `combined`, or, left out, the settings' `upload.choice.combined` is on |
+
+`"combined": false` makes none whatever the settings say, for every kind; an upload of it then
+answers 400. `PATCH /api/v1/settings {"createCombined": false, "upload": {"choice": {"combined": false}}}`
+turns off both settings that pull one in.
 
 ## Example
 
@@ -74,4 +111,13 @@ curl -s $B/recordings | jq '.recordings[] | {id, startedAt, files: [.files[] | {
 run=$(curl -s -X POST $B/recordings/361/upload | jq -r .id)   # to the game TS Director filed it under
 curl -s $B/runs/$run | jq '{isFinished, files: [.files[] | {name, state, fraction}], uploads}'
 curl -s -N $B/events            # follow along until the run says isFinished
+
+# Four takes in one run, each to its own game, the primary output only, no combined video.
+run=$(curl -s -X POST $B/runs -d '{
+  "kind": "export", "combined": false, "upload": {"tracks": ["primary"]},
+  "takes": [
+    {"recording": 101, "upload": {"game": "gam_a"}}, {"recording": 102, "upload": {"game": "gam_b"}},
+    {"recording": 103, "upload": {"game": "gam_c"}}, {"recording": 104, "upload": {"game": "gam_d"}}
+  ]}' | jq -r .id)
+curl -s $B/runs/$run | jq '{step, isDoneWithIPad, takes: [.takes[] | {recording, files: [.files[] | {name, state}], uploads: [.uploads[] | .state]}]}'
 ```

@@ -16,7 +16,7 @@ final class APIAdapter: DistributorActions {
 
   /// Each run's id, and the runs themselves for looking up by it. The last few are kept.
   private var runIDs: [ObjectIdentifier: UUID] = [:]
-  private var runs: [(id: UUID, run: DistributionRun)] = []
+  private var runs: [(id: UUID, batch: DistributionBatch)] = []
   private static let runsKept = 20
 
   init(model: DistributorModel) {
@@ -49,7 +49,7 @@ final class APIAdapter: DistributorActions {
     APIStatus(
       iPad: iPad(),
       destination: model.destination?.path,
-      run: model.run.map(snapshot),
+      run: model.batch.map(snapshot),
       teamStation: account()
     )
   }
@@ -170,13 +170,33 @@ final class APIAdapter: DistributorActions {
 
   // MARK: - Runs
 
+  /// Starts a run of one recording or several. Every take is worked out before any starts, so a
+  /// request wrong about one starts nothing.
   func startRun(_ request: APIRunRequest) async throws(HTTPError) -> APIRun {
+    var takes: [DistributorModel.ExportTake] = []
+    for one in try request.perTake() {
+      takes.append(try await take(one))
+    }
+    do {
+      let batch = try model.startExport(takes, reprocess: request.reprocess ?? false)
+      return snapshot(batch)
+    } catch {
+      throw httpError(for: error)
+    }
+  }
+
+  /// What a request of one recording asks of it: the files, the combined video, and the uploads.
+  ///
+  /// A combined video is made only when the request asks for one, or, left to the settings, for an
+  /// `export` when they make one (`createCombined`) and for an `upload` that sends one when they
+  /// tick it (`upload.choice.combined`) and none is saved. `"combined": false` turns it off for
+  /// either, and a `download` or `custom` run never makes one it was not asked for.
+  private func take(_ request: APIRunRequest) async throws(HTTPError) -> DistributorModel.ExportTake {
     guard let recordingID = request.recording else { throw HTTPError.badRequest("recording is required") }
     let recording = try listing(recordingID)
     let kind = request.kind ?? .custom
     let everyFile = (recording.hasPrimary ? [ Track.primary ] : []) + recording.cameras.map { Track.camera($0.sourceID) }
     var tracks = try request.tracks.map { names throws(HTTPError) in try names.map { name throws(HTTPError) in try Self.track(name, in: recording) } } ?? everyFile
-    let reprocess = request.reprocess ?? false
 
     var combined: CombinedPlan?
     var upload: TeamStationPlan?
@@ -184,12 +204,15 @@ final class APIAdapter: DistributorActions {
     case .download:
       break
     case .combined:
+      guard request.combined?.wanted ?? true else {
+        throw HTTPError.badRequest("a combined run with combined false has nothing to do")
+      }
       if request.tracks == nil, let include = request.combined?.include {
         tracks = try include.map { name throws(HTTPError) in try Self.track(name, in: recording) }
       }
       combined = try automaticCombined(recording, tracks: tracks, request: request.combined ?? APICombinedRequest(), required: true)
     case .export:
-      if request.combined != nil || model.settings.createCombined {
+      if request.combined?.wanted ?? model.settings.createCombined {
         combined = try automaticCombined(recording, tracks: tracks, request: request.combined ?? APICombinedRequest(), required: request.combined != nil)
       }
       if let asked = request.upload {
@@ -201,36 +224,32 @@ final class APIAdapter: DistributorActions {
     case .upload:
       // What goes up and is not on this Mac yet is fetched first; the run adds those files itself.
       // A combined video already here is kept as it is, so its layout does not matter; one that is
-      // not is made from every file, as the settings lay it out.
+      // not is made from every file, as the settings lay it out — unless the request says
+      // `"combined": false`, when none goes up.
+      let offered = request.combined?.wanted ?? true
       let saved = savedTracks(of: recording)
-      let hasCombined = model.inventory(of: recording)?.combined.isSaved ?? false
-      let makeable = CombinedPlan.automatic(for: recording, tracks: everyFile, saved: model.settings.combinedLayout)
+      let hasCombined = offered && (model.inventory(of: recording)?.combined.isSaved ?? false)
+      let makeable = offered ? CombinedPlan.automatic(for: recording, tracks: everyFile, saved: model.settings.combinedLayout) : nil
       upload = try await uploadPlan(recording, request: request.upload ?? APIUploadRequest(), makesCombined: hasCombined || makeable != nil)
       tracks = []
       if upload?.tracks.contains(.combined) == true {
         combined = (hasCombined ? CombinedPlan.automatic(for: recording, tracks: saved, saved: model.settings.combinedLayout) : nil) ?? makeable
       }
     case .custom:
-      if let request = request.combined {
+      if let request = request.combined, request.wanted {
         combined = try automaticCombined(recording, tracks: tracks, request: request, required: true)
       }
       if let request = request.upload {
         upload = try await uploadPlan(recording, request: request, makesCombined: combined != nil)
       }
     }
-
-    do {
-      let run = try model.startExport(recording, tracks: tracks, reprocess: reprocess, combined: combined, teamStation: upload)
-      return snapshot(run)
-    } catch {
-      throw httpError(for: error)
-    }
+    return DistributorModel.ExportTake(recording: recording, tracks: tracks, combined: combined, teamStation: upload)
   }
 
   private func httpError(for refusal: DistributorModel.ExportRefusal) -> HTTPError {
     switch refusal {
     case .exporting:
-      let current = model.run.map { " (\(id(for: $0)))" } ?? ""
+      let current = model.batch.map { " (\(id(for: $0)))" } ?? ""
       return HTTPError(409, "runInProgress", "an export is already under way\(current); follow it, or cancel it with DELETE /api/v1/runs/{id}")
     case .noDestination:
       return HTTPError(412, "noDestination", "choose an export folder first: PATCH /api/v1/settings {\"destination\": \"/path\"}")
@@ -242,41 +261,49 @@ final class APIAdapter: DistributorActions {
   }
 
   func run(_ id: UUID) -> APIRun? {
-    if let run = model.run, self.id(for: run) == id { return snapshot(run) }
-    return runs.first { $0.id == id }.map { snapshot($0.run) }
+    if let batch = model.batch, self.id(for: batch) == id { return snapshot(batch) }
+    return runs.first { $0.id == id }.map { snapshot($0.batch) }
   }
 
   func currentRun() -> APIRun? {
-    model.run.map(snapshot) ?? runs.last.map { snapshot($0.run) }
+    model.batch.map(snapshot) ?? runs.last.map { snapshot($0.batch) }
   }
 
   func cancelRun(_ id: UUID) throws(HTTPError) -> APIRun {
-    guard let run = (model.run.flatMap { self.id(for: $0) == id ? $0 : nil }) ?? runs.first(where: { $0.id == id })?.run else {
+    guard let batch = (model.batch.flatMap { self.id(for: $0) == id ? $0 : nil }) ?? runs.first(where: { $0.id == id })?.batch else {
       throw HTTPError.notFound("no run \(id)")
     }
-    run.cancel()
-    return snapshot(run)
+    batch.cancel()
+    return snapshot(batch)
   }
 
-  private func id(for run: DistributionRun) -> UUID {
-    if let id = runIDs[ObjectIdentifier(run)] { return id }
+  private func id(for batch: DistributionBatch) -> UUID {
+    if let id = runIDs[ObjectIdentifier(batch)] { return id }
     let id = UUID()
-    runIDs[ObjectIdentifier(run)] = id
-    runs.append((id, run))
+    runIDs[ObjectIdentifier(batch)] = id
+    runs.append((id, batch))
     if runs.count > Self.runsKept {
       let gone = runs.removeFirst()
-      runIDs[ObjectIdentifier(gone.run)] = nil
+      runIDs[ObjectIdentifier(gone.batch)] = nil
     }
     return id
   }
 
-  private func snapshot(_ run: DistributionRun) -> APIRun {
+  private func snapshot(_ batch: DistributionBatch) -> APIRun {
     APIRun(
-      id: id(for: run),
+      id: id(for: batch),
+      isFinished: batch.isFinished,
+      wasCancelled: batch.wasCancelled,
+      step: batch.step.rawValue,
+      isDoneWithIPad: batch.isDoneWithIPad,
+      takes: batch.runs.map(snapshot(take:))
+    )
+  }
+
+  private func snapshot(take run: DistributionRun) -> APIRunTake {
+    APIRunTake(
       recording: run.recording.id,
       folder: run.folder.path,
-      isFinished: run.isFinished,
-      wasCancelled: run.wasCancelled,
       files: run.tracks.map { track in
         Self.step(
           track: Self.name(track),
@@ -368,6 +395,9 @@ final class APIAdapter: DistributorActions {
       tracks = (choice.primary ? [ UploadTrack.primary ] : []) + choice.cameras.map { .camera($0) } + (choice.combined ? [ .combined ] : [])
     }
     guard !tracks.isEmpty else { throw HTTPError.badRequest("nothing to upload: list upload.tracks, or tick files to upload in the app") }
+    if tracks.contains(.combined), !makesCombined {
+      throw HTTPError.badRequest("recording \(recording.id) gets no combined video in this run, so none can go up: ask for one with combined, or leave combined out of upload.tracks")
+    }
 
     return model.teamStationPlan(
       gameId: gameId,
@@ -392,6 +422,7 @@ final class APIAdapter: DistributorActions {
     await model.updateSettings { settings in
       if let path = patch.destination { settings.destinations[macID] = path }
       if let on = patch.createCombined { settings.createCombined = on }
+      if let choice = patch.upload?.choice { settings.upload.choice = choice.applied(to: settings.upload.choice) }
     }
     return model.settings
   }

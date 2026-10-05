@@ -48,7 +48,10 @@ final class FakeActions: DistributorActions {
   func startRun(_ request: APIRunRequest) async throws(HTTPError) -> APIRun {
     if let startFailure { throw startFailure }
     started.append(request)
-    let run = APIRun(id: UUID(), recording: request.recording ?? 0, folder: "/Movies", isFinished: false, wasCancelled: false, files: [], combined: nil, uploads: [])
+    let takes = ((try? request.perTake()) ?? []).map { take in
+      APIRunTake(recording: take.recording ?? 0, folder: "/Movies", files: [], combined: nil, uploads: [])
+    }
+    let run = APIRun(id: UUID(), isFinished: false, wasCancelled: false, step: "fetching", isDoneWithIPad: false, takes: takes)
     runs[run.id] = run
     return run
   }
@@ -155,6 +158,70 @@ struct DistributorAPITests {
     #expect(followed.status == 200)
     let cancelled = try await Self.call(router, "DELETE", "/api/v1/runs/\(run.id.uuidString)")
     #expect(try JSONDecoder.api.decode(APIRun.self, from: cancelled.data).wasCancelled)
+  }
+
+  @Test("A run of several recordings starts as one request, and each take reads as one recording's request")
+  func severalTakes() async throws {
+    let actions = FakeActions()
+    let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
+    let body = #"""
+      {"kind": "export", "combined": false, "upload": {"tracks": ["primary"]},
+       "takes": [{"recording": 101, "upload": {"game": "gam_1"}},
+                 {"recording": 102, "upload": {"game": "gam_2", "tracks": ["primary", "home"]}},
+                 {"recording": 103, "combined": {"include": ["home", "away"]}}]}
+      """#
+    let answer = try await Self.call(router, "POST", "/api/v1/runs", body: body)
+    #expect(answer.status == 202)
+    let run = try JSONDecoder.api.decode(APIRun.self, from: answer.data)
+    #expect(run.takes.map(\.recording) == [ 101, 102, 103 ])
+    #expect(run.recording == 101)
+
+    let takes = try #require(try actions.started.first?.perTake())
+    #expect(takes.map(\.recording) == [ 101, 102, 103 ])
+    #expect(takes.allSatisfy { $0.kind == .export && $0.takes == nil })
+    #expect(takes.map(\.upload?.game) == [ "gam_1", "gam_2", nil ])
+    #expect(takes.map(\.upload?.tracks) == [ [ "primary" ], [ "primary", "home" ], [ "primary" ] ])
+    #expect(takes[0].combined == .off && takes[1].combined == .off)
+    #expect(takes[2].combined == APICombinedRequest(include: [ "home", "away" ]))
+
+    let list = try APIRunRequest(kind: .download, recordings: [ 1, 2 ], tracks: [ "primary" ]).perTake()
+    #expect(list.map(\.recording) == [ 1, 2 ])
+    #expect(list.allSatisfy { $0.tracks == [ "primary" ] && $0.upload == nil && $0.combined == nil })
+
+    for wrong in [
+      #"{"recording": 101, "recordings": [102]}"#,
+      #"{"recordings": []}"#,
+      #"{"takes": [{"recording": 101}, {"recording": 101}]}"#
+    ] {
+      #expect(try await Self.call(router, "POST", "/api/v1/runs", body: wrong).status == 400, "\(wrong)")
+    }
+    // The routes of one recording take one: the path names it.
+    #expect(try await Self.call(router, "POST", "/api/v1/recordings/101/download", body: #"{"recordings": [102]}"#).status == 400)
+  }
+
+  @Test("combined is false for none, true for one as the settings lay it out, or what goes in it")
+  func combinedChoice() throws {
+    func decode(_ json: String) throws -> APICombinedRequest? {
+      try JSONDecoder.api.decode(APIRunRequest.self, from: Data(json.utf8)).combined
+    }
+    #expect(try decode(#"{"combined": false}"#) == .off)
+    #expect(try decode(#"{"combined": true}"#) == APICombinedRequest())
+    #expect(try decode(#"{"combined": {"audioCamera": "home"}}"#) == APICombinedRequest(audioCamera: "home"))
+    #expect(try decode(#"{}"#) == nil)
+    let encoded = try JSONEncoder.api.encode(APIRunRequest(recording: 1, combined: .off))
+    #expect(try decode(String(decoding: encoded, as: UTF8.self)) == .off)
+  }
+
+  @Test("The settings change can turn the combined video's upload off, leaving the rest of the choice")
+  func uploadChoicePatch() async throws {
+    let actions = FakeActions()
+    let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
+    let answer = try await Self.call(router, "PATCH", "/api/v1/settings", body: #"{"createCombined": false, "upload": {"choice": {"combined": false}}}"#)
+    #expect(answer.status == 200)
+    let patch = try #require(actions.patches.first)
+    #expect(patch == APISettingsPatch(createCombined: false, upload: APIUploadSettingsPatch(choice: APIUploadChoicePatch(combined: false))))
+    let choice = UploadChoice(primary: true, cameras: [ "home" ], combined: true)
+    #expect(patch.upload?.choice?.applied(to: choice) == UploadChoice(primary: true, cameras: [ "home" ], combined: false))
   }
 
   @Test("A refusal from the app reaches the caller with its status and code")

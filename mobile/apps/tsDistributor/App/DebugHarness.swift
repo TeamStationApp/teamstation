@@ -103,12 +103,12 @@ final class DebugHarness {
         "allOnMac": !inventory.needsIPad(Array(inventory.files.keys))
       ]
     case "/cancel":
-      model.run?.cancel()
-      return [ "ok": model.run?.wasCancelled ?? false ]
+      model.batch?.cancel()
+      return [ "ok": model.batch?.wasCancelled ?? false ]
     case "/dismiss-export":
       // As Done does. AppKit will not quit while the progress sheet is up.
       model.dismissRun()
-      return [ "ok": model.run == nil ]
+      return [ "ok": model.batch == nil ]
     case "/games":
       await model.teamStation.refreshFinishedEvents()
       return [
@@ -158,7 +158,7 @@ final class DebugHarness {
         )
       }
       model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan, teamStation: upload)
-      return [ "ok": model.run != nil ]
+      return [ "ok": model.batch != nil ]
     default:
       return state()
     }
@@ -181,25 +181,12 @@ final class DebugHarness {
       link["reason"] = reason
     }
     var export: Any = NSNull()
-    if let run = model.run {
+    if let batch = model.batch {
       export = [
-        "recording": run.recording.id,
-        "folder": run.folder.path,
-        "isFinished": run.isFinished,
-        "tracks": run.tracks.map { track -> [String: Any] in
-          [
-            "track": Self.name(track),
-            "state": Self.describe(run.states[track] ?? .queued),
-          ]
-        },
-        "combined": run.combinedState.map { Self.describe($0) } ?? NSNull(),
-        "combinedSound": run.combinedSound ?? NSNull(),
-        "uploads": (run.teamStation?.tracks ?? []).map { track -> [String: Any] in
-          [
-            "title": run.teamStation?.title(for: track) ?? "",
-            "state": Self.describe(run.uploadStates[track] ?? .queued)
-          ]
-        }
+        "step": batch.step.rawValue,
+        "isDoneWithIPad": batch.isDoneWithIPad,
+        "isFinished": batch.isFinished,
+        "takes": batch.runs.map(Self.describe)
       ] as [String: Any]
     }
     let teamStation = model.teamStation.user.map { "signedIn \($0.email ?? $0.displayName)" } ?? "signedOut"
@@ -220,6 +207,29 @@ final class DebugHarness {
       "export": export,
       "teamStation": teamStation,
       "problem": model.problem ?? NSNull()
+    ]
+  }
+
+  /// One recording of the export under way.
+  private static func describe(_ run: DistributionRun) -> [String: Any] {
+    [
+      "recording": run.recording.id,
+      "folder": run.folder.path,
+      "isFinished": run.isFinished,
+      "tracks": run.tracks.map { track -> [String: Any] in
+        [
+          "track": Self.name(track),
+          "state": Self.describe(run.states[track] ?? .queued),
+        ]
+      },
+      "combined": run.combinedState.map { Self.describe($0) } ?? NSNull(),
+      "combinedSound": run.combinedSound ?? NSNull(),
+      "uploads": (run.teamStation?.tracks ?? []).map { track -> [String: Any] in
+        [
+          "title": run.teamStation?.title(for: track) ?? "",
+          "state": Self.describe(run.uploadStates[track] ?? .queued)
+        ]
+      }
     ]
   }
 

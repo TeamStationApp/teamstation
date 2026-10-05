@@ -45,10 +45,10 @@ struct RecordingsView: View {
       filesColumn
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
-    .sheet(isPresented: Binding(get: { model.run != nil }, set: { if !$0 { model.dismissRun() } })) {
-      if let run = model.run {
-        ExportProgressView(run: run) { model.dismissRun() }
-          .interactiveDismissDisabled(!run.isFinished)
+    .sheet(isPresented: Binding(get: { model.batch != nil }, set: { if !$0 { model.dismissRun() } })) {
+      if let batch = model.batch {
+        ExportProgressView(batch: batch) { model.dismissRun() }
+          .interactiveDismissDisabled(!batch.isFinished)
       }
     }
     .confirmationDialog(
