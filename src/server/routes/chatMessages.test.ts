@@ -258,6 +258,16 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
       expect(
         ok(await call('B', 'GET', `/chat/conversations/${members}/messages`))
       ).deep.equals([made])
+      // The list says when the chat last had a message.
+      const listed = (
+        ok(await call('C', 'GET', '/chat/conversations')) as Array<{
+          id: string
+          lastMessageAt: string | null
+          lastSeq: number
+        }>
+      ).find(chat => chat.id === members)
+      expect(listed?.lastSeq).equals(1)
+      expect(listed?.lastMessageAt).equals(made.createdAt)
 
       // The id from another sender, or in another conversation.
       const fromC = seal('C', members, 1, memberKeys[1], 'post', text('hi'), {

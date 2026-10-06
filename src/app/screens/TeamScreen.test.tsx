@@ -265,6 +265,22 @@ describe('TeamScreen for a fan', function () {
     expect(text()).contains('No games scheduled.')
   })
 
+  it('links to the team’s chats the person is in', async function () {
+    const { client } = fakeClient()
+    const opened: string[] = []
+    await render(
+      <TeamScreen
+        client={client}
+        team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
+        onOpenGame={() => undefined}
+        chats={[{ id: 'cnv_fans', title: 'Hawks Fans' }]}
+        onOpenChat={chat => opened.push(chat.id)}
+      />
+    )
+    await press('Open Hawks Fans')
+    expect(opened).deep.equals(['cnv_fans'])
+  })
+
   it('turns Following back into Follow, and says why when it cannot', async function () {
     const { client, calls } = fakeClient()
     await render(

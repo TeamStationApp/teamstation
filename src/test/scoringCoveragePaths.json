@@ -102,6 +102,7 @@
   "src/app/walkup/*.ts",
   "src/app/walkup/*.tsx",
   "src/app/components/Icon.tsx",
+  "src/app/components/iconCodepoints.ts",
   "src/common/scoring/lineupHistory.ts",
   "src/app/scoring/developmentSession.ts",
   "src/app/scoring/scoringSource.ts",

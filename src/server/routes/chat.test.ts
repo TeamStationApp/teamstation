@@ -202,9 +202,15 @@ describe('chat routes and the DM rules (U5)', function () {
         noHolder: false,
         closed: false,
         lastSeq: 0,
+        lastMessageAt: null,
+        scopeName: 'QPLL Spring 2027',
         unread: 0
       })
-      expect(a['Hawks Members']).to.include({ canPost: true, memberCount: 11 })
+      expect(a['Hawks Members']).to.include({
+        canPost: true,
+        memberCount: 11,
+        scopeName: 'Hawks'
+      })
       const s = await list('S')
       expect(s[ANNOUNCEMENTS]).to.include({ canPost: true, canModerate: true })
       const hc = await list('Hc')
@@ -218,6 +224,7 @@ describe('chat routes and the DM rules (U5)', function () {
         type: 'league',
         id: fixture.seed.leagueId
       })
+      expect(l['QPLL Org'].scopeName).equals('QPLL')
     })
 
     it('lists members with labels, never the player without an account', async function () {

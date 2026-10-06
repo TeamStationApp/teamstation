@@ -167,6 +167,7 @@ interface Setup {
   manage?: boolean
   initialTab?: string
   initialWhen?: When
+  chats?: Array<{ id: string; title: string }>
 }
 
 interface Calls {
@@ -177,6 +178,7 @@ interface Calls {
   managed: number
   invites: string[]
   loads: string[]
+  chats: string[]
 }
 
 async function mount(setup: Setup = {}): Promise<Calls> {
@@ -187,7 +189,8 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     whens: [],
     managed: 0,
     invites: [],
-    loads: []
+    loads: [],
+    chats: []
   }
   const client = {
     seasonGames: async (seasonId: string) => {
@@ -231,6 +234,8 @@ async function mount(setup: Setup = {}): Promise<Calls> {
           onTab={(tab, correcting) => calls.tabs.push([tab, correcting])}
           initialWhen={setup.initialWhen}
           onWhen={when => calls.whens.push(when)}
+          chats={setup.chats}
+          onOpenChat={chat => calls.chats.push(chat.id)}
         />
       </ThemeProvider>
     )
@@ -381,6 +386,22 @@ describe('the season screen', function () {
       }
     })
     expect(text()).includes('Cannot load')
+  })
+
+  it('links to the season’s chats the person is in', async function () {
+    const calls = await mount({
+      chats: [{ id: 'cnv_ann', title: 'QPLL Spring 2027 Announcements' }]
+    })
+    const link = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(
+      node =>
+        node.getAttribute('aria-label') ===
+        'Open QPLL Spring 2027 Announcements'
+    )
+    expect(link).not.equals(undefined)
+    await press(link!)
+    expect(calls.chats).deep.equals(['cnv_ann'])
   })
 
   it('names the season, its year, term and age group, and its counts', async function () {
