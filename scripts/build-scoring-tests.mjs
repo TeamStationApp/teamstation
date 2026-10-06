@@ -1,7 +1,9 @@
 import { globSync, mkdirSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
@@ -36,6 +38,7 @@ for (const entry of entries)
     ...webSettings,
     plugins: [
       ...webSettings.plugins,
+      chatCoreResolvePlugin(),
       {
         name: 'native-initials-measurement-unit',
         setup(build) {
@@ -82,6 +85,9 @@ for (const entry of entries)
     sourcemap: true,
     define: {
       __DEV__: 'true',
+      TS_CHAT_NODE_ADDON: JSON.stringify(
+        resolve('src/common/chatCrypto/node/chat_crypto.node')
+      ),
       TS_API_BASE_URL: JSON.stringify('/api/v1'),
       // Tests never report; they hand startSentry a DSN and an SDK of their own.
       'process.env.TS_SENTRY_DSN': JSON.stringify(''),

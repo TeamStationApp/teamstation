@@ -1,5 +1,5 @@
 const { execFileSync } = require('node:child_process')
-const { readFileSync } = require('node:fs')
+const { readFileSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 
 const {
@@ -45,7 +45,9 @@ function parseArgs(argv) {
   }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    if (arg === '--coverage') args.coverage = argv[++i]
+    if (arg === '--base') args.base = argv[++i]
+    else if (arg === '--report') args.report = argv[++i]
+    else if (arg === '--coverage') args.coverage = argv[++i]
     else if (arg === '--counts') args.counts = argv[++i]
     else if (arg === '--jacoco') args.jacoco = argv[++i]
     else if (arg === '--source-root') args.sourceRoots.push(argv[++i])
@@ -154,9 +156,12 @@ function main(argv, { run, log, cwd = process.cwd() }) {
     return 2
   }
   const topLevel = run('git', ['rev-parse', '--show-toplevel']).trim()
-  const base = run('git', ['merge-base', 'origin/master', 'HEAD']).trim()
+  const base =
+    args.base == null
+      ? run('git', ['merge-base', 'origin/master', 'HEAD']).trim()
+      : run('git', ['rev-parse', '--verify', `${args.base}^{commit}`]).trim()
   const specs = resolveSpecs(topLevel, args.specs, cwd)
-  const range = `${base}...HEAD`
+  const range = args.base == null ? `${base}...HEAD` : base
   // The whole tree is diffed and the pathspecs applied afterwards: git pairs a
   // rename only when it can see both sides, so a pathspec that names just the
   // new location would report a moved file as added, every line of it new.
@@ -197,6 +202,8 @@ function main(argv, { run, log, cwd = process.cwd() }) {
     newFiles: added,
     newFileMin: 90
   })
+  if (args.report != null)
+    writeFileSync(resolve(cwd, args.report), JSON.stringify(report, null, 2))
   for (const [path, rows] of Object.entries(report.files)) {
     const total = rows.covered.length + rows.uncovered.length
     if (total === 0) continue

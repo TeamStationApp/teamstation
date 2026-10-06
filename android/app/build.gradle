@@ -89,6 +89,7 @@ tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
     inputs.property("TS_API_BASE_URL", providers.environmentVariable("TS_API_BASE_URL").orElse(""))
     inputs.property("TS_SENTRY_DSN", providers.environmentVariable("TS_SENTRY_DSN").orElse(""))
     inputs.property("TS_BUILD_INFO", providers.environmentVariable("TS_BUILD_INFO").orElse(""))
+    inputs.property("TS_CHAT_BENCH", providers.environmentVariable("TS_CHAT_BENCH").orElse(""))
 }
 
 /**
@@ -145,6 +146,13 @@ android {
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+    // The app's own CMake: React Native's default app setup plus the chat
+    // crypto core's C++ TurboModule (src/main/jni/CMakeLists.txt).
+    externalNativeBuild {
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
         }
     }
     testCoverage { jacocoVersion = '0.8.13' }
@@ -257,3 +265,18 @@ ${familyFile("${family}_bold", 700)}
 android.sourceSets.main.res.srcDirs += tsFontRes
 android.sourceSets.main.java.srcDirs += file("../../mobile/apps/common/android/observability/src/main/kotlin")
 tasks.named('preBuild') { dependsOn('tsFonts') }
+
+// The chat crypto core (crates/chat-crypto) as a static library for every
+// ABI this build makes, before CMake links it into libappmodules.so.
+def chatCryptoAbis = (findProperty('reactNativeArchitectures') ?: 'arm64-v8a')
+    .toString().split(',').collect { it.trim() }.findAll { !it.isEmpty() }
+tasks.register('buildChatCryptoRust', Exec) {
+    workingDir rootDir
+    commandLine "${rootDir}/../scripts/chatCryptoNative.sh", 'android', chatCryptoAbis.join(',')
+    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
+}
+tasks.configureEach { task ->
+    if (task.name.startsWith('configureCMake') || task.name.startsWith('buildCMake')) {
+        task.dependsOn('buildChatCryptoRust')
+    }
+}

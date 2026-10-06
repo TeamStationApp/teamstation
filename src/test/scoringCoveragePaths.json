@@ -142,5 +142,16 @@
   "src/app/player/MultiCamView.tsx",
   "src/app/player/multiCam/align.ts",
   "src/app/player/useVideoListRefresh.ts",
-  "src/app/player/playIntent.ts"
+  "src/app/player/playIntent.ts",
+  "src/app/components/GuardiansModal.tsx",
+  "src/app/screens/JoinScreen.tsx",
+  "src/app/screens/FollowTeamScreen.tsx",
+  "src/app/screens/ChatReportsScreen.tsx",
+  "src/app/components/iconCodepoints.ts",
+  "src/app/dev/ChatBenchScreen.tsx",
+  "src/app/dev/chatBenchRun.ts",
+  "src/app/dev/chatBench.ts",
+  "src/app/dev/chatBench.native.ts",
+  "src/app/chat/**/*.ts",
+  "src/app/chat/**/*.tsx"
 ]

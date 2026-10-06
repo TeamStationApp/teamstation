@@ -87,7 +87,8 @@ function check(
   const calls: string[][] = []
   const run = (file: string, args: string[]): string => {
     calls.push([file, ...args])
-    if (args[0] === 'rev-parse') return `${TOP}\n`
+    if (args[0] === 'rev-parse')
+      return args.includes('--verify') ? `${BASE}\n` : `${TOP}\n`
     if (args[0] === 'merge-base') return `${BASE}\n`
     if (args.includes('--name-only')) return added.join('\n')
     return diff
@@ -97,6 +98,96 @@ function check(
 }
 
 describe('the changed-line check', function () {
+  it('writes the actual changed-line report and refuses a missing preserved ref', function () {
+    const report = join(
+      mkdtempSync(join(tmpdir(), 'changed-line-report-')),
+      'report.json'
+    )
+    const files = { 'src/server/a.ts': 10 }
+    const result = check(
+      [
+        '--base',
+        'preserved',
+        '--report',
+        report,
+        '--counts',
+        countsOf(files),
+        '--ext',
+        '.ts',
+        'src/server'
+      ],
+      diffOf(files)
+    )
+    expect(result.code).equals(0)
+    expect(JSON.parse(readFileSync(report, 'utf8'))).includes({
+      pass: true,
+      percent: 100
+    })
+    expect(() =>
+      main(
+        [
+          '--base',
+          'missing',
+          '--counts',
+          countsOf(files),
+          '--ext',
+          '.ts',
+          'src/server'
+        ],
+        {
+          cwd: TOP,
+          log: () => {},
+          run: (_file: string, args: string[]) => {
+            if (args.includes('--verify'))
+              throw new Error('Invalid preserved ref')
+            return TOP
+          }
+        }
+      )
+    ).throws('Invalid preserved ref')
+  })
+  it('uses an explicit preserved base without consulting or diffing primary history', function () {
+    const files = { 'src/server/a.ts': 10 }
+    const result = check(
+      [
+        '--base',
+        'preserved-base',
+        '--counts',
+        countsOf(files),
+        '--ext',
+        '.ts',
+        'src/server'
+      ],
+      diffOf(files),
+      ['src/server/a.ts']
+    )
+    expect(result.code).equals(0)
+    expect(result.calls).deep.includes([
+      'git',
+      'rev-parse',
+      '--verify',
+      'preserved-base^{commit}'
+    ])
+    expect(result.calls.some(call => call.includes('merge-base'))).equals(false)
+    expect(
+      result.calls.find(call => call.includes('--unified=0'))!.at(-1)
+    ).equals(BASE)
+    expect(
+      check(
+        [
+          '--base',
+          'preserved-base',
+          '--counts',
+          countsOf(files, { 'src/server/a.ts': 2 }),
+          '--ext',
+          '.ts',
+          'src/server'
+        ],
+        diffOf(files),
+        ['src/server/a.ts']
+      ).code
+    ).equals(1)
+  })
   it('fails on an empty diff unless --allow-empty, and diffs from the merge base', function () {
     const counts = countsOf({})
     const empty = check(['--counts', counts, '--ext', '.ts', 'src/server'], '')
