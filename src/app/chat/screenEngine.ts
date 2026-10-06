@@ -20,6 +20,7 @@ export type ChatScreenEngine = Pick<
   | 'edit'
   | 'deleteMessage'
   | 'moderatorDelete'
+  | 'report'
   | 'markRead'
   | 'typing'
   | 'openAttachment'

@@ -80,6 +80,7 @@ import { AccountScreen } from './screens/AccountScreen'
 import { CreateGameScreen } from './screens/CreateGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
+import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { GameScreen } from './screens/GameScreen'
 import {
   type GameSettingsResult,
@@ -187,6 +188,8 @@ type Pushed =
   | { name: 'conversation'; conversationId: string; title: string }
   /** A chat's members, safety numbers and approvals. */
   | { name: 'chatMembers'; conversationId: string }
+  /** Reported chat messages, for site administrators. */
+  | { name: 'chatReports' }
   /**
    * One player, and what their stats and videos are narrowed to.
    *
@@ -1794,6 +1797,10 @@ function Shell(props: AppProps): React.ReactElement {
       session == null ? null : (
         <ChatDevicesScreen client={client} userId={session.user.id} />
       )
+    ) : top.name === 'chatReports' ? (
+      session == null ? null : (
+        <ChatReportsScreen client={client} isAdmin={session.user.isAdmin} />
+      )
     ) : top.name === 'chatLink' ? (
       session == null ? null : (
         <LinkDeviceScreen
@@ -1823,6 +1830,9 @@ function Shell(props: AppProps): React.ReactElement {
         session={session}
         onChatDevices={() => {
           push({ name: 'chatDevices' })
+        }}
+        onChatReports={() => {
+          push({ name: 'chatReports' })
         }}
         onSignOut={() => {
           client.signOut().catch(() => undefined)
@@ -2353,6 +2363,7 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   if (route.name === 'chatDevices') return { [tab]: [{ name: 'chatDevices' }] }
   if (route.name === 'chatLink') return { [tab]: [{ name: 'chatLink' }] }
 
+  if (route.name === 'chatReports') return { [tab]: [{ name: 'chatReports' }] }
   if (route.name === 'chatNew') return { [tab]: [{ name: 'chatNew' }] }
   if (route.name === 'conversation' || route.name === 'chatMembers') {
     const conversation: Pushed = {
@@ -2451,6 +2462,7 @@ function routeOf(
     if (top.name === 'chatDevices') return { name: 'chatDevices' }
     if (top.name === 'chatLink') return { name: 'chatLink' }
 
+    if (top.name === 'chatReports') return { name: 'chatReports' }
     if (top.name === 'chatNew') return { name: 'chatNew' }
     if (top.name === 'conversation') {
       return { name: 'conversation', conversationId: top.conversationId }
@@ -2529,6 +2541,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'chatDevices') return lstrings.chat_devices_title
     if (top.name === 'chatLink') return lstrings.chat_link_title
 
+    if (top.name === 'chatReports') return lstrings.chat_reports_title
     if (top.name === 'chatNew') return lstrings.chat_new_title
     if (top.name === 'conversation') {
       return top.title === '' ? lstrings.chat_title : top.title

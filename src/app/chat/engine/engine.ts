@@ -2,10 +2,13 @@ import type {
   ChatConversation,
   ChatDmPerson,
   ChatKindName,
-  ChatMember
+  ChatMember,
+  ChatMessage
 } from '../../../common/api'
 import type { AttachmentRef, ChatContent } from '../../../common/chatContent'
+import { fromUtf8 } from '../../../common/chatCrypto/bytes'
 import { safetyNumber } from '../../../common/chatCrypto/safetyNumber'
+import { messageKey, openWithMessageKey } from '../../../common/chatCrypto/seal'
 import { HttpError } from '../../../common/errors'
 import type { ChatSocketEvent, GameSocket } from '../../../common/gameSocket'
 import { lstrings, sprintf } from '../../locales/strings'
@@ -17,7 +20,7 @@ import {
   type EngineContext,
   KeyHolder
 } from './context'
-import { IdentityCache } from './decrypt'
+import { fieldsOf, IdentityCache } from './decrypt'
 import { approveGrant, fillGrants } from './grants'
 import { type ChatSetup, type Enrolment, ensureEnrolled } from './links'
 import { headOf, syncLog } from './log'
@@ -636,6 +639,57 @@ export class ChatEngine {
       { type: 'delete', targetId },
       { targetIds: [targetId, ...target.editIds] }
     )
+  }
+
+  /**
+   * Reports someone else's post to the site administrators. It discloses
+   * that one message: its content exactly as it was sealed, and its own
+   * message key, never the epoch's. Answers whether the server could prove
+   * the sender wrote it.
+   */
+  async report(
+    conversationId: string,
+    messageId: string
+  ): Promise<{ id: string; verified: boolean }> {
+    const ctx = this.ctx
+    const state = await stateOf(ctx, conversationId)
+    let envelope: ChatMessage | undefined
+    for (const held of state.envelopes.values()) {
+      if (held.id === messageId) envelope = held
+    }
+    // As the person sees it: a post since deleted is no longer readable.
+    const shown = this.view(conversationId)?.messages.find(
+      message => message.id === messageId
+    )
+    const epochKey =
+      envelope == null
+        ? undefined
+        : epochKeyOf(ctx.keys.record, conversationId, envelope.epoch)
+    if (
+      envelope?.kind !== 'post' ||
+      shown?.status !== 'ok' ||
+      shown.mine ||
+      epochKey == null
+    ) {
+      throw new ChatEngineError(
+        'target',
+        'Only someone else’s message can be reported'
+      )
+    }
+    const key = messageKey(epochKey, conversationId, messageId)
+    const plaintext = fromUtf8(
+      openWithMessageKey({
+        ...fieldsOf(envelope),
+        nonce: unb64(envelope.nonce),
+        ciphertext: unb64(envelope.ciphertext),
+        messageKey: key
+      })
+    )
+    return await ctx.client.reportChatMessage({
+      messageId,
+      plaintext,
+      messageKey: b64(key)
+    })
   }
 
   /** Moves the person's read cursor to the newest message read. */
