@@ -132,10 +132,14 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     setAccount(value)
     onAccountChanged?.(value.user)
   }
-  const run = (section: string, operation: () => Promise<void>): void => {
+  const run = (
+    section: string,
+    operation: () => Promise<void>,
+    busyAction = section
+  ): void => {
     if (working.current) return
     working.current = true
-    setBusy(section)
+    setBusy(busyAction)
     setNotice(undefined)
     operation()
       .catch((error: unknown) => {
@@ -362,6 +366,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                   <View style={styles.actions}>
                     <Button
                       label="Save password"
+                      busy={busy === 'savePassword'}
+                      busyLabel="Saving password"
                       disabled={
                         busy !== '' ||
                         !newPasswordRequirements(password).valid ||
@@ -370,35 +376,39 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                         (reset != null && resetCode.trim() === '')
                       }
                       onPress={() => {
-                        run('password', async () => {
-                          if (password !== confirmation)
-                            throw new Error('The new passwords do not match')
-                          const signal = passwordLifetime.current?.signal
-                          const value = await client.setAccountPassword(
-                            password,
-                            currentPassword,
-                            reset == null
-                              ? undefined
-                              : {
-                                  requestId: reset.requestId,
-                                  code: resetCode
-                                },
-                            preparation.current,
-                            signal
-                          )
-                          if (signal?.aborted === true) return
-                          accept(value)
-                          setReset(undefined)
-                          setResetCode('')
-                          setCurrentPassword('')
-                          setPassword('')
-                          setConfirmation('')
-                          setPasswordOpen(false)
-                          setNotice({
-                            section: 'password',
-                            message: 'Password saved'
-                          })
-                        })
+                        run(
+                          'password',
+                          async () => {
+                            if (password !== confirmation)
+                              throw new Error('The new passwords do not match')
+                            const signal = passwordLifetime.current?.signal
+                            const value = await client.setAccountPassword(
+                              password,
+                              currentPassword,
+                              reset == null
+                                ? undefined
+                                : {
+                                    requestId: reset.requestId,
+                                    code: resetCode
+                                  },
+                              preparation.current,
+                              signal
+                            )
+                            if (signal?.aborted === true) return
+                            accept(value)
+                            setReset(undefined)
+                            setResetCode('')
+                            setCurrentPassword('')
+                            setPassword('')
+                            setConfirmation('')
+                            setPasswordOpen(false)
+                            setNotice({
+                              section: 'password',
+                              message: 'Password saved'
+                            })
+                          },
+                          'savePassword'
+                        )
                       }}
                     />
                     <Button

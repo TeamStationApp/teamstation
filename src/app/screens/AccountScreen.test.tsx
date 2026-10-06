@@ -364,7 +364,11 @@ describe('Account settings screen', () => {
     await change('New password', 'invented valid password')
     await change('Confirm new password', 'invented valid password')
     await press('Save password')
-    await press('Save password')
+    const saving = button('Saving password')!
+    expect(saving.getAttribute('aria-busy')).equals('true')
+    expect(saving.getAttribute('aria-disabled')).equals('true')
+    expect(saving.lastElementChild!.getAttribute('role')).equals('progressbar')
+    await press('Saving password')
     expect(f.calls.filter(c => c.endsWith('/password'))).length(0)
     await act(async () => {
       finish(testPasswordCosts)
