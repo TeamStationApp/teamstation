@@ -127,11 +127,17 @@ async function main(): Promise<void> {
       ].join('\n') + '\n'
     )
   } catch (error) {
-    if (m != null)
-      await writeFile(
-        path.join(artifacts, 'support', 'browser-failure.json'),
-        JSON.stringify(await m.hierarchy(), null, 2)
-      )
+    try {
+      if (m != null) {
+        await mkdir(path.join(artifacts, 'support'), { recursive: true })
+        await writeFile(
+          path.join(artifacts, 'support', 'browser-failure.json'),
+          JSON.stringify(await m.hierarchy(), null, 2)
+        )
+      }
+    } catch {
+      // Diagnostics are best effort; preserve the original test failure.
+    }
     throw error
   } finally {
     try {

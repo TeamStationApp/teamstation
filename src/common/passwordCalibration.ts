@@ -8,6 +8,9 @@ import {
   type PasswordKdf
 } from './passwordProtocol'
 
+// Hermes supplies this monotonic timer, but React Native's types omit it.
+declare const performance: { now: () => number }
+
 export const PASSWORD_HASH_TARGET_MS = 3000
 const calibrationSalt = '000102030405060708090a0b0c0d0e0f'
 

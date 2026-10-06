@@ -71,6 +71,7 @@ run('node_modules/.bin/mocha', [
   'src/common/passwordCalibration.test.ts',
   'src/common/passwordProtocol.test.ts',
   'src/common/passwordClient.test.ts',
+  'src/app/platform/passwordKdf.test.ts',
   '--grep',
   'password|Password|Argon2',
   'lib/password-tests.cjs'

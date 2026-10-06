@@ -12,7 +12,9 @@ describe('password platform adapters', () => {
     expect(
       await nativePasswordKdf('secret', testPasswordParameters, async p => {
         seen = p.password
-        expect(p.memory).equals(19456)
+        expect(p.memory).equals(32768)
+        expect(p.iterations).equals(6)
+        expect(p.parallelism).equals(4)
         expect(p.version).equals(19)
         return output
       })
@@ -105,7 +107,7 @@ describe('password platform adapters', () => {
         }
       })
       expect(result).deep.equals({
-        hash: 'd12fff922594f23bcece092625514a6085a867d68fbbc328935c13376c83fd31'
+        hash: '2c3fd536d6c57a72de37aa167fe3cad0146a547d8a14e13e8fa98f499449044a'
       })
       await scope.onmessage!({ data: { password: 'secret', parameters: null } })
       expect(result).deep.equals({ error: true })
