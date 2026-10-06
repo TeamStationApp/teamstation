@@ -86,6 +86,8 @@
   "src/app/field/grassApron.ts",
   "src/app/locales/en_US.ts",
   "src/app/components/RolesModal.tsx",
+  "src/app/components/GuardiansModal.tsx",
+  "src/app/screens/JoinScreen.tsx",
   "src/app/screens/ManageScreen.tsx",
   "src/app/screens/PlayerScreen.tsx",
   "src/app/screens/PlayerSettingsTab.tsx",

@@ -103,6 +103,34 @@ export async function teamStaff(
 }
 
 /**
+ * Every row that is one of these people: each id and every row closed into
+ * it, however many merges back. A merge leaves what was written about a row
+ * where it was (a guardian link names the row the child had when it was
+ * made), so a read about a person asks about all of their rows.
+ */
+export async function rowsOfPeople(
+  db: Kysely<Database>,
+  userIds: number[]
+): Promise<number[]> {
+  const unique = [...new Set(userIds)]
+  if (unique.length === 0) return []
+  const { rows } = await sql<{ id: number }>`
+    with recursive closed (id, depth) as (
+      select id, 0
+      from users
+      where id = any(${unique}::bigint[])
+      union all
+      select users.id, closed.depth + 1
+      from closed
+      join users on users.merged_into = closed.id
+      where closed.depth < ${MAX_MERGE_DEPTH}
+    )
+    select distinct id from closed
+  `.execute(db)
+  return rows.map(row => Number(row.id))
+}
+
+/**
  * Each of these user ids mapped to the open row it now is: itself, or the
  * end of its chain of `merged_into`. An id whose chain does not end, which
  * would be a bug in whatever wrote it, maps to nothing.

@@ -689,6 +689,12 @@ export const asPlayerDetail = asObject({
   avatarUrl: asOptional(asNullable(asString), null),
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),
+  /**
+   * `YYYY-MM`, or null when nobody has set it. Absent for anybody who may
+   * not set it: only the team's administrators and coaches and the
+   * player's guardians see it.
+   */
+  birthMonth: asOptional(asNullable(asString)),
   teams: asArray(asPlayerTeam)
 })
 export type PlayerDetail = ReturnType<typeof asPlayerDetail>
@@ -700,6 +706,30 @@ export const asPersonSettingsAnswer = asObject({
   throws: asThrows
 })
 export type PersonSettingsAnswer = ReturnType<typeof asPersonSettingsAnswer>
+
+/** A player's guardian or adult family member. */
+export const asGuardian = asObject({
+  userId: asUserId,
+  name: asString,
+  email: asNullable(asString),
+  kind: asLiteral('guardian', 'family')
+})
+export type Guardian = ReturnType<typeof asGuardian>
+export type RelativeKind = Guardian['kind']
+
+/** What linking a relative answers: the list now, and any invitation sent. */
+export const asAddedGuardian = asObject({
+  guardians: asArray(asGuardian),
+  invited: asOptional(
+    asObject({
+      inviteId: asString,
+      email: asString,
+      code: asString,
+      invitedAt: asString
+    })
+  )
+})
+export type AddedGuardian = ReturnType<typeof asAddedGuardian>
 
 /**
  * One highlight of one player, for their own page.
@@ -1094,9 +1124,14 @@ export type Redeemed = ReturnType<typeof asRedeemed>
 export const asScopeGrant = asObject({
   id: asString,
   name: asString,
-  role: asString
+  role: asString,
+  /** On a team grant only: whether they play on the team. */
+  isPlayer: asOptional(asBoolean)
 })
-export type ScopeGrant = ReturnType<typeof asScopeGrant>
+/** `isPlayer` optional, so a season's or league's grant is one too. */
+export type ScopeGrant = Omit<ReturnType<typeof asScopeGrant>, 'isPlayer'> & {
+  isPlayer?: boolean
+}
 
 export const asNamed = asObject({ id: asString, name: asString })
 
@@ -1147,7 +1182,15 @@ export const asScopePerson = asObject({
   lastSignInAt: asNullable(asString),
   lastSeenAt: asNullable(asString)
 })
-export type ScopePerson = ReturnType<typeof asScopePerson>
+type ScopePersonFromPage = ReturnType<typeof asScopePerson>
+export type ScopePerson = Omit<
+  ScopePersonFromPage,
+  'teams' | 'seasons' | 'leagues'
+> & {
+  teams: ScopeGrant[]
+  seasons: ScopeGrant[]
+  leagues: ScopeGrant[]
+}
 
 /** Every role one person holds on one level, from `ScopePerson.grants`. */
 export function grantsOf(person: ScopePerson): RoleGrant[] {
@@ -1257,7 +1300,12 @@ export const asManagePage = asObject({
   scope: asObject({
     kind: asLiteral('league', 'season', 'team'),
     id: asString,
-    name: asString
+    name: asString,
+    /**
+     * A league only: whether it is a SafeSport Local Affiliated
+     * Organization, which binds it to the MAAPP.
+     */
+    safesportLao: asOptional(asBoolean)
   }),
   /** The levels around this one, named, so a tick can say which it is. */
   tree: asObject({
@@ -1269,7 +1317,13 @@ export const asManagePage = asObject({
   pending: asArray(asPendingPerson),
   invites: asArray(asInvite)
 })
-export type ManagePage = ReturnType<typeof asManagePage>
+type ManagePageFromServer = ReturnType<typeof asManagePage>
+export type ManagePage = Omit<ManagePageFromServer, 'scope' | 'people'> & {
+  scope: Omit<ManagePageFromServer['scope'], 'safesportLao'> & {
+    safesportLao?: boolean
+  }
+  people: ScopePerson[]
+}
 
 export const asAddedPerson = asObject({
   added: asBoolean,
@@ -2678,6 +2732,80 @@ export class TeamStationClient {
     await this.request('DELETE', walkUpSongPath(teamId, userId), asUnknownOk)
   }
 
+  /** A player's guardians and adult family members, guardians first. */
+  async guardians(
+    teamId: string,
+    userId: number | string
+  ): Promise<Guardian[]> {
+    return await this.request(
+      'GET',
+      guardiansPath(teamId, userId),
+      asArray(asGuardian)
+    )
+  }
+
+  /**
+   * Links a guardian or adult family member, by account or by address. An
+   * address with no account is sent an invitation only it can redeem.
+   */
+  async addGuardian(
+    teamId: string,
+    userId: number | string,
+    who: { userId: number } | { email: string },
+    kind: RelativeKind = 'guardian'
+  ): Promise<AddedGuardian> {
+    return await this.request(
+      'POST',
+      guardiansPath(teamId, userId),
+      asAddedGuardian,
+      'userId' in who
+        ? { userId: String(who.userId), kind }
+        : { email: who.email, kind }
+    )
+  }
+
+  /** Unlinks a guardian or family member, with what the link granted. */
+  async removeGuardian(
+    teamId: string,
+    userId: number | string,
+    guardianId: number
+  ): Promise<boolean> {
+    const answer = await this.request(
+      'DELETE',
+      `${guardiansPath(teamId, userId)}/${encodeURIComponent(guardianId)}`,
+      asObject({ removed: asBoolean })
+    )
+    return answer.removed
+  }
+
+  /**
+   * Sets a player's year and month of birth, never a day, or clears it with
+   * null. Answers the month as `YYYY-MM`, or null.
+   */
+  async setBirthMonth(
+    userId: number | string,
+    birth: { year: number; month: number } | null
+  ): Promise<string | null> {
+    const answer = await this.request(
+      'PUT',
+      `/players/${encodeURIComponent(userId)}/birth-month`,
+      asObject({ birthMonth: asNullable(asString) }),
+      birth ?? { year: null, month: null }
+    )
+    return answer.birthMonth
+  }
+
+  /** Says whether a league is a SafeSport Local Affiliated Organization. */
+  async setSafesport(leagueId: string, lao: boolean): Promise<boolean> {
+    const answer = await this.request(
+      'PUT',
+      `/manage/league/${encodeURIComponent(leagueId)}/safesport`,
+      asObject({ safesportLao: asBoolean }),
+      { lao }
+    )
+    return answer.safesportLao
+  }
+
   /** One person: their picture, their name, their handedness, their teams. */
   async player(userId: string): Promise<PlayerDetail> {
     return await this.request(
@@ -3096,6 +3224,10 @@ export class TeamStationClient {
     }
     return cleaner(parsed)
   }
+}
+
+function guardiansPath(teamId: string, userId: number | string): string {
+  return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/guardians`
 }
 
 function walkUpSongPath(teamId: string, userId: number | string): string {

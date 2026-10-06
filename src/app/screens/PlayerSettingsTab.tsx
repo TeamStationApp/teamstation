@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import type { RosterEntry, TeamStationClient } from '../../common/api'
+import { ageOn, type BirthMonth, parseBirthMonth } from '../../common/age'
+import type { Guardian, RosterEntry, TeamStationClient } from '../../common/api'
 import { rosterFullName } from '../../common/names'
 import {
   PLAYER_POSITIONS,
   type PlayerPosition,
   type PlayerSettings
 } from '../../common/playerSettings'
-import { Button, Card, TextField } from '../components'
+import { Button, Card, SectionHeader, TextField } from '../components'
+import { GuardiansModal, kindLabel } from '../components/GuardiansModal'
+import { sprintf } from '../../common/sprintf'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -181,6 +184,7 @@ export function PlayerSettingsTab(
   }
 
   return (
+    <View style={styles.sections}>
     <Card style={styles.form}>
       {teamId != null && (
         <>
@@ -308,6 +312,260 @@ export function PlayerSettingsTab(
         onPress={save}
       />
     </Card>
+      <BirthMonthSection client={client} userId={userId} />
+      {teamId != null && <GuardiansSection client={client} teamId={teamId} userId={userId} playerName={saved.shortName} />}
+    </View>
+  )
+}
+
+/** A month and a year of birth, never a day, with the age it makes today. */
+function BirthMonthSection(props: {
+  client: TeamStationClient
+  userId: string
+}): React.ReactElement | null {
+  const { client, userId } = props
+  const styles = getStyles(useTheme())
+  /** Undefined while loading, and for somebody not shown it at all. */
+  const [saved, setSaved] = useState<BirthMonth | null | undefined>(undefined)
+  const [month, setMonth] = useState<number | null>(null)
+  const [year, setYear] = useState(new Date().getUTCFullYear() - 12)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | undefined>(undefined)
+  const [error, setError] = useState<string | undefined>(undefined)
+
+  const show = (birth: BirthMonth | null): void => {
+    setSaved(birth)
+    setMonth(birth?.month ?? null)
+    if (birth != null) setYear(birth.year)
+  }
+
+  useEffect(() => {
+    let live = true
+    client
+      .player(userId)
+      .then(player => {
+        if (!live || player.birthMonth === undefined) return
+        show(parseBirthMonth(player.birthMonth) ?? null)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [client, userId])
+
+  if (saved === undefined) return null
+
+  const thisYear = new Date().getUTCFullYear()
+  const changed =
+    month != null && (saved?.month !== month || saved?.year !== year)
+  const send = (birth: BirthMonth | null): void => {
+    setBusy(true)
+    setError(undefined)
+    setNote(undefined)
+    client
+      .setBirthMonth(userId, birth)
+      .then(text => {
+        show(parseBirthMonth(text) ?? null)
+        setNote(
+          birth == null
+            ? lstrings.player_birth_cleared
+            : lstrings.player_birth_saved
+        )
+      })
+      .catch((caught: unknown) => {
+        setError(
+          caught instanceof Error && caught.message !== ''
+            ? caught.message
+            : lstrings.player_settings_cannot_save
+        )
+      })
+      .finally(() => {
+        setBusy(false)
+      })
+  }
+
+  return (
+    <View style={styles.section}>
+      <SectionHeader title={lstrings.player_birth} />
+      <Card style={styles.form}>
+        <Text style={styles.muted}>
+          {saved == null
+            ? lstrings.player_birth_none
+            : sprintf(
+                lstrings.player_birth_shown,
+                monthName(saved.month),
+                saved.year,
+                ageOn(saved.year, saved.month, new Date())
+              )}
+        </Text>
+        <Text style={styles.muted}>{lstrings.player_birth_detail}</Text>
+
+        <Text style={styles.label}>
+          {lstrings.player_birth_month.toUpperCase()}
+        </Text>
+        <View
+          style={styles.chips}
+          accessibilityRole="radiogroup"
+          accessibilityLabel={lstrings.player_birth_month}
+        >
+          {MONTHS.map(number => (
+            <Chip
+              key={number}
+              label={monthName(number).slice(0, 3)}
+              accessibilityLabel={`${lstrings.player_birth_month} ${monthName(number)}`}
+              role="radio"
+              on={month === number}
+              disabled={busy}
+              onPress={() => {
+                setMonth(number)
+                setNote(undefined)
+              }}
+            />
+          ))}
+        </View>
+
+        <Text style={styles.label}>
+          {lstrings.player_birth_year.toUpperCase()}
+        </Text>
+        <View style={styles.stepper}>
+          <Chip
+            label="−"
+            accessibilityLabel={lstrings.player_birth_year_earlier}
+            role="button"
+            on={false}
+            disabled={busy || year <= EARLIEST_YEAR}
+            onPress={() => {
+              setYear(year - 1)
+              setNote(undefined)
+            }}
+          />
+          <Text
+            style={styles.year}
+            accessibilityLabel={`${lstrings.player_birth_year} ${year}`}
+          >
+            {year}
+          </Text>
+          <Chip
+            label="+"
+            accessibilityLabel={lstrings.player_birth_year_later}
+            role="button"
+            on={false}
+            disabled={busy || year >= thisYear}
+            onPress={() => {
+              setYear(year + 1)
+              setNote(undefined)
+            }}
+          />
+        </View>
+
+        {error != null && <Text style={styles.error}>{error}</Text>}
+        {note != null && <Text style={styles.muted}>{note}</Text>}
+        <Button
+          label={lstrings.player_birth_save}
+          accessibilityLabel={lstrings.player_birth_save}
+          busy={busy}
+          disabled={!changed}
+          onPress={() => {
+            if (month != null) send({ year, month })
+          }}
+        />
+        <Button
+          label={lstrings.player_birth_clear}
+          accessibilityLabel={lstrings.player_birth_clear}
+          kind="text"
+          disabled={busy || saved == null}
+          onPress={() => {
+            send(null)
+          }}
+        />
+      </Card>
+    </View>
+  )
+}
+
+const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+const EARLIEST_YEAR = 1900
+
+/** `March`, from 3. */
+function monthName(month: number): string {
+  return (lstrings as Record<string, string>)[`month_${month}`] ?? String(month)
+}
+
+/**
+ * The player's guardians and adult family members, and the way to change
+ * them: `GuardiansModal`.
+ */
+function GuardiansSection(props: {
+  client: TeamStationClient
+  teamId: string
+  userId: string
+  playerName: string
+}): React.ReactElement {
+  const { client, teamId, userId, playerName } = props
+  const styles = getStyles(useTheme())
+  const [guardians, setGuardians] = useState<Guardian[] | undefined>(undefined)
+  const [failed, setFailed] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    client
+      .guardians(teamId, userId)
+      .then(list => {
+        if (live) setGuardians(list)
+      })
+      .catch(() => {
+        if (live) setFailed(true)
+      })
+    return () => {
+      live = false
+    }
+  }, [client, teamId, userId])
+
+  return (
+    <View style={styles.section}>
+      <SectionHeader title={lstrings.guardians_title} />
+      <Card style={styles.form}>
+        {failed ? (
+          <Text style={styles.error}>{lstrings.guardians_cannot_load}</Text>
+        ) : guardians == null ? (
+          <Text style={styles.muted}>{lstrings.player_loading}</Text>
+        ) : guardians.length === 0 ? (
+          <Text style={styles.muted}>{lstrings.guardians_none}</Text>
+        ) : (
+          guardians.map(guardian => (
+            <View key={guardian.userId}>
+              <Text style={styles.name}>{guardian.name}</Text>
+              <Text style={styles.muted}>
+                {[kindLabel(guardian.kind), guardian.email]
+                  .filter(item => item != null)
+                  .join(' \u00b7 ')}
+              </Text>
+            </View>
+          ))
+        )}
+        <Button
+          label={lstrings.guardians_manage}
+          accessibilityLabel={lstrings.guardians_manage}
+          kind="secondary"
+          onPress={() => {
+            setOpen(true)
+          }}
+        />
+      </Card>
+      {open && (
+        <GuardiansModal
+          client={client}
+          teamId={teamId}
+          playerId={userId}
+          playerName={playerName}
+          onChanged={setGuardians}
+          onClose={() => {
+            setOpen(false)
+          }}
+        />
+      )}
+    </View>
   )
 }
 
@@ -375,7 +633,7 @@ export function changesOf(saved: Saved, draft: Draft): PlayerSettings {
 function Chip(props: {
   label: string
   accessibilityLabel?: string
-  role: 'checkbox' | 'radio'
+  role: 'checkbox' | 'radio' | 'button'
   on: boolean
   disabled: boolean
   onPress: () => void
@@ -386,10 +644,10 @@ function Chip(props: {
     <Pressable
       accessibilityRole={role}
       accessibilityLabel={props.accessibilityLabel ?? label}
-      accessibilityState={{ checked: on, disabled }}
+      accessibilityState={role === 'button' ? { disabled } : { checked: on, disabled }}
       // react-native-web does not render `aria-checked` from
       // `accessibilityState`, so the web says it directly.
-      aria-checked={on}
+      aria-checked={role === 'button' ? undefined : on}
       disabled={disabled}
       onPress={onPress}
       style={[styles.chip, on ? styles.chipOn : styles.chipOff]}
@@ -402,6 +660,31 @@ function Chip(props: {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  sections: {
+    gap: theme.rem(theme.spaceLgRem)
+  },
+  section: {
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceMdRem)
+  },
+  year: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1.125),
+    fontWeight: '600',
+    color: theme.primaryTextColor,
+    minWidth: theme.rem(3.5),
+    textAlign: 'center'
+  },
+  name: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.9375),
+    fontWeight: '600',
+    color: theme.primaryTextColor
+  },
   form: {
     gap: theme.rem(theme.spaceMdRem)
   },

@@ -488,8 +488,9 @@ describe('following a team (U1)', function () {
       const followers = coach.body.filter(
         (entry: { group: string }) => entry.group === 'follower'
       )
-      // The parents and the team's role holders, who are members.
-      expect(followers.length).equals(7)
+      // The parents, P's guardians and the team's role holders, who are
+      // members.
+      expect(followers.length).equals(9)
       const pat = coach.body.find(
         (entry: { userId: number }) => entry.userId === userId('P')
       )

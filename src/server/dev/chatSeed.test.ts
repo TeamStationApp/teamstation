@@ -3,13 +3,25 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { ageOn } from '../../common/age'
+import { passwordBytes } from '../../common/passwordProtocol'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { findUserByEmail } from '../auth/emails'
-import { passwordMatches } from '../auth/passwords'
+import {
+  nativeArgon,
+  passwordMatches,
+  readPasswordRecord
+} from '../auth/passwords'
 import { type Database, makeDatabase } from '../db/database'
-import { type ChatSeed, chatSeed, describeSeed, SEED_PEOPLE } from './chatSeed'
+import {
+  birthMonthOf,
+  type ChatSeed,
+  chatSeed,
+  describeSeed,
+  SEED_PEOPLE
+} from './chatSeed'
 
 /** U1: the chat fixture, built twice into one scratch database. */
 
@@ -27,6 +39,7 @@ const TABLES = [
   'memberships',
   'scope_roles',
   'team_follows',
+  'user_links',
   'games',
   'videos',
   'external_ids'
@@ -102,7 +115,8 @@ describe('the chat seed', function () {
       season_teams: 3,
       games: 3,
       videos: 1,
-      team_follows: 2
+      team_follows: 2,
+      user_links: 2
     })
     expect(second.teams).deep.equals(first.teams)
     expect(second.games).deep.equals(first.games)
@@ -119,8 +133,16 @@ describe('the chat seed', function () {
     expect(pat?.password).equals('same for all')
     const found = await findUserByEmail(database(), 'p@chat.example.com')
     expect(found?.loginEnabled).equals(true)
+    // What a client sends for that password: its Argon2id under the record's
+    // own client parameters.
+    const record = readPasswordRecord(found?.passwordHash ?? null)
+    expect(record).not.equals(null)
+    const clientHash = await nativeArgon(
+      passwordBytes('same for all'),
+      record!.client
+    )
     expect(
-      await passwordMatches('same for all', found?.passwordHash ?? null)
+      await passwordMatches(clientHash, found?.passwordHash ?? null)
     ).equals(true)
     expect(first.people.P?.password).not.equals('same for all')
     const final = await database()
@@ -186,6 +208,60 @@ describe('the chat seed', function () {
       .where('id', '=', second.people.Z?.userId ?? 0)
       .executeTakeFirstOrThrow()
     expect(admin.is_admin).equals(true)
+  })
+
+  it('links G1 and G2 as guardians of P, on Hawks through their links', async function () {
+    const links = await database()
+      .selectFrom('user_links')
+      .innerJoin(
+        'memberships',
+        'memberships.granted_by_link_id',
+        'user_links.id'
+      )
+      .select([
+        'user_links.user_id as userId',
+        'user_links.related_user_id as playerId',
+        'user_links.kind as kind',
+        'user_links.can_manage as canManage',
+        'memberships.team_id as teamId',
+        'memberships.user_id as memberId'
+      ])
+      .orderBy('user_links.user_id')
+      .execute()
+    const expected = ['G1', 'G2'].map(key => ({
+      userId: second.people[key]?.userId,
+      playerId: second.people.P?.userId,
+      kind: 'guardian',
+      canManage: true,
+      teamId: second.teams.hawks,
+      memberId: second.people[key]?.userId
+    }))
+    expect(links).to.have.deep.members(expected)
+  })
+
+  it('gives P, E, R and T birth months that make them 15, 16, 12 and 12', async function () {
+    const now = new Date('2027-04-12T12:00:00Z')
+    const ages: Record<string, number | null> = {}
+    for (const key of ['P', 'E', 'R', 'T', 'Hc']) {
+      const row = await database()
+        .selectFrom('users')
+        .select(['birth_year', 'birth_month'])
+        .where('id', '=', second.people[key]?.userId ?? 0)
+        .executeTakeFirstOrThrow()
+      ages[key] =
+        row.birth_year == null || row.birth_month == null
+          ? null
+          : ageOn(row.birth_year, row.birth_month, now)
+    }
+    expect(ages).deep.equals({ P: 15, E: 16, R: 12, T: 12, Hc: null })
+    // T turns 13 on the first of next month.
+    const t = birthMonthOf(now, { years: 13, months: 0 })
+    expect(t).deep.equals({ year: 2014, month: 4 })
+    expect(ageOn(t.year, t.month, new Date('2027-05-01T00:00:00Z'))).equals(13)
+    // January less a month is December of the year before.
+    expect(
+      birthMonthOf(new Date('2027-01-15T00:00:00Z'), { years: 15, months: 1 })
+    ).deep.equals({ year: 2011, month: 12 })
   })
 
   it('prints every password beside its person', function () {
