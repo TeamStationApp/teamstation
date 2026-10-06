@@ -44,7 +44,8 @@ const config = {
   // source, so a new value is a new transform rather than a cached old one.
   cacheVersion: JSON.stringify([
     process.env.TS_API_BASE_URL ?? 'production',
-    appOrigin()
+    appOrigin(),
+    process.env.TS_CHAT_BENCH ?? ''
   ]),
   resolver: {
     resolveRequest: (context, moduleName, platform) => {
@@ -69,6 +70,7 @@ const config = {
       new RegExp(`^${escape(strayModules)}.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'mobile'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'lib'))}/.*$`),
+      new RegExp(`^${escape(path.resolve(__dirname, 'crates'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'dist'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'ios', 'build'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'ios', 'Pods'))}/.*$`),

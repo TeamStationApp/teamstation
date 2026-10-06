@@ -11,49 +11,20 @@ import type { OpenMicrophone } from './dictationTypes'
 
 export const PCM_RATE = 16000
 
-/** Runs on the audio thread. `sampleRate` is the context's own. */
-export const WORKLET_SOURCE = `
-class Pcm16k extends AudioWorkletProcessor {
-  constructor() {
-    super()
-    this.ratio = sampleRate / ${PCM_RATE}
-    this.sum = 0
-    this.count = 0
-    this.step = 0
-    this.out = new Int16Array(${PCM_RATE / 10})
-    this.length = 0
-  }
-  process(inputs) {
-    const channel = inputs[0] && inputs[0][0]
-    if (channel == null) return true
-    for (let i = 0; i < channel.length; i++) {
-      this.sum += channel[i]
-      this.count++
-      this.step++
-      if (this.step < this.ratio) continue
-      this.step -= this.ratio
-      const sample = Math.max(-1, Math.min(1, this.sum / this.count))
-      this.out[this.length++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
-      this.sum = 0
-      this.count = 0
-      if (this.length === this.out.length) {
-        const chunk = this.out.slice(0, this.length)
-        this.port.postMessage(chunk.buffer, [chunk.buffer])
-        this.length = 0
-      }
-    }
-    return true
-  }
-}
-registerProcessor('pcm16k', Pcm16k)
-`
+/**
+ * Where the page loads the worklet processor from: `pcm16kWorklet.js`, which
+ * `src/build.mjs` copies to the top of `dist/`. A same-origin file, because
+ * the page's Content-Security-Policy (`script-src 'self'`) refuses a worklet
+ * module built from a `blob:` or `data:` URL.
+ */
+export const WORKLET_URL = '/pcm16kWorklet.js'
 
 /** What opening the microphone needs from the browser, so a test can supply it. */
 export interface MicrophoneDevices {
   getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>
   createContext: () => AudioContext
   createNode: (context: AudioContext) => AudioWorkletNode
-  moduleUrl: () => string
+  moduleUrl: string
 }
 
 const browser: MicrophoneDevices = {
@@ -61,8 +32,7 @@ const browser: MicrophoneDevices = {
     await navigator.mediaDevices.getUserMedia(constraints),
   createContext: () => new AudioContext(),
   createNode: context => new AudioWorkletNode(context, 'pcm16k'),
-  moduleUrl: () =>
-    URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'text/javascript' }))
+  moduleUrl: WORKLET_URL
 }
 
 export function makeOpenMicrophone(
@@ -79,7 +49,7 @@ export function makeOpenMicrophone(
     })
     const context = devices.createContext()
     try {
-      await context.audioWorklet.addModule(devices.moduleUrl())
+      await context.audioWorklet.addModule(devices.moduleUrl)
       const node = devices.createNode(context)
       node.port.onmessage = event => {
         onPcm(event.data as ArrayBuffer)
