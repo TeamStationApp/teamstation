@@ -1138,13 +1138,22 @@ export class TeamStationClient {
     password: string,
     currentPassword?: string,
     reset?: ResetAuthorization,
-    preparation?: Promise<ClientPasswordCosts>
+    preparation?: Promise<ClientPasswordCosts>,
+    signal?: AbortSignal
   ): Promise<AccountSettings> {
+    // Native/Worker hashes cannot be interrupted, but leaving the editor must
+    // prevent their eventual result from being submitted.
+    const checkActive = (): void => {
+      if (signal?.aborted === true) throw new Error('Password change cancelled')
+    }
+    checkActive()
     const derive = this.requirePasswordKdf()
     checkNewPassword(password)
     const costs = await (preparation ?? this.preparePasswordCosts())
+    checkActive()
     asNewPasswordParameters(clientParameters('00'.repeat(16), costs))
     const account = await this.accountSettings()
+    checkActive()
     if (account.newPasswordSalt == null)
       throw new Error('Update the server before setting a password')
     if (account.passwordNeedsUpgrade && reset == null)
@@ -1158,9 +1167,11 @@ export class TeamStationClient {
       currentClientHash = asClientHash(
         await derive(currentPassword, account.passwordParameters.client)
       )
+      checkActive()
     }
     const parameters = clientParameters(account.newPasswordSalt, costs)
     const clientHash = asClientHash(await derive(password, parameters))
+    checkActive()
     return await this.request(
       'PUT',
       '/me/account/password',

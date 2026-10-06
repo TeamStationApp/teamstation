@@ -8,6 +8,62 @@ import {
 import { TeamStationClient } from './api'
 
 describe('password API client', () => {
+  it('cancels password submission when leaving during each preparation or hashing step', async () => {
+    for (const stage of ['start', 'calibration', 'account', 'current', 'new']) {
+      const controller = new AbortController()
+      let writes = 0
+      const cancelAt = (step: string): void => {
+        if (stage === step) controller.abort()
+      }
+      const client = new TeamStationClient({
+        baseUrl: 'https://example.test',
+        passwordKdf: async password => {
+          cancelAt(password === 'current password' ? 'current' : 'new')
+          return 'ab'.repeat(32)
+        },
+        fetch: async (_input, init) => {
+          if (init?.method === 'PUT') writes++
+          cancelAt('account')
+          return new Response(
+            JSON.stringify({
+              user: {
+                id: 101,
+                displayName: 'Demo',
+                isAdmin: false,
+                avatarUrl: null
+              },
+              emails: [],
+              hasPassword: true,
+              passwordNeedsUpgrade: false,
+              passwordParameters: {
+                client: testPasswordParameters,
+                server: testPasswordParameters
+              },
+              newPasswordSalt: 'ff'.repeat(16)
+            })
+          )
+        }
+      })
+      cancelAt('start')
+      const preparation = Promise.resolve().then(() => {
+        cancelAt('calibration')
+        return testPasswordCosts
+      })
+      try {
+        await client.setAccountPassword(
+          'invented valid password',
+          'current password',
+          undefined,
+          preparation,
+          controller.signal
+        )
+        expect.fail('submitted after cancellation')
+      } catch (error) {
+        expect(String(error), stage).includes('Password change cancelled')
+      }
+      expect(writes, stage).equals(0)
+    }
+  })
   it('sends only client proofs and chosen parameters, honoring saved costs for old passwords', async () => {
     const calls: Array<{ route: string; body: Record<string, unknown> }> = []
     const derived: Array<{ password: string; iterations: number }> = []

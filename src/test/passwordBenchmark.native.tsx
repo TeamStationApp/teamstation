@@ -11,7 +11,8 @@ import { TeamStationClient } from '../common/api'
 import { calibratePasswordCosts } from '../common/passwordCalibration'
 import {
   clientParameters,
-  DEFAULT_PASSWORD_COSTS
+  DEFAULT_PASSWORD_COSTS,
+  newPasswordRequirements
 } from '../common/passwordProtocol'
 
 function PasswordBenchmark(): React.ReactElement {
@@ -54,6 +55,7 @@ function PasswordBenchmark(): React.ReactElement {
         baselineMs: calibration.baselineMs,
         parameters: p,
         vector,
+        unicodeRequirements: newPasswordRequirements('Éé١abcde'),
         samples,
         median: [...samples].sort((a, b) => a - b)[1]
       }

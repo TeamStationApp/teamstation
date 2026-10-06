@@ -421,6 +421,36 @@ describe('Account settings screen', () => {
     })
     expect(text()).not.includes('stale')
   })
+  it('cancels a password save when leaving during preparation', async () => {
+    const f = fixture()
+    let finish!: (costs: typeof testPasswordCosts) => void
+    f.client.preparePasswordCosts = async () =>
+      await new Promise(resolve => {
+        finish = resolve
+      })
+    let changed = 0
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => undefined}
+        onAccountChanged={() => {
+          changed++
+        }}
+      />
+    )
+    await press('Set password')
+    await change('New password', 'invented valid password')
+    await change('Confirm new password', 'invented valid password')
+    await press('Save password')
+    await act(async () => {
+      root!.unmount()
+      root = undefined
+      finish(testPasswordCosts)
+      await delay()
+    })
+    expect(f.calls.filter(c => c.endsWith('/password'))).length(0)
+    expect(changed).equals(0)
+  })
   it('adds, resends, confirms, replaces and selects primary email addresses', async () => {
     const f = fixture()
     await render(<AccountScreen {...f} onSignOut={() => undefined} />)

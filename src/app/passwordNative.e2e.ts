@@ -87,6 +87,19 @@ async function main(): Promise<void> {
       true,
       'native client set/login through real API'
     )
+    assert.deepEqual(
+      result.unicodeRequirements,
+      {
+        length: true,
+        uppercase: true,
+        lowercase: true,
+        number: true,
+        long: false,
+        tooLong: false,
+        valid: true
+      },
+      'Unicode password requirements in the native JavaScript runtime'
+    )
     await mkdir(artifacts, { recursive: true })
     await writeFile(
       path.join(artifacts, 'native-calibration.png'),

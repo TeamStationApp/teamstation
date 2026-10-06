@@ -55,9 +55,12 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [preparing, setPreparing] = useState(false)
   const [preparationError, setPreparationError] = useState('')
   const [preparationAttempt, setPreparationAttempt] = useState(0)
+  const passwordLifetime = useRef<AbortController | undefined>(undefined)
 
   useEffect(() => {
     let live = true
+    const lifetime = new AbortController()
+    passwordLifetime.current = lifetime
     setPreparationError('')
     setPreparing(passwordOpen)
     preparation.current = undefined
@@ -81,6 +84,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     }
     return () => {
       live = false
+      lifetime.abort()
     }
   }, [client, passwordOpen, preparationAttempt])
   const [reset, setReset] = useState<{ requestId: string; email: string }>()
@@ -369,19 +373,21 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                         run('password', async () => {
                           if (password !== confirmation)
                             throw new Error('The new passwords do not match')
-                          accept(
-                            await client.setAccountPassword(
-                              password,
-                              currentPassword,
-                              reset == null
-                                ? undefined
-                                : {
-                                    requestId: reset.requestId,
-                                    code: resetCode
-                                  },
-                              preparation.current
-                            )
+                          const signal = passwordLifetime.current?.signal
+                          const value = await client.setAccountPassword(
+                            password,
+                            currentPassword,
+                            reset == null
+                              ? undefined
+                              : {
+                                  requestId: reset.requestId,
+                                  code: resetCode
+                                },
+                            preparation.current,
+                            signal
                           )
+                          if (signal?.aborted === true) return
+                          accept(value)
                           setReset(undefined)
                           setResetCode('')
                           setCurrentPassword('')
