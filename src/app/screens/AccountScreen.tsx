@@ -38,6 +38,8 @@ export interface AccountScreenProps {
   chatStore?: ChatKeyStore
   /** Opens Chat devices. */
   onChatDevices?: () => void
+  /** Opens the reported chat messages; shown to site administrators only. */
+  onChatReports?: () => void
   onSignOut: () => void
   pickPhoto?: typeof pickAccountPhoto
 }
@@ -48,6 +50,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     session,
     client,
     onChatDevices,
+    onChatReports,
     onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto
@@ -614,6 +617,17 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               emblemIcon="settings"
               onPress={onChatDevices}
             />
+            {onChatReports != null && user.isAdmin && (
+              <>
+                <View style={styles.divider} />
+                <ListRow
+                  title={lstrings.chat_reports_title}
+                  subtitle={lstrings.account_chat_reports_detail}
+                  emblemIcon="star"
+                  onPress={onChatReports}
+                />
+              </>
+            )}
           </Card>
         </View>
       )}

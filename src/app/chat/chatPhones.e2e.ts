@@ -1,9 +1,9 @@
 /**
- * The chat's simulator scenarios (P1–P3), through maestro-d's JavaScript
+ * The chat's simulator scenarios (P1–P4), through maestro-d's JavaScript
  * client, with the other person in a Puppeteer browser on their run profile.
  *
  *   MAESTRO_D=chat-<run> CHAT_DEVICE=<udid> CHAT_ARTIFACTS=<run dir> \
- *     node -r sucrase/register src/app/chat/chatPhones.e2e.ts P1|P3|P2
+ *     node -r sucrase/register src/app/chat/chatPhones.e2e.ts P1|P3|P2|P4
  *
  * Required: `MAESTRO_D`, a daemon of this run's own, already started from
  * `$HOME` (`MAESTRO_RUNNER_HOME=$HOME/.maestro-d maestro-d start --daemon
@@ -18,9 +18,12 @@
  *
  * The app on the simulator is a Release build whose `TS_API_BASE_URL` is the
  * Mac's LAN address, against the same API and stand-in Space as the browser
- * scenarios, both listening on the LAN. Run in this order, P1, P3,
- * P2: P3 continues as P1's person, before P2 signs in as B. P3's photo must
- * already be in the simulator's library (`xcrun simctl addmedia`).
+ * scenarios, both listening on the LAN — or, for the full pass on a deployed
+ * copy of the branch (P4), its https address, with `TS_CHAT_WEB_URL` and
+ * `TS_CHAT_API_URL` on it too. Run in this order, P1, P3, P2, P4: P3
+ * continues as P1's person, before P2 signs in as B, and P4 follows P2 on
+ * B's phone. P3's photo must already be in the simulator's library
+ * (`xcrun simctl addmedia`).
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -390,11 +393,72 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
   }
 }
 
+/**
+ * P4's last step, right after P2: coach Hc's web page deletes for everyone
+ * the message the simulator sent in P1 ("hello 🎉", N's), and the phone,
+ * now B's, shows "Removed by a moderator" in its place.
+ */
+async function p4(m: Device, run: string, shots: string): Promise<void> {
+  const coach = await browserOf(run, 'Hc-1')
+  try {
+    const members = await chatIdOf(coach.page, 'Hawks Members')
+    await coach.page.goto(`${WEB}/chat/${members}`, {
+      waitUntil: 'networkidle2'
+    })
+    try {
+      await m.assertVisible({ text: 'hello 🎉', timeout: 5000 })
+    } catch {
+      await m.openLink({ link: `teamstation://chat/${members}` })
+      await m.assertVisible({ text: 'hello 🎉', timeout: 60000 })
+    }
+
+    const words = await until(
+      '“hello 🎉” on Hc’s page',
+      async () => (await coach.page.$('::-p-text(hello 🎉)')) ?? undefined
+    )
+    await words.scrollIntoView()
+    const box = await words.boundingBox()
+    assert(box != null, '“hello 🎉” is not on Hc’s screen')
+    await coach.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await coach.page.mouse.down()
+    await new Promise(resolve => setTimeout(resolve, 900))
+    await coach.page.mouse.up()
+    const remove = await until('Delete for everyone', async () => {
+      for (const handle of await coach.page.$$('[role="button"]')) {
+        const said = await handle.evaluate(node => node.textContent)
+        if (said?.endsWith('Delete for everyone') === true) return handle
+      }
+      return undefined
+    })
+    await remove.click()
+    await until('the removal on Hc’s page', async () =>
+      (await bodyText(coach.page)).includes('Removed by a moderator')
+        ? true
+        : undefined
+    )
+    await coach.page.screenshot({
+      path: join(shots, 'p4-1-hc-web-removed.png')
+    })
+
+    await m.assertVisible({ text: 'Removed by a moderator', timeout: 60000 })
+    await m.assertNotVisible({ text: 'hello 🎉', timeout: 30000 })
+    await m.takeScreenshot({ path: join(shots, 'p4-2-phone-removed') })
+    console.log(
+      'P4 PASS: Hc deleted the simulator’s message for everyone; the phone shows Removed by a moderator'
+    )
+  } finally {
+    await coach.browser.close()
+  }
+}
+
 async function main(): Promise<void> {
   const scenario = process.argv[2]
   assert(
-    scenario === 'P1' || scenario === 'P2' || scenario === 'P3',
-    'Name the scenario: P1, P3 or P2'
+    scenario === 'P1' ||
+      scenario === 'P2' ||
+      scenario === 'P3' ||
+      scenario === 'P4',
+    'Name the scenario: P1, P3, P2 or P4'
   )
   const root = process.env.MAESTRO_D_CLIENT_ROOT
   const load =
@@ -420,7 +484,8 @@ async function main(): Promise<void> {
   try {
     if (scenario === 'P1') await p1(m, run, shots)
     else if (scenario === 'P3') await p3(m, run, shots)
-    else await p2(m, run, shots)
+    else if (scenario === 'P2') await p2(m, run, shots)
+    else await p4(m, run, shots)
   } finally {
     await m.detach()
     await daemon.close()
