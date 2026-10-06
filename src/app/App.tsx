@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Image, Text, View } from 'react-native'
+import { ActivityIndicator, Image, Platform, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -16,6 +16,8 @@ import type { GroupRef } from '../common/groupCreation'
 import { managesRoster } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
+import { ChatCoreGate } from './chat/ChatCoreGate'
+import { chatCoreLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
 import { ChatGate } from './chat/ChatGate'
 import type { ChatLink } from './chat/ChatLinks'
@@ -303,6 +305,11 @@ function Shell(props: AppProps): React.ReactElement {
   const refreshRoles = useCallback((): void => {
     setRoleRevision(revision => revision + 1)
   }, [])
+  /** Why chat's crypto core is not here, to the console and the server's log. */
+  const reportChatCore = useMemo(
+    () => chatCoreLog(apiBaseUrl, Platform.OS),
+    [apiBaseUrl]
+  )
   /**
    * A sign-in, or a sign-out, and what the platform should remember of it.
    *
@@ -1130,12 +1137,17 @@ function Shell(props: AppProps): React.ReactElement {
   const openChat = (chat: { id: string; title: string }): void => {
     push({ name: 'conversation', conversationId: chat.id, title: chat.title })
   }
-  /** What every chat screen stands behind: this device set up for chat. */
+  /**
+   * What every chat screen stands behind: chat's crypto core on this
+   * platform, then this device set up for chat.
+   */
   const gated = (screen: React.ReactNode): React.ReactNode =>
     chatEngine == null || session == null ? null : (
-      <ChatGate engine={chatEngine} client={client} userId={session.user.id}>
-        {screen}
-      </ChatGate>
+      <ChatCoreGate onUnavailable={reportChatCore}>
+        <ChatGate engine={chatEngine} client={client} userId={session.user.id}>
+          {screen}
+        </ChatGate>
+      </ChatCoreGate>
     )
   /**
    * Somebody who has just signed in, back to where the sign-in was for.
@@ -1795,7 +1807,9 @@ function Shell(props: AppProps): React.ReactElement {
       )
     ) : top.name === 'chatDevices' ? (
       session == null ? null : (
-        <ChatDevicesScreen client={client} userId={session.user.id} />
+        <ChatCoreGate onUnavailable={reportChatCore}>
+          <ChatDevicesScreen client={client} userId={session.user.id} />
+        </ChatCoreGate>
       )
     ) : top.name === 'chatReports' ? (
       session == null ? null : (
@@ -1803,18 +1817,20 @@ function Shell(props: AppProps): React.ReactElement {
       )
     ) : top.name === 'chatLink' ? (
       session == null ? null : (
-        <LinkDeviceScreen
-          client={client}
-          userId={session.user.id}
-          onDone={() => {
-            // Linked or reset: the devices list takes this screen's place,
-            // so Back does not return to a finished link.
-            setStacks(current => ({
-              ...current,
-              [tab]: [...current[tab].slice(0, -1), { name: 'chatDevices' }]
-            }))
-          }}
-        />
+        <ChatCoreGate onUnavailable={reportChatCore}>
+          <LinkDeviceScreen
+            client={client}
+            userId={session.user.id}
+            onDone={() => {
+              // Linked or reset: the devices list takes this screen's place,
+              // so Back does not return to a finished link.
+              setStacks(current => ({
+                ...current,
+                [tab]: [...current[tab].slice(0, -1), { name: 'chatDevices' }]
+              }))
+            }}
+          />
+        </ChatCoreGate>
       )
     ) : top.name === 'account' && session != null ? (
       <AccountScreen

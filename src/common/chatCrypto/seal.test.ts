@@ -1,12 +1,13 @@
 import { createPublicKey, hkdfSync, verify as nodeVerify } from 'node:crypto'
 
-import { sha256 } from '@noble/hashes/sha2.js'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { hex, oracle, seed } from '../../test/chatCryptoOracle'
 import { utf8 } from './bytes'
 import { signingPublicKey } from './keys'
 import {
+  bucketSize,
   ENVELOPE_KINDS,
   messageAad,
   type MessageFields,
@@ -17,9 +18,6 @@ import {
   signedDigest,
   verifyMessage
 } from './seal'
-
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex')
-const seed = (label: string): Uint8Array => sha256(utf8(label))
 
 const identity = seed('identity')
 const identityKey = signingPublicKey(identity)
@@ -107,7 +105,7 @@ describe('chatCrypto seal', () => {
     expect(hex(sealed.ciphertext.subarray(0, 32))).equals(
       'e39d960c5314b67588ef5e85d648b40d755894f6d279f4de2b62beda888419f0'
     )
-    expect(hex(sha256(sealed.ciphertext))).equals(
+    expect(hex(oracle.sha256(sealed.ciphertext))).equals(
       '51a66e8451ceeec51a33d5889b7a9bb33c3d083a04b8403388e4b9079ab2fbff'
     )
     expect(hex(sealed.signature)).equals(
@@ -286,6 +284,69 @@ describe('chatCrypto seal', () => {
 
     it('the wrong epoch key fails', () => {
       expect(() => open({ epochKey: seed('another epoch') })).throws()
+    })
+  })
+
+  describe('bucket sizes', () => {
+    it('frozen vectors', () => {
+      const table: Array<[number, number]> = [
+        [0, 541],
+        [1, 541],
+        [539, 542],
+        [540, 542],
+        [541, 569],
+        [542, 569],
+        [560, 569],
+        [1000, 1021],
+        [8000, 8319],
+        [65536, 67790],
+        [20 * 1024 * 1024, 21453467]
+      ]
+      for (const [length, size] of table) {
+        expect(bucketSize(length), String(length)).equals(size)
+      }
+    })
+
+    it('follow max(541, ceil(1.05^ceil(log_1.05(n + 1))))', () => {
+      for (let n = 0; n < 200000; n += n < 2000 ? 1 : 997) {
+        const k = Math.ceil(Math.log(n + 1) / Math.log(1.05))
+        const expected = Math.max(541, Math.ceil(1.05 ** k))
+        expect(bucketSize(n), String(n)).equals(expected)
+        expect(bucketSize(n)).greaterThan(n)
+      }
+      expect(() => bucketSize(-1)).throws(RangeError)
+      expect(() => bucketSize(0.5)).throws(RangeError)
+    })
+
+    it('a sealed message is its bucket and a tag, at the edges', () => {
+      // 540 bytes is the most a 542-byte bucket takes; 541 moves to the next.
+      const lengthOf = (size: number): number =>
+        sealMessage({
+          ...fields,
+          epochKey,
+          plaintext: new Uint8Array(size).fill(7),
+          identitySecretKey: identity
+        }).ciphertext.length
+      expect(lengthOf(0)).equals(541 + 16)
+      expect(lengthOf(540)).equals(542 + 16)
+      expect(lengthOf(541)).equals(569 + 16)
+      // Content ending in the marker's own bytes comes back whole.
+      const tricky = Uint8Array.of(1, 0, 0x80, 0)
+      const sealedTricky = sealMessage({
+        ...fields,
+        epochKey,
+        plaintext: tricky,
+        identitySecretKey: identity
+      })
+      expect(
+        hex(
+          openWithMessageKey({
+            ...fields,
+            ...sealedTricky,
+            messageKey: messageKey(epochKey, 'cnv_c1', fields.messageId)
+          })
+        )
+      ).equals('01008000')
     })
   })
 })

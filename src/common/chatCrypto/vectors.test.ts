@@ -3,9 +3,9 @@ import { describe, it } from 'mocha'
 
 import { fromHex, runVectors, toHex, vectorSummary } from './vectors'
 
-/** U3: the shared frozen vectors, on `primitives.ts`. */
+/** U3: the shared frozen vectors, through the wrappers, on the Node core. */
 describe('chatCrypto vectors', () => {
-  it('every vector matches on @noble', () => {
+  it('every vector matches through the TypeScript wrappers', () => {
     const results = runVectors()
     expect(results.filter(result => !result.ok)).deep.equals([])
     expect(vectorSummary(results)).equals('vectors ok')
@@ -21,16 +21,16 @@ describe('chatCrypto vectors', () => {
     ).equals('vectors failed: seal (got threw boom)')
   })
 
-  it('a primitive that throws outside a check is a failure, not a crash', async () => {
-    const { primitives } = await import('./primitives')
-    const real = primitives.ed25519PublicKey
-    primitives.ed25519PublicKey = () => {
-      throw new Error('no seed import')
+  it('a core that throws outside a check is a failure, not a crash', async () => {
+    const hash = (await import('./hash')) as { sha256: unknown }
+    const real = hash.sha256
+    hash.sha256 = () => {
+      throw new Error('no seed')
     }
     try {
-      expect(vectorSummary()).equals('vectors failed: threw no seed import')
+      expect(vectorSummary()).equals('vectors failed: threw no seed')
     } finally {
-      primitives.ed25519PublicKey = real
+      hash.sha256 = real
     }
   })
 

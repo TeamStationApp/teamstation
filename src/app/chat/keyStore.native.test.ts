@@ -91,6 +91,17 @@ describe('chat key store on the phone', function () {
     )
   })
 
+  it('says whether a record is kept, without changing anything', async function () {
+    keychain.saved.clear()
+    keychain.calls = []
+    expect(await keyStore.exists()).equals(false)
+    await keyStore.save(sample)
+    expect(await keyStore.exists()).equals(true)
+    await keyStore.wipe()
+    expect(await keyStore.exists()).equals(false)
+    expect(keychain.calls).deep.equals(['get', 'set', 'get', 'reset', 'get'])
+  })
+
   it('wipes it', async function () {
     keychain.saved.clear()
     await keyStore.save(sample)
