@@ -1,43 +1,16 @@
 /**
- * The rules that say two spellings of a team name are one team.
+ * The one rule TeamStation has for whether a schedule names a team it holds.
  *
- * A schedule names an opponent only by a name, and different teams write the
- * same club differently, so these are how a schedule's opponent lands on the
- * team TeamStation already holds.
+ * A name finds a team only when the two are the same once trimmed, with runs
+ * of spaces collapsed and case ignored. Anything looser — a trailing number,
+ * a bracketed note, punctuation, a coach's surname — is a different name
+ * here: a client that knows two spellings are one team says so by sending
+ * the team's id.
  */
 
-/**
- * The coach's surname inside a team name, which is how a schedule tells two
- * clubs of the same name apart — and often the only thing two naming schemes
- * share. An organisation calls a team `Bay Stars (Mize)`; another team's
- * schedule calls the same team `NP3 Mize`.
- */
-export function coachSurname(name: string): string | undefined {
-  const bracketed = /\(([^)]+)\)\s*$/.exec(name)
-  const candidate =
-    bracketed != null ? bracketed[1] : (name.trim().split(/\s+/).pop() ?? '')
-  const word = candidate.trim()
-  // A surname, not a number or a two-letter code.
-  if (!/^[A-Za-z][A-Za-z'-]{2,}$/.test(word)) return undefined
-  return word.toLowerCase()
-}
-
-/** Two spellings of the same opponent should be one team. */
-export function normaliseTeamName(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      // A trailing qualifier a scorekeeper added: "Mid City 1", "Sunshine 2".
-      .replace(/\s+\d+$/, '')
-      // Notes a video title carried in, not part of the name.
-      .replace(/\s*[-–]\s*livestream$/, '')
-      .replace(/\s*\((partial|livestream)\)$/, '')
-      // A coach's surname in brackets disambiguates two clubs, and it is still
-      // the same club: "Bay Stars (Mize)".
-      .replace(/\s*\([^)]*\)$/, '')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim()
-  )
+/** A team name as names are compared: trimmed, spaces collapsed, any case. */
+export function teamNameKey(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 /**

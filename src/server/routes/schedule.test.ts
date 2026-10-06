@@ -267,7 +267,7 @@ describe('scheduling a team’s games over HTTP', function () {
   const springRow = (): object => {
     minute += 1
     return {
-      opponent: { name: 'Dragons' },
+      opponent: { name: 'Dunlins' },
       side: 'home',
       startAt: new Date(Date.UTC(2026, 3, 1, 17, minute)).toISOString()
     }
@@ -693,17 +693,17 @@ describe('scheduling a team’s games over HTTP', function () {
       .select(['home_team_id', 'away_team_id', 'home_score', 'away_score'])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-  /** A Hawks home game against Diablos, held under `id`. */
+  /** A Hawks home game against Dunlins, held under `id`. */
   const sidedGame = async (
     id: string
-  ): Promise<{ row: object; gameId: string; diablos: string }> => {
+  ): Promise<{ row: object; gameId: string; dunlins: string }> => {
     const row = {
       ...springRow(),
       externalId: { system: 'otherLeague', id }
     }
     const made = await schedule('owner', { games: [row] })
     const gameId: string = made.body.results[0].gameId
-    return { row, gameId, diablos: await awayTeamOf(gameId) }
+    return { row, gameId, dunlins: await awayTeamOf(gameId) }
   }
   const playOn = async (gameId: string): Promise<void> => {
     const play = {
@@ -717,7 +717,7 @@ describe('scheduling a team’s games over HTTP', function () {
   }
 
   it('swaps home and away on a matched game with no plays, and announces it', async function () {
-    const { row, gameId, diablos } = await sidedGame('side-1')
+    const { row, gameId, dunlins } = await sidedGame('side-1')
     const listener = new Client({ connectionString: scratchUrl })
     await listener.connect()
     const heard: unknown[] = []
@@ -758,7 +758,7 @@ describe('scheduling a team’s games over HTTP', function () {
         status: 'scheduled'
       })
       expect(await sidesOf(gameId)).deep.equals({
-        home_team_id: diablos,
+        home_team_id: dunlins,
         away_team_id: hawks,
         home_score: 4,
         away_score: 1
@@ -776,7 +776,7 @@ describe('scheduling a team’s games over HTTP', function () {
       })
       expect(await sidesOf(gameId)).deep.include({
         home_team_id: hawks,
-        away_team_id: diablos
+        away_team_id: dunlins
       })
     } finally {
       await listener.end()
@@ -784,8 +784,8 @@ describe('scheduling a team’s games over HTTP', function () {
   })
 
   it('keeps the sides of a game with plays stored or under way', async function () {
-    const { row, gameId, diablos } = await sidedGame('side-2')
-    const kept = { home_team_id: hawks, away_team_id: diablos }
+    const { row, gameId, dunlins } = await sidedGame('side-2')
+    const kept = { home_team_id: hawks, away_team_id: dunlins }
     await playOn(gameId)
     const stored = await schedule('owner', {
       games: [{ ...row, side: 'away' }]
@@ -826,7 +826,7 @@ describe('scheduling a team’s games over HTTP', function () {
   })
 
   it('keeps the sides of a final game', async function () {
-    const { row, gameId, diablos } = await sidedGame('side-3')
+    const { row, gameId, dunlins } = await sidedGame('side-3')
     await db!
       .updateTable('games')
       .set({ status: 'final' })
@@ -841,7 +841,7 @@ describe('scheduling a team’s games over HTTP', function () {
     })
     expect(await sidesOf(gameId)).deep.include({
       home_team_id: hawks,
-      away_team_id: diablos
+      away_team_id: dunlins
     })
   })
 
@@ -1104,9 +1104,9 @@ describe('scheduling a team’s games over HTTP', function () {
     ])
     expect(await gamesOf(placeholder)).deep.equals([])
 
-    // The same name again, however it is written, changes nothing.
+    // The same name again, in another case and spacing, changes nothing.
     const again = await schedule('owner', {
-      games: [{ ...row, opponent: { name: 'COPPERHEADS 2' } }]
+      games: [{ ...row, opponent: { name: '  COPPERHEADS ' } }]
     })
     expect(again.body.results[0].result).equals('unchanged')
     expect(await awayTeamOf(gameId)).equals(copperheads.id)
@@ -1683,8 +1683,138 @@ describe('scheduling a team’s games over HTTP', function () {
     }
   })
 
+  it('keeps or moves a held game named by its opponent\u2019s id, and records the id that comes with it', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'by-id-1',
+      'Plovers'
+    )
+    const [other] = await teamsNamed('Plovers')
+    expect(other.id).equals(placeholder)
+    const sandpipers = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({ id: sandpipers, name: 'Sandpipers', kind: 'external' })
+      .execute()
+
+    // Its own opponent, by id: nothing changes, and the id is recorded.
+    const same = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          opponent: { teamId: placeholder, externalId: opponentKey('plv-1') }
+        }
+      ]
+    })
+    expect(same.body.results[0]).deep.equals({
+      index: 0,
+      result: 'unchanged',
+      gameId,
+      status: 'scheduled'
+    })
+    expect(await holdersOf('plv-1')).deep.equals([
+      { entity_type: 'team', entity_id: placeholder }
+    ])
+
+    // Another external team, by id: the game moves to it.
+    const moved = await schedule('owner', {
+      games: [{ ...row, opponent: { teamId: sandpipers } }]
+    })
+    expect(moved.body.results[0]).deep.include({ result: 'updated', gameId })
+    expect(await awayTeamOf(gameId)).equals(sandpipers)
+  })
+
+  it('gives a placeholder opponent no id, named by its id or not', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'by-id-tbd',
+      'TBD 0f0f0f0f 2026-05-02 18:00'
+    )
+    await db!
+      .updateTable('games')
+      .set({ scoringOwner: 'teamstation' })
+      .where('id', '=', gameId)
+      .execute()
+    const answer = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          opponent: { teamId: placeholder, externalId: opponentKey('tbd-1') }
+        }
+      ]
+    })
+    expect(answer.body.results[0]).deep.include({
+      result: 'unchanged',
+      gameId
+    })
+    expect(await holdersOf('tbd-1')).deep.equals([])
+
+    // A game moved onto it by its id leaves the id free too.
+    const other = await placeholderGame('by-id-tbd-2', 'Stints')
+    const moved = await schedule('owner', {
+      games: [
+        {
+          ...other.row,
+          opponent: { teamId: placeholder, externalId: opponentKey('tbd-2') }
+        }
+      ]
+    })
+    expect(moved.body.results[0]).deep.include({
+      result: 'updated',
+      gameId: other.gameId
+    })
+    expect(await awayTeamOf(other.gameId)).equals(placeholder)
+    expect(await holdersOf('tbd-2')).deep.equals([])
+  })
+
+  it('records the id of a scored game\u2019s own opponent, and moves it to no other', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'by-id-scored',
+      'Scored Avocets'
+    )
+    await db!
+      .updateTable('games')
+      .set({ scoringOwner: 'teamstation' })
+      .where('id', '=', gameId)
+      .execute()
+    const stilts = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({ id: stilts, name: 'Stilts', kind: 'external' })
+      .execute()
+
+    // Another team by id, with a free id and a new time: the opponent
+    // stays, the time moves, and nobody takes the id.
+    const later = new Date(Date.UTC(2026, 4, 3, 17, minute)).toISOString()
+    const other = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          startAt: later,
+          opponent: { teamId: stilts, externalId: opponentKey('avo-1') }
+        }
+      ]
+    })
+    expect(other.body.results[0]).deep.include({ result: 'updated', gameId })
+    expect(await awayTeamOf(gameId)).equals(placeholder)
+    expect(await holdersOf('avo-1')).deep.equals([])
+
+    // Its own opponent by id: the id is recorded on it.
+    const own = await schedule('owner', {
+      games: [
+        {
+          ...row,
+          startAt: later,
+          opponent: { teamId: placeholder, externalId: opponentKey('avo-1') }
+        }
+      ]
+    })
+    expect(own.body.results[0]).deep.include({ result: 'unchanged', gameId })
+    expect(await holdersOf('avo-1')).deep.equals([
+      { entity_type: 'team', entity_id: placeholder }
+    ])
+  })
+
   it('moves a scheduled game, swaps its sides in the same row, and announces it', async function () {
-    const { row, gameId, diablos } = await sidedGame('repoint-1')
+    const { row, gameId, dunlins } = await sidedGame('repoint-1')
     const listener = new Client({ connectionString: scratchUrl })
     await listener.connect()
     const heard: unknown[] = []
@@ -1708,7 +1838,7 @@ describe('scheduling a team’s games over HTTP', function () {
         home_team_id: scorpions.id,
         away_team_id: hawks
       })
-      expect(await gamesOf(diablos)).not.includes(gameId)
+      expect(await gamesOf(dunlins)).not.includes(gameId)
       for (let tries = 0; tries < 50 && heard.length < 3; tries++) {
         await new Promise(resolve => setTimeout(resolve, 10))
       }
@@ -1721,7 +1851,7 @@ describe('scheduling a team’s games over HTTP', function () {
     }
   })
 
-  it('keeps an opponent whose name the row writes another way, even when another team has it', async function () {
+  it('keeps an opponent whose name the row writes in another case or spacing, even when another team has it', async function () {
     const { row, gameId, placeholder } = await placeholderGame(
       'same-1',
       'Placeholder Q'
@@ -1731,12 +1861,36 @@ describe('scheduling a team’s games over HTTP', function () {
       .insertInto('teams')
       .values({ id: makeId('team'), name: 'PLACEHOLDER Q', kind: 'external' })
       .execute()
-    for (const name of ['placeholder-q', 'Placeholder Q (livestream)']) {
+    for (const name of ['placeholder q', '  Placeholder   Q ']) {
       const answer = await schedule('owner', {
         games: [{ ...row, opponent: { name } }]
       })
       expect(answer.body.results[0].result, name).equals('unchanged')
       expect(await awayTeamOf(gameId), name).equals(placeholder)
+    }
+  })
+
+  it('moves a held game for a name written any looser way, onto a team of that exact name', async function () {
+    const { row, gameId, placeholder } = await placeholderGame(
+      'loose-1',
+      'Otters 1'
+    )
+    // Case and spacing only: the same opponent.
+    const same = await schedule('owner', {
+      games: [{ ...row, opponent: { name: ' otters  1 ' } }]
+    })
+    expect(same.body.results[0].result).equals('unchanged')
+    expect(await awayTeamOf(gameId)).equals(placeholder)
+    // A number, punctuation or a note is another name: a new team.
+    for (const name of ['Otters 2', 'Otters-1', 'Otters 1 (livestream)']) {
+      const moved = await schedule('owner', {
+        games: [{ ...row, opponent: { name } }]
+      })
+      expect(moved.body.results[0].result, name).equals('updated')
+      const [made, ...more] = await teamsNamed(name)
+      expect(more, name).deep.equals([])
+      expect(made.kind, name).equals('external')
+      expect(await awayTeamOf(gameId), name).equals(made.id)
     }
   })
 

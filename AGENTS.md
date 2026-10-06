@@ -8,11 +8,18 @@ files. Work that is not pushed is work he cannot review.
 
 - Commit and `git push` as soon as a change is coherent. Do not wait to be asked.
 - Feature branches only. Never push directly to `master`.
-- **Force pushes need Paul's explicit say-so** for that push. `--force-with-lease` included.
-- Anything genuinely destructive — deleting a remote branch, rewriting published history,
-  discarding someone else's commits — is his call, not yours.
+- **Never force-push `master` or `develop`.** Force-pushing your own feature branch, to fold
+  fixups or rebase it, needs no say-so: use `--force-with-lease`, after pushing a backup
+  branch of what it replaces.
+- Anything else genuinely destructive — deleting someone else's branch, rewriting history
+  someone else's work builds on, discarding someone else's commits — is Paul's call, not yours.
 
 If a change is not ready to push, it is not finished; say so rather than leaving it on disk.
+
+## API design
+
+Before adding or changing a route under `/api/v1`, read [docs/api.md](docs/api.md). A filter
+or a search is a query parameter on the collection that already exists, never a new path.
 
 ## TS Director: pass the device UDID
 

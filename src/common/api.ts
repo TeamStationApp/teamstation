@@ -74,7 +74,13 @@ export const asTeamSummary = asObject({
       })
     ),
     null
-  )
+  ),
+  /**
+   * `full` for a team in a season, `external` for an opponent from outside
+   * every season. Only a list asked for external teams holds one; a server
+   * from before the field sends none, and every team it lists is full.
+   */
+  kind: asOptional(asEither(asLiteral('full'), asLiteral('external')), 'full')
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
 

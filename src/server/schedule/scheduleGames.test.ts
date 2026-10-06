@@ -37,9 +37,9 @@ describe('scheduling a team’s games', function () {
   const summer = makeId('season')
   const fall = makeId('season')
   const lateSummer = makeId('season')
-  const titan = makeId('team')
+  const harbor = makeId('team')
   const rival = makeId('team')
-  const mize = makeId('team')
+  const sealions = makeId('team')
   const outsiders = makeId('team')
   const merged = makeId('team')
   const mergedInto = makeId('team')
@@ -51,7 +51,7 @@ describe('scheduling a team’s games', function () {
     options: { teamId?: string; rights?: ScheduleRights } = {}
   ): Promise<ScheduleGamesResponse> =>
     await scheduleGames(db!, {
-      teamId: options.teamId ?? titan,
+      teamId: options.teamId ?? harbor,
       rows,
       rights: options.rights ?? SITE
     })
@@ -123,14 +123,14 @@ describe('scheduling a team’s games', function () {
     await db
       .insertInto('teams')
       .values([
-        { id: titan, name: 'Titan Force 11U' },
+        { id: harbor, name: 'Harbor Herons 11U' },
         { id: rival, name: 'Hawks' },
-        { id: mize, name: 'Bay Stars (Mize)' },
+        { id: sealions, name: 'Sea Lions (Gehrig)' },
         { id: outsiders, name: 'Outsiders', kind: 'external' },
         { id: mergedInto, name: 'Alta Hawks' },
         {
           id: merged,
-          name: 'NP5 Maddux',
+          name: 'NP5 Ruth',
           kind: 'external',
           merged_into: mergedInto
         },
@@ -141,11 +141,11 @@ describe('scheduling a team’s games', function () {
     await db
       .insertInto('season_teams')
       .values([
-        { season_id: summer, team_id: titan },
+        { season_id: summer, team_id: harbor },
         { season_id: summer, team_id: rival },
-        { season_id: summer, team_id: mize },
-        { season_id: fall, team_id: titan },
-        { season_id: lateSummer, team_id: titan },
+        { season_id: summer, team_id: sealions },
+        { season_id: fall, team_id: harbor },
+        { season_id: lateSummer, team_id: harbor },
         { season_id: summer, team_id: others }
       ])
       .execute()
@@ -171,21 +171,25 @@ describe('scheduling a team’s games', function () {
 
   it('creates an external opponent from the api, once per name', async function () {
     const answer = await post([
-      { opponent: { name: 'Dragons' }, side: 'home', startAt: nextStart() },
-      { opponent: { name: 'dragons 2' }, side: 'away', startAt: nextStart() }
+      { opponent: { name: 'Dunlins' }, side: 'home', startAt: nextStart() },
+      { opponent: { name: ' DUNLINS ' }, side: 'away', startAt: nextStart() },
+      { opponent: { name: 'Dunlins 2' }, side: 'home', startAt: nextStart() }
     ])
     expect(answer.counts).deep.equals({
-      created: 2,
+      created: 3,
       updated: 0,
       unchanged: 0,
       error: 0
     })
-    const [first, second] = await Promise.all(
+    const [first, second, third] = await Promise.all(
       answer.results.map(async r => await game(idOf(r)))
     )
-    expect(first.home_team_id).equals(titan)
-    expect(second.away_team_id).equals(titan)
+    expect(first.home_team_id).equals(harbor)
+    expect(second.away_team_id).equals(harbor)
+    // The same name, but for case and spacing, is the same team; a trailing
+    // number makes another.
     expect(second.home_team_id).equals(first.away_team_id)
+    expect(third.away_team_id).not.equals(first.away_team_id)
     expect(first.season_id).equals(summer)
     expect(first.status).equals('scheduled')
     const team = await db!
@@ -194,22 +198,74 @@ describe('scheduling a team’s games', function () {
       .where('id', '=', first.away_team_id)
       .executeTakeFirstOrThrow()
     expect(team).deep.equals({
-      name: 'Dragons',
+      name: 'Dunlins',
       kind: 'external',
       created_from: 'api'
     })
   })
 
-  it('finds a same-season rival by name and by coach', async function () {
+  it('finds a same-season rival by its name only, never by a coach or a number', async function () {
     const answer = await post([
+      { opponent: { name: ' hawks ' }, side: 'home', startAt: nextStart() },
+      {
+        opponent: { name: 'sea lions (GEHRIG)' },
+        side: 'home',
+        startAt: nextStart()
+      },
+      { opponent: { name: 'Outsiders' }, side: 'home', startAt: nextStart() },
       { opponent: { name: 'Hawks 2' }, side: 'home', startAt: nextStart() },
-      { opponent: { name: 'NP3 Mize' }, side: 'home', startAt: nextStart() },
-      { opponent: { name: 'Outsiders' }, side: 'home', startAt: nextStart() }
+      { opponent: { name: 'NP3 Gehrig' }, side: 'home', startAt: nextStart() },
+      {
+        opponent: { name: 'Sea Lions (Ruth)' },
+        side: 'home',
+        startAt: nextStart()
+      }
     ])
     const opponents = await Promise.all(
       answer.results.map(async r => (await game(idOf(r))).away_team_id)
     )
-    expect(opponents).deep.equals([rival, mize, outsiders])
+    expect(opponents.slice(0, 3)).deep.equals([rival, sealions, outsiders])
+    // Each of the others is a new external team of its own name.
+    const made = await db!
+      .selectFrom('teams')
+      .select(['id', 'name', 'kind'])
+      .where('id', 'in', opponents.slice(3))
+      .orderBy('name')
+      .execute()
+    expect(made.map(team => [team.name, team.kind])).deep.equals([
+      ['Hawks 2', 'external'],
+      ['NP3 Gehrig', 'external'],
+      ['Sea Lions (Ruth)', 'external']
+    ])
+  })
+
+  it('refuses a row naming the team itself exactly, and not one sharing only a coach', async function () {
+    const coach = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({ id: coach, name: 'Coach Musial 11U' })
+      .execute()
+    await db!
+      .insertInto('season_teams')
+      .values({ season_id: summer, team_id: coach })
+      .execute()
+    const answer = await post(
+      [
+        {
+          opponent: { name: ' coach  MUSIAL 11u ' },
+          side: 'home',
+          startAt: nextStart()
+        },
+        {
+          opponent: { name: 'NP7 Musial' },
+          side: 'home',
+          startAt: nextStart()
+        }
+      ],
+      { teamId: coach }
+    )
+    expect(answer.results[0]).deep.include({ result: 'error' })
+    expect(answer.results[1]).deep.include({ result: 'created' })
   })
 
   it('records an external id and recognises it again', async function () {
@@ -252,7 +308,7 @@ describe('scheduling a team’s games', function () {
       .insertInto('games')
       .values({
         id: gameId,
-        home_team_id: titan,
+        home_team_id: harbor,
         away_team_id: rival,
         season_id: summer,
         start_at: new Date(nextStart())
@@ -525,7 +581,7 @@ describe('scheduling a team’s games', function () {
       .values({
         id: gameId,
         home_team_id: rival,
-        away_team_id: mize,
+        away_team_id: sealions,
         season_id: summer,
         start_at: start
       })
@@ -563,7 +619,7 @@ describe('scheduling a team’s games', function () {
       .values({
         id: twinId,
         home_team_id: rival,
-        away_team_id: titan,
+        away_team_id: harbor,
         season_id: summer,
         start_at: new Date(start)
       })
@@ -611,7 +667,7 @@ describe('scheduling a team’s games', function () {
 
   it('creates a game every time a row has no external id', async function () {
     const row = {
-      opponent: { name: 'Dragons' },
+      opponent: { name: 'Dunlins' },
       side: 'home',
       startAt: nextStart()
     }
@@ -625,7 +681,7 @@ describe('scheduling a team’s games', function () {
   it('resolves the season by name, by range, then by year', async function () {
     const seasonOf = async (row: object): Promise<string | null> => {
       const answer = await post([
-        { opponent: { name: 'Dragons' }, side: 'home', ...row }
+        { opponent: { name: 'Dunlins' }, side: 'home', ...row }
       ])
       return (await game(idOf(answer.results[0]))).season_id
     }
@@ -646,7 +702,7 @@ describe('scheduling a team’s games', function () {
 
     const notIn = await post([
       {
-        opponent: { name: 'Dragons' },
+        opponent: { name: 'Dunlins' },
         side: 'home',
         startAt: nextStart(),
         seasonId: makeId('season')
@@ -659,7 +715,7 @@ describe('scheduling a team’s games', function () {
 
     const none = await post([
       {
-        opponent: { name: 'Dragons' },
+        opponent: { name: 'Dunlins' },
         side: 'home',
         startAt: '2027-05-01T17:00:00Z'
       }
@@ -669,7 +725,7 @@ describe('scheduling a team’s games', function () {
       result: 'error',
       error: {
         code: 'noSeason',
-        message: 'Titan Force 11U has no season in 2027: send seasonId'
+        message: 'Harbor Herons 11U has no season in 2027: send seasonId'
       }
     })
   })
@@ -687,21 +743,116 @@ describe('scheduling a team’s games', function () {
         : result.result
     }
     expect(await codes({ teamId: makeId('team') })).matches(/^notFound/)
-    expect(await codes({ teamId: titan })).matches(/^conflict/)
+    expect(await codes({ teamId: harbor })).matches(/^conflict/)
     expect(await codes({ teamId: merged })).equals(
       `conflict: Team ${merged} was merged into ${mergedInto}`
     )
-    expect(await codes({ name: 'Titan Force 11U' })).matches(/^conflict/)
-    expect(await codes({ name: 'Dragons' }, 'none')).equals(
+    expect(await codes({ name: 'Harbor Herons 11U' })).matches(/^conflict/)
+    expect(await codes({ name: 'Dunlins' }, 'none')).equals(
       'invalid: opponent and side are needed to create a game'
     )
     const noOpponent = await post([{ side: 'home', startAt: nextStart() }])
     expect(noOpponent.results[0]).deep.include({ result: 'error' })
   })
 
+  it('names an opponent by id and records the id it carries on it, when free', async function () {
+    const pelicans = makeId('team')
+    const cormorants = makeId('team')
+    const terns = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values([
+        { id: pelicans, name: 'Pelicans', kind: 'external' },
+        { id: cormorants, name: 'Cormorants', kind: 'external' },
+        { id: terns, name: 'Terns', kind: 'external' }
+      ])
+      .execute()
+    const key = (id: string): object => ({
+      system: 'scoreKeeper',
+      kind: 'opponent',
+      id
+    })
+    const holders = async (id: string): Promise<string[]> =>
+      (
+        await db!
+          .selectFrom('external_ids')
+          .select('entity_id')
+          .where('system', '=', 'scoreKeeper')
+          .where('kind', '=', 'opponent')
+          .where('external_id', '=', id)
+          .execute()
+      ).map(row => row.entity_id)
+    const row = (opponent: object): object => ({
+      opponent,
+      side: 'home',
+      startAt: nextStart()
+    })
+
+    // A free id goes on the external team the row names.
+    const first = await post([
+      row({ teamId: pelicans, externalId: key('sk-1') })
+    ])
+    expect(first.results[0]).deep.include({ result: 'created' })
+    expect((await game(idOf(first.results[0]))).away_team_id).equals(pelicans)
+    expect(await holders('sk-1')).deep.equals([pelicans])
+
+    // Held by another team, the id stays there, and the game goes on the
+    // team the row names.
+    const second = await post([
+      row({ teamId: cormorants, externalId: key('sk-1') })
+    ])
+    expect((await game(idOf(second.results[0]))).away_team_id).equals(
+      cormorants
+    )
+    expect(await holders('sk-1')).deep.equals([pelicans])
+
+    // A full team never takes one.
+    const full = await post([row({ teamId: rival, externalId: key('sk-2') })])
+    expect((await game(idOf(full.results[0]))).away_team_id).equals(rival)
+    expect(await holders('sk-2')).deep.equals([])
+
+    // Two rows in one call naming two teams with one free id: it is
+    // recorded once, on the first.
+    const both = await post([
+      row({ teamId: cormorants, externalId: key('sk-3') }),
+      row({ teamId: terns, externalId: key('sk-3') })
+    ])
+    expect(both.counts.created).equals(2)
+    expect(await holders('sk-3')).deep.equals([cormorants])
+
+    // Refused as a bare id is, recording nothing.
+    const refused = await post([
+      row({ teamId: makeId('team'), externalId: key('sk-4') }),
+      row({ teamId: harbor, externalId: key('sk-4') }),
+      row({ teamId: merged, externalId: key('sk-4') })
+    ])
+    expect(
+      refused.results.map(result =>
+        result.result === 'error' ? result.error.code : result.result
+      )
+    ).deep.equals(['notFound', 'conflict', 'conflict'])
+    expect(await holders('sk-4')).deep.equals([])
+
+    // A placeholder names no team, so it takes no id, named by id or not.
+    const tbd = makeId('team')
+    await db!
+      .insertInto('teams')
+      .values({
+        id: tbd,
+        name: 'TBD 0a0b0c0d 2026-07-02 18:00',
+        kind: 'external'
+      })
+      .execute()
+    const placeholder = await post([
+      row({ teamId: tbd, externalId: key('sk-5') })
+    ])
+    expect((await game(idOf(placeholder.results[0]))).away_team_id).equals(tbd)
+    expect(await holders('sk-5')).deep.equals([])
+  })
+
   it('follows a merged team a name finds', async function () {
     const answer = await post([
-      { opponent: { name: 'NP5 Maddux' }, side: 'home', startAt: nextStart() }
+      { opponent: { name: 'NP5 Ruth' }, side: 'home', startAt: nextStart() }
     ])
     expect((await game(idOf(answer.results[0]))).away_team_id).equals(
       mergedInto
@@ -711,13 +862,13 @@ describe('scheduling a team’s games', function () {
   it('answers every row in order, applying the good around a bad one', async function () {
     const count = await gamesCount()
     const answer = await post([
-      { opponent: { name: 'Dragons' }, side: 'home', startAt: nextStart() },
+      { opponent: { name: 'Dunlins' }, side: 'home', startAt: nextStart() },
       {
-        opponent: { name: 'Dragons' },
+        opponent: { name: 'Dunlins' },
         side: 'home',
         startAt: '2026-10-03 17:00'
       },
-      { opponent: { name: 'Dragons' }, side: 'home', startAt: nextStart() }
+      { opponent: { name: 'Dunlins' }, side: 'home', startAt: nextStart() }
     ])
     expect(answer.results.map(r => [r.index, r.result])).deep.equals([
       [0, 'created'],
@@ -777,12 +928,12 @@ describe('scheduling a team’s games', function () {
     const answer = await post(
       [
         {
-          opponent: { name: 'Dragons' },
+          opponent: { name: 'Dunlins' },
           side: 'home',
           startAt: '2026-07-20T17:00:00Z'
         },
         {
-          opponent: { name: 'Dragons' },
+          opponent: { name: 'Dunlins' },
           side: 'home',
           startAt: '2026-10-20T17:00:00Z'
         }

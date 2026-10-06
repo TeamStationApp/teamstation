@@ -1391,14 +1391,23 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/teams': {
         get: {
-          summary: 'The teams this person belongs to',
+          summary: 'The teams this person belongs to, or a season\u2019s teams',
           description:
-            'Full teams only, never an opponent from outside a season. A ' +
-            'site administrator gets every team; anybody else the teams they ' +
-            'may see. Each team carries `externalIds`, the ids other systems ' +
-            'know it by (any system or kind), sorted.\n\n' +
-            '`externalId` may be repeated, and narrows the list to teams ' +
-            'holding any of those ids, with what the caller may see ' +
+            'Without `season`: full teams only, never an opponent from ' +
+            'outside a season. A site administrator gets every team; anybody ' +
+            'else the teams they may see.\n\n' +
+            '`season` may be repeated, and lists the teams of those seasons ' +
+            'instead, whoever the caller belongs to: its full teams, and ' +
+            'with `kind=external` or `kind=any` the external teams on either ' +
+            'side of its games (`kind=external` lists only those). A season ' +
+            'the caller can neither see nor schedule games in answers 404. A ' +
+            'merged team is listed as the team it was merged into, and each ' +
+            'team once. `kind` defaults to `full`; any other value needs ' +
+            '`season` (400 `kind needs season`).\n\n' +
+            'Each team carries `externalIds`, the ids other systems know it ' +
+            'by (any system or kind), sorted, and `kind`, `full` or ' +
+            '`external`. `externalId` may be repeated, and narrows the list ' +
+            'to teams holding any of those ids, with what the caller may see ' +
             'unchanged; an empty one is refused.',
           security: [{ bearer: [] }],
           parameters: [
@@ -1409,12 +1418,36 @@ export function openApiDocument(version: string): OpenApiDocument {
               style: 'form',
               explode: true,
               description: "Another service's ids for the team"
+            },
+            {
+              name: 'season',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description:
+                'Seasons whose teams to list. Leaving it out lists the ' +
+                'teams this person belongs to.'
+            },
+            {
+              name: 'kind',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: ['full', 'external', 'any'],
+                default: 'full'
+              },
+              description:
+                'Which teams of the seasons: their own, the external teams ' +
+                'their games were played against, or both. Needs `season` ' +
+                'unless `full`.'
             }
           ],
           responses: {
-            200: { description: 'Their teams, which may be an empty list' },
+            200: { description: 'The teams, which may be an empty list' },
             400: errorResponse,
-            401: errorResponse
+            401: errorResponse,
+            404: errorResponse
           }
         },
         post: {
@@ -1588,7 +1621,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'neither see nor administer gets 404. A season or league admin ' +
             'may only schedule into a season they administer: a row into ' +
             'another season is `forbidden`.\n\n' +
-            '**A row:** `opponent` (`{teamId}`, or `{name, externalId?}` with ' +
+            '**A row:** `opponent` (`{teamId, externalId?}`, or ' +
+            '`{name, externalId?}` with ' +
             'a name of 1-120 characters) and `side` (`home` or `away`, the ' +
             'side this team plays on) are needed to create a game. On a ' +
             'matched one, `opponent` may change the opponent and `side` may ' +
@@ -1623,18 +1657,31 @@ export function openApiDocument(version: string): OpenApiDocument {
             'between the same two teams at the same time takes the id. ' +
             'Otherwise the row creates a game. A row without `externalId` ' +
             'always creates one. An opponent named by `name` is a team of the ' +
-            'season with that name or coach, else an external team of that ' +
+            'season with that name, else the oldest external team of that ' +
             'name, else a new external team.\n\n' +
+            '**Names:** a `name` finds a team only by the name itself: two ' +
+            'names are the same when they are, once trimmed, with runs of ' +
+            'spaces made one and case ignored. Any other difference (a ' +
+            'trailing number, punctuation, a note in brackets) is another ' +
+            'team. A client that knows two spellings are one team names it ' +
+            'by `teamId`.\n\n' +
             "**An opponent's id:** `opponent.externalId` is `{system, kind, " +
             'id}`, `system` matching `^[a-z][a-zA-Z0-9]{0,31}$` and `kind` and ' +
-            '`id` non-empty, the id another system has for the opponent. A ' +
+            '`id` non-empty, the id another system has for the opponent. ' +
+            'With `teamId`, that team is the opponent (an unknown one is ' +
+            '`notFound`, this team itself and a merged team are `conflict`), ' +
+            'and it takes the id when it is an external team and nothing ' +
+            "holds the id. On a matched game, the game's opponent takes it " +
+            'the same way when `teamId` names that opponent, before anything ' +
+            'else, so a game scored in TeamStation records it too. With ' +
+            '`name`, a ' +
             'team already holding it (an external or a full one, followed ' +
             'through merges) is the opponent, whatever the name says, except ' +
-            "an external team whose name differs from the row's once " +
-            'normalised and which is named as a placeholder (below), is ' +
-            "shared by other teams' games, or would by that name be a second " +
-            'team of one name (the `name` already finds a team by its ' +
-            'normalised name). For those the opponent is found by `name` ' +
+            "an external team whose name is not the row's and which is " +
+            "named as a placeholder (below), is shared by other teams' " +
+            'games, or would by that name be a second team of one name (the ' +
+            '`name` already finds a team). For those the opponent is found ' +
+            'by `name` ' +
             'alone. Otherwise the opponent is found by name, and an external ' +
             'team found or made that way takes the id when nothing holds it ' +
             'and the `name` is not a placeholder. On a matched game, the ' +
@@ -1650,13 +1697,13 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`name`, saying the opponent is not known yet (one starting ' +
             '`TBD`, `TBA`, `To be decided`, `To be announced` or `To be ' +
             'determined`, in any case), leaves the opponent as it is, and ' +
-            "takes no id. So does a `name` that is this team's own once " +
-            "normalised. A `name` that matches the opponent's once " +
-            "normalised changes nothing, whatever team holds the row's id. " +
-            "Otherwise the row's opponent is found by its id, as above, then " +
-            'by its `name`: a team of the season or an external team of that ' +
-            "normalised name (never by a coach's surname), else a new " +
-            "external team. When the row's id is held by the game's " +
+            "takes no id. So does a `name` that is this team's own. A " +
+            "`name` that is the opponent's changes nothing, whatever team " +
+            "holds the row's id. Otherwise the row's opponent is found by " +
+            'its id, as above, then by its `name`: a team of the season or ' +
+            'an external team of that name, else a new external team. A ' +
+            '`{teamId}` naming the opponent changes nothing; naming another ' +
+            "team moves the game to it. When the row's id is held by the game's " +
             "opponent and stands for the row's `name` by the rule above, " +
             "that team is renamed to the row's `name`, in every game it " +
             'plays, and the row is `updated`; otherwise it keeps its name, ' +
@@ -1702,7 +1749,21 @@ export function openApiDocument(version: string): OpenApiDocument {
                               {
                                 type: 'object',
                                 required: ['teamId'],
-                                properties: { teamId: { type: 'string' } }
+                                properties: {
+                                  teamId: { type: 'string' },
+                                  externalId: {
+                                    type: 'object',
+                                    required: ['system', 'kind', 'id'],
+                                    properties: {
+                                      system: {
+                                        type: 'string',
+                                        pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                                      },
+                                      kind: { type: 'string', minLength: 1 },
+                                      id: { type: 'string', minLength: 1 }
+                                    }
+                                  }
+                                }
                               },
                               {
                                 type: 'object',
@@ -2745,13 +2806,31 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/seasons': {
         get: {
           summary: 'The seasons you may watch',
+          description:
+            'Each season carries `startsOn` and `endsOn` (`YYYY-MM-DD`, or ' +
+            'null), the days a game with no `seasonId` is placed by. ' +
+            '`team` may be repeated, and narrows the list to the seasons ' +
+            'those teams play in. Asked that way, a season the caller may ' +
+            'schedule games in counts as one they may see. Leaving it out ' +
+            'lists every season the caller may watch.',
           security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'team',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: 'Teams whose seasons to list'
+            }
+          ],
           responses: {
             200: {
               description:
                 'Being in a season grants every team in it; being on a team ' +
                 'is separate and stronger'
             },
+            400: errorResponse,
             401: errorResponse
           }
         }

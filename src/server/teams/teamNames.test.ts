@@ -1,28 +1,28 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import {
-  coachSurname,
-  isUndeterminedName,
-  normaliseTeamName
-} from './teamNames'
+import { isUndeterminedName, teamNameKey } from './teamNames'
 
 describe('team names', function () {
-  it('normalises the spellings of one team to one name', function () {
-    expect(normaliseTeamName('Mid City 1')).equals('mid city')
-    expect(normaliseTeamName('Bay Stars (Mize)')).equals('bay stars')
-    expect(normaliseTeamName('Otters - Livestream')).equals('otters')
-    expect(normaliseTeamName('Otters (partial)')).equals('otters')
-    expect(normaliseTeamName("  St. Mary's  Hawks!")).equals('st mary s hawks')
-    expect(normaliseTeamName('Dragons')).equals(normaliseTeamName('dragons 2'))
+  it('keys a name by itself, trimmed, spaces collapsed and any case', function () {
+    expect(teamNameKey('  Harbor   Herons ')).equals('harbor herons')
+    expect(teamNameKey('HARBOR\therons')).equals('harbor herons')
+    expect(teamNameKey('harbor herons')).equals(teamNameKey(' Harbor Herons'))
   })
 
-  it("reads a coach's surname from a bracket or the last word", function () {
-    expect(coachSurname('Bay Stars (Mize)')).equals('mize')
-    expect(coachSurname('NP3 Mize')).equals('mize')
-    expect(coachSurname('Mid City 1')).equals(undefined)
-    expect(coachSurname('Hawks AA')).equals(undefined)
-    expect(coachSurname("Team O'Neill")).equals("o'neill")
+  it('keeps everything else that tells two names apart', function () {
+    for (const [one, other] of [
+      ['Herons 2', 'Herons'],
+      ['Sea Lions (Gehrig)', 'Sea Lions'],
+      ['Gulls - Livestream', 'Gulls'],
+      ['Gulls (partial)', 'Gulls'],
+      ["St. Mary's Hawks!", 'St Marys Hawks'],
+      ['NP3 Gehrig', 'Sea Lions (Gehrig)']
+    ]) {
+      expect(teamNameKey(one), one).not.equals(teamNameKey(other))
+    }
+    expect(teamNameKey('Herons 2')).equals('herons 2')
+    expect(teamNameKey('Gulls - Livestream')).equals('gulls - livestream')
   })
 
   it('knows a name that names no opponent yet', function () {
