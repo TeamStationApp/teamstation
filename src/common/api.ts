@@ -19,9 +19,11 @@ import { asLiteral } from './asLiteral'
 import { type ApiError, asApiError, HttpError } from './errors'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
+import { calibratePasswordCosts } from './passwordCalibration'
 import {
   asArgonParameters,
   asClientHash,
+  asNewPasswordParameters,
   checkNewPassword,
   clientParameters,
   type ClientPasswordCosts,
@@ -1002,6 +1004,7 @@ export interface ClientOptions {
   fetch?: typeof fetch
   passwordKdf?: PasswordKdf
   passwordCosts?: ClientPasswordCosts
+  passwordTargetMs?: number
 }
 
 export type { DefaultLineup, Lineup, LineupChange, LineupPerson, SideLineups }
@@ -1070,12 +1073,15 @@ export class TeamStationClient {
   private readonly doFetch: typeof fetch
   private readonly passwordKdf?: PasswordKdf
   private readonly passwordCosts?: ClientPasswordCosts
+  private readonly passwordTargetMs?: number
+  private passwordPreparation?: Promise<ClientPasswordCosts>
   token: string | undefined
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
     this.passwordKdf = options.passwordKdf
     this.passwordCosts = options.passwordCosts
+    this.passwordTargetMs = options.passwordTargetMs
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
@@ -1104,13 +1110,40 @@ export class TeamStationClient {
     return this.passwordKdf
   }
 
+  /** Start on editor entry; overlapping requests share work, later visits measure again. */
+  // eslint-disable-next-line @typescript-eslint/promise-function-async -- Keep one shared pending promise.
+  preparePasswordCosts(): Promise<ClientPasswordCosts> {
+    if (this.passwordPreparation != null) return this.passwordPreparation
+    const pending = Promise.resolve().then(
+      async () =>
+        (
+          await calibratePasswordCosts(
+            this.requirePasswordKdf(),
+            this.passwordCosts,
+            this.passwordTargetMs
+          )
+        ).costs
+    )
+    this.passwordPreparation = pending
+    const clear = (): void => {
+      if (this.passwordPreparation === pending)
+        this.passwordPreparation = undefined
+    }
+    // Attach failure handling immediately, even when the person never presses Save.
+    pending.then(clear, clear)
+    return pending
+  }
+
   async setAccountPassword(
     password: string,
     currentPassword?: string,
-    reset?: ResetAuthorization
+    reset?: ResetAuthorization,
+    preparation?: Promise<ClientPasswordCosts>
   ): Promise<AccountSettings> {
     const derive = this.requirePasswordKdf()
     checkNewPassword(password)
+    const costs = await (preparation ?? this.preparePasswordCosts())
+    asNewPasswordParameters(clientParameters('00'.repeat(16), costs))
     const account = await this.accountSettings()
     if (account.newPasswordSalt == null)
       throw new Error('Update the server before setting a password')
@@ -1126,10 +1159,7 @@ export class TeamStationClient {
         await derive(currentPassword, account.passwordParameters.client)
       )
     }
-    const parameters = clientParameters(
-      account.newPasswordSalt,
-      this.passwordCosts
-    )
+    const parameters = clientParameters(account.newPasswordSalt, costs)
     const clientHash = asClientHash(await derive(password, parameters))
     return await this.request(
       'PUT',

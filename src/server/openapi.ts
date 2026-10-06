@@ -32,7 +32,7 @@ const argonParameters = {
       maximum: 65536,
       description: 'Multiple of four times parallelism'
     },
-    iterations: { type: 'integer', minimum: 2, maximum: 32 },
+    iterations: { type: 'integer', minimum: 2, maximum: 1024 },
     parallelism: { type: 'integer', minimum: 1, maximum: 4 },
     hashLength: { type: 'integer', enum: [32] },
     salt: { type: 'string', pattern: '^[0-9a-f]{32}$' }
@@ -75,7 +75,7 @@ const accountResponse = {
                     ...argonParameters,
                     properties: {
                       ...argonParameters.properties,
-                      iterations: { type: 'integer', minimum: 8, maximum: 128 }
+                      iterations: { type: 'integer', minimum: 8, maximum: 4096 }
                     }
                   }
                 }
@@ -177,7 +177,18 @@ const accountPaths = {
               required: ['clientHash', 'clientParameters'],
               properties: {
                 clientHash: clientHashSchema,
-                clientParameters: argonParameters,
+                clientParameters: {
+                  ...argonParameters,
+                  properties: {
+                    ...argonParameters.properties,
+                    memoryKiB: {
+                      ...argonParameters.properties.memoryKiB,
+                      minimum: 32768
+                    },
+                    iterations: { type: 'integer', minimum: 6, maximum: 1024 },
+                    parallelism: { type: 'integer', enum: [4] }
+                  }
+                },
                 currentClientHash: clientHashSchema,
                 reset: {
                   type: 'object',

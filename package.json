@@ -67,7 +67,8 @@
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json",
     "typecheck.native": "tsc -p tsconfig.native.json",
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts",
-    "coverage.account": "node scripts/account-coverage.mjs"
+    "coverage.account": "node scripts/account-coverage.mjs",
+    "coverage.password": "node scripts/password-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",

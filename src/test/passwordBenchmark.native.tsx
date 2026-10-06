@@ -1,15 +1,24 @@
 /** Simulator-only entry point. Build explicitly with ENTRY_FILE; never used by the product. */
 import React, { useState } from 'react'
 import { AppRegistry, Button, ScrollView, Text, TextInput } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { passwordKdf } from '../app/platform/passwordKdf.native'
+import { AccountScreen } from '../app/screens/AccountScreen'
+import { ThemeProvider } from '../app/theme/ThemeContext'
+import type { Session } from '../common/api'
 import { TeamStationClient } from '../common/api'
+import { calibratePasswordCosts } from '../common/passwordCalibration'
 import {
   clientParameters,
   DEFAULT_PASSWORD_COSTS
 } from '../common/passwordProtocol'
 
 function PasswordBenchmark(): React.ReactElement {
+  const [form, setForm] = useState<{
+    client: TeamStationClient
+    session: Session
+  }>()
   const [output, setOutput] = useState('Ready')
   const [url, setUrl] = useState('')
   const [iterations, setIterations] = useState(
@@ -20,29 +29,33 @@ function PasswordBenchmark(): React.ReactElement {
     setBusy(true)
     setOutput('Hashing')
     try {
-      const p = clientParameters('000102030405060708090a0b0c0d0e0f', {
-        memoryKiB: 65536,
-        iterations: Number(iterations),
-        parallelism: 1
+      const calibration = await calibratePasswordCosts(passwordKdf, {
+        ...DEFAULT_PASSWORD_COSTS,
+        iterations: Number(iterations)
       })
+      const p = clientParameters(
+        '000102030405060708090a0b0c0d0e0f',
+        calibration.costs
+      )
       const vectorParameters = clientParameters(p.salt, {
-        memoryKiB: 19456,
-        iterations: 2,
-        parallelism: 1
+        memoryKiB: 32768,
+        iterations: 6,
+        parallelism: 4
       })
       const vector = await passwordKdf('Argon2 parity: é😀', vectorParameters)
       await passwordKdf('Simulator benchmark password', p)
       const samples: number[] = []
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 3; i++) {
         const start = performance.now()
         await passwordKdf('Simulator benchmark password', p)
         samples.push(Math.round(performance.now() - start))
       }
       const result: Record<string, unknown> = {
+        baselineMs: calibration.baselineMs,
         parameters: p,
         vector,
         samples,
-        median: [...samples].sort((a, b) => a - b)[2]
+        median: [...samples].sort((a, b) => a - b)[1]
       }
       if (url !== '') {
         const fixture = await (await fetch(url + '/benchmark')).json()
@@ -52,7 +65,12 @@ function PasswordBenchmark(): React.ReactElement {
           passwordKdf,
           passwordCosts: p
         })
-        await client.setAccountPassword('Simulator-only invented password')
+        await client.setAccountPassword(
+          'Simulator-only invented password',
+          undefined,
+          undefined,
+          Promise.resolve(calibration.costs)
+        )
         const session = await client.signInWithPassword(
           fixture.email,
           'Simulator-only invented password'
@@ -71,6 +89,20 @@ function PasswordBenchmark(): React.ReactElement {
       setBusy(false)
     }
   }
+  if (form != null)
+    return (
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <AccountScreen
+            client={form.client}
+            session={form.session}
+            onSignOut={() => {
+              setForm(undefined)
+            }}
+          />
+        </ThemeProvider>
+      </SafeAreaProvider>
+    )
   return (
     <ScrollView contentContainerStyle={{ padding: 35, gap: 20 }}>
       <Text>Native Argon2id benchmark</Text>
@@ -87,6 +119,44 @@ function PasswordBenchmark(): React.ReactElement {
         value={iterations}
         onChangeText={setIterations}
         keyboardType="number-pad"
+      />
+      <Button
+        title="Show password form"
+        onPress={() => {
+          const client = new TeamStationClient({
+            baseUrl: 'https://example.test/api/v1',
+            passwordKdf,
+            fetch: async () =>
+              new Response(
+                JSON.stringify({
+                  user: {
+                    id: 101,
+                    displayName: 'Demo',
+                    isAdmin: false,
+                    avatarUrl: null
+                  },
+                  emails: [],
+                  hasPassword: false,
+                  passwordNeedsUpgrade: false,
+                  passwordParameters: null,
+                  newPasswordSalt: '00'.repeat(16)
+                })
+              )
+          })
+          setForm({
+            client,
+            session: {
+              token: '',
+              expiresAt: '',
+              user: {
+                id: 101,
+                displayName: 'Demo',
+                isAdmin: false,
+                avatarUrl: null
+              }
+            }
+          })
+        }}
       />
       <Button
         title="Run benchmark"

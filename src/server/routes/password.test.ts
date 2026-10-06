@@ -11,7 +11,11 @@ import {
   testPasswordParameters
 } from '../../test/passwordFixtures'
 import { createEmailCode } from '../auth/emailCodes'
-import { createPasswordRecord, readPasswordRecord } from '../auth/passwords'
+import {
+  createPasswordRecord,
+  nativeArgon,
+  readPasswordRecord
+} from '../auth/passwords'
 
 const legacy = '$2b$11$legacy-fixture-not-a-live-password'
 const proof = 'ab'.repeat(32)
@@ -65,6 +69,68 @@ describe('password hashing and email-reset HTTP protocol', function () {
     code: string
   }): Promise<Response> =>
     await h.request('PUT', '/me/account/password', { ...body(), reset })
+  it('authenticates old saved costs and requires the new floor only when replacing them', async () => {
+    const old = {
+      ...testPasswordParameters,
+      memoryKiB: 65536,
+      iterations: 16,
+      parallelism: 1
+    }
+    const server = { ...old, iterations: 64, salt: 'ff'.repeat(16) }
+    const oldSecret = 'old lowercase password'
+    const clientHash = await testPasswordKdf(oldSecret, old)
+    const storedOld = JSON.stringify({
+      schema: 1,
+      client: old,
+      server,
+      hash: await nativeArgon(Buffer.from(clientHash, 'hex'), server)
+    })
+    await h.db
+      .updateTable('users')
+      .set({ password_hash: storedOld })
+      .where('id', '=', 101)
+      .execute()
+    const client = new TeamStationClient({
+      baseUrl: h.origin + '/api/v1',
+      token: h.tokens.get(101),
+      passwordKdf: testPasswordKdf,
+      passwordTargetMs: 1
+    })
+    expect(
+      (await client.signInWithPassword('alex@example.com', oldSecret)).user.id
+    ).equals(101)
+    for (const patch of [
+      { memoryKiB: 19456 },
+      { iterations: 5 },
+      { parallelism: 1 },
+      { iterations: 1025 }
+    ]) {
+      const response = await h.request('PUT', '/me/account/password', {
+        clientHash: proof,
+        currentClientHash: clientHash,
+        clientParameters: { ...testPasswordParameters, ...patch }
+      })
+      expect(response.status).equals(400)
+      expect(await stored()).equals(storedOld)
+    }
+    await client.setAccountPassword(
+      'new lowercase passphrase',
+      oldSecret,
+      undefined,
+      Promise.resolve(testPasswordCosts)
+    )
+    expect(readPasswordRecord(await stored())!.client).includes(
+      testPasswordCosts
+    )
+    expect(
+      (
+        await client.signInWithPassword(
+          'alex@example.com',
+          'new lowercase passphrase'
+        )
+      ).user.id
+    ).equals(101)
+  })
   it('requires a fresh email code for legacy upgrade, stores parameters and refuses plaintext', async () => {
     expect((await update()).status).equals(400)
     expect(
@@ -83,7 +149,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     expect((await update(pending)).status).equals(200)
     const record = readPasswordRecord(await stored())!
     expect(record.client).deep.equals(testPasswordParameters)
-    expect(record.server.iterations).equals(8)
+    expect(record.server.iterations).equals(24)
     expect(await stored()).not.includes(proof)
     expect((await update(pending)).status).equals(400)
     const response = await h.request(
@@ -202,7 +268,8 @@ describe('password hashing and email-reset HTTP protocol', function () {
       baseUrl: h.origin + '/api/v1',
       token: h.tokens.get(101),
       passwordKdf: testPasswordKdf,
-      passwordCosts: testPasswordCosts
+      passwordCosts: testPasswordCosts,
+      passwordTargetMs: 1
     })
     await client.setAccountPassword('original invented password')
     const pending = await client.requestPasswordReset()

@@ -5,7 +5,10 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import { TeamStationClient } from '../../common/api'
-import { testPasswordParameters } from '../../test/passwordFixtures'
+import {
+  testPasswordCosts,
+  testPasswordParameters
+} from '../../test/passwordFixtures'
 import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
@@ -289,6 +292,82 @@ describe('Account settings screen', () => {
     ).equals('')
     await press('Cancel password change')
     expect(button('Change password')).not.equals(undefined)
+  })
+  it('starts password preparation on entry and waits before a single save', async () => {
+    const f = fixture()
+    let finish!: (costs: typeof testPasswordCosts) => void
+    let count = 0
+    const pending = new Promise<typeof testPasswordCosts>(resolve => {
+      finish = resolve
+    })
+    f.client.preparePasswordCosts = async () => {
+      count++
+      return await pending
+    }
+    await render(<AccountScreen {...f} onSignOut={() => undefined} />)
+    expect(count).equals(0)
+    await press('Set password')
+    expect(count).equals(1)
+    expect(text()).includes('You can keep typing')
+    await change('New password', 'invented valid password')
+    await change('Confirm new password', 'invented valid password')
+    await press('Save password')
+    await press('Save password')
+    expect(f.calls.filter(c => c.endsWith('/password'))).length(0)
+    await act(async () => {
+      finish(testPasswordCosts)
+      await delay()
+    })
+    expect(f.calls.filter(c => c.endsWith('/password'))).length(1)
+    expect(text()).includes('Password saved')
+  })
+  it('handles password preparation failure, retries and ignores completion after closing the editor', async () => {
+    const f = fixture()
+    let failPreparation!: (error: unknown) => void
+    let finishPreparation!: (costs: typeof testPasswordCosts) => void
+    let count = 0
+    f.client.preparePasswordCosts = async () => {
+      count++
+      return await new Promise((resolve, reject) => {
+        finishPreparation = resolve
+        failPreparation = reject
+      })
+    }
+    await render(<AccountScreen {...f} onSignOut={() => undefined} />)
+    await press('Set password')
+    await act(async () => {
+      failPreparation(new Error('Preparation unavailable'))
+      await delay()
+    })
+    expect(text()).includes('Preparation unavailable')
+    await press('Retry password preparation')
+    expect(count).equals(2)
+    await press('Cancel password change')
+    await act(async () => {
+      finishPreparation(testPasswordCosts)
+      await delay()
+    })
+    expect(text()).not.includes('Preparation unavailable')
+    await press('Set password')
+    await act(async () => {
+      failPreparation('unknown failure')
+      await delay()
+    })
+    expect(text()).includes('Could not prepare your password')
+    await press('Retry password preparation')
+    await act(async () => {
+      finishPreparation(testPasswordCosts)
+      await delay()
+    })
+    expect(text()).not.includes('You can keep typing')
+    await press('Cancel password change')
+    await press('Set password')
+    await press('Cancel password change')
+    await act(async () => {
+      failPreparation(new Error('stale'))
+      await delay()
+    })
+    expect(text()).not.includes('stale')
   })
   it('adds, resends, confirms, replaces and selects primary email addresses', async () => {
     const f = fixture()

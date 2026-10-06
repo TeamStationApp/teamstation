@@ -7,6 +7,7 @@ import {
   type ArgonParameters,
   asArgonParameters,
   asClientHash,
+  asNewPasswordParameters,
   clientParameters,
   DEFAULT_PASSWORD_COSTS,
   passwordBytes
@@ -76,7 +77,7 @@ export async function createPasswordRecord(
   clientHash: string,
   parameters: ArgonParameters
 ): Promise<string> {
-  const client = asArgonParameters(parameters)
+  const client = asNewPasswordParameters(parameters)
   const input = Buffer.from(asClientHash(clientHash), 'hex')
   const server = {
     ...client,

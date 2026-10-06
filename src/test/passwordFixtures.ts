@@ -5,9 +5,9 @@ import { TeamStationClient } from '../common/api'
 import { clientParameters, type PasswordKdf } from '../common/passwordProtocol'
 
 export const testPasswordCosts = {
-  memoryKiB: 19456,
-  iterations: 2,
-  parallelism: 1
+  memoryKiB: 32768,
+  iterations: 6,
+  parallelism: 4
 }
 export const testPasswordParameters = clientParameters(
   '000102030405060708090a0b0c0d0e0f',

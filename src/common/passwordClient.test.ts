@@ -25,6 +25,7 @@ describe('password API client', () => {
     const client = new TeamStationClient({
       baseUrl: 'https://example.com/api/v1',
       passwordCosts: testPasswordCosts,
+      passwordTargetMs: Number.MIN_VALUE,
       passwordKdf: async (password, p) => {
         derived.push({ password, iterations: p.iterations })
         return 'ab'.repeat(32)
@@ -57,7 +58,7 @@ describe('password API client', () => {
       'new invented password',
       'current invented password'
     )
-    expect(derived.map(d => d.iterations)).deep.equals([3, 2])
+    expect(derived.map(d => d.iterations)).deep.equals([6, 3, 6])
     expect(calls[1].body).deep.equals({
       clientHash: 'ab'.repeat(32),
       currentClientHash: 'ab'.repeat(32),
@@ -67,7 +68,7 @@ describe('password API client', () => {
       'a@example.com',
       'current invented password'
     )
-    expect(derived[2].iterations).equals(3)
+    expect(derived[3].iterations).equals(3)
     expect(client.token).equals('fixture')
     await client.requestPasswordReset()
     await client.setAccountPassword('reset invented password', undefined, {
@@ -114,5 +115,89 @@ describe('password API client', () => {
     } catch (error) {
       expect(String(error)).includes('unavailable')
     }
+  })
+})
+
+describe('password preparation lifecycle', () => {
+  it('shares pending work, retries failures and benchmarks on a later visit', async () => {
+    let finish!: (value: string) => void
+    let fail!: (error: Error) => void
+    let count = 0
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test',
+      passwordTargetMs: Number.MIN_VALUE,
+      passwordKdf: async () => {
+        count++
+        return await new Promise<string>((resolve, reject) => {
+          finish = resolve
+          fail = reject
+        })
+      }
+    })
+    const first = client.preparePasswordCosts()
+    expect(client.preparePasswordCosts()).equals(first)
+    await Promise.resolve()
+    expect(count).equals(1)
+    fail(new Error('unavailable'))
+    try {
+      await first
+      expect.fail('accepted')
+    } catch (error) {
+      expect(String(error)).includes('unavailable')
+    }
+    const retry = client.preparePasswordCosts()
+    await Promise.resolve()
+    finish('ab'.repeat(32))
+    expect((await retry).iterations).equals(6)
+    const later = client.preparePasswordCosts()
+    await Promise.resolve()
+    expect(count).equals(3)
+    finish('ab'.repeat(32))
+    await later
+  })
+  it('waits for preparation before deriving secrets or sending requests, and rejects weak supplied costs', async () => {
+    let finishPreparation!: (costs: typeof testPasswordCosts) => void
+    const pending = new Promise<typeof testPasswordCosts>(resolve => {
+      finishPreparation = resolve
+    })
+    let requests = 0
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test',
+      passwordKdf: async () => {
+        throw new Error('must not derive')
+      },
+      fetch: async () => {
+        requests++
+        throw new Error('request after preparation')
+      }
+    })
+    const saved = client.setAccountPassword(
+      'invented long password',
+      undefined,
+      undefined,
+      pending
+    )
+    await Promise.resolve()
+    expect(requests).equals(0)
+    finishPreparation(testPasswordCosts)
+    try {
+      await saved
+      expect.fail('saved')
+    } catch (error) {
+      expect(String(error)).includes('Cannot reach TeamStation')
+    }
+    expect(requests).equals(1)
+    try {
+      await client.setAccountPassword(
+        'invented long password',
+        undefined,
+        undefined,
+        Promise.resolve({ ...testPasswordCosts, iterations: 2 })
+      )
+      expect.fail('accepted')
+    } catch (error) {
+      expect(String(error)).includes('at least')
+    }
+    expect(requests).equals(1)
   })
 })

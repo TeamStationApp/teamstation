@@ -8,6 +8,7 @@ import {
 import {
   asArgonParameters,
   asClientHash,
+  asNewPasswordParameters,
   asPasswordUpdate,
   bytesHex,
   checkNewPassword,
@@ -39,7 +40,7 @@ describe('Argon2 password protocol', () => {
       clientParameters(testPasswordParameters.salt, testPasswordCosts)
     ).deep.equals(testPasswordParameters)
     expect(clientParameters(testPasswordParameters.salt).memoryKiB).equals(
-      65536
+      32768
     )
     for (const patch of [
       { algorithm: 'argon2i' },
@@ -53,7 +54,7 @@ describe('Argon2 password protocol', () => {
       { parallelism: 5 },
       { parallelism: 1.1 },
       { iterations: 1 },
-      { iterations: 33 },
+      { iterations: 1025 },
       { iterations: 2.1 },
       { salt: '00' },
       { salt: 'AB'.repeat(16) }
@@ -64,14 +65,35 @@ describe('Argon2 password protocol', () => {
     for (const value of [undefined, null, 1, 'text'])
       expect(() => asArgonParameters(value)).throws()
     expect(
-      asArgonParameters({ ...testPasswordParameters, iterations: 128 }, true)
+      asArgonParameters({ ...testPasswordParameters, iterations: 4096 }, true)
         .iterations
-    ).equals(128)
+    ).equals(4096)
     expect(() =>
-      asArgonParameters({ ...testPasswordParameters, iterations: 129 }, true)
+      asArgonParameters({ ...testPasswordParameters, iterations: 4097 }, true)
     ).throws()
     expect(() => asClientHash('x'.repeat(64))).throws()
     expect(asClientHash('ab'.repeat(32))).length(64)
+  })
+  it('enforces the new-write floor while preserving readable old credentials', () => {
+    const old = {
+      ...testPasswordParameters,
+      memoryKiB: 65536,
+      iterations: 16,
+      parallelism: 1
+    }
+    expect(asArgonParameters(old)).deep.equals(old)
+    expect(() => asNewPasswordParameters(old)).throws()
+    for (const patch of [
+      { memoryKiB: 19456 },
+      { iterations: 5 },
+      { parallelism: 2 }
+    ])
+      expect(() =>
+        asNewPasswordParameters({ ...testPasswordParameters, ...patch })
+      ).throws()
+    expect(asNewPasswordParameters(testPasswordParameters)).deep.equals(
+      testPasswordParameters
+    )
   })
   it('rejects raw password wire fields and enforces local password policy', () => {
     for (const raw of [{ password: 'raw' }, { currentPassword: 'raw' }])

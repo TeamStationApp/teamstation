@@ -3,6 +3,7 @@ import { Platform, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
+import type { ClientPasswordCosts } from '../../common/passwordProtocol'
 import {
   Button,
   Card,
@@ -44,6 +45,40 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const working = useRef(false)
   const [notice, setNotice] = useState<{ section: string; message: string }>()
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const preparation = useRef<Promise<ClientPasswordCosts> | undefined>(
+    undefined
+  )
+  const [preparing, setPreparing] = useState(false)
+  const [preparationError, setPreparationError] = useState('')
+  const [preparationAttempt, setPreparationAttempt] = useState(0)
+
+  useEffect(() => {
+    let live = true
+    setPreparationError('')
+    setPreparing(passwordOpen)
+    preparation.current = undefined
+    if (passwordOpen) {
+      const pending = client.preparePasswordCosts()
+      preparation.current = pending
+      pending.then(
+        () => {
+          if (live) setPreparing(false)
+        },
+        (error: unknown) => {
+          if (!live) return
+          setPreparing(false)
+          setPreparationError(
+            error instanceof Error
+              ? error.message
+              : 'Could not prepare your password. Please retry'
+          )
+        }
+      )
+    }
+    return () => {
+      live = false
+    }
+  }, [client, passwordOpen, preparationAttempt])
   const [reset, setReset] = useState<{ requestId: string; email: string }>()
   const [resetCode, setResetCode] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -300,12 +335,36 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                     secure
                   />
                   <Text style={styles.email}>Use at least 8 characters.</Text>
+                  {preparing && (
+                    <Text accessibilityLiveRegion="polite" style={styles.email}>
+                      Preparing password security… You can keep typing.
+                    </Text>
+                  )}
+                  {preparationError !== '' && (
+                    <>
+                      <Text
+                        accessibilityLiveRegion="polite"
+                        style={styles.feedback}
+                      >
+                        {preparationError}
+                      </Text>
+                      <Button
+                        label="Retry password preparation"
+                        kind="text"
+                        disabled={busy !== ''}
+                        onPress={() => {
+                          setPreparationAttempt(value => value + 1)
+                        }}
+                      />
+                    </>
+                  )}
                   <View style={styles.actions}>
                     <Button
                       label="Save password"
                       disabled={
                         busy !== '' ||
                         password === '' ||
+                        preparationError !== '' ||
                         (reset != null && resetCode.trim() === '')
                       }
                       onPress={() => {
@@ -321,7 +380,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                                 : {
                                     requestId: reset.requestId,
                                     code: resetCode
-                                  }
+                                  },
+                              preparation.current
                             )
                           )
                           setReset(undefined)

@@ -20,10 +20,12 @@ export type PasswordKdf = (
 
 /** Client policy is adjustable; saved account parameters always take precedence at login. */
 export const DEFAULT_PASSWORD_COSTS: ClientPasswordCosts = {
-  memoryKiB: 65536,
-  iterations: 16,
-  parallelism: 1
+  memoryKiB: 32768,
+  iterations: 6,
+  parallelism: 4
 }
+
+export const MAX_CLIENT_PASSWORD_ITERATIONS = 1024
 
 export function asHex(raw: unknown, bytes: number): string {
   if (
@@ -62,7 +64,10 @@ export function asArgonParameters(
     p.memoryKiB % (4 * p.parallelism) !== 0 ||
     !Number.isInteger(p.iterations) ||
     p.iterations < 2 ||
-    p.iterations > (server ? 128 : 32)
+    p.iterations >
+      (server
+        ? MAX_CLIENT_PASSWORD_ITERATIONS * 4
+        : MAX_CLIENT_PASSWORD_ITERATIONS)
   )
     throw new TypeError('Password parameters are outside the supported limits')
   return {
@@ -74,6 +79,19 @@ export function asArgonParameters(
     hashLength: 32,
     salt: asHex(p.salt, 16)
   }
+}
+/** Stronger policy for new writes; saved credentials retain their original costs. */
+export function asNewPasswordParameters(raw: unknown): ArgonParameters {
+  const p = asArgonParameters(raw)
+  if (
+    p.memoryKiB < DEFAULT_PASSWORD_COSTS.memoryKiB ||
+    p.iterations < DEFAULT_PASSWORD_COSTS.iterations ||
+    p.parallelism < DEFAULT_PASSWORD_COSTS.parallelism
+  )
+    throw new TypeError(
+      'New passwords require at least 32 MiB, 6 iterations and 4 lanes'
+    )
+  return p
 }
 export function clientParameters(
   salt: string,
@@ -135,7 +153,7 @@ export const asResetAuthorization = asObject({
 export type ResetAuthorization = ReturnType<typeof asResetAuthorization>
 const cleanUpdate = asObject({
   clientHash: asClientHash,
-  clientParameters: (raw: unknown) => asArgonParameters(raw),
+  clientParameters: asNewPasswordParameters,
   currentClientHash: asOptional(asClientHash),
   reset: asOptional(asResetAuthorization)
 })

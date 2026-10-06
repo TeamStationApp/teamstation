@@ -37,7 +37,7 @@ describe('native server Argon2id', function () {
     const stored = await createPasswordRecord(proof, testPasswordParameters)
     const record = readPasswordRecord(stored)!
     expect(record.client).deep.equals(testPasswordParameters)
-    expect(record.server.iterations).equals(8)
+    expect(record.server.iterations).equals(24)
     expect(record.server.salt).not.equals(record.client.salt)
     expect(stored).not.includes(proof)
     expect(stored).not.includes('invented password')

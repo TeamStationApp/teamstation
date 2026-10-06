@@ -89,11 +89,11 @@ async function main(): Promise<void> {
     )
     await mkdir(artifacts, { recursive: true })
     await writeFile(
-      path.join(artifacts, 'simulator-benchmark.png'),
+      path.join(artifacts, 'native-calibration.png'),
       await m.screenshot()
     )
     await writeFile(
-      path.join(artifacts, 'simulator-benchmark.log'),
+      path.join(artifacts, 'native-calibration.log'),
       [
         '$ node -r sucrase/register src/app/passwordNative.e2e.ts (pinned iPhone simulator, Release build)',
         `Host processor: ${cpus()[0]?.model}; simulator timing is not physical-phone timing.`,
@@ -104,8 +104,8 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result))
     if (process.env.PASSWORD_REQUIRE_TARGET === '1')
       assert(
-        Number(result.median) >= 400 && Number(result.median) <= 600,
-        'target median 500 ms ±20%'
+        Number(result.median) >= 1950 && Number(result.median) <= 4050,
+        'target median 3000 ms ±35%'
       )
   } finally {
     clearTimeout(timer!)
