@@ -11,6 +11,8 @@ import express from 'express'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
+import { spaceObjectStore, startChatPurge } from './chat/attachments'
+import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
@@ -47,6 +49,11 @@ import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
 import { appLinkRoutes } from './routes/appLinks'
 import { authRoutes } from './routes/auth'
+import { chatRoutes } from './routes/chat'
+import { chatAttachmentRoutes } from './routes/chatAttachments'
+import { chatEpochRoutes } from './routes/chatEpochs'
+import { chatKeyRoutes } from './routes/chatKeys'
+import { chatMessageRoutes } from './routes/chatMessages'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
@@ -54,8 +61,10 @@ import { directorUploadRoutes } from './routes/directorUploads'
 import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
+import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
 import { groupRoutes } from './routes/groups'
+import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -317,6 +326,24 @@ function startPurge(db: ReturnType<typeof makeDatabase>): void {
   timer.unref?.()
 }
 
+/**
+ * Where uploads wait while their parts arrive: a Director's recordings, and
+ * chat attachments under `chat/`.
+ */
+function uploadsDir(): string {
+  return serverConfig.uploadsDir === ''
+    ? path.join(serverConfig.mediaDir, 'uploads')
+    : serverConfig.uploadsDir
+}
+
+/**
+ * Chat attachments no message references, swept hourly whenever a Space is
+ * configured — unlike `startPurge`, not gated by `purgeReplacedRecordings`.
+ */
+function startChatAttachmentPurge(db: ReturnType<typeof makeDatabase>): void {
+  startChatPurge(db, { space: serverConfig.space, uploadsDir: uploadsDir() })
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
@@ -324,6 +351,8 @@ function runPrimary(workerCount: number): void {
   startLive(liveDb)
   reopenInterrupted(liveDb)
   startPurge(liveDb)
+  startChatAttachmentPurge(liveDb)
+  startChatReconciler(liveDb, serverConfig.databaseUrl)
   const builder = startStatsBuilder({
     enabled: serverConfig.statsBuilder,
     supervise: () =>
@@ -525,6 +554,8 @@ function runWorker(): void {
   app.use('/api/v1', nodeAdministrationRoutes(db))
   app.use('/api/v1', gameApprovalRoutes(db))
   app.use('/api/v1', notificationRoutes(db))
+  app.use('/api/v1', guardianRoutes(db, { sendInvite, publicUrl }))
+  app.use('/api/v1', followRoutes(db, mediaContext))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use(
     '/api/v1',
@@ -532,6 +563,26 @@ function runWorker(): void {
   )
   app.use('/api/v1', eventInfoRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
+  app.use('/api/v1', chatRoutes(db, mediaContext))
+  app.use('/api/v1', chatKeyRoutes(db))
+  app.use('/api/v1', chatEpochRoutes(db))
+  // A delete takes the attachments only it referenced off the Space.
+  app.use(
+    '/api/v1',
+    chatMessageRoutes(db, mediaContext, {
+      objects: spaceConfigured(serverConfig.space)
+        ? spaceObjectStore(serverConfig.space)
+        : undefined
+    })
+  )
+  // Its parts are raw bytes, read by its own `express.raw` (9 MiB a part).
+  app.use(
+    '/api/v1',
+    chatAttachmentRoutes(db, {
+      space: serverConfig.space,
+      uploadsDir: uploadsDir()
+    })
+  )
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
@@ -584,10 +635,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     directorUploadRoutes(db, {
-      uploadsDir:
-        serverConfig.uploadsDir === ''
-          ? path.join(serverConfig.mediaDir, 'uploads')
-          : serverConfig.uploadsDir,
+      uploadsDir: uploadsDir(),
       ffmpegPath: serverConfig.ffmpegPath,
       space: serverConfig.space
     })
@@ -655,6 +703,8 @@ function runWorker(): void {
     startLive(db)
     reopenInterrupted(db)
     startPurge(db)
+    startChatAttachmentPurge(db)
+    startChatReconciler(db, serverConfig.databaseUrl)
     builder = startStatsBuilder({
       enabled: serverConfig.statsBuilder,
       supervise: () =>
