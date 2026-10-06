@@ -65,6 +65,11 @@ import { gameStatusLine, shortDate, winnerOf } from './format'
 import { gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
+import {
+  STAT_COLUMN_GAP_REM,
+  type StatColumn,
+  statColumnWidths
+} from './statColumns'
 
 export interface GameScreenProps {
   client: TeamStationClient
@@ -1493,6 +1498,19 @@ function LineScore(props: {
   )
 }
 
+function statCellSize(
+  theme: Theme,
+  width: number,
+  index: number
+): { width: number; paddingLeft: number; fontVariant: Array<'tabular-nums'> } {
+  const gap = index === 0 ? 0 : STAT_COLUMN_GAP_REM
+  return {
+    width: theme.rem(width + gap),
+    paddingLeft: theme.rem(gap),
+    fontVariant: ['tabular-nums']
+  }
+}
+
 /**
  * One person's line, in any of the four tables.
  *
@@ -1503,22 +1521,21 @@ function LineScore(props: {
 function StatRow(props: {
   name: string
   cells: string[]
-  /** Which of those cells take the wider column, by position. */
-  wide?: boolean[]
+  widths: number[]
   theme: Theme
   onPress?: () => void
 }): React.ReactElement {
-  const { name, cells, wide, theme, onPress } = props
+  const { name, cells, widths, theme, onPress } = props
   const styles = getStyles(theme)
   const content = (
     <>
-      <Text style={styles.cellName} numberOfLines={1}>
+      <Text style={[styles.cellName, styles.statName]} numberOfLines={1}>
         {name}
       </Text>
       {cells.map((value, index) => (
         <Text
           key={index}
-          style={[styles.cell, wide?.[index] === true && styles.cellWide]}
+          style={[styles.cell, statCellSize(theme, widths[index], index)]}
           // A figure is one line. Whatever it measures, it must not be
           // allowed to make its row taller than the row above.
           numberOfLines={1}
@@ -1554,11 +1571,18 @@ function BattingTable(props: {
   onOpenPlayer?: (userId: number, name: string) => void
 }): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
+  const { fontScale } = useWindowDimensions()
   if (rows.length === 0) return null
   const styles = getStyles(theme)
-  // Best day first, which is who somebody is looking for.
-  const lines = [...rows].sort((a, b) =>
-    b.h !== a.h ? b.h - a.h : b.pa - a.pa
+  // The server preserves each side’s first plate-appearance order.
+  const lines = rows
+  const widths = statColumnWidths(
+    battingColumns,
+    rows,
+    0.8125,
+    0.8125,
+    0,
+    fontScale
   )
   return (
     <View style={styles.table}>
@@ -1567,16 +1591,16 @@ function BattingTable(props: {
       </Text>
       <WideTable>
         <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.cellHead]}>
+          <Text style={[styles.cellName, styles.statName, styles.cellHead]}>
             {lstrings.stats_player}
           </Text>
-          {battingColumns.map(column => (
+          {battingColumns.map((column, index) => (
             <Text
               key={column.label}
               style={[
                 styles.cell,
                 styles.cellHead,
-                column.wide === true && styles.cellWide
+                statCellSize(theme, widths[index], index)
               ]}
               numberOfLines={1}
             >
@@ -1589,7 +1613,7 @@ function BattingTable(props: {
             key={line.userId}
             name={line.shortName ?? ''}
             cells={battingColumns.map(column => column.value(line))}
-            wide={battingColumns.map(column => column.wide === true)}
+            widths={widths}
             theme={theme}
             onPress={
               onOpenPlayer == null
@@ -1612,8 +1636,17 @@ function PitchingTable(props: {
   onOpenPlayer?: (userId: number, name: string) => void
 }): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
+  const { fontScale } = useWindowDimensions()
   if (rows.length === 0) return null
   const styles = getStyles(theme)
+  const widths = statColumnWidths(
+    pitchingColumns,
+    rows,
+    0.8125,
+    0.8125,
+    0,
+    fontScale
+  )
   return (
     <View style={styles.table}>
       <Text style={styles.heading}>
@@ -1621,11 +1654,19 @@ function PitchingTable(props: {
       </Text>
       <WideTable>
         <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.cellHead]}>
+          <Text style={[styles.cellName, styles.statName, styles.cellHead]}>
             {lstrings.stats_player}
           </Text>
-          {pitchingColumns.map(column => (
-            <Text key={column.label} style={[styles.cell, styles.cellHead]}>
+          {pitchingColumns.map((column, index) => (
+            <Text
+              key={column.label}
+              style={[
+                styles.cell,
+                styles.cellHead,
+                statCellSize(theme, widths[index], index)
+              ]}
+              numberOfLines={1}
+            >
               {column.label}
             </Text>
           ))}
@@ -1635,6 +1676,7 @@ function PitchingTable(props: {
             key={line.userId}
             name={line.shortName ?? ''}
             cells={pitchingColumns.map(column => column.value(line))}
+            widths={widths}
             theme={theme}
             onPress={
               onOpenPlayer == null
@@ -1650,11 +1692,8 @@ function PitchingTable(props: {
   )
 }
 
-const pitchingColumns: Array<{
-  label: string
-  value: (row: PitchingRow) => string
-}> = [
-  { label: lstrings.stats_innings, value: row => row.ip },
+const pitchingColumns: Array<StatColumn<PitchingRow>> = [
+  { label: lstrings.stats_innings, sample: '9.2', value: row => row.ip },
   { label: 'BF', value: row => String(row.bf) },
   { label: lstrings.stats_hits, value: row => String(row.h) },
   { label: lstrings.stats_runs, value: row => String(row.r) },
@@ -1667,12 +1706,7 @@ const pitchingColumns: Array<{
   { label: 'HBP', value: row => String(row.hbp) }
 ]
 
-const battingColumns: Array<{
-  label: string
-  value: (row: BattingRow) => string
-  /** Holds five characters rather than three, so it gets its own width. */
-  wide?: boolean
-}> = [
+const battingColumns: Array<StatColumn<BattingRow>> = [
   { label: lstrings.stats_at_bats, value: row => String(row.ab) },
   { label: lstrings.stats_hits, value: row => String(row.h) },
   { label: lstrings.stats_runs, value: row => String(row.r) },
@@ -1687,12 +1721,7 @@ const battingColumns: Array<{
     // they are.
     label: lstrings.stats_average,
     value: row => (row.seasonAvg == null ? '–' : average(row.seasonAvg)),
-    // `1.000` is five characters where every other column holds at most
-    // three. At the shared width Android's shaping made it a hair too wide
-    // and broke it across two lines — `1.00` over `0` — which made that one
-    // row taller than the rest and put a step in the table. iOS and the
-    // browser measured the same string a hair narrower and got away with it.
-    wide: true
+    sample: '1.000'
   }
 ]
 
@@ -2057,6 +2086,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.9)
     },
+    statName: { minWidth: theme.rem(6.5) },
     cell: {
       color: theme.primaryTextColor,
       fontFamily: theme.regularTextFont,
@@ -2067,12 +2097,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       flexGrow: 0,
       flexShrink: 0,
       textAlign: 'right'
-    },
-    cellWide: {
-      // For a batting average. The eight columns beside it each gave up
-      // 0.1rem to pay for this, so the table is the width it always was and
-      // the name column is not squeezed any further.
-      width: theme.rem(2.8)
     },
     cellHead: {
       color: theme.secondaryTextColor,

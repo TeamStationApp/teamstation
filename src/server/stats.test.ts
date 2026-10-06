@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { emptyStatExtras } from '../common/statExtras'
 import {
   battingLines,
   battingRates,
@@ -161,5 +162,72 @@ describe('stats', function () {
     expect(inningsPitched(0)).equals('0.0')
     expect(inningsPitched(5)).equals('1.2')
     expect(inningsPitched(18)).equals('6.0')
+  })
+})
+
+describe('expanded totals', function () {
+  it('sums detail counts and derives rates from denominators even with zero outs', function () {
+    const extra = {
+      ...emptyStatExtras(),
+      appeared: true,
+      gs: 1,
+      pitches: 12,
+      kl: 2,
+      pitchAb: 4,
+      lob: 1,
+      bk: 1,
+      pitchPik: 1,
+      pitchCs: 1,
+      pitchSb: 2,
+      wp: 1,
+      roe: 1,
+      fc: 1,
+      pik: 1,
+      firstPa: 5
+    }
+    const rows = [
+      game({ pa: 2, sb: 2, cs: 1, pitchH: 1, extra }),
+      game({
+        pa: 1,
+        pitchH: 2,
+        extra: { ...extra, firstPa: 2, pitchAb: 6, pitchSb: 1 }
+      })
+    ]
+    const bat = battingLines(rows)[0]
+    expect(bat).includes({ roe: 2, fc: 2, pik: 2, firstPa: 2 })
+    expect(battingRates(bat).sbPct).equals(0.667)
+    const pitcher = pitchingLines(rows)[0]
+    expect(pitcher).includes({
+      g: 2,
+      gs: 2,
+      pitches: 24,
+      kl: 4,
+      pitchAb: 10,
+      lob: 2,
+      bk: 2,
+      pik: 2,
+      cs: 2,
+      sb: 3,
+      wp: 2
+    })
+    expect(pitchingRates(pitcher)).deep.equals({ baa: 0.3, sbPct: 0.6 })
+  })
+  it('keeps legacy detail unknown and nonpitchers absent', function () {
+    const rows = [
+      game({ pa: 2, pitchBf: 1 }),
+      game({ pa: 2, pitchBf: 1, extra: emptyStatExtras() })
+    ]
+    expect(battingLines(rows)[0].roe).equals(null)
+    expect(pitchingLines(rows)[0]).includes({
+      gs: null,
+      pitches: null,
+      pitchAb: null
+    })
+    expect(
+      pitchingLines([game({ pa: 2, extra: emptyStatExtras() })])
+    ).deep.equals([])
+    expect(
+      battingLines([game({ extra: { ...emptyStatExtras(), pik: 1 } })])
+    ).has.length(1)
   })
 })

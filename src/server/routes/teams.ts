@@ -52,6 +52,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
+import { boxScoreOrder } from '../stats/boxScoreOrder'
 import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
@@ -753,6 +754,17 @@ export function teamRoutes(
         }))
       )
 
+      if (req.query.kind === 'pitching') {
+        res.json(
+          pitchingLines(rows).map(line => ({
+            ...line,
+            shortName: names.get(line.userId) ?? 'Unknown',
+            ip: inningsPitched(line.outs),
+            rates: pitchingRates(line)
+          }))
+        )
+        return
+      }
       res.json(
         battingLines(rows).map(line => ({
           ...line,
@@ -810,7 +822,7 @@ export function teamRoutes(
         ip: inningsPitched(line.outs),
         rates: pitchingRates(line)
       }))
-      const lines = battingLines(rows)
+      const lines = await boxScoreOrder(db, gameId, battingLines(rows))
 
       res.json({
         batting: lines.map(line => ({

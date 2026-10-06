@@ -617,6 +617,7 @@ export interface GamePlayerStatsTable {
   pitch_k: Generated<number>
   pitch_r: Generated<number>
   pitch_er: Generated<number>
+  extra: Json | null
   computed_at: Timestamp
 }
 

@@ -1,5 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
+import { asStatExtras } from '../../common/statExtras'
 import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { DEFAULT_ERA_INNINGS, type StatRow } from '../stats'
@@ -52,6 +53,7 @@ export async function statRows(
     .leftJoin('leagues', 'leagues.id', 'seasons.league_id')
     .leftJoin('teams', 'teams.id', 'game_player_stats.team_id')
     .select([
+      'game_player_stats.extra as extra',
       'game_player_stats.game_id as gameId',
       'game_player_stats.user_id as userId',
       'game_player_stats.team_id as teamId',
@@ -140,6 +142,7 @@ export async function statRows(
   )
   return rows.map(row => ({
     ...row,
+    extra: row.extra == null ? null : asStatExtras(row.extra),
     userId: survivors.get(row.userId) ?? row.userId
   }))
 }

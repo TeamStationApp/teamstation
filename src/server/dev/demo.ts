@@ -6,6 +6,7 @@ import { createSession } from '../auth/sessions'
 import { makeDatabase } from '../db/database'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { serverConfig } from '../serverConfig'
+import { sampleBatter } from './demoStats'
 
 // Builds a league, two seasons, two teams, a roster, a finished game in each
 // season and a video of the first, and prints tokens so the schedule, roster
@@ -229,15 +230,7 @@ async function main(): Promise<void> {
     // roster may never have come to the plate, and a demo that points at them
     // looks like the stats are broken when they are merely empty. Null until
     // the stats builder has written the games' stat lines.
-    const topBatter = await db
-      .selectFrom('game_player_stats')
-      .select(['user_id'])
-      .select(eb => eb.fn.sum<number>('pa').as('pa'))
-      .where('team_id', '=', homeTeamId)
-      .groupBy('user_id')
-      .orderBy('pa', 'desc')
-      .executeTakeFirst()
-    const samplePlayerId = topBatter?.user_id ?? null
+    const samplePlayerId = await sampleBatter(db, homeTeamId)
 
     const session = await createSession(db, viewerId, 'demo script')
 

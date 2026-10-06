@@ -38,6 +38,22 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('requests team pitching with optional season filtering', async function () {
+    const { fetch, calls } = stubFetch(200, [])
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch
+    })
+    expect(await client.teamPitchingStats('team/one')).deep.equals([])
+    expect(
+      await client.teamPitchingStats('team/one', 'season/one')
+    ).deep.equals([])
+    expect(calls.map(call => call.url)).deep.equals([
+      'http://example.com/api/v1/teams/team%2Fone/stats?kind=pitching',
+      'http://example.com/api/v1/teams/team%2Fone/stats?kind=pitching&seasonId=season%2Fone'
+    ])
+  })
+
   it('sets somebody\u2019s roles on one level, and reads the caller\u2019s own', async function () {
     const set = stubFetch(200, { userId: 42, roles: ['admin', 'coach'] })
     const client = new TeamStationClient({

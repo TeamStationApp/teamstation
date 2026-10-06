@@ -258,13 +258,16 @@ const asRates = asObject({
   avg: asOptional(asNumber),
   obp: asOptional(asNumber),
   slg: asOptional(asNumber),
-  ops: asOptional(asNumber)
+  ops: asOptional(asNumber),
+  sbPct: asOptional(asNumber)
 })
 
 const asPitchingRates = asObject({
   /** Earned runs per game; absent for a pitcher with no outs. */
   era: asOptional(asNumber),
-  whip: asOptional(asNumber)
+  whip: asOptional(asNumber),
+  baa: asOptional(asNumber),
+  sbPct: asOptional(asNumber)
 })
 
 export const asBattingRow = asObject({
@@ -292,6 +295,9 @@ export const asBattingRow = asObject({
   sf: asOptional(asNumber, 0),
   /** Sacrifice bunts. */
   sh: asOptional(asNumber, 0),
+  roe: asOptional(asNullable(asNumber), null),
+  fc: asOptional(asNullable(asNumber), null),
+  pik: asOptional(asNullable(asNumber), null),
   rates: asRates,
   /**
    * This player's average for the season so far, up to and including this
@@ -326,6 +332,15 @@ export const asPitchingRow = asObject({
   er: asOptional(asNumber, 0),
   bb: asNumber,
   k: asNumber,
+  gs: asOptional(asNullable(asNumber), null),
+  pitches: asOptional(asNullable(asNumber), null),
+  kl: asOptional(asNullable(asNumber), null),
+  lob: asOptional(asNullable(asNumber), null),
+  bk: asOptional(asNullable(asNumber), null),
+  pik: asOptional(asNullable(asNumber), null),
+  cs: asOptional(asNullable(asNumber), null),
+  sb: asOptional(asNullable(asNumber), null),
+  wp: asOptional(asNullable(asNumber), null),
   rates: asPitchingRates
 })
 export type PitchingRow = ReturnType<typeof asPitchingRow>
@@ -1556,6 +1571,19 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/stats${query}`,
       asArray(asBattingRow)
+    )
+  }
+
+  async teamPitchingStats(
+    teamId: string,
+    seasonId?: string
+  ): Promise<PitchingRow[]> {
+    const query = new URLSearchParams({ kind: 'pitching' })
+    if (seasonId != null) query.set('seasonId', seasonId)
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/stats?${query.toString()}`,
+      asArray(asPitchingRow)
     )
   }
 

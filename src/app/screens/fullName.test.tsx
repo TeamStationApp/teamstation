@@ -255,6 +255,7 @@ describe('a player’s whole name is never shown', function () {
         })
       ],
       teamStats: async () => [batting],
+      teamPitchingStats: async () => [],
       standings: async () => [
         {
           teamId: 'tem_hawks',

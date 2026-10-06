@@ -3,7 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
-import { gameStatLines } from '../stats/gumboStats'
+import { expandedGameStatLines } from '../stats/expandedStats'
 
 export type Clock = () => Date
 
@@ -190,7 +190,7 @@ export async function buildNext(
         return { kind: 'done' as const }
       }
 
-      const result = gameStatLines(plays, teams, knownUsers)
+      const result = expandedGameStatLines(plays, teams, knownUsers)
       if (result.kind === 'incomplete') {
         await updateState(trx, gameId, gen, {
           status: 'incomplete',
@@ -241,6 +241,7 @@ export async function buildNext(
             pitch_k: line.pitch_k,
             pitch_r: line.pitch_r,
             pitch_er: line.pitch_er,
+            extra: JSON.stringify(line.extra),
             computed_at: now.toISOString()
           })
           .execute()

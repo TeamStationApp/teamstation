@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Text, useWindowDimensions, View } from 'react-native'
 
 import type {
   BattingRow,
   GameSummary,
+  PitchingRow,
   RosterEntry,
   StandingsRow,
   TeamStationClient,
@@ -40,6 +41,13 @@ import {
   shortDateNoWeekday,
   shortTime
 } from './format'
+import {
+  battingColumns,
+  pitchingColumns,
+  STAT_COLUMN_GAP_REM,
+  type StatColumn,
+  statColumnWidths
+} from './statColumns'
 import { gamesFor } from './whenFilter'
 
 export interface TeamScreenProps {
@@ -160,6 +168,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const [games, setGames] = useState<GameSummary[]>([])
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
+  const [pitching, setPitching] = useState<PitchingRow[]>([])
   const [standing, setStanding] = useState<StandingsRow | undefined>(undefined)
   /** Where this team sits in its season, 1 for first. */
   const [place, setPlace] = useState<number | undefined>(undefined)
@@ -183,16 +192,19 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       setGames(loadedGames)
 
       const seasonId = loadedGames.find(game => game.seasonId != null)?.seasonId
-      const [loadedRoster, loadedBatting, standings] = await Promise.all([
-        client.roster(team.id),
-        client.teamStats(team.id, seasonId ?? undefined),
-        seasonId == null
-          ? Promise.resolve<StandingsRow[]>([])
-          : client.standings(seasonId)
-      ])
+      const [loadedRoster, loadedBatting, loadedPitching, standings] =
+        await Promise.all([
+          client.roster(team.id),
+          client.teamStats(team.id, seasonId ?? undefined),
+          client.teamPitchingStats(team.id, seasonId ?? undefined),
+          seasonId == null
+            ? Promise.resolve<StandingsRow[]>([])
+            : client.standings(seasonId)
+        ])
       if (cancelled) return
       setRoster(loadedRoster)
       setBatting(loadedBatting)
+      setPitching(loadedPitching)
       setStanding(standings.find(row => row.teamId === team.id))
       // The position is the row's place in the standings the server already
       // sorted. Working it out again here is how two screens come to disagree
@@ -389,8 +401,19 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             <Empty text="No plays have been ingested for this team yet." />
           ) : (
             <Card flush>
-              <BattingTable rows={batting} />
+              <StatsTable rows={batting} columns={battingColumns} />
             </Card>
+          )}
+          {pitching.length > 0 && (
+            <>
+              <SectionHeader
+                title="Pitching"
+                note={`${pitching.length} players`}
+              />
+              <Card flush>
+                <StatsTable rows={pitching} columns={pitchingColumns} />
+              </Card>
+            </>
           )}
         </View>
       )}
@@ -468,38 +491,57 @@ function GameCard(props: {
   )
 }
 
-/** The batting table, which is the one place a real grid beats stacked rows. */
-function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
-  const { rows } = props
-  const styles = getStyles(useTheme())
-  const sorted = [...rows].sort((a, b) => b.pa - a.pa)
-
+/** Header and body share compact widths, including any unusually large value. */
+function StatsTable<T extends { userId: number; shortName?: string }>(props: {
+  rows: T[]
+  columns: Array<StatColumn<T>>
+}): React.ReactElement {
+  const { rows, columns } = props
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const { fontScale } = useWindowDimensions()
+  const widths = statColumnWidths(columns, rows, 0.875, 0.6875, 0.05, fontScale)
+  const cellSize = (index: number): { width: number; paddingLeft: number } => {
+    const gap = index === 0 ? 0 : STAT_COLUMN_GAP_REM
+    return {
+      width: theme.rem(widths[index] + gap),
+      paddingLeft: theme.rem(gap)
+    }
+  }
   return (
     <WideTable>
-      <View style={[styles.tableRow, styles.tableHead]}>
-        <Text style={[styles.cellName, styles.cellHead, styles.cellNameHead]}>
-          Player
-        </Text>
-        <Text style={[styles.cell, styles.cellHead]}>PA</Text>
-        <Text style={[styles.cell, styles.cellHead]}>AB</Text>
-        <Text style={[styles.cell, styles.cellHead]}>H</Text>
-        <Text style={[styles.cell, styles.cellHead]}>R</Text>
-        <Text style={[styles.cell, styles.cellHead]}>RBI</Text>
-        <Text style={[styles.cell, styles.cellHead]}>AVG</Text>
-      </View>
-      {sorted.map(row => (
-        <View key={row.userId} style={styles.tableRow}>
-          <Text style={styles.cellName} numberOfLines={1}>
-            {row.shortName ?? 'Unknown'}
+      <View>
+        <View style={[styles.tableRow, styles.tableHead]}>
+          <Text style={[styles.cellName, styles.cellHead, styles.cellNameHead]}>
+            Player
           </Text>
-          <Text style={styles.cell}>{row.pa}</Text>
-          <Text style={styles.cell}>{row.ab}</Text>
-          <Text style={styles.cell}>{row.h}</Text>
-          <Text style={styles.cell}>{row.r}</Text>
-          <Text style={styles.cell}>{row.rbi}</Text>
-          <Text style={styles.cell}>{rate(row.rates.avg)}</Text>
+          {columns.map((column, index) => (
+            <Text
+              key={column.label}
+              style={[styles.cell, styles.cellHead, cellSize(index)]}
+              numberOfLines={1}
+            >
+              {column.label}
+            </Text>
+          ))}
         </View>
-      ))}
+        {rows.map(row => (
+          <View key={row.userId} style={styles.tableRow}>
+            <Text style={styles.cellName} numberOfLines={1}>
+              {row.shortName ?? 'Unknown'}
+            </Text>
+            {columns.map((column, index) => (
+              <Text
+                key={column.label}
+                style={[styles.cell, cellSize(index)]}
+                numberOfLines={1}
+              >
+                {column.value(row)}
+              </Text>
+            ))}
+          </View>
+        ))}
+      </View>
     </WideTable>
   )
 }
@@ -619,8 +661,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: theme.rem(theme.spaceMdRem),
-    paddingVertical: theme.rem(theme.spaceSmRem),
-    gap: theme.rem(theme.spaceXsRem)
+    paddingVertical: theme.rem(theme.spaceSmRem)
   },
   tableHead: {
     backgroundColor: theme.containerBackgroundColor
@@ -642,6 +683,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     // scrolled to its last column is still somebody's — `sticky` is a position
     // React Native has no name for, and this app renders to the DOM.
     flexBasis: theme.rem(7),
+    minWidth: theme.rem(7),
     flexGrow: 1,
     flexShrink: 0,
     ...webStyle({ position: 'sticky', left: 0, zIndex: 1 }),
@@ -651,7 +693,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   cell: {
-    width: theme.rem(2.75),
+    fontVariant: ['tabular-nums'],
+    flexShrink: 0,
     textAlign: 'right',
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.875),
