@@ -1,5 +1,10 @@
 import { findSamePersonAcrossTeams } from '../admin/duplicatePeople'
-import { closeInto, tidyClosedRows } from '../admin/people'
+import {
+  closeInto,
+  strandedNote,
+  strandedRows,
+  tidyClosedRows
+} from '../admin/people'
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
 
@@ -34,6 +39,8 @@ async function main(): Promise<void> {
     }
     console.log(`\n${groups.length} people are on more than one row`)
     if (!apply) {
+      const note = strandedNote(await strandedRows(db))
+      if (note != null) console.log(note)
       console.log('Nothing written. Run again with --apply.')
       return
     }
@@ -42,8 +49,8 @@ async function main(): Promise<void> {
     for (const group of groups) {
       for (const member of group.members) {
         if (member.userId === group.keepUserId) continue
-        await closeInto(db, member.userId, group.keepUserId)
-        closed += 1
+        const merge = await closeInto(db, member.userId, group.keepUserId)
+        if (merge.closed) closed += 1
       }
     }
     // And anything an earlier run left behind, which is how a roster loses a
@@ -51,8 +58,12 @@ async function main(): Promise<void> {
     const tidied = await tidyClosedRows(db)
     console.log(
       `closed ${closed} rows into ${groups.length} people` +
-        (tidied > 0 ? `, and moved ${tidied} stranded memberships` : '')
+        (tidied.moved > 0
+          ? `, and moved ${tidied.moved} stranded memberships`
+          : '')
     )
+    const note = strandedNote(tidied.stranded)
+    if (note != null) console.log(note)
   } finally {
     await db.destroy()
   }

@@ -1,5 +1,6 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql, type Transaction } from 'kysely'
 
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 
 /**
@@ -79,14 +80,74 @@ export async function onePerson(
  * positions, being a player at all — is copied onto it first. Two rows for one
  * child on one team is the thing being undone, and a number nobody typed twice
  * should not be what it costs.
+ *
+ * Nothing is written when `keeping` has already been closed into `closing`,
+ * directly or through other rows. The two are one person already, and closing
+ * `closing` too would leave no row open: each would name the other, and every
+ * walk up the chain would stop on whichever row it reached second. Doing
+ * nothing rather than throwing, because every caller runs many merges one after
+ * another, and `tidyClosedRows` has to pass by a loop that is already in the
+ * data rather than stop the run it is part of.
+ *
+ * Each merge is one transaction holding one lock that every merge takes, so the
+ * check and the writes cannot be split by another merge: two run at once in
+ * opposite directions each passed the check and wrote the loop between them.
+ * One lock for all merges rather than one per row, because a loop can run
+ * through rows neither merge names.
+ *
+ * A caller already in a transaction has its own used, and it must be read
+ * committed: under a stricter level the transaction's snapshot predates the
+ * lock, the check reads the chain as it was before another merge committed,
+ * and the loop is written anyway. Anything else is refused with an error. The
+ * lock is then held until the caller's transaction ends, so every other merge
+ * waits for it.
+ *
+ * `closed` says whether the row was closed: false for a row closed into itself
+ * and for a merge refused because it would close a loop. `moved` counts the
+ * team rows that went with it.
  */
 export async function closeInto(
   db: Kysely<Database>,
   closing: number,
   keeping: number
-): Promise<number> {
-  if (closing === keeping) return 0
+): Promise<Merge> {
+  const nothing: Merge = { closed: false, moved: 0 }
+  if (closing === keeping) return nothing
+  const merge = async (trx: Transaction<Database>): Promise<Merge> => {
+    await lockKeys(trx, [MERGE_LOCK])
+    if (await closedInto(trx, keeping, closing)) return nothing
+    return { closed: true, moved: await moveAndClose(trx, closing, keeping) }
+  }
+  if (!db.isTransaction) return await db.transaction().execute(merge)
 
+  const level = await sql<{
+    level: string
+  }>`select current_setting('transaction_isolation') as level`.execute(db)
+  if (level.rows[0]?.level !== 'read committed') {
+    throw new Error(
+      `closeInto needs a read committed transaction, not ${level.rows[0]?.level}`
+    )
+  }
+  return await merge(db as Transaction<Database>)
+}
+
+/** What one `closeInto` did. */
+export interface Merge {
+  /** Whether the row was closed: false when it was refused or a no-op. */
+  closed: boolean
+  /** The team rows that moved with it. */
+  moved: number
+}
+
+/** The advisory lock every merge holds while it checks and writes. */
+const MERGE_LOCK = 'users.closeInto'
+
+/** The merge itself, once `closeInto` has the lock and has ruled out a loop. */
+async function moveAndClose(
+  db: Kysely<Database>,
+  closing: number,
+  keeping: number
+): Promise<number> {
   const theirs = await db
     .selectFrom('memberships')
     .select(['id', 'team_id', 'jersey', 'positions', 'is_player'])
@@ -163,6 +224,34 @@ export async function closeInto(
 }
 
 /**
+ * Whether `row` has been closed into `into`, however many rows lie between.
+ *
+ * Followed to the end with no count of steps: a cap would let a chain longer
+ * than it close a loop. A row seen twice ends the walk, so a loop already in
+ * the data cannot hang it.
+ */
+async function closedInto(
+  db: Kysely<Database>,
+  row: number,
+  into: number
+): Promise<boolean> {
+  const seen = new Set<number>([row])
+  let at = row
+  while (true) {
+    const found = await db
+      .selectFrom('users')
+      .select(['merged_into'])
+      .where('id', '=', at)
+      .executeTakeFirst()
+    const next = found?.merged_into
+    if (next == null || seen.has(next)) return false
+    if (next === into) return true
+    seen.add(next)
+    at = next
+  }
+}
+
+/**
  * The surviving row takes the better of the two names.
  *
  * Which row survives is decided by how much history is on it, and the row a
@@ -223,25 +312,95 @@ export async function keepTheFullerName(
  * Idempotent, and run every time the merge tool runs: rows closed before the
  * memberships moved with them are the reason a roster can be missing a child,
  * and there is no way to tell from the row itself whether it was tidied.
+ *
+ * Passes repeat until one moves nothing. A team row can land on a row that is
+ * itself closed: `onePerson` stops counting after `MAX_DEPTH` rows, and another
+ * merge can close the row a walk ended on before `closeInto` takes its lock.
+ * The next pass moves it on. Every move goes up a chain that does not lead back
+ * to the row it left (`closeInto` refuses that), so the passes end.
+ *
+ * `stranded` is what `strandedRows` finds afterwards: rows in, or closed into,
+ * a `merged_into` loop, which `closeInto` will not add to and this does not
+ * repair.
  */
-export async function tidyClosedRows(db: Kysely<Database>): Promise<number> {
-  const stranded = await db
+export async function tidyClosedRows(
+  db: Kysely<Database>
+): Promise<{ moved: number; stranded: number[] }> {
+  let moved = 0
+  while (true) {
+    let pass = 0
+    for (const userId of await closedRowsHoldingTeams(db)) {
+      // Through the chain, not one step: a row can be closed into a row that
+      // was itself closed later.
+      const person = await onePerson(db, userId)
+      pass += (await closeInto(db, userId, person.userId)).moved
+    }
+    moved += pass
+    if (pass === 0) break
+  }
+  return { moved, stranded: await strandedRows(db) }
+}
+
+/**
+ * Closed rows that hold team rows a tidy cannot move: their chain, followed to
+ * its end, reaches no open row. Read-only, so a dry run can show them too.
+ * Each keeps a person off every roster until somebody opens the loop by hand.
+ */
+export async function strandedRows(db: Kysely<Database>): Promise<number[]> {
+  const stranded: number[] = []
+  for (const userId of await closedRowsHoldingTeams(db)) {
+    if ((await openEnd(db, userId)) == null) stranded.push(userId)
+  }
+  return stranded.sort((a, b) => a - b)
+}
+
+/** Every closed row that still holds a team row. */
+async function closedRowsHoldingTeams(db: Kysely<Database>): Promise<number[]> {
+  const rows = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
-    .select(['memberships.user_id as userId', 'users.merged_into as keeping'])
+    .select(['memberships.user_id as userId'])
     .where('users.merged_into', 'is not', null)
     .distinct()
     .execute()
+  return rows.map(row => row.userId)
+}
 
-  let moved = 0
-  for (const row of stranded) {
-    if (row.keeping == null) continue
-    // Through the chain, not one step: a row can be closed into a row that was
-    // itself closed later.
-    const person = await onePerson(db, row.userId)
-    moved += await closeInto(db, row.userId, person.userId)
+/**
+ * The open row at the end of `row`'s chain, followed with no count of steps,
+ * or undefined when the chain comes back on itself before reaching one.
+ */
+async function openEnd(
+  db: Kysely<Database>,
+  row: number
+): Promise<number | undefined> {
+  const seen = new Set<number>([row])
+  let at = row
+  while (true) {
+    const found = await db
+      .selectFrom('users')
+      .select(['merged_into'])
+      .where('id', '=', at)
+      .executeTakeFirst()
+    const next = found?.merged_into
+    if (next == null) return at
+    if (seen.has(next)) return undefined
+    seen.add(next)
+    at = next
   }
-  return moved
+}
+
+/** The line a merge tool prints for the rows `strandedRows` finds. */
+export function strandedNote(stranded: number[]): string | undefined {
+  if (stranded.length === 0) return undefined
+  const one = stranded.length === 1
+  return (
+    `${stranded.length} closed ${one ? 'row still holds' : 'rows still hold'} ` +
+    `team rows, in a merge loop that leaves no row open: ` +
+    `${stranded.join(', ')}. ` +
+    `${one ? 'That person is' : 'Those people are'} on no roster until the ` +
+    'loop is opened by hand.'
+  )
 }
 
 /** Who each of these ids is now, for a read that has rows rather than a name. */
@@ -257,27 +416,27 @@ export async function survivorsOf(
     .where('id', 'in', [...new Set(userIds)])
     .execute()
 
-  const closedInto = new Map<number, number>()
+  const mergedInto = new Map<number, number>()
   for (const row of rows) {
-    if (row.merged_into != null) closedInto.set(row.id, row.merged_into)
+    if (row.merged_into != null) mergedInto.set(row.id, row.merged_into)
   }
   for (const row of rows) {
     let id = row.id
     const walked = new Set<number>([id])
     while (true) {
-      const next = closedInto.get(id)
+      const next = mergedInto.get(id)
       if (next == null || walked.has(next)) break
       walked.add(next)
       id = next
       // The chain can leave the batch, and then one more lookup settles it.
-      if (!closedInto.has(id)) {
+      if (!mergedInto.has(id)) {
         const beyond = await db
           .selectFrom('users')
           .select(['merged_into'])
           .where('id', '=', id)
           .executeTakeFirst()
         if (beyond?.merged_into == null) break
-        closedInto.set(id, beyond.merged_into)
+        mergedInto.set(id, beyond.merged_into)
       }
     }
     survivors.set(row.id, id)
