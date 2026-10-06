@@ -8,6 +8,7 @@ import type {
   TeamStationClient,
   TeamSummary
 } from '../../common/api'
+import type { ChatLink } from '../chat/ChatLinks'
 import {
   Button,
   Card,
@@ -33,6 +34,12 @@ export interface HomeScreenProps {
   ) => void
   /** Find a team to follow. Without it there is no Follow a team. */
   onFollowTeam?: () => void
+  /**
+   * The leagues whose Org chat the person is in. A league has no page of
+   * its own, so its card opens its chat.
+   */
+  leagueChats?: Array<ChatLink & { league: string }>
+  onOpenChat?: (chat: ChatLink) => void
 }
 
 /**
@@ -363,6 +370,29 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
           </Card>
         </View>
       )}
+
+      {props.leagueChats != null &&
+        props.leagueChats.length > 0 &&
+        props.onOpenChat != null && (
+          <View style={styles.section}>
+            <SectionHeader title="Leagues" />
+            <Card>
+              {props.leagueChats.map((chat, index) => (
+                <View key={chat.id}>
+                  {index > 0 && <View style={styles.divider} />}
+                  <ListRow
+                    title={chat.league}
+                    subtitle={chat.title}
+                    emblemIcon="chat"
+                    onPress={() => {
+                      props.onOpenChat?.(chat)
+                    }}
+                  />
+                </View>
+              ))}
+            </Card>
+          </View>
+        )}
 
       {nothing && (
         <Card>

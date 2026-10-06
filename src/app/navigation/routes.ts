@@ -117,6 +117,14 @@ export type Route =
   | { name: 'chatDevices' }
   /** Linking this device to the user's chat keys, or resetting them. */
   | { name: 'chatLink' }
+  /** The Chat tab: every chat the person is in. */
+  | { name: 'chat' }
+  /** Starting a direct message. */
+  | { name: 'chatNew' }
+  /** One chat. Its id carries the `cnv_` prefix, so no chat is `new`. */
+  | { name: 'conversation'; conversationId: string }
+  /** A chat's members, safety numbers and approvals. */
+  | { name: 'chatMembers'; conversationId: string }
 
 const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
@@ -261,10 +269,18 @@ export function parseRoute(path: string, search = ''): Route {
       }
     }
     case 'chat':
+      if (id == null) return { name: 'chat' }
+      if (parts[2] === 'members' && parts[3] == null) {
+        if (id === 'devices' || id === 'link' || id === 'new') {
+          return { name: 'home' }
+        }
+        return { name: 'chatMembers', conversationId: id }
+      }
       if (parts[2] != null) return { name: 'home' }
       if (id === 'devices') return { name: 'chatDevices' }
       if (id === 'link') return { name: 'chatLink' }
-      return { name: 'home' }
+      if (id === 'new') return { name: 'chatNew' }
+      return { name: 'conversation', conversationId: id }
     case 'dev':
       return parseDevRoute(parts)
     default:
@@ -382,6 +398,14 @@ export function routePath(route: Route): string {
       return '/chat/devices'
     case 'chatLink':
       return '/chat/link'
+    case 'chat':
+      return '/chat'
+    case 'chatNew':
+      return '/chat/new'
+    case 'conversation':
+      return `/chat/${encodeURIComponent(route.conversationId)}`
+    case 'chatMembers':
+      return `/chat/${encodeURIComponent(route.conversationId)}/members`
     case 'signIn':
       return route.next == null
         ? '/sign-in'

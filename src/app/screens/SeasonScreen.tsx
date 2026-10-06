@@ -8,6 +8,7 @@ import type {
   TeamStationClient,
   TeamSummary
 } from '../../common/api'
+import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Badge,
   Card,
@@ -51,6 +52,9 @@ export interface SeasonScreenProps {
   initialWhen?: When
   /** Tells the shell which filter is showing. */
   onWhen?: (when: When) => void
+  /** This season's chats the person is in, each opening from the page. */
+  chats?: ChatLink[]
+  onOpenChat?: (chat: ChatLink) => void
 }
 
 type TabId = 'schedule' | 'teams' | 'standings'
@@ -181,6 +185,10 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
           ]}
         />
       </Card>
+
+      {props.chats != null && props.onOpenChat != null && (
+        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
+      )}
 
       <PillTabs
         tabs={TABS}

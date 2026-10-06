@@ -89,6 +89,22 @@ npm run lint
 `npm run build` compiles `src/` to `lib/` and `npm run build.web` bundles the
 app to `dist/`, both at the root.
 
+Every web build writes a Content-Security-Policy `<meta>` into `index.html`
+(`src/buildCsp.mjs`), and a one-shot build adds Subresource Integrity to its
+script tag. The policy allows the API and its socket (from an absolute
+`TS_API_BASE_URL`) and the media origins in `TS_MEDIA_ORIGINS`,
+space-separated; a deployment takes those from
+`node src/deploy/mediaOrigins.mjs <serverConfig.json>` (the deployment's own
+origin, its Space, and Apple Music's artwork). A local web app needs the
+API's and the stand-in Space's origins there, or pictures and attachments
+from them are refused:
+
+```sh
+TS_API_BASE_URL=http://127.0.0.1:9100/api/v1 \
+  TS_MEDIA_ORIGINS="$(node src/deploy/mediaOrigins.mjs serverConfig.json)" \
+  npm run start.web
+```
+
 **Run `npm run prepare` once**, per clone rather than per worktree. It installs
 the husky hook that lints before every commit. `npm install` will not do it for
 you: `.npmrc` sets `ignore-scripts`, which is what makes a fresh install safe

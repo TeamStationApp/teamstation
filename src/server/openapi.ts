@@ -3619,12 +3619,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Scope chats (Staff, Members and Fans of a team; Staff, All Staff ' +
             'and Announcements of a season; a league’s Org) and DMs, each ' +
-            '`{id, kind, title, scope, lastSeq, unread, canPost, ' +
-            'canModerate, locked, noHolder, closed, memberCount, people}`. ' +
-            '`title` is null for a DM; `people` lists, for a DM, everybody ' +
-            'else who was in it with the caller as `{userId, shortName, ' +
-            'left}` (current members, and those who left after the caller ' +
-            'joined), and is empty for a scope chat. Somebody who is not an account, or is under ' +
+            '`{id, kind, title, scope, scopeName, lastSeq, lastMessageAt, ' +
+            'unread, canPost, canModerate, locked, noHolder, closed, ' +
+            'memberCount, people}`. `title` and `scopeName` are null for a ' +
+            'DM; `people` lists, for a DM, everybody else who was in it ' +
+            'with the caller as `{userId, shortName, left}` (current ' +
+            'members, and those who left after the caller joined), and is ' +
+            'empty for a scope chat. `lastMessageAt` is null before the ' +
+            'first message. Somebody who is not an account, or is under ' +
             '13 by birth month, is in none.',
           security: [{ bearer: [] }],
           responses: {

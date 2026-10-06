@@ -44,6 +44,14 @@ export type IconName =
   | 'stop'
   | 'mic'
   | 'mic_off'
+  | 'chat'
+  | 'send'
+  | 'attach_file'
+  | 'add_reaction'
+  | 'mood'
+  | 'lock'
+  | 'group'
+  | 'edit'
 
 export interface IconProps {
   name: IconName
