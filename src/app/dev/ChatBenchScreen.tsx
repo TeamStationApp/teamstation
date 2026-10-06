@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
-import { vectorSummary } from '../../common/chatCrypto/vectors'
+import { coreVectorSummary } from '../../common/chatCrypto/coreVectors'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -22,9 +22,9 @@ export interface ChatBenchScreenProps extends ChatBenchOptions {
  * The chat crypto bench, at `/dev/chat-bench` in a phone build made with
  * `TS_CHAT_BENCH=1` and nowhere else.
  *
- * It runs once, as soon as it is drawn: first every frozen vector of
- * `common/chatCrypto/vectors.ts` through this platform's `primitives` (on a
- * phone, `primitives.native.ts`), showing `vectors ok` or the first mismatch;
+ * It runs once, as soon as it is drawn: first every frozen vector through
+ * this platform's chat crypto core (`common/chatCrypto/coreVectors.ts`; on a
+ * phone, the native core), showing `vectors ok` or the first mismatch;
  * then the bench, showing `stream MB/s` and `wraps/s`; then the word `done`,
  * which is what
  * `src/app/dev/chatBenchPhones.e2e.ts` waits for before its screenshot.
@@ -39,7 +39,7 @@ export function ChatBenchScreen(
     wraps,
     now,
     run = runChatBench,
-    checkVectors = vectorSummary
+    checkVectors = coreVectorSummary
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -52,8 +52,8 @@ export function ChatBenchScreen(
     // JavaScript thread for the seconds it takes.
     const timer = setTimeout(() => {
       try {
-        // The vectors first: a fast figure from primitives that give other
-        // bytes than the server's would be no result at all.
+        // The vectors first: a fast figure from a core that gives other bytes
+        // than the server's would be no result at all.
         const vectors = checkVectors()
         setLines([vectors, ...benchLines(run({ bytes, wraps, now }))])
       } catch (caught: unknown) {

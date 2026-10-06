@@ -1,16 +1,22 @@
-import { equalBytes } from '../../common/chatCrypto/bytes'
-import { epochAad, hpkeOpen, hpkeSeal } from '../../common/chatCrypto/hpke'
-import { newEpochKey, newPukKey } from '../../common/chatCrypto/keys'
+import { equalBytes, utf8 } from '../../common/chatCrypto/bytes'
+import { call } from '../../common/chatCrypto/core'
+import { num } from '../../common/chatCrypto/coreCall'
+import { epochAad } from '../../common/chatCrypto/hpke'
 import { openAttachment, sealAttachment } from '../../common/chatCrypto/stream'
 
 /**
  * The chat crypto bench: the same work on a phone (`ChatBenchScreen`) and in
  * Node (`scripts/chatCryptoBench.mjs`).
  *
- * It seals and opens a 20 MiB buffer through `stream.ts`, as an attachment
- * would be, and makes 1,000 HPKE `epoch` wraps, as a new epoch for a large
- * chat would. Both results are checked, so a fast wrong answer is not a
+ * It seals and opens a 20 MiB buffer through the chat crypto core's attachment
+ * stream, as an attachment would be, and makes 1,000 HPKE `epoch` wraps, as a
+ * new epoch for a large chat would: on the phone's native core, the Node
+ * addon, or the browser's WebAssembly, whichever this platform's `core` is. Both results are checked, so a fast wrong answer is not a
  * result.
+ *
+ * A short warm-up goes through the same calls first, untimed, so a cold
+ * process (the first native call, its first large buffers) is not counted
+ * as the core's speed.
  *
  * A megabyte here is 2^20 bytes of plaintext. `streamMBps` is the slower of
  * sealing (pad, encrypt, digest) and opening (digest check, decrypt, unpad):
@@ -56,16 +62,20 @@ export function runChatBench(options: ChatBenchOptions = {}): ChatBenchResult {
   const file = new Uint8Array(bytes)
   for (let i = 0; i < bytes; i++) file[i] = (i * 31 + 7) & 0xff
 
+  const warm = sealAttachment(file.subarray(0, Math.min(bytes, 1024 * 1024)))
+  openAttachment(warm.key, warm.blob, warm.digest)
+
   let start = now()
-  const sealed = sealAttachment(file)
+  const { key, blob, digest } = sealAttachment(file)
   const sealMs = now() - start
   start = now()
-  const opened = openAttachment(sealed.key, sealed.blob, sealed.digest)
+  const opened = openAttachment(key, blob, digest)
   const openMs = now() - start
   if (!equalBytes(opened, file)) throw new Error('stream did not round-trip')
 
-  const puk = newPukKey()
-  const epochKey = newEpochKey()
+  const none = new Uint8Array(0)
+  const [pukSecret, pukPublic] = call('newBoxKeyPair', [])
+  const [epochKey] = call('randomBytes', [num(32)])
   const aad = epochAad({
     conversationId: 'cnv_bench',
     epoch: 1,
@@ -73,15 +83,16 @@ export function runChatBench(options: ChatBenchOptions = {}): ChatBenchResult {
     identityId: 'cid_bench',
     generation: 1
   })
+  const purpose = utf8('epoch')
   let box = new Uint8Array(0)
   start = now()
   for (let i = 0; i < wraps; i++) {
-    box = hpkeSeal('epoch', puk.publicKey, aad, epochKey)
+    box = call('hpkeSeal', [purpose, pukPublic, aad, epochKey, none])[0]
   }
   const wrapMs = now() - start
   if (
     wraps > 0 &&
-    !equalBytes(hpkeOpen('epoch', puk.secretKey, aad, box), epochKey)
+    !equalBytes(call('hpkeOpen', [purpose, pukSecret, aad, box])[0], epochKey)
   ) {
     throw new Error('HPKE did not round-trip')
   }
