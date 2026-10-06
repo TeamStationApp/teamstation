@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { testPasswordParameters } from '../test/passwordFixtures'
 import { TeamStationClient } from './api'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
@@ -457,7 +458,19 @@ describe('api client', function () {
       user: { id: 1, displayName: 'Robin', isAdmin: false }
     }
     const { fetch, calls } = stubFetch(200, session)
-    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      passwordKdf: async () => 'ab'.repeat(32),
+      fetch: async (input, init) =>
+        (typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+        ).endsWith('/parameters')
+          ? new Response(JSON.stringify(testPasswordParameters))
+          : await fetch(input, init)
+    })
     await client.signInWithPassword('a@b.c', 'hunter2')
     expect(client.token).equals('tok_abc')
 

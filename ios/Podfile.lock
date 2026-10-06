@@ -1,4 +1,5 @@
 PODS:
+  - Argon2Swift (1.0.4)
   - AsyncStorage (3.1.1):
     - hermes-engine
     - RCTRequired
@@ -25,6 +26,9 @@ PODS:
     - ReactNativeDependencies
   - DoubleConversion (1.1.6):
     - ReactNativeDependencies
+  - ExpoArgon2 (0.1.0):
+    - Argon2Swift (~> 1.0.4)
+    - ExpoModulesCore
   - ExpoGL (58.0.1):
     - ExpoModulesCore
     - ExpoModulesJSI
@@ -1307,6 +1311,28 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - react-native-image-picker (8.2.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - react-native-safe-area-context (5.10.0):
     - hermes-engine
     - RCTRequired
@@ -2093,6 +2119,7 @@ DEPENDENCIES:
   - "AsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - boost (from `build/rndeps-facades/boost`)
   - DoubleConversion (from `build/rndeps-facades/DoubleConversion`)
+  - "ExpoArgon2 (from `../node_modules/@sonnetstationsolutions/expo-argon2/ios`)"
   - ExpoGL (from `../node_modules/expo-gl`)
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
   - ExpoModulesJSI (from `../node_modules/expo-modules-jsi/apple`)
@@ -2144,6 +2171,7 @@ DEPENDENCIES:
   - React-Mapbuffer (from `../node_modules/react-native/ReactCommon`)
   - React-microtasksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
   - React-mutationobservernativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/mutationobserver`)
+  - react-native-image-picker (from `../node_modules/react-native-image-picker`)
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
   - react-native-video (from `../node_modules/react-native-video`)
   - React-NativeModulesApple (from `../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios`)
@@ -2191,6 +2219,10 @@ DEPENDENCIES:
   - SocketRocket (from `build/rndeps-facades/SocketRocket`)
   - Yoga (from `build/rncore-facades/Yoga`)
 
+SPEC REPOS:
+  trunk:
+    - Argon2Swift
+
 EXTERNAL SOURCES:
   AsyncStorage:
     :path: "../node_modules/@react-native-async-storage/async-storage"
@@ -2198,6 +2230,8 @@ EXTERNAL SOURCES:
     :path: build/rndeps-facades/boost
   DoubleConversion:
     :path: build/rndeps-facades/DoubleConversion
+  ExpoArgon2:
+    :path: "../node_modules/@sonnetstationsolutions/expo-argon2/ios"
   ExpoGL:
     :path: "../node_modules/expo-gl"
   ExpoModulesCore:
@@ -2299,6 +2333,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/microtasks"
   React-mutationobservernativemodule:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/mutationobserver"
+  react-native-image-picker:
+    :path: "../node_modules/react-native-image-picker"
   react-native-safe-area-context:
     :path: "../node_modules/react-native-safe-area-context"
   react-native-video:
@@ -2393,9 +2429,11 @@ EXTERNAL SOURCES:
     :path: build/rncore-facades/Yoga
 
 SPEC CHECKSUMS:
+  Argon2Swift: 295b8bde7ba61434f227f5610b8813c42e866f74
   AsyncStorage: f0453c14a52d22d3f6184284c55f2117fbfd9954
   boost: 8502bfdc46e2804408af2e163049ece181009af4
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
+  ExpoArgon2: 2a03c6fdb5c0bd5a378e66b2e2eedb85bcfda5f9
   ExpoGL: 401c221e6dcf6d223ce12043420b80d970064344
   ExpoModulesCore: c61acb1444b9d4f79ebbf350c7ee946a65fe7fed
   ExpoModulesJSI: dde0e7a9a01d2456c3a61b503d4bea5769d97895
@@ -2446,6 +2484,7 @@ SPEC CHECKSUMS:
   React-Mapbuffer: 295203fc648a43acf7fba609ddf573aa9fca849f
   React-microtasksnativemodule: 269f81deee27a2a9bedb6b2d1088c1ae93de9bd3
   React-mutationobservernativemodule: 877e9f730e0d8175c2e952901b55c170fc3d372f
+  react-native-image-picker: 870b31525256975a2d4b6b20a54db9b380cd725d
   react-native-safe-area-context: b3e507b0dbfb44dfadb29f7a31e884ac13789723
   react-native-video: 60ae0731a9603d2ac0867f64724b752c68ea9460
   React-NativeModulesApple: adb1dd8361dff80e9f6652fb3fdbf033cfbe2a89
@@ -2493,6 +2532,6 @@ SPEC CHECKSUMS:
   SocketRocket: 37aec555668fb852ec12e3c0de59a86ca58f0871
   Yoga: d1c536142c5ff8ec8cd856ab2a7c227a1d875c8e
 
-PODFILE CHECKSUM: 82792f1d58564fff8ad0d800e10c55b62f9b90bc
+PODFILE CHECKSUM: b36b09e1cf0854d54a72bb8587c21faf790e5f71
 
 COCOAPODS: 1.16.2

@@ -38,6 +38,7 @@ import {
   showRoute,
   useBrowserBack
 } from './navigation/useAddressBar'
+import { passwordKdf } from './platform/passwordKdf'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
@@ -203,7 +204,12 @@ function Shell(props: AppProps): React.ReactElement {
 
   const { initialToken, onToken } = props
   const client = useMemo(
-    () => new TeamStationClient({ baseUrl: apiBaseUrl, token: initialToken }),
+    () =>
+      new TeamStationClient({
+        baseUrl: apiBaseUrl,
+        token: initialToken,
+        passwordKdf
+      }),
     [apiBaseUrl, initialToken]
   )
   const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
@@ -775,6 +781,12 @@ function Shell(props: AppProps): React.ReactElement {
       )
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
+        client={client}
+        onAccountChanged={user => {
+          setSession(current =>
+            current?.user.id !== user.id ? current : { ...current, user }
+          )
+        }}
         session={session}
         onSignOut={() => {
           client.signOut().catch(() => undefined)

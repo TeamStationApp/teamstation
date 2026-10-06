@@ -12,6 +12,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 import NodeSocket from 'ws'
 
 import { DICTATION_MODEL_NAMES, DICTATION_MODELS } from '../../common/api'
+import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**
  * Dictation end to end: a faked microphone plays a clip into the scoring
@@ -100,17 +101,7 @@ async function signIn(who: {
   email: string
   password: string
 }): Promise<string> {
-  const response = await fetch(`${API}/auth/password`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(who)
-  })
-  expect(response.status, `sign in ${who.email}`).equals(200)
-  const match = /ts_session=([^;]+)/.exec(
-    response.headers.get('set-cookie') ?? ''
-  )
-  if (match == null) throw new Error('No session cookie')
-  return decodeURIComponent(match[1])
+  return await signInTestAccount(API, who)
 }
 interface Stored {
   plays: Array<{ id: string; gumbo: Record<string, any> }>

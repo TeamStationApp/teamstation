@@ -40,6 +40,11 @@ const LARGE_BODIES: ReadonlyArray<{
   parser: RequestHandler
 }> = [
   {
+    method: 'PUT',
+    path: /^\/api\/v1\/me\/account\/photo$/,
+    parser: pictureBody
+  },
+  {
     method: 'POST',
     path: /^\/api\/v1\/games\/[^/]+\/events$/,
     parser: gameBody
