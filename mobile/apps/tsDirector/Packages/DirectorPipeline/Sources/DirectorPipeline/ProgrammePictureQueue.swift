@@ -12,8 +12,9 @@ import Foundation
 /// showing it would put it ticks behind its neighbours, which reads as a hitch, and nothing else
 /// waits for it. One that misses its tick by less is shown on the next: the preview's delay line
 /// releases pictures on a 4 ms drain, so a picture due right on a tick can land just after it, and
-/// a camera locked in that phase would otherwise lose every picture. A picture with no capture
-/// time (a replay) is due at once.
+/// a camera locked in that phase would otherwise lose every picture. A replay's picture comes with
+/// the moment it is due instead (`ReplayCadence`) and is taken by the same rule; a picture with
+/// neither is due at once.
 ///
 /// The queue holds `D` plus `spareSeconds` of pictures and lets older ones go.
 public struct ProgrammePictureQueue<Picture> {
@@ -22,9 +23,16 @@ public struct ProgrammePictureQueue<Picture> {
 
   public struct Entry {
     public let picture: Picture
-    /// When it was captured, on our wall clock; nil for a picture that is due at once.
+    /// When it was captured, on our wall clock; nil for a replay's picture or one due at once.
     public let capture: Double?
+    /// When a replay's picture is due, on our wall clock.
+    public let due: Double?
     public let sequence: UInt64
+
+    /// When it belongs on the programme with the delay `delay`.
+    func moment(delay: Double) -> Double {
+      capture.map { $0 + delay } ?? due ?? -Double.infinity
+    }
   }
 
   public private(set) var delaySeconds: Double
@@ -49,15 +57,16 @@ public struct ProgrammePictureQueue<Picture> {
     delaySeconds = max(0, seconds)
   }
 
-  /// Adds a picture as it arrives from the camera on air, in capture order.
-  public mutating func add(_ picture: Picture, capture: Double?) {
+  /// Adds a picture as it arrives from the camera on air, in capture order, or a replay's picture,
+  /// in tape order, with the moment it is `due`.
+  public mutating func add(_ picture: Picture, capture: Double?, due: Double? = nil) {
     // Older than what is already on air: it arrived after its moment, and after a newer picture's.
     if let capture, let shown = current?.capture, capture < shown {
       latePictures &+= 1
       return
     }
     nextSequence &+= 1
-    let entry = Entry(picture: picture, capture: capture, sequence: nextSequence)
+    let entry = Entry(picture: picture, capture: capture, due: capture == nil ? due : nil, sequence: nextSequence)
     if let capture, let index = queued.lastIndex(where: { ($0.capture ?? -Double.infinity) <= capture }) {
       queued.insert(entry, at: index + 1)
     } else if capture != nil, !queued.isEmpty {
@@ -86,8 +95,7 @@ public struct ProgrammePictureQueue<Picture> {
     let due = now + tolerance
     var chosen: Int?
     for (index, entry) in queued.enumerated() {
-      let at = entry.capture.map { $0 + delaySeconds } ?? -Double.infinity
-      if at <= due { chosen = index } else { break }
+      if entry.moment(delay: delaySeconds) <= due { chosen = index } else { break }
     }
     if let chosen {
       var candidate = queued[chosen]

@@ -41,7 +41,9 @@ public final class SourcePipeline: @unchecked Sendable {
   private var proxy: ProxySink?
   private var state: TileState = .live
   /// Picture, its presentation time, and when the camera captured it (nil for replay frames).
-  private var programSink: (@Sendable (CVPixelBuffer, CMTime, WallClock?) -> Void)?
+  /// A picture for the programme: the picture, its presentation time, when it was captured (live), and
+  /// for a replay when it is due on the host clock.
+  private var programSink: (@Sendable (CVPixelBuffer, CMTime, WallClock?, Double?) -> Void)?
   /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR.
   public var onProgramDiscontinuity: (@Sendable () -> Void)?
   private var audioSink: (@Sendable (AudioFrame) -> Void)?
@@ -270,7 +272,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
   }
 
-  public func setProgramSink(_ sink: (@Sendable (CVPixelBuffer, CMTime, WallClock?) -> Void)?) {
+  public func setProgramSink(_ sink: (@Sendable (CVPixelBuffer, CMTime, WallClock?, Double?) -> Void)?) {
     lock.lock()
     programSink = sink
     lock.unlock()
@@ -372,7 +374,7 @@ public final class SourcePipeline: @unchecked Sendable {
     // to. The camera archive is unaffected either way; it is fed on arrival, before any of this.
     if state != .replaying {
       if showable {
-        programSink?(converted.pixelBuffer, converted.presentationTime, converted.captureWallClock)
+        programSink?(converted.pixelBuffer, converted.presentationTime, converted.captureWallClock, nil)
       }
     } else if wedgePolicy.shouldReturnToLive(
       now: Date().timeIntervalSince1970,
@@ -547,7 +549,8 @@ public final class SourcePipeline: @unchecked Sendable {
 
     let picture = zoomed(pixelBuffer)
     presentOnRenderer(pixelBuffer: picture, presentationTime: presentationTime)
-    programSink?(picture, presentationTime, nil)
+    // Due at its own moment of the replay, which the decoder stamped on the host clock.
+    programSink?(picture, presentationTime, nil, presentationTime.seconds)
     // Only for the replay that delivered this frame, and under the lock. A return to live that
     // lands while the frame is being presented has already put the tile back on live; written
     // after it, this left the tile saying "replaying" for good -- the picture live, the tile still
@@ -969,8 +972,8 @@ public final class TileRouter: @unchecked Sendable {
         pipeline.onProgramDiscontinuity = { [weak self] in
           self?.programStreamer.requestKeyframe()
         }
-        pipeline.setProgramSink { [weak self] buffer, time, capture in
-          self?.composeAndEncode(buffer, presentationTime: time, captureWall: capture)
+        pipeline.setProgramSink { [weak self] buffer, time, capture, dueHost in
+          self?.composeAndEncode(buffer, presentationTime: time, captureWall: capture, dueHost: dueHost)
         }
       } else {
         pipeline.onProgramDiscontinuity = nil
@@ -1138,7 +1141,8 @@ public final class TileRouter: @unchecked Sendable {
   private func composeAndEncode(
     _ pixelBuffer: CVPixelBuffer,
     presentationTime: CMTime,
-    captureWall: WallClock? = nil
+    captureWall: WallClock? = nil,
+    dueHost: Double? = nil
   ) {
     // With a compositor, only a composed picture goes on air: one without its overlays, from a
     // compositor that could not make a picture just then, flickers the overlay off. The last
@@ -1156,10 +1160,13 @@ public final class TileRouter: @unchecked Sendable {
       composed = pixelBuffer
     }
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
+    // A replay picture's moment, moved from the host clock onto the wall clock the tick runs on.
+    let due = dueHost.map { clock.now.seconds - (CMClockGetTime(CMClockGetHostTimeClock()).seconds - $0) }
     lock.lock()
     programPictures.add(
       ProgramPicture(buffer: composed, captureWall: captureWall),
-      capture: captureWall?.seconds
+      capture: captureWall?.seconds,
+      due: due
     )
     lock.unlock()
   }

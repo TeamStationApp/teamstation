@@ -127,7 +127,7 @@ struct TileRouterTests {
 
     // The programme sink runs after the frame has been checked and before its telemetry is written,
     // which is exactly where a Return to Live from the operator or the control channel can land.
-    pipe.setProgramSink { [pipe] _, _, _ in pipe.returnToLive() }
+    pipe.setProgramSink { [pipe] _, _, _, _ in pipe.returnToLive() }
     let factory = try #require(
       PixelBufferFactory(width: 64, height: 64, pixelFormat: kCVPixelFormatType_32BGRA)
     )

@@ -411,9 +411,13 @@ public final class ReplayDecoder: @unchecked Sendable {
     }
   }
 
+  /// How often a replay from the archive files looks for the next picture: often enough that each
+  /// is handed on within a few milliseconds of its moment, as the live delay line's drain does.
+  static let filePumpInterval = 0.004
+
   private func armTimer() {
     let timer = DispatchSource.makeTimerSource(queue: queue)
-    let interval = 1 / max(configuration.frameRate, 1)
+    let interval = configuration.fileURLs.isEmpty ? 1 / max(configuration.frameRate, 1) : Self.filePumpInterval
     timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(2))
     timer.setEventHandler { [weak self] in
       self?.pump()
@@ -484,35 +488,34 @@ public final class ReplayDecoder: @unchecked Sendable {
     if reader.shouldPrefetchMore {
       requestMoreFiles(played: shown)
     }
-    // Which frame belongs on screen now, asked of a clock rather than counted in ticks.
-    //
-    // Counting ticks quantises the rate to 1/n: a 40% setting became round(1/0.4) = 2 ticks per
-    // frame, which is 50%, and 33% and 25% collapsed together too. Playback position as a function
-    // of wall time has no such steps, and it is also the shape a shared clock needs — every tile
-    // asking one clock for the same instant, rather than each counting its own ticks and drifting.
+    // Which frame belongs on screen now, asked of a clock rather than counted in ticks: the newest
+    // whose moment on the tape is due within the lead (`ReplayCadence`), stamped with that moment,
+    // which the programme takes it at. Counting ticks quantised the rate to 1/n.
     let now = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+    var chosen: (pixel: CVPixelBuffer, time: CMTime, media: TimeInterval)?
     lock.lock()
-    if replayAnchorWall == nil { replayAnchorWall = now }
-    let anchorWall = replayAnchorWall ?? now
+    let anchorWall = replayAnchorWall
     let anchorMedia = replayAnchorMedia
     lock.unlock()
-    let target = anchorMedia + Double(max(configuration.rate, 0.05)) * (now - anchorWall)
-
-    // Frames are consumed until the next one would be in the future, so a rate below one holds the
-    // same picture across several ticks and a rate above one skips — both falling out of the clock
-    // instead of being special-cased.
-    var chosen: (pixel: CVPixelBuffer, time: CMTime, media: TimeInterval)?
-    while true {
-      lock.lock()
-      let last = lastShownMedia
-      lock.unlock()
-      if let last, last >= target { break }
-      guard let next = reader.pop() else { break }
-      chosen = next
-      lock.lock()
-      lastShownMedia = next.media
-      if replayAnchorMedia == 0 { replayAnchorMedia = next.media }
-      lock.unlock()
+    if anchorWall == nil {
+      // The first picture is shown at once and anchors the replay's clock.
+      if let first = reader.pop() {
+        chosen = first
+        lock.lock()
+        replayAnchorWall = now
+        replayAnchorMedia = first.media
+        lastShownMedia = first.media
+        lock.unlock()
+      }
+    } else if let anchorWall {
+      let cadence = ReplayCadence(anchorWall: anchorWall, anchorMedia: anchorMedia, rate: Double(configuration.rate))
+      let reached = cadence.handOnThrough(now) + 1e-9
+      while let media = reader.peekMedia(), media <= reached, let next = reader.pop() {
+        chosen = next
+        lock.lock()
+        lastShownMedia = next.media
+        lock.unlock()
+      }
     }
     guard let frame = chosen else {
       if reader.isExhausted {
@@ -533,9 +536,17 @@ public final class ReplayDecoder: @unchecked Sendable {
     // the rate the camera claimed. `step` is the bootstrap for the very first frame, which has no
     // predecessor to be measured against.
     let played = playedSeconds(upTo: frame.media, bootstrapStep: step)
+    // Stamped with its own moment on the host clock, which the programme places it by.
+    lock.lock()
+    let cadence = ReplayCadence(
+      anchorWall: replayAnchorWall ?? now,
+      anchorMedia: replayAnchorMedia,
+      rate: Double(configuration.rate)
+    )
+    lock.unlock()
     deliver(
       pixelBuffer: copy,
-      time: CMClockGetTime(CMClockGetHostTimeClock()),
+      time: CMTime(seconds: cadence.due(media: frame.media), preferredTimescale: 1_000_000_000),
       played: played
     )
     if ScrubMapping.hasPlayedRequestedDuration(played: played, requested: configuration.playDuration) {
