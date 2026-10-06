@@ -22,7 +22,7 @@ itself:
 | `CameraParametersTests` | the `GET_PARAMETER` / `SET_PARAMETER` vocabulary: encode, decode, clamping, kbps↔bps, all-or-nothing |
 | `RTSPParameterInteropTests` | a parameter request built by **Director's** `RTSPRequestBuilder`, parsed here, answered, and read back by **Director's** `RTSPResponse` |
 | `RTSPServerStatusTests` | a control-only connection is not a viewer; a parameter reply is not held by a media send delay |
-| `StreamSendQueueTests` | backpressure drops to the next keyframe rather than growing |
+| `MediaSendQueueTests` | nothing waits longer than the live delay D (a second) from capture to go out: old pictures drop to the next keyframe, old sound is dropped, sound goes ahead of pictures, sequence numbers stay unbroken, the transport holds about a quarter second |
 | `ZoomMappingTests` | device/displayed conversion at each switchover, from real fixtures |
 
 Director's packages are path dependencies of the test target only. Nothing here builds or launches

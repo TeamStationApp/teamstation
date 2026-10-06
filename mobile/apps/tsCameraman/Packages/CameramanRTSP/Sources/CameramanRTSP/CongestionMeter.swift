@@ -47,27 +47,20 @@ public struct CongestionMeter: Sendable {
     }
   }
 
-  /// Sends that were abandoned before the transport took them. They are the newest, because the
-  /// writer takes them strictly in order.
-  public mutating func discardNewest(_ count: Int) {
-    let removable = min(count, waitingBytes.count - head)
-    guard removable > 0 else { return }
-    waitingSince.removeLast(removable)
-    waitingBytes.removeLast(removable)
-  }
-
   public func queueDelay(at now: Double) -> Double {
     guard head < waitingSince.count else { return 0 }
     return max(0, now - waitingSince[head])
   }
 
   /// Everything since the previous call. `droppedFrames` and `flushes` are the send queue's running
-  /// totals; the sample carries how much each grew.
+  /// totals; the sample carries how much each grew. `waitingHere` is how long the oldest media not
+  /// yet handed to the transport has waited, which counts toward the delay as much as the ledger's.
   public mutating func sample(
     at now: Double,
     droppedFrames: Int,
     flushes: Int,
-    transportBacklogBytes: Int? = nil
+    transportBacklogBytes: Int? = nil,
+    waitingHere: Double = 0
   ) -> CongestionSample {
     let interval = lastSampleTime.map { max(0, now - $0) } ?? 0
     var drained = deliveredSinceSample
@@ -76,7 +69,7 @@ public struct CongestionMeter: Sendable {
     }
     let sample = CongestionSample(
       interval: interval,
-      queueDelay: queueDelay(at: now),
+      queueDelay: max(queueDelay(at: now), waitingHere),
       deliveredBytes: deliveredSinceSample,
       offeredBytes: offeredSinceSample,
       transportBacklogBytes: transportBacklogBytes,

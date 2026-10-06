@@ -153,6 +153,88 @@ class CaptureStampTest {
         assertEquals(listOf(0L, 1_024, 2_048, 3_072, 4_096, 9_920, 10_944, 11_968, 12_992, 14_016), stamps)
     }
 
+    @Test
+    fun `media older than the bound is dropped on the way out, with no hole in the sequence numbers`() {
+        val identity = DeviceIdentity("00000000-0000-4000-8000-000000000001", "Loopback")
+        val listener = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        val client = Socket(InetAddress.getLoopbackAddress(), listener.localPort)
+        val accepted = listener.accept()
+        var now = 50.0
+        val keyframeRequests = java.util.concurrent.atomic.AtomicInteger()
+        val connection = RTSPClientConnection(
+            socket = accepted,
+            sdp = { video, audio ->
+                SDPBuilder(
+                    identity,
+                    SDPBuilder.VideoTrack(StreamCodec.H264, listOf(byteArrayOf(0x67, 0x42, 0, 0x1F), byteArrayOf(0x68, 0xCE.toByte(), 0x3C, 0x80.toByte())), 1920, 1080),
+                    SDPBuilder.AudioTrack(byteArrayOf(0x11, 0x90.toByte()), 48_000, 1),
+                    video,
+                    audio
+                ).build()
+            },
+            hasAudio = true,
+            identity = { identity },
+            requestKeyframe = { keyframeRequests.incrementAndGet() },
+            clock = { now }
+        )
+        connection.start()
+        val input = client.getInputStream()
+        val out = client.getOutputStream()
+        val url = "rtsp://127.0.0.1:${listener.localPort}/live/mainstream"
+        fun exchange(text: String): String {
+            out.write(text.toByteArray())
+            out.flush()
+            return readResponse(input)
+        }
+        exchange("DESCRIBE $url RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n")
+        val setup = exchange("SETUP $url/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n")
+        val session = Regex("Session: ([^;\\r\\n]+)").find(setup)!!.groupValues[1]
+        exchange("SETUP $url/trackID=1 RTSP/1.0\r\nCSeq: 3\r\nSession: $session\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n")
+        val play = exchange("PLAY $url RTSP/1.0\r\nCSeq: 4\r\nSession: $session\r\n\r\n")
+        assertTrue(play, play.contains("trackID=0;seq=0;rtptime=0"))
+        val requestsAtPlay = keyframeRequests.get()
+
+        fun picture(capture: Double, key: Boolean, tag: Byte) =
+            EncodedVideoFrame(listOf(byteArrayOf(if (key) 0x65 else 0x41, tag, tag, tag)), isKeyframe = key, presentationTime = capture)
+        connection.send(picture(50.0, true, 1), StreamCodec.H264)
+        connection.send(EncodedAudioFrame(ByteArray(40) { 1 }, 50.0, 48_000, 1, captureTime = 50.0))
+        Thread.sleep(200)
+        // Captured 0.1 s after the keyframe, but handed over 1.5 s later: too late to show.
+        now = 51.6
+        connection.send(picture(50.1, false, 2), StreamCodec.H264)
+        connection.send(EncodedAudioFrame(ByteArray(40) { 2 }, 50.1, 48_000, 1, captureTime = 50.1))
+        connection.send(picture(51.6, false, 3), StreamCodec.H264)
+        connection.send(picture(51.62, true, 4), StreamCodec.H264)
+        connection.send(EncodedAudioFrame(ByteArray(40) { 3 }, 51.62, 48_000, 1, captureTime = 51.62))
+
+        client.soTimeout = 3_000
+        val packets = mutableListOf<Pair<Int, ByteArray>>()
+        while (packets.count { it.first == 0 } < 2 || packets.count { it.first == 2 } < 2) {
+            val marker = input.read()
+            if (marker < 0) break
+            if (marker != 0x24) continue
+            val channel = input.read()
+            val length = (input.read() shl 8) or input.read()
+            packets.add(channel to input.readNBytes(length))
+        }
+        Thread.sleep(100)
+        val snapshot = connection.sendQueueSnapshot()
+        connection.close()
+        client.close()
+        listener.close()
+
+        val pictures = packets.filter { it.first == 0 }.map { it.second }
+        assertEquals(listOf(1, 4), pictures.map { it[13].toInt() })
+        assertEquals("unbroken", listOf(0, 1), pictures.map { ((it[2].toInt() and 0xFF) shl 8) or (it[3].toInt() and 0xFF) })
+        val sounds = packets.filter { it.first == 2 }.map { it.second }
+        assertEquals(listOf(0, 1), sounds.map { ((it[2].toInt() and 0xFF) shl 8) or (it[3].toInt() and 0xFF) })
+        assertEquals("the stamp skips the sound dropped", 51.62 - 50.0, (readUInt32(sounds[1], 4) - readUInt32(sounds[0], 4)) / 48_000.0, 0.03)
+        assertEquals(2, snapshot.droppedFrames)
+        assertEquals(1, snapshot.flushes)
+        assertEquals(1024 / 48_000.0, snapshot.droppedSoundSeconds, 1e-9)
+        assertTrue("a keyframe was asked for", keyframeRequests.get() > requestsAtPlay)
+    }
+
     private fun readUInt32(bytes: ByteArray, at: Int): Long =
         ((bytes[at].toLong() and 0xFF) shl 24) or ((bytes[at + 1].toLong() and 0xFF) shl 16) or
             ((bytes[at + 2].toLong() and 0xFF) shl 8) or (bytes[at + 3].toLong() and 0xFF)

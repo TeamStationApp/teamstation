@@ -15,6 +15,8 @@ final class RTSPClientConnection: @unchecked Sendable {
   private let identity: @Sendable () -> DeviceIdentity
   private let requestKeyframe: @Sendable () -> Void
   private let parameters: RTSPResponder.ParameterHandler?
+  /// The clock capture times are stamped on; see `RTSPServer.hostClock`.
+  private let captureClock: @Sendable () -> Double
   private var responder: RTSPResponder
 
   private var buffer = Data()
@@ -29,8 +31,6 @@ final class RTSPClientConnection: @unchecked Sendable {
 
   private let videoSSRC: UInt32
   private let audioSSRC: UInt32
-  private var videoSequence: UInt16 = 0
-  private var audioSequence: UInt16 = 0
   private var videoPacketCount: UInt32 = 0
   private var videoOctetCount: UInt32 = 0
   /// Audio stamps by capture position; made at the first frame, when the rate is known.
@@ -42,7 +42,13 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var videoTimestamps = RTPTimestampSequencer()
   private var videoReports = SenderReportSchedule()
 
-  private(set) var sendQueue = StreamSendQueue()
+  /// Media waiting to go out, and what is dropped when it waits too long. See `MediaSendQueue`.
+  private(set) var sendQueue = MediaSendQueue()
+  /// How much the transport holds, so the wait stays in `sendQueue`, where it can still be dropped.
+  private var gate = TransportGate()
+  private var pumpScheduled = false
+  /// What the gate last saw: bytes handed to the transport and not yet taken, and the budget.
+  private(set) var transport: (bytes: Int, budget: Int) = (0, TransportGate.initialBytes)
   private var congestion = CongestionMeter()
   /// The most free space the TCP send buffer has reported, which is its size as far as this side can
   /// tell. Network.framework reports only the free space, and the backlog is what is missing from it.
@@ -60,7 +66,8 @@ final class RTSPClientConnection: @unchecked Sendable {
     hasAudio: Bool,
     identity: @escaping @Sendable () -> DeviceIdentity,
     requestKeyframe: @escaping @Sendable () -> Void,
-    parameters: RTSPResponder.ParameterHandler? = nil
+    parameters: RTSPResponder.ParameterHandler? = nil,
+    captureClock: @escaping @Sendable () -> Double = RTSPServer.hostClock,
   ) {
     self.connection = connection
     self.queue = queue
@@ -68,6 +75,7 @@ final class RTSPClientConnection: @unchecked Sendable {
     self.identity = identity
     self.requestKeyframe = requestKeyframe
     self.parameters = parameters
+    self.captureClock = captureClock
 
     // Distinct per connection, so two clients watching at once are separable in a capture. Held as
     // locals first because no property can be read until all of them are initialized.
@@ -162,6 +170,7 @@ final class RTSPClientConnection: @unchecked Sendable {
         // Each client gets its own SSRC and its own timeline, so a client that joins an hour in still
         // starts at zero and RTP-Info can promise that.
         firstVideoPresentationTime = nil
+        sendQueue.reset()
         videoTimestamps.reset()
         audioStamps = nil
         videoReports.reset()
@@ -206,12 +215,16 @@ final class RTSPClientConnection: @unchecked Sendable {
   private func rtpInfo(for uri: String, hasAudio: Bool) -> String {
     let base = uri.hasSuffix("/") ? String(uri.dropLast()) : uri
     var tracks = [
-      "url=\(base)/\(SDPBuilder.videoTrackControl);seq=\(videoSequence);rtptime=0"
+      "url=\(base)/\(SDPBuilder.videoTrackControl);seq=\(sequence(videoSetup));rtptime=0"
     ]
     if hasAudio {
-      tracks.append("url=\(base)/\(SDPBuilder.audioTrackControl);seq=\(audioSequence);rtptime=0")
+      tracks.append("url=\(base)/\(SDPBuilder.audioTrackControl);seq=\(sequence(audioSetup));rtptime=0")
     }
     return tracks.joined(separator: ",")
+  }
+
+  private func sequence(_ setup: RTSPResponder.Setup?) -> UInt16 {
+    setup.map { sendQueue.nextSequence(channel: $0.dataChannel) } ?? 0
   }
 
   private func write(_ data: Data) {
@@ -236,20 +249,6 @@ final class RTSPClientConnection: @unchecked Sendable {
 
       let bytes = payloads.reduce(0) { $0 + $1.count }
       congestion.offered(bytes: bytes)
-      let wasDropping = sendQueue.isDropping
-      switch sendQueue.decide(frameBytes: bytes, isKeyframe: frame.isKeyframe) {
-      case .drop:
-        // Nothing more goes out until a keyframe, so ask for one now rather than leaving the client
-        // without pictures for the rest of the GOP.
-        if !wasDropping { requestKeyframe() }
-        return
-      case .flushThenSend:
-        // NWConnection cannot cancel the stale send buffers; `decide` bumped `generation` so their
-        // completions will not debit this keyframe.
-        break
-      case .send:
-        break
-      }
 
       if firstVideoPresentationTime == nil { firstVideoPresentationTime = frame.presentationTime }
       let elapsed = frame.presentationTime - (firstVideoPresentationTime ?? frame.presentationTime)
@@ -266,25 +265,30 @@ final class RTSPClientConnection: @unchecked Sendable {
       }
 
       let writer = RTPPacketWriter(payloadType: SDPBuilder.videoPayloadType, ssrc: videoSSRC)
-      var batch = Data()
+      var packets: [Data] = []
       for (index, payload) in payloads.enumerated() {
         // The marker bit goes on the last packet of the picture, which is how the receiver knows the
-        // frame is complete without waiting for the next timestamp.
+        // frame is complete without waiting for the next timestamp. The sequence number is written
+        // as the packet is handed over; see `MediaSendQueue`.
         let packet = writer.packet(
-          sequenceNumber: videoSequence,
+          sequenceNumber: 0,
           timestamp: timestamp,
           marker: index == payloads.count - 1,
           payload: payload
         )
-        videoSequence &+= 1
         videoPacketCount &+= 1
         videoOctetCount &+= UInt32(truncatingIfNeeded: payload.count)
         if let framed = InterleavedFramer.frame(channel: setup.dataChannel, payload: packet) {
-          batch.append(framed)
+          packets.append(framed)
         }
       }
 
-      sendMedia(batch)
+      if sendQueue.enqueuePicture(packets, capture: frame.presentationTime, isKeyframe: frame.isKeyframe, now: now()) {
+        // Nothing more goes out until a keyframe, so ask for one now rather than leaving the client
+        // without pictures for the rest of the GOP.
+        requestKeyframe()
+      }
+      pump()
       if videoReports.reportIsDue(at: Date()) {
         sendVideoReport(setup: setup, rtpTimestamp: timestamp, captureTime: frame.presentationTime)
       }
@@ -307,12 +311,11 @@ final class RTSPClientConnection: @unchecked Sendable {
         sendAudioReport(setup: setup, rtpTimestamp: timestamp, captureTime: capture)
       }
       let packet = writer.packet(
-        sequenceNumber: audioSequence,
+        sequenceNumber: 0,
         timestamp: timestamp,
         marker: true,
         payload: payload
       )
-      audioSequence &+= 1
       audioPacketCount &+= 1
       audioOctetCount &+= UInt32(truncatingIfNeeded: payload.count)
 
@@ -320,27 +323,59 @@ final class RTSPClientConnection: @unchecked Sendable {
         return
       }
       congestion.offered(bytes: framed.count)
-      sendQueue.enqueueAudio(bytes: framed.count)
-      sendMedia(framed)
+      sendQueue.enqueueSound(
+        framed,
+        capture: capture,
+        duration: Double(stamps.samplesPerFrame) / Double(max(frame.sampleRate, 1)),
+        now: now()
+      )
+      pump()
       if audioReports.reportIsDue(at: Date()) {
         sendAudioReport(setup: setup, rtpTimestamp: timestamp, captureTime: capture)
       }
     }
   }
 
+  /// Hands media to the transport while it has room, dropping what has waited too long; runs again
+  /// as sends complete, and every few milliseconds while something waits for room.
+  private func pump() {
+    let moment = now()
+    if sendQueue.prune(at: moment) { requestKeyframe() }
+    // Only what Network.framework holds: the send buffer's free space it reports cannot be read as a
+    // backlog. On an iPhone streaming at 4 Mbit/s over a healthy link it read 40-125 kB short of the
+    // most ever seen, and gated on that the stream starved.
+    gate.observe(at: moment, kernelBacklog: 0)
+    transport = (gate.inTransport(kernelBacklog: 0), gate.budgetBytes)
+    while let data = sendQueue.next(hasRoom: gate.hasRoom(kernelBacklog: 0)) {
+      sendMedia(data)
+    }
+    guard !sendQueue.isEmpty, !pumpScheduled, isStreaming else { return }
+    pumpScheduled = true
+    queue.asyncAfter(deadline: .now() + Self.pumpRetrySeconds) { [weak self] in
+      guard let self else { return }
+      pumpScheduled = false
+      pump()
+    }
+  }
+
+  /// How soon a pump that found no room tries again: the transport drains between completions too.
+  static let pumpRetrySeconds = 0.005
+
+  private func now() -> Double { captureClock() }
+
   private func sendMedia(_ data: Data) {
     guard !data.isEmpty else { return }
     let count = data.count
-    let generation = sendQueue.generation
+    gate.handed(count)
     congestion.sent(bytes: count, at: ProcessInfo.processInfo.systemUptime)
     connection.send(content: data, completion: .contentProcessed { [weak self] _ in
-      // Credited on completion rather than enqueue, so the queue depth reflects what the client has
-      // actually taken. Completions from a flushed generation are ignored by the send queue, but the
-      // meter still counts them: flushed or not, those bytes went down the link.
+      // Credited on completion rather than enqueue, so what the transport holds is what it has not
+      // yet taken.
       guard let self else { return }
       self.queue.async {
-        self.sendQueue.complete(bytes: count, generation: generation)
+        self.gate.processed(count)
         self.congestion.delivered()
+        self.pump()
       }
     })
   }
@@ -352,7 +387,8 @@ final class RTSPClientConnection: @unchecked Sendable {
       at: now,
       droppedFrames: sendQueue.droppedFrames,
       flushes: sendQueue.flushes,
-      transportBacklogBytes: transportBacklogBytes()
+      transportBacklogBytes: transportBacklogBytes(),
+      waitingHere: sendQueue.oldestWait(at: self.now())
     )
     return isStreaming ? sample : nil
   }

@@ -15,7 +15,7 @@ coincidence.
 | Suite | What it settles |
 |---|---|
 | `ZoomMappingTest` | device/displayed conversion at each switchover, on both an iPhone's fixtures and a Pixel's |
-| `StreamSendQueueTest` | backpressure drops to the next keyframe rather than growing |
+| `MediaSendQueueTest` | nothing waits longer than the live delay D (a second) from capture to go out: old pictures drop to the next keyframe, old sound is dropped, sound goes ahead of pictures, sequence numbers stay unbroken, the transport holds about a quarter second |
 | `H264PacketizerTest` / `HEVCPacketizerTest` | FU fragments reassemble into the original NAL, bit for bit |
 | `AACPacketizerTest` | the AU-headers-length is in **bits**, which is the field every hand-rolled RFC 3640 sender writes in bytes |
 | `InterleavedFramerTest` | a batch of frames parses back into the original payloads |

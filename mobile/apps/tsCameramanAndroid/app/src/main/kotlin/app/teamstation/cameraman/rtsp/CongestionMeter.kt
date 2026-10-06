@@ -1,7 +1,6 @@
 package app.teamstation.cameraman.rtsp
 
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * What one client's link did over one sampling interval, seen from the sending side.
@@ -88,17 +87,6 @@ class CongestionMeter {
         deliveredSinceSample += bytes
     }
 
-    /**
-     * Sends that were abandoned before the transport took them. They are the newest, because the
-     * writer takes them strictly in order.
-     */
-    fun discardNewest(count: Int) {
-        repeat(min(count, waitingBytes.size)) {
-            waitingBytes.removeLast()
-            waitingSince.removeLast()
-        }
-    }
-
     fun queueDelay(now: Double): Double {
         val oldest = waitingSince.firstOrNull() ?: return 0.0
         return max(0.0, now - oldest)
@@ -106,13 +94,15 @@ class CongestionMeter {
 
     /**
      * Everything since the previous call. [droppedFrames] and [flushes] are the send queue's running
-     * totals; the sample carries how much each grew.
+     * totals; the sample carries how much each grew. [waitingHere] is how long the oldest media not
+     * yet handed to the transport has waited, which counts toward the delay as much as the ledger's.
      */
     fun sample(
         now: Double,
         droppedFrames: Int,
         flushes: Int,
-        transportBacklogBytes: Int? = null
+        transportBacklogBytes: Int? = null,
+        waitingHere: Double = 0.0
     ): CongestionSample {
         val interval = lastSampleTime?.let { max(0.0, now - it) } ?: 0.0
         val previous = lastBacklog
@@ -123,7 +113,7 @@ class CongestionMeter {
         }
         val sample = CongestionSample(
             interval = interval,
-            queueDelay = queueDelay(now),
+            queueDelay = max(queueDelay(now), waitingHere),
             deliveredBytes = deliveredSinceSample,
             offeredBytes = offeredSinceSample,
             transportBacklogBytes = transportBacklogBytes,

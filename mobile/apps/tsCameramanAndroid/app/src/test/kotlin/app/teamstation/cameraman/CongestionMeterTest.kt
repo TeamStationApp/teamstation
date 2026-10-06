@@ -61,20 +61,6 @@ class CongestionMeterTest {
     }
 
     @Test
-    fun `abandoned sends are forgotten from the newest end`() {
-        val meter = CongestionMeter()
-        meter.sent(100, 1.0)
-        meter.sent(200, 2.0)
-        meter.sent(300, 3.0)
-        meter.discardNewest(2)
-
-        assertEquals(100, meter.pendingBytes)
-        meter.delivered()
-        assertEquals(100, meter.sample(4.0, 0, 0).deliveredBytes)
-        assertEquals(0.0, meter.queueDelay(4.0), 0.0)
-    }
-
-    @Test
     fun `the worst client is the one losing frames then the one waiting longest`() {
         val slow = CongestionSample(interval = 0.25, queueDelay = 0.3)
         val dropping = CongestionSample(interval = 0.25, queueDelay = 0.1, droppedFrames = 1)

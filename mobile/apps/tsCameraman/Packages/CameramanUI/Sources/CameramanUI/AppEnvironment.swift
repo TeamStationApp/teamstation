@@ -943,6 +943,11 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     snapshot.droppedFrames = summaries.reduce(0) { $0 + $1.droppedFrames }
     snapshot.sendQueuePendingBytes = summaries.reduce(0) { $0 + $1.pendingBytes }
     snapshot.sendQueueFlushes = summaries.reduce(0) { $0 + $1.flushes }
+    snapshot.sendQueueDroppedSoundSeconds = (summaries.reduce(0) { $0 + $1.droppedSoundSeconds } * 100).rounded() / 100
+    if let worst = server?.transportSummaries().max(by: { $0.bytes < $1.bytes }) {
+      snapshot.transportBytes = worst.bytes
+      snapshot.transportBudgetBytes = worst.budget
+    }
     return snapshot
   }
 

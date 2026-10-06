@@ -1227,6 +1227,7 @@ class AppEnvironment(
             put("lastDisconnectReason", status.lastDisconnectReason ?: JSONObject.NULL)
             put("sendQueuePendingBytes", summaries.sumOf { it.pendingBytes })
             put("sendQueueFlushes", summaries.sumOf { it.flushes })
+            put("sendQueueDroppedSoundSeconds", (summaries.sumOf { it.droppedSoundSeconds } * 100).roundToInt() / 100.0)
             put("listenerState", status.listenerState ?: JSONObject.NULL)
             put("isAdvertising", status.isAdvertising)
         }
