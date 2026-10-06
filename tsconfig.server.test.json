@@ -21,6 +21,11 @@
     "node_modules",
     "src/test/fakeScoreboardSocket.ts",
     "src/test/scoringHelpers.ts",
-    "src/test/scoreboardServer.e2e.ts"
+    "src/test/scoreboardServer.e2e.ts",
+    "src/common/chatCrypto/core.web.ts",
+    "src/common/chatCrypto/core.web.test.ts",
+    "src/common/chatCrypto/core.native.ts",
+    "src/common/chatCrypto/wasmCore.ts",
+    "src/common/chatCrypto/wasmCore.test.ts"
   ]
 }
