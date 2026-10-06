@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
 import type { Session } from '../../common/api'
+import { TeamStationClient } from '../../common/api'
 import { AccountScreen } from '../screens/AccountScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -346,7 +347,25 @@ describe('the walk-up fade setting', function () {
       }
     } as unknown as Session
     function account(): React.ReactElement {
-      return <AccountScreen session={session} onSignOut={() => undefined} />
+      return (
+        <AccountScreen
+          session={session}
+          client={
+            new TeamStationClient({
+              baseUrl: '/api/v1',
+              fetch: async () =>
+                new Response(
+                  JSON.stringify({
+                    user: { ...session.user, avatarUrl: null },
+                    hasPassword: false,
+                    emails: []
+                  })
+                )
+            })
+          }
+          onSignOut={() => undefined}
+        />
+      )
     }
 
     it('shows the switch on an iPhone only, and writes the setting', async function () {

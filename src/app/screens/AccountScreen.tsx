@@ -1,78 +1,571 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Platform, Switch, Text, View } from 'react-native'
 
-import type { Session } from '../../common/api'
+import type { AccountSettings } from '../../common/accountSettings'
+import type { Session, SessionUser, TeamStationClient } from '../../common/api'
+import {
+  type ClientPasswordCosts,
+  newPasswordRequirements
+} from '../../common/passwordProtocol'
 import {
   Button,
   Card,
+  Emblem,
   initialsOf,
-  ListRow,
   Screen,
-  SectionHeader
+  SectionHeader,
+  TextField
 } from '../components'
+import { NewPasswordFields } from '../components/NewPasswordFields'
 import { lstrings } from '../locales/strings'
+import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useWalkUpPreferences } from '../walkup/walkUpPreferences'
 
 export interface AccountScreenProps {
   session: Session
+  client: TeamStationClient
+  onAccountChanged?: (user: SessionUser) => void
   onSignOut: () => void
+  pickPhoto?: typeof pickAccountPhoto
 }
 
-/**
- * Who you are signed in as, and the way out.
- *
- * Not in the designs — the drawn set has an Account tab on one screen and no
- * screen behind it. It has to exist anyway: signing out has to live somewhere,
- * and an app that cannot be signed out of on a shared family iPad is a problem
- * rather than a simplification.
- *
- * Deliberately thin. There is nothing here to edit yet: display names come from
- * the PeerTube import and e-mail addresses are what sign-in codes are sent to,
- * so letting either be changed here without the merge work behind it would
- * make duplicates rather than fix them.
- */
+/** A person's identity and verified sign-in methods, all on their own account. */
 export function AccountScreen(props: AccountScreenProps): React.ReactElement {
-  const { session, onSignOut } = props
+  const {
+    session,
+    client,
+    onSignOut,
+    onAccountChanged,
+    pickPhoto = pickAccountPhoto
+  } = props
   const styles = getStyles(useTheme())
-  const { user } = session
   const [walkUp, setWalkUp] = useWalkUpPreferences()
+  const [account, setAccount] = useState<AccountSettings>()
+  const [loadError, setLoadError] = useState('')
+  const [reload, setReload] = useState(0)
+  const [name, setName] = useState(session.user.displayName)
+  const [busy, setBusy] = useState('')
+  const working = useRef(false)
+  const [notice, setNotice] = useState<{ section: string; message: string }>()
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const preparation = useRef<Promise<ClientPasswordCosts> | undefined>(
+    undefined
+  )
+  const [preparing, setPreparing] = useState(false)
+  const [preparationError, setPreparationError] = useState('')
+  const [preparationAttempt, setPreparationAttempt] = useState(0)
+  const passwordLifetime = useRef<AbortController | undefined>(undefined)
+
+  useEffect(() => {
+    let live = true
+    const lifetime = new AbortController()
+    passwordLifetime.current = lifetime
+    setPreparationError('')
+    setPreparing(passwordOpen)
+    preparation.current = undefined
+    if (passwordOpen) {
+      const pending = client.preparePasswordCosts()
+      preparation.current = pending
+      pending.then(
+        () => {
+          if (live) setPreparing(false)
+        },
+        (error: unknown) => {
+          if (!live) return
+          setPreparing(false)
+          setPreparationError(
+            error instanceof Error
+              ? error.message
+              : 'Could not prepare your password. Please retry'
+          )
+        }
+      )
+    }
+    return () => {
+      live = false
+      lifetime.abort()
+    }
+  }, [client, passwordOpen, preparationAttempt])
+  const [reset, setReset] = useState<{ requestId: string; email: string }>()
+  const [resetCode, setResetCode] = useState('')
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [emailEdit, setEmailEdit] = useState<{
+    replaceEmailId?: string
+    previous?: string
+  }>()
+  const [email, setEmail] = useState('')
+  const [pending, setPending] = useState<{
+    requestId: string
+    email: string
+    replaceEmailId?: string
+  }>()
+  const [code, setCode] = useState('')
+  const user = account?.user ?? session.user
+
+  useEffect(() => {
+    let live = true
+    setLoadError('')
+    client
+      .accountSettings()
+      .then(value => {
+        if (!live) return
+        setAccount(value)
+        setName(value.user.displayName)
+      })
+      .catch((error: unknown) => {
+        if (live)
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : 'Could not load account settings'
+          )
+      })
+    return () => {
+      live = false
+    }
+  }, [client, reload])
+
+  const accept = (value: AccountSettings): void => {
+    setAccount(value)
+    onAccountChanged?.(value.user)
+  }
+  const run = (section: string, operation: () => Promise<void>): void => {
+    if (working.current) return
+    working.current = true
+    setBusy(section)
+    setNotice(undefined)
+    operation()
+      .catch((error: unknown) => {
+        setNotice({
+          section,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Something went wrong. Please try again'
+        })
+      })
+      .finally(() => {
+        working.current = false
+        setBusy('')
+      })
+  }
+  const feedback = (section: string): React.ReactNode =>
+    notice?.section === section ? (
+      <Text accessibilityLiveRegion="polite" style={styles.feedback}>
+        {notice.message}
+      </Text>
+    ) : null
+  const closeEmail = (): void => {
+    setEmailEdit(undefined)
+    setPending(undefined)
+    setEmail('')
+    setCode('')
+  }
+  const sendCode = (): void => {
+    const address = pending?.email ?? email.trim().toLowerCase()
+    const replacing = pending?.replaceEmailId ?? emailEdit?.replaceEmailId
+    run('email', async () => {
+      const requested = await client.requestAccountEmail(address, replacing)
+      setPending({ ...requested, email: address, replaceEmailId: replacing })
+      setCode('')
+      setNotice({ section: 'email', message: `A code was sent to ${address}` })
+    })
+  }
 
   return (
     <Screen>
       <Card style={styles.identity}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initialsOf(user.displayName)}</Text>
-        </View>
+        <Emblem
+          key={user.avatarUrl}
+          uri={user.avatarUrl}
+          fallback={initialsOf(user.displayName)}
+          shape="circle"
+          size={3.5}
+        />
         <View style={styles.identityText}>
           <Text style={styles.name}>{user.displayName}</Text>
           {user.email != null && <Text style={styles.email}>{user.email}</Text>}
         </View>
       </Card>
-
-      <View style={styles.section}>
-        <SectionHeader title="Account" />
-        <Card>
-          <ListRow
-            title="Signed in as"
-            subtitle={user.email ?? user.displayName}
-            emblemIcon="mail"
-          />
-          <View style={styles.divider} />
-          <ListRow
-            title="Role"
-            subtitle={user.isAdmin ? 'Administrator' : 'Member'}
-            emblemIcon={user.isAdmin ? 'star' : 'account_circle'}
-          />
+      {account == null ? (
+        <Card style={styles.setting}>
+          <Text style={styles.email}>
+            {loadError !== '' ? loadError : 'Loading account settings…'}
+          </Text>
+          {loadError !== '' && (
+            <Button
+              label="Retry"
+              onPress={() => {
+                setReload(value => value + 1)
+              }}
+            />
+          )}
         </Card>
-      </View>
-
-      {/*
-        An iPhone fades Apple Music by moving the phone's own volume, which
-        some Bluetooth speakers answer with a beep at every step. An Android
-        phone fades a file on its player's volume, and has nothing to turn
-        off, so the section is the iPhone's alone.
-      */}
+      ) : (
+        <>
+          <View style={styles.section}>
+            <SectionHeader title="Profile" />
+            <Card style={styles.setting}>
+              <TextField label="Name" value={name} onChangeText={setName} />
+              <View style={styles.actions}>
+                <Button
+                  label="Save name"
+                  disabled={
+                    busy !== '' ||
+                    name.trim() === '' ||
+                    name.trim() === user.displayName
+                  }
+                  onPress={() => {
+                    run('profile', async () => {
+                      const value = await client.setAccountName(name)
+                      accept(value)
+                      setName(value.user.displayName)
+                      setNotice({ section: 'profile', message: 'Name saved' })
+                    })
+                  }}
+                />
+                <Button
+                  label={user.avatarUrl == null ? 'Add photo' : 'Change photo'}
+                  kind="secondary"
+                  disabled={busy !== ''}
+                  onPress={() => {
+                    run('profile', async () => {
+                      const picture = await pickPhoto()
+                      if (picture == null) return
+                      accept(await client.setAccountPhoto(picture))
+                      setNotice({
+                        section: 'profile',
+                        message: 'Profile picture saved'
+                      })
+                    })
+                  }}
+                />
+              </View>
+              <Text style={styles.email}>JPEG, PNG or WebP, up to 10 MB.</Text>
+              {feedback('profile')}
+            </Card>
+          </View>
+          <View style={styles.section}>
+            <SectionHeader title="Password" />
+            <Card style={styles.setting}>
+              <Text style={styles.email}>
+                You can always sign in with an email code.
+              </Text>
+              {!passwordOpen ? (
+                <Button
+                  label={
+                    account.passwordNeedsUpgrade
+                      ? 'Verify email and set password'
+                      : account.hasPassword
+                        ? 'Change password'
+                        : 'Set password'
+                  }
+                  kind="secondary"
+                  disabled={busy !== ''}
+                  onPress={() => {
+                    if (account.passwordNeedsUpgrade) {
+                      run('password', async () => {
+                        setReset(await client.requestPasswordReset())
+                        setResetCode('')
+                        setPasswordOpen(true)
+                      })
+                    } else {
+                      setPasswordOpen(true)
+                      setNotice(undefined)
+                    }
+                  }}
+                />
+              ) : (
+                <>
+                  {reset != null ? (
+                    <>
+                      <Text style={styles.email}>
+                        Enter the code sent to {reset.email} to set a new
+                        password.
+                      </Text>
+                      <TextField
+                        label="Password reset code"
+                        value={resetCode}
+                        onChangeText={setResetCode}
+                        keyboardType="number-pad"
+                        autoComplete="one-time-code"
+                      />
+                      <Button
+                        label="Resend password code"
+                        kind="text"
+                        disabled={busy !== ''}
+                        onPress={() => {
+                          run('password', async () => {
+                            setReset(await client.requestPasswordReset())
+                            setResetCode('')
+                          })
+                        }}
+                      />
+                    </>
+                  ) : (
+                    account.hasPassword && (
+                      <TextField
+                        label="Current password"
+                        value={currentPassword}
+                        onChangeText={setCurrentPassword}
+                        secure
+                        autoComplete="current-password"
+                      />
+                    )
+                  )}
+                  {reset == null && account.hasPassword && (
+                    <Button
+                      label="Reset with an email code"
+                      kind="text"
+                      disabled={busy !== ''}
+                      onPress={() => {
+                        run('password', async () => {
+                          setReset(await client.requestPasswordReset())
+                          setResetCode('')
+                          setCurrentPassword('')
+                        })
+                      }}
+                    />
+                  )}
+                  <NewPasswordFields
+                    password={password}
+                    confirmation={confirmation}
+                    onPassword={setPassword}
+                    onConfirmation={setConfirmation}
+                  />
+                  {preparing && (
+                    <Text accessibilityLiveRegion="polite" style={styles.email}>
+                      Preparing password security… You can keep typing.
+                    </Text>
+                  )}
+                  {preparationError !== '' && (
+                    <>
+                      <Text
+                        accessibilityLiveRegion="polite"
+                        style={styles.feedback}
+                      >
+                        {preparationError}
+                      </Text>
+                      <Button
+                        label="Retry password preparation"
+                        kind="text"
+                        disabled={busy !== ''}
+                        onPress={() => {
+                          setPreparationAttempt(value => value + 1)
+                        }}
+                      />
+                    </>
+                  )}
+                  <View style={styles.actions}>
+                    <Button
+                      label="Save password"
+                      disabled={
+                        busy !== '' ||
+                        !newPasswordRequirements(password).valid ||
+                        password !== confirmation ||
+                        preparationError !== '' ||
+                        (reset != null && resetCode.trim() === '')
+                      }
+                      onPress={() => {
+                        run('password', async () => {
+                          if (password !== confirmation)
+                            throw new Error('The new passwords do not match')
+                          const signal = passwordLifetime.current?.signal
+                          const value = await client.setAccountPassword(
+                            password,
+                            currentPassword,
+                            reset == null
+                              ? undefined
+                              : {
+                                  requestId: reset.requestId,
+                                  code: resetCode
+                                },
+                            preparation.current,
+                            signal
+                          )
+                          if (signal?.aborted === true) return
+                          accept(value)
+                          setReset(undefined)
+                          setResetCode('')
+                          setCurrentPassword('')
+                          setPassword('')
+                          setConfirmation('')
+                          setPasswordOpen(false)
+                          setNotice({
+                            section: 'password',
+                            message: 'Password saved'
+                          })
+                        })
+                      }}
+                    />
+                    <Button
+                      label="Cancel password change"
+                      kind="text"
+                      disabled={busy !== ''}
+                      onPress={() => {
+                        setReset(undefined)
+                        setResetCode('')
+                        setCurrentPassword('')
+                        setPassword('')
+                        setConfirmation('')
+                        setPasswordOpen(false)
+                        setNotice(undefined)
+                      }}
+                    />
+                  </View>
+                </>
+              )}
+              {feedback('password')}
+            </Card>
+          </View>
+          <View style={styles.section}>
+            <SectionHeader title="Email addresses" />
+            <Card style={styles.setting}>
+              <Text style={styles.email}>
+                Sign in with any confirmed address. Your primary address appears
+                on your account.
+              </Text>
+              {account.emails.map(address => (
+                <View key={address.id} style={styles.setting}>
+                  <View style={styles.divider} />
+                  <Text style={styles.settingLabel}>
+                    {address.email}
+                    {address.isPrimary ? ' · Primary' : ''}
+                  </Text>
+                  <View style={styles.actions}>
+                    <Button
+                      label="Change"
+                      accessibilityLabel={`Change ${address.email}`}
+                      kind="text"
+                      disabled={busy !== '' || emailEdit != null}
+                      onPress={() => {
+                        setEmailEdit({
+                          replaceEmailId: address.id,
+                          previous: address.email
+                        })
+                        setEmail('')
+                        setNotice(undefined)
+                      }}
+                    />
+                    {!address.isPrimary && (
+                      <Button
+                        label="Make primary"
+                        accessibilityLabel={`Make ${address.email} primary`}
+                        kind="text"
+                        disabled={busy !== '' || emailEdit != null}
+                        onPress={() => {
+                          run('email', async () => {
+                            accept(
+                              await client.setAccountPrimaryEmail(address.id)
+                            )
+                            setNotice({
+                              section: 'email',
+                              message: 'Primary email updated'
+                            })
+                          })
+                        }}
+                      />
+                    )}
+                  </View>
+                </View>
+              ))}
+              {emailEdit == null ? (
+                <Button
+                  label="Add email address"
+                  kind="secondary"
+                  disabled={busy !== ''}
+                  onPress={() => {
+                    setEmailEdit({})
+                    setNotice(undefined)
+                  }}
+                />
+              ) : pending == null ? (
+                <>
+                  {emailEdit.previous != null && (
+                    <Text style={styles.email}>
+                      Replacing {emailEdit.previous}. It stays active until you
+                      confirm the new address.
+                    </Text>
+                  )}
+                  <TextField
+                    label="New email address"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoComplete="email"
+                  />
+                  <Button
+                    label="Send confirmation code"
+                    disabled={busy !== '' || email.trim() === ''}
+                    onPress={sendCode}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={styles.email}>
+                    Enter the code sent to {pending.email}. The address is not
+                    active yet.
+                  </Text>
+                  <TextField
+                    label="Confirmation code"
+                    value={code}
+                    onChangeText={setCode}
+                    keyboardType="number-pad"
+                    autoComplete="one-time-code"
+                  />
+                  <View style={styles.actions}>
+                    <Button
+                      label="Confirm email"
+                      disabled={busy !== '' || code.trim() === ''}
+                      onPress={() => {
+                        run('email', async () => {
+                          accept(
+                            await client.confirmAccountEmail(
+                              pending.requestId,
+                              code
+                            )
+                          )
+                          closeEmail()
+                          setNotice({
+                            section: 'email',
+                            message: 'Email address confirmed'
+                          })
+                        })
+                      }}
+                    />
+                    <Button
+                      label="Resend code"
+                      kind="text"
+                      disabled={busy !== ''}
+                      onPress={sendCode}
+                    />
+                  </View>
+                </>
+              )}
+              {emailEdit != null && (
+                <Button
+                  label="Cancel email change"
+                  kind="text"
+                  disabled={busy !== ''}
+                  onPress={() => {
+                    closeEmail()
+                    setNotice(undefined)
+                  }}
+                />
+              )}
+              {feedback('email')}
+            </Card>
+          </View>
+        </>
+      )}
+      {busy !== '' && (
+        <Text accessibilityLiveRegion="polite" style={styles.email}>
+          Saving…
+        </Text>
+      )}
       {Platform.OS === 'ios' && (
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_walkup} />
@@ -95,18 +588,28 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           </Card>
         </View>
       )}
-
-      <Button label="Sign out" kind="secondary" block onPress={onSignOut} />
-
-      <Text style={styles.footnote}>
-        Your name and e-mail come from the league's records. Ask your league
-        administrator to change either one.
-      </Text>
+      <Button
+        label="Sign out"
+        kind="secondary"
+        block
+        disabled={busy !== ''}
+        onPress={onSignOut}
+      />
     </Screen>
   )
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  feedback: {
+    fontFamily: theme.regularTextFont,
+    color: theme.primaryTextColor,
+    fontSize: theme.rem(0.875)
+  },
   identity: {
     flexDirection: 'row',
     alignItems: 'center',
