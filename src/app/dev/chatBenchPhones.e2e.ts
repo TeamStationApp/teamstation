@@ -1,22 +1,22 @@
 /**
- * The chat crypto bench on the iOS simulator, through maestro-d's JavaScript
- * client (`ChatBenchScreen`).
+ * The chat crypto bench on an iOS simulator or an Android emulator, through
+ * maestro-d's JavaScript client (`ChatBenchScreen`).
  *
- *   MAESTRO_D=chat-<run> CHAT_DEVICE=<udid> CHAT_ARTIFACTS=<dir> \
- *     node -r sucrase/register src/app/dev/chatBenchPhones.e2e.ts
+ *   MAESTRO_D=chat-<run> CHAT_PLATFORM=ios|android CHAT_DEVICE=<id> \
+ *     CHAT_ARTIFACTS=<dir> node -r sucrase/register src/app/dev/chatBenchPhones.e2e.ts
  *
  * Required: `MAESTRO_D`, a daemon of this run's own, already started
  * (`maestro-d start --daemon "$MAESTRO_D"`; run `maestro-d ps` first and never
- * share one); `CHAT_DEVICE`, the simulator's UDID, which the test pins and
- * never chooses; `CHAT_ARTIFACTS`, where the screenshot goes. Optional:
- * `MAESTRO_D_CLIENT_ROOT`, a checkout of the maestro-d npm package, since
- * `maestro-d` is not a dependency.
+ * share one); `CHAT_PLATFORM`; `CHAT_DEVICE`, the simulator's UDID or the
+ * emulator's serial, which the test pins and never chooses; `CHAT_ARTIFACTS`,
+ * where the screenshot goes. Optional: `MAESTRO_D_CLIENT_ROOT`, a checkout of
+ * the maestro-d npm package, since `maestro-d` is not a dependency.
  *
- * The app on the simulator must be the bench build: a Release build made with
- * `TS_CHAT_BENCH=1`. It opens
- * `teamstation://dev/chat-bench`, waits for `done` and `vectors ok` (the native
- * primitives reproduce every frozen vector), saves a screenshot and
- * prints the figures it can read off the screen. The screenshot is the record.
+ * The app must be the bench build: a Release build made with
+ * `TS_CHAT_BENCH=1`. It opens `teamstation://dev/chat-bench`, waits for
+ * `done` and `vectors ok` (the native core reproduces every frozen vector),
+ * saves a screenshot, prints the figures it can read off the screen, and
+ * fails under 100 MB/s. The screenshot is the record.
  */
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
@@ -56,6 +56,11 @@ async function main(): Promise<void> {
     MaestroD: { connect: (options: object) => Promise<Daemon> }
   }
   const device = required('CHAT_DEVICE')
+  const platform = required('CHAT_PLATFORM')
+  assert(
+    platform === 'ios' || platform === 'android',
+    `CHAT_PLATFORM is ios or android, not ${platform}`
+  )
   const artifacts = resolve(required('CHAT_ARTIFACTS'))
   await mkdir(artifacts, { recursive: true })
 
@@ -65,7 +70,7 @@ async function main(): Promise<void> {
   })
   const m = await daemon.attach({
     device,
-    platform: 'ios',
+    platform,
     appId: 'app.teamstation.app',
     artifacts: 'on-failure'
   })
@@ -78,8 +83,8 @@ async function main(): Promise<void> {
     // 20 MiB both ways and 1,000 wraps take seconds on a phone's JavaScript
     // engine; give it minutes before calling it hung.
     await m.assertVisible({ text: 'done', timeout: 300_000 })
-    // The native primitives must give every frozen vector's bytes, or the
-    // figures below measure something that is not this protocol.
+    // The native core must give every frozen vector's bytes, or the figures
+    // below measure something that is not this protocol.
     await m.assertVisible({ text: 'vectors ok', timeout: 5_000 })
     const shot = join(artifacts, 'chat-bench')
     await m.takeScreenshot({ path: shot })
@@ -97,11 +102,13 @@ async function main(): Promise<void> {
       .map(line => /^stream MB\/s: ([\d.]+)/.exec(line)?.[1])
       .find(found => found != null)
     assert(stream != null, 'No stream MB/s on the screen')
-    console.log(
-      Number(stream) >= 10
-        ? `PASS stream ${stream} MB/s >= 10`
-        : `FAIL stream ${stream} MB/s < 10`
-    )
+    // Native code, so a figure in the tens means a debug or wrong build.
+    if (Number(stream) >= 100) {
+      console.log(`PASS stream ${stream} MB/s >= 100`)
+    } else {
+      console.log(`FAIL stream ${stream} MB/s < 100`)
+      process.exitCode = 1
+    }
   } finally {
     await m.detach()
     await daemon.close()
