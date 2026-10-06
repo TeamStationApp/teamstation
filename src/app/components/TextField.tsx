@@ -12,7 +12,8 @@ export interface TextFieldProps {
   secure?: boolean
   autoFocus?: boolean
   keyboardType?: 'default' | 'email-address' | 'number-pad'
-  autoComplete?: 'email' | 'current-password' | 'one-time-code' | 'off'
+  autoComplete?:
+    'email' | 'current-password' | 'new-password' | 'one-time-code' | 'off'
   /** Shown at the right of the label, e.g. "Forgot?". */
   action?: { label: string; onPress: () => void }
   error?: string

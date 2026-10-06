@@ -1,10 +1,11 @@
-import { asBoolean, asObject, asOptional, asString } from 'cleaners'
+import { asObject, asOptional, asString } from 'cleaners'
 import { type Response, Router } from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
+import { asSession } from '../../common/api'
 import { badRequest, unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
-import { asUserId } from '../../common/userIdNumber'
+import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
 import {
   asSignInOrigin,
   claimApprovedRequest,
@@ -16,7 +17,11 @@ import {
 } from '../auth/emailCodes'
 import type { FoundUser } from '../auth/emails'
 import { findUserByEmail, primaryEmail } from '../auth/emails'
-import { passwordMatches } from '../auth/passwords'
+import {
+  decoyParameters,
+  passwordMatches,
+  readPasswordRecord
+} from '../auth/passwords'
 import {
   checkLimits,
   clientIp,
@@ -34,7 +39,7 @@ import { withAsync } from '../middleware/withErrors'
 
 const asPasswordLogin = asObject({
   email: asString,
-  password: asString
+  clientHash: asClientHash
 })
 
 const asCodeRequest = asObject({
@@ -85,19 +90,8 @@ function sessionOptionsFor(deviceName: string | undefined): {
   return { days: DEVICE_SESSION_DAYS, deviceName: deviceName.trim() }
 }
 
-/** What a successful sign-in returns. Cleaned on the way out as well as in. */
-const asSession = asObject({
-  token: asString,
-  expiresAt: asString,
-  user: asObject({
-    id: asUserId,
-    displayName: asString,
-    email: asOptional(asString),
-    isAdmin: asBoolean
-  })
-})
-
 export interface AuthOptions {
+  passwordParameterSecret?: string
   /**
    * Delivers a sign-in code. In production this is SMTP; in development it
    * logs, so the flow can be exercised without a mail server.
@@ -205,6 +199,11 @@ function clearSessionCookie(res: Response, secure: boolean): void {
 }
 
 export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
+  const parameterSecret =
+    options.passwordParameterSecret == null ||
+    options.passwordParameterSecret === ''
+      ? makeToken()
+      : options.passwordParameterSecret
   const router = Router()
   const secureCookie = options.publicUrl?.startsWith('http://') !== true
 
@@ -243,9 +242,36 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   }
 
   router.post(
+    '/auth/password/parameters',
+    withAsync(async (req, res) => {
+      const { email: rawEmail } = cleanBody(
+        asObject({ email: asString }),
+        req.body
+      )
+      const email = rawEmail.trim().toLowerCase()
+      if (email.length > 254) throw badRequest('Email address is too long')
+      const rules = rulesFor(
+        { ...LIMITS.passwordByAddress, scope: 'passwordParameters.address' },
+        { ...LIMITS.passwordByClient, scope: 'passwordParameters.client' },
+        email,
+        clientIp(req)
+      )
+      await chargePasswordAttempt(db, rules)
+      const user = await findUserByEmail(db, email)
+      const record =
+        user?.loginEnabled === true
+          ? readPasswordRecord(user.passwordHash)
+          : null
+      res.json(record?.client ?? decoyParameters(email, parameterSecret))
+    })
+  )
+  router.post(
     '/auth/password',
     withAsync(async (req, res) => {
-      const body = cleanBody(asPasswordLogin, req.body)
+      const body = cleanBody(raw => {
+        rejectRawPassword(raw)
+        return asPasswordLogin(raw)
+      }, req.body)
       const email = body.email.trim().toLowerCase()
       const rules = rulesFor(
         LIMITS.passwordByAddress,
@@ -253,24 +279,36 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         email,
         clientIp(req)
       )
-      await checkLimits(db, rules)
-
+      await chargePasswordAttempt(db, rules)
       const user = await findUserByEmail(db, email)
 
-      // The same answer whether the address is unknown, the password is wrong,
-      // or the account has no login: none of those should be discoverable.
+      // Keep the failure message uniform. The public parameter handshake can
+      // still distinguish accounts with non-default stored hashing costs.
       const ok =
         user != null &&
         user.loginEnabled &&
-        (await passwordMatches(body.password, user.passwordHash))
+        (await passwordMatches(body.clientHash, user.passwordHash, user.id))
       if (!ok || user == null) {
-        // Only a failure counts. Somebody who signs in correctly all day is not
-        // the problem, and locking them out would be this change causing one.
-        await recordAttempts(db, rules)
-        throw unauthorized('Wrong e-mail or password')
+        throw unauthorized(
+          'Wrong e-mail or password. Use an email code to sign in and set a new password'
+        )
       }
 
-      const session = await createSession(db, user.id, req.header('user-agent'))
+      const session = await db.transaction().execute(async tx => {
+        const current = await tx
+          .selectFrom('users')
+          .select(['password_hash', 'login_enabled', 'merged_into'])
+          .where('id', '=', user.id)
+          .forUpdate()
+          .executeTakeFirst()
+        if (
+          current?.password_hash !== user.passwordHash ||
+          !current.login_enabled ||
+          current.merged_into != null
+        )
+          throw unauthorized('Your password changed. Please sign in again')
+        return await createSession(tx, user.id, req.header('user-agent'))
+      })
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
         asSession({
@@ -279,7 +317,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           user: {
             id: user.id,
             displayName: user.displayName,
-            email: user.email,
+            email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
             avatarUrl: await avatarFor(user.id)
           }
@@ -371,7 +409,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           user: {
             id: user.id,
             displayName: user.displayName,
-            email: user.email,
+            email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
             avatarUrl: await avatarFor(user.id)
           }
@@ -416,7 +454,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           user: {
             id: user.id,
             displayName: user.displayName,
-            email: user.email,
+            email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
             avatarUrl: await avatarFor(user.id)
           }
@@ -463,7 +501,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           user: {
             id: user.id,
             displayName: user.displayName,
-            email: user.email,
+            email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
             avatarUrl: await avatarFor(user.id)
           }
@@ -524,4 +562,19 @@ function cleanBody<T>(cleaner: (raw: unknown) => T, raw: unknown): T {
       error instanceof Error ? error.message : 'Malformed request body'
     )
   }
+}
+
+/** Serialize quota accounting before launching a memory-hard hash. */
+async function chargePasswordAttempt(
+  db: Kysely<Database>,
+  rules: LimitRule[]
+): Promise<void> {
+  await db.transaction().execute(async tx => {
+    for (const key of rules.map(rule => `${rule.scope}:${rule.key}`).sort())
+      await sql`select pg_advisory_xact_lock(hashtext('password-limits'), hashtext(${key}))`.execute(
+        tx
+      )
+    await checkLimits(tx, rules)
+    await recordAttempts(tx, rules)
+  })
 }

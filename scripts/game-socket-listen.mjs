@@ -22,6 +22,9 @@ import WebSocket from 'ws'
 const require = createRequire(import.meta.url)
 require('sucrase/register')
 const { GameSocket } = require('../src/common/gameSocket.ts')
+const { TeamStationClient } = require('../src/common/api.ts')
+const { passwordBytes } = require('../src/common/passwordProtocol.ts')
+const { nativeArgon } = require('../src/server/auth/passwords.ts')
 
 const { values } = parseArgs({
   options: {
@@ -46,15 +49,12 @@ async function signIn() {
   if (values.email == null || values.password == null) {
     throw new Error('Give --email and --password, --token, or --no-token')
   }
-  const response = await fetch(`${values.api}/auth/password`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: values.email, password: values.password })
+  const client = new TeamStationClient({
+    baseUrl: values.api,
+    passwordKdf: async (password, parameters) =>
+      await nativeArgon(passwordBytes(password), parameters)
   })
-  if (!response.ok) {
-    throw new Error(`Signing in answered ${response.status}`)
-  }
-  return (await response.json()).token
+  return (await client.signInWithPassword(values.email, values.password)).token
 }
 
 let finished = false
