@@ -111,8 +111,10 @@ export const unauthorized = (message = 'Sign in to continue'): HttpError =>
  * same message as `notFound` at the route level for private resources, so a
  * stranger cannot learn that a team or a video exists by probing.
  */
-export const forbidden = (message = 'Not found'): HttpError =>
-  new HttpError('forbidden', message)
+export const forbidden = (
+  message = 'Not found',
+  details?: unknown
+): HttpError => new HttpError('forbidden', message, details)
 
 export const notFound = (message = 'Not found'): HttpError =>
   new HttpError('notFound', message)

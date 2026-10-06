@@ -449,9 +449,10 @@ describe('password hashing and email-reset HTTP protocol', function () {
     ).deep.equals(Object.keys(testPasswordParameters))
     expect((await metadata('x'.repeat(255))).status).equals(400)
     const invalid = await createPasswordRecord(proof, testPasswordParameters)
+    // An account closed into another cannot sign in, whatever its password.
     await h.db
       .updateTable('users')
-      .set({ password_hash: invalid, login_enabled: false })
+      .set({ password_hash: invalid, merged_into: 102 })
       .where('id', '=', 101)
       .execute()
     expect(

@@ -359,6 +359,8 @@ async function moveAndClose(
     })
   }
 
+  await moveSignIns(db, closing, keeping)
+  await moveFollows(db, closing, keeping)
   await keepTheFullerName(db, closing, keeping)
 
   await db
@@ -396,6 +398,86 @@ async function closedInto(
     seen.add(next)
     at = next
   }
+}
+
+/**
+ * The closing row's ways to sign in move to the survivor, so a row that
+ * absorbs an account (a roster import's row, most often) can be signed in
+ * to as that person.
+ *
+ * Every address moves; the survivor's primary stays primary, and the moved
+ * primary becomes it only when the survivor had none. The password moves
+ * when the survivor has none of its own. `login_enabled` follows by trigger.
+ */
+async function moveSignIns(
+  db: Kysely<Database>,
+  closing: number,
+  keeping: number
+): Promise<void> {
+  const primary = await db
+    .selectFrom('user_emails')
+    .select(['id'])
+    .where('user_id', '=', keeping)
+    .where('is_primary', '=', true)
+    .executeTakeFirst()
+  if (primary != null) {
+    await db
+      .updateTable('user_emails')
+      .set({ is_primary: false })
+      .where('user_id', '=', closing)
+      .execute()
+  }
+  await db
+    .updateTable('user_emails')
+    .set({ user_id: keeping })
+    .where('user_id', '=', closing)
+    .execute()
+
+  const rows = await db
+    .selectFrom('users')
+    .select(['id', 'password_hash'])
+    .where('id', 'in', [closing, keeping])
+    .execute()
+  const from = rows.find(row => row.id === closing)
+  const to = rows.find(row => row.id === keeping)
+  if (from?.password_hash != null && to != null && to.password_hash == null) {
+    await db
+      .updateTable('users')
+      .set({ password_hash: from.password_hash, updated_at: new Date() })
+      .where('id', '=', keeping)
+      .execute()
+    await db
+      .updateTable('users')
+      .set({ password_hash: null })
+      .where('id', '=', closing)
+      .execute()
+  }
+}
+
+/** The teams the closing row follows, followed by the survivor, once each. */
+async function moveFollows(
+  db: Kysely<Database>,
+  closing: number,
+  keeping: number
+): Promise<void> {
+  const follows = await db
+    .selectFrom('team_follows')
+    .select(['team_id', 'created_at'])
+    .where('user_id', '=', closing)
+    .execute()
+  if (follows.length === 0) return
+  await db
+    .insertInto('team_follows')
+    .values(
+      follows.map(follow => ({
+        user_id: keeping,
+        team_id: follow.team_id,
+        created_at: follow.created_at
+      }))
+    )
+    .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
+    .execute()
+  await db.deleteFrom('team_follows').where('user_id', '=', closing).execute()
 }
 
 /**

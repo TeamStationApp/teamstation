@@ -24,6 +24,8 @@ import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { gameApprovalRoutes } from './routes/gameApprovals'
 import { groupRoutes } from './routes/groups'
+import { followRoutes } from './routes/follows'
+import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -162,6 +164,7 @@ describe('the API document', function () {
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
+      ...routesOf(guardianRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),
@@ -213,6 +216,7 @@ describe('the API document', function () {
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
+      ...routesOf(guardianRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),

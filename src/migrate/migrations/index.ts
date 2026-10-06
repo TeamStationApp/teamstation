@@ -58,6 +58,7 @@ import { migration055GuardianRequests } from './055guardianRequests'
 import { migration056OneMemberKind } from './056oneMemberKind'
 
 import { migration050TeamFollows } from './050teamFollows'
+import { migration051GuardiansAndAccounts } from './051guardiansAndAccounts'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -108,6 +109,7 @@ export const migrations: Migration[] = [
   migration048DropStatRollups,
   migration049ExpandedStats,
   migration050TeamFollows,
+  migration051GuardiansAndAccounts,
   migration050CreationHierarchy,
   migration050OAuth,
   migration051EventTags,

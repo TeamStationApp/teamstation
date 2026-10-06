@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
+import { birthMonthText } from '../../common/age'
 import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
@@ -34,6 +35,7 @@ import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { mayKeepBirthMonth } from '../people/guardians'
 import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
 import { teamRoster } from '../teams/teamRoster'
@@ -77,6 +79,8 @@ export function playerRoutes(
           'avatar_path as avatarPath',
           'bats',
           'throws',
+          'birth_year as birthYear',
+          'birth_month as birthMonth',
           'merged_into as mergedInto'
         ])
         .where('id', '=', userId)
@@ -118,6 +122,16 @@ export function playerRoutes(
         { isAdmin: actor.isAdmin },
         { player: person }
       )
+      // The birth month only for those who may set it: the team's
+      // administrators and coaches, and the player's guardians.
+      const birthMonth = (await mayKeepBirthMonth(db, actor, userId))
+        ? {
+            birthMonth:
+              user.birthYear == null || user.birthMonth == null
+                ? null
+                : birthMonthText(user.birthYear, user.birthMonth)
+          }
+        : {}
 
       res.json({
         userId,
@@ -133,6 +147,7 @@ export function playerRoutes(
         avatarUrl: imageUrl(media.space, user.avatarPath, PROFILE_SIZE),
         bats: user.bats,
         throws: user.throws,
+        ...birthMonth,
         teams: teams
           .filter(team => ownPage || canSeePlayedFor(scopes, team))
           .map(({ logoPath, ...team }) => ({

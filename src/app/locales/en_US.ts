@@ -253,6 +253,57 @@ export const enUs = {
   player_settings_cannot_load: 'Cannot load this player\u2019s settings.',
   player_settings_cannot_save: 'Cannot save these settings.',
   player_settings_not_on_team: 'This player is not on this team\u2019s roster.',
+  player_birth: 'Birth month',
+  player_birth_detail:
+    'The month and year only, never the day. A birthday counts from the first of the month after.',
+  player_birth_month: 'Month',
+  player_birth_year: 'Year',
+  player_birth_year_earlier: 'One year earlier',
+  player_birth_year_later: 'One year later',
+  player_birth_none: 'Not set',
+  player_birth_shown: 'Born %s %s \u00b7 %s today',
+  player_birth_save: 'Save birth month',
+  player_birth_clear: 'Clear birth month',
+  player_birth_saved: 'Birth month saved.',
+  player_birth_cleared: 'Birth month cleared.',
+  month_1: 'January',
+  month_2: 'February',
+  month_3: 'March',
+  month_4: 'April',
+  month_5: 'May',
+  month_6: 'June',
+  month_7: 'July',
+  month_8: 'August',
+  month_9: 'September',
+  month_10: 'October',
+  month_11: 'November',
+  month_12: 'December',
+
+  // A player's guardians and adult family members
+  guardians_title: 'Guardians and family',
+  guardians_title_for: 'Guardians and family of %s',
+  guardians_detail:
+    'A guardian joins the team through this link. An adult family member gets no access; they only count for who may message the player.',
+  guardians_open: 'Guardians and family',
+  guardians_manage: 'Change guardians and family',
+  guardians_none: 'Nobody is linked yet.',
+  guardians_kind_guardian: 'Guardian',
+  guardians_kind_family: 'Adult family member',
+  guardians_kind_family_short: 'Family',
+  guardians_remove: 'Remove',
+  guardians_remove_label: 'Remove %s',
+  guardians_add: 'Add somebody',
+  guardians_add_field: 'E-mail address or name',
+  guardians_add_placeholder: 'parent@example.com, or a name on the team',
+  guardians_add_submit: 'Add by e-mail',
+  guardians_pick: 'Add %s',
+  guardians_added: '%s is linked.',
+  guardians_invited:
+    'An invitation is on its way to %s. Only that address can accept it.',
+  guardians_needs_account:
+    'That person has no way to sign in. Add them by e-mail address instead.',
+  guardians_cannot_load: 'Cannot load the guardians.',
+  guardians_done: 'Done',
 
   // Guardians: a guardian, or a team's coaching staff while the player has
   // none, invite one by address from Settings; anybody else who can see the
@@ -503,6 +554,12 @@ export const enUs = {
   player_removed: 'Removed %1$s from %2$s',
   player_remove_unchanged: '%1$s is not on %2$s. Nothing was changed.',
   people_none: 'Nobody here yet.',
+  manage_no_address_header: 'No address on file',
+  manage_guardians: 'Guardians',
+  manage_safesport_title: 'SafeSport',
+  manage_safesport_label: 'SafeSport Local Affiliated Organization',
+  manage_safesport_detail:
+    "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to a player under 18 must also include the player's parent or guardian, an adult family member, or another adult of the league. A league that is only a chartered Little League is not one.",
 
   // Coming in through an invite
   join_header: 'Invitation',
@@ -528,6 +585,8 @@ export const enUs = {
   join_already: 'You can already watch %s.',
   join_welcome: 'You are in. %s is on your home screen.',
   join_open: 'Have a look',
+  join_for_another_email:
+    'This invitation was sent to another e-mail address. Sign in with that address to accept it.',
 
   // Scoring control presentation (engine action identifiers stay stable)
   scoring_control_more: 'MORE',

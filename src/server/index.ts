@@ -53,6 +53,7 @@ import { eventRoutes } from './routes/events'
 import { gameApprovalRoutes } from './routes/gameApprovals'
 import { groupRoutes } from './routes/groups'
 import { followRoutes } from './routes/follows'
+import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -494,6 +495,8 @@ function runWorker(): void {
   app.use('/api/v1', nodeAdministrationRoutes(db))
   app.use('/api/v1', gameApprovalRoutes(db))
   app.use('/api/v1', notificationRoutes(db))
+  app.use('/api/v1', guardianRoutes(db, { sendInvite, publicUrl }))
+  app.use('/api/v1', followRoutes(db, mediaContext))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use(
     '/api/v1',

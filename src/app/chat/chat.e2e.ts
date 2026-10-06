@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
+import { Pool } from 'pg'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 /**
@@ -17,7 +18,11 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
  *     --timeout 180000 src/app/chat/chat.e2e.ts
  *
  * The seed's table of people, ids and passwords is read from
- * `<artifacts>/seed.txt`, which the reset script writes. Each browser is one
+ * `<artifacts>/seed.txt`, which the reset script writes. With no mail relay
+ * configured the API logs every invitation and sign-in code instead of
+ * sending it; run it with its output in a file and name that file in
+ * `TS_CHAT_API_LOG` (E2 reads both from it). Database checks connect to the
+ * `databaseUrl` of the local `serverConfig.json`. Each browser is one
  * device of one person, with its own profile in
  * `<artifacts>/profiles/<person>-<n>`, so what a device keeps survives from
  * one scenario to the next. Screenshots go to `<artifacts>/shots`.
@@ -31,10 +36,11 @@ const WEB = (process.env.TS_CHAT_WEB_URL ?? 'http://127.0.0.1:8080').replace(
   ''
 )
 const SHOTS = join(ARTIFACTS, 'shots')
+const API_LOG = process.env.TS_CHAT_API_LOG ?? ''
 
 interface Seed {
   ids: Record<string, string>
-  people: Record<string, { email: string; password: string }>
+  people: Record<string, { userId: string; email: string; password: string }>
 }
 
 /** The seed's printed table, read back. */
@@ -48,9 +54,13 @@ function readSeed(): Seed {
     )) {
       ids[match[1] === '(final)' ? 'hawksOwlsFinal' : match[1]] = match[2]
     }
-    const person = /^(\S+)\s.*\s(\S+@\S+)\s+(\S+)$/.exec(line)
+    const person = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
     if (person != null) {
-      people[person[1]] = { email: person[2], password: person[3] }
+      people[person[1]] = {
+        userId: person[2],
+        email: person[3],
+        password: person[4]
+      }
     }
   }
   return { ids, people }
@@ -143,6 +153,48 @@ async function signIn(page: Page, seed: Seed, person: string): Promise<void> {
       ? true
       : undefined
   )
+}
+
+/**
+ * The last line the API logged for a mail it did not send, once it is
+ * there: `[no mail configured] <what> for <address>: <rest>`. Only lines
+ * after `skip` count, so a later mail is never mistaken for an earlier one.
+ */
+async function logged(
+  what: 'invitation' | 'sign-in code',
+  address: string,
+  skip = 0
+): Promise<string> {
+  if (API_LOG === '' || !existsSync(API_LOG)) {
+    throw new Error('Set TS_CHAT_API_LOG to the API output file')
+  }
+  const prefix = `[no mail configured] ${what} for ${address}: `
+  return await until(`the ${what} for ${address} in the API log`, () => {
+    const lines = readFileSync(API_LOG, 'utf8').split('\n').slice(skip)
+    const line = lines.filter(row => row.includes(prefix)).at(-1)
+    return line?.slice(line.indexOf(prefix) + prefix.length).trim()
+  })
+}
+
+/** How many lines the API log has, to read only what comes after. */
+function logLength(): number {
+  return API_LOG === '' || !existsSync(API_LOG)
+    ? 0
+    : // The last piece is the line still being written, or nothing.
+      readFileSync(API_LOG, 'utf8').split('\n').length - 1
+}
+
+/** The database the local API runs on, for checks the screens cannot make. */
+function localDatabase(): Pool {
+  const config = JSON.parse(readFileSync('serverConfig.json', 'utf8')) as {
+    databaseUrl: string
+  }
+  if (
+    !/^postgres(ql)?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(config.databaseUrl)
+  ) {
+    throw new Error('serverConfig.json does not name a local database')
+  }
+  return new Pool({ connectionString: config.databaseUrl })
 }
 
 async function shot(page: Page, name: string): Promise<void> {
@@ -238,5 +290,150 @@ describe('chat scenarios in the browser', function () {
     })
     await waitForText(page, 'That game is not here')
     await shot(page, 'e17-5-final-game')
+  })
+  /**
+   * E2: coach Hc keeps P's guardians and family from P's Settings tab. The
+   * aunt, who has no account, joins through her invitation; parent D cannot
+   * use the uncle's; parent B is linked as family; G1 is unlinked.
+   */
+  it('E2: guardians and family from the player’s Settings tab', async function () {
+    const db = localDatabase()
+    try {
+      const pat = seed.people.P
+      const hawks = seed.ids.Hawks
+      const coach = await device('Hc')
+      await signIn(coach, seed, 'Hc')
+      await coach.goto(`${WEB}/players/${pat.userId}?onTeam=${hawks}`, {
+        waitUntil: 'networkidle2'
+      })
+      await press(coach, 'Settings')
+      await waitForText(coach, 'GUARDIANS AND FAMILY')
+      await waitForText(coach, 'Glen Guardian')
+      const listed = await bodyText(coach)
+      expect(listed).contains('Gale Guardian')
+      expect(listed).contains('Guardian · g1@chat.example.com')
+      expect(listed).contains('Guardian · g2@chat.example.com')
+      await shot(coach, 'e2-1-settings-guardians')
+
+      // The aunt has no account: an invitation is mailed (logged).
+      await press(coach, 'Change guardians and family')
+      await waitForText(coach, 'Guardians and family of Pat P')
+      const auntAddress = 'aunt@chat.example.com'
+      const before = logLength()
+      await typeInto(coach, 'E-mail address or name', auntAddress)
+      await press(coach, 'Add by e-mail')
+      await waitForText(coach, `An invitation is on its way to ${auntAddress}`)
+      await shot(coach, 'e2-2-aunt-invited')
+      const auntLink = await logged('invitation', auntAddress, before)
+      const auntCode = /\/i\/([^/\s]+)$/.exec(auntLink)?.[1] ?? ''
+      expect(auntCode).not.equals('')
+
+      const aunt = await device('Aunt')
+      await aunt.goto(`${WEB}/i/${auntCode}`, { waitUntil: 'networkidle2' })
+      await waitForText(aunt, 'You are invited to watch Hawks')
+      await typeInto(aunt, 'Your name', 'Ava Aunt')
+      await typeInto(aunt, 'E-mail address', auntAddress)
+      const beforeCode = logLength()
+      await pressText(aunt, 'Send me a sign-in code')
+      const code = await logged('sign-in code', auntAddress, beforeCode)
+      await typeInto(aunt, 'Sign-in code', code.split(/\s/)[0])
+      await pressText(aunt, 'Join')
+      await waitForText(aunt, 'You are in. Hawks is on your home screen.')
+      await shot(aunt, 'e2-3-aunt-joined')
+
+      // The uncle's invitation, opened by parent D signed in as D.
+      const uncleAddress = 'uncle@chat.example.com'
+      const beforeUncle = logLength()
+      await typeInto(coach, 'E-mail address or name', uncleAddress)
+      await press(coach, 'Add by e-mail')
+      await waitForText(coach, `An invitation is on its way to ${uncleAddress}`)
+      const uncleLink = await logged('invitation', uncleAddress, beforeUncle)
+      const uncleCode = /\/i\/([^/\s]+)$/.exec(uncleLink)?.[1] ?? ''
+      const parentD = await device('D')
+      await signIn(parentD, seed, 'D')
+      await parentD.goto(`${WEB}/i/${uncleCode}`, {
+        waitUntil: 'networkidle2'
+      })
+      await pressText(parentD, 'Accept the invitation')
+      await waitForText(
+        parentD,
+        'This invitation was sent to another e-mail address.'
+      )
+      await shot(parentD, 'e2-4-d-refused')
+
+      // Parent B, picked from the team, as an adult family member.
+      await press(coach, 'Adult family member')
+      await typeInto(coach, 'E-mail address or name', 'Bla')
+      await press(coach, 'Add Blair B')
+      await waitForText(coach, 'Blair B is linked.')
+      await waitForText(coach, 'Family · b@chat.example.com')
+      await shot(coach, 'e2-5-b-family')
+
+      // G1 removed.
+      await press(coach, 'Remove Gale Guardian')
+      await until('G1 to leave the list', async () =>
+        (await bodyText(coach)).includes('Gale Guardian') ? undefined : true
+      )
+      await shot(coach, 'e2-6-g1-removed')
+      await pressText(coach, 'Done')
+      await until('the Settings tab list to drop G1', async () => {
+        const text = await bodyText(coach)
+        return !text.includes('Gale Guardian') && text.includes('Ava Aunt')
+          ? true
+          : undefined
+      })
+      await shot(coach, 'e2-7-settings-after')
+
+      // What the screens cannot show, read from the database.
+      const query = async <T>(sql: string, values: unknown[]): Promise<T[]> =>
+        (await db.query(sql, values)).rows as T[]
+      const people = Object.fromEntries(
+        ['B', 'D', 'G1'].map(key => [key, seed.people[key].userId])
+      )
+      const b = await query<{ kind: string; links: string }>(
+        `select l.kind,
+           (select count(*) from memberships m where m.user_id = $1)::text as links
+         from user_links l where l.user_id = $1 and l.related_user_id = $2`,
+        [people.B, pat.userId]
+      )
+      expect(b).deep.equals([{ kind: 'family', links: '1' }])
+      const bMembership = await query<{ granted: string | null }>(
+        `select granted_by_link_id as granted from memberships
+         where user_id = $1 and team_id = $2`,
+        [people.B, hawks]
+      )
+      expect(bMembership).deep.equals([{ granted: null }])
+
+      const auntRows = await query<{ kind: string; same: boolean }>(
+        `select l.kind, m.granted_by_link_id = l.id as same
+         from user_emails e
+         join user_links l on l.user_id = e.user_id and l.related_user_id = $2
+         join memberships m on m.user_id = e.user_id and m.team_id = $3
+         where lower(e.email) = $1`,
+        [auntAddress, pat.userId, hawks]
+      )
+      expect(auntRows).deep.equals([{ kind: 'guardian', same: true }])
+
+      const dLinks = await query<{ id: string }>(
+        'select id from user_links where user_id = $1',
+        [people.D]
+      )
+      expect(dLinks).deep.equals([])
+      const uncleUses = await query<{ uses: number }>(
+        'select uses from invites where lower(code) = lower($1)',
+        [uncleCode]
+      )
+      expect(uncleUses).deep.equals([{ uses: 0 }])
+
+      const g1 = await query<{ id: string }>(
+        `select id from user_links where user_id = $1 and related_user_id = $2
+         union all
+         select id from memberships where user_id = $1 and team_id = $3`,
+        [people.G1, pat.userId, hawks]
+      )
+      expect(g1).deep.equals([])
+    } finally {
+      await db.end()
+    }
   })
 })
