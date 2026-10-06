@@ -191,6 +191,8 @@ export type Route =
   | { name: 'conversation'; conversationId: string }
   /** A chat's members, safety numbers and approvals. */
   | { name: 'chatMembers'; conversationId: string }
+  /** Reported chat messages, for site administrators. */
+  | { name: 'chatReports' }
 
 /** A sign-in link's route, with the issuing server only when the link names one. */
 function signInLinkRoute(token: string, server: string | null): Route {
@@ -486,6 +488,10 @@ export function parseRoute(path: string, search = ''): Route {
       if (id === 'link') return { name: 'chatLink' }
       if (id === 'new') return { name: 'chatNew' }
       return { name: 'conversation', conversationId: id }
+    case 'admin':
+      return id === 'chat' && parts[2] === 'reports' && parts[3] == null
+        ? { name: 'chatReports' }
+        : { name: 'home' }
     case 'dev':
       return parseDevRoute(parts)
     default:
@@ -670,6 +676,8 @@ export function routePath(route: Route): string {
       return `/chat/${encodeURIComponent(route.conversationId)}`
     case 'chatMembers':
       return `/chat/${encodeURIComponent(route.conversationId)}/members`
+    case 'chatReports':
+      return '/admin/chat/reports'
     case 'signIn':
       return route.next == null
         ? '/sign-in'

@@ -193,28 +193,34 @@ describe('what a long press offers', function () {
     ])
   })
 
-  it('offers Delete for everyone to a moderator, and nothing more to others', function () {
+  it('offers Delete for everyone to a moderator, and Report to everyone, on others’ messages', function () {
     expect(actionsFor(message(), view('enabled', true))).deep.equals([
       'reply',
       'react',
-      'deleteForEveryone'
+      'deleteForEveryone',
+      'report'
     ])
     expect(actionsFor(message(), view('enabled'))).deep.equals([
       'reply',
-      'react'
+      'react',
+      'report'
     ])
   })
 
-  it('lets an Announcements reader react and nothing else', function () {
-    expect(actionsFor(message(), view('readOnly'))).deep.equals(['react'])
+  it('lets an Announcements reader react and report, and nothing else', function () {
+    expect(actionsFor(message(), view('readOnly'))).deep.equals([
+      'react',
+      'report'
+    ])
     expect(actionsFor(message({ mine: true }), view('readOnly'))).deep.equals([
       'react'
     ])
   })
 
-  it('offers nothing in a closed chat, or on a locked device', function () {
-    expect(actionsFor(message(), view('closed', true))).deep.equals([])
-    expect(actionsFor(message(), view('locked'))).deep.equals([])
+  it('offers only Report in a closed chat, or on a locked device', function () {
+    expect(actionsFor(message(), view('closed', true))).deep.equals(['report'])
+    expect(actionsFor(message(), view('locked'))).deep.equals(['report'])
+    expect(actionsFor(message({ mine: true }), view('closed'))).deep.equals([])
   })
 
   it('lets an unreadable message be removed by its author or a moderator', function () {

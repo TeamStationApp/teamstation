@@ -309,6 +309,25 @@ describe('addresses', function () {
     expect(parseRoute('/chat/cnv_abc/members/x')).deep.equals({ name: 'home' })
   })
 
+  it('reads and writes the reported messages at /admin/chat/reports', function () {
+    expect(parseRoute('/admin/chat/reports')).deep.equals({
+      name: 'chatReports'
+    })
+    expect(routePath({ name: 'chatReports' })).equals('/admin/chat/reports')
+    expect(roundTrip({ name: 'chatReports' })).deep.equals({
+      name: 'chatReports'
+    })
+    for (const other of [
+      '/admin',
+      '/admin/chat',
+      '/admin/chat/other',
+      '/admin/other/reports',
+      '/admin/chat/reports/x'
+    ]) {
+      expect(parseRoute(other), other).deep.equals({ name: 'home' })
+    }
+  })
+
   it('has no chat bench outside a phone build made for it', function () {
     // The web and the tests read `chatBench.ts`, which has no bench.
     expect(parseRoute('/dev/chat-bench')).deep.equals({ name: 'home' })

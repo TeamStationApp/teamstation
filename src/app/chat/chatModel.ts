@@ -143,12 +143,14 @@ export function readLine(
 export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🎉'] as const
 
 export type MessageAction =
-  'reply' | 'react' | 'edit' | 'delete' | 'deleteForEveryone'
+  'reply' | 'react' | 'edit' | 'delete' | 'deleteForEveryone' | 'report'
 
 /**
  * What a long press on a message offers this person: reply and react to
  * any readable message where they may post or react; edit and delete their
- * own; and, for a moderator, Delete for everyone on someone else's.
+ * own; for a moderator, Delete for everyone on someone else's; and Report
+ * on anyone else's readable message, wherever it is (a closed chat and an
+ * Announcements reader included), since reporting posts nothing in it.
  */
 export function actionsFor(
   message: MessageView,
@@ -172,6 +174,7 @@ export function actionsFor(
   if (!message.mine && posting && view.conversation.canModerate) {
     actions.push('deleteForEveryone')
   }
+  if (!message.mine) actions.push('report')
   return actions
 }
 
