@@ -941,7 +941,10 @@ describe('chat devices in the app', function () {
    * The API as a signed-in user, with the chat key routes answered by
    * `fake`. Every call is logged as `METHOD /path`.
    */
-  function fakeApi(fake: FakeKeys): string[] {
+  function fakeApi(
+    fake: FakeKeys,
+    more?: (method: string, path: string, body: unknown) => unknown
+  ): string[] {
     // The browser's own key store, on an IndexedDB of this test's.
     Object.defineProperty(globalThis, 'indexedDB', {
       configurable: true,
@@ -1002,6 +1005,8 @@ describe('chat devices in the app', function () {
       if (parts[1] === 'chat' && parts[2] === 'links') {
         return await answer(async () => await client.chatLink(parts[3]))
       }
+      const extra = more?.(method, path, body)
+      if (extra !== undefined) return Response.json(extra)
       return Response.json([])
     }
     return asked
@@ -1062,5 +1067,164 @@ describe('chat devices in the app', function () {
     expect(revoke).greaterThan(-1)
     expect(revoke).lessThan(asked.indexOf('POST /auth/logout'))
     expect(fake.devices[0].revokedAt).not.equals(null)
+  })
+
+  /** The chat routes' answers: a list, an empty chat, and a new DM. */
+  function chats(
+    list: Array<Record<string, unknown>>
+  ): (method: string, path: string, body: unknown) => unknown {
+    return (method, path) => {
+      if (path === '/chat/conversations') return list
+      if (path === '/chat/grants') return []
+      if (path === '/chat/dm-candidates') {
+        return [{ userId: 8, shortName: 'Pat P', avatarUrl: null }]
+      }
+      if (path === '/chat/dms' && method === 'POST') return list[0]
+      const parts = path.split('/')
+      if (parts[2] === 'conversations' && parts[4] === 'members') {
+        return [
+          {
+            userId: USER,
+            shortName: 'Blair B',
+            avatarUrl: null,
+            label: 'Parent',
+            isModerator: false,
+            isApprover: false,
+            eligible: true,
+            hasIdentity: true,
+            identityKey: null,
+            generation: 1
+          }
+        ]
+      }
+      if (parts[2] === 'conversations' && parts[4] === 'epochs') {
+        return {
+          latest: 0,
+          needsRotation: false,
+          noHolder: false,
+          epochs: [],
+          boxes: []
+        }
+      }
+      return undefined
+    }
+  }
+
+  const summary = (over: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'cnv_hawks',
+    kind: 'teamMembers',
+    title: 'Hawks Members',
+    scope: { type: 'team', id: 'tem_hawks' },
+    scopeName: 'Hawks',
+    lastSeq: 0,
+    lastMessageAt: null,
+    unread: 0,
+    canPost: true,
+    canModerate: false,
+    locked: false,
+    noHolder: false,
+    closed: false,
+    memberCount: 3,
+    ...over
+  })
+
+  it('has a Chat tab with an unread dot, a list, a chat and its members', async function () {
+    const fake = new FakeKeys()
+    fakeApi(fake, chats([summary({ unread: 2 })]))
+    showRoute({ name: 'chat' }, true)
+    await render(<App />)
+    await until('the list', () => text().includes('Hawks Members'))
+    expect(currentRoute()).deep.equals({ name: 'chat' })
+    expect(document.querySelector('[data-testid="chat-unread"]')).not.equals(
+      null
+    )
+    expect(text()).contains('New message')
+    await press('Hawks Members')
+    await until('the chat', () => text().includes('No messages yet'))
+    expect(currentRoute()).deep.equals({
+      name: 'conversation',
+      conversationId: 'cnv_hawks'
+    })
+    await press('Members')
+    await until('the members', () =>
+      text().includes('Members of Hawks Members')
+    )
+    expect(currentRoute()).deep.equals({
+      name: 'chatMembers',
+      conversationId: 'cnv_hawks'
+    })
+  })
+
+  it('starts a DM at /chat/new, which takes the form’s place', async function () {
+    const fake = new FakeKeys()
+    const dm = summary({
+      id: 'cnv_dm',
+      kind: 'dm',
+      title: null,
+      scope: null,
+      scopeName: null,
+      memberCount: 2
+    })
+    fakeApi(fake, chats([dm]))
+    showRoute({ name: 'chatNew' }, true)
+    await render(<App />)
+    await until('the candidates', () => text().includes('Pat P'))
+    await press('Pick Pat P')
+    await press('Start conversation')
+    await until('the chat', () => text().includes('No messages yet'))
+    expect(currentRoute()).deep.equals({
+      name: 'conversation',
+      conversationId: 'cnv_dm'
+    })
+  })
+
+  it('opens a DM’s members by address, and leaves it for the list', async function () {
+    const fake = new FakeKeys()
+    const dm = summary({
+      id: 'cnv_dm',
+      kind: 'dm',
+      title: null,
+      scope: null,
+      scopeName: null,
+      memberCount: 2
+    })
+    const asked = fakeApi(fake, (method, path, body) =>
+      path === '/chat/dms/cnv_dm/members/me'
+        ? { closed: false }
+        : chats([dm])(method, path, body)
+    )
+    showRoute({ name: 'chatMembers', conversationId: 'cnv_dm' }, true)
+    await render(<App />)
+    await until('the members', () => text().includes('Leave this conversation'))
+    await press('Leave this conversation')
+    await until('the list', () => text().includes('Follow a team'))
+    expect(asked).includes('DELETE /chat/dms/cnv_dm/members/me')
+    expect(currentRoute()).deep.equals({ name: 'chat' })
+  })
+
+  it('opens a league’s Org chat from its card on Home', async function () {
+    const fake = new FakeKeys()
+    fakeApi(
+      fake,
+      chats([
+        summary({
+          id: 'cnv_org',
+          kind: 'leagueOrg',
+          title: 'QPLL Org',
+          scope: { type: 'league', id: 'lea_qpll' },
+          scopeName: 'QPLL'
+        })
+      ])
+    )
+    showRoute({ name: 'home' }, true)
+    await render(<App />)
+    await until('the league card', () => text().includes('LEAGUES'))
+    await press('QPLL, QPLL Org')
+    await until('the chat', () => text().includes('No messages yet'))
+    expect(currentRoute()).deep.equals({
+      name: 'conversation',
+      conversationId: 'cnv_org'
+    })
+    expect(document.querySelector('[data-testid="chat-unread"]')).equals(null)
   })
 })

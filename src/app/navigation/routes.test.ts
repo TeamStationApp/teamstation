@@ -277,10 +277,36 @@ describe('addresses', function () {
       name: 'chatDevices'
     })
     expect(roundTrip({ name: 'chatLink' })).deep.equals({ name: 'chatLink' })
-    // Nothing else under /chat yet.
-    expect(parseRoute('/chat')).deep.equals({ name: 'home' })
-    expect(parseRoute('/chat/other')).deep.equals({ name: 'home' })
     expect(parseRoute('/chat/devices/more')).deep.equals({ name: 'home' })
+  })
+
+  it('reads and writes the chat list, a chat, its members and a new DM', function () {
+    expect(parseRoute('/chat')).deep.equals({ name: 'chat' })
+    expect(parseRoute('/chat/new')).deep.equals({ name: 'chatNew' })
+    expect(parseRoute('/chat/cnv_abc')).deep.equals({
+      name: 'conversation',
+      conversationId: 'cnv_abc'
+    })
+    expect(parseRoute('/chat/cnv_abc/members')).deep.equals({
+      name: 'chatMembers',
+      conversationId: 'cnv_abc'
+    })
+    for (const route of [
+      { name: 'chat' as const },
+      { name: 'chatNew' as const },
+      { name: 'conversation' as const, conversationId: 'cnv_abc' },
+      { name: 'chatMembers' as const, conversationId: 'cnv_abc' }
+    ]) {
+      expect(roundTrip(route)).deep.equals(route)
+    }
+    expect(routePath({ name: 'chatMembers', conversationId: 'cnv_x' })).equals(
+      '/chat/cnv_x/members'
+    )
+    // Nothing else under a chat, and no members of the fixed addresses.
+    expect(parseRoute('/chat/cnv_abc/other')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/new/members')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/devices/members')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/cnv_abc/members/x')).deep.equals({ name: 'home' })
   })
 
   it('has no chat bench outside a phone build made for it', function () {

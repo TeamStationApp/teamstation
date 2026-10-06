@@ -626,7 +626,9 @@ describe('api client', function () {
       kind: 'teamMembers',
       title: 'Hawks Members',
       scope: { type: 'team', id: 'tem_1' },
+      scopeName: 'Hawks',
       lastSeq: 3,
+      lastMessageAt: '2027-04-01T17:00:00.000Z',
       unread: 1,
       canPost: true,
       canModerate: false,
@@ -641,6 +643,7 @@ describe('api client', function () {
       kind: 'dm',
       title: null,
       scope: null,
+      scopeName: null,
       memberCount: 1,
       people: [{ userId: 7, shortName: 'Eli C', left: true }]
     }

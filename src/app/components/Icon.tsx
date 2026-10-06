@@ -47,6 +47,14 @@ export type IconName =
   | 'notifications'
   | 'search'
   | 'filter_alt'
+  | 'chat'
+  | 'send'
+  | 'attach_file'
+  | 'add_reaction'
+  | 'mood'
+  | 'lock'
+  | 'group'
+  | 'edit'
 
 export interface IconProps {
   name: IconName
