@@ -473,6 +473,149 @@ describe('a player, and who may change their name', function () {
     }
   })
 
+  /**
+   * Two rows closed into the child, one into the other, and a parent who can
+   * see the team and is linked to the oldest of them alone: what an import
+   * leaves when a child's placeholder rows are merged into the real one. Every
+   * row it adds is gone again once `check` returns.
+   */
+  const withClosedRows = async (
+    check: (rows: {
+      oldest: number
+      closer: number
+      parent: number
+    }) => Promise<void>
+  ): Promise<void> => {
+    const [oldest, closer, parent] = [mintUser(), mintUser(), mintUser()]
+    await db
+      .insertInto('users')
+      .values([
+        {
+          id: closer,
+          legacyId: legacyId(closer),
+          display_name: 'Jordan P',
+          merged_into: childId
+        },
+        {
+          id: oldest,
+          legacyId: legacyId(oldest),
+          display_name: 'Jordan',
+          merged_into: closer
+        },
+        {
+          id: parent,
+          legacyId: legacyId(parent),
+          display_name: 'Albert Pujols'
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({ id: makeId('membership'), team_id: teamId, user_id: parent })
+      .execute()
+    await db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: parent,
+        related_user_id: oldest,
+        kind: 'guardian'
+      })
+      .execute()
+    try {
+      await check({ oldest, closer, parent })
+    } finally {
+      await db
+        .deleteFrom('users')
+        .where('id', 'in', [parent, oldest, closer])
+        .execute()
+    }
+  }
+
+  it('offers the name field to a parent linked to a row merged into the child', async function () {
+    await withClosedRows(async ({ parent }) => {
+      const page = await get(`/players/${childId}`, parent)
+      expect(page.status).equals(200)
+      expect(asPlayerDetail(page.body).canEditName).equals(true)
+      const name = await get(`/players/${childId}/name`, parent)
+      expect(name.status).equals(200)
+      expect(name.body).deep.include({ lastName: 'Pujols' })
+
+      const stranger = await get(`/players/${childId}`, strangerId)
+      expect(asPlayerDetail(stranger.body).canEditName).equals(false)
+    })
+  })
+
+  it('sends the name of a merged-away row on to the open row, and answers anybody refused with 404', async function () {
+    await withClosedRows(async ({ oldest, closer, parent }) => {
+      const ask = async (id: number, viewer: number): Promise<Response> =>
+        await fetch(`${base}/players/${id}/name`, {
+          headers: { 'x-test-user': String(viewer) },
+          redirect: 'manual'
+        })
+
+      // Straight to the open row, however long the chain: one hop, not one
+      // per merge.
+      for (const id of [oldest, closer]) {
+        for (const viewer of [parent, parentId, teamCoachId]) {
+          const answer = await ask(id, viewer)
+          expect(answer.status, `${id} ${viewer}`).equals(303)
+          expect(answer.headers.get('location')).equals(
+            `/api/v1/players/${childId}/name`
+          )
+        }
+        for (const viewer of [strangerId, otherCoachId]) {
+          expect((await ask(id, viewer)).status, String(viewer)).equals(404)
+        }
+      }
+    })
+  })
+
+  it('answers a closed row itself when its chain never reaches an open one', async function () {
+    // Two rows closed into each other: bad data, but no reason to send the
+    // editor round in circles.
+    const [one, two] = [mintUser(), mintUser()]
+    await db
+      .insertInto('users')
+      .values([
+        { id: one, legacyId: legacyId(one), display_name: 'Jordan' },
+        { id: two, legacyId: legacyId(two), display_name: 'Jordan P' }
+      ])
+      .execute()
+    await db
+      .updateTable('users')
+      .set({ merged_into: two })
+      .where('id', '=', one)
+      .execute()
+    await db
+      .updateTable('users')
+      .set({ merged_into: one })
+      .where('id', '=', two)
+      .execute()
+    await db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: parentId,
+        related_user_id: one,
+        kind: 'guardian'
+      })
+      .execute()
+    try {
+      const answer = await fetch(`${base}/players/${one}/name`, {
+        headers: { 'x-test-user': String(parentId) },
+        redirect: 'manual'
+      })
+      expect(answer.status).equals(200)
+      expect(await answer.json()).deep.include({
+        userId: one,
+        displayName: 'Jordan'
+      })
+    } finally {
+      await db.deleteFrom('users').where('id', 'in', [one, two]).execute()
+    }
+  })
+
   const put = async (
     path: string,
     viewer: number,

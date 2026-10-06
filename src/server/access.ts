@@ -1,6 +1,7 @@
 import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely'
 
 import { type Role, ROLE_FLAGS, ROLES } from '../common/roles'
+import { type OnePerson, onePerson } from './admin/people'
 import type { Database } from './db/database'
 
 /**
@@ -390,21 +391,65 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
  * This is also the only way to **read** the whole name: it is sent nowhere
  * but `GET /players/:userId/name`, which this guards. Everything else — the
  * roster, the player page, the box score — carries `Jordan P` alone.
+ *
+ * A parent's link and the player's team rows are read across every row of
+ * each person, not one id each. A merge closes a row into another and leaves
+ * what was written about it where it was, so a parent's link names the row
+ * their child had when it was made, and may hang from a row of the parent's
+ * own that has since been closed into the one they sign in as. Asking about
+ * one id each cost `Mookie Betts`'s parents his name the day the placeholder
+ * row they were linked to was merged into his real one. Asked across every
+ * row, undoing a merge takes the parent's answer back with it: no link was
+ * copied that would have to be found and removed. Team rows are another
+ * matter: `closeInto` moves them onto the row it keeps, and a split leaves them
+ * there, so the staff answer stays where the merge put it.
+ *
+ * That makes the name follow a merge, right or wrong. A merge says two rows
+ * are one person, and while a wrong one stands both sides of it are one:
+ *
+ * - Two boys called `Nolan` on one team: the parents of each can read the
+ *   other's surname, as every other read already treats the two as one, until
+ *   `repair-people` splits them at a game they both played in.
+ * - Two parents who share a name, closed together by `same-person`: each can
+ *   read the names of the other's children, and a father closed together with
+ *   a son of the same name is taken for the son himself. Adults have no plays,
+ *   so `repair-people` never finds the clash; such a merge is undone by hand.
+ *
+ * The staff's roles are still read from the row the asker is signed in as, the
+ * way every other rule here reads them.
+ *
+ * A caller that has already gathered the player's rows passes them as
+ * `known.player`, so a page does not walk the same chain twice. Rows that do
+ * not include `playerUserId` are somebody else's and are not used.
  */
 export async function mayEditName(
   db: Kysely<Database>,
   actorUserId: number,
   playerUserId: number,
-  about: { isAdmin: boolean }
+  about: { isAdmin: boolean },
+  known: { player?: OnePerson } = {}
 ): Promise<boolean> {
   if (about.isAdmin) return true
   if (actorUserId === playerUserId) return true
 
+  const gathered =
+    known.player?.userIds.includes(playerUserId) === true
+      ? known.player
+      : undefined
+  const [actor, player] = await Promise.all([
+    onePerson(db, actorUserId),
+    gathered ?? onePerson(db, playerUserId)
+  ])
+  // The asker's own row among the player's rows is the player themselves.
+  // Comparing where the two walks stopped is not enough: rows closed into
+  // each other stop each walk on the other row.
+  if (player.userIds.includes(actorUserId)) return true
+
   const parent = await db
     .selectFrom('user_links')
     .select(['id'])
-    .where('user_id', '=', actorUserId)
-    .where('related_user_id', '=', playerUserId)
+    .where('user_id', 'in', actor.userIds)
+    .where('related_user_id', 'in', player.userIds)
     .where('kind', 'in', ['guardian', 'family'])
     .executeTakeFirst()
   if (parent != null) return true
@@ -415,7 +460,7 @@ export async function mayEditName(
   const plays = await db
     .selectFrom('memberships')
     .select(['id'])
-    .where('user_id', '=', playerUserId)
+    .where('user_id', 'in', player.userIds)
     .where('is_player', '=', true)
     .where('team_id', 'in', [...staffOf])
     .executeTakeFirst()

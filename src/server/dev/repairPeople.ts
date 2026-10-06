@@ -4,6 +4,8 @@ import {
   keepTheFullerName,
   onePerson,
   splitByClash,
+  strandedNote,
+  strandedRows,
   tidyClosedRows
 } from '../admin/people'
 import { makeDatabase } from '../db/database'
@@ -219,11 +221,16 @@ async function main(): Promise<void> {
         .execute()
     }
 
-    const moved = apply ? await tidyClosedRows(db) : 0
+    // A dry run moves nothing, and still says which rows a tidy could not.
+    const tidied = apply
+      ? await tidyClosedRows(db)
+      : { moved: 0, stranded: await strandedRows(db) }
     console.log(
       `\n${opened} rows split off, ${renamed} names restored, ` +
-        `${deduped} duplicates dropped, ${moved} memberships moved`
+        `${deduped} duplicates dropped, ${tidied.moved} memberships moved`
     )
+    const note = strandedNote(tidied.stranded)
+    if (note != null) console.log(note)
     console.log(
       `${unvouched} team rows have no plays behind them and were kept: ` +
         'without a roster to read, pruning them would delete parents, ' +

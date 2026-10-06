@@ -40,6 +40,7 @@ async function main(): Promise<void> {
       return
     }
 
+    let closed = 0
     for (const pair of pairs) {
       // Whichever of the two has nothing on it is the one that closes. When
       // both have plays this still points the emptier at the fuller name,
@@ -51,9 +52,9 @@ async function main(): Promise<void> {
       // `closeInto` takes the teams with the person. Setting `merged_into` by
       // hand and deleting the membership is what took 31 children off six
       // rosters, because every roster asks for people who are still open.
-      await closeInto(db, closing, keeping)
+      if ((await closeInto(db, closing, keeping)).closed) closed += 1
     }
-    console.log(`closed ${pairs.length}`)
+    console.log(`closed ${closed}`)
   } finally {
     await db.destroy()
   }
