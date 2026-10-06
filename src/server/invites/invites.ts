@@ -2,10 +2,11 @@ import { randomBytes } from 'node:crypto'
 
 import type { Kysely } from 'kysely'
 
-import { badRequest, conflict } from '../../common/errors'
+import { badRequest, conflict, forbidden } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import type { AdminScopes } from '../access'
 import type { Database } from '../db/database'
+import { linkGuardian, type RelativeKind } from '../people/guardians'
 
 /**
  * Invite codes: who may make one, what one is worth, and what redeeming does.
@@ -37,6 +38,15 @@ export interface Invite {
   createdAt: Date
   /** The one person it was made out to, or null for a link anybody may use. */
   forEmail: string | null
+  /** Who made it, or null when nobody is recorded. */
+  createdBy: number | null
+  /**
+   * The player whose guardian, or adult family member by `relativeKind`,
+   * redeeming this makes somebody. Only the address it was made out to may
+   * redeem it.
+   */
+  guardianOfUserId: number | null
+  relativeKind: RelativeKind | null
 }
 
 /** Why an invite cannot be redeemed, or null when it can. */
@@ -53,7 +63,10 @@ const FIELDS = [
   'expires_at',
   'revoked_at',
   'created_at',
-  'for_email'
+  'for_email',
+  'created_by',
+  'guardian_of_user_id',
+  'relative_kind'
 ] as const
 
 interface InviteFields {
@@ -68,6 +81,9 @@ interface InviteFields {
   revoked_at: Date | string | null
   created_at: Date | string
   for_email: string | null
+  created_by: number | null
+  guardian_of_user_id: number | null
+  relative_kind: RelativeKind | null
 }
 
 const asDate = (value: Date | string | null): Date | null =>
@@ -85,7 +101,10 @@ function shape(row: InviteFields): Invite {
     expiresAt: asDate(row.expires_at),
     revokedAt: asDate(row.revoked_at),
     createdAt: asDate(row.created_at) ?? new Date(),
-    forEmail: row.for_email
+    forEmail: row.for_email,
+    createdBy: row.created_by,
+    guardianOfUserId: row.guardian_of_user_id,
+    relativeKind: row.relative_kind
   }
 }
 
@@ -223,6 +242,8 @@ export interface NewInvite {
   createdAt?: Date
   /** Made out to one address, mailed to it, and good for one use. */
   forEmail?: string
+  /** For a team invite that makes its redeemer a relative of this player. */
+  guardianOf?: { userId: number; kind: RelativeKind }
 }
 
 export async function createInvite(
@@ -246,6 +267,8 @@ export async function createInvite(
     expires_at: invite.expiresAt ?? null,
     source: invite.source ?? 'manual',
     for_email: invite.forEmail ?? null,
+    guardian_of_user_id: invite.guardianOf?.userId ?? null,
+    relative_kind: invite.guardianOf?.kind ?? null,
     ...(invite.createdAt == null ? {} : { created_at: invite.createdAt })
   }
   await db.insertInto('invites').values(row).execute()
@@ -345,6 +368,9 @@ export async function redeemInvite(
 ): Promise<Redemption> {
   const problem = inviteProblem(invite)
   if (problem != null) throw badRequest(`That invite is ${problem}`)
+  if (invite.guardianOfUserId != null) {
+    await mustHoldInvitedAddress(db, invite, userId)
+  }
 
   return await db.transaction().execute(async trx => {
     const recorded = await trx
@@ -373,12 +399,60 @@ export async function redeemInvite(
   })
 }
 
-/** Writes the one row the scope calls for, or leaves a stronger one alone. */
+/**
+ * A guardian invite is good only for the address it was made out to.
+ *
+ * The redeemer must hold that address on `user_emails`, compared without
+ * regard to case. An account made by signing in through the invite from
+ * that address holds it, so a forwarded link opens nothing under any other
+ * account, and is refused with reason `inviteForAnotherEmail`.
+ */
+async function mustHoldInvitedAddress(
+  db: Kysely<Database>,
+  invite: Invite,
+  userId: number
+): Promise<void> {
+  const wanted = (invite.forEmail ?? '').trim().toLowerCase()
+  const held =
+    wanted === ''
+      ? undefined
+      : await db
+          .selectFrom('user_emails')
+          .select(['id'])
+          .where('user_id', '=', userId)
+          .where(eb => eb.fn('lower', ['email']), '=', wanted)
+          .executeTakeFirst()
+  if (held == null) {
+    throw forbidden('This invitation was sent to another address', {
+      reason: 'inviteForAnotherEmail'
+    })
+  }
+}
+
+/**
+ * Writes the one row the scope calls for, or leaves a stronger one alone.
+ *
+ * A guardian invite writes no membership of its own: it links the redeemer
+ * to the player, and the link puts them on the team with a membership that
+ * says where it came from.
+ */
 async function grant(
   trx: Kysely<Database>,
   invite: Invite,
   userId: number
 ): Promise<boolean> {
+  if (invite.scopeType === 'team' && invite.guardianOfUserId != null) {
+    const linked = await linkGuardian(
+      trx,
+      invite.guardianOfUserId,
+      userId,
+      invite.scopeId,
+      invite.createdBy,
+      invite.relativeKind ?? 'guardian'
+    )
+    return linked.created
+  }
+
   if (invite.scopeType === 'team') {
     const added = await trx
       .insertInto('memberships')

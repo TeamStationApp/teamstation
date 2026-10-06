@@ -47,6 +47,7 @@ import { migration048DropStatRollups } from './048dropStatRollups'
 import { migration049ExpandedStats } from './049expandedStats'
 import { migration050OAuth } from './050oauth'
 import { migration050TeamFollows } from './050teamFollows'
+import { migration051GuardiansAndAccounts } from './051guardiansAndAccounts'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -97,5 +98,6 @@ export const migrations: Migration[] = [
   migration048DropStatRollups,
   migration049ExpandedStats,
   migration050OAuth,
-  migration050TeamFollows
+  migration050TeamFollows,
+  migration051GuardiansAndAccounts
 ]

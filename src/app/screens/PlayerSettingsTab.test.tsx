@@ -3,8 +3,10 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { ageOn } from '../../common/age'
 import {
   asRosterEntry,
+  type Guardian,
   type RosterEntry,
   type TeamStationClient
 } from '../../common/api'
@@ -82,12 +84,42 @@ interface Saved {
   settings: PlayerSettings
 }
 
+interface Family {
+  guardians: Guardian[] | Error
+  /** `YYYY-MM`, null, or undefined for a viewer who is not shown it. */
+  birthMonth?: string | null
+  births: Array<{ year: number; month: number } | null>
+}
+
 function settingsClient(
   roster: RosterEntry[] | Error,
   saves: Saved[],
-  answer?: (settings: PlayerSettings) => RosterEntry | Error
+  answer?: (settings: PlayerSettings) => RosterEntry | Error,
+  family: Family = { guardians: [], birthMonth: null, births: [] }
 ): TeamStationClient {
   return {
+    player: async () => ({
+      userId: 7,
+      name: 'Jordan P',
+      teams: [],
+      ...(family.birthMonth === undefined
+        ? {}
+        : { birthMonth: family.birthMonth })
+    }),
+    guardians: async () => {
+      if (family.guardians instanceof Error) throw family.guardians
+      return family.guardians
+    },
+    setBirthMonth: async (
+      _userId: string,
+      birth: { year: number; month: number } | null
+    ) => {
+      family.births.push(birth)
+      if (birth?.year === 1999) throw new Error('Not that year')
+      return birth == null
+        ? null
+        : `${birth.year}-${String(birth.month).padStart(2, '0')}`
+    },
     roster: async () => {
       if (roster instanceof Error) throw roster
       return roster
@@ -217,6 +249,122 @@ describe('a player’s settings form', function () {
       />
     )
     expect(text()).includes('Cannot load this player')
+  })
+
+  it('picks a birth month and a year, never a day, and can clear it', async function () {
+    const family: Family = { guardians: [], birthMonth: null, births: [] }
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], [], undefined, family)}
+        teamId="t1"
+        userId="7"
+      />
+    )
+    expect(text()).includes('BIRTH MONTH')
+    expect(text()).includes('Not set')
+    expect(document.querySelector('[aria-label*="Day"]')).equals(null)
+    const saveBirth = (): boolean =>
+      labelled('Save birth month').getAttribute('aria-disabled') === 'true'
+    expect(saveBirth()).equals(true)
+    expect(labelled('Clear birth month').getAttribute('aria-disabled')).equals(
+      'true'
+    )
+
+    const year = new Date().getUTCFullYear() - 12
+    await press('Month March')
+    expect(checked('Month March')).equals(true)
+    await press('One year earlier')
+    await press('One year earlier')
+    await press('One year later')
+    expect(text()).includes(String(year - 1))
+    await press('Save birth month')
+    expect(family.births).deep.equals([{ year: year - 1, month: 3 }])
+    expect(text()).includes(
+      `Born March ${year - 1} \u00b7 ${ageOn(year - 1, 3, new Date())} today`
+    )
+    expect(text()).includes('Birth month saved.')
+    expect(saveBirth()).equals(true)
+
+    await press('Clear birth month')
+    expect(family.births.at(-1)).equals(null)
+    expect(text()).includes('Not set')
+    expect(text()).includes('Birth month cleared.')
+
+    // A refusal stays on the form.
+    for (let n = year - 1; n > 1999; n -= 1) await press('One year earlier')
+    await press('Month May')
+    await press('Save birth month')
+    expect(text()).includes('Not that year')
+  })
+
+  it('shows no birth month to somebody the server does not show it to', async function () {
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], [], undefined, {
+          guardians: [],
+          births: []
+        })}
+        teamId="t1"
+        userId="7"
+      />
+    )
+    expect(text()).not.includes('BIRTH MONTH')
+    expect(text()).includes('GUARDIANS AND FAMILY')
+  })
+
+  it('reads a birth month already set', async function () {
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], [], undefined, {
+          guardians: [],
+          birthMonth: '2012-11',
+          births: []
+        })}
+        teamId="t1"
+        userId="7"
+      />
+    )
+    expect(text()).includes('Born November 2012')
+    expect(checked('Month November')).equals(true)
+  })
+
+  it('lists the guardians and family, and opens the modal to change them', async function () {
+    const family: Family = {
+      guardians: [
+        { userId: 11, name: 'Gale Guardian', email: 'g1@x', kind: 'guardian' },
+        { userId: 12, name: 'Blair Brooks', email: null, kind: 'family' }
+      ],
+      births: []
+    }
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], [], undefined, family)}
+        teamId="t1"
+        userId="7"
+      />
+    )
+    expect(text()).includes('GUARDIANS AND FAMILY')
+    expect(text()).includes('Gale Guardian')
+    expect(text()).includes('Guardian \u00b7 g1@x')
+    expect(text()).includes('Family')
+    await press('Change guardians and family')
+    expect(text()).includes('Guardians and family of Jordan P')
+    await press('Done')
+    expect(text()).not.includes('Guardians and family of Jordan P')
+  })
+
+  it('says when the guardians cannot be read', async function () {
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], [], undefined, {
+          guardians: new Error('offline'),
+          births: []
+        })}
+        teamId="t1"
+        userId="7"
+      />
+    )
+    expect(text()).includes('Cannot load the guardians.')
   })
 
   it('treats an emptied jersey as no number, and positions as a set', function () {

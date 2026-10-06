@@ -7,6 +7,7 @@ import type {
   SignInWait,
   TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { Button, Card, Screen, TextField } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -74,9 +75,7 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
     setBusy(true)
     work()
       .catch((caught: unknown) => {
-        setError(
-          caught instanceof Error ? caught.message : 'Something went wrong'
-        )
+        setError(joinError(caught))
       })
       .finally(() => {
         setBusy(false)
@@ -262,6 +261,21 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
       </Card>
     </Screen>
   )
+}
+
+/**
+ * What went wrong, in words. An invitation made out to somebody else's
+ * address says so, rather than the server's wording.
+ */
+export function joinError(caught: unknown): string {
+  if (
+    caught instanceof HttpError &&
+    (caught.details as { reason?: unknown } | undefined)?.reason ===
+      'inviteForAnotherEmail'
+  ) {
+    return lstrings.join_for_another_email
+  }
+  return caught instanceof Error ? caught.message : 'Something went wrong'
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

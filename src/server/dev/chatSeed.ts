@@ -8,6 +8,7 @@ import type { Role } from '../../common/roles'
 import { addEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
 import { type Database, makeDatabase } from '../db/database'
+import { linkGuardian } from '../people/guardians'
 
 /**
  * The chat fixture: QPLL, its Spring 2027 season, and Hawks, Eagles and Owls
@@ -29,7 +30,11 @@ import { type Database, makeDatabase } from '../db/database'
  * - **Site admin** Z.
  * - **Hawks:** admin Ha (an owner membership), coach Hc, scorekeeper Hk,
  *   songkeeper Hs; players P, R and T with accounts, and Q without one;
- *   invited parents A, B and C, and parent N; fan F, who follows Hawks.
+ *   invited parents A, B and C, and parent N; fan F, who follows Hawks;
+ *   G1 and G2, P's guardians, on Hawks through those links.
+ * - **Birth months**, from the day the seed runs: P is 15, R is 12, and T,
+ *   born exactly 13 years before this month, is still 12 until the first of
+ *   next month; Eagles player E is 16. Nobody else has one.
  * - **Eagles:** admin Ea, coach Ec, scorekeeper Ek, songkeeper Es; player E,
  *   who also follows Hawks; invited parents D and D2.
  * - **Owls:** a full team with nobody on it.
@@ -58,6 +63,10 @@ export interface SeedPerson {
   /** A role on the team above, or on the league or season. */
   roles?: Array<{ on: 'team' | 'season' | 'league'; role: Role }>
   follows?: TeamKey[]
+  /** A guardian of this player (by key), linked on the player's team. */
+  guardianOf?: string
+  /** Born this many years and months before the month the seed runs. */
+  born?: { years: number; months: number }
 }
 
 const at = (key: string): string => `${key.toLowerCase()}@chat.example.com`
@@ -98,14 +107,19 @@ export const SEED_PEOPLE: SeedPerson[] = [
     ['Hk', 'Holly', 'Scorer', 'scorekeeper'],
     ['Hs', 'Hugo', 'Songs', 'songkeeper']
   ]),
-  player('hawks', 'P', 'Pat', 'Player'),
-  player('hawks', 'R', 'Riley', 'Rookie'),
-  player('hawks', 'T', 'Trea', 'Turner'),
+  { ...player('hawks', 'P', 'Pat', 'Player'), born: { years: 15, months: 1 } },
+  {
+    ...player('hawks', 'R', 'Riley', 'Rookie'),
+    born: { years: 12, months: 1 }
+  },
+  { ...player('hawks', 'T', 'Trea', 'Turner'), born: { years: 13, months: 0 } },
   { ...player('hawks', 'Q', 'Quilvio', 'Veras'), email: null },
   parent('hawks', 'A', 'Alex', 'Ashby'),
   parent('hawks', 'B', 'Blair', 'Brooks'),
   parent('hawks', 'C', 'Casey', 'Cole'),
   parent('hawks', 'N', 'Nora', 'Nash'),
+  guardian('P', 'G1', 'Gale', 'Guardian'),
+  guardian('P', 'G2', 'Glen', 'Guardian'),
   {
     key: 'F',
     firstName: 'Frankie',
@@ -119,7 +133,11 @@ export const SEED_PEOPLE: SeedPerson[] = [
     ['Ek', 'Ellis', 'Scorer', 'scorekeeper'],
     ['Es', 'Emery', 'Songs', 'songkeeper']
   ]),
-  { ...player('eagles', 'E', 'Eli', 'Eagle'), follows: ['hawks'] },
+  {
+    ...player('eagles', 'E', 'Eli', 'Eagle'),
+    follows: ['hawks'],
+    born: { years: 16, months: 1 }
+  },
   parent('eagles', 'D', 'Dana', 'Dunn'),
   parent('eagles', 'D2', 'Drew', 'Dalton')
 ]
@@ -170,6 +188,28 @@ function parent(
     email: at(key),
     team: { key: team, role: 'member', isPlayer: false }
   }
+}
+
+function guardian(
+  of: string,
+  key: string,
+  firstName: string,
+  lastName: string
+): SeedPerson {
+  return { key, firstName, lastName, email: at(key), guardianOf: of }
+}
+
+/** The year and month of birth `born` puts before `now`'s month, in UTC. */
+export function birthMonthOf(
+  now: Date,
+  born: { years: number; months: number }
+): { year: number; month: number } {
+  const months =
+    now.getUTCFullYear() * 12 +
+    now.getUTCMonth() -
+    born.years * 12 -
+    born.months
+  return { year: Math.floor(months / 12), month: (months % 12) + 1 }
 }
 
 export interface SeededPerson {
@@ -269,7 +309,7 @@ export async function chatSeed(
         person.email == null
           ? null
           : (options.password ?? randomBytes(9).toString('base64url'))
-      const userId = await upsertPerson(trx, person, password)
+      const userId = await upsertPerson(trx, person, password, now)
       const team = person.team
       if (team != null) {
         await trx
@@ -320,6 +360,23 @@ export async function chatSeed(
         email: person.email,
         password
       }
+    }
+
+    // Guardians last, once the players they guard are on their teams.
+    for (const person of SEED_PEOPLE) {
+      if (person.guardianOf == null) continue
+      const ward = SEED_PEOPLE.find(item => item.key === person.guardianOf)
+      const wardId = people[person.guardianOf]?.userId
+      if (ward?.team == null || wardId == null) {
+        throw new Error(`${person.key} guards nobody on a team`)
+      }
+      await linkGuardian(
+        trx,
+        wardId,
+        people[person.key].userId,
+        teams[ward.team.key],
+        null
+      )
     }
 
     return { leagueId, seasonId, teams, games, videoId, people }
@@ -491,8 +548,10 @@ async function upsertVideo(
 async function upsertPerson(
   trx: Trx,
   person: SeedPerson,
-  password: string | null
+  password: string | null,
+  now: Date
 ): Promise<number> {
+  const born = person.born == null ? undefined : birthMonthOf(now, person.born)
   const values = {
     display_name: `${person.firstName} ${person.lastName}`,
     first_name: person.firstName,
@@ -500,6 +559,8 @@ async function upsertPerson(
     is_admin: person.isAdmin === true,
     password_hash: password == null ? null : await hashPassword(password),
     login_enabled: password != null,
+    birth_year: born?.year ?? null,
+    birth_month: born?.month ?? null,
     merged_into: null,
     updated_at: new Date()
   }

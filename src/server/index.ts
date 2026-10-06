@@ -45,6 +45,7 @@ import { directorUploadRoutes } from './routes/directorUploads'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
+import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -475,6 +476,7 @@ function runWorker(): void {
   )
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl }))
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
+  app.use('/api/v1', guardianRoutes(db, { sendInvite, publicUrl }))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use(
     '/api/v1',

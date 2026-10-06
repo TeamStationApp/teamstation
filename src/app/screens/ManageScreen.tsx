@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Switch, Text, View } from 'react-native'
 
 import {
   grantsOf,
@@ -14,6 +14,7 @@ import {
   Button,
   Card,
   flagLabel,
+  GuardiansModal,
   InvitePanel,
   RolesModal,
   Screen,
@@ -75,6 +76,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const [email, setEmail] = useState('')
   const [filter, setFilter] = useState('')
   const [changing, setChanging] = useState<ScopePerson | undefined>(undefined)
+  const [guarding, setGuarding] = useState<ScopePerson | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -195,6 +197,9 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
     },
     onChangeRole: (person: ScopePerson) => {
       setChanging(person)
+    },
+    onGuardians: (person: ScopePerson) => {
+      setGuarding(person)
     }
   }
 
@@ -349,6 +354,32 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
         </Card>
       </View>
 
+      {scopeKind === 'league' && page.scope.safesportLao != null && (
+        <View style={styles.section}>
+          <SectionHeader title={lstrings.manage_safesport_title} />
+          <Card style={styles.card}>
+            <View style={styles.switchRow}>
+              <Text style={[styles.name, styles.switchLabel]}>
+                {lstrings.manage_safesport_label}
+              </Text>
+              <Switch
+                accessibilityLabel={lstrings.manage_safesport_label}
+                value={page.scope.safesportLao}
+                disabled={busy}
+                onValueChange={next => {
+                  run(async () => {
+                    await client.setSafesport(scopeId, next)
+                  })
+                }}
+              />
+            </View>
+            <Text style={styles.detail}>
+              {lstrings.manage_safesport_detail}
+            </Text>
+          </Card>
+        </View>
+      )}
+
       {error != null && <Text style={styles.warning}>{error}</Text>}
 
       <InvitePanel
@@ -357,6 +388,18 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
         scopeId={scopeId}
         scopeName={page.scope.name}
       />
+
+      {guarding != null && (
+        <GuardiansModal
+          client={client}
+          teamId={scopeId}
+          playerId={guarding.userId}
+          playerName={guarding.displayName}
+          onClose={() => {
+            setGuarding(undefined)
+          }}
+        />
+      )}
 
       {changing != null && (
         <RolesModal
@@ -429,9 +472,18 @@ function PersonRow(props: {
   busy: boolean
   onRemove: (person: ScopePerson) => void
   onChangeRole: (person: ScopePerson) => void
+  onGuardians: (person: ScopePerson) => void
 }): React.ReactElement {
-  const { person, columns, scopeKind, scopeId, busy, onRemove, onChangeRole } =
-    props
+  const {
+    person,
+    columns,
+    scopeKind,
+    scopeId,
+    busy,
+    onRemove,
+    onChangeRole,
+    onGuardians
+  } = props
   const styles = getStyles(useTheme())
 
   const grantsFor = (
@@ -449,6 +501,10 @@ function PersonRow(props: {
   // cannot, so there is nothing to make an administrator of.
   const canHoldRole = person.emails.length > 0
   const roles = rolesOf(person, scopeKind, scopeId)
+  // A player on the team being managed has guardians to look after here.
+  const plays =
+    scopeKind === 'team' &&
+    person.teams.some(grant => grant.id === scopeId && grant.isPlayer === true)
 
   return (
     <View style={styles.row}>
@@ -459,6 +515,18 @@ function PersonRow(props: {
             ? lstrings.manage_no_email
             : person.emails.join(', ')}
         </Text>
+        {plays && (
+          <Button
+            label={lstrings.manage_guardians}
+            accessibilityLabel={`${lstrings.manage_guardians} ${person.displayName}`}
+            kind="text"
+            style={styles.guardiansButton}
+            disabled={busy}
+            onPress={() => {
+              onGuardians(person)
+            }}
+          />
+        )}
       </View>
       <Pressable
         style={styles.roleBox}
@@ -647,6 +715,17 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
     color: theme.secondaryTextColor
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  switchLabel: {
+    flex: 1
+  },
+  guardiansButton: {
+    alignSelf: 'flex-start'
   },
   tableScroll: {
     // `flexGrow`, not `minWidth: '100%'`. A percentage along a horizontal

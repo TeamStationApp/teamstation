@@ -128,18 +128,42 @@ interface Calls {
   roles: Array<{ userId: number; admin: boolean; flags: RoleFlag[] }>
   removed: number[]
   added: string[]
+  safesport: Array<{ leagueId: string; lao: boolean }>
+  guardiansOf: Array<{ teamId: string; userId: number }>
 }
 
 async function mount(
   page: ManagePage | Error = hawksPage(),
-  added: 'added' | 'invited' | 'already' = 'added'
+  added: 'added' | 'invited' | 'already' = 'added',
+  scope: { kind: 'league' | 'season' | 'team'; id: string } = {
+    kind: 'team',
+    id: 'tem_hawks'
+  }
 ): Promise<Calls> {
-  const calls: Calls = { roles: [], removed: [], added: [] }
+  const calls: Calls = {
+    roles: [],
+    removed: [],
+    added: [],
+    safesport: [],
+    guardiansOf: []
+  }
   const client = {
     managePage: async () => {
       if (page instanceof Error) throw page
       return page
     },
+    setSafesport: async (leagueId: string, lao: boolean) => {
+      calls.safesport.push({ leagueId, lao })
+      if (!(page instanceof Error)) {
+        page.scope = { ...page.scope, safesportLao: lao }
+      }
+      return lao
+    },
+    guardians: async (teamId: string, userId: number) => {
+      calls.guardiansOf.push({ teamId, userId })
+      return []
+    },
+    roster: async () => [],
     setRoles: async (
       _kind: string,
       _id: string,
@@ -182,7 +206,11 @@ async function mount(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <ManageScreen client={client} scopeKind="team" scopeId="tem_hawks" />
+        <ManageScreen
+          client={client}
+          scopeKind={scope.kind}
+          scopeId={scope.id}
+        />
       </ThemeProvider>
     )
     await delay(10)
@@ -334,6 +362,67 @@ describe('the manage page, with role flags', function () {
     expect(document.body.textContent).includes(
       'Season admin · from Spring 2026'
     )
+  })
+
+  it('offers Guardians on a player of this team, and on nobody else', async function () {
+    const page = hawksPage()
+    page.people.push(
+      person(7, 'Pia Player', {
+        teams: [
+          { id: 'tem_hawks', name: 'Hawks', role: 'member', isPlayer: true }
+        ]
+      })
+    )
+    const calls = await mount(page)
+    expect(buttonsNamed('Guardians').length).equals(1)
+    await press(labelled('Guardians Pia Player'))
+    expect(document.body.textContent).includes(
+      'Guardians and family of Pia Player'
+    )
+    expect(calls.guardiansOf).deep.equals([{ teamId: 'tem_hawks', userId: 7 }])
+    await press(labelled('Done'))
+    expect(document.body.textContent).not.includes(
+      'Guardians and family of Pia Player'
+    )
+  })
+
+  it('shows a league’s SafeSport switch, and turns it on and off', async function () {
+    const page = hawksPage()
+    page.scope = {
+      kind: 'league',
+      id: 'lea_spring',
+      name: 'Spring league',
+      safesportLao: false
+    }
+    const calls = await mount(page, 'added', {
+      kind: 'league',
+      id: 'lea_spring'
+    })
+    const text = document.body.textContent ?? ''
+    expect(text).includes('SafeSport Local Affiliated Organization')
+    expect(text).includes(
+      "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to a player under 18 must also include the player's parent or guardian, an adult family member, or another adult of the league. A league that is only a chartered Little League is not one."
+    )
+    const lao = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="SafeSport Local Affiliated Organization"]'
+      )!
+    expect(lao().checked).equals(false)
+    await press(lao())
+    expect(calls.safesport).deep.equals([{ leagueId: 'lea_spring', lao: true }])
+    expect(lao().checked).equals(true)
+    await press(lao())
+    expect(calls.safesport.at(-1)).deep.equals({
+      leagueId: 'lea_spring',
+      lao: false
+    })
+    // No team here, so no Guardians.
+    expect(buttonsNamed('Guardians')).deep.equals([])
+  })
+
+  it('shows no SafeSport switch on a team', async function () {
+    await mount()
+    expect(document.body.textContent).not.includes('SafeSport')
   })
 
   it('says so to somebody who does not administer it', async function () {
