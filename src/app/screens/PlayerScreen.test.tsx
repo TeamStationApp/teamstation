@@ -128,6 +128,7 @@ function playerClient(
       withoutVideo: 0
     }),
     playerStats: async () => stats,
+    guardians: async () => [],
     roster: async (teamId: string) => {
       rosters.push(teamId)
       return [jordan]

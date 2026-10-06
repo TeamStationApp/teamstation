@@ -35,6 +35,12 @@ export interface UsersTable {
   bats_source: 'import' | 'manual' | null
   /** Set when this account was absorbed by another; it is closed, not deleted. */
   merged_into: number | null
+  /**
+   * The year and month of birth, both or neither (051guardiansAndAccounts).
+   * Never a day: `ageOn` in `common/age.ts` reads an age from these two.
+   */
+  birth_year: number | null
+  birth_month: number | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -80,6 +86,11 @@ export interface LeaguesTable {
   /** Feet from home plate to the fence, for seasons that do not set their own. */
   fence_distance_ft: number | null
   spectator_access: Generated<'team' | 'league'>
+  /**
+   * A SafeSport Local Affiliated Organization, bound by the MAAPP. Set by the
+   * league's own administrators (051guardiansAndAccounts).
+   */
+  safesport_lao: Generated<boolean>
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -469,6 +480,12 @@ export interface InvitesTable {
   created_at: Timestamp
   /** Set when the invitation was made out to one address and mailed to it. */
   for_email: string | null
+  /**
+   * The player whose guardian (or adult family member, by `relative_kind`)
+   * redeeming this makes somebody. Both set together, on team invites only.
+   */
+  guardian_of_user_id: Generated<number | null>
+  relative_kind: Generated<'guardian' | 'family' | null>
 }
 
 /** Who redeemed which invite, and whether that is where their account began. */

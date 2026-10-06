@@ -428,13 +428,14 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
 /**
  * Whether somebody may see and **change** a player's whole name.
  *
- * A site administrator, a parent — a `user_links` row of kind `guardian` or
- * `family` — the player themselves, whose own name is their own business,
- * and the staff of a team the person plays for: anybody holding any role on
- * it, an administrator, coach, scorekeeper, songkeeper or videographer, set
- * on the team or carried down from its season or league, and its owner or
- * manager. Paul, 2026-10-02: team admins, coaches and other staff can see
- * and edit a child's full name.
+ * A site administrator, a guardian — a `user_links` row of kind `guardian`
+ * — the player themselves, whose own name is their own business, and the
+ * staff of a team the person plays for: anybody holding any role on it, an
+ * administrator, coach, scorekeeper, songkeeper or videographer, set on the
+ * team or carried down from its season or league, and its owner or manager.
+ * Paul, 2026-10-02: team admins, coaches and other staff can see and edit a
+ * child's full name. Not an adult family member, whose `family` link counts
+ * only for who may message the player.
  *
  * This is also the only way to **read** the whole name: it is sent nowhere
  * but `GET /players/:userId/name`, which this guards. Everything else — the
@@ -498,7 +499,7 @@ export async function mayEditName(
     .select(['id'])
     .where('user_id', 'in', actor.userIds)
     .where('related_user_id', 'in', player.userIds)
-    .where('kind', 'in', ['guardian', 'family'])
+    .where('kind', '=', 'guardian')
     .executeTakeFirst()
   if (parent != null) return true
 

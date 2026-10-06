@@ -1454,7 +1454,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           properties: {
             id: { type: 'string' },
             name: { type: 'string' },
-            role: { type: 'string' }
+            role: { type: 'string' },
+            isPlayer: {
+              type: 'boolean',
+              description: 'On a team grant only: whether they play on it'
+            }
           }
         },
         PendingPerson: {
@@ -1478,7 +1482,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               properties: {
                 kind: { type: 'string', enum: ['league', 'season', 'team'] },
                 id: { type: 'string' },
-                name: { type: 'string' }
+                name: { type: 'string' },
+                safesportLao: {
+                  type: 'boolean',
+                  description:
+                    'A league only: whether it is a SafeSport Local ' +
+                    'Affiliated Organization, bound by the MAAPP'
+                }
               }
             },
             tree: {
@@ -3409,6 +3419,126 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/teams/{teamId}/players/{userId}/guardians': {
+        get: {
+          summary: "A player's guardians and adult family members",
+          description:
+            'For the team’s administrators and coaches (inherited roles ' +
+            'count), the player, and the player’s guardians; anybody else, ' +
+            'and a user who is not a player on the team, gets 404. Each is ' +
+            '`{userId, name, email, kind}`, `kind` `guardian` or `family`, ' +
+            'guardians first.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          responses: {
+            200: { description: 'The guardians and family' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Link a guardian or adult family member',
+          description:
+            'For the team’s administrators and coaches. The body is ' +
+            '`{userId}` or `{email}`, with `kind` `guardian` (the default) ' +
+            'or `family`. A `userId` must be on a team the caller can see. ' +
+            'An address with an account links it at once; any other address ' +
+            'is sent an invitation that only that address can redeem. A ' +
+            'guardian is put on the team as a member, by the link; a family ' +
+            'link grants nothing. Somebody with no way to sign in is 400 with ' +
+            '`details.reason` `guardianNeedsAccount`. Audited. Answers 201 ' +
+            '`{guardians, invited?}`.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    userId: { type: 'string' },
+                    email: { type: 'string' },
+                    kind: { type: 'string', enum: ['guardian', 'family'] }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: { description: 'The guardians now, and any invitation sent' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/guardians/{guardianId}': {
+        delete: {
+          summary: 'Unlink a guardian or adult family member',
+          description:
+            'For the team’s administrators and coaches, and the guardian ' +
+            'themselves. The membership the link granted goes too, unless ' +
+            'they guard another player on the team, whose link then holds ' +
+            'it. Audited. Answers `{removed}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            teamIdParam,
+            userIdParam,
+            {
+              name: 'guardianId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: '`{removed}`' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/birth-month': {
+        put: {
+          summary: "Set or clear a player's birth month",
+          description:
+            'A year and a month, never a day: `{year, month}`, or ' +
+            '`{year: null, month: null}` to clear it. Any other field is 400. ' +
+            'For administrators and coaches of a team the player plays on, ' +
+            'and the player’s guardians; they alone see it, as `birthMonth` ' +
+            '`YYYY-MM` on `GET /players/{userId}`. Anybody else gets 404. ' +
+            'Audited. Answers `{userId, birthMonth}`.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['year', 'month'],
+                  additionalProperties: false,
+                  properties: {
+                    year: { type: ['integer', 'null'] },
+                    month: {
+                      type: ['integer', 'null'],
+                      minimum: 1,
+                      maximum: 12
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: '`{userId, birthMonth}`' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/players/{userId}/settings': {
         put: {
           summary: "Set a player's jersey, positions, bats and throws",
@@ -3855,6 +3985,43 @@ export function openApiDocument(version: string): OpenApiDocument {
                 }
               }
             },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/league/{leagueId}/safesport': {
+        put: {
+          summary: 'Say whether a league is a SafeSport LAO',
+          description:
+            'For the league’s own administrators and site admins; anybody ' +
+            'else, a season admin included, gets 404. `{lao: true}` marks the ' +
+            'league as a SafeSport Local Affiliated Organization, which binds ' +
+            'it to the MAAPP. Audited. Answers `{leagueId, safesportLao}`.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'leagueId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['lao'],
+                  properties: { lao: { type: 'boolean' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: '`{leagueId, safesportLao}`' },
+            400: errorResponse,
             401: errorResponse,
             404: errorResponse
           }

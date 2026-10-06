@@ -20,6 +20,7 @@ import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
+import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -153,6 +154,7 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(guardianRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
@@ -196,6 +198,7 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(guardianRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),

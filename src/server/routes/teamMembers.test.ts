@@ -1568,8 +1568,9 @@ describe('a team’s people by external id', function () {
         .select(['login_enabled'])
         .where('id', '=', known)
         .executeTakeFirstOrThrow()
-      // Never changed for somebody already here.
-      expect(user.login_enabled).equals(false)
+      // An address is a way to sign in, so the trigger from
+      // 051guardiansAndAccounts makes this an account.
+      expect(user.login_enabled).equals(true)
       signIns.push({ email: 'quin@example.test', userId: known, teamId })
     })
 

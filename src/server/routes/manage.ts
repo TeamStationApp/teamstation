@@ -118,8 +118,24 @@ export function manageRoutes(
         listInvites(db, scopeType, scopeId)
       ])
 
+      // A league says whether it is a SafeSport Local Affiliated
+      // Organization, for the switch its page draws.
+      const league =
+        scopeType === 'league'
+          ? await db
+              .selectFrom('leagues')
+              .select(['safesport_lao'])
+              .where('id', '=', scopeId)
+              .executeTakeFirst()
+          : undefined
+
       res.json({
-        scope: { kind: scopeType, id: scopeId, name },
+        scope: {
+          kind: scopeType,
+          id: scopeId,
+          name,
+          ...(league == null ? {} : { safesportLao: league.safesport_lao })
+        },
         // The columns the table draws, named, so a tick can say which season
         // or league it stands for rather than only that there is one.
         tree,

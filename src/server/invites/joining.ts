@@ -60,6 +60,15 @@ export async function settleInviteSignIn(
   if (invite == null) return undefined
 
   const email = options.email.trim().toLowerCase()
+  // A guardian invite is for the address it was made out to and nobody else.
+  // Signing in from another address through it makes no account and links
+  // nothing; the sign-in itself goes on as an ordinary one.
+  if (
+    invite.guardianOfUserId != null &&
+    (invite.forEmail ?? '').trim().toLowerCase() !== email
+  ) {
+    return undefined
+  }
   // Under the address's lock, the one a roster import takes, so the two
   // cannot both find it free and both attach it.
   const settled = await db.transaction().execute(async trx => {
