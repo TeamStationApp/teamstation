@@ -10,6 +10,8 @@ import {
   signPuk,
   verifyPuk
 } from '../../../common/chatCrypto/chain'
+import { loadChatCore } from '../../../common/chatCrypto/core'
+import type { ChatCoreStatus } from '../../../common/chatCrypto/coreCall'
 import {
   hpkeOpen,
   hpkeSeal,
@@ -587,15 +589,62 @@ export async function revokeOtherDevice(
   return mine.pukNeedsRotation ? await rotatePuk(setup, record) : record
 }
 
+/** How long sign-out waits for the core (a module still on its way). */
+export const LEAVE_CORE_WAIT_MS = 5000
+
+/** The core's status, or `loading` if it has not settled within `waitMs`. */
+async function coreWithin(
+  loadCore: () => Promise<ChatCoreStatus>,
+  waitMs: number
+): Promise<ChatCoreStatus> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const waited = new Promise<ChatCoreStatus>(resolve => {
+    timer = setTimeout(() => {
+      resolve({ ready: false, reason: 'loading' })
+    }, waitMs)
+  })
+  try {
+    return await Promise.race([
+      loadCore().catch((): ChatCoreStatus => ({
+        ready: false,
+        reason: 'instantiateFailed'
+      })),
+      waited
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * Signing out: this device is removed from chat and its keys are wiped, so
  * nobody who picks it up later reads the user's chats. The wipe happens
  * whatever the server says.
+ *
+ * It waits for chat's crypto core first (at most `LEAVE_CORE_WAIT_MS`),
+ * which may never have loaded on this page. Without it (no WebAssembly, a
+ * phone build without the module, or a module still on its way) a store
+ * with no record is left untouched, so signing out makes nothing; a record
+ * that is there, or a store that cannot say, is revoked if this session
+ * can and wiped either way, since proving the device to a new session would
+ * need a signature only the core can make.
  */
 export async function leaveChat(
-  setup: Pick<ChatSetup, 'client' | 'store'>
+  setup: Pick<ChatSetup, 'client' | 'store'> & {
+    /** This platform's core loader; the real one by default. */
+    loadCore?: () => Promise<ChatCoreStatus>
+    /** How long sign-out waits for the core before going on without it. */
+    coreWaitMs?: number
+  }
 ): Promise<void> {
   const { client, store } = setup
+  // Nothing stored, nothing to do, and no core to wait for. A store that
+  // cannot say counts as one that may hold a record.
+  if (!(await store.exists().catch(() => true))) return
+  const core = await coreWithin(
+    setup.loadCore ?? loadChatCore,
+    setup.coreWaitMs ?? LEAVE_CORE_WAIT_MS
+  )
   try {
     const record = await store.load()
     if (record == null) return
@@ -604,7 +653,7 @@ export async function leaveChat(
     } catch (error) {
       // Not bound to this session (it changed since): prove the device, then
       // remove it.
-      if (reasonOf(error) == null) throw error
+      if (reasonOf(error) == null || !core.ready) throw error
       await bindDevice(setup, record)
       await client.revokeChatDevice(record.deviceId)
     }

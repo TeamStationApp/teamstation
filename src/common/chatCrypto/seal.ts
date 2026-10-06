@@ -1,18 +1,17 @@
-import { join, lp, pad, u64, unpad, utf8 } from './bytes'
-import { hkdf } from './kdf'
-import { sign, verify } from './keys'
-import { primitives } from './primitives'
-import { randomBytes } from './random'
+import { join, lp, u64, utf8 } from './bytes'
+import { call } from './core'
+import { num, readFlag, readNumber } from './coreCall'
+import { sha256 } from './hash'
 
 /**
- * One message, sealed and signed.
+ * One message, sealed and signed, on the chat crypto core.
  *
  * - The message key is `HKDF-SHA256(epochKey, salt = conversationId,
  *   info = "ts-chat/v1/msg" ‖ messageId)` (both strings as UTF-8), so each
  *   message has its own key, and a reporter can hand the server that one key
  *   without the epoch's.
  * - The cipher is XChaCha20-Poly1305 with a random 24-byte nonce, over the
- *   content padded to its bucket (`bytes.ts`), with AAD
+ *   content padded to its bucket (`bucketSize`), with AAD
  *   `lp(conversationId) ‖ u64(epoch) ‖ lp(messageId) ‖ u64(senderUserId) ‖
  *   lp(kind)`.
  * - The sender's identity key signs `SHA-256(aad ‖ nonce ‖ ciphertext)`.
@@ -45,7 +44,20 @@ export interface SealedMessage {
   signature: Uint8Array
 }
 
-const MSG_INFO = utf8('ts-chat/v1/msg')
+const EMPTY = new Uint8Array(0)
+
+/**
+ * The padded size of `length` bytes of plaintext:
+ * `max(541, ceil(1.05^ceil(log_1.05(length + 1))))`, the `+ 1` being the
+ * `0x80` that marks where the padding starts. Computed exactly in the core,
+ * so a phone and a server never disagree on a bucket's edge.
+ */
+export function bucketSize(length: number): number {
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new RangeError(`Not a length: ${length}`)
+  }
+  return readNumber(call('bucketSize', [num(length)])[0])
+}
 
 export function messageAad(fields: MessageFields): Uint8Array {
   return join(
@@ -57,18 +69,26 @@ export function messageAad(fields: MessageFields): Uint8Array {
   )
 }
 
+/** The core's arguments for a message's fields, in the order its ops take them. */
+const fieldArgs = (fields: MessageFields): Uint8Array[] => [
+  utf8(fields.conversationId),
+  num(fields.epoch),
+  utf8(fields.messageId),
+  num(fields.senderUserId),
+  utf8(fields.kind)
+]
+
 /** This one message's key, from the epoch key. */
 export function messageKey(
   epochKey: Uint8Array,
   conversationId: string,
   messageId: string
 ): Uint8Array {
-  return hkdf(
+  return call('messageKey', [
     epochKey,
     utf8(conversationId),
-    join(MSG_INFO, utf8(messageId)),
-    32
-  )
+    utf8(messageId)
+  ])[0]
 }
 
 /** What the identity key signs: `SHA-256(aad ‖ nonce ‖ ciphertext)`. */
@@ -77,7 +97,7 @@ export function signedDigest(
   nonce: Uint8Array,
   ciphertext: Uint8Array
 ): Uint8Array {
-  return primitives.sha256(join(aad, nonce, ciphertext))
+  return sha256(join(aad, nonce, ciphertext))
 }
 
 /** Pads, seals and signs a message's content (its UTF-8 JSON). */
@@ -90,37 +110,28 @@ export function sealMessage(
     nonce?: Uint8Array
   }
 ): SealedMessage {
-  const nonce = fields.nonce ?? randomBytes(24)
-  const aad = messageAad(fields)
-  const key = messageKey(
+  const [nonce, ciphertext, signature] = call('sealMessage', [
+    ...fieldArgs(fields),
     fields.epochKey,
-    fields.conversationId,
-    fields.messageId
-  )
-  const ciphertext = primitives.xchacha20Poly1305Seal(
-    key,
-    nonce,
-    aad,
-    pad(fields.plaintext)
-  )
-  return {
-    nonce,
-    ciphertext,
-    signature: sign(
-      signedDigest(aad, nonce, ciphertext),
-      fields.identitySecretKey
-    )
-  }
+    fields.plaintext,
+    fields.identitySecretKey,
+    fields.nonce ?? EMPTY
+  ])
+  return { nonce, ciphertext, signature }
 }
 
 /** Whether the signature is the sender identity's over this envelope. */
 export function verifyMessage(
   fields: MessageFields & SealedMessage & { senderIdentityKey: Uint8Array }
 ): boolean {
-  return verify(
-    fields.signature,
-    signedDigest(messageAad(fields), fields.nonce, fields.ciphertext),
-    fields.senderIdentityKey
+  return readFlag(
+    call('verifyMessage', [
+      ...fieldArgs(fields),
+      fields.nonce,
+      fields.ciphertext,
+      fields.signature,
+      fields.senderIdentityKey
+    ])[0]
   )
 }
 
@@ -135,14 +146,12 @@ export function openWithMessageKey(
     ciphertext: Uint8Array
   }
 ): Uint8Array {
-  return unpad(
-    primitives.xchacha20Poly1305Open(
-      fields.messageKey,
-      fields.nonce,
-      messageAad(fields),
-      fields.ciphertext
-    )
-  )
+  return call('openWithMessageKey', [
+    ...fieldArgs(fields),
+    fields.messageKey,
+    fields.nonce,
+    fields.ciphertext
+  ])[0]
 }
 
 /** Checks the signature, then opens. Either failing throws. */

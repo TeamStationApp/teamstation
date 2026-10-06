@@ -1,31 +1,14 @@
+import { call } from './core'
+import { num } from './coreCall'
+
 /**
- * Random bytes, from the one source every platform has.
- *
- * `globalThis.crypto.getRandomValues` is the browser's, Node's, and — through
- * `react-native-get-random-values`, imported first in the root `index.js` —
- * Hermes'. Nothing here falls back to `Math.random`: a phone without the
- * polyfill throws rather than making keys anybody could guess.
+ * Random bytes, from the chat crypto core: the operating system's generator
+ * on a phone and in Node, and in the browser Web Crypto's, which the
+ * WebAssembly loader hands the module. There is no other source.
  */
-
-interface RandomSource {
-  getRandomValues: (array: Uint8Array) => Uint8Array
-}
-
-/** The Web Crypto limit on one call. */
-const MOST_PER_CALL = 65536
-
 export function randomBytes(length: number): Uint8Array {
-  const source = (globalThis as { crypto?: Partial<RandomSource> }).crypto
-  if (source?.getRandomValues == null) {
-    throw new Error(
-      'No crypto.getRandomValues: import react-native-get-random-values first'
-    )
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new RangeError(`Not a length: ${length}`)
   }
-  const out = new Uint8Array(length)
-  for (let at = 0; at < length; at += MOST_PER_CALL) {
-    source.getRandomValues(
-      out.subarray(at, Math.min(length, at + MOST_PER_CALL))
-    )
-  }
-  return out
+  return call('randomBytes', [num(length)])[0]
 }

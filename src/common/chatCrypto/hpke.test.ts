@@ -1,9 +1,9 @@
-import { x25519 } from '@noble/curves/ed25519.js'
-import { sha256 } from '@noble/hashes/sha2.js'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { utf8 } from './bytes'
+import { fromHex, hex, oracle, seed } from '../../test/chatCryptoOracle'
+import { call } from './core'
+import { num } from './coreCall'
 import {
   deriveKeyPair,
   epochAad,
@@ -12,15 +12,8 @@ import {
   type HpkePurpose,
   hpkeSeal,
   linkAad,
-  pukAad,
-  setupBaseRecipient,
-  setupBaseSender
+  pukAad
 } from './hpke'
-
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex')
-const fromHex = (text: string): Uint8Array =>
-  Uint8Array.from(Buffer.from(text.replace(/\s+/g, ''), 'hex'))
-const seed = (label: string): Uint8Array => sha256(utf8(label))
 
 /**
  * RFC 9180 Appendix A.2.1: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256,
@@ -99,74 +92,46 @@ describe('chatCrypto HPKE', () => {
       expect(hex(r.publicKey)).equals(A21.pkRm)
     })
 
-    it('sets up the sender: enc, key, base nonce, exporter secret', () => {
-      const { enc, context } = setupBaseSender(
-        fromHex(A21.pkRm),
-        fromHex(A21.info),
-        fromHex(A21.ikmE)
-      )
-      expect(hex(enc)).equals(A21.enc)
-      expect(hex(context.key)).equals(A21.key)
-      expect(hex(context.baseNonce)).equals(A21.baseNonce)
-      expect(hex(context.exporterSecret)).equals(A21.exporterSecret)
-    })
-
-    it('seals every sequence number to the RFC ciphertext', () => {
-      const { context } = setupBaseSender(
-        fromHex(A21.pkRm),
-        fromHex(A21.info),
-        fromHex(A21.ikmE)
-      )
-      for (const one of A21.encryptions) {
-        context.setSequence(one.seq)
-        expect(hex(context.seal(fromHex(one.aad), fromHex(A21.pt)))).equals(
-          one.ct
-        )
-      }
-    })
-
-    it('opens every RFC ciphertext as the recipient', () => {
-      const context = setupBaseRecipient(
-        fromHex(A21.enc),
-        fromHex(A21.skRm),
-        fromHex(A21.info)
-      )
-      expect(hex(context.key)).equals(A21.key)
-      for (const one of A21.encryptions) {
-        context.setSequence(one.seq)
-        expect(hex(context.open(fromHex(one.aad), fromHex(one.ct)))).equals(
-          A21.pt
-        )
-      }
-    })
-
-    it('moves the sequence on by itself, from 0', () => {
-      const { context } = setupBaseSender(
-        fromHex(A21.pkRm),
-        fromHex(A21.info),
-        fromHex(A21.ikmE)
-      )
-      const [first, second, third] = A21.encryptions
-      expect(hex(context.seal(fromHex(first.aad), fromHex(A21.pt)))).equals(
-        first.ct
-      )
-      expect(hex(context.seal(fromHex(second.aad), fromHex(A21.pt)))).equals(
-        second.ct
-      )
-      expect(hex(context.seal(fromHex(third.aad), fromHex(A21.pt)))).equals(
-        third.ct
-      )
-    })
-
-    it('exports the RFC values', () => {
-      const context = setupBaseRecipient(
-        fromHex(A21.enc),
-        fromHex(A21.skRm),
-        fromHex(A21.info)
-      )
+    // Nothing in chat keeps a context open, so the RFC's sequence runs
+    // through the core's own op: one seal and open under the RFC's ephemeral
+    // key, with the key schedule and an export. The crate's tests run every
+    // sequence number.
+    it('gives the RFC key schedule, first seal, open and every export', () => {
+      const [first] = A21.encryptions
       for (const one of A21.exports) {
-        expect(hex(context.export(fromHex(one.context), 32))).equals(one.value)
+        const [enc, key, baseNonce, exporterSecret, ct, opened, exported] =
+          call('hpkeVectorSequence', [
+            fromHex(A21.pkRm),
+            fromHex(A21.skRm),
+            fromHex(A21.info),
+            fromHex(A21.ikmE),
+            fromHex(first.aad),
+            fromHex(A21.pt),
+            fromHex(one.context),
+            num(32)
+          ]).map(hex)
+        expect(enc).equals(A21.enc)
+        expect(key).equals(A21.key)
+        expect(baseNonce).equals(A21.baseNonce)
+        expect(exporterSecret).equals(A21.exporterSecret)
+        expect(ct).equals(first.ct)
+        expect(opened).equals(A21.pt)
+        expect(exported, one.context).equals(one.value)
       }
+    })
+
+    it("the RFC's first ciphertext is Node's ChaCha20-Poly1305 under its key", () => {
+      const [first] = A21.encryptions
+      expect(
+        hex(
+          oracle.chacha20Poly1305Seal(
+            fromHex(A21.key),
+            fromHex(A21.baseNonce),
+            fromHex(first.aad),
+            fromHex(A21.pt)
+          )
+        )
+      ).equals(first.ct)
     })
   })
 
@@ -297,15 +262,17 @@ describe('chatCrypto HPKE', () => {
       expect(() =>
         hpkeOpen('epoch', recipient.secretKey, epoch, box.subarray(0, 47))
       ).throws(TypeError, 'too short')
-      expect(() =>
-        setupBaseRecipient(box.subarray(0, 31), recipient.secretKey, epoch)
-      ).throws(TypeError, '32 bytes')
     })
 
     it('refuses a small-order public key (an all-zero shared secret)', () => {
       const zero = new Uint8Array(32)
-      expect(() => hpkeSeal('epoch', zero, epoch, plaintext)).throws()
-      expect(x25519.getPublicKey(recipient.secretKey).length).equals(32)
+      expect(() => hpkeSeal('epoch', zero, epoch, plaintext)).throws(
+        'smallOrder'
+      )
+      // The recipient's key is a real X25519 key: Node derives the same one.
+      expect(hex(oracle.x25519PublicKey(recipient.secretKey))).equals(
+        hex(recipient.publicKey)
+      )
     })
   })
 })

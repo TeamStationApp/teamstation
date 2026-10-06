@@ -270,7 +270,11 @@ the same crate as WebAssembly, and Node as a Node-API addon.
   `libappmodules.so`. After a change to the spec, `rm -rf android/app/.cxx`.
 
 No JavaScript implementation stands behind it: when the module is missing,
-`core.native.ts` throws `ChatCryptoUnavailable('noNativeModule')`.
+`core.native.ts` throws `ChatCryptoUnavailable('noNativeModule')` and every
+chat screen shows "Chat is not available in this build" (`ChatCoreGate`).
+Randomness comes from the core too, so the app has no
+`react-native-get-random-values`, and no `@noble` or
+`react-native-quick-crypto` either.
 
 ### The bench build
 

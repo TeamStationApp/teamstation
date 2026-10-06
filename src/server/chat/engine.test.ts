@@ -80,6 +80,10 @@ class MemoryStore implements ChatKeyStore {
     this.text = undefined
   }
 
+  async exists(): Promise<boolean> {
+    return this.text != null
+  }
+
   copy(): MemoryStore {
     const copy = new MemoryStore()
     copy.text = this.text

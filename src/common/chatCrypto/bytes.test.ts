@@ -1,18 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import {
-  bucketSize,
-  equalBytes,
-  fromUtf8,
-  join,
-  lp,
-  pad,
-  SMALLEST_BUCKET,
-  u64,
-  unpad,
-  utf8
-} from './bytes'
+import { equalBytes, fromUtf8, join, lp, u64, utf8 } from './bytes'
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex')
 const fromHex = (text: string): Uint8Array => Buffer.from(text, 'hex')
@@ -99,61 +88,5 @@ describe('chatCrypto bytes', () => {
     expect(equalBytes(Uint8Array.of(1, 2), Uint8Array.of(1, 2))).equals(true)
     expect(equalBytes(Uint8Array.of(1, 2), Uint8Array.of(1, 3))).equals(false)
     expect(equalBytes(Uint8Array.of(1), Uint8Array.of(1, 2))).equals(false)
-  })
-
-  it('bucket sizes: frozen vectors', () => {
-    const table: Array<[number, number]> = [
-      [0, 541],
-      [1, 541],
-      [539, 542],
-      [540, 542],
-      [541, 569],
-      [542, 569],
-      [560, 569],
-      [1000, 1021],
-      [8000, 8319],
-      [65536, 67790],
-      [20 * 1024 * 1024, 21453467]
-    ]
-    for (const [length, size] of table) {
-      expect(bucketSize(length), String(length)).equals(size)
-    }
-  })
-
-  it('bucket sizes follow max(541, ceil(1.05^ceil(log_1.05(n + 1))))', () => {
-    for (let n = 0; n < 200000; n += n < 2000 ? 1 : 997) {
-      const k = Math.ceil(Math.log(n + 1) / Math.log(1.05))
-      const expected = Math.max(SMALLEST_BUCKET, Math.ceil(1.05 ** k))
-      expect(bucketSize(n), String(n)).equals(expected)
-      expect(bucketSize(n)).greaterThan(n)
-    }
-    expect(() => bucketSize(-1)).throws(RangeError)
-    expect(() => bucketSize(0.5)).throws(RangeError)
-  })
-
-  it('padding at the bucket edges', () => {
-    // 540 bytes is the most a 542-byte bucket takes; 541 moves to the next.
-    expect(pad(new Uint8Array(540)).length).equals(542)
-    expect(pad(new Uint8Array(541)).length).equals(569)
-    const full = pad(new Uint8Array(540).fill(7))
-    expect(full[540]).equals(0x80)
-    expect(full[541]).equals(0)
-    // Exactly full: the marker is the last byte.
-    const exact = pad(new Uint8Array(4).fill(9), 5)
-    expect(hex(exact)).equals('0909090980')
-    expect(hex(unpad(exact))).equals('09090909')
-    expect(() => pad(new Uint8Array(5), 5)).throws(RangeError)
-  })
-
-  it('unpad strips the zeros and the marker, and nothing of the content', () => {
-    const content = Uint8Array.of(1, 0, 0x80, 0)
-    expect(hex(unpad(pad(content)))).equals('01008000')
-    expect(unpad(pad(new Uint8Array(0))).length).equals(0)
-  })
-
-  it('unpad refuses a buffer with no 0x80', () => {
-    expect(() => unpad(new Uint8Array(541))).throws(TypeError, '0x80')
-    expect(() => unpad(new Uint8Array(0))).throws(TypeError)
-    expect(() => unpad(Uint8Array.of(1, 2, 0, 0))).throws(TypeError)
   })
 })

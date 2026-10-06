@@ -1,11 +1,10 @@
-import type { KeyPair } from './hpke'
-import { primitives } from './primitives'
+import { call } from './core'
+import { readFlag } from './coreCall'
 import { randomBytes } from './random'
 
-export type { KeyPair } from './hpke'
-
 /**
- * The keys of encrypted chat, made here and nowhere else.
+ * The keys of encrypted chat, made here and nowhere else, on the chat crypto
+ * core.
  *
  * | Key | Kind |
  * | --- | --- |
@@ -17,16 +16,24 @@ export type { KeyPair } from './hpke'
  * A secret key is always 32 bytes: an X25519 secret or an Ed25519 seed.
  */
 
+export interface KeyPair {
+  secretKey: Uint8Array
+  publicKey: Uint8Array
+}
+
+const pair = ([secretKey, publicKey]: Uint8Array[]): KeyPair => ({
+  secretKey,
+  publicKey
+})
+
 /** An X25519 pair, for receiving HPKE boxes. */
 export function newBoxKeyPair(): KeyPair {
-  const secretKey = randomBytes(32)
-  return { secretKey, publicKey: primitives.x25519PublicKey(secretKey) }
+  return pair(call('newBoxKeyPair', []))
 }
 
 /** An Ed25519 pair, for signing. */
 export function newSigningKeyPair(): KeyPair {
-  const secretKey = randomBytes(32)
-  return { secretKey, publicKey: primitives.ed25519PublicKey(secretKey) }
+  return pair(call('newSigningKeyPair', []))
 }
 
 export interface DeviceKeys {
@@ -52,24 +59,27 @@ export function newEpochKey(): Uint8Array {
 
 /** The X25519 public key of a secret key. */
 export function boxPublicKey(secretKey: Uint8Array): Uint8Array {
-  return primitives.x25519PublicKey(secretKey)
+  return call('boxPublicKey', [secretKey])[0]
 }
 
 /** The Ed25519 public key of a secret key. */
 export function signingPublicKey(secretKey: Uint8Array): Uint8Array {
-  return primitives.ed25519PublicKey(secretKey)
+  return call('signingPublicKey', [secretKey])[0]
 }
 
 /** An Ed25519 signature of `message`. */
 export function sign(message: Uint8Array, secretKey: Uint8Array): Uint8Array {
-  return primitives.ed25519Sign(message, secretKey)
+  return call('sign', [message, secretKey])[0]
 }
 
-/** Whether `signature` is `publicKey`'s over `message`. Malformed input is simply false. */
+/**
+ * Whether `signature` is `publicKey`'s over `message`, by RFC 8032's strict
+ * rules. Malformed input is simply false.
+ */
 export function verify(
   signature: Uint8Array,
   message: Uint8Array,
   publicKey: Uint8Array
 ): boolean {
-  return primitives.ed25519Verify(signature, message, publicKey)
+  return readFlag(call('verify', [signature, message, publicKey])[0])
 }
