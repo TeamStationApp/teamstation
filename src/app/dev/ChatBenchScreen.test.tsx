@@ -36,9 +36,11 @@ afterEach(() => {
 })
 
 describe('ChatBenchScreen', () => {
-  it('is not in the web build at all', () => {
-    expect(chatBenchPath).equals(undefined)
-    expect(ChatBench).equals(undefined)
+  it('is in a served web build, which defines __DEV__ as this bundle does', () => {
+    // A production build defines it false and has no bench: the real build
+    // in buildCsp.test.ts checks its bundle for the route.
+    expect(chatBenchPath).equals('/dev/chat-bench')
+    expect(ChatBench).equals(ChatBenchScreen)
   })
 
   it('is in a phone build only when TS_CHAT_BENCH is 1', () => {
@@ -112,6 +114,52 @@ describe('ChatBenchScreen', () => {
     })
     expect(text()).contains('failed: stream did not round-trip')
     expect(text()).contains('done')
+  })
+
+  it('waits for the core, and runs nothing without it', async () => {
+    let ran = false
+    let settle: (status: {
+      ready: false
+      reason: 'noWebAssembly'
+    }) => void = () => undefined
+    await render(
+      <ChatBenchScreen
+        loadCore={async () =>
+          await new Promise(resolve => {
+            settle = resolve
+          })
+        }
+        checkVectors={() => {
+          ran = true
+          return 'vectors ok'
+        }}
+      />
+    )
+    await act(async () => {
+      await delay(400)
+    })
+    expect(text()).contains('Running')
+    await act(async () => {
+      settle({ ready: false, reason: 'noWebAssembly' })
+      await delay(400)
+    })
+    expect(ran).equals(false)
+    expect(text()).contains('failed: no chat crypto core: noWebAssembly')
+    expect(text()).contains('done')
+  })
+
+  it('shows a loader that throws', async () => {
+    await render(
+      <ChatBenchScreen
+        loadCore={async () => {
+          throw new Error('no module')
+        }}
+      />
+    )
+    await act(async () => {
+      await delay(50)
+    })
+    expect(text()).contains('failed: no module')
   })
 
   it('shows something thrown that is not an Error', async () => {

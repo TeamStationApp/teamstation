@@ -150,6 +150,18 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
       } finally {
         db.close()
       }
+    },
+
+    async exists(): Promise<boolean> {
+      // Asked of the list first: opening `ts-chat` would make it.
+      const listed = await factory().databases()
+      if (!listed.some(found => found.name === KEY_DATABASE)) return false
+      const db = await open()
+      try {
+        return (await read(db, RECORD)) != null
+      } finally {
+        db.close()
+      }
     }
   }
 }

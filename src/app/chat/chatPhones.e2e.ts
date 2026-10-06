@@ -1,20 +1,26 @@
 /**
- * The chat's simulator scenarios (P1–P4), through maestro-d's JavaScript
- * client, with the other person in a Puppeteer browser on their run profile.
+ * The chat's phone scenarios (P1–P4) on an iOS simulator or an Android
+ * emulator, through maestro-d's JavaScript client, with the other person in
+ * a Puppeteer browser on their run profile.
  *
- *   MAESTRO_D=chat-<run> CHAT_DEVICE=<udid> CHAT_ARTIFACTS=<run dir> \
+ *   MAESTRO_D=chat-<run> CHAT_PLATFORM=ios|android CHAT_DEVICE=<id> \
+ *     CHAT_ARTIFACTS=<run dir> \
  *     node -r sucrase/register src/app/chat/chatPhones.e2e.ts P1|P3|P2|P4
  *
  * Required: `MAESTRO_D`, a daemon of this run's own, already started from
  * `$HOME` (`MAESTRO_RUNNER_HOME=$HOME/.maestro-d maestro-d start --daemon
  * "$MAESTRO_D"`; run `maestro-d ps` first and never share one);
- * `CHAT_DEVICE`, the simulator's UDID, which the test pins and never
+ * `CHAT_PLATFORM`, `ios` (the default) or `android`; `CHAT_DEVICE`, the
+ * simulator's UDID or the emulator's serial, which the test pins and never
  * chooses; `CHAT_ARTIFACTS`, the run directory of the browser scenarios
  * (its `seed.txt`, and `profiles/` with the browsers' keys). Optional:
  * `MAESTRO_D_CLIENT_ROOT` (a checkout of the maestro-d npm package), `TS_CHAT_WEB_URL`
  * (the web app, default `http://127.0.0.1:8091`), `TS_CHAT_API_URL` (the API
  * as the browser reaches it, default `http://127.0.0.1:9120/api/v1`),
- * `TS_CHROME_PATH`.
+ * `TS_CHROME_PATH`, and `CHAT_P1_PERSON`, the seed person P1 signs in as
+ * (`N` by default; any Hawks parent new to chat), and `CHAT_P2_PERSON`, the
+ * one P2 links (`B` by default; any Hawks parent with a browser profile
+ * `<person>-1` in the run).
  *
  * The app on the simulator is a Release build whose `TS_API_BASE_URL` is the
  * Mac's LAN address, against the same API and stand-in Space as the browser
@@ -23,7 +29,8 @@
  * `TS_CHAT_API_URL` on it too. Run in this order, P1, P3, P2, P4: P3
  * continues as P1's person, before P2 signs in as B, and P4 follows P2 on
  * B's phone. P3's photo must already be in the simulator's library
- * (`xcrun simctl addmedia`).
+ * (`xcrun simctl addmedia`); on Android only P1 and P2 run, since the
+ * picker P3 drives is iOS's.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -199,7 +206,13 @@ async function signIn(
   m: Device,
   who: { email: string; password: string }
 ): Promise<void> {
-  for (const pieces of ['letters', 'letters', 'words'] as const) {
+  // Android's input replaces a field's text rather than adding to it, and
+  // drops no keys, so it types each field whole.
+  const tries =
+    process.env.CHAT_PLATFORM === 'android'
+      ? (['whole', 'whole'] as const)
+      : (['letters', 'letters', 'words'] as const)
+  for (const pieces of tries) {
     await m.launchApp({ appId: APP, clearState: true })
     await m.tapOn({ text: 'Use a password instead', timeout: 30000 })
     await typeIn(m, 'E-mail address', who.email, pieces)
@@ -233,7 +246,9 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
       (await bodyText(coach.page)).includes('members') ? true : undefined
     )
 
-    await signIn(m, seed.N)
+    const who = process.env.CHAT_P1_PERSON ?? 'N'
+    assert(seed[who] != null, `${who} is not in the seed`)
+    await signIn(m, seed[who])
     await chatTab(m, 'Hawks Members')
     await m.tapOn({ text: 'Hawks Members' })
     // Hc's open page grants N the history; then the composer opens.
@@ -249,6 +264,8 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
     })
     await m.tapOn({ id: 'chat-composer' })
     await m.inputText({ text: 'hello 🎉' })
+    // Android's keyboard covers Send; iOS's leaves it showing.
+    if (process.env.CHAT_PLATFORM === 'android') await m.hideKeyboard()
     await m.tapOn({ text: 'Send' })
     await m.assertVisible({ text: 'hello 🎉', timeout: 30000 })
     await m.takeScreenshot({ path: join(shots, 'p1-1-phone-sent') })
@@ -350,9 +367,11 @@ async function p3(m: Device, run: string, shots: string): Promise<void> {
 
 async function p2(m: Device, run: string, shots: string): Promise<void> {
   const seed = people(run)
-  const parent = await browserOf(run, 'B-1')
+  const who = process.env.CHAT_P2_PERSON ?? 'B'
+  assert(seed[who] != null, `${who} is not in the seed`)
+  const parent = await browserOf(run, `${who}-1`)
   try {
-    await signIn(m, seed.B)
+    await signIn(m, seed[who])
     await chatTab(m, 'Link this device')
     await m.takeScreenshot({ path: join(shots, 'p2-1-phone-code') })
     const shown = (await phoneText(m))
@@ -362,7 +381,7 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
     const phoneCode = `${shown[1]}${shown[2]}`
 
     await parent.page.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
-    const label = await until('the request on B’s page', async () => {
+    const label = await until(`the request on ${who}’s page`, async () => {
       const node = await parent.page.$('[aria-label^="Code "]')
       return (
         (await node?.evaluate(found => found.getAttribute('aria-label'))) ??
@@ -386,7 +405,7 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
     await m.assertVisible({ text: 'hello 🎉', timeout: 60000 })
     await m.takeScreenshot({ path: join(shots, 'p2-3-phone-history') })
     console.log(
-      'P2 PASS: the same six digits; the history, granted by B’s own web device'
+      `P2 PASS: the same six digits; the history, granted by ${who}’s own web device`
     )
   } finally {
     await parent.browser.close()
@@ -471,13 +490,22 @@ async function main(): Promise<void> {
   const run = resolve(required('CHAT_ARTIFACTS'))
   const shots = join(run, 'shots')
   await mkdir(shots, { recursive: true })
+  const platform = process.env.CHAT_PLATFORM ?? 'ios'
+  assert(
+    platform === 'ios' || platform === 'android',
+    `CHAT_PLATFORM is ios or android, not ${platform}`
+  )
+  assert(
+    platform === 'ios' || scenario === 'P1' || scenario === 'P2',
+    `${scenario} runs on iOS only`
+  )
   const daemon = await MaestroD.connect({
     name: required('MAESTRO_D'),
     spawn: false
   })
   const m = await daemon.attach({
     device: required('CHAT_DEVICE'),
-    platform: 'ios',
+    platform,
     appId: APP,
     artifacts: 'on-failure'
   })

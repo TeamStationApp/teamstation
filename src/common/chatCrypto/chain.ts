@@ -1,11 +1,11 @@
 import { join, lp, u64, utf8 } from './bytes'
-import { hkdf } from './kdf'
+import { call } from './core'
+import { num } from './coreCall'
 import { sign, verify } from './keys'
-import { primitives } from './primitives'
-import { randomBytes } from './random'
 
 /**
- * The two key chains, which are why a later key opens everything before it.
+ * The two key chains, which are why a later key opens everything before it,
+ * on the chat crypto core.
  *
  * - **Epochs.** Epoch n's record carries `previous_key_box`: epoch n−1's key,
  *   sealed with XChaCha20-Poly1305 under `HKDF-SHA256(epoch n key,
@@ -23,43 +23,8 @@ import { randomBytes } from './random'
  */
 
 const NONCE = 24
+const TAG = 16
 const EMPTY = new Uint8Array(0)
-const PREV_EPOCH = utf8('ts-chat/v1/prev-epoch')
-const PREV_PUK = utf8('ts-chat/v1/prev-puk')
-
-function sealBox(
-  key: Uint8Array,
-  aad: Uint8Array,
-  plaintext: Uint8Array,
-  nonce = randomBytes(NONCE)
-): Uint8Array {
-  return join(
-    nonce,
-    primitives.xchacha20Poly1305Seal(key, nonce, aad, plaintext)
-  )
-}
-
-function openBox(
-  key: Uint8Array,
-  aad: Uint8Array,
-  box: Uint8Array
-): Uint8Array {
-  if (box.length < NONCE + 16) throw new TypeError('Box is too short')
-  return primitives.xchacha20Poly1305Open(
-    key,
-    box.subarray(0, NONCE),
-    aad,
-    box.subarray(NONCE)
-  )
-}
-
-function epochChainKey(epochKey: Uint8Array): Uint8Array {
-  return hkdf(epochKey, EMPTY, PREV_EPOCH, 32)
-}
-
-function epochChainAad(conversationId: string, epoch: number): Uint8Array {
-  return join(lp(conversationId), u64(epoch))
-}
 
 /** Epoch n's `previous_key_box`: epoch n−1's key under epoch n's. */
 export function sealPreviousEpochKey(fields: {
@@ -69,12 +34,13 @@ export function sealPreviousEpochKey(fields: {
   previousEpochKey: Uint8Array
   nonce?: Uint8Array
 }): Uint8Array {
-  return sealBox(
-    epochChainKey(fields.epochKey),
-    epochChainAad(fields.conversationId, fields.epoch),
+  return call('sealPreviousEpochKey', [
+    utf8(fields.conversationId),
+    num(fields.epoch),
+    fields.epochKey,
     fields.previousEpochKey,
-    fields.nonce
-  )
+    fields.nonce ?? EMPTY
+  ])[0]
 }
 
 /** Epoch n−1's key, from epoch n's record and key. */
@@ -84,11 +50,15 @@ export function openPreviousEpochKey(fields: {
   epochKey: Uint8Array
   previousKeyBox: Uint8Array
 }): Uint8Array {
-  return openBox(
-    epochChainKey(fields.epochKey),
-    epochChainAad(fields.conversationId, fields.epoch),
+  if (fields.previousKeyBox.length < NONCE + TAG) {
+    throw new TypeError('Box is too short')
+  }
+  return call('openPreviousEpochKey', [
+    utf8(fields.conversationId),
+    num(fields.epoch),
+    fields.epochKey,
     fields.previousKeyBox
-  )
+  ])[0]
 }
 
 /**
@@ -100,11 +70,11 @@ export function epochSignedBytes(fields: {
   epoch: number
   previousKeyBox: Uint8Array | null
 }): Uint8Array {
-  return join(
-    lp(fields.conversationId),
-    u64(fields.epoch),
-    primitives.sha256(fields.previousKeyBox ?? EMPTY)
-  )
+  return call('epochSignedBytes', [
+    utf8(fields.conversationId),
+    num(fields.epoch),
+    fields.previousKeyBox ?? EMPTY
+  ])[0]
 }
 
 export function signEpoch(
@@ -128,18 +98,6 @@ export interface OlderPuk {
   privateKey: Uint8Array
 }
 
-function pukChainKey(privateKey: Uint8Array): Uint8Array {
-  return hkdf(privateKey, EMPTY, PREV_PUK, 32)
-}
-
-function pukChainAad(
-  userId: number,
-  identityId: string,
-  generation: number
-): Uint8Array {
-  return join(u64(userId), lp(identityId), u64(generation))
-}
-
 /** Generation n's `previous_keys_box`: every older private key, oldest first. */
 export function sealPreviousPukKeys(fields: {
   userId: number
@@ -153,12 +111,14 @@ export function sealPreviousPukKeys(fields: {
   const plaintext = join(
     ...sorted.flatMap(key => [u64(key.generation), lp(key.privateKey)])
   )
-  return sealBox(
-    pukChainKey(fields.privateKey),
-    pukChainAad(fields.userId, fields.identityId, fields.generation),
+  return call('sealPreviousPukKeys', [
+    num(fields.userId),
+    utf8(fields.identityId),
+    num(fields.generation),
+    fields.privateKey,
     plaintext,
-    fields.nonce
-  )
+    fields.nonce ?? EMPTY
+  ])[0]
 }
 
 /** The older private keys a generation carries, oldest first. */
@@ -169,11 +129,16 @@ export function openPreviousPukKeys(fields: {
   privateKey: Uint8Array
   previousKeysBox: Uint8Array
 }): OlderPuk[] {
-  const plaintext = openBox(
-    pukChainKey(fields.privateKey),
-    pukChainAad(fields.userId, fields.identityId, fields.generation),
+  if (fields.previousKeysBox.length < NONCE + TAG) {
+    throw new TypeError('Box is too short')
+  }
+  const plaintext = call('openPreviousPukKeys', [
+    num(fields.userId),
+    utf8(fields.identityId),
+    num(fields.generation),
+    fields.privateKey,
     fields.previousKeysBox
-  )
+  ])[0]
   const keys: OlderPuk[] = []
   let at = 0
   while (at < plaintext.length) {

@@ -126,6 +126,20 @@ describe('chat key store in the browser', function () {
     expect(await store.load()).equals(undefined)
   })
 
+  it('says whether a record is kept, and makes no database to say so', async function () {
+    const factory = new IDBFactory()
+    const store = webKeyStore({ indexedDB: factory })
+    expect(await store.exists()).equals(false)
+    expect((await factory.databases()).map(found => found.name)).not.includes(
+      KEY_DATABASE
+    )
+    await store.save(sample())
+    expect(await store.exists()).equals(true)
+    // A wiped database stays, with no record in it.
+    await store.wipe()
+    expect(await store.exists()).equals(false)
+  })
+
   it('wipes the record and its wrapping key', async function () {
     const factory = new IDBFactory()
     const store = webKeyStore({ indexedDB: factory })

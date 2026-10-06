@@ -138,6 +138,10 @@ class MemoryStore implements ChatKeyStore {
     this.text = undefined
   }
 
+  async exists(): Promise<boolean> {
+    return this.text != null
+  }
+
   record(): ChatKeyRecord {
     if (this.text == null) throw new Error('no record')
     return recordFromJson(this.text)

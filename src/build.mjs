@@ -1,11 +1,19 @@
+import { createHash } from 'crypto'
 import { build, context } from 'esbuild'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
 import buildInfoTools from '../scripts/build-info.cjs'
+import { buildWasm, findCargo } from '../scripts/chatCryptoBuild.mjs'
 import { webSettings } from '../scripts/web-build-settings.mjs'
-import { cspFor, originsFor, withCsp, withIntegrity } from './buildCsp.mjs'
+import {
+  cspFor,
+  integrityOf,
+  originsFor,
+  withCsp,
+  withIntegrity
+} from './buildCsp.mjs'
 
 /**
  * Everything below is written relative to the repository root, and this is
@@ -78,6 +86,22 @@ const policy = cspFor(
 const out = process.env.TS_WEB_OUT_DIR ?? 'dist'
 
 /**
+ * Chat's crypto core, as the WebAssembly module every browser loads
+ * (`crates/chat-crypto`, built by `scripts/chatCryptoBuild.mjs`). It is
+ * copied beside the bundle under a name with its hash in it, as the bundle
+ * is (plain `chat-crypto.wasm` under `--serve`), and the bundle is told where
+ * it is and what its sha384 must be: `core.web.ts` fetches it with that
+ * integrity and refuses anything else. Under `--serve` a change to the crate
+ * needs a restart, since the watch follows the bundle only.
+ */
+const found = findCargo()
+if (found.error != null) throw new Error(found.error)
+const wasmBytes = await readFile(buildWasm(found))
+const wasmFile = serve
+  ? 'chat-crypto.wasm'
+  : `chat-crypto-${createHash('sha256').update(wasmBytes).digest('hex').slice(0, 16)}.wasm`
+
+/**
  * Reanimated's worklets, and nothing else.
  *
  * Reanimated compiles the functions that run on the animation thread with a
@@ -146,6 +170,8 @@ const options = {
     ),
     __DEV__: serve ? 'true' : 'false',
     TS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    TS_CHAT_WASM_URL: JSON.stringify(`/${wasmFile}`),
+    TS_CHAT_WASM_INTEGRITY: JSON.stringify(integrityOf(wasmBytes)),
     TS_PASSWORD_WORKER_URL: JSON.stringify(
       '/' + workerFile.replace(/^dist\//, '')
     ),
@@ -191,6 +217,14 @@ await copyWellKnown()
  * restart there, since the watch follows the bundle only).
  */
 await copyFile('src/app/scoring/pcm16kWorklet.js', `${out}/pcm16kWorklet.js`)
+
+// Earlier deploys' modules, then this one's, so exactly one is left.
+for (const name of await readdirSafe(out)) {
+  if (/^chat-crypto-[0-9a-f]+\.wasm$/.test(name) && name !== wasmFile) {
+    await rm(`${out}/${name}`)
+  }
+}
+await writeFile(`${out}/${wasmFile}`, wasmBytes)
 
 if (serve) {
   // No integrity here: the watch rebuilds `app.js` after this page is

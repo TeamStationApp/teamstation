@@ -382,6 +382,13 @@ export const enUs = {
   chat_follow_team: 'Follow a team',
   chat_loading: 'Opening chat…',
   chat_cannot_load: 'Chat could not be opened.',
+  chat_core_needs_webassembly: 'Chat needs WebAssembly',
+  chat_core_no_webassembly:
+    'This browser has WebAssembly turned off, or does not have it. On an iPhone, iPad or Mac, Lockdown Mode turns it off in Safari.',
+  chat_core_module_failed:
+    'This browser could not load chat’s encryption. Reload the page to try again.',
+  chat_core_not_in_build: 'Chat is not available in this build',
+  chat_core_rest_works: 'Everything else in TeamStation works as usual.',
   chat_empty: 'You are in no chats yet.',
   chat_empty_detail:
     'Team, season and league chats appear here once you are on a team. Follow a team to join its fans.',

@@ -1,16 +1,14 @@
 import { createHash } from 'node:crypto'
 
-import { sha256 } from '@noble/hashes/sha2.js'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { utf8 } from './bytes'
+import { seed } from '../../test/chatCryptoOracle'
 import { deriveKeyPair } from './hpke'
 import { signingPublicKey } from './keys'
 import { linkCode } from './linkCode'
 import { safetyHalf, safetyNumber, safetyNumberGroups } from './safetyNumber'
 
-const seed = (label: string): Uint8Array => sha256(utf8(label))
 const alice = { userId: 42, identityKey: signingPublicKey(seed('identity')) }
 const bob = { userId: 7, identityKey: signingPublicKey(seed('identity 7')) }
 const SAFETY = '420693152042024233918378460099523999522228652791089056264003'

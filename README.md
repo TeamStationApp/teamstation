@@ -89,9 +89,23 @@ npm run lint
 `npm run build` compiles `src/` to `lib/` and `npm run build.web` bundles the
 app to `dist/`, both at the root.
 
+Chat's cryptography is one Rust crate, `crates/chat-crypto`, so every build
+needs Rust: install it with rustup (https://rustup.rs), and the crate's
+`rust-toolchain.toml` brings the pinned toolchain and its targets on first
+use. `npm run build`, `npm test` and the coverage scripts build the Node addon
+the server loads; `npm run build.web` builds the WebAssembly module the page
+loads and ships it beside the bundle as `chat-crypto-<hash>.wasm`, which the
+bundle fetches with its sha384 and refuses otherwise. `npm run chat-crypto`
+builds both by hand. A browser without WebAssembly gets no chat ("Chat needs
+WebAssembly") and the rest of the app as usual; there is no JavaScript
+implementation to fall back on. The phones build the same crate as a static
+library (`src/MOBILE.md`).
+
 Every web build writes a Content-Security-Policy `<meta>` into `index.html`
 (`src/buildCsp.mjs`), and a one-shot build adds Subresource Integrity to its
-script tag. The policy allows the API and its socket (from an absolute
+script tag. Scripts come only from the page's own origin, with
+`'wasm-unsafe-eval'` so it may compile the chat crypto module (and still no
+`eval`). The policy allows the API and its socket (from an absolute
 `TS_API_BASE_URL`) and the media origins in `TS_MEDIA_ORIGINS`,
 space-separated; a deployment takes those from
 `node src/deploy/mediaOrigins.mjs <serverConfig.json>` (the deployment's own

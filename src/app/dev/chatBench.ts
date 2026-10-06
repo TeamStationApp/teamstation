@@ -1,12 +1,22 @@
 import type React from 'react'
 
 /**
- * The chat crypto bench, in the builds that have it: none on the web.
+ * The chat crypto bench on the web: in a bundle `src/build.mjs --serve`
+ * makes, where esbuild defines `__DEV__` true, and in no other.
  *
- * The phone twin, `chatBench.native.ts`, has it when `TS_CHAT_BENCH=1` was set
- * at build time. Here there is neither an address nor a screen, so the web
- * bundle holds no `/dev/chat-bench` route and no bench at all.
+ * A production build defines it false, so the minifier drops both branches
+ * below and its bundle holds no `/dev/chat-bench` route and no bench screen;
+ * the unbundled tests define nothing and never load the screen either. In a
+ * served build it runs every frozen vector on the browser's WebAssembly core
+ * and times it, as the phone twin (`chatBench.native.ts`) does on the native
+ * core.
  */
-export const chatBenchPath: string | undefined = undefined
+export const chatBenchPath: string | undefined =
+  typeof __DEV__ !== 'undefined' && __DEV__ ? '/dev/chat-bench' : undefined
 
-export const ChatBench: React.ComponentType | undefined = undefined
+export const ChatBench: React.ComponentType | undefined =
+  typeof __DEV__ !== 'undefined' && __DEV__
+    ? // Required here, not imported, so only a served bundle holds it.
+      (require('./ChatBenchScreen') as { ChatBenchScreen: React.ComponentType })
+        .ChatBenchScreen
+    : undefined
