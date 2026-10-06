@@ -211,7 +211,7 @@ export function accountRoutes(
           if (
             readPasswordRecord(held) == null ||
             body.currentClientHash == null ||
-            !(await passwordMatches(body.currentClientHash, held))
+            !(await passwordMatches(body.currentClientHash, held, userId))
           )
             return false
         }
@@ -220,7 +220,8 @@ export function accountRoutes(
           .set({
             password_hash: await createPasswordRecord(
               body.clientHash,
-              body.clientParameters
+              body.clientParameters,
+              userId
             ),
             updated_at: new Date()
           })

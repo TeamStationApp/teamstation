@@ -114,4 +114,52 @@ describe('native server Argon2id', function () {
       decoyParameters('a@example.com', 'fixture').salt
     )
   })
+  it('reserves capacity for another account while bounding total native work', async () => {
+    const releases: Array<() => void> = []
+    const hasher = new PasswordHasher(async () => {
+      await new Promise<void>(resolve => {
+        releases.push(resolve)
+      })
+      return 'ab'.repeat(32)
+    })
+    const first = hasher.run(
+      new Uint8Array(),
+      testPasswordParameters,
+      'account:1'
+    )
+    try {
+      await hasher.run(
+        new Uint8Array(),
+        { ...testPasswordParameters, salt: 'ff'.repeat(16) },
+        'account:1'
+      )
+      expect.fail('same account occupied another slot')
+    } catch (error) {
+      expect(String(error)).includes('busy')
+    }
+    const second = hasher.run(
+      new Uint8Array(),
+      testPasswordParameters,
+      'account:2'
+    )
+    expect(releases).length(2)
+    try {
+      await hasher.run(new Uint8Array(), testPasswordParameters, 'account:3')
+      expect.fail('exceeded total capacity')
+    } catch (error) {
+      expect(String(error)).includes('busy')
+    }
+    releases[1]()
+    await second
+    const third = hasher.run(
+      new Uint8Array(),
+      testPasswordParameters,
+      'account:3'
+    )
+    expect(releases).length(3)
+    releases[2]()
+    await third
+    releases[0]()
+    await first
+  })
 })

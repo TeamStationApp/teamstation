@@ -282,12 +282,12 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       await chargePasswordAttempt(db, rules)
       const user = await findUserByEmail(db, email)
 
-      // The same answer whether the address is unknown, the password is wrong,
-      // or the account has no login: none of those should be discoverable.
+      // Keep the failure message uniform. The public parameter handshake can
+      // still distinguish accounts with non-default stored hashing costs.
       const ok =
         user != null &&
         user.loginEnabled &&
-        (await passwordMatches(body.clientHash, user.passwordHash))
+        (await passwordMatches(body.clientHash, user.passwordHash, user.id))
       if (!ok || user == null) {
         throw unauthorized(
           'Wrong e-mail or password. Use an email code to sign in and set a new password'

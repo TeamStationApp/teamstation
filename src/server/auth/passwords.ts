@@ -41,18 +41,26 @@ export function readPasswordRecord(
   }
 }
 
-/** Bounds memory per worker process; overload fails promptly instead of queuing secrets. */
+/**
+ * Two native jobs per worker (at most 128 MiB of Argon2 memory), one per
+ * account. A costly account cannot monopolize verification for other accounts.
+ * Overload fails promptly instead of queuing password-equivalent input.
+ */
 export class PasswordHasher {
-  private busy = false
+  private readonly active = new Set<string>()
   constructor(private readonly derive = nativeArgon) {}
-  async run(input: Uint8Array, parameters: ArgonParameters): Promise<string> {
-    if (this.busy)
+  async run(
+    input: Uint8Array,
+    parameters: ArgonParameters,
+    accountKey = parameters.salt
+  ): Promise<string> {
+    if (this.active.size >= 2 || this.active.has(accountKey))
       throw unavailable('Password verification is busy. Please try again')
-    this.busy = true
+    this.active.add(accountKey)
     try {
       return await this.derive(input, parameters)
     } finally {
-      this.busy = false
+      this.active.delete(accountKey)
     }
   }
 }
@@ -75,7 +83,8 @@ export async function nativeArgon(
 const hasher = new PasswordHasher()
 export async function createPasswordRecord(
   clientHash: string,
-  parameters: ArgonParameters
+  parameters: ArgonParameters,
+  accountId?: number
 ): Promise<string> {
   const client = asNewPasswordParameters(parameters)
   const input = Buffer.from(asClientHash(clientHash), 'hex')
@@ -85,7 +94,11 @@ export async function createPasswordRecord(
     salt: passwordSalt()
   }
   try {
-    const digest = await hasher.run(input, server)
+    const digest = await hasher.run(
+      input,
+      server,
+      accountId == null ? client.salt : `account:${accountId}`
+    )
     return JSON.stringify({
       schema: 1,
       client,
@@ -98,13 +111,18 @@ export async function createPasswordRecord(
 }
 export async function passwordMatches(
   clientHash: string,
-  stored: string | null
+  stored: string | null,
+  accountId?: number
 ): Promise<boolean> {
   const record = readPasswordRecord(stored)
   if (record == null) return false
   const input = Buffer.from(asClientHash(clientHash), 'hex')
   try {
-    const actual = await hasher.run(input, record.server)
+    const actual = await hasher.run(
+      input,
+      record.server,
+      accountId == null ? record.client.salt : `account:${accountId}`
+    )
     return timingSafeEqual(
       Buffer.from(actual, 'hex'),
       Buffer.from(record.hash, 'hex')

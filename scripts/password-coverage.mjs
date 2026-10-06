@@ -108,6 +108,7 @@ run('node_modules/.bin/c8', [
     'src/server/auth/passwords.ts',
     'src/common/api.ts',
     'src/server/routes/auth.ts',
+    'src/server/routes/account.ts',
     'src/server/jsonBody.ts',
     'src/server/openapi.ts',
     'src/app/App.tsx',
