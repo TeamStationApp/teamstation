@@ -45,6 +45,22 @@ export interface VideoRow {
 }
 
 /**
+ * Whether a title starts by saying it is a live recording: `Live 2026-04-12`,
+ * `Livestream …`, or the same after a league's short name, `ABC Live …`. Any
+ * league's — the acronym is matched by shape, all capitals, so that no
+ * league's name has to be written into the source, and a team's name in
+ * ordinary case (`Hawks live …`) is not taken for one.
+ */
+export function titleSaysLive(title: string): boolean {
+  const trimmed = title.trim()
+  const live = /^live(stream)?\b/i
+  // Tried both ways, because `LIVE 2026-04-12` looks like an acronym too.
+  return (
+    live.test(trimmed) || live.test(trimmed.replace(/^[A-Z][A-Z0-9]{1,5} /, ''))
+  )
+}
+
+/**
  * Which of the six a video is.
  *
  * Live first, because a live recording's title is a timestamp and carries no
@@ -71,7 +87,7 @@ export function slotOf(video: VideoRow): { slot: Slot; why: string } {
   if (
     video.kind === 'live' ||
     video.startAtSource === 'liveSession' ||
-    /^(qpll )?live(stream)?\b/i.test(title) ||
+    titleSaysLive(title) ||
     / — (gs director|camera \d+)$/i.test(title) ||
     /[- ]livestream$/i.test(lower)
   ) {

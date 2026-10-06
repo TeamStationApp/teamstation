@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import path from 'node:path'
 
 import { Pool } from 'pg'
 
@@ -14,9 +13,8 @@ import { serverConfig } from '../serverConfig'
 /**
  * PeerTube's channel invite codes, brought across as TeamStation invites.
  *
- *   npm run import-invites -- --dry     (writes nothing)
- *   npm run import-invites
- *   npm run import-invites -- --map /path/to/other.json
+ *   npm run import-invites -- --map /path/to/mapping.json --dry   (writes nothing)
+ *   npm run import-invites -- --map /path/to/mapping.json
  *
  * The codes themselves come over **unchanged**, because they are already out
  * there: `app.teamstation.app/i/demo2026` is in mailboxes, in group chats and
@@ -30,9 +28,10 @@ import { serverConfig } from '../serverConfig'
  * about the door staying open, not about who came through it.
  *
  * Which channel maps to which team or season is operational fact, not program
- * logic, so it lives in `peertubeInvites.json` beside this file rather than in
- * the source. A channel is named by what it is called, never by its id: the
- * development and production databases number the same team differently.
+ * logic, so it lives in a JSON file passed with `--map` and kept outside this
+ * repository: the channels are real teams and seasons. A channel is named by
+ * what it is called, never by its id: the development and production
+ * databases number the same team differently.
  *
  * PeerTube is read and never written.
  */
@@ -99,11 +98,8 @@ async function main(): Promise<void> {
   // `--dry`, not `--dry-run`: npm eats the latter before the script sees it.
   const dryRun = process.argv.includes('--dry')
   const mapAt = process.argv.indexOf('--map')
-  const mapFile =
-    mapAt === -1
-      ? path.join(__dirname, 'peertubeInvites.json')
-      : (process.argv[mapAt + 1] ?? '')
-  if (mapFile === '') throw new Error('--map needs a file')
+  const mapFile = mapAt === -1 ? '' : (process.argv[mapAt + 1] ?? '')
+  if (mapFile === '') throw new Error('--map needs a mapping file')
 
   if (serverConfig.peertubeDatabaseUrl === '') {
     throw new Error('peertubeDatabaseUrl is not configured')

@@ -11,6 +11,7 @@ import { promisify } from 'node:util'
 
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
+import { titleSaysLive } from './auditVideos'
 
 const run = promisify(execFile)
 
@@ -41,8 +42,8 @@ const run = promisify(execFile)
  * within a season — so a run that is interrupted has finished whole seasons
  * rather than a scattering of days.
  *
- *   npm run import-archive -- --dry-run
- *   npm run import-archive -- --seasons "QPLL Spring 2026,10U All-Stars 2026"
+ *   npm run import-archive -- --seasons "<season>,<season>" --dry-run
+ *   npm run import-archive -- --seasons "<season>,<season>"
  *
  * **Taking down is hiding, not deleting.** A hidden video is on no page and in
  * no picker, which is what "no longer referenced" means to anybody looking at
@@ -205,7 +206,7 @@ function reads(title: string, kind: string, source: string | null): string {
   if (
     kind === 'live' ||
     source === 'liveSession' ||
-    /^(qpll )?live(stream)?\b/i.test(lower) ||
+    titleSaysLive(title) ||
     / — (gs director|camera \d+)$/i.test(lower) ||
     // `2026-03-25 Hawks vs Mid City 1 - livestream`: a live recording that
     // wears the game's name and puts the word at the end. The audit knew
@@ -271,9 +272,13 @@ async function main(): Promise<void> {
   const dryRun = argv.includes('--dry-run')
   const local = argv.includes('--local')
   const host = get('host') ?? 'user@example.com'
-  const seasons = (
-    get('seasons') ?? '10U All-Stars 2026,QPLL Fall 2026,QPLL Spring 2026'
-  ).split(',')
+  // Which seasons is the operator's to say, not the source's: a default
+  // would put a real league's season names in a public repository.
+  const seasonList = get('seasons') ?? ''
+  if (seasonList === '') {
+    throw new Error('--seasons needs a comma-separated list of season names')
+  }
+  const seasons = seasonList.split(',')
   const databaseUrl = get('database') ?? serverConfig.databaseUrl
   if (!dryRun) takeTheLock()
   const db = makeDatabase(databaseUrl)
