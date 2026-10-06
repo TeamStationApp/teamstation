@@ -1,12 +1,17 @@
 import { expect } from 'chai'
+import { readFileSync } from 'fs'
 import { describe, it } from 'mocha'
+import { join } from 'path'
 
 import {
   makeOpenMicrophone,
   type MicrophoneDevices,
   PCM_RATE,
-  WORKLET_SOURCE
+  WORKLET_URL
 } from './microphone'
+
+/** The worklet processor, the very file `src/build.mjs` serves. */
+const WORKLET_SOURCE = readFileSync(join(__dirname, 'pcm16kWorklet.js'), 'utf8')
 
 /** Runs the worklet's source against a stand-in for the audio thread. */
 function processor(sampleRate: number): {
@@ -109,7 +114,7 @@ describe('the microphone', function () {
         port,
         connect: (to: unknown) => calls.push(`worklet → ${String(to)}`)
       }),
-      moduleUrl: () => 'blob:pcm'
+      moduleUrl: WORKLET_URL
     } as unknown as MicrophoneDevices
     const chunks: ArrayBuffer[] = []
     const microphone = await makeOpenMicrophone(devices)(pcm =>
@@ -117,7 +122,7 @@ describe('the microphone', function () {
     )
     expect(calls).deep.equals([
       'asked {"channelCount":1,"echoCancellation":true,"noiseSuppression":true,"autoGainControl":true}',
-      'module blob:pcm',
+      'module /pcm16kWorklet.js',
       'source → worklet',
       'worklet → speakers',
       'resumed'
@@ -148,7 +153,7 @@ describe('the microphone', function () {
       createNode: () => {
         throw new Error('unreachable')
       },
-      moduleUrl: () => 'blob:pcm'
+      moduleUrl: WORKLET_URL
     } as unknown as MicrophoneDevices
     let failure: unknown
     try {
