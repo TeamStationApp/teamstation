@@ -23,6 +23,8 @@ const suites = [
 ]
 const required = [
   'src/common/passwordProtocol.ts',
+  'src/common/passwordCalibration.ts',
+  'src/app/components/NewPasswordFields.tsx',
   'src/server/auth/passwords.ts',
   'src/server/account/passwordReset.ts',
   'src/app/platform/passwordKdfNative.ts',
@@ -84,6 +86,7 @@ run('node_modules/.bin/mocha', [
   'src/server/routes/password.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordProtocol.test.ts',
+  'src/common/passwordCalibration.test.ts',
   'src/common/passwordClient.test.ts',
   'src/app/platform/passwordKdf.test.ts',
   'src/app/platform/accountPhoto.test.ts',

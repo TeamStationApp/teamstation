@@ -126,14 +126,39 @@ export function passwordBytes(password: string): Uint8Array {
   }
   return Uint8Array.from(bytes)
 }
+export function newPasswordRequirements(password: string): {
+  length: boolean
+  uppercase: boolean
+  lowercase: boolean
+  number: boolean
+  long: boolean
+  tooLong: boolean
+  valid: boolean
+} {
+  const count = Array.from(password).length
+  const long = count > 16
+  const length = count >= 8
+  const uppercase = /\p{Lu}/u.test(password)
+  const lowercase = /\p{Ll}/u.test(password)
+  const number = /\p{Nd}/u.test(password)
+  const tooLong = passwordBytes(password).length > 1024
+  return {
+    length,
+    uppercase,
+    lowercase,
+    number,
+    long,
+    tooLong,
+    valid: length && !tooLong && (long || (uppercase && lowercase && number))
+  }
+}
 export function checkNewPassword(password: string): void {
-  if (
-    password.length < 8 ||
-    password.length > 1024 ||
-    passwordBytes(password).length > 1024
-  )
+  const requirements = newPasswordRequirements(password)
+  if (requirements.tooLong)
+    throw new Error('Use at most 1024 UTF-8 bytes for your password')
+  if (!requirements.valid)
     throw new Error(
-      'Use at least 8 characters and at most 1024 UTF-8 bytes for your password'
+      'Use at least 8 characters with uppercase, lowercase and a number, or use 17 or more characters'
     )
 }
 export function rejectRawPassword(raw: unknown): void {

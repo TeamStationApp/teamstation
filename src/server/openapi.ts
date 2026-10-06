@@ -167,7 +167,7 @@ const accountPaths = {
       security: [{ bearer: [] }],
       summary: 'Set or change your password',
       description:
-        'Submit a 32-byte client Argon2id hash and client-selected parameters. A currentClientHash using saved parameters is required for a password change, or a fresh reset email code. Legacy credentials always require the reset code. Raw password/currentPassword fields are rejected. Clients enforce 8 characters through 1024 UTF-8 bytes. Server uses independent salt and four times client iterations; both parameter sets and only the final server hash are stored.',
+        'Submit a 32-byte client Argon2id hash and client-selected parameters. A currentClientHash using saved parameters is required for a password change, or a fresh reset email code. Legacy credentials always require the reset code. Raw password/currentPassword fields are rejected. Clients require at least 8 Unicode characters with uppercase, lowercase and a number; at 17 or more characters composition is waived. Maximum 1024 UTF-8 bytes. Clients calibrate asynchronously from at least 32 MiB, 6 iterations and 4 lanes toward 3000 ms. Server uses independent salt and four times client iterations; both parameter sets and only the final server hash are stored.',
       requestBody: {
         required: true,
         content: {

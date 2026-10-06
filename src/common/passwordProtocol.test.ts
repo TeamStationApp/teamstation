@@ -14,6 +14,7 @@ import {
   checkNewPassword,
   clientParameters,
   hexBytes,
+  newPasswordRequirements,
   passwordBytes,
   rejectRawPassword
 } from './passwordProtocol'
@@ -94,6 +95,40 @@ describe('Argon2 password protocol', () => {
     expect(asNewPasswordParameters(testPasswordParameters)).deep.equals(
       testPasswordParameters
     )
+  })
+  it('requires eight Unicode characters and composition unless length exceeds sixteen', () => {
+    for (const password of [
+      'Abcdef1',
+      'abcdefgh',
+      'ABCDEFG1',
+      'abcdefg1',
+      'Abcdefgh',
+      'a'.repeat(16),
+      '😀'.repeat(7)
+    ])
+      expect(newPasswordRequirements(password).valid, password).equals(false)
+    for (const password of [
+      'Abcdefg1',
+      'a'.repeat(17),
+      'a'.repeat(1024),
+      'Éé١abcde',
+      '😀'.repeat(17)
+    ]) {
+      expect(newPasswordRequirements(password).valid, password).equals(true)
+      expect(() => {
+        checkNewPassword(password)
+      }).not.throws()
+    }
+    expect(newPasswordRequirements('😀'.repeat(8)).length).equals(true)
+    expect(newPasswordRequirements('😀'.repeat(8)).long).equals(false)
+    expect(newPasswordRequirements('Éé١abcde')).includes({
+      uppercase: true,
+      lowercase: true,
+      number: true
+    })
+    expect(newPasswordRequirements('é'.repeat(512)).valid).equals(true)
+    expect(newPasswordRequirements('é'.repeat(513)).tooLong).equals(true)
+    expect(newPasswordRequirements('a'.repeat(1025)).valid).equals(false)
   })
   it('rejects raw password wire fields and enforces local password policy', () => {
     for (const raw of [{ password: 'raw' }, { currentPassword: 'raw' }])

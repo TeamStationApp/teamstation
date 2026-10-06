@@ -15,6 +15,7 @@ import { webSettings } from './web-build-settings.mjs'
 
 const suites = ['src/app/screens/AccountScreen.test.tsx']
 const required = [
+  'src/app/components/NewPasswordFields.tsx',
   'src/common/passwordCalibration.ts',
   'src/common/passwordProtocol.ts'
 ]
@@ -64,6 +65,7 @@ run('node_modules/.bin/mocha', [
   '-r',
   './src/test/scoringDomSetup.cjs',
   'src/server/routes/password.test.ts',
+  'src/server/routes/account.test.ts',
   'src/server/openapi.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordCalibration.test.ts',
@@ -101,7 +103,7 @@ run('node_modules/.bin/c8', [
   ...[
     ...required,
     'src/app/screens/AccountScreen.tsx',
-    'src/app/components/NewPasswordFields.tsx',
+    'src/app/components/TextField.tsx',
     'src/server/auth/passwords.ts',
     'src/common/api.ts',
     'src/server/routes/auth.ts',

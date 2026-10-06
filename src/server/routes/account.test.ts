@@ -216,7 +216,8 @@ describe('account settings HTTP API', function () {
       baseUrl: h.origin + '/api/v1',
       token: h.tokens.get(101),
       passwordKdf: testPasswordKdf,
-      passwordCosts: testPasswordCosts
+      passwordCosts: testPasswordCosts,
+      passwordTargetMs: 1
     })
   it('sets and changes passwords with saved parameters and no raw HTTP password', async () => {
     const client = passwordClient()
@@ -225,7 +226,7 @@ describe('account settings HTTP API', function () {
         await client.setAccountPassword(password)
         expect.fail('accepted invalid password')
       } catch (error) {
-        expect(String(error)).includes('8 characters')
+        expect(String(error)).matches(/8 characters|1024 UTF-8 bytes/)
       }
     }
     expect(
@@ -259,7 +260,7 @@ describe('account settings HTTP API', function () {
       expect(String(error)).includes('Wrong e-mail')
     }
     const login = await client.signInWithPassword('alex@example.com', next)
-    expect(login.user.avatarUrl).includes(h.space.endpoint)
+    expect(login.user.avatarUrl).equals((await read()).user.avatarUrl)
     const wait = await h.request(
       'POST',
       '/auth/email-code',
@@ -576,7 +577,8 @@ describe('account settings HTTP API', function () {
       baseUrl: h.origin + '/api/v1',
       token: h.tokens.get(102),
       passwordKdf: testPasswordKdf,
-      passwordCosts: testPasswordCosts
+      passwordCosts: testPasswordCosts,
+      passwordTargetMs: 1
     })
     expect((await client.accountSettings()).user.id).equals(102)
     expect((await client.setAccountName('Casey Reed')).user.displayName).equals(

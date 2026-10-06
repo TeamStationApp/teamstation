@@ -3,7 +3,10 @@ import { Platform, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
-import type { ClientPasswordCosts } from '../../common/passwordProtocol'
+import {
+  type ClientPasswordCosts,
+  newPasswordRequirements
+} from '../../common/passwordProtocol'
 import {
   Button,
   Card,
@@ -13,6 +16,7 @@ import {
   SectionHeader,
   TextField
 } from '../components'
+import { NewPasswordFields } from '../components/NewPasswordFields'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -322,19 +326,12 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                       }}
                     />
                   )}
-                  <TextField
-                    label="New password"
-                    value={password}
-                    onChangeText={setPassword}
-                    secure
+                  <NewPasswordFields
+                    password={password}
+                    confirmation={confirmation}
+                    onPassword={setPassword}
+                    onConfirmation={setConfirmation}
                   />
-                  <TextField
-                    label="Confirm new password"
-                    value={confirmation}
-                    onChangeText={setConfirmation}
-                    secure
-                  />
-                  <Text style={styles.email}>Use at least 8 characters.</Text>
                   {preparing && (
                     <Text accessibilityLiveRegion="polite" style={styles.email}>
                       Preparing password security… You can keep typing.
@@ -363,7 +360,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                       label="Save password"
                       disabled={
                         busy !== '' ||
-                        password === '' ||
+                        !newPasswordRequirements(password).valid ||
+                        password !== confirmation ||
                         preparationError !== '' ||
                         (reset != null && resetCode.trim() === '')
                       }

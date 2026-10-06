@@ -1,4 +1,4 @@
-/** Simulator-only entry point. Build explicitly with ENTRY_FILE; never used by the product. */
+/** Device-test entry point. Build explicitly with ENTRY_FILE; never used by the product. */
 import React, { useState } from 'react'
 import { AppRegistry, Button, ScrollView, Text, TextInput } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
@@ -89,6 +89,42 @@ function PasswordBenchmark(): React.ReactElement {
       setBusy(false)
     }
   }
+  const showForm = (mode: 'normal' | 'pending' | 'failure'): void => {
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      passwordKdf: async (password, parameters) => {
+        if (mode === 'failure')
+          throw new Error('Password preparation unavailable')
+        if (mode === 'pending')
+          await new Promise(resolve => setTimeout(resolve, 60000))
+        return await passwordKdf(password, parameters)
+      },
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            user: {
+              id: 101,
+              displayName: 'Demo',
+              isAdmin: false,
+              avatarUrl: null
+            },
+            emails: [],
+            hasPassword: false,
+            passwordNeedsUpgrade: false,
+            passwordParameters: null,
+            newPasswordSalt: '00'.repeat(16)
+          })
+        )
+    })
+    setForm({
+      client,
+      session: {
+        token: '',
+        expiresAt: '',
+        user: { id: 101, displayName: 'Demo', isAdmin: false, avatarUrl: null }
+      }
+    })
+  }
   if (form != null)
     return (
       <SafeAreaProvider>
@@ -123,39 +159,19 @@ function PasswordBenchmark(): React.ReactElement {
       <Button
         title="Show password form"
         onPress={() => {
-          const client = new TeamStationClient({
-            baseUrl: 'https://example.test/api/v1',
-            passwordKdf,
-            fetch: async () =>
-              new Response(
-                JSON.stringify({
-                  user: {
-                    id: 101,
-                    displayName: 'Demo',
-                    isAdmin: false,
-                    avatarUrl: null
-                  },
-                  emails: [],
-                  hasPassword: false,
-                  passwordNeedsUpgrade: false,
-                  passwordParameters: null,
-                  newPasswordSalt: '00'.repeat(16)
-                })
-              )
-          })
-          setForm({
-            client,
-            session: {
-              token: '',
-              expiresAt: '',
-              user: {
-                id: 101,
-                displayName: 'Demo',
-                isAdmin: false,
-                avatarUrl: null
-              }
-            }
-          })
+          showForm('normal')
+        }}
+      />
+      <Button
+        title="Show pending password form"
+        onPress={() => {
+          showForm('pending')
+        }}
+      />
+      <Button
+        title="Show failed password form"
+        onPress={() => {
+          showForm('failure')
         }}
       />
       <Button

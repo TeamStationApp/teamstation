@@ -293,6 +293,58 @@ describe('Account settings screen', () => {
     await press('Cancel password change')
     expect(button('Change password')).not.equals(undefined)
   })
+  it('shows password requirements once, live completion and only matching feedback for confirmation', async () => {
+    const f = fixture()
+    await render(<AccountScreen {...f} onSignOut={() => undefined} />)
+    await press('Set password')
+    expect(text()).not.includes('Passwords do not match')
+    const requirement = (label: string): Element | null =>
+      document.querySelector(`[aria-label="${label}"]`)
+    expect(requirement('At least 8 characters: Required')).not.equals(null)
+    await change('New password', 'Abcdefg1')
+    for (const label of [
+      'At least 8 characters',
+      'An uppercase letter',
+      'A lowercase letter',
+      'A number'
+    ])
+      expect(requirement(label + ': Complete')).not.equals(null)
+    expect(
+      document
+        .querySelector('[aria-label="New password"]')!
+        .getAttribute('autocomplete')
+    ).equals('new-password')
+    await change('Confirm new password', 'different')
+    expect(text()).includes('Passwords do not match')
+    expect(button('Save password')!.getAttribute('aria-disabled')).equals(
+      'true'
+    )
+    await change('Confirm new password', 'Abcdefg1')
+    expect(text()).includes('Passwords match')
+    expect(button('Save password')!.getAttribute('aria-disabled')).not.equals(
+      'true'
+    )
+    await change('New password', 'a'.repeat(16))
+    expect(requirement('An uppercase letter: Required')).not.equals(null)
+    await change('New password', 'a'.repeat(17))
+    expect(
+      requirement(
+        'An uppercase letter: Not required with 17 or more characters'
+      )
+    ).not.equals(null)
+    await change('Confirm new password', 'a'.repeat(17))
+    expect(button('Save password')!.getAttribute('aria-disabled')).not.equals(
+      'true'
+    )
+    expect(
+      document.querySelectorAll('[aria-label^="At least 8 characters:"]')
+    ).length(1)
+    await change('New password', 'a'.repeat(1025))
+    expect(text()).includes('at most 1024 UTF-8 bytes')
+    expect(button('Save password')!.getAttribute('aria-disabled')).equals(
+      'true'
+    )
+  })
   it('starts password preparation on entry and waits before a single save', async () => {
     const f = fixture()
     let finish!: (costs: typeof testPasswordCosts) => void
