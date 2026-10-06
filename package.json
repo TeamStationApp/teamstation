@@ -21,7 +21,8 @@
         "DictationMicrophone": "RCTDictationMicrophone",
         "TSHaptics": "RCTHaptics",
         "TSPhoneStream": "RCTPhoneStream",
-        "CueSounds": "RCTCueSounds"
+        "CueSounds": "RCTCueSounds",
+        "NativeChatCrypto": "ChatCryptoProvider"
       },
       "componentProvider": {
         "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",
@@ -33,7 +34,7 @@
     "android": "react-native run-android",
     "audit-videos": "node -r sucrase/register src/server/dev/auditVideos.ts",
     "backfill-linescore": "node -r sucrase/register src/server/dev/backfillLinescore.ts",
-    "build": "tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures lib/server/location && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/ && cp src/server/location/placesCatalog.json.gz lib/server/location/",
+    "build": "node scripts/chatCryptoBuild.mjs node && tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures lib/server/location && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/ && cp src/server/location/placesCatalog.json.gz lib/server/location/ && mkdir -p lib/common/chatCrypto/node && rm -f lib/common/chatCrypto/node/chat_crypto.node && cp src/common/chatCrypto/node/chat_crypto.node lib/common/chatCrypto/node/",
     "build.field": "TS_FIELD_PREVIEW=1 node src/build.mjs",
     "build.web": "node src/build.mjs",
     "camera-sweep": "node -r sucrase/register src/server/dev/cameraSweep.ts",
@@ -43,11 +44,11 @@
     "coverage.uiTweaks": "node scripts/ui-tweaks-coverage.mjs",
     "coverage.sync": "node scripts/sync-changed-coverage.mjs",
     "coverage.lineupQr": "node scripts/lineup-qr-coverage.mjs",
-    "coverage.app": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
+    "coverage.app": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
     "coverage.changed.app": "c8 --reporter=json --report-dir coverage/changedApp --include 'src/app/player/**/*.ts' --exclude '**/*.test.ts' --exclude '**/*.e2e.ts' --exclude '**/*.integration.ts' mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/app/player/**/*.test.ts' && node scripts/changed-line-check.cjs --coverage coverage/changedApp/coverage-final.json --ext .ts --allow-empty src/app/player",
-    "coverage.changed.server": "node scripts/server-changed-coverage.mjs",
+    "coverage.changed.server": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/server-changed-coverage.mjs",
     "coverage.scripts": "c8 --reporter=json --report-dir coverage/scripts --include 'scripts/changed-line-*.cjs' --include scripts/swift-changed-line-coverage.cjs mocha -r sucrase/register --extension ts --spec src/test/changedLineCoverage.test.ts --spec src/test/coverageScripts.test.ts --spec src/test/userIdCoverage.test.ts && node scripts/changed-line-check.cjs --coverage coverage/scripts/coverage-final.json --ext .cjs scripts/changed-line-coverage.cjs scripts/changed-line-check.cjs scripts/swift-changed-line-coverage.cjs",
-    "coverage.server": "node src/migrate/requirePostgres18.js && c8 --all --reporter=text --check-coverage --lines 90 --include src/common/userIdNumber.ts --include src/server/db/int8.ts --include src/common/gumboEventTypes.ts --include src/common/gumboPlay.ts --include src/server/events/**/*.ts --include src/server/routes/events.ts --include src/server/routes/teams.ts --include src/server/stats/records.ts --include src/server/teams/resolveOpponent.ts --include src/server/teams/createTeam.ts --include src/server/teams/followMerges.ts --include src/server/db/externalIds.ts --include src/server/db/advisoryLocks.ts --include src/common/createTeam.ts --include src/common/teamMembers.ts --include src/common/externalIds.ts --include src/server/teams/addPlayers.ts --include src/server/teams/addAdults.ts --include src/server/teams/storeTeamPictures.ts --include src/server/routes/teamMembers.ts --include src/server/teams/teamNames.ts --include src/common/scheduleGames.ts --include 'src/server/schedule/**/*.ts' --include src/server/routes/schedule.ts --include src/migrate/migrations/041scheduleApi.ts --include src/migrate/migrations/042fenceDistance.ts --include src/migrate/migrations/043roleFlags.ts --include src/migrate/migrations/044teamDefaultLineup.ts --include src/migrate/migrations/045walkUpSongs.ts --include src/migrate/migrations/046externalCleanup.ts --include src/migrate/migrations/048dropStatRollups.ts --include src/migrate/runner.ts --include src/migrate/schemaSnapshot.ts --include src/common/scoring/lineupHistory.ts --include src/server/routes/lineups.ts --include src/server/routes/walkUpSongs.ts --include 'src/server/socket/*.ts' --include src/common/roles.ts --include src/common/playerSettings.ts --include src/server/access.ts --include src/server/invites/people.ts --include src/server/routes/manage.ts --include src/server/routes/me.ts --include src/server/routes/deviceEventControl.ts --include src/server/auth/deviceEventControl.ts --include src/server/routes/players.ts --include src/server/routes/director.ts --include src/server/routes/directorUploads.ts --include src/server/routes/live.ts --include src/server/live/streamKeys.ts --include src/server/live/splitter.ts --include src/server/live/controller.ts --include src/server/media/trackStarts.ts --include src/server/notifications/recordingReminders.ts --include src/server/notifications/inbox.ts --include src/server/routes/notifications.ts --include src/server/director/uploads.ts --include src/migrate/migrations/062phoneStreams.ts --include src/server/teams/teamRoster.ts --include src/common/fenceDistance.ts --include 'src/server/games/**/*.ts' --include src/server/jsonBody.ts --include src/common/scoreboard.ts --include src/common/scoreboardEvents.ts --include src/common/scoring/scoreboardOf.ts --include 'src/server/scoreboard/**/*.ts' --include src/server/routes/scoreboard.ts --include src/server/director/runGames.ts --include src/server/scoring/replayContext.ts --include 'src/server/dictation/**/*.ts' --include src/server/routes/health.ts --include src/server/location/googlePlaces.ts --include src/server/location/places.ts --include src/server/routes/location.ts --include src/server/serverConfig.ts --include src/server/appLinks/config.ts --include 'src/server/replay/**/*.ts' --include src/server/routes/narrations.ts --include src/migrate/migrations/072narrationAudio.ts --include src/server/dev/replaySeed.ts mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --ignore '**/node_modules/**' --ignore 'lib/**'",
+    "coverage.server": "node src/migrate/requirePostgres18.js && node scripts/chatCryptoBuild.mjs node wasm && c8 --all --reporter=text --check-coverage --lines 90 --include src/common/userIdNumber.ts --include src/server/db/int8.ts --include src/common/gumboEventTypes.ts --include src/common/gumboPlay.ts --include src/server/events/**/*.ts --include src/server/routes/events.ts --include src/server/routes/teams.ts --include src/server/stats/records.ts --include src/server/teams/resolveOpponent.ts --include src/server/teams/createTeam.ts --include src/server/teams/followMerges.ts --include src/server/db/externalIds.ts --include src/server/db/advisoryLocks.ts --include src/common/createTeam.ts --include src/common/teamMembers.ts --include src/common/externalIds.ts --include src/server/teams/addPlayers.ts --include src/server/teams/addAdults.ts --include src/server/teams/storeTeamPictures.ts --include src/server/routes/teamMembers.ts --include src/server/teams/teamNames.ts --include src/common/scheduleGames.ts --include 'src/server/schedule/**/*.ts' --include src/server/routes/schedule.ts --include src/migrate/migrations/041scheduleApi.ts --include src/migrate/migrations/042fenceDistance.ts --include src/migrate/migrations/043roleFlags.ts --include src/migrate/migrations/044teamDefaultLineup.ts --include src/migrate/migrations/045walkUpSongs.ts --include src/migrate/migrations/046externalCleanup.ts --include src/migrate/migrations/048dropStatRollups.ts --include src/migrate/runner.ts --include src/migrate/schemaSnapshot.ts --include src/common/scoring/lineupHistory.ts --include src/server/routes/lineups.ts --include src/server/routes/walkUpSongs.ts --include 'src/server/socket/*.ts' --include src/common/roles.ts --include src/common/playerSettings.ts --include src/server/access.ts --include src/server/invites/people.ts --include src/server/routes/manage.ts --include src/server/routes/me.ts --include src/server/routes/deviceEventControl.ts --include src/server/auth/deviceEventControl.ts --include src/server/routes/players.ts --include src/server/routes/director.ts --include src/server/routes/directorUploads.ts --include src/server/routes/live.ts --include src/server/live/streamKeys.ts --include src/server/live/splitter.ts --include src/server/live/controller.ts --include src/server/media/trackStarts.ts --include src/server/notifications/recordingReminders.ts --include src/server/notifications/inbox.ts --include src/server/routes/notifications.ts --include src/server/director/uploads.ts --include src/migrate/migrations/062phoneStreams.ts --include src/server/teams/teamRoster.ts --include src/common/fenceDistance.ts --include 'src/server/games/**/*.ts' --include src/server/jsonBody.ts --include src/common/scoreboard.ts --include src/common/scoreboardEvents.ts --include src/common/scoring/scoreboardOf.ts --include 'src/server/scoreboard/**/*.ts' --include src/server/routes/scoreboard.ts --include src/server/director/runGames.ts --include src/server/scoring/replayContext.ts --include 'src/server/dictation/**/*.ts' --include src/server/routes/health.ts --include src/server/location/googlePlaces.ts --include src/server/location/places.ts --include src/server/routes/location.ts --include src/server/serverConfig.ts --include src/server/appLinks/config.ts --include 'src/server/replay/**/*.ts' --include src/server/routes/narrations.ts --include src/migrate/migrations/072narrationAudio.ts --include src/server/dev/replaySeed.ts mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --ignore '**/node_modules/**' --ignore 'lib/**'",
     "demo": "node -r sucrase/register src/server/dev/demo.ts",
     "duplicate-people": "node -r sucrase/register src/server/dev/duplicatePeople.ts",
     "fake-space": "node -r sucrase/register src/server/dev/fakeSpace.ts",
@@ -77,7 +78,7 @@
     "stats-builder": "node -r sucrase/register src/server/statsBuilder/start.ts",
     "stats-fixture": "node -r sucrase/register src/server/dev/postStatsFixture.ts",
     "stats-request": "node -r sucrase/register src/server/statsBuilder/cli.ts",
-    "test": "node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
+    "test": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json",
     "typecheck.native": "tsc -p tsconfig.native.json",
     "typecheck.android": "tsc -p tsconfig.android.json",
@@ -106,7 +107,10 @@
     "test.playerNative": "node scripts/build-player-native-tests.mjs",
     "coverage.umpires": "node scripts/umpire-coverage.mjs",
     "coverage.umpires.server": "node scripts/umpire-server-coverage.mjs",
-    "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs"
+    "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs",
+    "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
+    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
+    "coverage.chat-ui": "c8 --temp-directory coverage/chatUi/tmp --reports-dir coverage/chatUi --reporter=text --reporter=json --reporter=json-summary --exclude '**/*.test.*' --exclude '**/*.e2e.*' --exclude 'src/test/**' --exclude-after-remap node scripts/chatUiCoverage.mjs && node scripts/changed-line-check.cjs --base \"$TS_COVERAGE_BASE\" --coverage coverage/chatUi/coverage-final.json --report coverage/chatUi/changed-lines.json --ext .ts --ext .tsx --ext .mjs --ext .cjs --exclude src/app/locales/en_US.ts --exclude src/app/chat/screenEngine.ts src scripts/chatUiCoverage.mjs scripts/changed-line-check.cjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",
@@ -158,7 +162,12 @@
     "redis": "^5.12.1",
     "rfc4648": "^1.5.4",
     "three": "0.186.0",
-    "ws": "8.22.0"
+    "ws": "8.22.0",
+    "@react-native-documents/picker": "12.0.2",
+    "emojibase-data": "17.0.0",
+    "react-native-blob-util": "0.25.1",
+    "react-native-keychain": "10.0.0",
+    "react-native-quick-base64": "3.0.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -192,6 +201,7 @@
     "esbuild": "^0.28.2",
     "eslint": "^9.37.0",
     "eslint-config-standard-kit": "^1.0.0",
+    "fake-indexeddb": "6.2.5",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "mocha": "^12.0.1",
@@ -207,7 +217,8 @@
     "expo-modules-core": {
       "expo-modules-jsi": "58.0.3",
       "react-native-worklets": "$react-native-worklets"
-    }
+    },
+    "shell-quote": "^1.12.0"
   },
   "reanimated": {
     "staticFeatureFlags": {
