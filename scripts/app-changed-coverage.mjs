@@ -88,6 +88,15 @@ const check = spawnSync(
     // src/app/components/index.ts has no coverage record of its own.
     '--exclude',
     'src/app/components/index.ts',
+    // TurboModule specs: codegen reads them, and loading one needs React
+    // Native's native side, which no test here has.
+    '--exclude',
+    'src/app/**/Native*.ts',
+    // Types only: nothing of them is left to run.
+    '--exclude',
+    'src/app/chat/chatVideoProps.ts',
+    '--exclude',
+    'src/app/chat/screenEngine.ts',
     'src/app'
   ],
   { stdio: 'inherit' }

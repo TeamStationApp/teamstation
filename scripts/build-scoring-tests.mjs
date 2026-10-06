@@ -1,7 +1,9 @@
 import { globSync, mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
@@ -29,8 +31,13 @@ await build({
     'chai'
   ],
   sourcemap: true,
+  // The bundle runs in Node: the chat crypto core is the Node addon's.
+  plugins: [...(webSettings.plugins ?? []), chatCoreResolvePlugin()],
   define: {
     __DEV__: 'true',
+    TS_CHAT_NODE_ADDON: JSON.stringify(
+      resolve('src/common/chatCrypto/node/chat_crypto.node')
+    ),
     TS_API_BASE_URL: JSON.stringify('/api/v1'),
     'process.env.NODE_ENV': JSON.stringify('test')
   },
