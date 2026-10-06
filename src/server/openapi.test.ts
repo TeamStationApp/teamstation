@@ -18,14 +18,21 @@ import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
+import { chatRoutes } from './routes/chat'
+import { chatAttachmentRoutes } from './routes/chatAttachments'
+import { chatEpochRoutes } from './routes/chatEpochs'
+import { chatKeyRoutes } from './routes/chatKeys'
+import { chatMessageRoutes } from './routes/chatMessages'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
 import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
+import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
 import { groupRoutes } from './routes/groups'
+import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
@@ -159,6 +166,14 @@ describe('the API document', function () {
       ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(followRoutes(db, media)),
+      ...routesOf(chatRoutes(db, media)),
+      ...routesOf(chatKeyRoutes(db)),
+      ...routesOf(chatEpochRoutes(db)),
+      ...routesOf(chatMessageRoutes(db, media)),
+      ...routesOf(
+        chatAttachmentRoutes(db, { space: media.space, uploadsDir: '/tmp' })
+      ),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
@@ -173,6 +188,7 @@ describe('the API document', function () {
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
+      ...routesOf(guardianRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),
@@ -215,6 +231,14 @@ describe('the API document', function () {
       ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(followRoutes(db, media)),
+      ...routesOf(chatRoutes(db, media)),
+      ...routesOf(chatKeyRoutes(db)),
+      ...routesOf(chatEpochRoutes(db)),
+      ...routesOf(chatMessageRoutes(db, media)),
+      ...routesOf(
+        chatAttachmentRoutes(db, { space: media.space, uploadsDir: '/tmp' })
+      ),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
@@ -229,6 +253,7 @@ describe('the API document', function () {
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
+      ...routesOf(guardianRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),

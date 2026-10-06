@@ -40,6 +40,14 @@ export async function settleInviteSignIn(
   db: Kysely<Database>,
   options: { email: string; inviteId: string; displayName?: string | null }
 ): Promise<SettledJoin | undefined> {
+  const knownInvite = await findInviteById(db, options.inviteId)
+  if (knownInvite == null) return undefined
+  if (
+    knownInvite.guardianOfUserId != null &&
+    (knownInvite.forEmail ?? '').trim().toLowerCase() !==
+      options.email.trim().toLowerCase()
+  )
+    return undefined
   const settled = await settleAccount(db, options.email, {
     displayName: options.displayName
   })

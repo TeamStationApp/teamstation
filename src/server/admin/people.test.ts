@@ -865,7 +865,7 @@ describe('a guardian across merges', function () {
     expect(await may(signsIn, child)).equals(true)
   })
 
-  it('counts a family link and not an other one, merged or not', async function () {
+  it('counts a guardian link and not a family or other one, merged or not', async function () {
     if (db == null) this.skip()
     const aunt = await person('Ketel Marte')
     const neighbour = await person('Corbin Carroll')
@@ -874,7 +874,9 @@ describe('a guardian across merges', function () {
     await link(aunt, placeholder, 'family')
     await link(neighbour, placeholder, 'other')
 
-    expect(await may(aunt, placeholder)).equals(true)
+    // An adult family member's link counts only for who may message the
+    // player, never for the whole name.
+    expect(await may(aunt, placeholder)).equals(false)
     expect(await may(neighbour, placeholder)).equals(false)
     await closeInto(db, userIdOfGumbo(placeholder), userIdOfGumbo(child))
     expect(await may(aunt, child)).equals(true)

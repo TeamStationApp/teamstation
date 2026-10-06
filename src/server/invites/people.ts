@@ -41,6 +41,7 @@ export interface Grant {
   name: string
   /** `owner`, `manager` or `member` for a team; `member` above. */
   role: string
+  /** On a team grant only: whether they play on the team. */
   isPlayer?: boolean
 }
 
