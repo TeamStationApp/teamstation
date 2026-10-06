@@ -28,12 +28,13 @@ export async function requestPasswordReset(
   return { id: pending.id, code: pending.code, email: address.email }
 }
 
-/** Account and code locks make successful verification and password replacement atomic. */
+/** Validate under account/code locks; consume only in the replacement transaction. */
 export async function confirmPasswordReset(
   db: Kysely<Database>,
   userId: number,
   stored: string | null,
-  reset: ResetAuthorization
+  reset: ResetAuthorization,
+  consume = true
 ): Promise<boolean> {
   const row = await db
     .selectFrom('email_codes')
@@ -75,6 +76,7 @@ export async function confirmPasswordReset(
       .execute()
     return false
   }
+  if (!consume) return true
   await db
     .updateTable('email_codes')
     .set({ consumed_at: new Date() })

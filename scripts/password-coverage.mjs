@@ -106,6 +106,7 @@ run('node_modules/.bin/c8', [
     'src/app/screens/AccountScreen.tsx',
     'src/app/components/TextField.tsx',
     'src/server/auth/passwords.ts',
+    'src/server/account/passwordReset.ts',
     'src/common/api.ts',
     'src/server/routes/auth.ts',
     'src/server/routes/account.ts',

@@ -93,7 +93,7 @@ export async function readAccount(
   }
 }
 
-/** Lock before checking any credential, not merely before writing its replacement. */
+/** Protect each short authorization/write phase; never hold this lock during hashing. */
 async function lockAccount(
   db: Kysely<Database>,
   userId: number
@@ -201,40 +201,57 @@ export function accountRoutes(
     withAsync(async (req, res) => {
       const userId = accountId(req)
       const body = cleanBody(asAccountPasswordBody, req.body)
-      const changed = await db.transaction().execute(async tx => {
+      const invalidAuthorization = (): Error =>
+        badRequest(
+          body.reset == null
+            ? 'Your current password is incorrect. You can reset it with an email code'
+            : 'That code is incorrect or expired. Request a new code'
+        )
+      const authorization = await db.transaction().execute(async tx => {
         const held = await lockAccount(tx, userId)
         await limit(tx, userId, 'password', 10)
-        if (body.reset != null) {
-          if (!(await confirmPasswordReset(tx, userId, held, body.reset)))
-            return false
-        } else if (held != null && held !== '') {
-          if (
-            readPasswordRecord(held) == null ||
-            body.currentClientHash == null ||
-            !(await passwordMatches(body.currentClientHash, held, userId))
-          )
-            return false
-        }
+        const allowed =
+          body.reset == null ||
+          (await confirmPasswordReset(tx, userId, held, body.reset, false))
+        return { held, allowed }
+      })
+      if (!authorization.allowed) throw invalidAuthorization()
+      const { held } = authorization
+      if (
+        body.reset == null &&
+        held != null &&
+        held !== '' &&
+        (readPasswordRecord(held) == null ||
+          body.currentClientHash == null ||
+          !(await passwordMatches(body.currentClientHash, held, userId)))
+      )
+        throw invalidAuthorization()
+      // Native work owns no database connection or row lock. The final phase
+      // compares the exact credential and rechecks/consumes reset authorization.
+      const replacement = await createPasswordRecord(
+        body.clientHash,
+        body.clientParameters,
+        userId
+      )
+      const changed = await db.transaction().execute(async tx => {
+        if ((await lockAccount(tx, userId)) !== held)
+          throw badRequest('Your password changed. Please try again')
+        if (
+          body.reset != null &&
+          !(await confirmPasswordReset(tx, userId, held, body.reset))
+        )
+          return false
         await tx
           .updateTable('users')
           .set({
-            password_hash: await createPasswordRecord(
-              body.clientHash,
-              body.clientParameters,
-              userId
-            ),
+            password_hash: replacement,
             updated_at: new Date()
           })
           .where('id', '=', userId)
           .execute()
         return true
       })
-      if (!changed)
-        throw badRequest(
-          body.reset == null
-            ? 'Your current password is incorrect. You can reset it with an email code'
-            : 'That code is incorrect or expired. Request a new code'
-        )
+      if (!changed) throw invalidAuthorization()
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readAccount(db, userId, options))
     })

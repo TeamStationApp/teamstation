@@ -69,6 +69,87 @@ describe('password hashing and email-reset HTTP protocol', function () {
     code: string
   }): Promise<Response> =>
     await h.request('PUT', '/me/account/password', { ...body(), reset })
+  const waitForPasswordAttempt = async (): Promise<void> => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const charged = await h.db
+        .selectFrom('rate_events')
+        .select('at')
+        .where('scope', '=', 'account.password')
+        .where('key', '=', '101')
+        .executeTakeFirst()
+      if (charged != null) return
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    throw new Error('Password authorization did not start')
+  }
+  it('releases database locks during password hashing and rejects a superseded credential', async () => {
+    await h.db
+      .updateTable('users')
+      .set({ password_hash: null })
+      .where('id', '=', 101)
+      .execute()
+    let finished = false
+    const pending = h
+      .request('PUT', '/me/account/password', {
+        ...body(),
+        clientParameters: { ...testPasswordParameters, iterations: 128 }
+      })
+      .then(response => {
+        finished = true
+        return response
+      })
+    try {
+      await waitForPasswordAttempt()
+      const others = await Promise.all([
+        ...Array.from(
+          { length: 9 },
+          async () =>
+            await h.request('PUT', '/me/account/name', { displayName: 'Demo' })
+        ),
+        h.request('GET', '/me/account', undefined, 102)
+      ])
+      expect(others.map(r => r.status)).deep.equals(Array(10).fill(200))
+      expect(
+        finished,
+        'unrelated requests must finish before the expensive hash'
+      ).equals(false)
+      await h.db
+        .updateTable('users')
+        .set({ password_hash: legacy })
+        .where('id', '=', 101)
+        .execute()
+      expect((await pending).status).equals(400)
+      expect(await stored()).equals(legacy)
+    } finally {
+      await pending
+    }
+  })
+  it('revalidates reset expiry after hashing without consuming an invalid authorization', async () => {
+    const resetAuth = await reset()
+    const pending = h.request('PUT', '/me/account/password', {
+      ...body(),
+      reset: resetAuth,
+      clientParameters: { ...testPasswordParameters, iterations: 128 }
+    })
+    try {
+      await waitForPasswordAttempt()
+      await h.db
+        .updateTable('email_codes')
+        .set({ expires_at: new Date(0) })
+        .where('id', '=', resetAuth.requestId)
+        .execute()
+      expect((await pending).status).equals(400)
+      expect(await stored()).equals(legacy)
+      const code = await h.db
+        .selectFrom('email_codes')
+        .select('consumed_at')
+        .where('id', '=', resetAuth.requestId)
+        .executeTakeFirstOrThrow()
+      expect(code.consumed_at).equals(null)
+    } finally {
+      await pending
+    }
+  })
   it('authenticates old saved costs and requires the new floor only when replacing them', async () => {
     const old = {
       ...testPasswordParameters,
@@ -243,9 +324,10 @@ describe('password hashing and email-reset HTTP protocol', function () {
   it('consumes a reset only once across simultaneous submissions and handles mail failure', async () => {
     const pending = await reset()
     const responses = await Promise.all([update(pending), update(pending)])
-    expect(responses.map(r => r.status).sort((a, b) => a - b)).deep.equals([
-      200, 400
-    ])
+    expect(responses.filter(r => r.status === 200)).length(1)
+    expect(responses.filter(r => [400, 503].includes(r.status))).length(1)
+    // A competing hash may be rejected busy; after completion the code is spent.
+    expect((await update(pending)).status).equals(400)
     h.controls.failMail = true
     expect(
       (await h.request('POST', '/me/account/password/reset', {})).status
