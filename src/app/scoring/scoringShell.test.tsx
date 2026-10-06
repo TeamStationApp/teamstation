@@ -74,6 +74,56 @@ function fixtureFetch(signedIn = true): void {
     })
   }
 }
+function navigationFixture(past = false): void {
+  fixtureFetch()
+  const fetchFixture = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const path = (
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url
+    ).split('?')[0]
+    if (path.endsWith('/events') && !path.includes('/games/')) {
+      return new Response(
+        JSON.stringify([
+          {
+            ...gameFixture,
+            startAt: new Date(
+              Date.now() + (past ? -1 : 1) * 86400000
+            ).toISOString(),
+            homeTeamExternal: false,
+            awayTeamExternal: false,
+            videoCount: 1
+          }
+        ]),
+        { headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+    return await fetchFixture(input, init)
+  }
+}
+async function clickTab(label: string): Promise<void> {
+  const nav = document.querySelector('[aria-label="Schedule"]')?.parentElement
+  const button = nav?.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+  expect(button, `${label} navigation tab`).not.equals(null)
+  await act(async () => {
+    button?.click()
+  })
+}
+async function openListedGame(): Promise<void> {
+  const label = document
+    .querySelector('[aria-label^="Owls @ Hawks,"]')
+    ?.getAttribute('aria-label')
+  expect(
+    label,
+    Array.from(document.querySelectorAll('[aria-label]'))
+      .map(node => node.getAttribute('aria-label'))
+      .join(', ')
+  ).to.be.a('string')
+  await click(label!)
+}
 describe('scoring shell and exit', function () {
   for (const path of [
     '/',
@@ -148,6 +198,66 @@ describe('scoring shell and exit', function () {
     expect(menuBox?.style.right).equals('12px')
     await click('Exit Current Game')
     expect(currentRoute().name).equals('game')
+  })
+  for (const when of ['upcoming', 'past'] as const) {
+    it(`returns Schedule to its ${when} list after exiting scoring twice`, async function () {
+      navigationFixture(when === 'past')
+      showRoute({ name: 'schedule', when }, true)
+      await render(<App />)
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await openListedGame()
+        await click('Score Game')
+        await click('Full game scoring')
+        await click('Open scoring menu')
+        await click('Exit Current Game')
+        expect(currentRoute()).include({
+          name: 'game',
+          gameId: 'g1',
+          tab: 'watch'
+        })
+        await clickTab('Videos')
+        await clickTab('Schedule')
+        expect(currentRoute()).deep.equals({ name: 'schedule', when })
+        expect(
+          document.querySelector('[aria-label="Open scoring menu"]')
+        ).equals(null)
+        expect(document.querySelector('[aria-label="Upcoming"]')).not.equals(
+          null
+        )
+      }
+    })
+  }
+  it('clears Videos after scoring exit and preserves the game held in Schedule', async function () {
+    navigationFixture()
+    showRoute({ name: 'schedule', when: 'upcoming' }, true)
+    await render(<App />)
+    await openListedGame()
+    await click('Score Game')
+    await clickTab('Videos')
+    await openListedGame()
+    await click('Score Game')
+    await click('Full game scoring')
+    await click('Open scoring menu')
+    await click('Exit Current Game')
+    await clickTab('Schedule')
+    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'score' })
+    await clickTab('Videos')
+    expect(currentRoute().name).equals('videos')
+    expect(document.querySelector('[aria-label="Open scoring menu"]')).equals(
+      null
+    )
+  })
+  it('returns a direct scoring link to its game without leaving a scorer in Schedule', async function () {
+    fixtureFetch()
+    showRoute({ name: 'scoreGame', gameId: 'g1' }, true)
+    await render(<App />)
+    await click('Open scoring menu')
+    await click('Exit Current Game')
+    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'watch' })
+    await clickTab('Schedule')
+    expect(currentRoute().name).equals('schedule')
+    await click('Home')
+    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'watch' })
   })
   it('has a visible failure exit, retries the load, and ignores a late response after unmount', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
