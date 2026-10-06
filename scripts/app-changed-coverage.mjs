@@ -107,6 +107,15 @@ const check = spawnSync(
     'src/app/scoring/NativeCueSounds.ts',
     '--exclude',
     'src/app/components/glassViewProps.ts',
+    // TurboModule specs: codegen reads them, and loading one needs React
+    // Native's native side, which no test here has.
+    '--exclude',
+    'src/app/**/Native*.ts',
+    // Types only: nothing of them is left to run.
+    '--exclude',
+    'src/app/chat/chatVideoProps.ts',
+    '--exclude',
+    'src/app/chat/screenEngine.ts',
     'src/app'
   ],
   { stdio: 'inherit' }
