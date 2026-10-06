@@ -8,6 +8,7 @@ import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mayEditName } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { bothPlayedTogether } from '../events/playedTogether'
@@ -373,5 +374,335 @@ describe('one person, however many rows', function () {
       .where('team_id', '=', team)
       .executeTakeFirstOrThrow()
     expect(moved.user_id).equals(survivor)
+  })
+})
+
+describe('a guardian across merges', function () {
+  this.timeout(60000)
+
+  const scratch = `${scratchName}_guardians`
+  const url = adminUrl.replace(/\/[^/]*$/, `/${scratch}`)
+  let admin: Pool | undefined
+  let pool: Pool | undefined
+  let db: Kysely<Database> | undefined
+  const about = { isAdmin: false }
+
+  before(async function () {
+    attachInt8Parser()
+    admin = new Pool({ connectionString: adminUrl })
+    try {
+      await admin.query('select 1')
+    } catch {
+      await admin.end()
+      admin = undefined
+      this.skip()
+      return
+    }
+    await admin.query(`create database ${scratch}`)
+    pool = new Pool({ connectionString: url })
+    await migrateUp(pool, migrations)
+    db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
+  })
+
+  after(async function () {
+    if (db != null) await db.destroy()
+    else if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratch}`)
+      await admin.end()
+    }
+  })
+
+  function database(): Kysely<Database> {
+    if (db == null) throw new Error('no database')
+    return db
+  }
+
+  async function person(name: string): Promise<number> {
+    const id = mintUser()
+    await database()
+      .insertInto('users')
+      .values({ id, legacyId: legacyId(id), display_name: name })
+      .execute()
+    return id
+  }
+
+  async function link(
+    from: number,
+    to: number,
+    kind: 'guardian' | 'family' | 'other' = 'guardian'
+  ): Promise<void> {
+    await database()
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: from,
+        related_user_id: to,
+        kind
+      })
+      .execute()
+  }
+
+  /**
+   * What `repair-people` does to a group it takes apart: every row opened,
+   * then each part closed into its first row.
+   */
+  async function split(group: number[], parts: number[][]): Promise<void> {
+    await database()
+      .updateTable('users')
+      .set({ merged_into: null })
+      .where('id', 'in', group)
+      .execute()
+    for (const [keep, ...rest] of parts) {
+      for (const id of rest) await closeInto(database(), id, keep)
+    }
+  }
+
+  const may = async (actor: number, player: number): Promise<boolean> =>
+    await mayEditName(database(), actor, player, about)
+
+  const links = async (): Promise<unknown[]> =>
+    await database()
+      .selectFrom('user_links')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+
+  it('gives a parent the child’s name on the row their child was merged into', async function () {
+    if (db == null) this.skip()
+    const parent = await person('Yadier Molina')
+    const placeholder = await person('Unknown player')
+    const child = await person('Nolan Arenado')
+    await link(parent, placeholder)
+    const written = await links()
+
+    expect(await may(parent, child)).equals(false)
+    await closeInto(db, placeholder, child)
+    expect(await may(parent, child)).equals(true)
+    expect(await may(parent, placeholder)).equals(true)
+    // Nothing is written to make that so.
+    expect(await links()).deep.equals(written)
+  })
+
+  it('keeps a parent’s children when their own rows are merged', async function () {
+    if (db == null) this.skip()
+    const child = await person('Adley Rutschman')
+    const imported = await person('Cedric Mullins')
+    const signsIn = await person('Cedric Mullins')
+    await link(imported, child)
+
+    expect(await may(signsIn, child)).equals(false)
+    await closeInto(db, imported, signsIn)
+    expect(await may(signsIn, child)).equals(true)
+  })
+
+  it('counts a family link and not an other one, merged or not', async function () {
+    if (db == null) this.skip()
+    const aunt = await person('Ketel Marte')
+    const neighbour = await person('Corbin Carroll')
+    const placeholder = await person('Gabriel')
+    const child = await person('Gabriel Moreno')
+    await link(aunt, placeholder, 'family')
+    await link(neighbour, placeholder, 'other')
+
+    expect(await may(aunt, placeholder)).equals(true)
+    expect(await may(neighbour, placeholder)).equals(false)
+    await closeInto(db, placeholder, child)
+    expect(await may(aunt, child)).equals(true)
+    expect(await may(neighbour, child)).equals(false)
+  })
+
+  it('gives nobody a child they have no link to', async function () {
+    if (db == null) this.skip()
+    const parent = await person('Salvador Perez')
+    const otherParent = await person('Bobby Witt')
+    const placeholder = await person('Vinnie')
+    const child = await person('Vinnie Pasquantino')
+    const stranger = await person('Maikel Garcia')
+    await link(parent, placeholder)
+    await link(otherParent, stranger)
+
+    await closeInto(db, placeholder, child)
+    expect(await may(otherParent, child)).equals(false)
+    expect(await may(parent, stranger)).equals(false)
+  })
+
+  it('takes the name back when the merge is undone, after the parent’s rows merged too', async function () {
+    if (db == null) this.skip()
+    const parent = await person('Jose Ramirez')
+    const parentAgain = await person('Jose Ramirez')
+    const child = await person('Steven Kwan')
+    const kept = await person('Steven Kwan')
+    await link(parent, child)
+    await closeInto(db, child, kept)
+    await closeInto(db, parent, parentAgain)
+    expect(await may(parentAgain, kept)).equals(true)
+    const written = await links()
+
+    // They batted in one game: two boys, so the group is taken apart.
+    await split([kept, child], [[kept], [child]])
+    expect(await may(parentAgain, kept)).equals(false)
+    expect(await may(parentAgain, child)).equals(true)
+    expect(await links()).deep.equals(written)
+  })
+
+  it('keeps what is still one person when a group is split in part', async function () {
+    if (db == null) this.skip()
+    const parent = await person('Bryan Reynolds')
+    const parentAgain = await person('Bryan Reynolds')
+    const otherParent = await person('Oneil Cruz')
+    const kept = await person('Jared Jones')
+    const sameChild = await person('Jared')
+    const otherChild = await person('Jared J')
+    await link(parent, sameChild)
+    await link(otherParent, otherChild)
+    await closeInto(db, sameChild, kept)
+    await closeInto(db, otherChild, kept)
+    await closeInto(db, parent, parentAgain)
+    expect(await may(otherParent, kept)).equals(true)
+
+    await split(
+      [kept, sameChild, otherChild],
+      [[kept, sameChild], [otherChild]]
+    )
+    expect(await may(parentAgain, kept)).equals(true)
+    expect(await may(otherParent, kept)).equals(false)
+    expect(await may(otherParent, otherChild)).equals(true)
+  })
+
+  it('keeps a link made to the kept row itself, whatever else is undone', async function () {
+    if (db == null) this.skip()
+    const parent = await person('Pete Alonso')
+    const parentAgain = await person('Pete Alonso')
+    const parentThird = await person('Pete Alonso')
+    const kept = await person('Francisco Alvarez')
+    const placeholder = await person('Francisco')
+    await link(parent, placeholder)
+    await link(parentThird, kept)
+    await closeInto(db, placeholder, kept)
+    await closeInto(db, parent, parentAgain)
+    await closeInto(db, parentThird, parentAgain)
+
+    await split([kept, placeholder], [[kept], [placeholder]])
+    expect(await may(parentAgain, kept)).equals(true)
+    expect(await may(parentAgain, placeholder)).equals(true)
+  })
+
+  it('knows a player asking about their own name from another of their rows', async function () {
+    if (db == null) this.skip()
+    const old = await person('Julio')
+    const kept = await person('Julio Rodriguez')
+    const stranger = await person('Cal Raleigh')
+    await closeInto(db, old, kept)
+    expect(await may(old, kept)).equals(true)
+    expect(await may(kept, old)).equals(true)
+    expect(await may(stranger, kept)).equals(false)
+
+    // Two rows closed into each other: each walk stops on the other row, so
+    // neither names the same row as open, and they are still one person.
+    const one = await person('Jarred')
+    const other = await person('Jarred Kelenic')
+    // Written by hand: `closeInto` will not make a loop, but data from before
+    // it refused one can hold it.
+    for (const [closing, keeping] of [
+      [one, other],
+      [other, one]
+    ]) {
+      await database()
+        .updateTable('users')
+        .set({ merged_into: keeping })
+        .where('id', '=', closing)
+        .execute()
+    }
+    expect(await may(one, other)).equals(true)
+    expect(await may(other, one)).equals(true)
+    expect(await may(stranger, other)).equals(false)
+  })
+
+  it('uses the rows a caller already gathered, and only when they are the player’s', async function () {
+    if (db == null) this.skip()
+    const parent = await person('Freddie Freeman')
+    const placeholder = await person('Will')
+    const child = await person('Will Smith')
+    const stranger = await person('Mookie Betts')
+    const cousin = await person('Gavin Lux')
+    await link(parent, placeholder)
+    await link(parent, cousin)
+    await closeInto(db, placeholder, child)
+
+    // Rows that hold the player are taken as given, not walked again: a row
+    // the parent is linked to answers only because it was handed over.
+    expect(await may(parent, stranger)).equals(false)
+    expect(
+      await mayEditName(db, parent, stranger, about, {
+        player: { userId: stranger, userIds: [stranger, cousin] }
+      })
+    ).equals(true)
+
+    const gathered = await onePerson(db, child)
+    expect(
+      await mayEditName(db, parent, child, about, { player: gathered })
+    ).equals(true)
+    // The child's rows handed over for somebody else are ignored, and the
+    // question is answered about the one actually asked.
+    expect(
+      await mayEditName(db, parent, stranger, about, { player: gathered })
+    ).equals(false)
+    expect(
+      await mayEditName(db, parent, child, about, {
+        player: { userId: stranger, userIds: [stranger] }
+      })
+    ).equals(true)
+  })
+
+  it('gives the name to a coach whose player’s team row is still on a closed row', async function () {
+    if (db == null) this.skip()
+    const team = makeId('team')
+    const otherTeam = makeId('team')
+    await db
+      .insertInto('teams')
+      .values([
+        { id: team, name: 'Owls' },
+        { id: otherTeam, name: 'Larks' }
+      ])
+      .execute()
+    const coach = await person('Ozzie Albies')
+    const otherCoach = await person('Austin Riley')
+    const old = await person('Michael')
+    const kept = await person('Michael Harris')
+    for (const [userId, teamId, role] of [
+      [coach, team, 'coach'],
+      [otherCoach, otherTeam, 'coach']
+    ] as const) {
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: makeId('scopeRole'),
+          user_id: userId,
+          scope_type: 'team',
+          scope_id: teamId,
+          role
+        })
+        .execute()
+    }
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        team_id: team,
+        user_id: old,
+        is_player: true
+      })
+      .execute()
+    // Closed by hand, the way merges were made before `closeInto` moved the
+    // team rows: the membership is still under the closed row.
+    await db
+      .updateTable('users')
+      .set({ merged_into: kept })
+      .where('id', '=', old)
+      .execute()
+
+    expect(await may(coach, kept)).equals(true)
+    expect(await may(otherCoach, kept)).equals(false)
   })
 })

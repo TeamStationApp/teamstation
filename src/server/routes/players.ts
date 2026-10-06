@@ -103,9 +103,13 @@ export function playerRoutes(
       // `Jordan P` for everybody, whoever is asking. The whole name is never
       // in this answer: it is only behind `/name` below, for the person
       // editing it, which `mayEditName` decides.
-      const mayEdit = await mayEditName(db, actor.userId, userId, {
-        isAdmin: actor.isAdmin
-      })
+      const mayEdit = await mayEditName(
+        db,
+        actor.userId,
+        userId,
+        { isAdmin: actor.isAdmin },
+        { player: person }
+      )
 
       res.json({
         userId,
@@ -138,10 +142,37 @@ export function playerRoutes(
       if (actor == null) throw unauthorized()
       const userId = userIdParam(req.params.userId)
 
-      const mayEdit = await mayEditName(db, actor.userId, userId, {
-        isAdmin: actor.isAdmin
-      })
+      const person = await onePerson(db, userId)
+      const mayEdit = await mayEditName(
+        db,
+        actor.userId,
+        userId,
+        { isAdmin: actor.isAdmin },
+        { player: person }
+      )
       if (!mayEdit) throw notFound()
+
+      // A closed row's name is not the one anybody should be editing: send
+      // the editor on to the row still open, as the player page does. Only
+      // after the check above, so a refused asker gets the same 404 for a
+      // closed row as for an open one, and learns nothing of who may ask.
+      // A cycle, or a chain longer than `onePerson` walks, ends on a row that
+      // is still closed; sending the editor there would go round in circles,
+      // so the row asked about answers for itself.
+      if (person.userId !== userId) {
+        const end = await db
+          .selectFrom('users')
+          .select(['merged_into as mergedInto'])
+          .where('id', '=', person.userId)
+          .executeTakeFirst()
+        if (end != null && end.mergedInto == null) {
+          res.redirect(
+            303,
+            `/api/v1/players/${encodeURIComponent(person.userId)}/name`
+          )
+          return
+        }
+      }
 
       const user = await db
         .selectFrom('users')
