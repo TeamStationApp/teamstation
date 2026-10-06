@@ -23,6 +23,8 @@ export interface ButtonProps {
   kind?: ButtonKind
   disabled?: boolean
   busy?: boolean
+  /** Keeps this label before the spinner while busy. */
+  busyLabel?: string
   /** Fills the row it is in. Primary actions in the designs always do. */
   block?: boolean
   /** Drawn before the label. */
@@ -56,6 +58,7 @@ export function Button(props: ButtonProps): React.ReactElement {
     kind = 'primary',
     disabled = false,
     busy = false,
+    busyLabel,
     block = false,
     icon,
     style
@@ -69,6 +72,7 @@ export function Button(props: ButtonProps): React.ReactElement {
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: inert, busy }}
+      aria-busy={busy}
       disabled={inert}
       onPress={onPress}
       style={({ pressed }) => [
@@ -85,13 +89,7 @@ export function Button(props: ButtonProps): React.ReactElement {
         style
       ]}
     >
-      {busy ? (
-        <ActivityIndicator
-          color={
-            kind === 'primary' ? theme.buttonTextColor : theme.primaryTextColor
-          }
-        />
-      ) : (
+      {(!busy || busyLabel != null) && (
         <>
           {icon != null && (
             <Icon
@@ -113,9 +111,16 @@ export function Button(props: ButtonProps): React.ReactElement {
               textColor != null && { color: textColor }
             ]}
           >
-            {label}
+            {busy ? busyLabel : label}
           </Text>
         </>
+      )}
+      {busy && (
+        <ActivityIndicator
+          color={
+            kind === 'primary' ? theme.buttonTextColor : theme.primaryTextColor
+          }
+        />
       )}
     </Pressable>
   )

@@ -49,3 +49,6 @@ android/app/.cxx/
 
 # Test coverage reports:
 coverage/
+
+# Locally generated Android debug signing key
+/android/app/debug.keystore

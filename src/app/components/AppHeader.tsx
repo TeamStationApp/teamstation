@@ -147,6 +147,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             style={({ pressed }) => [styles.account, pressed && styles.pressed]}
           >
             <Emblem
+              key={account.avatarUrl}
               uri={account.avatarUrl}
               fallback={initials(account.name)}
               shape="circle"

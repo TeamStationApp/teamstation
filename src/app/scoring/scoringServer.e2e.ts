@@ -22,6 +22,7 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import type { GameSetup, GameState } from '../../common/scoring/state'
+import { signInTestAccount } from '../../test/passwordFixtures'
 import { createDevelopmentSession, teamsOf } from './developmentSession'
 
 /**
@@ -91,16 +92,7 @@ async function signIn(who: {
   email: string
   password: string
 }): Promise<string> {
-  const response = await fetch(`${API}/auth/password`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(who)
-  })
-  expect(response.status, `sign in ${who.email}`).equals(200)
-  const cookie = response.headers.get('set-cookie') ?? ''
-  const match = /ts_session=([^;]+)/.exec(cookie)
-  if (match == null) throw new Error('No session cookie')
-  return decodeURIComponent(match[1])
+  return await signInTestAccount(API, who)
 }
 interface Stored {
   plays: Array<{ id: string; gumbo: Record<string, unknown> }>

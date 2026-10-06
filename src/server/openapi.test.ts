@@ -12,6 +12,7 @@ import {
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { openApiDocument } from './openapi'
+import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
@@ -125,6 +126,9 @@ describe('the API document', function () {
     const mounted = [
       ...routesOf(healthRoutes(db, '0.0.0')),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
+      ...routesOf(
+        accountRoutes(db, { ...media, sendCode: async () => undefined })
+      ),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
@@ -163,6 +167,9 @@ describe('the API document', function () {
     const mounted = new Set([
       ...routesOf(healthRoutes(db, '0.0.0')),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
+      ...routesOf(
+        accountRoutes(db, { ...media, sendCode: async () => undefined })
+      ),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
