@@ -13,8 +13,7 @@ public enum ControlCommand: Sendable, Equatable {
   case stream(on: Bool)
   case startDirecting
   case selectProgram(source: Int)
-  /// Which camera carries the take's sound, by grid slot. A take has one audio source and it is
-  /// locked while recording, so this is refused mid-take exactly as the toggle is.
+  /// Which camera carries the sound, by grid slot, mid-take included, exactly as the toggle does.
   case selectAudioSource(source: Int)
   /// Instant replay on a 0-based source. `speed` is `full` or `slow`.
   case replay(source: Int, seconds: Double, speed: String)

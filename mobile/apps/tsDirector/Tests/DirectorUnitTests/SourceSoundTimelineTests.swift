@@ -643,6 +643,39 @@ struct SourceSoundTimelineTests {
     #expect(router.soundTimelines.existing(source.sourceID)?.currentStatistics.writeEnd != nil)
   }
 
+  @Test("A camera not heard is laid on its timeline too, ready for a switch to it")
+  func routerKeepsUnheardCamerasWarm() throws {
+    let router = try Self.router()
+    let source = TappableSource()
+    let pipeline = SourcePipeline(
+      sourceID: source.sourceID,
+      sourceIndex: 2,
+      source: source,
+      converter: PixelConverter(),
+      telemetry: PipelineTelemetry()
+    )
+    router.add(pipeline)
+    try pipeline.start()
+    router.setAudioContributors([])
+    source.emit(Rig.frame(at: Date().timeIntervalSince1970, position: 0, frames: 960, session: 1).with(source.sourceID))
+    #expect(router.soundTimelines.existing(source.sourceID)?.currentStatistics.appendedBuffers == 1)
+    #expect(router.soundStatus().isEmpty, "laid down, not heard")
+    // Stopped mixes take a change at once.
+    router.setAudioContributors([ source.sourceID ])
+    #expect(router.audioMixer.currentContributors == [ source.sourceID ])
+    #expect(router.recordingMixer.currentContributors == [ source.sourceID ])
+    // Running, a switch is placed a chunk past where the live mix reads, and the camera's timeline
+    // is kept for the next switch back.
+    router.setProgrammeSoundLive(true)
+    let next = try #require(router.audioMixer.nextReadPosition)
+    router.setAudioContributors([])
+    #expect(router.recordingMixer.currentContributors == [ source.sourceID ], "five seconds from its moment")
+    #expect(router.soundTimelines.existing(source.sourceID) != nil)
+    #expect(next > 0)
+    router.setProgrammeSoundLive(false)
+    router.remove(sourceIndex: 2)
+  }
+
   @Test("A new device behind the same source drops the clock offset it carried")
   func newDeviceDropsCarriedOffset() {
     let source = RTSPFrameSource(

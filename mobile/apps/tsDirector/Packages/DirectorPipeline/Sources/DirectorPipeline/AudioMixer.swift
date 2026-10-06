@@ -24,6 +24,11 @@ import DirectorSources
 /// time but emits five seconds behind the live edge, so sound held up on the way still lands in its
 /// place. A source that underruns fades out and contributes silence; a source that returns fades in.
 ///
+/// Changing the sources heard while running is a switch at one timeline position, the same in every
+/// mix: the source leaving fades out and the source joining fades in over the same 15 ms from there,
+/// each on its own timeline. The live mix reaches that position a read lag after capture and the
+/// recording's mix five seconds later, so both put the switch at the same picture.
+///
 /// Mixing is plain summation with a clamp. There is no limiter or automatic gain: with four or five
 /// cameras in one room the sum is dominated by whichever is closest to the action, and quiet
 /// programme audio is easier to fix afterwards than pumping is.
@@ -81,6 +86,8 @@ public final class AudioMixer: @unchecked Sendable {
   /// Counter position of the next chunk to emit.
   private var emitCursor: Int64 = 0
   private var contributors: Set<SourceID> = []
+  /// Changes of `contributors` still to take effect, in order. See `setContributors(_:at:)`.
+  private var switches: [Switch] = []
   private var readers: [SourceID: SourceSoundTimeline.Reader] = [:]
   private var readLag: Double
   /// A new read lag, taken on the next chunk after every source has faded out at the old one.
@@ -106,6 +113,15 @@ public final class AudioMixer: @unchecked Sendable {
   }
 
   private static let readerIDs = ReaderIDs()
+
+  /// A change of the sources heard, at one timeline position: until `position` the old sources play;
+  /// over the 15 ms from it, those leaving fade out while those joining fade in; after it, the new set.
+  private struct Switch {
+    var position: Int64
+    let ids: Set<SourceID>
+    /// Its crossfade has begun, so its position is fixed.
+    var begun = false
+  }
 
   /// The counter's starting point: the uptime it counts from, as a whole sample, the wall-clock
   /// instant that was at the time, and the wall-minus-uptime offset used for emitted wall clocks.
@@ -180,12 +196,40 @@ public final class AudioMixer: @unchecked Sendable {
     return readers[id]
   }
 
-  /// The sources this mix sums. A source left out stops contributing at once.
-  public func setContributors(_ ids: Set<SourceID>) {
+  /// The sources this mix sums. With no `position`, or while stopped, at once: a source left out
+  /// stops contributing. With one, while running, a switch at that timeline position (an uptime
+  /// sample, the scale every timeline is on): the sources leaving fade out from there and those
+  /// joining fade in, each on its own timeline. A position this mix has already read past is moved to
+  /// the next it reads.
+  public func setContributors(_ ids: Set<SourceID>, at position: Int64? = nil) {
     lock.lock()
-    contributors = ids
-    readers = readers.filter { ids.contains($0.key) }
+    if let position, let next = nextReadPositionLocked() {
+      switches.append(Switch(position: max(position, next), ids: ids))
+    } else {
+      switches.removeAll()
+      contributors = ids
+      readers = readers.filter { ids.contains($0.key) }
+    }
     lock.unlock()
+  }
+
+  /// The timeline position this mix reads next, nil while stopped.
+  public var nextReadPosition: Int64? {
+    lock.lock()
+    defer { lock.unlock() }
+    return nextReadPositionLocked()
+  }
+
+  private func nextReadPositionLocked() -> Int64? {
+    guard let origin else { return nil }
+    return origin.uptimeSample + emitCursor - Int64((readLag * Self.sampleRate).rounded())
+  }
+
+  /// The sources this mix sums now, before any switch still to come.
+  public var currentContributors: Set<SourceID> {
+    lock.lock()
+    defer { lock.unlock() }
+    return contributors
   }
 
   /// Replaces the per-source input gains used from the next chunk. Missing sources stay at 50%.
@@ -249,6 +293,7 @@ public final class AudioMixer: @unchecked Sendable {
     origin = nil
     emitCursor = 0
     contributors.removeAll()
+    switches.removeAll()
     readers.removeAll()
     lock.unlock()
   }
@@ -328,12 +373,15 @@ public final class AudioMixer: @unchecked Sendable {
       let lagFrames = Int64((readLag * Self.sampleRate).rounded())
       let readAt = origin.uptimeSample + cursor - lagFrames
       let reserve = Int(min((delaySeconds + readLag) / 2, Self.maximumReserveSeconds) * Self.sampleRate)
-      let stopAt = pendingReadLag.map { _ in readAt + Int64(SourceSoundTimeline.fadeFrames) }
+      let fade = Int64(SourceSoundTimeline.fadeFrames)
+      let stopAt = pendingReadLag.map { _ in readAt + fade }
+      let (heard, starts, stops) = switchingLocked(readAt: readAt)
 
       var sum = [Int32](repeating: 0, count: chunkFrames * Self.channelCount)
-      for id in contributors {
+      for id in heard {
         guard let timeline = timelines.existing(id) else { continue }
         var reader = readers[id] ?? SourceSoundTimeline.Reader(id: readerID)
+        let stop = [stopAt, stops[id]].compactMap { $0 }.min()
         timeline.read(
           &reader,
           at: readAt,
@@ -341,7 +389,8 @@ public final class AudioMixer: @unchecked Sendable {
           gain: (inputGains[id] ?? 0.5) * 2,
           reserveFrames: reserve,
           flushing: flushing,
-          stopAt: stopAt,
+          startAt: starts[id],
+          stopAt: stop,
           into: &sum
         )
         readers[id] = reader
@@ -379,6 +428,34 @@ public final class AudioMixer: @unchecked Sendable {
         wallClock: WallClock(seconds: wall)
       ))
     }
+  }
+
+  /// The sources this chunk reads, from `readAt`, and where the ones switching start or stop. Finishes
+  /// every switch whose crossfade is over. Called with `lock` held.
+  private func switchingLocked(
+    readAt: Int64
+  ) -> (heard: Set<SourceID>, starts: [SourceID: Int64], stops: [SourceID: Int64]) {
+    let fade = Int64(SourceSoundTimeline.fadeFrames)
+    while let first = switches.first {
+      if !first.begun, first.position < readAt {
+        // Queued behind another switch until after its own moment: it happens now, with its fade.
+        switches[0].position = readAt
+      }
+      guard switches[0].position + fade <= readAt else { break }
+      contributors = first.ids
+      readers = readers.filter { first.ids.contains($0.key) }
+      switches.removeFirst()
+    }
+    guard switches.first.map({ $0.position < readAt + Int64(chunkFrames) }) == true else {
+      return (contributors, [:], [:])
+    }
+    switches[0].begun = true
+    let change = switches[0]
+    var starts: [SourceID: Int64] = [:]
+    var stops: [SourceID: Int64] = [:]
+    for id in change.ids.subtracting(contributors) { starts[id] = change.position }
+    for id in contributors.subtracting(change.ids) { stops[id] = change.position + fade }
+    return (contributors.union(change.ids), starts, stops)
   }
 
   private static func clamp(_ value: Int32) -> Int16 {

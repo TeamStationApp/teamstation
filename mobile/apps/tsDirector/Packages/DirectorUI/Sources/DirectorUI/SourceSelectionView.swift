@@ -264,14 +264,12 @@ public struct SourceSelectionView: View {
         isOn: selection.isEnabled
       ) { environment.setEnabled($0, for: selection.id) }
 
-      // Locked while recording: the master's sound is placed by one offset settled at the part's
-      // start, which only holds while the sound keeps coming from the same camera.
+      // Mid-take too: the old camera fades out and the new one fades in at the same picture.
       toggle(
         label: "AUDIO",
         identifier: "source-audio-toggle-\(index + 1)",
         tint: .replayAmber,
-        isOn: selection.usesAudio,
-        isLocked: !environment.canChangeAudioSource
+        isOn: selection.usesAudio
       ) { environment.setUsesAudio($0, for: selection.id) }
 
       SourceWaveformThumb(
@@ -292,7 +290,6 @@ public struct SourceSelectionView: View {
     .accessibilityValue(
       "name=\(rowName(for: selection)) on=\(selection.isEnabled ? 1 : 0) "
         + "audio=\(selection.usesAudio ? 1 : 0) "
-        + "audioLocked=\(environment.canChangeAudioSource ? 0 : 1) "
         + "format=\(formatLabel(for: selection) ?? "") "
         + "gain=\(SourceWaveformThumb.percent(selection.inputGain)) "
         + "host=\(environment.endpoint(for: selection.id)?.host ?? "") "
@@ -562,14 +559,13 @@ public struct SourceSelectionView: View {
     identifier: String,
     tint: Color,
     isOn: Bool,
-    isLocked: Bool = false,
     set: @escaping (Bool) -> Void
   ) -> some View {
     VStack(spacing: 3) {
       Text(label)
         .font(.system(size: 8, weight: .heavy, design: .rounded))
         .tracking(1)
-        .foregroundStyle(.white.opacity(isLocked ? 0.22 : 0.4))
+        .foregroundStyle(.white.opacity(0.4))
       Button {
         set(!isOn)
       } label: {
@@ -583,13 +579,9 @@ public struct SourceSelectionView: View {
           }
       }
       .buttonStyle(.plain)
-      .disabled(isLocked)
-      .opacity(isLocked ? 0.45 : 1)
       .accessibilityIdentifier(identifier)
       .accessibilityValue(isOn ? "1" : "0")
       .accessibilityLabel(label)
-      // A flow has to be able to tell "this toggle is off" from "this toggle cannot be touched".
-      .accessibilityHint(isLocked ? "locked" : "")
     }
   }
 

@@ -993,7 +993,13 @@ public final class TileRouter: @unchecked Sendable {
   }
 
   /// Points the named sources at the programme mix. Every live pipeline still taps PCM so the
-  /// cameras-list oscilloscope can draw native audio even when AUDIO is off.
+  /// cameras-list oscilloscope can draw native audio even when AUDIO is off, and lays its sound on its
+  /// timeline whether heard or not, so a switch to it finds its sound already placed.
+  ///
+  /// While the mixes run, a change is a switch at one timeline position, a chunk past where the live
+  /// mix reads next: the sources leaving fade out and the sources joining fade in there, in the live
+  /// mix now and in the recording's mix five seconds later, so both switch at the same picture. With
+  /// the mixes stopped it is at once.
   public func setAudioContributors(_ ids: Set<SourceID>) {
     lock.lock()
     mixContributorIDs = ids
@@ -1006,10 +1012,15 @@ public final class TileRouter: @unchecked Sendable {
       pipeline.setRecordingAudioSink { [weak self] frame in self?.handleSound(frame) }
       telemetry.mutateTile(pipeline.sourceIndex) { $0.contributesAudio = contributes }
     }
-    soundTimelines.retain(ids)
-    audioMixer.setContributors(ids)
-    recordingMixer.setContributors(ids)
+    soundTimelines.retain(Set(all.map(\.sourceID)))
+    let position = audioMixer.nextReadPosition.map { $0 + Int64(AudioMixer.sampleRate * Self.switchLeadSeconds) }
+    audioMixer.setContributors(ids, at: position)
+    recordingMixer.setContributors(ids, at: position)
   }
+
+  /// How far past the live mix's next read a switch is placed, so the live mix has not passed it by
+  /// the time it is queued: one mixer chunk.
+  static let switchLeadSeconds = 0.02
 
   /// How long after capture the live mix plays each camera's sound: the display latency cap, the
   /// same delay the pictures are held to. A change fades every source out and in again.
@@ -1104,14 +1115,10 @@ public final class TileRouter: @unchecked Sendable {
     recordingMixer.setInputGains(gains)
   }
 
-  /// A contributing camera's sound, at its capture time, onto its timeline. Called on the source's
+  /// A camera's sound, at its capture time, onto its timeline, heard or not. Called on the source's
   /// receive thread as soon as the sound is decoded, so nothing the iPad does with pictures can hold
   /// it up.
   private func handleSound(_ frame: AudioFrame) {
-    lock.lock()
-    let contributes = mixContributorIDs.contains(frame.sourceID)
-    lock.unlock()
-    guard contributes else { return }
     soundTimelines.append(frame)
   }
 

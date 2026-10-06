@@ -1839,31 +1839,22 @@ public final class AppEnvironment {
   }
 
   /// Points the mixer at whichever sources are ticked for audio. Called after activation and again
-  /// whenever the operator changes a toggle, so the mix follows the switches live.
+  /// whenever the operator changes a toggle, so the mix follows the switches live, mid-take included:
+  /// the old source fades out and the new one fades in at the same picture in the stream and the
+  /// recording (`TileRouter.setAudioContributors`).
   public func applyAudioContributors() {
     let ids = Set(SourceSelectionRules.audioContributors(in: selections).map(\.id))
     router.setAudioContributors(ids)
     applyInputGains()
   }
 
-  /// Whether the take's sound source may be changed right now.
+  /// Which camera carries the sound, at any time, recording or not.
   ///
-  /// It may not, while recording. The programme master places its sound by one offset settled at
-  /// the part's start, and that is only correct while the sound keeps coming from the same place;
-  /// swapping source mid-take would put the writer back to reconciling a moving target, which is
-  /// the fault this whole change removes. Enforced here as well as disabled in the view, because
-  /// the control channel and the REST harness reach this directly.
-  ///
-  /// Input gain is deliberately *not* locked: it is applied in `AudioMixer.append` and never
-  /// touches the timeline, and an operator who hears the sound is too quiet twenty minutes into a
-  /// game should not be stuck with it for the rest of the game.
-  public var canChangeAudioSource: Bool { !isRecording }
-
+  /// The recording's master takes the recording mix as one continuous track on the mix's own sample
+  /// clock, and each camera's sound is placed on that clock by its own capture time, so the master's
+  /// placement does not depend on which camera is heard. A camera whose sound drops out mid-game can
+  /// be swapped for another without stopping the take.
   public func setUsesAudio(_ usesAudio: Bool, for id: SourceID) {
-    guard canChangeAudioSource else {
-      telemetry.recordError("audio source is locked while recording")
-      return
-    }
     SourceSelectionRules.setUsesAudio(usesAudio, for: id, in: &selections)
     // Every row's audio may have moved, not just this one: turning one on turns the others off.
     for selection in selections { rememberAudio(for: selection.id) }
@@ -4894,7 +4885,6 @@ public final class AppEnvironment {
     case let .selectAudioSource(source):
       // By grid slot, like `.selectProgram`, so a flow names a camera the same way for both.
       guard let pipeline = router.pipeline(at: source) else { return false }
-      guard canChangeAudioSource else { return false }
       setUsesAudio(true, for: pipeline.sourceID)
     case let .replay(source, seconds, speed):
       let rate: Float = speed == "slow" ? Float(config.replaySlowMotionRate) : 1

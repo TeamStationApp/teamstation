@@ -429,7 +429,9 @@ public final class SourceSoundTimeline: @unchecked Sendable {
   ///
   /// `reserveFrames` is how much sound must be held ahead before a source that went quiet is heard
   /// again, so a trickle does not chop on and off; `flushing` waives it at the end of a take.
-  /// `stopAt` fades the source out by that position whatever it holds: the mix moving its read head.
+  /// `stopAt` fades the source out by that position whatever it holds: the mix moving its read head,
+  /// or switching away from this source. `startAt` keeps a source not yet heard quiet until that
+  /// position, where it fades in: the mix switching to it.
   public func read(
     _ reader: inout Reader,
     at position: Int64,
@@ -437,6 +439,7 @@ public final class SourceSoundTimeline: @unchecked Sendable {
     gain: Double,
     reserveFrames: Int,
     flushing: Bool = false,
+    startAt: Int64? = nil,
     stopAt: Int64? = nil,
     into mix: inout [Int32]
   ) {
@@ -484,6 +487,10 @@ public final class SourceSoundTimeline: @unchecked Sendable {
         }
         cursor = max(stop, cursor)
       } else {
+        if let startAt, cursor < startAt {
+          guard startAt < end else { return }
+          cursor = startAt
+        }
         let candidate: Segment
         if let here = covering(cursor) {
           candidate = here
@@ -565,8 +572,9 @@ public final class SourceSoundTimeline: @unchecked Sendable {
   }
 }
 
-/// Every contributing camera's timeline, shared by the live and the recording mixes, so each
-/// camera's sound is decoded and laid down once.
+/// Every live camera's timeline, shared by the live and the recording mixes, so each camera's sound
+/// is decoded and laid down once. Cameras not being heard are laid down too, so a switch to one finds
+/// its sound already placed.
 public final class SourceSoundTimelines: @unchecked Sendable {
   private let clock: DirectorClock
   private let uptime: @Sendable () -> Double
@@ -600,7 +608,7 @@ public final class SourceSoundTimelines: @unchecked Sendable {
     timeline(for: frame.sourceID).append(frame)
   }
 
-  /// Drops the timelines of sources no longer contributing.
+  /// Drops the timelines of sources no longer on a tile.
   public func retain(_ ids: Set<SourceID>) {
     lock.lock()
     timelines = timelines.filter { ids.contains($0.key) }
