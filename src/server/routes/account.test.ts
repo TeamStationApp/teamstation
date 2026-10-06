@@ -19,7 +19,7 @@ import {
   testPasswordParameters
 } from '../../test/passwordFixtures'
 import { createEmailCode } from '../auth/emailCodes'
-import { readPasswordRecord } from '../auth/passwords'
+import { hashPassword, readPasswordRecord } from '../auth/passwords'
 import { hashToken, makeToken } from '../auth/tokens'
 
 const ROOT = '/me/account'
@@ -606,10 +606,14 @@ describe('account settings HTTP API', function () {
         })
       ).status
     ).equals(429)
+    // No address left, but a password: still an account that can sign in
+    // (one with neither is no account at all, and has no settings).
     await h.db
-      .deleteFrom('user_emails')
-      .where('user_id', '=', userIdOfGumbo(102))
+      .updateTable('users')
+      .set({ password_hash: await hashPassword('still mine 102') })
+      .where('id', '=', userIdOfGumbo(102))
       .execute()
+    await h.db.deleteFrom('user_emails').where('user_id', '=', userIdOfGumbo(102)).execute()
     const first = await requestEmail('first@example.com', undefined, 102)
     expect((await confirm(first, 102)).status).equals(200)
     const state = asAccountSettings(
@@ -617,6 +621,12 @@ describe('account settings HTTP API', function () {
     )
     expect(state.emails).length(1)
     expect(state.emails[0].isPrimary).equals(true)
+    // The address signs them in now; the password goes back to none.
+    await h.db
+      .updateTable('users')
+      .set({ password_hash: null })
+      .where('id', '=', 102)
+      .execute()
   })
   it('the public client serializes each account operation', async () => {
     const client = new TeamStationClient({
