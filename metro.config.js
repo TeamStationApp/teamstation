@@ -69,6 +69,7 @@ const config = {
       new RegExp(`^${escape(strayModules)}.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'mobile'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'lib'))}/.*$`),
+      new RegExp(`^${escape(path.resolve(__dirname, 'crates'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'dist'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'ios', 'build'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'ios', 'Pods'))}/.*$`),
