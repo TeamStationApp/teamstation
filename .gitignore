@@ -78,3 +78,9 @@ coverage/
 
 # The simulator build in src/MOBILE.md and the chat crypto bench.
 ios/build-sim/
+
+# The chat crypto core's build products (scripts/chatCryptoBuild.mjs), built
+# from crates/chat-crypto wherever the app is built.
+crates/chat-crypto/target/
+src/common/chatCrypto/node/
+src/common/chatCrypto/wasm/

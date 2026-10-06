@@ -1,0 +1,60 @@
+[package]
+name = "chat-crypto"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Every cryptographic operation of TeamStation's encrypted chat, behind one call ABI."
+license = "UNLICENSED"
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[features]
+# The Node-API binding the server, scripts and tests load as an addon.
+node = ["dep:napi", "dep:napi-derive"]
+
+[dependencies]
+chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc"] }
+ed25519-dalek = { version = "=2.2.0" }
+getrandom = { version = "=0.2.16" }
+hkdf = { version = "=0.12.4" }
+hmac = { version = "=0.12.1" }
+napi = { version = "=2.16.17", default-features = false, features = ["napi4"], optional = true }
+napi-derive = { version = "=2.16.13", optional = true }
+sha2 = { version = "=0.10.9", features = ["compress"] }
+x25519-dalek = { version = "=2.0.1", features = ["static_secrets", "zeroize"] }
+zeroize = { version = "=1.9.1" }
+
+# The browser has no operating system to ask for randomness: the module
+# imports `env.chat_crypto_random`, which the loader fills from
+# crypto.getRandomValues, and `random.rs` registers it with getrandom.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "=0.2.16", features = ["custom"] }
+
+# Phones and Apple-silicon Macs: SHA-256 on the ARMv8 SHA instructions
+# (checked at run time, with the portable code as the fallback). Without
+# `asm`, sha2 0.10 uses only the portable code on aarch64, and an
+# attachment's digest is most of its sealing time.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "=0.10.9", features = ["asm", "compress"] }
+
+[build-dependencies]
+napi-build = { version = "=2.2.3" }
+
+[dev-dependencies]
+curve25519-dalek = { version = "=4.1.3" }
+num-bigint = { version = "=0.4.6" }
+serde_json = { version = "=1.0.151" }
+
+[profile.release]
+debug = false
+
+# The browser's module: small, no unwinding, nothing about the build machine.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
