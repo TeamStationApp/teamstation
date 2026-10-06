@@ -1,5 +1,6 @@
-import { equalBytes, join, lp, u64 } from './bytes'
-import { primitives } from './primitives'
+import { equalBytes, utf8 } from './bytes'
+import { call } from './core'
+import { num } from './coreCall'
 
 /**
  * The hash chain over a conversation's membership log.
@@ -9,7 +10,8 @@ import { primitives } from './primitives'
  * u64(userId) ‖ u64(actorUserId or 0) ‖ lp(reason) ‖ u64(at in ms))`, and the
  * first row's `prev_hash` is 32 zero bytes. A row with no reason hashes
  * `lp("")`. The server writes it and every client checks it from the first
- * row, so a rewritten, dropped or reordered row shows.
+ * row, so a rewritten, dropped or reordered row shows. The chat crypto core
+ * computes it.
  */
 
 export type LogEvent = 'join' | 'leave' | 'identityReset' | 'closed'
@@ -31,18 +33,16 @@ export const GENESIS_HASH: Uint8Array = new Uint8Array(32)
 export function logRowHash(prevHash: Uint8Array, row: LogRow): Uint8Array {
   if (prevHash.length !== 32) throw new TypeError('prev_hash is not 32 bytes')
   const at = typeof row.at === 'number' ? row.at : row.at.getTime()
-  return primitives.sha256(
-    join(
-      prevHash,
-      lp(row.conversationId),
-      u64(row.seq),
-      lp(row.event),
-      u64(row.userId),
-      u64(row.actorUserId ?? 0),
-      lp(row.reason ?? ''),
-      u64(at)
-    )
-  )
+  return call('logRowHash', [
+    prevHash,
+    utf8(row.conversationId),
+    num(row.seq),
+    utf8(row.event),
+    num(row.userId),
+    num(row.actorUserId ?? 0),
+    utf8(row.reason ?? ''),
+    num(at)
+  ])[0]
 }
 
 /**

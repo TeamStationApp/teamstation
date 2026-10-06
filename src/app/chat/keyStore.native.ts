@@ -56,6 +56,12 @@ export function nativeKeyStore(keychain: KeychainModule): ChatKeyStore {
 
     async wipe(): Promise<void> {
       await keychain.resetGenericPassword({ service: KEY_SERVICE })
+    },
+
+    async exists(): Promise<boolean> {
+      return (
+        (await keychain.getGenericPassword({ service: KEY_SERVICE })) !== false
+      )
     }
   }
 }

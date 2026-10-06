@@ -1,6 +1,12 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -73,7 +79,7 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     )
     expect(policy).equals(
-      "default-src 'self'; script-src 'self'; " +
+      "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; " +
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
         'font-src https://fonts.gstatic.com; ' +
         "img-src 'self' data: blob: http://127.0.0.1:9120 http://127.0.0.1:9197; " +
@@ -127,6 +133,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     before(async function () {
       once = mkdtempSync(join(tmpdir(), 'ts-web-once-'))
       served = mkdtempSync(join(tmpdir(), 'ts-web-serve-'))
+      // A module an earlier deploy left, which this build must prune.
+      writeFileSync(join(once, 'chat-crypto-0123456789abcdef.wasm'), 'old')
       await run(process.execPath, ['src/build.mjs'], {
         cwd: root,
         env: {
@@ -194,6 +202,30 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     })
 
+    it('ships one chat crypto module, named by its hash, that the bundle checks', function () {
+      const modules = readdirSync(once).filter(name =>
+        /^chat-crypto-.*\.wasm$/.test(name)
+      )
+      expect(modules).lengthOf(1)
+      const [module] = modules
+      const bytes = readFileSync(join(once, module))
+      expect(module).equals(
+        `chat-crypto-${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}.wasm`
+      )
+      // WebAssembly's magic number: the real module, not the stale one.
+      expect(bytes.subarray(0, 4).toString('hex')).equals('0061736d')
+      const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
+      const code = readFileSync(join(once, bundle!), 'utf8')
+      expect(code).contains(`/${module}`)
+      expect(code).contains(integrityOf(bytes))
+      // The policy lets the page compile it, and nothing more.
+      const html = readFileSync(join(once, 'index.html'), 'utf8')
+      expect(directives(policyOf(html))['script-src']).deep.equals([
+        "'self'",
+        "'wasm-unsafe-eval'"
+      ])
+    })
+
     it('has no chat bench route in the web bundle', function () {
       const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
       expect(bundle).not.equals(undefined)
@@ -236,6 +268,14 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         'ws://127.0.0.1:9120',
         'http://127.0.0.1:9197'
       ])
+      // The dev server serves the chat crypto module under its plain name.
+      const module = await fetch(`${address}/chat-crypto.wasm`)
+      expect(module.status).equals(200)
+      expect(
+        Buffer.from(await module.arrayBuffer())
+          .subarray(0, 4)
+          .toString('hex')
+      ).equals('0061736d')
       // The dev server serves the worklet too, as JavaScript.
       const worklet = await fetch(`${address}/pcm16kWorklet.js`)
       expect(worklet.status).equals(200)

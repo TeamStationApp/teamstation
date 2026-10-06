@@ -4,7 +4,9 @@ import { createHash } from 'node:crypto'
  * The web page's Content-Security-Policy and Subresource Integrity, as pure
  * functions `build.mjs` calls (and `buildCsp.test.ts` checks).
  *
- * The page may run only its own script, load styles from itself and Google
+ * The page may run only its own script, and compile WebAssembly
+ * (`'wasm-unsafe-eval'`, which allows that and no `eval`) for chat's crypto
+ * core, which it fetches from itself; load styles from itself and Google
  * Fonts, fonts from Google Fonts, pictures and video from itself, `blob:`
  * and `data:` URLs and the media origins the deployment names, and talk to
  * itself, its API, the API's socket and those media origins. Workers come
@@ -50,7 +52,7 @@ export function cspFor(origins) {
     )
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     `style-src ${list("'self'", "'unsafe-inline'", 'https://fonts.googleapis.com')}`,
     'font-src https://fonts.gstatic.com',
     `img-src ${list("'self'", 'data:', 'blob:', media)}`,
