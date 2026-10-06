@@ -17,9 +17,16 @@ import { managesRoster } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
-import { ChatEngine } from './chat/engine/engine'
+import { ChatGate } from './chat/ChatGate'
+import type { ChatLink } from './chat/ChatLinks'
+import { ChatListScreen } from './chat/ChatListScreen'
+import { ChatMembersScreen } from './chat/ChatMembersScreen'
+import { hasUnread } from './chat/chatModel'
+import { ConversationScreen } from './chat/ConversationScreen'
+import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
+import { NewDmScreen } from './chat/NewDmScreen'
 import { thisDevice } from './chat/thisDevice'
 import {
   AppHeader,
@@ -174,6 +181,12 @@ type Pushed =
   | { name: 'chatDevices' }
   /** Linking this device for chat, or resetting the user's chat keys. */
   | { name: 'chatLink' }
+  /** Starting a direct message. */
+  | { name: 'chatNew' }
+  /** One chat, and what it is called once known. */
+  | { name: 'conversation'; conversationId: string; title: string }
+  /** A chat's members, safety numbers and approvals. */
+  | { name: 'chatMembers'; conversationId: string }
   /**
    * One player, and what their stats and videos are narrowed to.
    *
@@ -369,7 +382,7 @@ function Shell(props: AppProps): React.ReactElement {
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
     const opened = stackFor(currentRoute())
-    return { home: [], videos: [], schedule: [], search: [], ...opened }
+    return { home: [], videos: [], schedule: [], search: [], chat: [], ...opened }
   })
   const settingsVisitId = useRef(0)
   const [settingsVisit, setSettingsVisit] = useState(0)
@@ -512,6 +525,36 @@ function Shell(props: AppProps): React.ReactElement {
           }),
     [client, gameSocket, signedInAs]
   )
+  /**
+   * The chat list as last read, for the Chat tab's unread dot and the links
+   * to a team's, season's or league's chats. Read once at sign-in (no keys
+   * are needed for the list) and kept current from the engine's hints.
+   */
+  const [chatList, setChatList] = useState<ConversationListItem[]>([])
+  useEffect(() => {
+    setChatList([])
+    if (chatEngine == null) return
+    let live = true
+    const unsubscribe = chatEngine.subscribe(event => {
+      if (live && event.type === 'conversations') {
+        setChatList(chatEngine.conversations())
+      }
+    })
+    chatEngine
+      .refresh()
+      .then(list => {
+        if (live) setChatList(list)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [chatEngine])
+  const chatsOf = (type: 'team' | 'season', id: string): ChatLink[] =>
+    chatList
+      .filter(chat => chat.scope?.type === type && chat.scope.id === id)
+      .map(chat => ({ id: chat.id, title: chat.title }))
   useEffect(() => {
     if (chatEngine == null) return
     let stopListening = (): void => {}
@@ -1082,6 +1125,17 @@ function Shell(props: AppProps): React.ReactElement {
   const openSeason = (season: SeasonSummary): void => {
     push({ name: 'season', season })
   }
+  /** A chat, from the list or from a team's, season's or league's page. */
+  const openChat = (chat: { id: string; title: string }): void => {
+    push({ name: 'conversation', conversationId: chat.id, title: chat.title })
+  }
+  /** What every chat screen stands behind: this device set up for chat. */
+  const gated = (screen: React.ReactNode): React.ReactNode =>
+    chatEngine == null || session == null ? null : (
+      <ChatGate engine={chatEngine} client={client} userId={session.user.id}>
+        {screen}
+      </ChatGate>
+    )
   /**
    * Somebody who has just signed in, back to where the sign-in was for.
    *
@@ -1214,7 +1268,12 @@ function Shell(props: AppProps): React.ReactElement {
           showMark
           nav={
             isWide ? (
-              <AppNav mode="header" selected={tab} onSelect={selectTab} />
+              <AppNav
+                mode="header"
+                selected={tab}
+                onSelect={selectTab}
+                dots={{ chat: hasUnread(chatList) }}
+              />
             ) : undefined
           }
         />
@@ -1383,6 +1442,18 @@ function Shell(props: AppProps): React.ReactElement {
           onCreateGroup={kind => {
             push({ name: 'createGroup', kind })
           }}
+          leagueChats={chatList.flatMap(chat =>
+            chat.kind === 'leagueOrg'
+              ? [
+                  {
+                    id: chat.id,
+                    title: chat.title,
+                    league: chat.scopeName ?? chat.title
+                  }
+                ]
+              : []
+          )}
+          onOpenChat={openChat}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
         />
@@ -1393,6 +1464,19 @@ function Shell(props: AppProps): React.ReactElement {
           onOpen={openGroup}
           follow={session != null}
         />
+      ) : tab === 'chat' ? (
+        gated(
+          <ChatListScreen
+            engine={chatEngine!}
+            onOpen={openChat}
+            onNewMessage={() => {
+              push({ name: 'chatNew' })
+            }}
+            onFollowTeam={() => {
+              push({ name: 'followTeam' })
+            }}
+          />
+        )
       ) : tab === 'videos' ? (
         <GamesFeedScreen
           key="videos"
@@ -1649,6 +1733,76 @@ function Shell(props: AppProps): React.ReactElement {
           refreshNotifications().catch(() => undefined)
         }}
       />
+
+    ) : top.name === 'conversation' ? (
+      gated(
+        <ConversationScreen
+          key={top.conversationId}
+          engine={chatEngine!}
+          conversationId={top.conversationId}
+          userId={session?.user.id ?? 0}
+          onMembers={() => {
+            push({ name: 'chatMembers', conversationId: top.conversationId })
+          }}
+          onTitle={title => {
+            setStacks(current => {
+              const held = current[tab]
+              const last = held[held.length - 1]
+              if (last?.name !== 'conversation' || last.title === title) {
+                return current
+              }
+              return {
+                ...current,
+                [tab]: [...held.slice(0, -1), { ...last, title }]
+              }
+            })
+          }}
+        />
+      )
+    ) : top.name === 'chatMembers' ? (
+      gated(
+        <ChatMembersScreen
+          engine={chatEngine!}
+          client={client}
+          conversationId={top.conversationId}
+          userId={session?.user.id ?? 0}
+          onLeft={() => {
+            // Out of the chat and its members, back to the list.
+            setStacks(current => ({
+              ...current,
+              [tab]: current[tab].filter(
+                step =>
+                  step.name !== 'chatMembers' && step.name !== 'conversation'
+              )
+            }))
+          }}
+        />
+      )
+    ) : top.name === 'chatNew' ? (
+      gated(
+        <NewDmScreen
+          client={client}
+          engine={chatEngine!}
+          onCreated={conversation => {
+            const listed = chatEngine
+              ?.conversations()
+              .find(chat => chat.id === conversation.id)
+            // The new chat takes this screen's place, so Back goes to the
+            // list rather than to a finished form.
+            setStacks(current => ({
+              ...current,
+              [tab]: [
+                ...current[tab].slice(0, -1),
+                {
+                  name: 'conversation',
+                  conversationId: conversation.id,
+                  title: listed?.title ?? conversation.title ?? ''
+                }
+              ]
+            }))
+          }}
+        />
+      )
     ) : top.name === 'chatDevices' ? (
       session == null ? null : (
         <ChatDevicesScreen client={client} userId={session.user.id} />
@@ -1686,7 +1840,7 @@ function Shell(props: AppProps): React.ReactElement {
         onSignOut={() => {
           client.signOut().catch(() => undefined)
           rememberSession(undefined)
-          setStacks({ home: [], videos: [], schedule: [], search: [] })
+          setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
           setTab('home')
         }}
       />
@@ -1804,6 +1958,8 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         initialTab={top.tab}
         onTab={setTopTab}
+        chats={chatsOf('team', top.team.id)}
+        onOpenChat={openChat}
       />
     ) : top.name === 'season' ? (
       <SeasonScreen
@@ -1820,6 +1976,8 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         initialTab={top.tab}
         onTab={setTopTab}
+        chats={chatsOf('season', top.season.id)}
+        onOpenChat={openChat}
         initialWhen={top.when}
         onWhen={next => {
           setStacks(current => {
@@ -2043,7 +2201,12 @@ function Shell(props: AppProps): React.ReactElement {
       onHeight={setHeaderHeight}
       nav={
         isWide ? (
-          <AppNav mode="header" selected={tab} onSelect={selectTab} />
+          <AppNav
+            mode="header"
+            selected={tab}
+            onSelect={selectTab}
+            dots={{ chat: hasUnread(chatList) }}
+          />
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
@@ -2111,6 +2274,7 @@ function Shell(props: AppProps): React.ReactElement {
             mode="floating"
             selected={tab}
             onSelect={selectTab}
+            dots={{ chat: hasUnread(chatList) }}
           />
         )}
         <SuccessToast notice={successNotice} />
@@ -2203,6 +2367,24 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
   if (route.name === 'chatDevices') return { [tab]: [{ name: 'chatDevices' }] }
   if (route.name === 'chatLink') return { [tab]: [{ name: 'chatLink' }] }
+
+  if (route.name === 'chatNew') return { [tab]: [{ name: 'chatNew' }] }
+  if (route.name === 'conversation' || route.name === 'chatMembers') {
+    const conversation: Pushed = {
+      name: 'conversation',
+      conversationId: route.conversationId,
+      title: ''
+    }
+    return {
+      [tab]:
+        route.name === 'conversation'
+          ? [conversation]
+          : [
+              conversation,
+              { name: 'chatMembers', conversationId: route.conversationId }
+            ]
+    }
+  }
   if (route.name === 'player') {
     return {
       [tab]: [
@@ -2245,6 +2427,15 @@ function tabOf(route: Route): NavTabId {
   // Following from Home's Add stays on Home's stack; plain discovery is the
   // Search tab itself.
   if (route.name === 'discover' && route.follow !== true) return 'search'
+
+  if (
+    route.name === 'chat' ||
+    route.name === 'chatNew' ||
+    route.name === 'conversation' ||
+    route.name === 'chatMembers'
+  ) {
+    return 'chat'
+  }
   return 'home'
 }
 
@@ -2274,6 +2465,14 @@ function routeOf(
     if (top.name === 'account') return { name: 'account' }
     if (top.name === 'chatDevices') return { name: 'chatDevices' }
     if (top.name === 'chatLink') return { name: 'chatLink' }
+
+    if (top.name === 'chatNew') return { name: 'chatNew' }
+    if (top.name === 'conversation') {
+      return { name: 'conversation', conversationId: top.conversationId }
+    }
+    if (top.name === 'chatMembers') {
+      return { name: 'chatMembers', conversationId: top.conversationId }
+    }
     if (top.name === 'player') {
       return {
         name: 'player',
@@ -2320,6 +2519,8 @@ function routeOf(
   if (tab === 'videos') return { name: 'videos', when: filters.videos }
   if (tab === 'schedule') return { name: 'schedule', when: filters.schedule }
   if (tab === 'search') return { name: 'discover' }
+
+  if (tab === 'chat') return { name: 'chat' }
   return { name: 'home' }
 }
 
@@ -2342,6 +2543,12 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'account') return 'Account'
     if (top.name === 'chatDevices') return lstrings.chat_devices_title
     if (top.name === 'chatLink') return lstrings.chat_link_title
+
+    if (top.name === 'chatNew') return lstrings.chat_new_title
+    if (top.name === 'conversation') {
+      return top.title === '' ? lstrings.chat_title : top.title
+    }
+    if (top.name === 'chatMembers') return lstrings.chat_members
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {
       return sprintf(lstrings.walkup_title, top.playerName)
@@ -2353,6 +2560,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     return undefined
   }
   if (tab === 'home') return 'Your Home'
+  if (tab === 'chat') return lstrings.chat_title
   return undefined
 }
 

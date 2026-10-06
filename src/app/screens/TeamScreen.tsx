@@ -13,6 +13,8 @@ import type {
 import { HttpError } from '../../common/errors'
 import { eventName } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
+import type { Role } from '../../common/roles'
+import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Badge,
   Card,
@@ -124,6 +126,9 @@ export interface TeamScreenProps {
    * the entry is corrected rather than a new one added.
    */
   onTab?: (tab: string, correcting?: boolean) => void
+  /** This team's chats the person is in, each opening from the page. */
+  chats?: ChatLink[]
+  onOpenChat?: (chat: ChatLink) => void
 }
 
 type TabId = 'videos' | 'schedule' | 'team' | 'stats'
@@ -404,6 +409,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           </View>
         </Card>
       </CardBand>
+
+      {props.chats != null && props.onOpenChat != null && (
+        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
+      )}
 
       <PillBand part={pinned.pillBand}>
         <PillTabs

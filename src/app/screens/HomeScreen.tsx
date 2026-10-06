@@ -14,6 +14,7 @@ import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
+import type { ChatLink } from '../chat/ChatLinks'
 import {
   Button,
   Card,
@@ -47,6 +48,12 @@ export interface HomeScreenProps {
    * career rather than one team's part of it.
    */
   onOpenPlayer?: (userId: number, title: string) => void
+  /**
+   * The leagues whose Org chat the person is in. A league has no page of
+   * its own, so its card opens its chat.
+   */
+  leagueChats?: Array<ChatLink & { league: string }>
+  onOpenChat?: (chat: ChatLink) => void
 }
 
 /**
@@ -528,6 +535,29 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             ))}
           </ListCard>
         </View>
+      {props.leagueChats != null &&
+        props.leagueChats.length > 0 &&
+        props.onOpenChat != null && (
+          <View style={styles.section}>
+            <SectionHeader title="Leagues" />
+            <Card>
+              {props.leagueChats.map((chat, index) => (
+                <View key={chat.id}>
+                  {index > 0 && <View style={styles.divider} />}
+                  <ListRow
+                    title={chat.league}
+                    subtitle={chat.title}
+                    emblemIcon="chat"
+                    onPress={() => {
+                      props.onOpenChat?.(chat)
+                    }}
+                  />
+                </View>
+              ))}
+            </Card>
+          </View>
+        )}
+
       )}
       {counts.league > 0 && (
         <View style={styles.section}>
