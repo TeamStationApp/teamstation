@@ -70,6 +70,11 @@ export interface ChatKeyStore {
   save: (record: ChatKeyRecord) => Promise<void>
   /** Forgets every key this device holds. */
   wipe: () => Promise<void>
+  /**
+   * Whether a record is stored, answered without creating anything: signing
+   * out where chat's crypto core is not asks this first.
+   */
+  exists: () => Promise<boolean>
 }
 
 export const b64 = (bytes: Uint8Array): string =>

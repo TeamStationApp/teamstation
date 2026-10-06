@@ -1,4 +1,4 @@
-import { bucketSize, lp, u64, utf8 } from './bytes'
+import { lp, u64, utf8 } from './bytes'
 import {
   openPreviousEpochKey,
   openPreviousPukKeys,
@@ -9,7 +9,10 @@ import {
   verifyEpoch,
   verifyPuk
 } from './chain'
+import { call } from './core'
+import { num } from './coreCall'
 import vectorFile from './frozenVectors.json'
+import { sha256 } from './hash'
 import {
   deriveKeyPair,
   epochAad,
@@ -17,26 +20,23 @@ import {
   type HpkePurpose,
   hpkeSeal,
   linkAad,
-  pukAad,
-  setupBaseRecipient,
-  setupBaseSender
+  pukAad
 } from './hpke'
 import { signingPublicKey } from './keys'
 import { linkCode } from './linkCode'
 import { GENESIS_HASH, logRowHash } from './logHash'
-import { primitives } from './primitives'
 import { safetyNumber } from './safetyNumber'
-import { messageKey, openMessage, sealMessage } from './seal'
+import { bucketSize, messageKey, openMessage, sealMessage } from './seal'
 import { openAttachment, sealAttachment } from './stream'
 
 /**
- * The frozen vectors of every chat construction, in one place, for both
- * `primitives` twins.
+ * The frozen vectors of every chat construction, in one place, through the
+ * same TypeScript functions chat calls.
  *
- * Node's tests run `runVectors()` on `primitives.ts` (`@noble`); the bench
- * screen runs the same function on a phone, where the constructions sit on
- * `primitives.native.ts`, and shows `vectors ok` only when every one matches.
- * Same inputs, same bytes: that is what makes the two twins one protocol.
+ * Node's tests run `runVectors()` on the Node addon; the bench screen runs
+ * it on a phone's native core and in a browser's WebAssembly, and shows
+ * `vectors ok` only when every one matches. Same inputs, same bytes on every
+ * platform: that is what makes the three builds of the core one protocol.
  *
  * The inputs are fixed: `seed(label)` is SHA-256 of the label's UTF-8, and
  * every nonce, ephemeral key and attachment key is one of those. The expected
@@ -64,8 +64,7 @@ export function fromHex(text: string): Uint8Array {
 }
 
 /** SHA-256 of a label: every fixed input below. */
-export const seed = (label: string): Uint8Array =>
-  primitives.sha256(utf8(label))
+export const seed = (label: string): Uint8Array => sha256(utf8(label))
 
 export interface VectorResult {
   name: string
@@ -74,7 +73,7 @@ export interface VectorResult {
   want: string
 }
 
-/** Every vector, run on whichever `primitives` this platform has. */
+/** Every vector, run on this platform's chat crypto core. */
 export function runVectors(): VectorResult[] {
   const results: VectorResult[] = []
   const check = (name: string, got: () => string, want: string): void => {
@@ -100,44 +99,33 @@ export function runVectors(): VectorResult[] {
     () => toHex(deriveKeyPair(fromHex(rfc.ikmE)).publicKey),
     rfc.pkEm
   )
+  // Nothing in chat keeps an HPKE context open: the RFC's sequence (the key
+  // schedule, one seal and open under the RFC's ephemeral key, and an
+  // export) runs through the core's own op.
   check(
-    'RFC 9180 sender key schedule',
-    () => {
-      const { context } = setupBaseSender(
-        fromHex(rfc.pkRm),
-        fromHex(rfc.info),
-        fromHex(rfc.ikmE)
-      )
-      return [context.key, context.baseNonce, context.exporterSecret]
-        .map(toHex)
-        .join(' ')
-    },
-    `${rfc.key} ${rfc.baseNonce} ${rfc.exporterSecret}`
-  )
-  check(
-    'RFC 9180 seal 0',
+    'RFC 9180 sequence',
     () =>
-      toHex(
-        setupBaseSender(
-          fromHex(rfc.pkRm),
-          fromHex(rfc.info),
-          fromHex(rfc.ikmE)
-        ).context.seal(fromHex(rfc.aad0), fromHex(rfc.pt))
-      ),
-    rfc.ct0
-  )
-  check(
-    'RFC 9180 open 0 and export',
-    () => {
-      const context = setupBaseRecipient(
-        fromHex(rfc.pkEm),
+      call('hpkeVectorSequence', [
+        fromHex(rfc.pkRm),
         fromHex(rfc.skRm),
-        fromHex(rfc.info)
-      )
-      const opened = context.open(fromHex(rfc.aad0), fromHex(rfc.ct0))
-      return `${toHex(opened)} ${toHex(context.export(new Uint8Array(0), 32))}`
-    },
-    `${rfc.pt} ${rfc.exported}`
+        fromHex(rfc.info),
+        fromHex(rfc.ikmE),
+        fromHex(rfc.aad0),
+        fromHex(rfc.pt),
+        new Uint8Array(0),
+        num(32)
+      ])
+        .map(toHex)
+        .join(' '),
+    [
+      rfc.pkEm,
+      rfc.key,
+      rfc.baseNonce,
+      rfc.exporterSecret,
+      rfc.ct0,
+      rfc.pt,
+      rfc.exported
+    ].join(' ')
   )
 
   // hpke.ts: the four chat purposes
@@ -231,7 +219,7 @@ export function runVectors(): VectorResult[] {
         identitySecretKey: identity,
         nonce
       })
-      return `${toHex(primitives.sha256(sealed.ciphertext))} ${toHex(sealed.signature)}`
+      return `${toHex(sha256(sealed.ciphertext))} ${toHex(sealed.signature)}`
     },
     `${FROZEN.sealCiphertextSha256} ${FROZEN.sealSignature}`
   )
@@ -278,9 +266,9 @@ export function runVectors(): VectorResult[] {
         sealed.blob,
         sealed.digest
       )
-      return `${toHex(sealed.digest)} ${toHex(primitives.sha256(opened))}`
+      return `${toHex(sealed.digest)} ${toHex(sha256(opened))}`
     },
-    `${FROZEN.streamBigDigest} ${toHex(primitives.sha256(big))}`
+    `${FROZEN.streamBigDigest} ${toHex(sha256(big))}`
   )
 
   // chain.ts
@@ -448,8 +436,8 @@ export function runVectors(): VectorResult[] {
 }
 
 /**
- * `vectors ok`, or the first that did not match. A primitive that throws
- * while the fixed inputs are being made is a failure too, never a crash.
+ * `vectors ok`, or the first that did not match. A core that throws while
+ * the fixed inputs are being made is a failure too, never a crash.
  */
 export function vectorSummary(results?: VectorResult[]): string {
   let checked: VectorResult[]

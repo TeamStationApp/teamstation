@@ -1,11 +1,9 @@
 import { hkdfSync } from 'node:crypto'
 
-import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
-import { sha256 } from '@noble/hashes/sha2.js'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { utf8 } from './bytes'
+import { fromHex, hex, oracle, seed } from '../../test/chatCryptoOracle'
 import {
   epochSignedBytes,
   openPreviousEpochKey,
@@ -20,11 +18,6 @@ import {
 } from './chain'
 import { deriveKeyPair } from './hpke'
 import { signingPublicKey } from './keys'
-
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex')
-const fromHex = (text: string): Uint8Array =>
-  Uint8Array.from(Buffer.from(text, 'hex'))
-const seed = (label: string): Uint8Array => sha256(utf8(label))
 
 const identity = seed('identity')
 const identityKey = signingPublicKey(identity)
@@ -62,7 +55,10 @@ describe('chatCrypto chain', () => {
       const aad = fromHex(
         '00000006' + Buffer.from('cnv_c1').toString('hex') + '0000000000000008'
       )
-      const opened = xchacha20poly1305(new Uint8Array(key), nonce, aad).decrypt(
+      const opened = oracle.xchacha20Poly1305Open(
+        new Uint8Array(key),
+        nonce,
+        aad,
         box.subarray(24)
       )
       expect(hex(opened)).equals(hex(epochKey))
@@ -128,7 +124,7 @@ describe('chatCrypto chain', () => {
         '00000006' +
           Buffer.from('cnv_c1').toString('hex') +
           '0000000000000008' +
-          hex(sha256(box))
+          hex(oracle.sha256(box))
       )
       const signature = signEpoch(fields, identity)
       expect(hex(signature)).equals(
@@ -138,7 +134,9 @@ describe('chatCrypto chain', () => {
 
       const first = { conversationId: 'cnv_c1', epoch: 1, previousKeyBox: null }
       expect(
-        hex(epochSignedBytes(first)).endsWith(hex(sha256(new Uint8Array(0))))
+        hex(epochSignedBytes(first)).endsWith(
+          hex(oracle.sha256(new Uint8Array(0)))
+        )
       ).equals(true)
       const firstSignature = signEpoch(first, identity)
       expect(hex(firstSignature)).equals(
@@ -217,11 +215,12 @@ describe('chatCrypto chain', () => {
           Buffer.from('cid_1').toString('hex') +
           '0000000000000003'
       )
-      const plaintext = xchacha20poly1305(
+      const plaintext = oracle.xchacha20Poly1305Open(
         new Uint8Array(key),
         nonce,
-        aad
-      ).decrypt(box.subarray(24))
+        aad,
+        box.subarray(24)
+      )
       expect(hex(plaintext)).equals(
         '0000000000000001' +
           '00000020' +
@@ -288,7 +287,7 @@ describe('chatCrypto chain', () => {
       const seal = (plaintext: string): Uint8Array =>
         Uint8Array.from([
           ...nonce,
-          ...xchacha20poly1305(key, nonce, aad).encrypt(fromHex(plaintext))
+          ...oracle.xchacha20Poly1305Seal(key, nonce, aad, fromHex(plaintext))
         ])
       expect(() => open({ previousKeysBox: seal('0000000000000001') })).throws(
         'cut short'
@@ -296,6 +295,11 @@ describe('chatCrypto chain', () => {
       expect(() =>
         open({ previousKeysBox: seal('000000000000000100000020ab') })
       ).throws('cut short')
+      // Shorter than a nonce and a tag: refused before the core is asked.
+      expect(() => open({ previousKeysBox: new Uint8Array(39) })).throws(
+        TypeError,
+        'too short'
+      )
     })
 
     it('the PUK signature: frozen vector', () => {

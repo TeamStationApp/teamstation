@@ -4,10 +4,11 @@
 //   node scripts/chatCryptoBench.mjs [--bytes 20971520] [--wraps 1000] [--json]
 //
 // Seals and opens a 20 MiB buffer through the chat crypto core's Node addon
-// and makes 1,000 HPKE wraps, after checking every frozen vector through it
-// (`src/common/chatCrypto/coreVectors.ts`, `vectors ok`), then prints
-// `stream MB/s` (the slower of seal and open, MB = 2^20 bytes) and `wraps/s`. With --json it prints the whole
-// result as one line of JSON instead.
+// and makes 1,000 HPKE wraps, after checking every frozen vector through the
+// TypeScript wrappers on it (`src/common/chatCrypto/vectors.ts`, `vectors
+// ok`), then prints `stream MB/s` (the slower of seal and open, MB = 2^20
+// bytes) and `wraps/s`. With --json it prints the whole result as one line
+// of JSON instead.
 import { createRequire } from 'node:module'
 import { parseArgs } from 'node:util'
 
@@ -20,7 +21,7 @@ const {
   runChatBench
 } = require('../src/app/dev/chatBenchRun.ts')
 
-const { coreVectorSummary } = require('../src/common/chatCrypto/coreVectors.ts')
+const { vectorSummary } = require('../src/common/chatCrypto/vectors.ts')
 
 const { values } = parseArgs({
   options: {
@@ -30,7 +31,7 @@ const { values } = parseArgs({
   }
 })
 
-const vectors = coreVectorSummary()
+const vectors = vectorSummary()
 const result = runChatBench({
   bytes: Number(values.bytes),
   wraps: Number(values.wraps)

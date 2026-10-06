@@ -180,7 +180,7 @@ export async function open(context: AudioContext) {
 describe('the web code under its Content-Security-Policy', function () {
   it('finds a worklet, script or worker loaded from a scheme the policy forbids', function () {
     expect(blockedCodeLoads(policy, 'mic.ts', BLOB_WORKLET)).deep.equals([
-      "mic.ts: an AudioWorklet module (addModule) from a blob: URL, which script-src 'self' forbids"
+      "mic.ts: an AudioWorklet module (addModule) from a blob: URL, which script-src 'self' 'wasm-unsafe-eval' forbids"
     ])
     expect(
       blockedCodeLoads(
@@ -191,7 +191,7 @@ describe('the web code under its Content-Security-Policy', function () {
         'ctx.audioWorklet.addModule(`data:text/javascript;base64,${code}`)'
       )
     ).deep.equals([
-      "data.ts: an AudioWorklet module (addModule) from a data: URL, which script-src 'self' forbids"
+      "data.ts: an AudioWorklet module (addModule) from a data: URL, which script-src 'self' 'wasm-unsafe-eval' forbids"
     ])
     expect(
       blockedCodeLoads(

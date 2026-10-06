@@ -1,18 +1,21 @@
-import { sha256 } from '@noble/hashes/sha2.js'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { bucketSize, utf8 } from './bytes'
+import { hex, oracle, seed } from '../../test/chatCryptoOracle'
+import { utf8 } from './bytes'
+import { call } from './core'
+import { type CoreCall, num } from './coreCall'
+import { bucketSize } from './seal'
 import {
   blobLength,
   CHUNK_SIZE,
   chunkNonce,
   openAttachment,
-  sealAttachment
+  openAttachmentWith,
+  PART_CHUNKS,
+  sealAttachment,
+  sealAttachmentWith
 } from './stream'
-
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex')
-const seed = (label: string): Uint8Array => sha256(utf8(label))
 
 const key = seed('attachment key')
 const prefix = seed('prefix').subarray(0, 16)
@@ -46,7 +49,7 @@ describe('chatCrypto stream', () => {
     expect(hex(sealed.digest)).equals(
       '7da7e9fee49f0c99e2e40d7d46d853e2b32dd9303bdb165d9931a871c58cb491'
     )
-    expect(hex(sealed.digest)).equals(hex(sha256(sealed.blob)))
+    expect(hex(sealed.digest)).equals(hex(oracle.sha256(sealed.blob)))
     expect(
       Buffer.from(openAttachment(key, sealed.blob, sealed.digest)).toString()
     ).equals('hello attachment')
@@ -60,12 +63,80 @@ describe('chatCrypto stream', () => {
       16 + padded + Math.ceil(padded / CHUNK_SIZE) * 16
     )
     expect(sealed.blob.length).equals(blobLength(200000))
+    expect(() => blobLength(-1)).throws(RangeError)
+    expect(() => blobLength(0.5)).throws(RangeError)
     expect(hex(sealed.digest)).equals(
       '76c6ce34c7b1aebd2f530f7d441de4d6243807a12866fe649abcec55ff0a3c08'
     )
     expect(hex(openAttachment(key, sealed.blob, sealed.digest))).equals(
       hex(file)
     )
+  })
+
+  it('a file of several parts is the chunks the construction says', () => {
+    // 2.5 MiB: three parts, the last with the padding.
+    const size = 2.5 * 1024 * 1024
+    const file = pattern(size)
+    const sealed = sealAttachment(file, { key, prefix })
+    const padded = new Uint8Array(bucketSize(size))
+    padded.set(file)
+    padded[size] = 0x80
+    const chunks = Math.ceil(padded.length / CHUNK_SIZE)
+    expect(chunks).above(2 * PART_CHUNKS)
+    expect(hex(sealed.blob.subarray(0, 16))).equals(hex(prefix))
+    for (const i of [0, PART_CHUNKS - 1, PART_CHUNKS, chunks - 1]) {
+      const expected = oracle.xchacha20Poly1305Seal(
+        key,
+        chunkNonce(prefix, i, i === chunks - 1),
+        new Uint8Array(0),
+        padded.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+      )
+      const at = 16 + i * SEALED
+      expect(hex(sealed.blob.subarray(at, at + expected.length))).equals(
+        hex(expected)
+      )
+    }
+    expect(sealed.blob.length).equals(blobLength(size))
+    expect(hex(sealed.digest)).equals(hex(oracle.sha256(sealed.blob)))
+    const opened = openAttachment(key, sealed.blob, sealed.digest)
+    expect(opened.length).equals(size)
+    expect(hex(oracle.sha256(opened))).equals(hex(oracle.sha256(file)))
+    // A byte changed in the second part fails, digest or none.
+    const changed = sealed.blob.slice()
+    changed[16 + (PART_CHUNKS + 1) * SEALED] ^= 1
+    expect(() => openAttachment(key, changed)).throws('notAuthentic')
+    expect(() => openAttachment(key, changed, sealed.digest)).throws(
+      'notAuthentic'
+    )
+  })
+
+  it('a call holds a part, never the file', () => {
+    const sizes: number[] = []
+    const watched: CoreCall = (op, args) => {
+      sizes.push(args.reduce((sum, arg) => sum + arg.length, 0))
+      return call(op, args)
+    }
+    const file = pattern(2.5 * 1024 * 1024)
+    const sealed = sealAttachmentWith(watched, file, { key, prefix })
+    openAttachmentWith(watched, key, sealed.blob, sealed.digest)
+    expect(Math.max(...sizes)).below(PART_CHUNKS * SEALED + 200)
+  })
+
+  it('a blob that opens to no padding marker fails; a short prefix is refused', () => {
+    const sealed = sealAttachment(utf8('marker'), { key, prefix })
+    const unmarked: CoreCall = (op, args) => {
+      if (op !== 'openAttachmentPart') return call(op, args)
+      const [real, , state] = call(op, args)
+      const opened = new Uint8Array(real.length)
+      opened[0] = 1
+      return [opened, num(1), state]
+    }
+    expect(() => openAttachmentWith(unmarked, key, sealed.blob)).throws(
+      'noPaddingMarker'
+    )
+    expect(() =>
+      sealAttachment(utf8('x'), { prefix: new Uint8Array(15) })
+    ).throws('malformed')
   })
 
   it('an empty file, and one a byte short of a chunk', () => {
@@ -104,10 +175,14 @@ describe('chatCrypto stream', () => {
       }
     })
 
-    it('a digest that does not match fails before anything is opened', () => {
+    it('a digest that does not match fails, and nothing is returned', () => {
       const digest = sealed.digest.slice()
       digest[0] ^= 1
       expect(() => openAttachment(key, sealed.blob, digest)).throws('digest')
+      // An empty digest would be "no digest" to the core: never accepted.
+      for (const short of [new Uint8Array(0), sealed.digest.subarray(0, 31)]) {
+        expect(() => openAttachment(key, sealed.blob, short)).throws('digest')
+      }
     })
 
     it('the wrong key fails', () => {
