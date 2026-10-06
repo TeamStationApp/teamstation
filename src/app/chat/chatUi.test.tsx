@@ -282,6 +282,14 @@ class FakeEngine implements ChatScreenEngine {
     await this.sent(`moderatorDelete ${id} ${target}`)
   }
 
+  async report(
+    id: string,
+    target: string
+  ): Promise<{ id: string; verified: boolean }> {
+    await this.sent(`report ${id} ${target}`)
+    return { id: 'crp_1', verified: true }
+  }
+
   async markRead(id: string): Promise<void> {
     this.calls.push(`markRead ${id}`)
   }
@@ -636,7 +644,7 @@ describe('a conversation', function () {
     )
   })
 
-  it('reads a closed chat with no composer and no menu', async function () {
+  it('reads a closed chat with no composer, offering only Report', async function () {
     await open(
       view({
         conversation: chat({ closed: true }),
@@ -648,6 +656,47 @@ describe('a conversation', function () {
     expect(labelled('Message')).equals(null)
     await longPress('old words')
     expect(button('React with 👍')).equals(undefined)
+    expect(button('Reply')).equals(undefined)
+    expect(button('Report')).not.equals(undefined)
+    await press('Cancel')
+  })
+
+  it('reports someone else’s message after asking, and never one’s own', async function () {
+    const { engine } = await open(
+      view({
+        messages: [
+          message({ id: 'msg_mine', mine: true, body: 'my words' }),
+          message({ id: 'msg_c', senderName: 'Casey C', body: 'second from C' })
+        ]
+      })
+    )
+    await longPress('my words')
+    expect(button('Report')).equals(undefined)
+    await press('Cancel')
+
+    await longPress('second from C')
+    await press('Report')
+    await until('the question', () => text().includes('Report this message?'))
+    expect(text()).contains('this one message from Casey C')
+    expect(engine.calls.some(call => call.startsWith('report'))).equals(false)
+    await press('Cancel')
+    await until('the menu to close', () => button('Report message') == null)
+    expect(engine.calls.some(call => call.startsWith('report'))).equals(false)
+
+    await longPress('second from C')
+    await press('Report')
+    await press('Report message')
+    await until('the report', () => engine.calls.includes('report cnv_1 msg_c'))
+    await until('the word that it went', () => text().includes('Reported.'))
+
+    engine.failSend = true
+    await longPress('second from C')
+    await press('Report')
+    await press('Report message')
+    await until('the failure', () =>
+      text().includes('That message could not be reported')
+    )
+    expect(text()).not.contains('Reported.')
   })
 
   it('writes with emoji, replies, attaches, and sends', async function () {

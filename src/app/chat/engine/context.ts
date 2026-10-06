@@ -31,6 +31,7 @@ export type ChatEngineClient = ChatKeysClient &
     | 'putChatAttachmentPart'
     | 'completeChatAttachment'
     | 'chatAttachment'
+    | 'reportChatMessage'
   >
 
 export type ChatEngineErrorCode =

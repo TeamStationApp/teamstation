@@ -41,7 +41,7 @@ import {
   type ChatUserKeys,
   TeamStationClient
 } from '../../common/api'
-import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
+import { asChatContent, MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
 import { utf8 } from '../../common/chatCrypto/bytes'
 import { epochAad, hpkeOpen } from '../../common/chatCrypto/hpke'
 import { newMessageId } from '../../common/chatCrypto/messageIds'
@@ -1356,6 +1356,70 @@ describe('the chat engine (U12)', function () {
       'unverified'
     )
     broken.engine.stop()
+  })
+
+  it('reports someone else’s post with its own key, and the server proves it (U14)', async function () {
+    const b = await device('D2')
+    const c = await device('Es')
+    const chatOf = await dm('Es', ['D2'])
+    await c.engine.open(chatOf)
+    const posted = (await c.engine.sendText(chatOf, 'second from Es 🎉'))!
+    await b.engine.open(chatOf)
+    await hint(b, chat(chatOf, 'message'))
+
+    // Only someone else's readable post can be reported.
+    expect(await engineRefusal(c.engine.report(chatOf, posted.id))).equals(
+      'target'
+    )
+    expect(await engineRefusal(b.engine.report(chatOf, 'msg_nothere'))).equals(
+      'target'
+    )
+
+    const reported = await b.engine.report(chatOf, posted.id)
+    expect(reported.verified).equals(true)
+    const stored = await f()
+      .db.selectFrom('chat_reports')
+      .select(['message_key', 'verified', 'plaintext'])
+      .where('id', '=', reported.id)
+      .executeTakeFirstOrThrow()
+    expect(stored.verified).equals(true)
+    expect(stored.message_key.length).equals(32)
+
+    const admin = new TeamStationClient({
+      baseUrl: f().api,
+      token: f().tokenOf('Z')
+    })
+    const listed = (await admin.chatReports(true)).find(
+      item => item.id === reported.id
+    )!
+    expect(listed).include({ messageId: posted.id, verified: true })
+    expect(listed.sender.userId).equals(id('Es'))
+    expect(listed.reporter.userId).equals(id('D2'))
+    expect(asChatContent(JSON.parse(listed.plaintext))).include({
+      type: 'text',
+      body: 'second from Es 🎉'
+    })
+    expect(listed.plaintext).equals(stored.plaintext)
+
+    // Es deletes it: the report keeps its copy, and it cannot be reported again.
+    await c.engine.deleteMessage(chatOf, posted.id)
+    await hint(b, chat(chatOf, 'message'))
+    expect(await engineRefusal(b.engine.report(chatOf, posted.id))).equals(
+      'target'
+    )
+    const kept = (await admin.chatReports(true)).find(
+      item => item.id === reported.id
+    )
+    expect(kept?.plaintext).equals(listed.plaintext)
+
+    const resolved = await admin.resolveChatReport(reported.id)
+    expect(resolved.resolvedAt).not.equals(null)
+    expect(
+      (await admin.chatReports(true)).some(item => item.id === reported.id)
+    ).equals(false)
+    expect(
+      (await admin.chatReports()).some(item => item.id === reported.id)
+    ).equals(true)
   })
 
   it('tries a refused post once more, and refuses sends it cannot make', async function () {
