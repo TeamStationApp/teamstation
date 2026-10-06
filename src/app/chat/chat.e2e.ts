@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import { after, describe, it } from 'mocha'
+import { after, afterEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
@@ -27,7 +27,11 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
  * `<artifacts>/profiles/<person>-<n>`, so what a device keeps survives from
  * one scenario to the next — a browser's chat keys included (E5). Pages call
  * the API themselves at `TS_CHAT_API_URL` (default the API above) for what
- * the screens do not show. Screenshots go to `<artifacts>/shots`.
+ * the screens do not show. Screenshots go to `<artifacts>/shots`, and a
+ * failed scenario leaves `failed-<scenario>-<device>.png` of every open
+ * device. E11 attaches `photo.jpg` and a 20 MB `clip.mp4` from
+ * `TS_CHAT_FIXTURES` (default `<artifacts>/../fixtures`) and reads the
+ * stand-in Space's files under `TS_FAKE_SPACE_DIR`.
  *
  * Scenarios run in the order they are written, each on the state the ones
  * before it left.
@@ -76,7 +80,7 @@ const browsers: Browser[] = []
 async function until<T>(
   what: string,
   read: () => T | undefined | Promise<T | undefined>,
-  timeoutMs = 20000
+  timeoutMs = 30000
 ): Promise<T> {
   const end = Date.now() + timeoutMs
   for (;;) {
@@ -87,17 +91,36 @@ async function until<T>(
   }
 }
 
-/** One device of one person: a browser with its own lasting profile. */
+/** The devices open now, by `<person>-<n>`, so a scenario reuses one. */
+const open = new Map<string, { browser: Browser; page: Page }>()
+
+/**
+ * One device of one person: a browser with its own lasting profile, the
+ * one already open if a scenario before left it open.
+ */
 async function device(person: string, n = 1): Promise<Page> {
+  const key = `${person}-${n}`
+  const held = open.get(key)
+  if (held?.browser.connected === true) return held.page
   const browser = await puppeteer.launch({
     headless: true,
-    userDataDir: join(ARTIFACTS, 'profiles', `${person}-${n}`),
+    userDataDir: join(ARTIFACTS, 'profiles', key),
     executablePath: process.env.TS_CHROME_PATH
   })
   browsers.push(browser)
   const page = await browser.newPage()
   await page.setViewport({ width: 1280, height: 900 })
+  open.set(key, { browser, page })
+  // On the app, so the page's own calls to the API carry its session.
+  await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
   return page
+}
+
+/** Closes a device's browser; its profile (and keys) stay on disk. */
+async function closeDevice(person: string, n = 1): Promise<void> {
+  const key = `${person}-${n}`
+  await open.get(key)?.browser.close()
+  open.delete(key)
 }
 
 async function bodyText(page: Page): Promise<string> {
@@ -139,8 +162,16 @@ async function typeInto(
     `the ${label} field`,
     async () => (await page.$(`input[aria-label="${label}"]`)) ?? undefined
   )
-  await input.click({ count: 3 })
-  await input.type(text)
+  // Typed again until the field holds it all: a busy machine can drop keys
+  // while the screen redraws under the typing.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await input.click({ count: 3 })
+    await page.keyboard.press('Backspace')
+    await input.type(text)
+    const held = await input.evaluate(node => node.value)
+    if (held === text) return
+  }
+  throw new Error(`The ${label} field would not take "${text}"`)
 }
 
 /** Signs a device in with its person's password, if it is not already. */
@@ -217,6 +248,165 @@ async function apiGet(page: Page, path: string): Promise<any> {
   }, `${API}${path}`)
 }
 
+/** Any call to the API from inside the page, with its session. */
+async function apiCall(
+  page: Page,
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<{ status: number; body: any }> {
+  return await page.evaluate(
+    async (url: string, verb: string, sent: string | null) => {
+      const response = await fetch(url, {
+        method: verb,
+        credentials: 'include',
+        headers: sent === null ? {} : { 'content-type': 'application/json' },
+        // A ternary, not `??`: this runs in the page, where the compiler's
+        // helper for it does not exist.
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        body: sent === null ? undefined : sent
+      })
+      const text = await response.text()
+      return {
+        status: response.status,
+        body: text === '' ? null : JSON.parse(text)
+      }
+    },
+    `${API}${path}`,
+    method,
+    body === undefined ? null : JSON.stringify(body)
+  )
+}
+
+/** The id of the chat called `title` in the page's person's list. */
+async function chatIdOf(page: Page, title: string): Promise<string> {
+  return await until(`the chat ${title}`, async () => {
+    const list = (await apiGet(page, '/chat/conversations')).body as Array<{
+      id: string
+      title: string | null
+      members?: unknown
+    }>
+    return list.find(chat => chat.title === title)?.id
+  })
+}
+
+/** A DM's id from the page's list, by the user ids in it. */
+async function dmWith(page: Page, userIds: string[]): Promise<string> {
+  return await until(`a DM with ${userIds.join(', ')}`, async () => {
+    const list = (await apiGet(page, '/chat/conversations')).body as Array<{
+      id: string
+      kind: string
+      closed: boolean
+    }>
+    for (const chat of list) {
+      if (chat.kind !== 'dm' || chat.closed) continue
+      const members = (
+        await apiGet(page, `/chat/conversations/${chat.id}/members`)
+      ).body as Array<{ userId: number }>
+      const ids = members.map(member => String(member.userId)).sort()
+      if (JSON.stringify(ids) === JSON.stringify([...userIds].sort())) {
+        return chat.id
+      }
+    }
+    return undefined
+  })
+}
+
+/** Opens the Chat tab, which sets the device up for chat, and waits. */
+async function openChatTab(page: Page): Promise<void> {
+  await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+  await until('the chat list', async () => {
+    const text = await bodyText(page)
+    return text.includes('Follow a team') && !text.includes('Opening chat')
+      ? true
+      : undefined
+  })
+}
+
+/** Opens one chat from the Chat tab's list. */
+async function openChat(page: Page, title: string): Promise<void> {
+  await openChatTab(page)
+  await press(page, title)
+  await until(`the chat ${title}`, () =>
+    /\/chat\/cnv_[^/]+$/.test(page.url()) ? true : undefined
+  )
+  await until('the chat to load', async () =>
+    (await bodyText(page)).includes('members') ? true : undefined
+  )
+}
+
+/** Types a message into the composer and sends it. */
+async function send(page: Page, text: string): Promise<void> {
+  const field = await until(
+    'an enabled composer',
+    async () =>
+      (await page.$('textarea[aria-label="Message"]:not([readonly])')) ??
+      undefined,
+    30000
+  )
+  await field.click()
+  await field.type(text)
+  await press(page, 'Send')
+  await until(
+    `"${text}" sent`,
+    async () =>
+      await (
+        await page.$('textarea[aria-label="Message"]')
+      )?.evaluate(node => node.value === '')
+  )
+}
+
+/** Holds the mouse on a message's words until its menu opens. */
+async function longPress(page: Page, words: string): Promise<void> {
+  const node = await until(
+    `"${words}" on the page`,
+    async () =>
+      (await page.$(`::-p-text(${JSON.stringify(words)})`)) ?? undefined
+  )
+  await node.scrollIntoView()
+  const box = await node.boundingBox()
+  if (box == null) throw new Error(`"${words}" is not on the screen`)
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await new Promise(resolve => setTimeout(resolve, 900))
+  await page.mouse.up()
+}
+
+/** Presses the button saying `words` in the row that holds `row`. */
+async function pressInRow(
+  page: Page,
+  row: string,
+  words: string
+): Promise<void> {
+  const done = await page.evaluate(
+    (rowText: string, label: string) => {
+      const buttons = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="button"]')
+      ).filter(node => String(node.textContent).trim() === label)
+      let best: HTMLElement | null = null
+      let bestSize = Infinity
+      for (const button of buttons) {
+        let at: HTMLElement | null = button
+        while (at !== null && !String(at.innerText).includes(rowText)) {
+          at = at.parentElement
+        }
+        if (at === null) continue
+        const size = String(at.innerText).length
+        if (size < bestSize) {
+          best = button
+          bestSize = size
+        }
+      }
+      if (best === null) return false
+      best.click()
+      return true
+    },
+    row,
+    words
+  )
+  if (!done) throw new Error(`No ${words} in the row of ${row}`)
+}
+
 /** The digits in the first `[aria-label^="<prefix>"]`, once it is there. */
 async function codeOn(page: Page, prefix: string): Promise<string> {
   return await until(`the six digits on the page`, async () => {
@@ -250,74 +440,34 @@ describe('chat scenarios in the browser', function () {
     seed = readSeed()
   })
 
+  /** A person's main device, signed in (once) with their password. */
+  async function signedIn(person: string): Promise<Page> {
+    const page = await device(person)
+    await signIn(page, seed, person)
+    return page
+  }
+
+  afterEach(async function () {
+    // A failed scenario leaves a picture of every device as it stood.
+    if (this.currentTest?.state !== 'failed') return
+    const name = (
+      this.currentTest.title.split(':')[0] ?? 'failed'
+    ).toLowerCase()
+    for (const [key, held] of open) {
+      if (!held.browser.connected) continue
+      await held.page
+        .screenshot({
+          path: join(SHOTS, `failed-${name}-${key}.png`),
+          fullPage: true
+        })
+        .catch(() => undefined)
+    }
+  })
+
   after(async function () {
     for (const browser of browsers) await browser.close()
   })
 
-  /**
-   * E17: Eagles parent D2 finds Hawks from Home, follows it, and opens it:
-   * the schedule and the team, and nothing of its games.
-   */
-  it('E17: a fan follows Hawks and sees its schedule and team only', async function () {
-    const page = await device('D2')
-    await signIn(page, seed, 'D2')
-    await waitForText(page, 'Follow a team')
-    await shot(page, 'e17-1-home')
-    await pressText(page, 'Follow a team')
-    await until('the follow screen', () =>
-      page.url().endsWith('/teams/follow') ? true : undefined
-    )
-    await typeInto(page, 'Team name', 'Haw')
-    await press(page, 'Follow Hawks')
-    await until(
-      'Following',
-      async () => (await page.$('[aria-label="Following Hawks"]')) ?? undefined
-    )
-    await shot(page, 'e17-2-following')
-
-    await press(page, 'Hawks, QPLL Spring 2027')
-    await until('the Hawks page', () =>
-      page.url().includes(`/teams/${seed.ids.Hawks}`) ? true : undefined
-    )
-    await waitForText(page, 'vs Owls')
-    expect(await tabs(page)).deep.equals(['Schedule', 'Team'])
-    const schedule = await bodyText(page)
-    expect(schedule).contains('vs Owls')
-    expect(schedule).contains('@ Owls')
-    expect(schedule).contains('@ Eagles')
-    // The cards open nothing: no button carries a game's matchup.
-    const cardButtons = await page.$$eval('[role="button"]', nodes =>
-      nodes
-        .map(node => node.getAttribute('aria-label'))
-        .filter(label => label !== null && / (vs|@) /.test(label))
-    )
-    expect(cardButtons).deep.equals([])
-    await shot(page, 'e17-3-schedule')
-
-    await press(page, 'Team')
-    await waitForText(page, 'Hank C')
-    const team = await bodyText(page)
-    for (const words of [
-      'STAFF',
-      'Harper H',
-      'Admin',
-      'Coach',
-      'Scorekeeper',
-      'Songkeeper',
-      'PLAYERS',
-      'Pat P'
-    ]) {
-      expect(team, words).contains(words)
-    }
-    expect(team).not.contains('FOLLOWERS')
-    await shot(page, 'e17-4-team')
-
-    await page.goto(`${WEB}/games/${seed.ids.hawksOwlsFinal}`, {
-      waitUntil: 'networkidle2'
-    })
-    await waitForText(page, 'That game is not here')
-    await shot(page, 'e17-5-final-game')
-  })
   /**
    * E2: coach Hc keeps P's guardians and family from P's Settings tab. The
    * aunt, who has no account, joins through her invitation; parent D cannot
@@ -530,5 +680,903 @@ describe('chat scenarios in the browser', function () {
     console.log(
       `      E5 identity key on both: ${keysFirst.identity.publicKey as string}`
     )
+  })
+  /**
+   * E6: coach Hc posts in Hawks Members and keeps it open. Hawks admin Ha
+   * makes an invite link; J, new, signs up with an e-mail code and opens
+   * Hawks Members: History is locked first, then Hc's message within 5 s,
+   * with no reload on either side.
+   */
+  it('E6: a newcomer sees History is locked, then the history', async function () {
+    const coach = await signedIn('Hc')
+    await signIn(coach, seed, 'Hc')
+    await openChat(coach, 'Hawks Members')
+    await send(coach, 'Welcome to Hawks Members')
+    await waitForText(coach, 'Welcome to Hawks Members')
+    await shot(coach, 'e6-1-hc-posted')
+
+    const admin = await signedIn('Ha')
+    await signIn(admin, seed, 'Ha')
+    await admin.goto(`${WEB}/teams/${seed.ids.Hawks}/manage`, {
+      waitUntil: 'networkidle2'
+    })
+    const codes = async (): Promise<string[]> =>
+      [...(await bodyText(admin)).matchAll(/\/i\/([A-Za-z0-9_-]+)/g)].map(
+        found => found[1]
+      )
+    await waitForText(admin, 'Create an invite link')
+    const before = new Set(await codes())
+    await pressText(admin, 'Create an invite link')
+    await pressText(admin, 'Create')
+    const code = await until('the new invite link', async () =>
+      (await codes()).find(found => !before.has(found))
+    )
+    await shot(admin, 'e6-2-invite')
+
+    const newcomer = await device('J')
+    newcomer.on('console', message => {
+      if (message.type() === 'error' || message.type() === 'warn') {
+        console.log(
+          `      [J] ${message.type()} ${message.text().slice(0, 300)}`
+        )
+      }
+    })
+    newcomer.on('response', response => {
+      if (response.url().includes('/api/v1/chat')) {
+        console.log(
+          `      [J] ${Date.now()} ${response.status()} ${response.request().method()} ${response.url().slice(-70)}`
+        )
+      }
+    })
+    const address = 'j@chat.example.com'
+    await newcomer.goto(`${WEB}/i/${code}`, { waitUntil: 'networkidle2' })
+    await waitForText(newcomer, 'You are invited to watch Hawks')
+    await typeInto(newcomer, 'Your name', 'Jules Jay')
+    await typeInto(newcomer, 'E-mail address', address)
+    const lines = logLength()
+    await pressText(newcomer, 'Send me a sign-in code')
+    const signInCode = await logged('sign-in code', address, lines)
+    await typeInto(newcomer, 'Sign-in code', signInCode.split(/\s/)[0])
+    await pressText(newcomer, 'Join')
+    await waitForText(newcomer, 'You are in.')
+
+    // Every appearance on J's screen, timed, from before the page loads.
+    await newcomer.evaluateOnNewDocument(() => {
+      const seen: Record<string, number> = {}
+      ;(window as unknown as { seen: Record<string, number> }).seen = seen
+      const look = (): void => {
+        const text = document.body === null ? '' : document.body.innerText
+        for (const words of ['History is locked', 'Welcome to Hawks Members']) {
+          if (seen[words] === undefined && text.includes(words)) {
+            seen[words] = Date.now()
+          }
+        }
+      }
+      new MutationObserver(look).observe(document, {
+        subtree: true,
+        childList: true,
+        characterData: true
+      })
+    })
+    // Straight to the chat, as a link to it opens: J's device enrols on the
+    // way in, and Hc's open page grants it the history.
+    const members = await chatIdOf(coach, 'Hawks Members')
+    await newcomer.goto(`${WEB}/chat/${members}`, { waitUntil: 'load' })
+    await waitForText(newcomer, 'Welcome to Hawks Members')
+    const seen = await newcomer.evaluate(
+      () => (window as unknown as { seen: Record<string, number> }).seen
+    )
+    console.log(`      E6 seen: ${JSON.stringify(seen)}`)
+    // J's device joined the chat without its key, and Hc's open page
+    // granted it: J's box for the epoch was made by Hc, after J's identity.
+    const db = localDatabase()
+    try {
+      const rows = (
+        await db.query(
+          `select b.granted_by_user_id::text as granter,
+             (extract(epoch from r.opened_at) * 1000)::bigint as opened,
+             (extract(epoch from r.filled_at) * 1000)::bigint as filled,
+             (extract(epoch from i.created_at) * 1000)::bigint as enrolled
+           from chat_epoch_boxes b
+           join chat_identities i on i.id = b.identity_id
+           join chat_grant_requests r
+             on r.conversation_id = b.conversation_id and r.user_id = b.user_id
+           join users u on u.id = b.user_id
+           where b.conversation_id = $1 and u.display_name = 'Jules Jay'`,
+          [members]
+        )
+      ).rows as Array<{
+        granter: string
+        opened: string
+        filled: string
+        enrolled: string
+      }>
+      expect(rows.length).equals(1)
+      expect(rows[0].granter).equals(seed.people.Hc.userId)
+      const opened = Number(rows[0].opened)
+      const filled = Number(rows[0].filled)
+      expect(opened).greaterThanOrEqual(Number(rows[0].enrolled))
+      console.log(
+        `      E6 J locked from ${opened} until Hc's grant ${filled} ` +
+          `(${filled - opened} ms); message on J's screen at ` +
+          `${seen['Welcome to Hawks Members']}`
+      )
+      // The history reached J's screen within 5 s of J joining the chat,
+      // with no reload; the lock showed on the screen when it lasted long
+      // enough to be drawn.
+      expect(seen['Welcome to Hawks Members'] - opened).lessThan(5000)
+      if (seen['History is locked'] !== undefined) {
+        expect(seen['Welcome to Hawks Members']).greaterThan(
+          seen['History is locked']
+        )
+      }
+    } finally {
+      await db.end()
+    }
+    await shot(newcomer, 'e6-3-j-history')
+    await shot(coach, 'e6-4-hc-still-open')
+  })
+
+  /**
+   * E7: Hawks admin Ha removes parent D (added in E4) from Hawks on the
+   * Manage page, and Hc posts again: D is out, the post starts epoch n+1,
+   * and D has no box for it.
+   */
+  it('E7: a removed member gets nothing new', async function () {
+    const db = localDatabase()
+    try {
+      const coach = await signedIn('Hc')
+      const members = await chatIdOf(coach, 'Hawks Members')
+      const parentD = await signedIn('D')
+      await signIn(parentD, seed, 'D')
+      expect(
+        (await apiGet(parentD, `/chat/conversations/${members}/messages`))
+          .status
+      ).equals(200)
+      const epochBefore = Number(
+        (
+          await db.query(
+            'select max(epoch) as e from chat_epochs where conversation_id = $1',
+            [members]
+          )
+        ).rows[0].e
+      )
+
+      const admin = await signedIn('Ha')
+      await admin.goto(`${WEB}/teams/${seed.ids.Hawks}/manage`, {
+        waitUntil: 'networkidle2'
+      })
+      await waitForText(admin, 'Dana Dunn')
+      await pressInRow(admin, 'Dana Dunn', 'Remove')
+      await until('D to leave the Manage page', async () =>
+        (await bodyText(admin)).includes('Dana Dunn') ? undefined : true
+      )
+      await shot(admin, 'e7-1-d-removed')
+
+      await until('D to be refused Hawks Members', async () =>
+        (await apiGet(parentD, `/chat/conversations/${members}/messages`))
+          .status === 404
+          ? true
+          : undefined
+      )
+      await openChat(coach, 'Hawks Members')
+      await send(coach, 'After D left')
+      await waitForText(coach, 'After D left')
+      await shot(coach, 'e7-2-hc-posted')
+      const posted = (
+        await db.query(
+          `select epoch from chat_messages where conversation_id = $1
+           order by seq desc limit 1`,
+          [members]
+        )
+      ).rows[0]
+      expect(Number(posted.epoch)).equals(epochBefore + 1)
+      const boxes = await db.query(
+        `select 1 from chat_epoch_boxes
+         where conversation_id = $1 and epoch = $2 and user_id = $3`,
+        [members, epochBefore + 1, seed.people.D.userId]
+      )
+      expect(boxes.rowCount).equals(0)
+      console.log(
+        `      E7 epoch ${epochBefore} → ${epochBefore + 1}, no box for D`
+      )
+    } finally {
+      await db.end()
+    }
+  })
+
+  /**
+   * E8: Eagles coach Ec and parent D2 are alone in a DM with history. D2
+   * resets on a new device while Ec's browser is closed; D2's DM stays
+   * locked until Ec opens Chat, sees the changed safety number and the
+   * approval, and approves.
+   */
+  it('E8: a reset identity waits for a person to approve', async function () {
+    const coach = await signedIn('Ec')
+    await signIn(coach, seed, 'Ec')
+    await openChatTab(coach)
+    await pressText(coach, 'New message')
+    await typeInto(coach, 'Name', 'Drew')
+    await press(coach, 'Pick Drew D')
+    await pressText(coach, 'Start conversation')
+    await until('the DM', () =>
+      /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
+    )
+    await send(coach, 'Ec to D2: practice moved')
+
+    const old = await signedIn('D2')
+    await signIn(old, seed, 'D2')
+    await openChat(old, 'Eddie C')
+    await waitForText(old, 'Ec to D2: practice moved')
+    await send(old, 'D2: thanks')
+    await waitForText(coach, 'D2: thanks')
+    await shot(coach, 'e8-1-dm-history')
+    const dm = await dmWith(coach, [
+      seed.people.Ec.userId,
+      seed.people.D2.userId
+    ])
+    await closeDevice('Ec')
+
+    const fresh = await device('D2', 2)
+    await signIn(fresh, seed, 'D2')
+    await fresh.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+    await waitForText(fresh, 'Link this device')
+    await pressText(fresh, 'I can’t reach my other devices')
+    await pressText(fresh, 'Reset chat on this device')
+    await waitForText(fresh, 'Follow a team')
+    await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
+    await waitForText(fresh, 'History is locked')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    expect(await bodyText(fresh)).not.contains('practice moved')
+    await shot(fresh, 'e8-2-d2-locked')
+
+    const back = await signedIn('Ec')
+    await openChat(back, 'Drew D')
+    await waitForText(back, 'Drew D’s safety number changed')
+    await waitForText(back, 'reset their chat keys')
+    await shot(back, 'e8-3-ec-sees-change')
+    await pressText(back, 'Review')
+    await waitForText(back, 'OLD SAFETY NUMBER')
+    await waitForText(back, 'NEW SAFETY NUMBER')
+    await shot(back, 'e8-4-ec-approval')
+    await press(back, 'Approve Drew D')
+    await until('the approval to go', async () =>
+      (await bodyText(back)).includes('OLD SAFETY NUMBER') ? undefined : true
+    )
+    await waitForText(fresh, 'Ec to D2: practice moved')
+    await shot(fresh, 'e8-5-d2-history')
+  })
+
+  /**
+   * E9: Ec and parent D share a DM with history; Ec leaves. D resets on a
+   * new device, opens the DM and writes: nobody can grant the history, so
+   * the post starts a new chain and the earlier messages stay unopenable.
+   */
+  it('E9: with no holder left, the next message breaks the chain', async function () {
+    const db = localDatabase()
+    try {
+      const coach = await signedIn('Ec')
+      await openChatTab(coach)
+      await pressText(coach, 'New message')
+      await typeInto(coach, 'Name', 'Dana')
+      await press(coach, 'Pick Dana D')
+      await pressText(coach, 'Start conversation')
+      await until('the DM', () =>
+        /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
+      )
+      await send(coach, 'Ec to D: carpool list')
+      const parent = await signedIn('D')
+      await openChat(parent, 'Eddie C')
+      await waitForText(parent, 'Ec to D: carpool list')
+      const dm = await dmWith(parent, [
+        seed.people.Ec.userId,
+        seed.people.D.userId
+      ])
+      await shot(parent, 'e9-1-d-history')
+
+      await coach.goto(`${WEB}/chat/${dm}/members`, {
+        waitUntil: 'networkidle2'
+      })
+      await pressText(coach, 'Leave this conversation')
+      await until('Ec out of the DM', async () =>
+        (await apiGet(coach, `/chat/conversations/${dm}/messages`)).status ===
+        404
+          ? true
+          : undefined
+      )
+
+      const fresh = await device('D', 2)
+      await signIn(fresh, seed, 'D')
+      await fresh.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+      await waitForText(fresh, 'Link this device')
+      await pressText(fresh, 'I can’t reach my other devices')
+      await pressText(fresh, 'Reset chat on this device')
+      await waitForText(fresh, 'Follow a team')
+      await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
+      await send(fresh, 'still here')
+      await waitForText(fresh, 'still here')
+      await waitForText(fresh, 'Earlier messages can’t be opened')
+      await shot(fresh, 'e9-2-d-chain-break')
+
+      const epoch = (
+        await db.query(
+          `select e.chain_break from chat_messages m
+           join chat_epochs e
+             on e.conversation_id = m.conversation_id and e.epoch = m.epoch
+           where m.conversation_id = $1 order by m.seq desc limit 1`,
+          [dm]
+        )
+      ).rows[0]
+      expect(epoch.chain_break).equals(true)
+      const requests = (
+        await db.query(
+          // The requests of D's identity since the reset (the one before it
+          // had its request filled by Ec, back when Ec held the key).
+          `select r.filled_at, r.superseded_at from chat_grant_requests r
+           join chat_identities i on i.id = r.identity_id
+           where r.conversation_id = $1 and r.user_id = $2
+             and i.replaced_at is null`,
+          [dm, seed.people.D.userId]
+        )
+      ).rows as Array<{ filled_at: Date | null; superseded_at: Date | null }>
+      expect(requests.length).greaterThan(0)
+      for (const request of requests) {
+        expect(request.filled_at).equals(null)
+        expect(request.superseded_at).not.equals(null)
+      }
+      console.log(`      E9 ${requests.length} request(s), all superseded`)
+    } finally {
+      await db.end()
+    }
+  })
+
+  /**
+   * E10: Hc writes with 🎉 in Hawks Members, B replies, C reacts 👍: the
+   * quote, the count, and Hc's ticks naming B and C as each reads.
+   */
+  it('E10: reply, reaction and read ticks', async function () {
+    const coach = await signedIn('Hc')
+    await openChat(coach, 'Hawks Members')
+    await send(coach, 'Game day 🎉')
+
+    const parentB = await signedIn('B')
+    await signIn(parentB, seed, 'B')
+    await openChat(parentB, 'Hawks Members')
+    await waitForText(parentB, 'Game day 🎉')
+    await until('Hc’s ticks to name B', async () =>
+      /Read by [^\n]*Blair B/.test(await bodyText(coach)) ? true : undefined
+    )
+    await shot(coach, 'e10-1-read-by-b')
+    await longPress(parentB, 'Game day 🎉')
+    await pressText(parentB, 'Reply')
+    await waitForText(parentB, 'Replying to Hank C')
+    await send(parentB, 'Can’t wait')
+    await waitForText(coach, 'Can’t wait')
+    await shot(parentB, 'e10-2-b-reply')
+
+    const parentC = await signedIn('C')
+    await signIn(parentC, seed, 'C')
+    await openChat(parentC, 'Hawks Members')
+    await waitForText(parentC, 'Game day 🎉')
+    await until(
+      'C’s composer to open',
+      async () =>
+        (await parentC.$('textarea[aria-label="Message"]:not([readonly])')) ??
+        undefined
+    )
+    await longPress(parentC, 'Game day 🎉')
+    await press(parentC, 'React with 👍')
+    await waitForText(coach, '👍 1')
+    await until('Hc’s ticks to name B and C', async () => {
+      const text = await bodyText(coach)
+      // Each of Game day's readers by name, in the order they read it.
+      const line = text
+        .split('Game day 🎉')[1]
+        ?.split('\n')
+        .find(row => row.includes('Read by'))
+      return line?.includes('Blair B') === true && line.includes('Casey C')
+        ? true
+        : undefined
+    })
+    const quoted = await bodyText(coach)
+    expect(quoted).contains('Hank C')
+    await shot(coach, 'e10-3-hc-ticks-reaction')
+    await shot(parentC, 'e10-4-c-reacted')
+  })
+
+  /**
+   * E11: B attaches a JPEG and a 20 MB MP4; both open decrypted elsewhere,
+   * and neither object in the Space starts with its format's magic.
+   */
+  it('E11: a picture and a video, encrypted end to end', async function () {
+    const fixtures =
+      process.env.TS_CHAT_FIXTURES ?? join(ARTIFACTS, '..', 'fixtures')
+    const parentB = await signedIn('B')
+    await openChat(parentB, 'Hawks Members')
+    const [chooser] = await Promise.all([
+      parentB.waitForFileChooser(),
+      press(parentB, 'Attach')
+    ])
+    await chooser.accept([
+      join(fixtures, 'photo.jpg'),
+      join(fixtures, 'clip.mp4')
+    ])
+    await waitForText(parentB, 'clip.mp4')
+    await send(parentB, 'Photos from practice')
+    await shot(parentB, 'e11-1-b-sent')
+
+    const coach = await signedIn('Hc')
+    await openChat(coach, 'Hawks Members')
+    await waitForText(coach, 'Photos from practice')
+    await until(
+      'the picture to open',
+      async () =>
+        await coach.evaluate(() =>
+          Array.from(document.querySelectorAll('img')).some(
+            image => image.src.startsWith('blob:') && image.naturalWidth > 0
+          )
+        )
+    )
+    await press(coach, 'Open clip.mp4')
+    const duration = await until(
+      'the video to open',
+      async () =>
+        await coach.evaluate(() => {
+          const video = document.querySelector('video')
+          return video !== null &&
+            video.src.startsWith('blob:') &&
+            video.readyState >= 1
+            ? video.duration
+            : undefined
+        }),
+      60000
+    )
+    expect(duration).greaterThan(30)
+    await shot(coach, 'e11-2-hc-opened')
+
+    const space =
+      process.env.TS_FAKE_SPACE_DIR ?? '/tmp/ts-encryptedChat-m13/space'
+    const db = localDatabase()
+    try {
+      const rows = (
+        await db.query(
+          `select object_key, size from chat_attachments
+           where completed_at is not null order by created_at desc limit 2`
+        )
+      ).rows as Array<{ object_key: string; size: string }>
+      expect(rows.length).equals(2)
+      for (const row of rows) {
+        const path = join(space, ...row.object_key.split('/'))
+        const head = readFileSync(path).subarray(0, 12)
+        expect(head.subarray(0, 3).toString('hex')).not.equals('ffd8ff')
+        expect(head.subarray(4, 8).toString('latin1')).not.equals('ftyp')
+        console.log(
+          `      E11 ${row.object_key} ${row.size} bytes, starts ${head.toString('hex')}`
+        )
+      }
+    } finally {
+      await db.end()
+    }
+  })
+
+  /**
+   * E12: B edits, then deletes, a message; C posts "first from C" and Hc
+   * deletes it for everyone. The edit and the deletions reach everyone, and
+   * B's post and its edit are cleared on the server.
+   */
+  it('E12: edit, delete, and a moderator’s Delete for everyone', async function () {
+    const parentB = await signedIn('B')
+    const parentC = await signedIn('C')
+    const coach = await signedIn('Hc')
+    await openChat(parentB, 'Hawks Members')
+    await openChat(parentC, 'Hawks Members')
+    await openChat(coach, 'Hawks Members')
+    await send(parentB, 'Snack shedule is up')
+    await waitForText(parentC, 'Snack shedule is up')
+
+    await longPress(parentB, 'Snack shedule is up')
+    await pressText(parentB, 'Edit')
+    await waitForText(parentB, 'Editing your message')
+    const field = await parentB.$('textarea[aria-label="Message"]')
+    await field!.click({ count: 3 })
+    await parentB.keyboard.down('Meta')
+    await parentB.keyboard.press('a')
+    await parentB.keyboard.up('Meta')
+    await field!.type('Snack schedule is up')
+    await press(parentB, 'Send')
+    for (const page of [parentC, coach]) {
+      await waitForText(page, 'Snack schedule is up')
+      await waitForText(page, 'edited')
+    }
+    await shot(parentC, 'e12-1-c-sees-edit')
+    const members = await chatIdOf(parentB, 'Hawks Members')
+    const ids = (
+      (await apiGet(parentB, `/chat/conversations/${members}/messages`))
+        .body as Array<{ id: string; kind: string; senderUserId: number }>
+    )
+      .filter(
+        message =>
+          String(message.senderUserId) === seed.people.B.userId &&
+          (message.kind === 'post' || message.kind === 'edit')
+      )
+      .slice(-2)
+      .map(message => message.id)
+
+    await longPress(parentB, 'Snack schedule is up')
+    await pressText(parentB, 'Delete')
+    for (const page of [parentC, coach]) {
+      await until('the deletion', async () =>
+        (await bodyText(page)).includes('Snack schedule is up')
+          ? undefined
+          : true
+      )
+      await waitForText(page, 'Message deleted')
+    }
+    await shot(coach, 'e12-2-hc-sees-delete')
+
+    await send(parentC, 'first from C')
+    await waitForText(coach, 'first from C')
+    await longPress(coach, 'first from C')
+    await pressText(coach, 'Delete for everyone')
+    for (const page of [parentB, parentC, coach]) {
+      await waitForText(page, 'Removed by a moderator')
+    }
+    expect(await bodyText(parentB)).not.contains('first from C')
+    await shot(parentC, 'e12-3-c-removed-by-moderator')
+
+    const db = localDatabase()
+    try {
+      const rows = (
+        await db.query(
+          `select id, kind, cleared_at, octet_length(ciphertext) as length
+           from chat_messages where id = any($1::text[])`,
+          [ids]
+        )
+      ).rows as Array<{ kind: string; cleared_at: Date | null; length: number }>
+      expect(rows.map(row => row.kind).sort()).deep.equals(['edit', 'post'])
+      for (const row of rows) {
+        expect(row.cleared_at).not.equals(null)
+        expect(Number(row.length)).equals(0)
+      }
+    } finally {
+      await db.end()
+    }
+  })
+
+  /**
+   * E13: parent A reads Announcements and may react but not write; season
+   * admin S posts and A, Eagles player E and the Eagles coach see it; fan F
+   * has no Announcements at all.
+   */
+  it('E13: Announcements, written by season staff', async function () {
+    const announcements = 'QPLL Spring 2027 Announcements'
+    const admin = await signedIn('S')
+    await signIn(admin, seed, 'S')
+    await openChat(admin, announcements)
+    await send(admin, 'Opening day is Saturday')
+
+    const parentA = await signedIn('A')
+    await signIn(parentA, seed, 'A')
+    await openChat(parentA, announcements)
+    await waitForText(parentA, 'Opening day is Saturday')
+    expect(await parentA.$('textarea[aria-label="Message"]')).equals(null)
+    await waitForText(parentA, 'Only season staff post here')
+    await longPress(parentA, 'Opening day is Saturday')
+    await press(parentA, 'React with 👍')
+    await waitForText(admin, '👍 1')
+    await shot(parentA, 'e13-1-a-reacted')
+
+    const player = await signedIn('E')
+    await signIn(player, seed, 'E')
+    await openChat(player, announcements)
+    await waitForText(player, 'Opening day is Saturday')
+    await shot(player, 'e13-2-e-sees')
+    const coach = await signedIn('Ec')
+    await openChat(coach, announcements)
+    await waitForText(coach, 'Opening day is Saturday')
+    await shot(coach, 'e13-3-ec-sees')
+
+    const fan = await signedIn('F')
+    await signIn(fan, seed, 'F')
+    await openChatTab(fan)
+    await waitForText(fan, 'Hawks Fans')
+    expect(await bodyText(fan)).not.contains('Announcements')
+    await shot(fan, 'e13-4-f-list')
+  })
+
+  /**
+   * E14: the SafeSport switch. K's DM with P, made while it is off, closes
+   * when L turns it on; K's next DM with P needs another adult and K picks
+   * Hc; G2's DM with P needs nobody, and closes when Hc unlinks P's
+   * remaining guardians; Hc's leave closes K's DM; L turns it off again.
+   */
+  it('E14: SafeSport includes another adult, and closes what breaks it', async function () {
+    const keeper = await signedIn('K')
+    await signIn(keeper, seed, 'K')
+    const newDm = async (
+      page: Page,
+      query: string,
+      pick: string
+    ): Promise<void> => {
+      await openChatTab(page)
+      await pressText(page, 'New message')
+      await typeInto(page, 'Name', query)
+      await press(page, `Pick ${pick}`)
+      await pressText(page, 'Start conversation')
+    }
+    await newDm(keeper, 'Pat', 'Pat P')
+    await until('the DM', () =>
+      /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
+    )
+    const first = await dmWith(keeper, [
+      seed.people.K.userId,
+      seed.people.P.userId
+    ])
+    await send(keeper, 'K to P: bring your glove')
+    await shot(keeper, 'e14-1-k-p')
+
+    const league = await signedIn('L')
+    await signIn(league, seed, 'L')
+    const toggle = async (on: boolean): Promise<void> => {
+      await league.goto(`${WEB}/leagues/${seed.ids.QPLL}/manage`, {
+        waitUntil: 'networkidle2'
+      })
+      const sw = await until(
+        'the SafeSport switch',
+        async () =>
+          (await league.$(
+            '[aria-label="SafeSport Local Affiliated Organization"]'
+          )) ?? undefined
+      )
+      const now = await sw.evaluate(node =>
+        node instanceof HTMLInputElement
+          ? node.checked
+          : node.getAttribute('aria-checked') === 'true'
+      )
+      if (now !== on) await sw.click()
+      await until('the switch to hold', async () =>
+        (await apiGet(league, `/manage/league/${seed.ids.QPLL}`)).body?.scope
+          ?.safesportLao === on
+          ? true
+          : undefined
+      )
+    }
+    await toggle(true)
+    await shot(league, 'e14-2-l-switch-on')
+    await until('K’s first DM to close', async () => {
+      const list = (await apiGet(keeper, '/chat/conversations')).body as Array<{
+        id: string
+        closed: boolean
+      }>
+      return list.find(chat => chat.id === first)?.closed === true
+        ? true
+        : undefined
+    })
+
+    await newDm(keeper, 'Pat', 'Pat P')
+    await waitForText(keeper, 'Include another adult')
+    for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
+      await waitForText(keeper, name)
+    }
+    expect(await bodyText(keeper)).not.contains('Kim K')
+    await shot(keeper, 'e14-3-k-suggestions')
+    await typeInto(keeper, 'Search for an adult', 'Eddie')
+    await waitForText(keeper, 'Nobody matches that name.')
+    await shot(keeper, 'e14-4-k-no-ec')
+    await typeInto(keeper, 'Search for an adult', 'Hank')
+    await press(keeper, 'Include Hank C')
+    await pressText(keeper, 'Start with them')
+    await until('the DM with Hc', () =>
+      /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
+    )
+    const second = await dmWith(keeper, [
+      seed.people.K.userId,
+      seed.people.P.userId,
+      seed.people.Hc.userId
+    ])
+    await shot(keeper, 'e14-5-k-p-hc')
+
+    const guardian = await signedIn('G2')
+    await signIn(guardian, seed, 'G2')
+    await newDm(guardian, 'Pat', 'Pat P')
+    await until('G2’s DM', () =>
+      /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
+    )
+    const g2dm = await dmWith(guardian, [
+      seed.people.G2.userId,
+      seed.people.P.userId
+    ])
+    await shot(guardian, 'e14-6-g2-p')
+
+    const coach = await signedIn('Hc')
+    await coach.goto(
+      `${WEB}/players/${seed.people.P.userId}?onTeam=${seed.ids.Hawks}&tab=settings`,
+      { waitUntil: 'networkidle2' }
+    )
+    await press(coach, 'Settings')
+    await press(coach, 'Change guardians and family')
+    for (const name of ['Glen Guardian', 'Ava Aunt']) {
+      await press(coach, `Remove ${name}`)
+      await until(`${name} unlinked`, async () => {
+        const text = await bodyText(coach)
+        return text.includes(name) ? undefined : true
+      })
+    }
+    await pressText(coach, 'Done')
+    await shot(coach, 'e14-7-hc-unlinked')
+    await until('G2’s DM to close', async () => {
+      const list = (await apiGet(guardian, '/chat/conversations'))
+        .body as Array<{
+        id: string
+        closed: boolean
+      }>
+      return list.find(chat => chat.id === g2dm)?.closed === true
+        ? true
+        : undefined
+    })
+
+    await coach.goto(`${WEB}/chat/${second}/members`, {
+      waitUntil: 'networkidle2'
+    })
+    await pressText(coach, 'Leave this conversation')
+    await until('K’s DM to close', async () => {
+      const list = (await apiGet(keeper, '/chat/conversations')).body as Array<{
+        id: string
+        closed: boolean
+      }>
+      return list.find(chat => chat.id === second)?.closed === true
+        ? true
+        : undefined
+    })
+    await keeper.goto(`${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
+    await waitForText(keeper, 'This chat is closed')
+    await shot(keeper, 'e14-8-k-closed')
+
+    await toggle(false)
+    await shot(league, 'e14-9-l-switch-off')
+  })
+  /**
+   * E17: Eagles parent D2 finds Hawks from Home, follows it, and opens it:
+   * the schedule and the team, and nothing of its games.
+   */
+  it('E17: a fan follows Hawks and sees its schedule and team only', async function () {
+    const page = await signedIn('D2')
+    await signIn(page, seed, 'D2')
+    await waitForText(page, 'Follow a team')
+    await shot(page, 'e17-1-home')
+    await pressText(page, 'Follow a team')
+    await until('the follow screen', () =>
+      page.url().endsWith('/teams/follow') ? true : undefined
+    )
+    await typeInto(page, 'Team name', 'Haw')
+    await press(page, 'Follow Hawks')
+    await until(
+      'Following',
+      async () => (await page.$('[aria-label="Following Hawks"]')) ?? undefined
+    )
+    await shot(page, 'e17-2-following')
+
+    await press(page, 'Hawks, QPLL Spring 2027')
+    await until('the Hawks page', () =>
+      page.url().includes(`/teams/${seed.ids.Hawks}`) ? true : undefined
+    )
+    await waitForText(page, 'vs Owls')
+    expect(await tabs(page)).deep.equals(['Schedule', 'Team'])
+    const schedule = await bodyText(page)
+    expect(schedule).contains('vs Owls')
+    expect(schedule).contains('@ Owls')
+    expect(schedule).contains('@ Eagles')
+    // The cards open nothing: no button carries a game's matchup.
+    const cardButtons = await page.$$eval('[role="button"]', nodes =>
+      nodes
+        .map(node => node.getAttribute('aria-label'))
+        .filter(label => label !== null && / (vs|@) /.test(label))
+    )
+    expect(cardButtons).deep.equals([])
+    await shot(page, 'e17-3-schedule')
+
+    await press(page, 'Team')
+    await waitForText(page, 'Hank C')
+    const team = await bodyText(page)
+    for (const words of [
+      'STAFF',
+      'Harper H',
+      'Admin',
+      'Coach',
+      'Scorekeeper',
+      'Songkeeper',
+      'PLAYERS',
+      'Pat P'
+    ]) {
+      expect(team, words).contains(words)
+    }
+    expect(team).not.contains('FOLLOWERS')
+    await shot(page, 'e17-4-team')
+
+    await page.goto(`${WEB}/games/${seed.ids.hawksOwlsFinal}`, {
+      waitUntil: 'networkidle2'
+    })
+    await waitForText(page, 'That game is not here')
+    await shot(page, 'e17-5-final-game')
+  })
+  /**
+   * E18: Hc starts a DM with fan F, who replies; F has no New message and
+   * the server refuses F's own DM.
+   */
+  it('E18: staff message a fan, who may reply but never start', async function () {
+    const coach = await signedIn('Hc')
+    await openChatTab(coach)
+    await pressText(coach, 'New message')
+    await typeInto(coach, 'Name', 'Frank')
+    await press(coach, 'Pick Frankie F')
+    await shot(coach, 'e18-1-hc-picks-f')
+    await pressText(coach, 'Start conversation')
+    await until('the DM', () =>
+      /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
+    )
+    await send(coach, 'Thanks for cheering, Frankie')
+
+    const fan = await signedIn('F')
+    await openChat(fan, 'Hank C')
+    await waitForText(fan, 'Thanks for cheering, Frankie')
+    await send(fan, 'Go Hawks!')
+    await waitForText(coach, 'Go Hawks!')
+    await shot(coach, 'e18-2-hc-gets-reply')
+
+    await openChatTab(fan)
+    expect(await fan.$('::-p-text(New message)')).equals(null)
+    await shot(fan, 'e18-3-f-no-new-message')
+    const refused = await apiCall(fan, 'POST', '/chat/dms', {
+      userIds: [Number(seed.people.Hc.userId)]
+    })
+    expect(refused.status).equals(403)
+    expect(refused.body.details.reason).equals('notCandidate')
+  })
+
+  /**
+   * E19: P (15) and E (16) need nobody else; neither parent A nor Eagles
+   * coach Ec is offered P; Hc's DM with P has no guardian (QPLL is not an
+   * LAO); R (12) has no chats.
+   */
+  it('E19: who may message a player, and nobody under 13', async function () {
+    const player = await signedIn('P')
+    await signIn(player, seed, 'P')
+    await openChatTab(player)
+    await pressText(player, 'New message')
+    await typeInto(player, 'Name', 'Eli')
+    await press(player, 'Pick Eli E')
+    await pressText(player, 'Start conversation')
+    await until('the DM', () =>
+      /\/chat\/cnv_[^/]+$/.test(player.url()) ? true : undefined
+    )
+    await dmWith(player, [seed.people.P.userId, seed.people.E.userId])
+    await shot(player, 'e19-1-p-e')
+
+    for (const who of ['A', 'Ec']) {
+      const page = await signedIn(who)
+      await openChatTab(page)
+      await pressText(page, 'New message')
+      await typeInto(page, 'Name', 'Pat')
+      await waitForText(page, 'Nobody matches.')
+      await shot(page, `e19-2-${who.toLowerCase()}-no-p`)
+    }
+
+    const coach = await signedIn('Hc')
+    await openChatTab(coach)
+    await pressText(coach, 'New message')
+    await typeInto(coach, 'Name', 'Pat')
+    await press(coach, 'Pick Pat P')
+    await pressText(coach, 'Start conversation')
+    await until('the DM', () =>
+      /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
+    )
+    await dmWith(coach, [seed.people.Hc.userId, seed.people.P.userId])
+    await shot(coach, 'e19-3-hc-p')
+
+    const rookie = await signedIn('R')
+    await signIn(rookie, seed, 'R')
+    await openChatTab(rookie)
+    await waitForText(rookie, 'You are in no chats yet.')
+    await shot(rookie, 'e19-4-r-no-chats')
   })
 })

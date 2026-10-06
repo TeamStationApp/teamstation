@@ -83,6 +83,8 @@ sibling is for. What exists twice:
 | `scoring/OutcomePicker`, `scoring/MoreMenu` | the web's drop menus; here `DropMenuView` over `dropMenu.ts`: tap opens above the button, drag up and release chooses, with hover and submenus |
 | `chat/keyStore` | the chat key record in IndexedDB `ts-chat`, sealed under a non-extractable AES-GCM `CryptoKey`, there; one Keychain / Keystore item through `react-native-keychain` (`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`) here. Both keep `chat/keyRecord.ts`'s JSON |
 | `chat/thisDevice` | the user agent's browser and system there; "iPhone", "iPad" or the Android maker and model here |
+| `chat/chatFiles` | attachments: an `<input type="file">`, and opened bytes shown, played and saved through a `Blob` URL there; `react-native-image-picker` (photo library), `@react-native-documents/picker` (any file) and `react-native-blob-util` (reading, the cache file a picture or video is shown from, the share sheet) here. They share `chatFileTypes.ts` |
+| `chat/ChatVideo` | an opened video in a `<video>` on its Blob URL there; `react-native-video` on its cache file here (`chatVideoProps.ts`) |
 
 **A native sibling may not import from its own web twin.** Metro resolves
 `./foo` inside `foo.native.tsx` back to `foo.native.tsx`, and the binding is

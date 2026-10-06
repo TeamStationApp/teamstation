@@ -16,7 +16,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
 import { DmFacts } from './dms'
-import { titlesOf } from './titles'
+import { scopeNames, titlesOf } from './titles'
 
 /**
  * What the chat routes read back: a person's conversations, a
@@ -201,6 +201,29 @@ async function describe(
     rows.filter(row => row.kind === 'dm').map(row => row.id),
     userId
   )
+  const names = await scopeNames(
+    db,
+    rows.flatMap(row =>
+      row.scope_type == null || row.scope_id == null
+        ? []
+        : [{ type: row.scope_type, id: row.scope_id }]
+    )
+  )
+  // When each chat last had a message, for the list. The newest envelope
+  // of any kind: a reaction or an edit is news in a chat too.
+  const lastAt = new Map(
+    (
+      await db
+        .selectFrom('chat_messages')
+        .select([
+          'conversation_id',
+          eb => eb.fn.max<Date>('created_at').as('at')
+        ])
+        .where('conversation_id', 'in', ids)
+        .groupBy('conversation_id')
+        .execute()
+    ).map(row => [row.conversation_id, new Date(row.at).toISOString()])
+  )
 
   // Moderation and posting, from the caller's roles.
   const scopes = await roleScopes(db, userId, isAdmin)
@@ -247,7 +270,12 @@ async function describe(
         row.scope_type == null || row.scope_id == null
           ? null
           : { type: row.scope_type, id: row.scope_id },
+      scopeName:
+        row.scope_type == null
+          ? null
+          : (names.get(`${row.scope_type}:${scopeId}`) ?? null),
       lastSeq: Number(row.last_seq),
+      lastMessageAt: lastAt.get(row.id) ?? null,
       unread: unread.get(row.id) ?? 0,
       canPost,
       canModerate,

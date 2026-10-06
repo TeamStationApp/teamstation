@@ -92,7 +92,11 @@ export interface ConversationListItem {
   /** The scope's chat title, or a DM's members by short name. */
   title: string
   scope: ChatConversation['scope']
+  /** The scope's own name (team, season title, league); null for a DM. */
+  scopeName: string | null
   lastSeq: number
+  /** When the newest message was posted, as last read; null before any. */
+  lastMessageAt: string | null
   unread: number
   canPost: boolean
   canModerate: boolean
@@ -176,6 +180,17 @@ const isGone = (error: unknown): boolean =>
 type Part = 'members' | 'epochs' | 'messages' | 'reads'
 
 const SNIPPET = 200
+
+/** The later of the list's last-message time and the newest envelope read. */
+function newest(
+  listed: string | null,
+  state: ConversationState
+): string | null {
+  const read = state.envelopes.get(state.newestSeq)?.createdAt ?? null
+  if (read == null) return listed
+  if (listed == null) return read
+  return Date.parse(read) > Date.parse(listed) ? read : listed
+}
 
 export class ChatEngine {
   /** Where the device stands; `idle` until `start()`. */
@@ -333,7 +348,9 @@ export class ChatEngine {
         summary.title ??
         dmTitle(this.options.userId, state.members, summary.people),
       scope: summary.scope,
+      scopeName: summary.scopeName,
       lastSeq: Math.max(summary.lastSeq, state.newestSeq),
+      lastMessageAt: newest(summary.lastMessageAt, state),
       unread: summary.unread,
       canPost: summary.canPost,
       canModerate: summary.canModerate,

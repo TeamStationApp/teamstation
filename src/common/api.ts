@@ -192,7 +192,14 @@ export const asChatConversation = asObject({
   scope: asNullable(
     asObject({ type: asLiteral('team', 'season', 'league'), id: asString })
   ),
+  /**
+   * The scope's own name, as its chats are titled (a team, a season title,
+   * a league); null for a DM. The list groups chats by it.
+   */
+  scopeName: asNullable(asString),
   lastSeq: asNumber,
+  /** When the newest message was posted, ISO; null before the first. */
+  lastMessageAt: asNullable(asString),
   unread: asNumber,
   canPost: asBoolean,
   canModerate: asBoolean,
