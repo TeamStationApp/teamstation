@@ -242,23 +242,42 @@ WDA on the iPhone can report the phone as landscape while it is upright; a
 point tap then lands at the transposed position. Tap by text wherever you
 can.
 
-## The chat crypto bench build
+## The chat crypto core
 
-Chat's crypto (`src/common/chatCrypto/`) is one set of constructions on a
-`primitives` twin: `primitives.ts` is `@noble` (web, server, Node) and
-`primitives.native.ts` is `react-native-quick-crypto` (OpenSSL over JSI, with
-`react-native-nitro-modules` and `react-native-quick-base64`), because Hermes
-has no JIT and ran the pure-JS ciphers at 0.9 MB/s. XChaCha20-Poly1305 there
-is an HChaCha20 subkey (`@noble/ciphers`' `hchacha`) plus the native IETF
-ChaCha20-Poly1305. `react-native-libsodium` was tried first and does not
-compile on 0.87 (it installs through the removed `RCTCxxBridge`). Hermes has
-no `crypto.getRandomValues` of its own either, so `index.js` imports
-`react-native-get-random-values` before anything else.
+Chat's crypto is one Rust crate, `crates/chat-crypto` (RustCrypto and dalek
+primitives plus chat's own constructions), with one entry point,
+`chat_crypto_call(op, input)`, over the byte layout in
+`src/common/chatCrypto/coreCall.ts`. The phones link it as a static library
+and reach it through `NativeChatCrypto`, a pure C++ TurboModule
+(`native/chatCrypto/`, spec `src/app/chat/NativeChatCrypto.ts`, generated
+into the app's `TeamStationWalkUpMusicSpec` codegen library). The web loads
+the same crate as WebAssembly, and Node as a Node-API addon.
+
+- **Toolchain**: `rustup` (https://rustup.rs). The crate's
+  `rust-toolchain.toml` pins the version and brings the iOS, Android and
+  WebAssembly targets on first use. Android also needs
+  `cargo install cargo-ndk`.
+- **iOS**: the TeamStation target's "Build chat crypto" phase runs
+  `scripts/chatCryptoNative.sh ios`. It builds every architecture in `ARCHS`
+  and joins them into `ios/build/chatCrypto/<platform>/libchat_crypto.a`,
+  which the target links (`-lchat_crypto`). `ChatCryptoProvider.mm` hands the
+  module to React Native through `codegenConfig.ios.modulesProvider`, so a
+  change to the spec needs `pod install`.
+- **Android**: `buildChatCryptoRust` (`android/app/build.gradle`) runs
+  `scripts/chatCryptoNative.sh android <abis>` for `reactNativeArchitectures`
+  before CMake. The app's own `src/main/jni/CMakeLists.txt` and `OnLoad.cpp`
+  (React Native's defaults plus the module) link the library into
+  `libappmodules.so`. After a change to the spec, `rm -rf android/app/.cxx`.
+
+No JavaScript implementation stands behind it: when the module is missing,
+`core.native.ts` throws `ChatCryptoUnavailable('noNativeModule')`.
+
+### The bench build
 
 `/dev/chat-bench` (`src/app/dev/ChatBenchScreen.tsx`) first runs every frozen
-vector (`chatCrypto/vectors.ts`) through the phone's primitives and shows
-`vectors ok`, then times them: 20 MiB sealed and opened through `stream.ts`,
-and 1,000 HPKE wraps. The route
+vector (`chatCrypto/frozenVectors.json`, through `coreVectors.ts`) through
+the phone's core and shows `vectors ok`. Then it times the core: 20 MiB
+sealed and opened, and 1,000 HPKE wraps. The route
 exists only in a build made with `TS_CHAT_BENCH=1`
 (`src/app/dev/chatBench.native.ts`; the web twin is always off). It is drawn
 before the session check and needs no server, so build it with no
@@ -269,14 +288,17 @@ cd ios
 TS_CHAT_BENCH=1 xcodebuild -workspace TeamStation.xcworkspace -scheme TeamStation \
   -configuration Release -sdk iphonesimulator -destination 'id=<udid>' -derivedDataPath build-sim
 xcrun simctl install <udid> build-sim/Build/Products/Release-iphonesimulator/TeamStation.app
+(cd ../android && TS_CHAT_BENCH=1 ./gradlew assembleRelease)
 ```
 
-then run `src/app/dev/chatBenchPhones.e2e.ts` (maestro-d; start its daemon
+then run `src/app/dev/chatBenchPhones.e2e.ts` (its header names the
+variables it needs; maestro-d, whose daemon starts
 from `$HOME` with `MAESTRO_RUNNER_HOME=$HOME/.maestro-d`, or it looks for
-WebDriverAgent under the working directory) and compare with
-`node scripts/chatCryptoBench.mjs`. Like `TS_API_BASE_URL`, the variable is an
-input of Gradle's bundle task, and `metro.config.js` keys Metro's cache on
-both, so a transform made for the bench is never reused by another build.
+WebDriverAgent under the working directory). It fails under 100 MB/s.
+Compare with `node scripts/chatCryptoBench.mjs`. Like `TS_API_BASE_URL`, the
+variable is an input of Gradle's bundle task, and `metro.config.js` keys
+Metro's cache on both, so a transform made for the bench is never reused by
+another build.
 
 ## Walk-up music: the app's own TurboModule
 

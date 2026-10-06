@@ -140,6 +140,13 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
+    // The app's own CMake: React Native's default app setup plus the chat
+    // crypto core's C++ TurboModule (src/main/jni/CMakeLists.txt).
+    externalNativeBuild {
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
+        }
+    }
 }
 
 // The sign-in link filter for the app's link host, added to every variant's
@@ -221,3 +228,18 @@ ${familyFile('space_grotesk_bold', 700)}
 
 android.sourceSets.main.res.srcDirs += tsFontRes
 tasks.named('preBuild') { dependsOn('tsFonts') }
+
+// The chat crypto core (crates/chat-crypto) as a static library for every
+// ABI this build makes, before CMake links it into libappmodules.so.
+def chatCryptoAbis = (findProperty('reactNativeArchitectures') ?: 'arm64-v8a')
+    .toString().split(',').collect { it.trim() }.findAll { !it.isEmpty() }
+tasks.register('buildChatCryptoRust', Exec) {
+    workingDir rootDir
+    commandLine "${rootDir}/../scripts/chatCryptoNative.sh", 'android', chatCryptoAbis.join(',')
+    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
+}
+tasks.configureEach { task ->
+    if (task.name.startsWith('configureCMake') || task.name.startsWith('buildCMake')) {
+        task.dependsOn('buildChatCryptoRust')
+    }
+}

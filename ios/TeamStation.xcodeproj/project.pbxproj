@@ -25,11 +25,14 @@
 		A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */; };
 		A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */; };
 		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
+		AF107DC2F99C16BDC99E1EAC /* NativeChatCrypto.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 513962B8AB54F3D2A1045C0C /* NativeChatCrypto.cpp */; };
 		E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */; };
+		E5877E23843C3DB5EB6E0DB1 /* ChatCryptoProvider.mm in Sources */ = {isa = PBXBuildFile; fileRef = 082EAD2A56E0FED3688B7251 /* ChatCryptoProvider.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		082EAD2A56E0FED3688B7251 /* ChatCryptoProvider.mm */ = {isa = PBXFileReference; includeInIndex = 1; path = ChatCryptoProvider.mm; sourceTree = "<group>"; };
 		12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TSGlassView.mm; path = TeamStation/TSGlassView.mm; sourceTree = SOURCE_ROOT; };
 		13B07F961A680F5B00A75B9A /* TeamStation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeamStation.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = TeamStation/Images.xcassets; sourceTree = "<group>"; };
@@ -40,6 +43,8 @@
 		2B00CE24920E788B4EBE7AB3 /* SystemVolume.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SystemVolume.swift; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-TeamStation.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-TeamStation.debug.xcconfig"; path = "Target Support Files/Pods-TeamStation/Pods-TeamStation.debug.xcconfig"; sourceTree = "<group>"; };
 		4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WalkUpMusic.swift; sourceTree = "<group>"; };
+		4FE031EAA32D302857AE6B28 /* NativeChatCrypto.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = NativeChatCrypto.h; path = ../../../native/chatCrypto/NativeChatCrypto.h; sourceTree = "<group>"; };
+		513962B8AB54F3D2A1045C0C /* NativeChatCrypto.cpp */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.cpp; name = NativeChatCrypto.cpp; path = ../../../native/chatCrypto/NativeChatCrypto.cpp; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-TeamStation.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-TeamStation.release.xcconfig"; path = "Target Support Files/Pods-TeamStation/Pods-TeamStation.release.xcconfig"; sourceTree = "<group>"; };
 		597D453C8C437EA317BB0D2B /* SpaceGrotesk-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-SemiBold.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-SemiBold.ttf"; sourceTree = SOURCE_ROOT; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-TeamStation.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-TeamStation.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -55,6 +60,7 @@
 		C9B14565B09802CB64B889F5 /* SpaceGrotesk-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Medium.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Medium.ttf"; sourceTree = SOURCE_ROOT; };
 		E62A480C138F4F68BF682000 /* RCTHaptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTHaptics.mm; path = TeamStation/RCTHaptics.mm; sourceTree = SOURCE_ROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		FFCD8157B944819BB558ECB1 /* chat_crypto.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = chat_crypto.h; path = "../../../crates/chat-crypto/include/chat_crypto.h"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +75,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		079C0F7B05299D6A392E2536 /* ChatCrypto */ = {
+			isa = PBXGroup;
+			children = (
+				082EAD2A56E0FED3688B7251 /* ChatCryptoProvider.mm */,
+				513962B8AB54F3D2A1045C0C /* NativeChatCrypto.cpp */,
+				4FE031EAA32D302857AE6B28 /* NativeChatCrypto.h */,
+				FFCD8157B944819BB558ECB1 /* chat_crypto.h */,
+			);
+			name = ChatCrypto;
+			path = TeamStation/ChatCrypto;
+			sourceTree = SOURCE_ROOT;
+		};
 		13B07FAE1A68108700A75B9A /* TeamStation */ = {
 			isa = PBXGroup;
 			children = (
@@ -80,6 +98,7 @@
 				BBC657A1B801E2924A1F71F6 /* WalkUpMusic */,
 				A1D1C7A70000000000000001 /* TSPointerEvents.m */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
+				079C0F7B05299D6A392E2536 /* ChatCrypto */,
 			);
 			name = TeamStation;
 			sourceTree = "<group>";
@@ -186,6 +205,7 @@
 			buildPhases = (
 				C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */,
 				6AA4A0066FA9B19F54CCEF7C /* [Expo] Configure project */,
+				10EAD6F9FCC5ECC5CD150820 /* Build chat crypto */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
@@ -285,6 +305,26 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-TeamStation/Pods-TeamStation-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
+		10EAD6F9FCC5ECC5CD150820 /* Build chat crypto */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build chat crypto";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)/libchat_crypto.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "# Builds crates/chat-crypto for this platform's architectures (src/MOBILE.md).\n\"${SRCROOT}/../scripts/chatCryptoNative.sh\" ios\n";
+		};
 		6AA4A0066FA9B19F54CCEF7C /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -366,6 +406,8 @@
 				A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */,
 				A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */,
 				2C4859213D85F5C819CDFF61 /* SystemVolume.swift in Sources */,
+				E5877E23843C3DB5EB6E0DB1 /* ChatCryptoProvider.mm in Sources */,
+				AF107DC2F99C16BDC99E1EAC /* NativeChatCrypto.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -382,17 +424,28 @@
 				TS_APP_ENTITLEMENTS = TeamStation/NoAppLinks.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_BITCODE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../native/chatCrypto",
+					"$(SRCROOT)/../crates/chat-crypto/include",
+				);
 				INFOPLIST_FILE = TeamStation/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(SDKROOT)/usr/lib/swift",
+					"$(inherited)",
+					"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)",
+				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-lchat_crypto",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;
@@ -415,17 +468,28 @@
 				CODE_SIGN_ENTITLEMENTS = "$(TS_APP_ENTITLEMENTS)";
 				TS_APP_ENTITLEMENTS = TeamStation/NoAppLinks.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../native/chatCrypto",
+					"$(SRCROOT)/../crates/chat-crypto/include",
+				);
 				INFOPLIST_FILE = TeamStation/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(SDKROOT)/usr/lib/swift",
+					"$(inherited)",
+					"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)",
+				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-lchat_crypto",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;
