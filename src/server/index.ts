@@ -31,6 +31,7 @@ import { withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
 import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { openApiDocument } from './openapi'
+import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
@@ -473,6 +474,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     authRoutes(db, {
+      passwordParameterSecret: serverConfig.sessionSecret,
       sendCode,
       space: serverConfig.space,
       publicUrl
@@ -500,6 +502,17 @@ function runWorker(): void {
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db))
   app.use('/api/v1', meRoutes(db))
+  app.use(
+    '/api/v1',
+    accountRoutes(db, {
+      ...mediaContext,
+      sendCode: async (email, code) => {
+        if (!mailConfigured(serverConfig.smtp))
+          throw new Error('Email is not configured')
+        await sendSignInCode(serverConfig.smtp, email, code)
+      }
+    })
+  )
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
   app.use(

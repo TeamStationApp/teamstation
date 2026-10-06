@@ -12,6 +12,7 @@ import {
 } from '../../common/api'
 import { NO_OVERRIDES, SAMPLE_SCOREBOARD } from '../../common/scoreboard'
 import { fakeSockets } from '../../test/fakeScoreboardSocket'
+import { testPasswordParameters } from '../../test/passwordFixtures'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
@@ -168,7 +169,14 @@ function fixtureFetch(signedIn: { value: boolean }): void {
           : input.url
     ).split('?')[0]
     const user = { id: 100, displayName: 'Runner', isAdmin: false }
+    if (path.endsWith('/auth/password/parameters'))
+      return Response.json(testPasswordParameters)
     if (path.endsWith('/auth/password') && init?.method === 'POST') {
+      const body = JSON.parse(typeof init.body === 'string' ? init.body : '{}')
+      expect(body).deep.equals({
+        email: 'runner@example.com',
+        clientHash: 'ab'.repeat(32)
+      })
       signedIn.value = true
       return Response.json({ token: 't', expiresAt: '2099-01-01', user })
     }
@@ -284,29 +292,62 @@ describe('the app, the Score Game screen and the dashboard', function () {
   })
 
   it('sends a lapsed session through sign-in and back to the dashboard', async function () {
-    const sockets = fakeSockets()
-    globalThis.WebSocket = sockets.Impl as unknown as typeof WebSocket
-    const signedIn = { value: true }
-    fixtureFetch(signedIn)
-    showRoute({ name: 'scoreboardOverride', gameId: 'g1' }, true)
-    await render(<App />)
-    signedIn.value = false
-    await act(async () => {
-      sockets.latest().drop(4401)
+    // This navigation test mocks only the Worker boundary; real WASM runs in account e2e.
+    const oldWorker = Object.getOwnPropertyDescriptor(globalThis, 'Worker')
+    const oldUrl = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'TS_PASSWORD_WORKER_URL'
+    )
+    Object.defineProperty(globalThis, 'TS_PASSWORD_WORKER_URL', {
+      value: '/test-password-worker',
+      configurable: true
     })
-    expect(currentRoute()).deep.equals({
-      name: 'signIn',
-      next: '/games/g1/scoreboard-override'
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      value: class {
+        onmessage?: (event: { data: { hash: string } }) => void
+        postMessage(): void {
+          queueMicrotask(() =>
+            this.onmessage?.({ data: { hash: 'ab'.repeat(32) } })
+          )
+        }
+
+        terminate(): void {}
+      }
     })
-    expect(document.body.textContent).includes('Sign in to TeamStation')
-    await press('Use a password instead')
-    await type('E-mail address', 'runner@example.com')
-    await type('Password', 'secret')
-    await press('Sign in')
-    expect(currentRoute()).deep.equals({
-      name: 'scoreboardOverride',
-      gameId: 'g1'
-    })
-    expect(sockets.sockets).length(2)
+    try {
+      const sockets = fakeSockets()
+      globalThis.WebSocket = sockets.Impl as unknown as typeof WebSocket
+      const signedIn = { value: true }
+      fixtureFetch(signedIn)
+      showRoute({ name: 'scoreboardOverride', gameId: 'g1' }, true)
+      await render(<App />)
+      signedIn.value = false
+      await act(async () => {
+        sockets.latest().drop(4401)
+      })
+      expect(currentRoute()).deep.equals({
+        name: 'signIn',
+        next: '/games/g1/scoreboard-override'
+      })
+      expect(document.body.textContent).includes('Sign in to TeamStation')
+      await press('Use a password instead')
+      await type('E-mail address', 'runner@example.com')
+      await type('Password', 'secret')
+      await press('Sign in')
+      expect(currentRoute()).deep.equals({
+        name: 'scoreboardOverride',
+        gameId: 'g1'
+      })
+      expect(sockets.sockets).length(2)
+    } finally {
+      for (const [key, descriptor] of [
+        ['Worker', oldWorker],
+        ['TS_PASSWORD_WORKER_URL', oldUrl]
+      ] as const) {
+        if (descriptor == null) Reflect.deleteProperty(globalThis, key)
+        else Object.defineProperty(globalThis, key, descriptor)
+      }
+    }
   })
 })

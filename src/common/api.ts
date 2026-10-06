@@ -9,10 +9,25 @@ import {
   type Cleaner
 } from 'cleaners'
 
+import {
+  type AccountPicture,
+  type AccountSettings,
+  asAccountEmailPending,
+  asAccountSettings
+} from './accountSettings'
 import { asLiteral } from './asLiteral'
 import { type ApiError, asApiError, HttpError } from './errors'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
+import {
+  asArgonParameters,
+  asClientHash,
+  checkNewPassword,
+  clientParameters,
+  type ClientPasswordCosts,
+  type PasswordKdf,
+  type ResetAuthorization
+} from './passwordProtocol'
 import type { PlayerSettings } from './playerSettings'
 import { asRole, type Role, type RoleFlag } from './roles'
 import {
@@ -985,6 +1000,8 @@ export interface ClientOptions {
   token?: string
   /** Swapped out in tests. Defaults to the platform's own. */
   fetch?: typeof fetch
+  passwordKdf?: PasswordKdf
+  passwordCosts?: ClientPasswordCosts
 }
 
 export type { DefaultLineup, Lineup, LineupChange, LineupPerson, SideLineups }
@@ -1051,18 +1068,136 @@ export class TeamStationClient {
   /** Where the API is, which is also where its sockets are. */
   readonly baseUrl: string
   private readonly doFetch: typeof fetch
+  private readonly passwordKdf?: PasswordKdf
+  private readonly passwordCosts?: ClientPasswordCosts
   token: string | undefined
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
+    this.passwordKdf = options.passwordKdf
+    this.passwordCosts = options.passwordCosts
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
 
+  async accountSettings(): Promise<AccountSettings> {
+    return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  async setAccountName(displayName: string): Promise<AccountSettings> {
+    return await this.request('PUT', '/me/account/name', asAccountSettings, {
+      displayName
+    })
+  }
+
+  async setAccountPhoto(image: AccountPicture): Promise<AccountSettings> {
+    return await this.request('PUT', '/me/account/photo', asAccountSettings, {
+      image
+    })
+  }
+
+  private requirePasswordKdf(): PasswordKdf {
+    if (this.passwordKdf == null)
+      throw new Error(
+        'Password hashing is unavailable. Use an email code to sign in'
+      )
+    return this.passwordKdf
+  }
+
+  async setAccountPassword(
+    password: string,
+    currentPassword?: string,
+    reset?: ResetAuthorization
+  ): Promise<AccountSettings> {
+    const derive = this.requirePasswordKdf()
+    checkNewPassword(password)
+    const account = await this.accountSettings()
+    if (account.newPasswordSalt == null)
+      throw new Error('Update the server before setting a password')
+    if (account.passwordNeedsUpgrade && reset == null)
+      throw new Error('Verify an email code to set a new password')
+    let currentClientHash: string | undefined
+    if (account.hasPassword && reset == null) {
+      if (account.passwordParameters == null || currentPassword == null)
+        throw new Error(
+          'Enter your current password or reset it with an email code'
+        )
+      currentClientHash = asClientHash(
+        await derive(currentPassword, account.passwordParameters.client)
+      )
+    }
+    const parameters = clientParameters(
+      account.newPasswordSalt,
+      this.passwordCosts
+    )
+    const clientHash = asClientHash(await derive(password, parameters))
+    return await this.request(
+      'PUT',
+      '/me/account/password',
+      asAccountSettings,
+      {
+        clientHash,
+        clientParameters: parameters,
+        currentClientHash,
+        reset
+      }
+    )
+  }
+
+  async requestPasswordReset(): Promise<{ requestId: string; email: string }> {
+    return await this.request(
+      'POST',
+      '/me/account/password/reset',
+      asObject({ requestId: asString, email: asString }),
+      {}
+    )
+  }
+
+  async requestAccountEmail(
+    email: string,
+    replaceEmailId?: string
+  ): Promise<{ requestId: string }> {
+    return await this.request(
+      'POST',
+      '/me/account/emails/request',
+      asAccountEmailPending,
+      { email, replaceEmailId }
+    )
+  }
+
+  async confirmAccountEmail(
+    requestId: string,
+    code: string
+  ): Promise<AccountSettings> {
+    return await this.request(
+      'POST',
+      '/me/account/emails/confirm',
+      asAccountSettings,
+      { requestId, code }
+    )
+  }
+
+  async setAccountPrimaryEmail(emailId: string): Promise<AccountSettings> {
+    return await this.request(
+      'PUT',
+      '/me/account/emails/primary',
+      asAccountSettings,
+      { emailId }
+    )
+  }
+
   async signInWithPassword(email: string, password: string): Promise<Session> {
+    const derive = this.requirePasswordKdf()
+    const parameters = await this.request(
+      'POST',
+      '/auth/password/parameters',
+      raw => asArgonParameters(raw),
+      { email }
+    )
+    const clientHash = asClientHash(await derive(password, parameters))
     const session = await this.request('POST', '/auth/password', asSession, {
       email,
-      password
+      clientHash
     })
     this.token = session.token
     return session

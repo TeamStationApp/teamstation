@@ -12,6 +12,296 @@ import {
   WALK_UP_PROVIDERS
 } from '../common/walkUpSong'
 
+const argonParameters = {
+  type: 'object',
+  required: [
+    'algorithm',
+    'version',
+    'memoryKiB',
+    'iterations',
+    'parallelism',
+    'hashLength',
+    'salt'
+  ],
+  properties: {
+    algorithm: { type: 'string', enum: ['argon2id'] },
+    version: { type: 'integer', enum: [19] },
+    memoryKiB: {
+      type: 'integer',
+      minimum: 19456,
+      maximum: 65536,
+      description: 'Multiple of four times parallelism'
+    },
+    iterations: { type: 'integer', minimum: 2, maximum: 32 },
+    parallelism: { type: 'integer', minimum: 1, maximum: 4 },
+    hashLength: { type: 'integer', enum: [32] },
+    salt: { type: 'string', pattern: '^[0-9a-f]{32}$' }
+  }
+}
+const clientHashSchema = {
+  type: 'string',
+  pattern: '^[0-9a-f]{64}$',
+  writeOnly: true
+}
+
+const accountResponse = {
+  description:
+    'The account identity, password status and accepted email addresses',
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: [
+          'user',
+          'hasPassword',
+          'emails',
+          'passwordNeedsUpgrade',
+          'passwordParameters',
+          'newPasswordSalt'
+        ],
+        properties: {
+          user: { $ref: '#/components/schemas/User' },
+          hasPassword: { type: 'boolean' },
+          passwordNeedsUpgrade: { type: 'boolean' },
+          newPasswordSalt: { type: 'string', pattern: '^[0-9a-f]{32}$' },
+          passwordParameters: {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                properties: {
+                  client: argonParameters,
+                  server: {
+                    ...argonParameters,
+                    properties: {
+                      ...argonParameters.properties,
+                      iterations: { type: 'integer', minimum: 8, maximum: 128 }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          emails: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['id', 'email', 'isPrimary'],
+              properties: {
+                id: { type: 'string' },
+                email: { type: 'string', format: 'email' },
+                isPrimary: { type: 'boolean' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+const accountPaths = {
+  '/me/account': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'Read your account settings (signed-in sessions only)',
+      responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/name': {
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Save your name',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['displayName'],
+              properties: {
+                displayName: { type: 'string', minLength: 1, maxLength: 120 }
+              }
+            }
+          }
+        }
+      },
+      responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/photo': {
+    put: {
+      security: [{ bearer: [] }],
+      summary:
+        'Store your profile picture in the configured DigitalOcean Space',
+      description:
+        'JPEG, PNG or WebP; at most 10 MiB decoded. Both normalized PNG renditions are uploaded before the account changes. Source is always upload.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['image'],
+              properties: {
+                image: {
+                  type: 'object',
+                  required: ['contentType', 'base64'],
+                  properties: {
+                    contentType: {
+                      type: 'string',
+                      enum: ['image/jpeg', 'image/png', 'image/webp']
+                    },
+                    base64: { type: 'string', contentEncoding: 'base64' }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/password': {
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Set or change your password',
+      description:
+        'Submit a 32-byte client Argon2id hash and client-selected parameters. A currentClientHash using saved parameters is required for a password change, or a fresh reset email code. Legacy credentials always require the reset code. Raw password/currentPassword fields are rejected. Clients enforce 8 characters through 1024 UTF-8 bytes. Server uses independent salt and four times client iterations; both parameter sets and only the final server hash are stored.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['clientHash', 'clientParameters'],
+              properties: {
+                clientHash: clientHashSchema,
+                clientParameters: argonParameters,
+                currentClientHash: clientHashSchema,
+                reset: {
+                  type: 'object',
+                  required: ['requestId', 'code'],
+                  properties: {
+                    requestId: { type: 'string' },
+                    code: { type: 'string', writeOnly: true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/password/reset': {
+    post: {
+      security: [{ bearer: [] }],
+      summary: 'Send an email code to reset your password',
+      description:
+        'Uses an accepted account email. Expires after 10 minutes or five wrong guesses; a new request supersedes the old one. Bound to this account and current credential. Submit the code with PUT /me/account/password.',
+      responses: {
+        202: {
+          description: 'Code sent',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['requestId', 'email'],
+                properties: {
+                  requestId: { type: 'string' },
+                  email: { type: 'string', format: 'email' }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  '/me/account/emails/request': {
+    post: {
+      security: [{ bearer: [] }],
+      summary: 'Send a confirmation code for an added or replacement address',
+      description:
+        'The address is not accepted until confirmed. A replacement keeps the existing address active. Codes expire after 10 minutes and 5 wrong guesses; resending invalidates earlier codes. Existing addresses on another account are refused.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['email'],
+              properties: {
+                email: { type: 'string', format: 'email' },
+                replaceEmailId: { type: 'string' }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        202: {
+          description: 'Code sent',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['requestId'],
+                properties: { requestId: { type: 'string' } }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  '/me/account/emails/confirm': {
+    post: {
+      security: [{ bearer: [] }],
+      summary: 'Accept the address after confirming its code',
+      description:
+        'Requests belong to the signed-in account and may only be consumed once. Replacements retain primary status.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['requestId', 'code'],
+              properties: {
+                requestId: { type: 'string' },
+                code: { type: 'string', writeOnly: true }
+              }
+            }
+          }
+        }
+      },
+      responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/emails/primary': {
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Choose your primary email from your accepted addresses',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['emailId'],
+              properties: { emailId: { type: 'string' } }
+            }
+          }
+        }
+      },
+      responses: { 200: accountResponse }
+    }
+  }
+}
+
 /**
  * The API's own description, served at `/api/v1/openapi.json`.
  *
@@ -1219,6 +1509,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       }
     },
     paths: {
+      ...accountPaths,
       '/health': {
         get: {
           summary:
@@ -1243,6 +1534,32 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/auth/password/parameters': {
+        post: {
+          summary: 'Get client Argon2id parameters for password sign-in',
+          description:
+            'Apply these saved parameters to UTF-8 password bytes on the client. Unknown or unavailable credentials return a decoy; no final hash or server salt is exposed.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email'],
+                  properties: { email: { type: 'string', maxLength: 254 } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'Client parameters',
+              content: { 'application/json': { schema: argonParameters } }
+            },
+            429: errorResponse
+          }
+        }
+      },
       '/auth/password': {
         post: {
           summary: 'Sign in with an e-mail address and a password',
@@ -1252,10 +1569,10 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['email', 'password'],
+                  required: ['email', 'clientHash'],
                   properties: {
                     email: { type: 'string' },
-                    password: { type: 'string' }
+                    clientHash: clientHashSchema
                   }
                 }
               }

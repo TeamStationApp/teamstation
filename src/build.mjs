@@ -75,6 +75,26 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
  * pass here would transpile everything twice and cost far more than it does.
  */
 
+const workerOptions = {
+  entryPoints: ['src/app/platform/passwordWorker.ts'],
+  bundle: true,
+  outdir: 'dist',
+  entryNames: serve ? 'password-worker' : 'password-worker-[hash]',
+  format: 'iife',
+  target: ['es2021'],
+  minify: !serve,
+  metafile: true
+}
+const workerBuild = await build(workerOptions)
+const workerFile = Object.keys(workerBuild.metafile.outputs).find(name =>
+  name.endsWith('.js')
+)
+if (workerFile == null) throw new Error('Password worker build failed')
+if (serve) {
+  const workerContext = await context(workerOptions)
+  await workerContext.watch()
+}
+
 const options = {
   ...webSettings,
   entryPoints: ['src/app/web/index.tsx'],
@@ -105,6 +125,9 @@ const options = {
     ),
     __DEV__: serve ? 'true' : 'false',
     TS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    TS_PASSWORD_WORKER_URL: JSON.stringify(
+      '/' + workerFile.replace(/^dist\//, '')
+    ),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // `global` is what a React Native runtime calls it and no browser does.
     // Worklets are compiled to code that reaches for it, and React Native Web
