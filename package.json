@@ -31,6 +31,7 @@
     "build.field": "TS_FIELD_PREVIEW=1 node src/build.mjs",
     "build.web": "node src/build.mjs",
     "camera-sweep": "node -r sucrase/register src/server/dev/cameraSweep.ts",
+    "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
     "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
     "clean": "rimraf lib",
     "coverage.tags": "node scripts/event-tags-coverage.mjs",
