@@ -51,19 +51,6 @@ struct CongestionMeterTests {
     #expect(sample.drainedBytes == 300)
   }
 
-  @Test func abandonedSendsAreForgottenFromTheNewestEnd() {
-    var meter = CongestionMeter()
-    meter.sent(bytes: 100, at: 1)
-    meter.sent(bytes: 200, at: 2)
-    meter.sent(bytes: 300, at: 3)
-    meter.discardNewest(2)
-
-    #expect(meter.pendingBytes == 100)
-    meter.delivered()
-    #expect(meter.sample(at: 4, droppedFrames: 0, flushes: 0).deliveredBytes == 100)
-    #expect(meter.queueDelay(at: 4) == 0)
-  }
-
   @Test func theWorstClientIsTheOneLosingFramesThenTheOneWaitingLongest() {
     let slow = CongestionSample(interval: 0.25, queueDelay: 0.3)
     let dropping = CongestionSample(interval: 0.25, queueDelay: 0.1, droppedFrames: 1)

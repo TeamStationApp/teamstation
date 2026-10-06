@@ -152,12 +152,15 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// How long the app may have been away and still pick a take back up.
   public var resumeDowntimeLimitSeconds: Double
 
-  public static let displayLatencyCapDefaultMilliseconds: Double = 500
+  /// One second: the live delay D, which the cap sets. Half a second left a camera whose delivery
+  /// stalled for longer than that silent and frozen on air, a few times an hour on a healthy link.
+  public static let displayLatencyCapDefaultMilliseconds: Double = 1_000
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
   public static let displayLatencyCapMaximumMilliseconds: Double = 2_000
-  /// Ten seconds by default: far beyond any delivery hiccup worth keeping, and short enough that a
-  /// source which has fallen badly behind stops writing stale pictures into the recording.
-  public static let diskLatencyCapDefaultMilliseconds: Double = 10_000
+  /// Twenty seconds by default, and on for a new install: far beyond any delivery hiccup worth
+  /// keeping, and short enough that a source which has fallen badly behind stops writing stale
+  /// pictures into the recording. What TS Director's first games should have run on.
+  public static let diskLatencyCapDefaultMilliseconds: Double = 20_000
   public static let diskLatencyCapMinimumMilliseconds: Double = 100
   public static let diskLatencyCapMaximumMilliseconds: Double = 60_000
   public static let replaySlowMotionRateDefault: Double = 0.5
@@ -185,11 +188,18 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let resumeDowntimeLimitMaximumSeconds: Double = 86_400
 
   /// The defaults are a new install's. A saved config keeps every value it has; see `init(from:)`.
+  ///
+  /// They are the values the first TS Director games should have run on, tuned on
+  /// the app it replaced: cameras at 4 Mbit/s, the programme at 60 fps, the stream between 1 and
+  /// 6 Mbit/s, the display latency cap on at 1 s and the recording's on at 20 s. The subnet override
+  /// stays off: the camera search sweeps the iPad's own subnet. Those games ran on the old ones
+  /// (cameras at 6 Mbit/s, programme at 30 fps, caps off), and copying the old app's settings
+  /// across failed because iOS restored its cached preferences.
   public init(
     programCodec: ProgramCodec = .hevc,
     rawCameraCodec: ProgramCodec = .hevc,
     programResolution: ProgramResolution = .hd1080,
-    programFrameRate: Int = 30,
+    programFrameRate: Int = 60,
     gopSeconds: Double = 2,
     segmentSeconds: Double = 3,
     maximumArchiveBytes: Int64 = AppConfig.maximumArchiveBytesDefault,
@@ -198,17 +208,17 @@ public struct AppConfig: Hashable, Sendable, Codable {
     freeDiskFloorBytes: Int64 = AppConfig.freeDiskFloorBytesDefault,
     rawCameraResolution: ProgramResolution = .hd1080,
     rawCameraFrameRate: Int = 60,
-    rawCameraBitrate: Int = 6_000_000,
+    rawCameraBitrate: Int = 4_000_000,
     streamCodec: ProgramCodec = .hevc,
     streamResolution: ProgramResolution = .hd1080,
     streamFrameRate: Int = 60,
-    streamBitrateLow: Int = 2_000_000,
+    streamBitrateLow: Int = 1_000_000,
     streamBitrateHigh: Int = 6_000_000,
     showDebugHUD: Bool = false,
     useSimulatedCameras: Bool = false,
-    displayLatencyCapEnabled: Bool = false,
+    displayLatencyCapEnabled: Bool = true,
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
-    diskLatencyCapEnabled: Bool = false,
+    diskLatencyCapEnabled: Bool = true,
     diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = "",

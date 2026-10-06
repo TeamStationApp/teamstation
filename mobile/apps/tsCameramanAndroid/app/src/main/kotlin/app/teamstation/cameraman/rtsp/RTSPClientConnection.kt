@@ -4,12 +4,15 @@ import app.teamstation.cameraman.core.DeviceIdentity
 import app.teamstation.cameraman.core.EncodedAudioFrame
 import app.teamstation.cameraman.core.EncodedVideoFrame
 import app.teamstation.cameraman.core.StreamCodec
+import app.teamstation.cameraman.encode.AudioEncoder
 import java.io.OutputStream
 import java.net.Socket
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.random.Random
 
 /**
@@ -21,9 +24,8 @@ import kotlin.random.Random
  * The split between that executor and a separate writer thread is what replaces `NWConnection`'s
  * async `send(completion:)`. A blocking `OutputStream.write` to a client that has stopped reading
  * would otherwise stall the encoder callback that called it — and then every other client with it.
- * So the executor decides and frames, hands finished bytes to the writer, and the writer credits the
- * send queue once they have actually left. That is also what makes [StreamSendQueue] honest: bytes
- * are debited on enqueue and credited on completion, never on enqueue alone.
+ * So the executor frames, puts the bytes in [sendQueue], and the writer takes them from there as
+ * the transport has room, dropping what has waited too long; see [MediaSendQueue].
  */
 internal class RTSPClientConnection(
     private val socket: Socket,
@@ -36,11 +38,21 @@ internal class RTSPClientConnection(
      * The TCP send buffer to ask for, or null for the platform's own. See [start] for why a small
      * one is what makes the congestion signal honest.
      */
-    private val sendBufferBytes: Int? = null
+    private val sendBufferBytes: Int? = null,
+    /** The boot clock, in seconds, which capture times are stamped on. */
+    private val clock: () -> Double = { android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000_000.0 }
 ) {
     private val queue: ExecutorService =
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "rtsp-conn") }
-    private val writes = LinkedBlockingQueue<WriteItem>()
+    /** Everything waiting for the writer, guarded by [sendLock]; [sendReady] wakes the writer. */
+    val sendQueue = MediaSendQueue()
+    private val gate = TransportGate()
+    private val sendLock = ReentrantLock()
+    private val sendReady = sendLock.newCondition()
+    /** The writer drains what waits and stops: a TEARDOWN answered. */
+    private var closeAfterDrain = false
+    /** The writer stops at once, abandoning what waits. */
+    private var abandon = false
     private var writerThread: Thread? = null
     private var readerThread: Thread? = null
     private lateinit var output: OutputStream
@@ -66,17 +78,16 @@ internal class RTSPClientConnection(
 
     private val videoSSRC: Long = Random.nextLong(1, 0xFFFFFFFFL)
     private val audioSSRC: Long = Random.nextLong(1, 0xFFFFFFFFL)
-    private var videoSequence = 0
-    private var audioSequence = 0
     private var videoPacketCount = 0L
     private var videoOctetCount = 0L
-    private var audioFrameIndex = 0
+    /** Audio stamps by capture position; made at the first frame, when the rate is known. */
+    private var audioStamps: AudioStampClock? = null
     private var audioPacketCount = 0L
     private var audioOctetCount = 0L
-    private var lastAudioReportMillis = 0L
+    private val audioReports = SenderReportSchedule()
     private var firstVideoPresentationTime: Double? = null
     private val videoTimestamps = RTPTimestampSequencer()
-    private var lastReportMillis = 0L
+    private val videoReports = SenderReportSchedule()
 
     /**
      * Wall clock minus the capture clock, sampled once per connection.
@@ -89,8 +100,6 @@ internal class RTSPClientConnection(
     private val captureToWallOffsetMillis: Long by lazy {
         System.currentTimeMillis() - (System.nanoTime() / 1_000_000)
     }
-
-    val sendQueue = StreamSendQueue()
 
     /** Written on the executor, read by the bitrate loop's thread; the lock is its own. */
     private val congestion = CongestionMeter()
@@ -114,8 +123,6 @@ internal class RTSPClientConnection(
             parameters = parameters
         )
     }
-
-    private data class WriteItem(val bytes: ByteArray, val generation: Int?, val isMedia: Boolean)
 
     fun start() {
         // Nagle would hold a small RTSP response back waiting for more to coalesce with, which on a
@@ -160,16 +167,19 @@ internal class RTSPClientConnection(
 
     /**
      * Immediate teardown: whatever is still queued is abandoned. The graceful path — answering a
-     * TEARDOWN before the socket goes — queues [poisonPill] behind the response instead, so the
+     * TEARDOWN before the socket goes — sets [closeAfterDrain] behind the response instead, so the
      * writer drains in order and the client gets its answer.
      */
     private fun shutdown() {
         if (isClosed) return
         isClosed = true
-        writes.clear()
-        // A poison pill rather than an interrupt: an interrupted write leaves the socket in an
+        // A flag rather than an interrupt: an interrupted write leaves the socket in an
         // indeterminate state, and this one is being closed anyway.
-        writes.offer(poisonPill())
+        sendLock.withLock {
+            sendQueue.reset()
+            abandon = true
+            sendReady.signalAll()
+        }
         socketQueue?.close()
         runCatching { socket.close() }
         val callback = onClose
@@ -243,8 +253,11 @@ internal class RTSPClientConnection(
                 // Each client gets its own SSRC and its own timeline, so a client that joins an hour
                 // in still starts at zero and RTP-Info can promise that.
                 firstVideoPresentationTime = null
+                sendLock.withLock { sendQueue.reset() }
                 videoTimestamps.reset()
-                audioFrameIndex = 0
+                audioStamps = null
+                videoReports.reset()
+                audioReports.reset()
 
                 val response = outcome.response.adding(
                     "RTP-Info",
@@ -265,12 +278,15 @@ internal class RTSPClientConnection(
             RTSPResponder.Effect.Close -> {
                 isStreaming = false
                 closeReason = "TEARDOWN"
-                // The response goes out first and the pill behind it, because the writer drains in
-                // order. Closing the socket here instead would discard the response, and the client
-                // would then wait out its TEARDOWN timeout on a connection the server has already
-                // forgotten. `writeLoop` calls `shutdown` once the pill comes round.
+                // The response goes out first and the writer stops behind it, because the writer
+                // drains in order. Closing the socket here instead would discard the response, and
+                // the client would then wait out its TEARDOWN timeout on a connection the server has
+                // already forgotten. `writeLoop` calls `shutdown` once it has drained.
                 write(outcome.response.wireFormat)
-                writes.offer(poisonPill())
+                sendLock.withLock {
+                    closeAfterDrain = true
+                    sendReady.signalAll()
+                }
             }
             RTSPResponder.Effect.None -> write(outcome.response.wireFormat)
         }
@@ -287,39 +303,63 @@ internal class RTSPClientConnection(
     private fun rtpInfo(uri: String, hasAudio: Boolean): String {
         val base = if (uri.endsWith("/")) uri.dropLast(1) else uri
         val tracks = mutableListOf(
-            "url=$base/${SDPBuilder.videoTrackControl};seq=$videoSequence;rtptime=0"
+            "url=$base/${SDPBuilder.videoTrackControl};seq=${sequence(videoSetup)};rtptime=0"
         )
         if (hasAudio) {
-            tracks.add("url=$base/${SDPBuilder.audioTrackControl};seq=$audioSequence;rtptime=0")
+            tracks.add("url=$base/${SDPBuilder.audioTrackControl};seq=${sequence(audioSetup)};rtptime=0")
         }
         return tracks.joinToString(",")
     }
 
+    private fun sequence(setup: RTSPResponder.Setup?): Int =
+        setup?.let { sendLock.withLock { sendQueue.nextSequence(it.dataChannel) } } ?: 0
+
     // MARK: - Writing
 
+    /** An RTSP response or a sender report: ahead of pictures, never dropped. */
     private fun write(data: ByteArray) {
         if (isClosed || data.isEmpty()) return
-        writes.offer(WriteItem(data, null, false))
+        sendLock.withLock {
+            sendQueue.enqueueControl(data, clock())
+            sendReady.signalAll()
+        }
     }
 
+    /**
+     * Takes from [sendQueue] whatever may go now and writes it. Media goes only while
+     * [TransportGate] says the kernel has room, so a backlog waits in the queue, where what grows too
+     * old is dropped, rather than in the kernel, where nothing can be.
+     */
     private fun writeLoop() {
         try {
             while (true) {
-                val item = writes.take()
-                // Empty payload is the poison pill; there is no legitimate zero-byte write.
-                if (item.bytes.isEmpty()) return
-                output.write(item.bytes)
-                output.flush()
-                if (item.isMedia) {
-                    val count = item.bytes.size
-                    val generation = item.generation
-                    // Credited on completion rather than enqueue, so the queue depth reflects what
-                    // the client has actually taken.
-                    submit {
-                        sendQueue.complete(count, generation)
-                        synchronized(congestion) { congestion.delivered() }
+                var wantsKeyframe = false
+                val next = sendLock.withLock {
+                    var found: MediaSendQueue.Next? = null
+                    while (found == null) {
+                        if (abandon) return
+                        val now = clock()
+                        if (sendQueue.prune(now)) wantsKeyframe = true
+                        val backlog = socketQueue?.queuedBytes() ?: 0
+                        gate.observe(now, backlog)
+                        found = sendQueue.next(closeAfterDrain || gate.hasRoom(backlog))
+                        if (found != null) break
+                        if (closeAfterDrain && sendQueue.isEmpty) return
+                        if (wantsKeyframe) break
+                        if (sendQueue.isEmpty) sendReady.await() else sendReady.await(retryMillis, TimeUnit.MILLISECONDS)
                     }
+                    found
                 }
+                if (wantsKeyframe) submit { requestKeyframe() }
+                if (next == null) continue
+                if (next.isMedia) synchronized(congestion) { congestion.sent(next.bytes.size, clock()) }
+                output.write(next.bytes)
+                output.flush()
+                sendLock.withLock {
+                    gate.handed(next.bytes.size)
+                    gate.processed(next.bytes.size)
+                }
+                if (next.isMedia) synchronized(congestion) { congestion.delivered() }
             }
         } catch (error: Exception) {
             submit {
@@ -328,13 +368,11 @@ internal class RTSPClientConnection(
                 }
             }
         } finally {
-            // However this thread ends — pill, broken pipe, closed socket — the connection is done.
+            // However this thread ends — drained, broken pipe, closed socket — the connection is done.
             // `shutdown` is idempotent, so the read side racing to the same conclusion is harmless.
             submit { shutdown() }
         }
     }
-
-    private fun poisonPill() = WriteItem(ByteArray(0), null, false)
 
     // MARK: - Media
 
@@ -355,22 +393,6 @@ internal class RTSPClientConnection(
 
             val bytes = payloads.sumOf { it.size }
             synchronized(congestion) { congestion.offered(bytes) }
-            val wasDropping = sendQueue.isDropping
-            when (sendQueue.decide(bytes, frame.isKeyframe)) {
-                StreamSendQueue.Decision.DROP -> {
-                    // Nothing more goes out until a keyframe, so ask for one now rather than leaving
-                    // the client without pictures for the rest of the GOP.
-                    if (!wasDropping) requestKeyframe()
-                    return@submit
-                }
-                StreamSendQueue.Decision.FLUSH_THEN_SEND ->
-                    // `decide` bumped `generation`, so completions from the abandoned batches will
-                    // not debit this keyframe. Unlike Network.framework, a queue of not-yet-written
-                    // batches *can* be dropped outright, so the client also stops receiving stale
-                    // pictures rather than only stopping being charged for them.
-                    dropPendingMedia()
-                StreamSendQueue.Decision.SEND -> Unit
-            }
 
             if (firstVideoPresentationTime == null) firstVideoPresentationTime = frame.presentationTime
             val elapsed = frame.presentationTime - (firstVideoPresentationTime ?: frame.presentationTime)
@@ -381,26 +403,38 @@ internal class RTSPClientConnection(
             // repeat a presentation time, so the sent timestamp is forced to advance — measured on
             // the 32-bit circle, because the field's own rollover is a forward step, not a repeat.
             val timestamp = videoTimestamps.next(natural)
+            // The session's first picture goes out behind a sender report, so the receiver can place it.
+            if (videoReports.reportBeforeFirstPacket(System.currentTimeMillis())) {
+                sendVideoReport(setup, timestamp, frame.presentationTime)
+            }
 
             val writer = RTPPacketWriter(SDPBuilder.videoPayloadType, videoSSRC)
-            val batch = ByteBuilder(bytes + payloads.size * 16)
+            val packets = ArrayList<ByteArray>(payloads.size)
             for ((index, payload) in payloads.withIndex()) {
                 // The marker bit goes on the last packet of the picture, which is how the receiver
-                // knows the frame is complete without waiting for the next timestamp.
+                // knows the frame is complete without waiting for the next timestamp. The sequence
+                // number is written as the packet is handed over; see [MediaSendQueue].
                 val packet = writer.packet(
-                    sequenceNumber = videoSequence,
+                    sequenceNumber = 0,
                     timestamp = timestamp,
                     marker = index == payloads.size - 1,
                     payload = payload
                 )
-                videoSequence = (videoSequence + 1) and 0xFFFF
                 videoPacketCount += 1
                 videoOctetCount += payload.size
-                InterleavedFramer.frame(setup.dataChannel, packet)?.let { batch.bytes(it) }
+                InterleavedFramer.frame(setup.dataChannel, packet)?.let { packets.add(it) }
             }
 
-            sendMedia(batch.build())
-            sendReportIfDue(setup, timestamp, frame.presentationTime)
+            val wantsKeyframe = sendLock.withLock {
+                sendQueue.enqueuePicture(packets, frame.presentationTime, frame.isKeyframe, clock())
+                    .also { sendReady.signalAll() }
+            }
+            // Nothing more goes out until a keyframe, so ask for one now rather than leaving the
+            // client without pictures for the rest of the GOP.
+            if (wantsKeyframe) requestKeyframe()
+            if (videoReports.reportIsDue(System.currentTimeMillis())) {
+                sendVideoReport(setup, timestamp, frame.presentationTime)
+            }
         }
     }
 
@@ -411,65 +445,53 @@ internal class RTSPClientConnection(
             val payload = AACPacketizer().payload(frame) ?: return@submit
 
             val writer = RTPPacketWriter(SDPBuilder.audioPayloadType, audioSSRC)
-            val timestamp = AACPacketizer.timestamp(audioFrameIndex)
+            // Stamped by where its samples were captured: a dropout becomes a skip in the stamps at
+            // the place it happened, rather than every later stamp sitting early by it.
+            val capture = (frame.captureTime ?: frame.presentationTime) + AudioStampClock.captureTrimSeconds
+            val stamps = audioStamps ?: AudioStampClock(frame.sampleRate.toDouble()).also { audioStamps = it }
+            val timestamp = stamps.next(capture)
+            if (audioReports.reportBeforeFirstPacket(System.currentTimeMillis())) {
+                sendAudioReport(setup, timestamp, capture)
+            }
             val packet = writer.packet(
-                sequenceNumber = audioSequence,
+                sequenceNumber = 0,
                 timestamp = timestamp,
                 marker = true,
                 payload = payload
             )
-            audioSequence = (audioSequence + 1) and 0xFFFF
-            audioFrameIndex += 1
             audioPacketCount += 1
             audioOctetCount += payload.size
 
             val framed = InterleavedFramer.frame(setup.dataChannel, packet) ?: return@submit
             synchronized(congestion) { congestion.offered(framed.size) }
-            sendQueue.enqueueAudio(framed.size)
-            sendMedia(framed)
-            frame.captureTime?.let { sendAudioReportIfDue(setup, timestamp.toLong(), it) }
+            sendLock.withLock {
+                sendQueue.enqueueSound(framed, capture, AudioEncoder.samplesPerFrame.toDouble() / frame.sampleRate, clock())
+                sendReady.signalAll()
+            }
+            if (audioReports.reportIsDue(System.currentTimeMillis())) sendAudioReport(setup, timestamp, capture)
         }
-    }
-
-    private fun sendMedia(data: ByteArray) {
-        if (data.isEmpty() || isClosed) return
-        synchronized(congestion) { congestion.sent(data.size, System.nanoTime() / 1e9) }
-        writes.offer(WriteItem(data, sendQueue.generation, true))
     }
 
     /** This client's link since the last call, or null when it is not playing. */
     fun congestionSample(now: Double): CongestionSample? {
+        val (dropped, flushes, waiting) = sendLock.withLock {
+            Triple(sendQueue.droppedFrames, sendQueue.flushes, sendQueue.oldestWait(clock()))
+        }
         val sample = synchronized(congestion) {
-            congestion.sample(now, sendQueue.droppedFrames, sendQueue.flushes, socketQueue?.queuedBytes())
+            congestion.sample(now, dropped, flushes, socketQueue?.queuedBytes(), waiting)
         }
         return if (isStreaming) sample else null
-    }
-
-    private fun dropPendingMedia() {
-        val kept = ArrayList<WriteItem>()
-        val drained = ArrayList<WriteItem>()
-        writes.drainTo(drained)
-        // RTSP responses queued behind media must still go out; only pictures are expendable.
-        for (item in drained) if (!item.isMedia) kept.add(item)
-        for (item in kept) writes.offer(item)
-        // Never written, so never completed: the meter must forget them or it would wait for ever.
-        val abandoned = drained.size - kept.size
-        synchronized(congestion) { congestion.discardNewest(abandoned) }
     }
 
     /**
      * A sender report about once a second, which is what RFC 3550 §6.2 recommends and what clients
      * use to derive a wall clock and to learn the CNAME.
      */
-    private fun sendReportIfDue(
+    private fun sendVideoReport(
         setup: RTSPResponder.Setup,
         rtpTimestamp: Long,
         captureTime: Double
     ) {
-        val now = System.currentTimeMillis()
-        if (now - lastReportMillis < 1000) return
-        lastReportMillis = now
-
         // Stamped from the frame's capture time, not from the clock at send.
         //
         // The RTP timestamp in this report is derived from capture; pairing it with the wall clock
@@ -498,15 +520,11 @@ internal class RTSPClientConnection(
      * count behind those timestamps fell behind real time. Paired from the frame's capture time and
      * put on wall time through the same offset as the video's, so both streams share one mapping.
      */
-    private fun sendAudioReportIfDue(
+    private fun sendAudioReport(
         setup: RTSPResponder.Setup,
         rtpTimestamp: Long,
         captureTime: Double
     ) {
-        val now = System.currentTimeMillis()
-        if (now - lastAudioReportMillis < 1000) return
-        lastAudioReportMillis = now
-
         val captureWallMillis = (captureTime * 1000).toLong() + captureToWallOffsetMillis
         val writer = RTCPWriter(audioSSRC, identity())
         val report = writer.compoundPacket(
@@ -516,5 +534,13 @@ internal class RTSPClientConnection(
             octetCount = audioOctetCount
         )
         InterleavedFramer.frame(setup.controlChannel, report)?.let { write(it) }
+    }
+
+    /** What waits for this client and what has been dropped, for the HUD and the state dump. */
+    fun sendQueueSnapshot(): MediaSendQueue.Snapshot = sendLock.withLock { sendQueue.snapshot() }
+
+    private companion object {
+        /** How soon a writer that found no room looks again: the kernel drains between writes too. */
+        const val retryMillis = 5L
     }
 }

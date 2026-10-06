@@ -183,6 +183,21 @@ public enum CameraParameterName {
   public static let lensDisabled = "lens.disabled"
   public static let streamURL = "stream.url"
   public static let streamClients = "stream.clients"
+  /// Test only: frames per second to deliver to the encoder, `0` for every frame. See
+  /// `FrameDeliveryThrottle`. Off at every launch.
+  public static let testDeliveredFrameRate = "test.deliveredFrameRate"
+  /// Test only: `low:high:periodSeconds`, a delivered rate swinging between the two, or empty for
+  /// none. Wins over `test.deliveredFrameRate` while set.
+  public static let testDeliveredFrameRateSwing = "test.deliveredFrameRateSwing"
+  /// Test only: `low:high:minHold:maxHold[:seed]`, a delivered rate wandering at random, or empty
+  /// for none. Reads back with its seed. Wins over the swing and the steady rate while set.
+  public static let testDeliveredFrameRateWander = "test.deliveredFrameRateWander"
+  /// Test only: `mic:hold:slow[:seed]`, a healthy phone made to behave like a hot one (see
+  /// `StruggleInjector`), or empty for none. Reads back with its seed.
+  public static let testStruggle = "test.struggle"
+  /// Frames per second actually reaching the encoder over the last two seconds, throttled or not;
+  /// empty until two have.
+  public static let testDeliveredFrameRateActual = "test.deliveredFrameRate.actual"
 
   public static let wildcard = "*"
 
@@ -191,7 +206,8 @@ public enum CameraParameterName {
 
   public static let writable: Set<String> = [
     deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-    bitrateFloorKbps, adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled
+    bitrateFloorKbps, adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled,
+    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander, testStruggle
   ]
 
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
@@ -208,7 +224,9 @@ public enum CameraParameterName {
     audioEnabled, audioSampleRate,
     videoOutputHDMIClean,
     lensCount, lensDisabled,
-    streamURL, streamClients
+    streamURL, streamClients,
+    testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander,
+    testDeliveredFrameRateActual, testStruggle
   ]
 
   static let formatFields = [ "width", "height", "frameRate", "multiLens" ]
@@ -258,6 +276,10 @@ public struct CameraSnapshot: Sendable, Equatable {
   /// What the encoder is running at, which is below `settings.bitrate` while adapting. Nil from a
   /// phone that predates adaptation, which always runs at `settings.bitrate`.
   public var currentBitrate: Int?
+  /// The test throttle's setting. Off from a phone that predates it.
+  public var frameDelivery: FrameDelivery
+  /// Frames per second reaching the encoder. Nil until measured, and from a phone that predates it.
+  public var deliveredFrameRate: Double?
 
   public init(
     name: String,
@@ -275,7 +297,9 @@ public struct CameraSnapshot: Sendable, Equatable {
     lenses: [CameraLens],
     streamURL: String,
     clientCount: Int,
-    currentBitrate: Int? = nil
+    currentBitrate: Int? = nil,
+    frameDelivery: FrameDelivery = .off,
+    deliveredFrameRate: Double? = nil
   ) {
     self.name = name
     self.cname = cname
@@ -293,6 +317,8 @@ public struct CameraSnapshot: Sendable, Equatable {
     self.streamURL = streamURL
     self.clientCount = clientCount
     self.currentBitrate = currentBitrate
+    self.frameDelivery = frameDelivery
+    self.deliveredFrameRate = deliveredFrameRate
   }
 
   public var displayedZoom: Double { mapping.displayedZoom(forDevice: deviceZoom) }
@@ -319,6 +345,14 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public var audioEnabled: Bool?
   public var cleanHDMIEnabled: Bool?
   public var disabledLensIDs: Set<String>?
+  /// Frames per second for the test throttle, 0 for off.
+  public var deliveredFrameRate: Double?
+  /// The test throttle's swing as canonical `low:high:period` text, or empty to clear it.
+  public var deliveredFrameRateSwing: String?
+  /// The test throttle's wander as canonical text with its seed, or empty to clear it.
+  public var deliveredFrameRateWander: String?
+  /// The struggling-phone injection as canonical text with its seed, or empty to clear it.
+  public var struggle: String?
   /// The names in the request, in order, so the reply can echo exactly those.
   public var requestedNames: [String] = []
 
@@ -328,6 +362,16 @@ public struct CameraParameterWrite: Sendable, Equatable {
     name == nil && position == nil && displayedZoom == nil && codec == nil && width == nil
       && height == nil && frameRate == nil && bitrate == nil && bitrateFloor == nil && adaptiveBitrate == nil
       && audioEnabled == nil && cleanHDMIEnabled == nil && disabledLensIDs == nil
+      && !touchesFrameDelivery
+  }
+
+  /// True when the request names the test throttle. Never a settings change: the throttle leaves
+  /// the format, the session and the saved settings alone.
+  public var touchesFrameDelivery: Bool { touchesFrameRate || struggle != nil }
+
+  /// True when the throttle's own rate, swing or wander is named, which restarts its clock.
+  public var touchesFrameRate: Bool {
+    deliveredFrameRate != nil || deliveredFrameRateSwing != nil || deliveredFrameRateWander != nil
   }
 
   /// True when anything in `StreamSettings` is named, i.e. the phone should run one
@@ -402,6 +446,14 @@ public enum CameraParameters {
     set.set(CameraParameterName.lensDisabled, s.disabledLensIDs.sorted().joined(separator: ","))
     set.set(CameraParameterName.streamURL, snapshot.streamURL)
     set.set(CameraParameterName.streamClients, String(snapshot.clientCount))
+    set.set(CameraParameterName.testDeliveredFrameRate, number(snapshot.frameDelivery.frameRate))
+    set.set(CameraParameterName.testDeliveredFrameRateSwing, snapshot.frameDelivery.swing?.text ?? "")
+    set.set(CameraParameterName.testDeliveredFrameRateWander, snapshot.frameDelivery.wander?.text ?? "")
+    set.set(
+      CameraParameterName.testDeliveredFrameRateActual,
+      snapshot.deliveredFrameRate.map { number(($0 * 10).rounded() / 10) } ?? ""
+    )
+    set.set(CameraParameterName.testStruggle, snapshot.frameDelivery.struggle?.text ?? "")
     return set
   }
 
@@ -519,7 +571,14 @@ public enum CameraParameters {
       lenses: lenses,
       streamURL: streamURL,
       clientCount: set[CameraParameterName.streamClients].flatMap(Int.init) ?? 0,
-      currentBitrate: set[CameraParameterName.currentBitrateKbps].flatMap(Int.init).map { $0 * 1000 }
+      currentBitrate: set[CameraParameterName.currentBitrateKbps].flatMap(Int.init).map { $0 * 1000 },
+      frameDelivery: FrameDelivery(
+        frameRate: set[CameraParameterName.testDeliveredFrameRate].flatMap(Double.init) ?? 0,
+        swing: set[CameraParameterName.testDeliveredFrameRateSwing].flatMap(FrameRateSwing.init(text:)),
+        wander: set[CameraParameterName.testDeliveredFrameRateWander].flatMap { FrameRateWander(text: $0) },
+        struggle: set[CameraParameterName.testStruggle].flatMap { Struggle(text: $0) }
+      ),
+      deliveredFrameRate: set[CameraParameterName.testDeliveredFrameRateActual].flatMap(Double.init)
     )
   }
 
@@ -649,6 +708,41 @@ public enum CameraParameters {
         }
         write.disabledLensIDs = ids
 
+      case CameraParameterName.testDeliveredFrameRate:
+        guard let rate = Double(value), rate == 0 || FrameDelivery.accepts(rate: rate) else {
+          return .failure(bad(
+            "expected 0 for off, or \(number(FrameDelivery.minimumRate))…\(number(FrameDelivery.maximumRate)) frames per second"
+          ))
+        }
+        write.deliveredFrameRate = rate
+
+      case CameraParameterName.testDeliveredFrameRateSwing:
+        if value.isEmpty {
+          write.deliveredFrameRateSwing = ""
+        } else if let swing = FrameRateSwing(text: value) {
+          write.deliveredFrameRateSwing = swing.text
+        } else {
+          return .failure(bad("expected low:high:periodSeconds with low ≤ high, or empty for none"))
+        }
+
+      case CameraParameterName.testStruggle:
+        if value.isEmpty {
+          write.struggle = ""
+        } else if let struggle = Struggle(text: value) {
+          write.struggle = struggle.text
+        } else {
+          return .failure(bad("expected mic:hold:slow[:seed], mic 0…0.5, hold 0…0.9, slow 0…0.95, or empty for none"))
+        }
+
+      case CameraParameterName.testDeliveredFrameRateWander:
+        if value.isEmpty {
+          write.deliveredFrameRateWander = ""
+        } else if let wander = FrameRateWander(text: value) {
+          write.deliveredFrameRateWander = wander.text
+        } else {
+          return .failure(bad("expected low:high:minHold:maxHold[:seed] with low ≤ high and 0 < minHold ≤ maxHold, or empty for none"))
+        }
+
       default:
         return .failure(CameraParameterError(kind: .readOnly, name: name, detail: "read-only parameter"))
       }
@@ -713,6 +807,16 @@ public enum CameraParameters {
     return next
   }
 
+  /// The test throttle after a write. Fields not in the request keep their current values.
+  public static func frameDelivery(applying write: CameraParameterWrite, to current: FrameDelivery) -> FrameDelivery {
+    var next = current
+    if let rate = write.deliveredFrameRate { next.frameRate = rate }
+    if let swing = write.deliveredFrameRateSwing { next.swing = FrameRateSwing(text: swing) }
+    if let wander = write.deliveredFrameRateWander { next.wander = FrameRateWander(text: wander) }
+    if let struggle = write.struggle { next.struggle = Struggle(text: struggle) }
+    return next
+  }
+
   /// The snapshot as it will be once the write has taken: settings merged, zoom clamped to the
   /// mapping, position and name replaced. Used to echo applied values in the `SET` reply before the
   /// capture queue has published them.
@@ -726,6 +830,7 @@ public enum CameraParameters {
     }
     next.settings.cameraPosition = next.position
     next.settings.displayedZoom = next.displayedZoom
+    next.frameDelivery = frameDelivery(applying: write, to: current.frameDelivery)
     return next
   }
 

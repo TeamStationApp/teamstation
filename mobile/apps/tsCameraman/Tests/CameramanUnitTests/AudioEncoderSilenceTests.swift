@@ -60,11 +60,12 @@ struct AudioEncoderSilenceTests {
     }
   }
 
-  private static func pcmBuffer(
+  static func pcmBuffer(
     samples: Int,
     rate: Double,
     pts: Double,
-    value: Int16
+    value: Int16,
+    pcm custom: [Int16]? = nil
   ) -> CMSampleBuffer? {
     var asbd = AudioStreamBasicDescription(
       mSampleRate: rate,
@@ -89,7 +90,7 @@ struct AudioEncoderSilenceTests {
       formatDescriptionOut: &format
     ) == noErr, let format else { return nil }
 
-    var pcm = [Int16](repeating: value, count: samples)
+    var pcm = custom ?? [Int16](repeating: value, count: samples)
     let byteCount = samples * 2
     var block: CMBlockBuffer?
     guard CMBlockBufferCreateWithMemoryBlock(
@@ -133,7 +134,7 @@ struct AudioEncoderSilenceTests {
   }
 }
 
-private final class FrameBox: @unchecked Sendable {
+final class FrameBox: @unchecked Sendable {
   private let lock = NSLock()
   private var frames: [EncodedAudioFrame] = []
 

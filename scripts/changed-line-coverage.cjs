@@ -60,6 +60,35 @@ function lcovCounts(text) {
   return files
 }
 
+// A JaCoCo XML report (Kover writes the same) as { path: { line: count } },
+// keyed by each source file's package directory and name
+// (`app/example/Thing.kt`), from its `<line nr ci>` records: a line counts as
+// its covered instructions.
+function jacocoCounts(xml) {
+  const files = {}
+  const attribute = (attrs, name) =>
+    new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1]
+  for (const [, packageAttrs, body] of xml.matchAll(
+    /<package\b([^>]*)>([\s\S]*?)<\/package>/g
+  )) {
+    const directory = attribute(packageAttrs, 'name') ?? ''
+    for (const [, fileAttrs, lines] of body.matchAll(
+      /<sourcefile\b([^>]*)>([\s\S]*?)<\/sourcefile>/g
+    )) {
+      const name = attribute(fileAttrs, 'name') ?? ''
+      const path = directory === '' ? name : `${directory}/${name}`
+      const counts = (files[path] ??= {})
+      for (const [, lineAttrs] of lines.matchAll(/<line\b([^>]*?)\/?>/g)) {
+        const number = Number(attribute(lineAttrs, 'nr'))
+        if (!Number.isInteger(number)) continue
+        const count = Number(attribute(lineAttrs, 'ci') ?? 0)
+        counts[number] = Math.max(counts[number] ?? 0, count)
+      }
+    }
+  }
+  return files
+}
+
 // Pathspecs as git's top level sees them, wherever the command was run.
 function resolveSpecs(topLevel, specs, cwd = process.cwd()) {
   return specs.map(spec => relative(topLevel, resolve(cwd, spec)) || '.')
@@ -129,6 +158,7 @@ function lineReport(changes, coverage, executable) {
 module.exports = {
   changedLines,
   istanbulCounts,
+  jacocoCounts,
   lcovCounts,
   lineReport,
   lineReportFromCounts,

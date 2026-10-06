@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<report name="Kover Gradle Plugin XML report for :app">
+<package name="app/example/tally">
+<class name="app/example/tally/Tally" sourcefilename="Tally.kt">
+<method name="add" desc="(I)V">
+<counter type="INSTRUCTION" missed="4" covered="9"/>
+<counter type="LINE" missed="1" covered="3"/>
+</method>
+<counter type="INSTRUCTION" missed="4" covered="9"/>
+<counter type="LINE" missed="1" covered="3"/>
+</class>
+<sourcefile name="Tally.kt">
+<line nr="5" mi="0" ci="3" mb="0" cb="0"/>
+<line nr="6" mi="0" ci="4" mb="1" cb="1"/>
+<line nr="7" mi="4" ci="0" mb="0" cb="0"/>
+<line nr="9" mi="0" ci="2" mb="0" cb="0"/>
+<counter type="INSTRUCTION" missed="4" covered="9"/>
+<counter type="LINE" missed="1" covered="3"/>
+</sourcefile>
+<sourcefile name="Empty.kt">
+<counter type="LINE" missed="0" covered="0"/>
+</sourcefile>
+</package>
+<package name="">
+<sourcefile name="Root.kt">
+<line nr="1" mi="2" ci="0" mb="0" cb="0"/>
+<line nr="1" mi="0" ci="5" mb="0" cb="0"/>
+<line mi="1" ci="1"/>
+</sourcefile>
+</package>
+<counter type="LINE" missed="2" covered="3"/>
+</report>

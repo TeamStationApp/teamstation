@@ -5,6 +5,7 @@ const { join, resolve } = require('node:path')
 const {
   changedLines,
   istanbulCounts,
+  jacocoCounts,
   lineReportFromCounts,
   resolveSpecs
 } = require('./changed-line-coverage.cjs')
@@ -12,8 +13,13 @@ const {
 // The changed-line coverage gate every milestone runs:
 //
 //   node scripts/changed-line-check.cjs (--coverage <coverage-final.json> |
-//     --counts <json>) --ext <.x> [--ext …] [--exclude <path|glob> …]
-//     [--allow-empty] <pathspec> …
+//     --counts <json> | --jacoco <report.xml> --source-root <dir> …)
+//     --ext <.x> [--ext …] [--exclude <path|glob> …] [--allow-empty]
+//     <pathspec> …
+//
+// `--jacoco` reads a JaCoCo XML report, which names each file by its package
+// directory; `--source-root` says which directories those are relative to, so
+// `<root>/app/example/Thing.kt` is the report's `app/example/Thing.kt`.
 //
 // The lines are those this branch changed under the pathspecs, from
 // `git merge-base origin/master HEAD` to HEAD. A changed file is executable
@@ -24,25 +30,41 @@ const {
 // the pathspecs changed, unless `--allow-empty`.
 
 const USAGE =
-  'usage: changed-line-check.cjs (--coverage <file> | --counts <file>) ' +
-  '--ext <.x> [--exclude <path>] [--allow-empty] <pathspec>…'
+  'usage: changed-line-check.cjs (--coverage <file> | --counts <file> | ' +
+  '--jacoco <file> --source-root <dir>…) --ext <.x> [--exclude <path>] ' +
+  '[--allow-empty] <pathspec>…'
 
 function parseArgs(argv) {
-  const args = { exts: [], excludes: [], specs: [], allowEmpty: false }
+  const args = {
+    exts: [],
+    excludes: [],
+    sourceRoots: [],
+    specs: [],
+    allowEmpty: false
+  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--coverage') args.coverage = argv[++i]
     else if (arg === '--counts') args.counts = argv[++i]
+    else if (arg === '--jacoco') args.jacoco = argv[++i]
+    else if (arg === '--source-root') args.sourceRoots.push(argv[++i])
     else if (arg === '--ext') args.exts.push(argv[++i])
     else if (arg === '--exclude') args.excludes.push(argv[++i])
     else if (arg === '--allow-empty') args.allowEmpty = true
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`)
     else args.specs.push(arg)
   }
-  if ((args.coverage == null) === (args.counts == null))
-    throw new Error('give one of --coverage or --counts')
+  const reports = [args.coverage, args.counts, args.jacoco]
+  if (reports.filter(report => report != null).length !== 1)
+    throw new Error('give one of --coverage, --counts or --jacoco')
+  if ((args.jacoco == null) !== (args.sourceRoots.length === 0))
+    throw new Error('--source-root goes with --jacoco, which needs one')
   if (args.exts.length === 0) throw new Error('give at least one --ext')
-  if (args.exts.some(ext => ext == null) || args.excludes.some(x => x == null))
+  if (
+    args.exts.some(ext => ext == null) ||
+    args.excludes.some(x => x == null) ||
+    args.sourceRoots.some(x => x == null)
+  )
     throw new Error('an option is missing its value')
   return args
 }
@@ -82,10 +104,18 @@ function executableFile(path, exts) {
   )
 }
 
-// Line counts keyed by top-level path, from either report.
+// Line counts keyed by top-level path, from any of the reports.
 function countsFor(args, topLevel, paths, cwd) {
   const counts = {}
-  if (args.coverage != null) {
+  if (args.jacoco != null) {
+    const raw = jacocoCounts(readFileSync(resolve(cwd, args.jacoco), 'utf8'))
+    const roots = resolveSpecs(topLevel, args.sourceRoots, cwd)
+    for (const path of paths) {
+      const root = roots.find(root => path.startsWith(`${root}/`))
+      const entry = root == null ? undefined : raw[path.slice(root.length + 1)]
+      if (entry != null) counts[path] = entry
+    }
+  } else if (args.coverage != null) {
     const raw = JSON.parse(readFileSync(resolve(cwd, args.coverage), 'utf8'))
     for (const path of paths) {
       const entry = raw[join(topLevel, path)] ?? raw[path]

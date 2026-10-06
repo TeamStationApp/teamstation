@@ -48,8 +48,11 @@ class AudioEncoder {
      * [captureFor]. Kept as a short history because a frame is cut from a buffer that spans reads.
      */
     private val captureAnchors = ArrayDeque<Pair<Double, Double>>()
-    /** Capture time of each frame in the codec, keyed by its presentation time in microseconds. */
-    private val captureByPresentation = LinkedHashMap<Long, Double>()
+    /**
+     * The codec's priming: a packet's decoded sound is the input from this long before the frame it
+     * carries the time of. From the output format's `encoder-delay` when the codec states it.
+     */
+    private var encoderDelaySeconds = 0.0
     private var bytesPerSourceFrame = 0
     private var configuredSampleRate = 0
     private var configuredChannels = 0
@@ -116,7 +119,7 @@ class AudioEncoder {
                     pendingTime = 0.0
                     hasStartTime = false
                     captureAnchors.clear()
-                    captureByPresentation.clear()
+                    encoderDelaySeconds = defaultEncoderDelaySamples.toDouble() / sampleRate.toDouble()
                 }
                 freeInputBuffers.clear()
             } catch (error: Exception) {
@@ -184,15 +187,6 @@ class AudioEncoder {
 
             val time = lock.withLock { pendingTime }
             val timeMicros = (time * 1_000_000).toLong()
-            captureFor(time)?.let { capture ->
-                lock.withLock {
-                    captureByPresentation[timeMicros] = capture
-                    // Bounded: a frame the codec never returns must not leave its entry forever.
-                    while (captureByPresentation.size > 64) {
-                        captureByPresentation.remove(captureByPresentation.keys.first())
-                    }
-                }
-            }
             try {
                 val buffer = running.getInputBuffer(index) ?: return
                 buffer.clear()
@@ -220,10 +214,7 @@ class AudioEncoder {
      * newest read is not always the frame's own — and beside a stretch the system dropped, using it
      * would stamp the frame off by the whole drop.
      */
-    private fun captureFor(time: Double): Double? = lock.withLock {
-        val anchor = captureAnchors.lastOrNull { it.first <= time + 1e-6 } ?: captureAnchors.firstOrNull()
-        anchor?.let { (presentation, capture) -> capture + (time - presentation) }
-    }
+    private fun captureFor(time: Double): Double? = lock.withLock { captureAt(captureAnchors, time) }
 
     /**
      * Eight AAC frames is 170 ms of PCM. Anything more is the encoder falling behind, which is how
@@ -273,11 +264,14 @@ class AudioEncoder {
                 buffer.get(bytes)
 
                 val (rate, channels) = lock.withLock { configuredSampleRate to configuredChannels }
-                val capture = lock.withLock { captureByPresentation.remove(info.presentationTimeUs) }
+                // The packet's decoded sound is the input from the codec's delay before the frame
+                // whose time it carries: stamped there, it plays with the pictures captured with it.
+                val time = soundTime(info.presentationTimeUs, lock.withLock { encoderDelaySeconds })
+                val capture = captureFor(time)
                 onFrame?.invoke(
                     EncodedAudioFrame(
                         data = bytes,
-                        presentationTime = info.presentationTimeUs / 1_000_000.0,
+                        presentationTime = time,
                         sampleRate = rate,
                         channelCount = channels,
                         captureTime = capture
@@ -292,7 +286,13 @@ class AudioEncoder {
             onFailure?.invoke(Failure.Converter("${error.errorCode}: ${error.message}"))
         }
 
-        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) = Unit
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            delaySamples(format)?.let { samples ->
+                lock.withLock {
+                    if (configuredSampleRate > 0) encoderDelaySeconds = samples / configuredSampleRate.toDouble()
+                }
+            }
+        }
     }
 
     private fun teardownLocked() {
@@ -303,7 +303,7 @@ class AudioEncoder {
             pendingTime = 0.0
             hasStartTime = false
             captureAnchors.clear()
-            captureByPresentation.clear()
+            encoderDelaySeconds = 0.0
             audioSpecificConfigValue = null
             current
         }
@@ -319,5 +319,29 @@ class AudioEncoder {
 
         /** Eight AAC frames is 170 ms of PCM. Anything more is the encoder falling behind. */
         private const val maxBufferedFrames = 8
+
+        /**
+         * AAC-LC priming in samples when the codec does not state its `encoder-delay`, as the Pixel
+         * 10's `c2.android.aac.encoder` does not: measured there, encoded noise bursts decode (as
+         * TS Director decodes, one access unit at a time) exactly 2,048 samples after their input.
+         */
+        const val defaultEncoderDelaySamples = 2048
+
+        /** The time of a packet's decoded sound: the codec's output time less its priming. */
+        fun soundTime(outputPresentationUs: Long, delaySeconds: Double): Double =
+            outputPresentationUs / 1_000_000.0 - delaySeconds
+
+        /**
+         * Capture time of the sample at [time]: the latest anchor at or before it, moved by how far
+         * past that anchor [time] falls, or the earliest anchor for a time before them all.
+         */
+        fun captureAt(anchors: Collection<Pair<Double, Double>>, time: Double): Double? {
+            val anchor = anchors.lastOrNull { it.first <= time + 1e-6 } ?: anchors.firstOrNull()
+            return anchor?.let { (presentation, capture) -> capture + (time - presentation) }
+        }
+
+        /** The codec's stated priming, in samples, if its output format carries one. */
+        fun delaySamples(format: MediaFormat): Int? =
+            if (format.containsKey(MediaFormat.KEY_ENCODER_DELAY)) format.getInteger(MediaFormat.KEY_ENCODER_DELAY) else null
     }
 }

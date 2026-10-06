@@ -23,12 +23,25 @@ public struct ProgrammeClock: Sendable, Equatable {
     /// and the recording is written on an exact grid, so they are filled rather than left as one
     /// frame lasting several.
     public var recordingFramesMissed: Int64
+    /// How far after its own moment this tick ran, in seconds (negative when the timer was early),
+    /// and how many ticks before it never ran at all: the iPad falling behind, seen from the clock.
+    public var lateness: Double
+    public var ticksMissed: Int64
 
-    public init(index: Int64, recordingFrame: Int64?, streamFrame: Int64? = nil, recordingFramesMissed: Int64 = 0) {
+    public init(
+      index: Int64,
+      recordingFrame: Int64?,
+      streamFrame: Int64? = nil,
+      recordingFramesMissed: Int64 = 0,
+      lateness: Double = 0,
+      ticksMissed: Int64 = 0
+    ) {
       self.index = index
       self.recordingFrame = recordingFrame
       self.streamFrame = streamFrame
       self.recordingFramesMissed = recordingFramesMissed
+      self.lateness = lateness
+      self.ticksMissed = ticksMissed
     }
   }
 
@@ -59,6 +72,7 @@ public struct ProgrammeClock: Sendable, Equatable {
     let elapsed = now - origin
     let index = Int64((elapsed * Double(rate)).rounded())
     guard index > lastTick else { return nil }
+    let ticksMissed = lastTick >= 0 ? max(0, index - lastTick - 1) : 0
     lastTick = index
     let previousRecordingFrame = lastRecordingFrame
     let recordingFrame = Self.frame(at: elapsed, rate: recordingRate, tickRate: rate, after: &lastRecordingFrame)
@@ -66,7 +80,9 @@ public struct ProgrammeClock: Sendable, Equatable {
       index: index,
       recordingFrame: recordingFrame,
       streamFrame: Self.frame(at: elapsed, rate: streamRate, tickRate: rate, after: &lastStreamFrame),
-      recordingFramesMissed: recordingFrame.map { max(0, $0 - previousRecordingFrame - 1) } ?? 0
+      recordingFramesMissed: recordingFrame.map { max(0, $0 - previousRecordingFrame - 1) } ?? 0,
+      lateness: elapsed - Double(index) / Double(rate),
+      ticksMissed: ticksMissed
     )
   }
 

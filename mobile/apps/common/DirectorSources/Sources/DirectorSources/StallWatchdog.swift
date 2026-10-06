@@ -22,6 +22,23 @@ public enum StallWatchdog: Sendable {
     return now.timeIntervalSince(origin) > timeout
   }
 
+  /// How long a picture may be missing before the session is reconnected. `timeout` when the camera's
+  /// sound has stopped too; while its sound keeps arriving, `pictureOnlyTimeout`, doubled for each
+  /// reconnect the same stall has already cost. A reconnect costs the sound a new session, and a
+  /// struggling phone can starve its picture for minutes while its sound goes on: on the first
+  /// games one sent half a second of picture in six minutes, and a 5 s rule would have cut its
+  /// sound seventy times.
+  public static func pictureTimeout(
+    now: Date,
+    lastSoundAt: Date?,
+    timeout: TimeInterval,
+    pictureOnlyTimeout: TimeInterval,
+    stallReconnects: Int
+  ) -> TimeInterval {
+    guard let lastSoundAt, now.timeIntervalSince(lastSoundAt) <= timeout else { return timeout }
+    return pictureOnlyTimeout * Double(1 << min(max(stallReconnects, 0), 6))
+  }
+
   /// How long a source has been silent past its timeout, or zero while it is healthy.
   ///
   /// Reported rather than only acted on: a tile that has stopped receiving has to say so, because

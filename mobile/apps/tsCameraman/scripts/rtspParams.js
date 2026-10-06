@@ -64,53 +64,66 @@ function readResponse (buffer) {
   }
 }
 
-async function main () {
-  const options = parseArgs(process.argv)
-  const uri = `rtsp://${options.host}:${options.port}${options.path}`
-  const writes = options.lines.filter(line => line.includes(':'))
-  const reads = options.lines.filter(line => !line.includes(':'))
+// One OPTIONS, then a GET_PARAMETER (bare names, or `*` when none) or a SET_PARAMETER (any line
+// with a colon) on one connection. Resolves with the second reply.
+async function exchange ({ host, port = 8554, path = '/live/mainstream', timeout = 5000, lines = [] }) {
+  const uri = `rtsp://${host}:${port}${path}`
+  const writes = lines.filter(line => line.includes(':'))
+  const reads = lines.filter(line => !line.includes(':'))
   const method = writes.length ? 'SET_PARAMETER' : 'GET_PARAMETER'
   const body = (writes.length ? writes : (reads.length ? reads : ['*']))
     .map(line => line.trim()).join('\r\n') + '\r\n'
 
-  const socket = net.connect({ host: options.host, port: options.port })
-  socket.setTimeout(options.timeout, () => { console.error('timed out'); process.exit(2) })
-  await new Promise((resolve, reject) => socket.once('connect', resolve).once('error', reject))
+  const socket = net.connect({ host, port })
+  try {
+    socket.setTimeout(timeout, () => socket.destroy(new Error('timed out')))
+    await new Promise((resolve, reject) => socket.once('connect', resolve).once('error', reject))
 
-  let buffer = Buffer.alloc(0)
-  const responses = []
-  const waitFor = count => new Promise((resolve, reject) => {
-    const onData = chunk => {
-      buffer = Buffer.concat([buffer, chunk])
-      let parsed
-      while ((parsed = readResponse(buffer))) {
-        buffer = buffer.slice(parsed.consumed)
-        responses.push(parsed)
+    let buffer = Buffer.alloc(0)
+    const responses = []
+    const waitFor = count => new Promise((resolve, reject) => {
+      const onData = chunk => {
+        buffer = Buffer.concat([buffer, chunk])
+        let parsed
+        while ((parsed = readResponse(buffer))) {
+          buffer = buffer.slice(parsed.consumed)
+          responses.push(parsed)
+        }
+        if (responses.length >= count) { socket.off('data', onData); resolve() }
       }
-      if (responses.length >= count) { socket.off('data', onData); resolve() }
+      socket.on('data', onData)
+      socket.once('error', reject)
+      socket.once('close', () => reject(new Error('connection closed')))
+    })
+
+    request(socket, 'OPTIONS', uri, 1)
+    await waitFor(1)
+    const publicMethods = responses[0].headers.public || ''
+    if (!publicMethods.includes('SET_PARAMETER')) {
+      console.error(`camera does not advertise SET_PARAMETER (Public: ${publicMethods})`)
     }
-    socket.on('data', onData)
-    socket.once('error', reject)
-  })
 
-  request(socket, 'OPTIONS', uri, 1)
-  await waitFor(1)
-  const options_ = responses[0]
-  const publicMethods = options_.headers.public || ''
-  if (!publicMethods.includes('SET_PARAMETER')) {
-    console.error(`camera does not advertise SET_PARAMETER (Public: ${publicMethods})`)
+    request(socket, method, uri, 2, body)
+    await waitFor(2)
+    return responses[1]
+  } finally {
+    socket.end()
   }
+}
 
-  request(socket, method, uri, 2, body)
-  await waitFor(2)
-  const answer = responses[1]
+async function main () {
+  const options = parseArgs(process.argv)
+  const answer = await exchange(options)
   console.log(answer.statusLine)
   process.stdout.write(answer.body)
-  socket.end()
   process.exit(answer.status >= 200 && answer.status < 300 ? 0 : 1)
 }
 
-main().catch(error => {
-  console.error(error.message)
-  process.exit(2)
-})
+module.exports = { exchange, readResponse }
+
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.message)
+    process.exit(2)
+  })
+}

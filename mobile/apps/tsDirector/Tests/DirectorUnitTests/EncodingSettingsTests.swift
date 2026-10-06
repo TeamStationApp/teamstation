@@ -4,17 +4,29 @@ import Testing
 
 @Suite("Encoding settings")
 struct EncodingSettingsTests {
-  @Test("A new install records raw cameras at 1080p60 HEVC 6 Mbps and streams 1080p60 HEVC at 2–6 Mbps")
+  @Test("A new install records raw cameras at 1080p60 HEVC 4 Mbps and streams 1080p60 HEVC at 1–6 Mbps")
   func newInstallDefaults() {
     let config = AppConfig()
     #expect(config.programBitrate == 4_000_000)
+    #expect(config.programFrameRate == 60)
     #expect(config.rawCameraEncoding == EncodeSettings(
-      codec: .hevc, resolution: .hd1080, frameRate: 60, bitrate: 6_000_000, keyframeSeconds: 2
+      codec: .hevc, resolution: .hd1080, frameRate: 60, bitrate: 4_000_000, keyframeSeconds: 2
     ))
     #expect(config.streamEncoding == EncodeSettings(
       codec: .hevc, resolution: .hd1080, frameRate: 60, bitrate: 6_000_000, keyframeSeconds: 2
     ))
-    #expect(config.streamBitrateLow == 2_000_000)
+    #expect(config.streamBitrateLow == 1_000_000)
+  }
+
+  @Test("A new install has both latency caps on, at 1 s and 20 s, and the subnet override off")
+  func newInstallCaps() {
+    let config = AppConfig()
+    #expect(config.displayLatencyCapEnabled)
+    #expect(config.displayLatencyCapMilliseconds == 1_000)
+    #expect(config.diskLatencyCapEnabled)
+    #expect(config.diskLatencyCapMilliseconds == 20_000)
+    #expect(config.subnetScanOverrideEnabled == false)
+    #expect(config.activeScanSubnets.isEmpty)
   }
 
   /// An iPad saved before the groups existed: 720p30 programme at 12 Mbps, NDI archived in H.264.

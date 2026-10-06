@@ -57,11 +57,36 @@ public struct AudioFrame: @unchecked Sendable {
   public let sourceID: SourceID
   public let sampleBuffer: CMSampleBuffer
   public let wallClock: WallClock
+  /// Which of the source's sessions this sound came from. A new session is a new timeline: its
+  /// sample count and its clock mapping start again. Zero for a source that never says.
+  public let sessionID: UInt64
+  /// Where this buffer's first sample sits in the session's own sample count, at 48 kHz, so a lost
+  /// packet can be told from contiguous sound. Nil for a source that does not count.
+  public let sourceSamplePosition: Int64?
+  /// Whether `wallClock` is when the sound was captured, from the source's own clock mapping,
+  /// rather than when it arrived. Arrival is a guess a capture time later corrects.
+  public let isCaptureTime: Bool
+  /// When the sound was captured on our continuous uptime (`ContinuousUptime`), from the source's
+  /// own clock mapping: what its timeline places by when present, so a step of the iPad's wall
+  /// clock cannot move it. Nil for a source that maps onto the wall clock only.
+  public let captureUptime: Double?
 
-  public init(sourceID: SourceID, sampleBuffer: CMSampleBuffer, wallClock: WallClock) {
+  public init(
+    sourceID: SourceID,
+    sampleBuffer: CMSampleBuffer,
+    wallClock: WallClock,
+    sessionID: UInt64 = 0,
+    sourceSamplePosition: Int64? = nil,
+    isCaptureTime: Bool = false,
+    captureUptime: Double? = nil
+  ) {
     self.sourceID = sourceID
     self.sampleBuffer = sampleBuffer
     self.wallClock = wallClock
+    self.sessionID = sessionID
+    self.sourceSamplePosition = sourceSamplePosition
+    self.isCaptureTime = isCaptureTime
+    self.captureUptime = captureUptime
   }
 }
 
@@ -362,6 +387,10 @@ public struct ReceiveStats: Sendable, Equatable {
   /// instead of silently absorbed.
   public var cameraClockOffsetFilteredSeconds: Double = 0
   public var cameraClockOffsetSamples: Int = 0
+  /// Times the camera's wall clock stepped back and the offset followed it.
+  public var cameraClockSteps: UInt64 = 0
+  /// Sound packets held back because the camera's clock reports did not yet agree.
+  public var soundAwaitingClock: UInt64 = 0
   /// The latest frame's capture time on the Director's clock, and how far behind now that is.
   ///
   /// The age is **excess over this camera's own best case**, not absolute end-to-end delay: the
@@ -380,10 +409,6 @@ public struct ReceiveStats: Sendable, Equatable {
   public var outOfOrderFrames: UInt64 = 0
   /// Times the sender's clock has been seen to restart, which in practice is the camera rebooting.
   public var senderClockRestarts: UInt64 = 0
-  /// Times this camera's live sound was re-anchored to its own arrival because the picture's timing
-  /// put it where the programme mix could not take it (`AudioPlayoutAnchor`). Each one is a moment
-  /// the programme would otherwise have gone silent on this camera.
-  public var audioReanchors: UInt64 = 0
   /// How long this source has been silent past the stall timeout, or zero while it is delivering.
   /// The one counter on a tile that can describe frames that did *not* arrive.
   public var stalledForSeconds: Double = 0

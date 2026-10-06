@@ -38,6 +38,20 @@ public final class SendDelayLine: @unchecked Sendable {
   private var heldFrames: UInt64 = 0
 
   private let queue = DispatchQueue(label: "app.teamstation.cameraman.senddelay")
+  /// The struggling-phone hold: given uptime now, when a packet handed over now may leave, or nil
+  /// for at once. Holds every packet of both streams and releases them in one burst.
+  private var holdRelease: (@Sendable (Double) -> Double?)?
+  /// True while a drain is handing packets on, outside the lock. A send arriving then waits its
+  /// turn rather than going out at once ahead of them: it used to, so the first packets after a
+  /// hold overtook the hold's own, and the audio stamps, which follow capture order, jumped ahead
+  /// and paired a later sound with an earlier capture time in the next sender report.
+  private var delivering = false
+
+  public func setHoldRelease(_ release: (@Sendable (Double) -> Double?)?) {
+    lock.lock()
+    holdRelease = release
+    lock.unlock()
+  }
 
   public init() {}
 
@@ -78,12 +92,13 @@ public final class SendDelayLine: @unchecked Sendable {
   /// Routes one send. Returns immediately either way; `deliver` runs now or later on the delay queue.
   public func submit(_ deliver: @escaping () -> Void) {
     lock.lock()
-    guard delaySeconds > 0 || jitterSeconds > 0 || burstSeconds > 0 else {
+    let now = Self.now()
+    let held = holdRelease?(now)
+    guard delaySeconds > 0 || jitterSeconds > 0 || burstSeconds > 0 || held != nil || !pending.isEmpty || delivering else {
       lock.unlock()
       deliver()
       return
     }
-    let now = Self.now()
     // Jitter is symmetric about the delay and never pulls a frame earlier than the moment it was
     // handed over: a negative total would deliver out of order, which is a different fault.
     let spread = jitterSeconds > 0 ? Double.random(in: -jitterSeconds ... jitterSeconds) : 0
@@ -94,6 +109,10 @@ public final class SendDelayLine: @unchecked Sendable {
       // Everything in this window leaves together at its end, which is the clumping that matters.
       due = max(due, opened + burstSeconds)
     }
+    // While a hold is set, nothing overtakes what is already waiting: a packet after a hold leaves
+    // with or after the hold's burst, never before it.
+    if holdRelease != nil, let latest = pending.map(\.due).max() { due = max(due, latest) }
+    if let held { due = max(due, held) }
     pending.append(Pending(due: due, sequence: nextSequence, deliver: deliver))
     nextSequence &+= 1
     heldFrames &+= 1
@@ -122,8 +141,12 @@ public final class SendDelayLine: @unchecked Sendable {
     pending.removeAll { $0.due <= now }
     if pending.isEmpty { burstOpenedAt = nil }
     scheduleLocked()
+    delivering = true
     lock.unlock()
     for item in ready { item.deliver() }
+    lock.lock()
+    delivering = false
+    lock.unlock()
   }
 
   private static func now() -> Double {

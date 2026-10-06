@@ -268,6 +268,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var cameraClockOffsetSeconds: Double = 0
   public var cameraClockOffsetFilteredSeconds: Double = 0
   public var cameraClockOffsetSamples: Int = 0
+  /// Times this camera's wall clock stepped back and its offset was re-measured from after the step.
+  public var cameraClockSteps: UInt64 = 0
+  /// Sound packets held back until the camera's clock reports agreed.
+  public var soundAwaitingClock: UInt64 = 0
   public var correctedCaptureTime: Double = 0
   public var correctedCaptureAgeMilliseconds: Double = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
@@ -283,9 +287,30 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// times is explained by this, and a count that climbs steadily is an unstable sender rather
   /// than one that was power-cycled once.
   public var senderClockRestarts: UInt64 = 0
-  /// Times this camera's sound was re-anchored to its arrival because its picture's timing put it
-  /// out of the programme mix's reach. Climbing means the picture is running seconds behind the sound.
-  public var audioReanchors: UInt64 = 0
+  /// This camera's sound on its own timeline: what the live mix is doing with it (`playing`,
+  /// `fadingOut`, `silent`, `buffering`, `fadingIn`; empty while it is not mixed), how much sound
+  /// waits ahead of the live mix's read head, fades into silence, silence emitted after it had been
+  /// heard, timelines started (one per session or jump over a second), re-anchors (a run begun on
+  /// arrival time moved once to its first capture time), steps (an error over 100 ms
+  /// held for a second), gaps in its own sample count, and the clock mapping's last error against
+  /// where the run lays it down. One new timeline per reconnect and no steps is a healthy camera.
+  public var soundState = ""
+  public var soundHeldMilliseconds: Double = 0
+  public var soundFades: UInt64 = 0
+  public var soundConcealedMilliseconds: Double = 0
+  public var soundTimelines: UInt64 = 0
+  /// Timelines a new session started; `soundTimelines` less this is the in-session ones.
+  public var soundSessionTimelines: UInt64 = 0
+  /// The largest error a step corrected, in milliseconds.
+  public var soundLargestStepMilliseconds: Double = 0
+  public var soundSteps: UInt64 = 0
+  /// Runs begun on arrival time before the session's first sender report, moved once to capture.
+  public var soundReanchors: UInt64 = 0
+  public var soundGaps: UInt64 = 0
+  public var soundErrorMilliseconds: Double = 0
+  /// The drift loop's correction for this camera, in parts per million: how much faster than its
+  /// own count its sound is laid down. Settles within 15 s of a new timeline; ±500 is the clamp.
+  public var soundDriftPartsPerMillion: Double = 0
   /// Pictures not shown because they were older than the display cap. The monitor is worthless
   /// showing action that has already happened, so these are skipped and the last good picture
   /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable
@@ -558,6 +583,23 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var recordingMixSeconds: Double = 0
   public var recordingMixLateBuffers: UInt64 = 0
   public var recordingMixFutureBuffers: UInt64 = 0
+  /// How long after capture the live mix plays each camera's sound (D): the display latency cap.
+  /// The programme's pictures are placed by the same delay.
+  public var liveSoundDelayMilliseconds: Double = 0
+  /// Programme pictures dropped for arriving more than a tick after their moment, and pictures
+  /// never shown because a newer one was due on the same tick.
+  public var programmeLatePictures: UInt64 = 0
+  /// The programme clock's worst lateness since the last poll, and ticks it has missed in all.
+  public var programmeTickLatenessMaxMilliseconds: Double = 0
+  public var programmeMissedTicks: UInt64 = 0
+  public var programmeSkippedPictures: UInt64 = 0
+  /// Programme pictures left out because the compositor could not make one.
+  public var programmeComposeMisses: UInt64 = 0
+  /// Fades into silence and silence emitted in each mix, over every source.
+  public var audioMixFades: UInt64 = 0
+  public var audioMixConcealedSeconds: Double = 0
+  public var recordingMixFades: UInt64 = 0
+  public var recordingMixConcealedSeconds: Double = 0
   public var cpuPercent: Double = 0
   public var cpuCores = 0
   /// What iPadOS will still let this process allocate, which is far below physical RAM.
@@ -609,6 +651,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var programAudioPlaying = false
   /// Programme RTMP publish is currently running. Distinct from `dvr.isRecording`.
   public var isStreaming = false
+  /// Where the Stream button publishes: `url` or `event`, and which one, without its stream key
+  /// (the URL up to its application, or the chosen game's id and title). Read before a test
+  /// streams, so a test never publishes to a real team's game.
+  public var streamDestination = ""
+  public var streamTarget = ""
   /// IDRs actually emitted on the RTMP encode, not camera keyframes.
   public var streamKeyframeCount: UInt64 = 0
   /// Seconds since the last RTMP IDR. HLS stalls when this climbs past `gopSeconds`.

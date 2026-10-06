@@ -1,4 +1,5 @@
 import AdaptiveBitrate
+import CoreMedia
 import CameramanCore
 import Darwin
 import Foundation
@@ -18,7 +19,7 @@ public final class RTSPServer: @unchecked Sendable {
     /// not counted here; `acceptedClients` still counts it.
     public var clientCount = 0
     public var lastError: String?
-    /// Frames the send queue dropped across clients because a receiver could not keep up.
+    /// Pictures the send queue dropped across clients because they waited too long to go out.
     public var droppedFrames = 0
     /// Lifetime accepts, including clients that closed immediately.
     public var acceptedClients = 0
@@ -28,7 +29,13 @@ public final class RTSPServer: @unchecked Sendable {
     public var lastDisconnectReason: String?
     /// Bytes still sitting in client send queues. A climb with `clientCount > 0` is backpressure.
     public var sendQueuePendingBytes = 0
+    /// Drops started because media waited longer than `MediaSendQueue.maximumAgeSeconds`.
     public var sendQueueFlushes = 0
+    /// Sound dropped for the same reason, in seconds.
+    public var sendQueueDroppedSoundSeconds: Double = 0
+    /// The worst client's transport: bytes handed and not yet taken, and its budget.
+    public var transportBytes = 0
+    public var transportBudgetBytes = 0
     /// `ready` / `failed` / `cancelled` / other `NWListener` states, for a soak that lost the bind.
     public var listenerState: String?
 
@@ -53,6 +60,8 @@ public final class RTSPServer: @unchecked Sendable {
   private let requestKeyframe: @Sendable () -> Void
   /// Answers `GET_PARAMETER` / `SET_PARAMETER` bodies. Nil offers no parameters.
   private let parameters: RTSPResponder.ParameterHandler?
+  /// The clock capture times are stamped on, which says how long media has waited to go out.
+  private let captureClock: @Sendable () -> Double
 
   /// What `start` was last called with, so the listener can be rebuilt without the caller having to
   /// remember. `stop` clears it, so a deliberate shutdown is never undone by a retry.
@@ -86,6 +95,9 @@ public final class RTSPServer: @unchecked Sendable {
 
   public var status: Status { state.withLock { $0.status } }
 
+  /// The host clock, which capture times are stamped on.
+  public static let hostClock: @Sendable () -> Double = { CMClockGetTime(CMClockGetHostTimeClock()).seconds }
+
   /// The SDP is produced on demand rather than held, because the parameter sets are not known until
   /// the encoder has produced its first frame, and a client may DESCRIBE before then.
   public init(
@@ -93,13 +105,15 @@ public final class RTSPServer: @unchecked Sendable {
     hasAudio: @escaping @Sendable () -> Bool,
     identity: @escaping @Sendable () -> DeviceIdentity,
     requestKeyframe: @escaping @Sendable () -> Void,
-    parameters: RTSPResponder.ParameterHandler? = nil
+    parameters: RTSPResponder.ParameterHandler? = nil,
+    captureClock: @escaping @Sendable () -> Double = RTSPServer.hostClock
   ) {
     self.describe = describe
     self.hasAudio = hasAudio
     self.identity = identity
     self.requestKeyframe = requestKeyframe
     self.parameters = parameters
+    self.captureClock = captureClock
   }
 
   /// Binds `port` and keeps it: a bind failure is retried on the same port with backoff, never moved
@@ -387,7 +401,8 @@ public final class RTSPServer: @unchecked Sendable {
       hasAudio: hasAudio(),
       identity: identity,
       requestKeyframe: requestKeyframe,
-      parameters: parameters
+      parameters: parameters,
+      captureClock: captureClock
     )
     let key = ObjectIdentifier(client)
     client.onClose = { [weak self] reason in
@@ -579,8 +594,13 @@ public final class RTSPServer: @unchecked Sendable {
 
   /// Aggregate backpressure across clients, for the HUD. A single slow client is worth seeing before
   /// it is diagnosed as an encoder problem.
-  public func sendQueueSummaries() -> [StreamSendQueue] {
+  public func sendQueueSummaries() -> [MediaSendQueue] {
     state.withLock { Array($0.connections.values) }.map(\.sendQueue)
+  }
+
+  /// Each client's transport as its gate last saw it: bytes handed and not yet taken, and the budget.
+  public func transportSummaries() -> [(bytes: Int, budget: Int)] {
+    state.withLock { Array($0.connections.values) }.map(\.transport)
   }
 
   /// The worst playing client's link since the previous call, or nil when nobody is playing.

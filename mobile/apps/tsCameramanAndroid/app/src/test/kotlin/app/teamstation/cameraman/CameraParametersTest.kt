@@ -11,12 +11,15 @@ import app.teamstation.cameraman.core.CameraParameters
 import app.teamstation.cameraman.core.CameraPosition
 import app.teamstation.cameraman.core.CameraSnapshot
 import app.teamstation.cameraman.core.DeviceIdentity
+import app.teamstation.cameraman.core.FrameDelivery
+import app.teamstation.cameraman.core.FrameRateSwing
 import app.teamstation.cameraman.core.StreamCodec
 import app.teamstation.cameraman.core.StreamSettings
 import app.teamstation.cameraman.core.ThermalBadgeLevel
 import app.teamstation.cameraman.core.ZoomMapping
 import app.teamstation.cameraman.core.fromSdpEncodingName
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -402,5 +405,69 @@ class CameraParametersTest {
         assertEquals(StreamCodec.HEVC, StreamCodec.fromSdpEncodingName("H265"))
         assertEquals(StreamCodec.HEVC, StreamCodec.fromSdpEncodingName("hevc"))
         assertNull(StreamCodec.fromSdpEncodingName("AV1"))
+    }
+
+    @Test
+    fun `the test throttle is on the wire - off by default, written without touching settings, echoed and decoded`() {
+        val plain = CameraParameters.encode(snapshot())
+        assertEquals("0", plain["test.deliveredFrameRate"])
+        assertEquals("", plain["test.deliveredFrameRateSwing"])
+        assertEquals("", plain["test.deliveredFrameRate.actual"])
+        assertEquals("", plain["test.deliveredFrameRateWander"])
+        assertEquals("", plain["test.struggle"])
+        assertEquals(
+            listOf(
+                "test.deliveredFrameRate", "test.deliveredFrameRateSwing", "test.deliveredFrameRateWander",
+                "test.deliveredFrameRate.actual", "test.struggle"
+            ),
+            plain.names.takeLast(5)
+        )
+
+        val throttled = snapshot().copy(
+            frameDelivery = FrameDelivery(24.0, FrameRateSwing(30.0, 60.0, 60.0)),
+            deliveredFrameRate = 29.87
+        )
+        val encoded = CameraParameters.encode(throttled)
+        assertEquals("24", encoded["test.deliveredFrameRate"])
+        assertEquals("30:60:60", encoded["test.deliveredFrameRateSwing"])
+        assertEquals("29.9", encoded["test.deliveredFrameRate.actual"])
+        val decoded = CameraParameters.decodeSnapshot(CameraParameterSet.decode(encoded.encoded).getOrNull()!!)!!
+        assertEquals(throttled.frameDelivery, decoded.frameDelivery)
+        assertEquals(29.9, decoded.deliveredFrameRate!!, 1e-9)
+        val older = CameraParameterSet()
+        for ((name, value) in plain.pairs) if (!name.startsWith("test.")) older.set(name, value)
+        val old = CameraParameters.decodeSnapshot(older)!!
+        assertEquals("a phone that predates the throttle reads as off", FrameDelivery.off, old.frameDelivery)
+        assertNull(old.deliveredFrameRate)
+
+        val rate = set("test.deliveredFrameRate: 24\r\n")
+        assertEquals(24.0, rate.deliveredFrameRate!!, 0.0)
+        assertTrue(rate.touchesFrameDelivery)
+        assertFalse("no settings change, so no reconfigure and no new session", rate.touchesSettings)
+        assertFalse(rate.isEmpty)
+        assertEquals(snapshot().settings, CameraParameters.settings(rate, snapshot().settings))
+        val applied = CameraParameters.snapshot(rate, snapshot())
+        assertEquals(FrameDelivery(frameRate = 24.0), applied.frameDelivery)
+        assertEquals(snapshot().settings, applied.settings)
+        assertEquals("test.deliveredFrameRate: 24\r\n", CameraParameters.echo(rate, applied).encoded)
+
+        val swing = set("test.deliveredFrameRateSwing: 24.0:60:20\r\n")
+        assertEquals("24:60:20", swing.deliveredFrameRateSwing)
+        assertFalse(swing.touchesSettings)
+        val swung = CameraParameters.frameDelivery(swing, FrameDelivery(frameRate = 12.0))
+        assertEquals(FrameDelivery(12.0, FrameRateSwing(24.0, 60.0, 20.0)), swung)
+        val cleared = CameraParameters.frameDelivery(set("test.deliveredFrameRateSwing:\r\n"), swung)
+        assertEquals(FrameDelivery(frameRate = 12.0), cleared)
+        assertTrue(CameraParameters.frameDelivery(set("test.deliveredFrameRate: 0\r\n"), cleared).isOff)
+
+        for (bad in listOf("-1", "0.5", "241", "abc", "NaN")) {
+            assertEquals(bad, 400, failure("test.deliveredFrameRate: $bad\r\n")?.statusCode)
+        }
+        for (bad in listOf("60:24:20", "24:60", "24:60:0", "x")) {
+            val error = failure("test.deliveredFrameRateSwing: $bad\r\n")
+            assertEquals(bad, 400, error?.statusCode)
+            assertEquals("test.deliveredFrameRateSwing", error?.name)
+        }
+        assertEquals(458, failure("test.deliveredFrameRate.actual: 24\r\n")?.statusCode)
     }
 }

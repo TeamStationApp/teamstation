@@ -423,8 +423,8 @@ class RTSPServer(
      * Aggregate backpressure across clients, for the HUD. A single slow client is worth seeing
      * before it is diagnosed as an encoder problem.
      */
-    fun sendQueueSummaries(): List<StreamSendQueue.Snapshot> =
-        lock.withLock { connections.keys.toList() }.map { it.sendQueue.snapshot() }
+    fun sendQueueSummaries(): List<MediaSendQueue.Snapshot> =
+        lock.withLock { connections.keys.toList() }.map { it.sendQueueSnapshot() }
 
     /**
      * The worst playing client's link since the previous call, or null when nobody is playing.

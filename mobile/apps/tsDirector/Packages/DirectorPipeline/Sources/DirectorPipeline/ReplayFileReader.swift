@@ -141,6 +141,13 @@ final class ReplayFileReader: @unchecked Sendable {
     return takeFrame()
   }
 
+  /// The media time of the next frame `pop` would return, without taking it; nil on underrun.
+  func peekMedia() -> TimeInterval? {
+    lock.lock()
+    defer { lock.unlock() }
+    return frames.first?.media
+  }
+
   /// Non-blocking pop for the display thread. Returns nil on underrun; the last picture stays.
   func pop() -> (pixel: CVPixelBuffer, time: CMTime, media: TimeInterval)? {
     lock.lock()

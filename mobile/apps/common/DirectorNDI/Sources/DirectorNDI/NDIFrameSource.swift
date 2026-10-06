@@ -258,6 +258,16 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     )
   }
 
+  /// Sinks and the audio format without a receiver, so a test can hand frames in.
+  func installSinks(_ sinks: FrameSinks) {
+    lock.lock()
+    self.sinks = sinks
+    audioFormat = AudioSampleBuilder.makeFormatDescription(
+      AudioSampleBuilder.interleavedInt16Description()
+    )
+    lock.unlock()
+  }
+
   deinit {
     stop()
   }
@@ -286,6 +296,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     var snapshot = stats
     snapshot.outOfOrderFrames = receiveClock.outOfOrderFrames
     snapshot.senderClockRestarts = receiveClock.clockRestarts
+    snapshot.cameraClockSteps = receiveClock.clockSteps
     // From the last picture across reconnects, not from this session; see `SilenceClock`.
     snapshot.stalledForSeconds = running
       ? silence.stalledForSeconds(now: Date(), timeout: Self.stallTimeout)
@@ -447,10 +458,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
   /// Releases whatever has come due and publishes it, on this source's own queue so the SDK's
   /// capture thread is never the one waiting on a renderer.
-  private func drain() {
+  func drain() {
     let now = Self.seconds(.now())
     lock.lock()
-    if let coordinator { playout.setFloor(milliseconds: coordinator.programMilliseconds) }
+    if let coordinator { playout.setFloor(milliseconds: coordinator.floorMilliseconds(excluding: sourceID)) }
     // The pool bounds the hold, not only the queue. A ceiling the pool cannot honour would have the
     // line evicting its earliest-due picture on every arrival — nothing ever comes due, the tile
     // freezes and the archive keeps recording. Below the pool, the operator's cap wins.
@@ -472,7 +483,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     noteGapWindow(now: now)
     let handler = sinks.pixel
-    let buffer = playout.bufferMilliseconds
+    let buffer = playout.requirementMilliseconds
     let shouldReport = now - lastReportAt >= Self.reportInterval
     if shouldReport { lastReportAt = now }
     lock.unlock()
@@ -1059,7 +1070,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
   }
 
-  private func handle(audio frame: NDIlib_audio_frame_v3_t) {
+  func handle(audio frame: NDIlib_audio_frame_v3_t) {
     if let rejection = NDIFrameValidator.accept(frame) {
       lock.lock()
       rejections.record(rejection)
@@ -1087,11 +1098,22 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
         formatDescription: format,
         presentationTime: time
       ) {
-        // Placed at its arrival for the screen and the recording alike: an NDI source's sound
-        // waits in no delay line, and carries no capture time of its own.
-        let frame = AudioFrame(sourceID: sourceID, sampleBuffer: buffer, wallClock: clock.now)
-        sinks.audio?(frame)
-        sinks.recordingAudio?(frame)
+        // Placed by its NDI timestamp, on the same clock offset as the pictures, so its sound
+        // plays with the pictures of the same moment however the network delivered it.
+        let capture = receiveClock.audioCaptureSeconds(
+          timestamp: frame.timestamp,
+          sampleIndex: start,
+          sampleRate: NDIAudioFrameConverter.outputSampleRate
+        )
+        let sound = AudioFrame(
+          sourceID: sourceID,
+          sampleBuffer: buffer,
+          wallClock: WallClock(seconds: capture),
+          sourceSamplePosition: start,
+          isCaptureTime: true
+        )
+        sinks.audio?(sound)
+        sinks.recordingAudio?(sound)
       }
     }
 

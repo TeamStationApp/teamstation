@@ -31,6 +31,10 @@ struct RTPClockAudit: Sendable {
     var accumulatedSeconds: Double = 0
     var octetCount: UInt32
     var reports: UInt64 = 1
+    /// The last time this stream's own NTP/RTP pairing moved: a report whose wall clock is not
+    /// where its RTP ticks, at the rate measured so far, put it. That is the camera's clock
+    /// stepping, and only that: a report held up on the way still pairs its two clocks correctly.
+    var lastRelationJump: (atUptime: Double, seconds: Double)?
   }
 
   /// Half the 32-bit circle. A step shorter than this is the clock advancing; anything longer is a
@@ -56,6 +60,25 @@ struct RTPClockAudit: Sendable {
   /// Rolling window of offset observations, kept so the estimate can be the minimum rather than the
   /// latest. See `filteredOffsetSeconds`.
   private var offsetSamples: [OffsetSample] = []
+  /// When every report started reading more than `stepThresholdSeconds` below the filtered offset:
+  /// the camera's clock stepped back, or its reports are being delayed. Held for
+  /// `stepHoldSeconds`, it is the clock: transit spikes come and go, a clock step stays.
+  private var lowSince: Double?
+  /// A camera's wall clock stepping back by more than this is adopted once it has held for
+  /// `stepHoldSeconds`. On 2026-10-05 the iPhone's clock stepped back 240 ms mid-stream and the
+  /// window's maximum kept the old offset for its whole ten minutes: every capture time 240 ms early,
+  /// the sound stepped and its margin halved.
+  static let stepThresholdSeconds: Double = 0.05
+  static let stepHoldSeconds: Double = 10
+  /// Seconds of reports a stream's rate must rest on before its pairing is judged to have moved.
+  static let relationRateSeconds: Double = 5
+  /// How long before the low reading began the pairing may have moved and still explain it.
+  static let relationLeadSeconds: Double = 5
+  /// The previous sessions' observations of the same camera, kept through a reconnect. The camera's
+  /// clock did not change when its link dropped, so the least-delayed report from before the drop is
+  /// still the best estimate after it; without them the first report of a new session, often
+  /// delayed by the reconnect itself, set the offset alone and moved every capture time.
+  private var carriedOffsetSamples: [OffsetSample] = []
   private static let offsetWindowSeconds: Double = 600
   /// An offset larger than this is a camera whose clock was never set, not a camera in another
   /// time zone. A NearStream ships without an NTP client and reports whatever it powered up
@@ -72,8 +95,14 @@ struct RTPClockAudit: Sendable {
   /// The sender's wall clock minus ours, at the moment its last report arrived. Includes one-way
   /// transit, which is milliseconds; anything larger is genuine disagreement between the clocks.
   private(set) var ntpOffsetSeconds: Double = 0
+  /// Our wall clock less our continuous uptime, as read with the last report: what turns a capture
+  /// time on uptime into one on the wall clock for the paths that still want one. Only that
+  /// conversion follows a wall-clock step; the offset itself is measured against uptime and does not.
+  private(set) var wallMinusUptimeSeconds: Double = 0
   /// Uptime when the last report landed, so staleness can be reported rather than inferred.
   private(set) var lastReportUptime: Double = 0
+  /// Times the camera's wall clock was seen to step back and the offset followed it.
+  private(set) var clockSteps: UInt64 = 0
 
   /// The offset to actually correct with: the **largest** observation in the window.
   ///
@@ -86,12 +115,60 @@ struct RTPClockAudit: Sendable {
   /// estimate follows the delay, silently cancelling the lateness it was supposed to reveal: a
   /// 500 ms send-side hold moved the unfiltered value 0.45 s, which would have made injected
   /// lateness invisible to the very tests meant to catch it.
+  ///
+  /// The largest that two more agree with, to within `agreementSeconds`, rather than the largest
+  /// alone: flight time only lowers an observation, so one above the envelope is a report whose
+  /// pairing is wrong, and a single one used to carry the whole mapping. On 2026-10-05, under a
+  /// struggling phone, isolated reports read 0.5-1.3 s above the rest, and every capture time moved
+  /// by that for as long as the window held them.
+  ///
+  /// Observations are kept as the camera's clock less our **continuous uptime** at arrival, never
+  /// less our wall clock: the iPad's wall clock is stepped by NTP, and a 100 ms step of it once moved
+  /// both cameras' offsets and stepped their sound. This is the same envelope on our wall clock, for
+  /// display and for the paths that place on it.
   var filteredOffsetSeconds: Double {
-    offsetSamples.map(\.offset).max() ?? ntpOffsetSeconds
+    filteredUptimeOffsetSeconds.map { $0 - wallMinusUptimeSeconds } ?? ntpOffsetSeconds
+  }
+
+  /// The camera's clock less our continuous uptime: the upper envelope of the observations.
+  var filteredUptimeOffsetSeconds: Double? {
+    Self.envelope((offsetSamples + carriedOffsetSamples).map(\.offset))
+  }
+
+  static let agreementSeconds: Double = 0.03
+
+  /// Whether the offset can be placed by yet: the largest observation has two more within
+  /// `agreementSeconds` of it, or the first was `agreementWaitSeconds` ago. A connection's first
+  /// report is often held up by the connection itself: placed by it, a session's first sound went in
+  /// seconds early and the next report started a new timeline. Waiting for agreement costs a fresh
+  /// connection its first second or two of sound; after a reconnect the carried observations agree
+  /// at once.
+  func offsetIsAgreed(at uptime: Double) -> Bool {
+    let samples = offsetSamples + carriedOffsetSamples
+    let sorted = samples.map(\.offset).sorted(by: >)
+    if sorted.count >= 3, sorted[0] - sorted[2] <= Self.agreementSeconds { return true }
+    guard let first = samples.map(\.atUptime).min() else { return false }
+    return uptime - first >= Self.agreementWaitSeconds
+  }
+
+  static let agreementWaitSeconds: Double = 5
+
+  /// Below this many observations there is no envelope to stand out from, and the largest is used.
+  static let envelopeMinimumSamples = 10
+
+  /// The upper envelope of `values`: the largest with two others within `agreementSeconds` below
+  /// it, or with none that do, the third largest. The largest while there are too few to judge.
+  static func envelope(_ values: [Double]) -> Double? {
+    let sorted = values.sorted(by: >)
+    guard sorted.count >= envelopeMinimumSamples else { return sorted.first }
+    for index in 0 ..< sorted.count - 2 where sorted[index] - sorted[index + 2] <= agreementSeconds {
+      return sorted[index]
+    }
+    return sorted[2]
   }
 
   /// How many observations the filtered value rests on. One sample is not a filter.
-  var offsetSampleCount: Int { offsetSamples.count }
+  var offsetSampleCount: Int { offsetSamples.count + carriedOffsetSamples.count }
 
   /// The most recent (wall clock, RTP tick) pair for one specific stream.
   ///
@@ -117,12 +194,22 @@ struct RTPClockAudit: Sendable {
   /// The tick difference is taken as a signed 32-bit quantity so a frame slightly older than the
   /// anchor reads as negative rather than as most of a rollover.
   func captureTimeOnLocalClock(rtpTimestamp: UInt32, ssrc: UInt32, clockRate: Double = 90_000) -> Double? {
-    guard let anchor = anchor(forSSRC: ssrc), clockRate > 0 else { return nil }
-    let offset = filteredOffsetSeconds
-    guard abs(offset) <= Self.maximumClockSkewSeconds else { return nil }
+    captureUptimeOnLocalClock(rtpTimestamp: rtpTimestamp, ssrc: ssrc, clockRate: clockRate)
+      .map { $0 + wallMinusUptimeSeconds }
+  }
+
+  /// When a frame carrying `rtpTimestamp` was captured, on our **continuous uptime**: what the sound
+  /// path places by, so nothing about where it lands goes through the iPad's wall clock.
+  func captureUptimeOnLocalClock(rtpTimestamp: UInt32, ssrc: UInt32, clockRate: Double = 90_000) -> Double? {
+    // No offset observed yet is no answer: an uptime offset defaulted to zero placed a session's
+    // first sound decades away, and the first real report then started a new timeline.
+    guard let anchor = anchor(forSSRC: ssrc), clockRate > 0,
+          let uptimeOffset = filteredUptimeOffsetSeconds
+    else { return nil }
+    guard abs(uptimeOffset - wallMinusUptimeSeconds) <= Self.maximumClockSkewSeconds else { return nil }
     let ticks = Int32(bitPattern: rtpTimestamp &- anchor.rtpTimestamp)
     let cameraWall = anchor.ntpSeconds + Double(ticks) / clockRate
-    return cameraWall - offset
+    return cameraWall - uptimeOffset
   }
 
   /// Mean seconds between sender reports.
@@ -179,6 +266,11 @@ struct RTPClockAudit: Sendable {
       // repeats or reorders a timestamp must not read as having jumped half a circle forward.
       let step = UInt64(sender.rtpTimestamp &- track.lastRTPTimestamp)
       let elapsed = ntpSeconds - track.lastNTPSeconds
+      if step < Self.half, track.accumulatedSeconds >= Self.relationRateSeconds, track.accumulatedTicks > 0 {
+        let rate = Double(track.accumulatedTicks) / track.accumulatedSeconds
+        let jump = elapsed - Double(step) / rate
+        if abs(jump) > Self.stepThresholdSeconds { track.lastRelationJump = (arrivalUptime, jump) }
+      }
       if step < Self.half, elapsed > 0 {
         track.accumulatedTicks &+= step
         track.accumulatedSeconds += elapsed
@@ -198,18 +290,50 @@ struct RTPClockAudit: Sendable {
       offsetSamples.removeAll()
     }
     if let busiest, let primary = report.senderReports.first(where: { $0.ssrc == busiest }) {
-      let observed = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
-      ntpOffsetSeconds = observed
+      ntpOffsetSeconds = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
+      wallMinusUptimeSeconds = wallClockNow.timeIntervalSince1970 - arrivalUptime
+      let observed = primary.ntpDate.timeIntervalSince1970 - arrivalUptime
+      let sessionBest = Self.envelope(offsetSamples.map(\.offset))
+      let carriedBest = Self.envelope(carriedOffsetSamples.map(\.offset))
+      if let filtered = Self.envelope((offsetSamples + carriedOffsetSamples).map(\.offset)),
+         observed < filtered - Self.stepThresholdSeconds {
+        let since = lowSince ?? arrivalUptime
+        lowSince = since
+        // Low for a while is not enough on its own: reports held up on the way, by a hot phone
+        // or a congested link, read low for as long as the holding lasts. On 2026-10-05 a phone
+        // holding its sends 0.3-2 s at a time was adopted as a clock step over and over. A step
+        // is followed when the camera's own pairing moved with it, or when what it contradicts
+        // is only the previous session's estimate.
+        let paired = tracks[busiest]?.lastRelationJump.map {
+          $0.atUptime >= since - Self.relationLeadSeconds && $0.seconds <= -Self.stepThresholdSeconds
+        } ?? false
+        let inherited = carriedBest.map { carried in
+          sessionBest.map { carried > $0 + Self.stepThresholdSeconds } ?? true
+        } ?? false
+        if arrivalUptime - since >= Self.stepHoldSeconds, paired || inherited {
+          // The clock stepped: what was measured before it no longer describes it.
+          offsetSamples.removeAll { $0.atUptime < since }
+          carriedOffsetSamples.removeAll()
+          clockSteps &+= 1
+          lowSince = nil
+        }
+      } else {
+        lowSince = nil
+      }
       offsetSamples.append(OffsetSample(atUptime: arrivalUptime, offset: observed))
       let cutoff = arrivalUptime - Self.offsetWindowSeconds
       offsetSamples.removeAll { $0.atUptime < cutoff }
+      carriedOffsetSamples.removeAll { $0.atUptime < cutoff }
     }
   }
 
   /// A reconnect gives the camera a new timeline and possibly a new SSRC, so nothing measured
-  /// against the old one carries over.
-  mutating func reset() {
+  /// against the old one carries over, except, with `keepingClockOffset`, what the camera's wall
+  /// clock was measured to be against ours: that belongs to the camera, not to the session.
+  mutating func reset(keepingClockOffset: Bool = false) {
+    carriedOffsetSamples = keepingClockOffset ? carriedOffsetSamples + offsetSamples : []
     tracks.removeAll()
+    lowSince = nil
     offsetSSRC = nil
     offsetSamples.removeAll()
     lastArrivalUptime = nil

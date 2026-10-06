@@ -186,6 +186,9 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `lens.disabled` | rw comma list of ids | a `SET` that would disable the last lens at a position is a `400`; honoured as a zoom clamp, see the README |
 | `stream.url` | string | `rtsp://<ip>:<port><path>`, the string Settings copies — the bound port, so `8554` |
 | `stream.clients` | int | playing sessions only; a control-only connection is not a viewer |
+| `test.deliveredFrameRate` | rw number | test only: fps to deliver to the encoder, `0` for every frame (off). Captured frames are dropped before encoding, each interval varied ±30%, so the stream carries fewer, uneven frames at their own capture times; format, declared rate, SDP, session and sound are untouched. Off at every launch, never saved |
+| `test.deliveredFrameRateSwing` | rw `low:high:period` | test only: the delivered rate ramps from `low` to `high` and back over each `period` seconds, starting at `low`; empty for none. Wins over `test.deliveredFrameRate` while set |
+| `test.deliveredFrameRate.actual` | number | fps actually reaching the encoder over the last two seconds, throttled or not; empty until measured |
 
 Three descriptors are filled differently from the iOS build, because Camera2 publishes different
 facts. Each is read-only, and a client that only reads what the table says it means is unaffected:

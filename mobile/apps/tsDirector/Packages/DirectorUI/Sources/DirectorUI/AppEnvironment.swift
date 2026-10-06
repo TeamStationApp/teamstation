@@ -171,6 +171,7 @@ public final class AppEnvironment {
       distributorEvents.publish(.recordingStateChanged(isRecording: isRecording))
       distributorEvents.publish(.recordingsChanged)
       updateScoreboards()
+      holdProgrammeSound()
     }
   }
   /// TS Distributor is attached by cable and talking to this Director.
@@ -191,7 +192,15 @@ public final class AppEnvironment {
       guard isStreaming != oldValue else { return }
       distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
       updateScoreboards()
+      holdProgrammeSound()
     }
+  }
+
+  /// Keeps the programme's two mixes counting while a stream is wanted or a take is recording, so
+  /// both sound tracks run from go-live, silent until a camera speaks. A dropped stream that is
+  /// being redialled still holds them: its sound must carry on from the same counter.
+  private func holdProgrammeSound() {
+    router.setProgrammeSoundLive(isRecording || isStreaming || streamWanted)
   }
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
@@ -310,6 +319,8 @@ public final class AppEnvironment {
   /// settings as they are now. Behind a lock because exports read it off the main actor.
   private let exportFallbackEncoding: OSAllocatedUnfairLock<TakeEncoding>
   private let stateDumper = StateDumper()
+  /// The take's once-a-second telemetry, beside its programme master.
+  private let takeTelemetry = TakeTelemetryLog(directory: DirectorPaths.program)
   private var controlServer: ControlServer?
   /// TS Distributor's way in: a loopback server the Mac reaches over the cable.
   private var linkServer: LinkServer?
@@ -428,11 +439,11 @@ public final class AppEnvironment {
     // The app target passes the same registry it gave to discovery; anything without a transport
     // gets its own, which is empty and harmless.
     let registry = cameras ?? CameraRegistry(store: CameraRecordStore(store: configStore))
-    registry.playout.setCap(
-      milliseconds: session.displayLatencyCapEnabled
-        ? session.displayLatencyCapMilliseconds
-        : nil
-    )
+    // Never past D, cap on or off, and before any camera is seeded from a saved hold.
+    registry.playout.setCap(milliseconds: TileRouter.playoutCapMilliseconds(
+      capEnabled: session.displayLatencyCapEnabled,
+      capMilliseconds: session.displayLatencyCapMilliseconds
+    ))
     // The delay line's cap above bounds how much latency is *added* deliberately. These bound how
     // old a picture may be and still be worth showing, or still be worth keeping — which nothing
     // enforced before, on either transport.
@@ -444,8 +455,8 @@ public final class AppEnvironment {
       width: session.programResolution.width,
       height: session.programResolution.height
     )
-    self.programEncoder = ProgramEncoder(telemetry: telemetry, converter: converter, config: session)
-    self.programStreamer = ProgramStreamer(telemetry: telemetry, converter: converter)
+    self.programEncoder = ProgramEncoder(telemetry: telemetry, converter: converter, config: session, clock: clock)
+    self.programStreamer = ProgramStreamer(telemetry: telemetry, converter: converter, clock: clock)
     self.router = TileRouter(
       telemetry: telemetry,
       converter: converter,
@@ -458,6 +469,12 @@ public final class AppEnvironment {
     // construction, and a frame gate that only took effect after the operator next opened Settings
     // would be off for the whole of the first session.
     self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
+    // And D, which the delay line's cap above was set to: a saved cap other than the default would
+    // otherwise hold pictures past a D still at its default until Settings next changed.
+    self.router.setLiveSoundDelay(seconds: TileRouter.liveSoundDelaySeconds(
+      capEnabled: session.displayLatencyCapEnabled,
+      capMilliseconds: session.displayLatencyCapMilliseconds
+    ))
     // The programme clock's rates until a take or a stream says otherwise.
     self.router.setRecordingRate(session.programFrameRate)
     self.router.setStreamRate(session.streamFrameRate)
@@ -1822,31 +1839,22 @@ public final class AppEnvironment {
   }
 
   /// Points the mixer at whichever sources are ticked for audio. Called after activation and again
-  /// whenever the operator changes a toggle, so the mix follows the switches live.
+  /// whenever the operator changes a toggle, so the mix follows the switches live, mid-take included:
+  /// the old source fades out and the new one fades in at the same picture in the stream and the
+  /// recording (`TileRouter.setAudioContributors`).
   public func applyAudioContributors() {
     let ids = Set(SourceSelectionRules.audioContributors(in: selections).map(\.id))
     router.setAudioContributors(ids)
     applyInputGains()
   }
 
-  /// Whether the take's sound source may be changed right now.
+  /// Which camera carries the sound, at any time, recording or not.
   ///
-  /// It may not, while recording. The programme master places its sound by one offset settled at
-  /// the part's start, and that is only correct while the sound keeps coming from the same place;
-  /// swapping source mid-take would put the writer back to reconciling a moving target, which is
-  /// the fault this whole change removes. Enforced here as well as disabled in the view, because
-  /// the control channel and the REST harness reach this directly.
-  ///
-  /// Input gain is deliberately *not* locked: it is applied in `AudioMixer.append` and never
-  /// touches the timeline, and an operator who hears the sound is too quiet twenty minutes into a
-  /// game should not be stuck with it for the rest of the game.
-  public var canChangeAudioSource: Bool { !isRecording }
-
+  /// The recording's master takes the recording mix as one continuous track on the mix's own sample
+  /// clock, and each camera's sound is placed on that clock by its own capture time, so the master's
+  /// placement does not depend on which camera is heard. A camera whose sound drops out mid-game can
+  /// be swapped for another without stopping the take.
   public func setUsesAudio(_ usesAudio: Bool, for id: SourceID) {
-    guard canChangeAudioSource else {
-      telemetry.recordError("audio source is locked while recording")
-      return
-    }
     SourceSelectionRules.setUsesAudio(usesAudio, for: id, in: &selections)
     // Every row's audio may have moved, not just this one: turning one on turns the others off.
     for selection in selections { rememberAudio(for: selection.id) }
@@ -2072,6 +2080,30 @@ public final class AppEnvironment {
     }
   }
 
+  /// Where a stream would go, without its key: the URL's scheme, host, port and application for a
+  /// typed URL, the game's id and title for an event. A test reads it before streaming.
+  var streamTargetDescription: String {
+    switch config.streamDestination {
+    case .url:
+      return Self.withoutStreamKey(config.streamURL)
+    case .event:
+      guard let chosen = teamStation.chosen else { return "" }
+      return "\(chosen.gameId) \(chosen.title)"
+    }
+  }
+
+  /// `rtmp://host:1935/live/key` → `rtmp://host:1935/live`. The key is the last path component.
+  static func withoutStreamKey(_ url: String) -> String {
+    guard var components = URLComponents(string: url), components.host != nil else { return "" }
+    components.user = nil
+    components.password = nil
+    components.query = nil
+    var path = components.path.split(separator: "/", omittingEmptySubsequences: true)
+    if path.count > 1 { path.removeLast() }
+    components.path = path.isEmpty ? "" : "/" + path.joined(separator: "/")
+    return components.string ?? ""
+  }
+
   public func startStreaming() {
     guard !isStreaming else { return }
     guard distributorExport == nil else {
@@ -2208,6 +2240,7 @@ public final class AppEnvironment {
 
   public func stopStreaming() async {
     streamWanted = false
+    holdProgrammeSound()
     guard isStreaming || programStreamer.running else {
       isStreaming = false
       endLiveSession(streaming: true)
@@ -4021,12 +4054,17 @@ public final class AppEnvironment {
 
   /// Launch arguments overlay the running session and are forgotten when the process exits.
   /// Writing them back is how a test flag became a saved setting, so they never touch disk.
-  private static func applying(_ launch: LaunchConfiguration, to config: AppConfig) -> AppConfig {
+  static func applying(_ launch: LaunchConfiguration, to config: AppConfig) -> AppConfig {
     var config = config
     if let seconds = launch.segmentSeconds { config.segmentSeconds = seconds }
     if let codec = launch.programCodec { config.programCodec = codec }
     if let hud = launch.debugHUD { config.showDebugHUD = hud }
-    if let url = launch.streamURL { config.streamURL = url }
+    if let url = launch.streamURL {
+      config.streamURL = url
+      // A run that names a URL streams there. Left on `event`, the stream went to whatever game
+      // Settings had chosen, which can be a real team's.
+      if !url.isEmpty { config.streamDestination = .url }
+    }
     if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
     if let rate = launch.programFrameRate { config.programFrameRate = rate }
     if let codec = launch.streamCodec { config.streamCodec = codec }
@@ -4071,16 +4109,21 @@ public final class AppEnvironment {
   }
 
   private func applyDisplayLatencyCap() {
-    cameras.playout.setCap(
-      milliseconds: config.displayLatencyCapEnabled
-        ? config.displayLatencyCapMilliseconds
-        : nil
-    )
+    // Never past D, cap on or off: a picture held longer reaches the programme after its moment.
+    cameras.playout.setCap(milliseconds: TileRouter.playoutCapMilliseconds(
+      capEnabled: config.displayLatencyCapEnabled,
+      capMilliseconds: config.displayLatencyCapMilliseconds
+    ))
     // Two different things share the word latency. The line above bounds how much delay the
     // delay line *adds* to smooth jitter; this bounds how old a picture may be and still be shown
     // or still be kept. Nothing enforced the second before, on either transport, which is how a
     // tile came to display frames two seconds behind the room.
     router.setLatencyCaps(FrameLatencyGate.Caps(config: config))
+    // The live mix plays each camera's sound this long after capture: the same cap.
+    router.setLiveSoundDelay(seconds: TileRouter.liveSoundDelaySeconds(
+      capEnabled: config.displayLatencyCapEnabled,
+      capMilliseconds: config.displayLatencyCapMilliseconds
+    ))
   }
 
   public func setDiskLatencyCapMilliseconds(_ milliseconds: Double) {
@@ -4552,6 +4595,18 @@ public final class AppEnvironment {
       $0.recordingMixSeconds = (recordingMix.emittedSeconds * 10).rounded() / 10
       $0.recordingMixLateBuffers = recordingMix.lateBuffers
       $0.recordingMixFutureBuffers = recordingMix.futureBuffers
+      $0.liveSoundDelayMilliseconds = (mix.readLagSeconds * 1_000).rounded()
+      let pictures = self.router.programmePictureCounts
+      let ticks = self.router.programmeTickStatistics()
+      $0.programmeTickLatenessMaxMilliseconds = (ticks.latenessMax * 10_000).rounded() / 10
+      $0.programmeMissedTicks = ticks.missed
+      $0.programmeLatePictures = pictures.late
+      $0.programmeSkippedPictures = pictures.skipped
+      $0.programmeComposeMisses = self.router.programmeComposeMisses
+      $0.audioMixFades = mix.fades
+      $0.audioMixConcealedSeconds = (mix.concealedSeconds * 100).rounded() / 100
+      $0.recordingMixFades = recordingMix.fades
+      $0.recordingMixConcealedSeconds = (recordingMix.concealedSeconds * 100).rounded() / 100
       $0.cpuPercent = (cpu * 10).rounded() / 10
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
@@ -4567,12 +4622,35 @@ public final class AppEnvironment {
       $0.diskLatencyCapMilliseconds = (caps.diskSeconds ?? 0) * 1_000
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
       $0.isStreaming = self.isStreaming
+      $0.streamDestination = self.config.streamDestination.rawValue
+      $0.streamTarget = self.streamTargetDescription
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
       $0.pictureInPictureActive = self.pictureInPicture.isActive
       $0.sourceLayout = self.sourceLayout.displayOrder
       $0.outputCorner = self.sourceLayout.programCorner.rawValue
     }
     telemetry.recordComposedFrames(composedFrames)
+    let sound = router.soundStatus()
+    for index in SourceIndex.all.map(\.value) {
+      telemetry.mutateTile(index) { tile in
+        guard let status = sound[index] else {
+          tile.soundState = ""
+          return
+        }
+        tile.soundState = status.live?.phase.rawValue ?? "silent"
+        tile.soundHeldMilliseconds = (status.heldSeconds * 1_000).rounded()
+        tile.soundFades = status.live?.fades ?? 0
+        tile.soundConcealedMilliseconds = ((status.live?.concealedSeconds ?? 0) * 1_000).rounded()
+        tile.soundTimelines = status.timeline.timelines
+        tile.soundSessionTimelines = status.timeline.sessionTimelines
+        tile.soundLargestStepMilliseconds = (status.timeline.largestStepSeconds * 10_000).rounded() / 10
+        tile.soundSteps = status.timeline.steps
+        tile.soundReanchors = status.timeline.reanchors
+        tile.soundDriftPartsPerMillion = (status.timeline.driftPartsPerMillion * 10).rounded() / 10
+        tile.soundGaps = status.timeline.gaps
+        tile.soundErrorMilliseconds = (status.timeline.lastErrorSeconds * 10_000).rounded() / 10
+      }
+    }
     var liveDecodeSessions = 0
     var countedBytesPerSecond = 0.0
     var uncountedTiles: [Int] = []
@@ -4627,7 +4705,6 @@ public final class AppEnvironment {
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
-        tile.audioReanchors = receive.audioReanchors
         tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
@@ -4638,6 +4715,8 @@ public final class AppEnvironment {
         tile.cameraClockOffsetSeconds = receive.cameraClockOffsetSeconds
         tile.cameraClockOffsetFilteredSeconds = receive.cameraClockOffsetFilteredSeconds
         tile.cameraClockOffsetSamples = receive.cameraClockOffsetSamples
+        tile.cameraClockSteps = receive.cameraClockSteps
+        tile.soundAwaitingClock = receive.soundAwaitingClock
         tile.correctedCaptureTime = receive.correctedCaptureTime
         tile.correctedCaptureAgeMilliseconds = receive.correctedCaptureAgeMilliseconds
       }
@@ -4728,6 +4807,7 @@ public final class AppEnvironment {
       }
     }
     applyProgramOverlays()
+    takeTelemetry.note(recording: activeRecordingID, snapshot: next, at: clock.now.seconds)
   }
 
   /// HUD numbers can wait a second. The yellow replay-offset pill cannot — it should tick about
@@ -4805,7 +4885,6 @@ public final class AppEnvironment {
     case let .selectAudioSource(source):
       // By grid slot, like `.selectProgram`, so a flow names a camera the same way for both.
       guard let pipeline = router.pipeline(at: source) else { return false }
-      guard canChangeAudioSource else { return false }
       setUsesAudio(true, for: pipeline.sourceID)
     case let .replay(source, seconds, speed):
       let rate: Float = speed == "slow" ? Float(config.replaySlowMotionRate) : 1
@@ -4864,6 +4943,13 @@ public final class AppEnvironment {
     case .searchCameras:
       discovery?.sweepNow()
       discovery?.searchNow()
+    case let .setDisplayLatencyCap(milliseconds):
+      // Saved, as the Performance sheet saves it; a launch or /configure cap overlays it for a session.
+      if milliseconds > 0 {
+        setDisplayLatencyCapMilliseconds(milliseconds)
+      } else {
+        setDisplayLatencyCap(enabled: false)
+      }
     case let .setSubnetScan(subnet, on):
       // Through `update(config:)`, like the Settings switch it stands in for, so a bench set up this
       // way is still set up after a relaunch. Turning it on without a usable subnet is refused

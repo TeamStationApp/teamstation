@@ -25,6 +25,9 @@ import app.teamstation.cameraman.core.CameraSnapshot
 import app.teamstation.cameraman.core.CaptureFormatDescriptor
 import app.teamstation.cameraman.core.DeviceIdentity
 import app.teamstation.cameraman.core.DeviceIdentityProvider
+import app.teamstation.cameraman.core.FrameDelivery
+import app.teamstation.cameraman.core.FrameDeliveryThrottle
+import app.teamstation.cameraman.core.StruggleInjector
 import app.teamstation.cameraman.core.IdentityStore
 import app.teamstation.cameraman.core.InMemoryIdentityStore
 import app.teamstation.cameraman.core.LensSelection
@@ -119,6 +122,24 @@ class AppEnvironment(
 
     /** The same, for the audio only. See `ControlCommand.SetAudioDelay`. */
     val audioSendDelay = SendDelayLine()
+
+    /**
+     * The test throttle on frames reaching the encoder, set over `test.deliveredFrameRate*`. A new
+     * one at every launch, so it always starts off.
+     */
+    val frameThrottle = FrameDeliveryThrottle()
+
+    /**
+     * The struggling-phone injection, set over `test.struggle` beside the throttle: sound lost before
+     * the encoder, both streams held and released in bursts, the encoder starved of pictures. A new
+     * one at every launch, so it always starts off.
+     */
+    val struggle = StruggleInjector().also { injector ->
+        val hold: (Double) -> Double? = { now -> injector.holdRelease(now) }
+        sendDelay.setHoldRelease(hold)
+        audioSendDelay.setHoldRelease(hold)
+        microphone.keepsSound = { time, duration -> injector.keepsSound(time, duration) }
+    }
 
     private val radarLink = RadarLink(
         store = PreferencesRadarPairingStore(context),
@@ -475,6 +496,7 @@ class AppEnvironment(
         camera.onBlankChanged = { videoEncoder.requestKeyframe() }
         camera.onCaptureRotationChange = { videoEncoder.requestKeyframe() }
         camera.onVideoFrame = { capturedFrameCount.incrementAndGet() }
+        camera.deliversFrame = ::deliversFrame
 
         // The listener is the broadcast. The preview, the encoder and the radar link come up either
         // way, so the operator can frame the shot before anyone is watching.
@@ -824,9 +846,22 @@ class AppEnvironment(
                 lenses = lensCatalogState.value,
                 streamURL = streamURL,
                 clientCount = serverStatusState.value.clientCount,
-                currentBitrate = adaptiveBitrate?.status?.controller?.bitrate
+                currentBitrate = adaptiveBitrate?.status?.controller?.bitrate,
+                frameDelivery = frameThrottle.delivery,
+                deliveredFrameRate = frameThrottle.deliveredFrameRate
             )
         }
+
+    /**
+     * Whether the camera frame captured at [timestampNanos] gets past the test throttle to the
+     * encoder. Asked of every captured frame, so the throttle's clock and its measured rate follow
+     * the camera.
+     */
+    fun deliversFrame(timestampNanos: Long): Boolean {
+        val time = timestampNanos / 1_000_000_000.0
+        val throttled = frameThrottle.shouldDeliver(time)
+        return struggle.keepsFrame(time) && throttled
+    }
 
     /**
      * Answers a `GET_PARAMETER` / `SET_PARAMETER` body. A write goes through the same methods the
@@ -855,6 +890,13 @@ class AppEnvironment(
                         write.name?.let { rename(it) }
                         write.position?.let { if (it != current.position) camera.flip() }
                         write.displayedZoom?.let { camera.setDisplayedZoom(it) }
+                        if (write.touchesFrameDelivery) {
+                            val next = CameraParameters.frameDelivery(write, frameThrottle.delivery)
+                            // A write that names only the struggle leaves the throttle's own clock
+                            // running; one that names only the throttle leaves the struggle's.
+                            frameThrottle.configure(next, keepingClock = !write.touchesFrameRate)
+                            if (write.struggle != null) struggle.configure(next.struggle)
+                        }
                         if (write.touchesSettings) {
                             updateSettings(CameraParameters.settings(write, settingsState.value))
                             applySettings()
@@ -1011,6 +1053,8 @@ class AppEnvironment(
         }
 
         ControlCommand.Reset -> {
+            frameThrottle.configure(FrameDelivery.off)
+            struggle.configure(null)
             val next = launch.settings.copy()
             settingsState.value = next
             noteSettingsApplied(next)
@@ -1142,7 +1186,25 @@ class AppEnvironment(
             put("wakeLockHeld", wakeLock?.isHeld == true)
             put("wifiLockHeld", wifiLock?.isHeld == true)
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
+            put("frameDelivery", frameDeliveryJSON())
             RadarSnapshot.putInto(this, radarLink.state.value)
+        }
+    }
+
+    /** The test throttle: what it was told, and what is reaching the encoder. Same keys as iOS. */
+    fun frameDeliveryJSON(): JSONObject {
+        val delivery = frameThrottle.delivery
+        return JSONObject().apply {
+            put("frameRate", delivery.frameRate)
+            put("swing", delivery.swing?.text ?: JSONObject.NULL)
+            put("wander", delivery.wander?.text ?: JSONObject.NULL)
+            put("wanderTarget", frameThrottle.wanderTarget?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL)
+            put("deliveredFrameRate", frameThrottle.deliveredFrameRate ?: JSONObject.NULL)
+            val summary = struggle.summary()
+            put("struggle", struggle.struggle?.text ?: JSONObject.NULL)
+            put("struggleDroppedSoundSeconds", Math.round(summary.droppedSoundSeconds * 100) / 100.0)
+            put("struggleHolds", summary.holds)
+            put("struggleDroppedFrames", summary.droppedFrames)
         }
     }
 
@@ -1193,6 +1255,7 @@ class AppEnvironment(
             put("lastDisconnectReason", status.lastDisconnectReason ?: JSONObject.NULL)
             put("sendQueuePendingBytes", summaries.sumOf { it.pendingBytes })
             put("sendQueueFlushes", summaries.sumOf { it.flushes })
+            put("sendQueueDroppedSoundSeconds", (summaries.sumOf { it.droppedSoundSeconds } * 100).roundToInt() / 100.0)
             put("listenerState", status.listenerState ?: JSONObject.NULL)
             put("isAdvertising", status.isAdvertising)
         }

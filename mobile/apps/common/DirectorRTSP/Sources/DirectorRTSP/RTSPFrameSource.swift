@@ -40,6 +40,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// No completed picture for this long means the session is dead even though the socket is open —
   /// the failure a camera on a flapping link actually produces.
   private static let stallTimeout: TimeInterval = 5
+  /// How long a picture may be missing while the camera's sound keeps arriving; see
+  /// `StallWatchdog.pictureTimeout`.
+  static let pictureOnlyStallTimeout: TimeInterval = 60
   private static let backoffSeconds: [TimeInterval] = [ 1, 2, 4, 8 ]
   /// After this many failures the address itself is suspect rather than the connection.
   private static let attemptsBeforeRelocation = 3
@@ -55,14 +58,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// release by as much, which is a visible hitch of its own. Decoding early and holding the pixel
   /// buffer for the remainder costs two frames of memory and takes the decode off the clock.
   private static let decodeLead: TimeInterval = 0.06
-  /// How much video the compressed delay line may hold, in seconds.
+  /// How much more video the compressed delay line holds than the longest it may hold a picture
+  /// (the display latency cap, or the engine's 2 s ceiling without one).
   ///
   /// `PlayoutQueue` bounds a count rather than a duration, so this is turned into frames against
-  /// the measured rate. It has to be: a fixed cap was three seconds at 30 fps and only a second
-  /// and a half at 60, which is less than the two seconds `PlayoutController.Limits` allows the
-  /// buffer to grow to. Overflowing costs more than it sounds — the queue is ordered by due time
-  /// and trims from the front, so the pictures it discards are the ones about to be shown.
-  private static let pictureQueueSeconds: Double = 3
+  /// the measured rate. A fixed count was three seconds at 30 fps and only a second and a half at
+  /// 60; and overflowing costs more than it sounds — the queue is ordered by due time and trims from
+  /// the front, so the pictures it discards are the ones about to be shown.
+  private static let pictureQueueSpareSeconds: Double = 0.25
   /// The rate assumed for the dozen frames before `frameRateEstimator` has an answer, and after a
   /// reconnect if this camera has never reported a format. The faster of the two rates in the
   /// population, because both consumers fail worse when the guess is low: the delay line drops
@@ -137,9 +140,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private var playout: PlayoutController
   private var pictures = PlayoutQueue<PendingPicture>()
   private var decodedFrames = PlayoutQueue<PixelFrame>()
-  private var audioFrames = PlayoutQueue<AudioFrame>()
-  /// Keeps this camera's sound mixable when its picture falls behind it; see `AudioPlayoutAnchor`.
-  private var audioAnchor = AudioPlayoutAnchor()
+  /// Counts sessions, so the sound timeline can tell a reconnect from a gap.
+  private var soundSession: UInt64 = 0
+  /// When the camera's sound last arrived: while it keeps arriving, a missing picture is given
+  /// longer before the session is reconnected.
+  private var lastSoundUnitAt: Date?
+  /// Reconnects the current picture stall has already cost, which lengthens the next wait.
+  private var pictureStallReconnects = 0
+  /// The stream's CNAME from the last session that stated one. A different one is a different
+  /// device, whose clock owes nothing to what was measured of this one.
+  private var lastStreamCNAME: String?
   private var drainTimer: DispatchSourceTimer?
   private var lastReportAt: Double = 0
 
@@ -255,6 +265,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.cameraClockOffsetSeconds = (clockAudit.ntpOffsetSeconds * 1000).rounded() / 1000
     snapshot.cameraClockOffsetFilteredSeconds = (clockAudit.filteredOffsetSeconds * 1000).rounded() / 1000
     snapshot.cameraClockOffsetSamples = clockAudit.offsetSampleCount
+    snapshot.cameraClockSteps = clockAudit.clockSteps
     snapshot.correctedCaptureTime = lastCorrectedCapture
     snapshot.correctedCaptureAgeMilliseconds = (correctedCaptureAgeSeconds * 1000).rounded()
     snapshot.senderReportStreams = clockAudit.streamCount
@@ -300,7 +311,6 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     connectionCount = 0
     pictures.removeAll()
     decodedFrames.removeAll()
-    audioFrames.removeAll()
     lock.unlock()
 
     coordinator?.retire(sourceID)
@@ -308,6 +318,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     session?.stop()
     decoder?.invalidate()
   }
+
+  /// Sinks without a session, so a test can hand decoded sound in; and the drain queue, so a test
+  /// can hold it up the way a slow picture decode does.
+  func installSinks(_ sinks: FrameSinks) {
+    lock.lock()
+    self.sinks = sinks
+    lock.unlock()
+  }
+
+  var drainQueue: DispatchQueue { queue }
 
   // MARK: - Session lifecycle
 
@@ -345,8 +365,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoTracker = RTPSequenceTracker()
     audioTracker = RTPSequenceTracker()
     videoTimeline.reset()
-    clockAudit.reset()
+    // The camera's clock offset is the camera's, not the session's: kept, so the first report of a
+    // new session cannot move every capture time on its own.
+    clockAudit.reset(keepingClockOffset: true)
     audioTimeline.reset()
+    soundSession &+= 1
     lastPresentationTime = nil
     // A new session means a new anchor, so a corrected capture time from the old one describes a
     // clock that no longer applies. Leaving it set stamped every frame after a reconnect with a
@@ -361,14 +384,20 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     // carries over as the starting size.
     pictures.removeAll()
     decodedFrames.removeAll()
-    audioFrames.removeAll()
     playout = playout.reset()
-    audioAnchor = AudioPlayoutAnchor()
   }
 
-  private func handle(_ event: RTSPSession.Event) {
+  func handle(_ event: RTSPSession.Event) {
     switch event {
     case let .playing(description, channels):
+      if let cname = description.streamCNAME, !cname.isEmpty {
+        lock.lock()
+        if let previous = lastStreamCNAME, previous != cname {
+          clockAudit.reset(keepingClockOffset: false)
+        }
+        lastStreamCNAME = cname
+        lock.unlock()
+      }
       configure(with: description, channels: channels)
       publishAdvertisement(cname: description.streamCNAME, name: description.streamName)
 
@@ -382,10 +411,12 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     case let .rtcp(report):
       publishAdvertisement(cname: report.cname, name: report.name)
       lock.lock()
+      // Our wall clock from `clock`, the steady one in the app: the same clock the programme
+      // tick and the mixes read, so a capture time on it is compared like with like.
       clockAudit.note(
         report: report,
-        arrivalUptime: Self.seconds(DispatchTime.now()),
-        wallClockNow: Date()
+        arrivalUptime: ContinuousUptime.seconds(),
+        wallClockNow: clock.now.date
       )
       lock.unlock()
 
@@ -485,6 +516,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoSSRC = packet.ssrc
     stats.captured &+= 1
     lastAccessUnitAt = Date()
+    pictureStallReconnects = 0
     // A picture, which the session answering at setup is not: a camera that accepts the connection
     // and sends nothing must go on reading as silent.
     silence.notePicture(at: lastAccessUnitAt ?? Date())
@@ -512,7 +544,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
          ssrc: videoSSRC
        ) {
       lastCorrectedCapture = correctedCapture
-      correctedCaptureAgeSeconds = Date().timeIntervalSince1970 - correctedCapture
+      correctedCaptureAgeSeconds = clock.now.seconds - correctedCapture
       frameCapture = correctedCapture
     }
 
@@ -579,19 +611,21 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// with `lock` held.
   private func pictureQueueCapacityLocked() -> Int {
     let rate = announcedFrameRate ?? frameRateEstimator.frameRate ?? Self.assumedFrameRate
-    return Int((rate * Self.pictureQueueSeconds).rounded(.up))
+    // Sized by the time it has to span: the longest the delay line may hold, plus a spare.
+    let ceiling = coordinator?.latencyCapMilliseconds ?? PlayoutController.Limits().maximumMilliseconds
+    return Int((rate * (ceiling / 1_000 + Self.pictureQueueSpareSeconds)).rounded(.up))
   }
 
   /// Releases whatever has come due, decodes it and publishes it.
   ///
   /// Runs on this source's own queue rather than on the network thread, so a keyframe's decode
   /// cannot hold up reading the socket, and video and audio reach the sinks in one serial order.
-  private func drain() {
+  func drain() {
     let now = Self.seconds(.now())
 
     lock.lock()
     if let coordinator {
-      playout.setFloor(milliseconds: coordinator.programMilliseconds)
+      playout.setFloor(milliseconds: coordinator.floorMilliseconds(excluding: sourceID))
       playout.setCeiling(milliseconds: coordinator.latencyCapMilliseconds)
     }
     playout.advance(to: now)
@@ -599,10 +633,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     // decoding frames it has barely received.
     let lead = min(Self.decodeLead, playout.holdSeconds / 2)
     let toDecode = pictures.release(at: now + lead)
-    let dueAudio = audioFrames.release(at: now)
     let decoder = self.decoder
-    let audioHandler = sinks.audio
-    let buffer = playout.bufferMilliseconds
+    let buffer = playout.requirementMilliseconds
     let shouldReport = now - lastReportAt >= Self.reportInterval
     if shouldReport { lastReportAt = now }
     lock.unlock()
@@ -640,8 +672,6 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       jitter.noteDelivery(milliseconds: spent * 1000, at: DispatchTime.now())
       lock.unlock()
     }
-
-    for frame in dueAudio { audioHandler?(frame) }
   }
 
   private func startDrain() {
@@ -712,6 +742,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private func handleAudio(_ packet: RTPPacket) {
     lock.lock()
     audioTracker.observe(packet.sequenceNumber)
+    lastSoundUnitAt = Date()
     guard let depacketizer = audioDepacketizer else {
       lock.unlock()
       return
@@ -731,14 +762,24 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       // Through the audio stream's own sender reports, when the camera sends them, at the audio's
       // sample rate. Without them the archive pins the audio clock to the picture instead, and the
       // recording's mix places the sound where it arrived.
+      // Asked whenever the sound goes anywhere, the live mix included: it used to be asked only
+      // while recording, so a stream's first seconds were placed by arrival and moved once the
+      // recording started.
       var capture: Double?
-      if let config, archive != nil || recording != nil {
+      var captureUptime: Double?
+      var awaitingClock = false
+      if let config, archive != nil || recording != nil || wantsMix {
         lock.lock()
-        capture = clockAudit.captureTimeOnLocalClock(
+        captureUptime = clockAudit.captureUptimeOnLocalClock(
           rtpTimestamp: rtpTimestamp,
           ssrc: packet.ssrc,
           clockRate: config.sampleRate
         )
+        capture = captureUptime.map { $0 + clockAudit.wallMinusUptimeSeconds }
+        // A camera that reports its clock is placed by it once the reports agree, never before:
+        // its sound waits rather than starting a timeline the next report would move.
+        awaitingClock = captureUptime != nil && !clockAudit.offsetIsAgreed(at: ContinuousUptime.seconds())
+        if awaitingClock { stats.soundAwaitingClock &+= 1 }
         lock.unlock()
       }
 
@@ -763,64 +804,70 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         )
       }
 
-      guard wantsMix || recording != nil, let decoder, let output = decoder.decode(accessUnit) else { continue }
-
-      lock.lock()
-      if audioFormatDescription == nil {
-        audioFormatDescription = AudioSampleBuilder.makeFormatDescription(
-          AudioSampleBuilder.interleavedInt16Description(
-            sampleRate: output.sampleRate,
-            channels: UInt32(output.channelCount)
-          )
-        )
-      }
-      let formatDescription = audioFormatDescription
-      let rate = config?.sampleRate ?? output.sampleRate
-      let elapsed = audioTimeline.unwrap(rtpTimestamp)
-      let presentationSeconds = rate > 0 ? Double(elapsed) / rate : 0
-      lock.unlock()
-
-      guard
-        let formatDescription,
-        let sampleBuffer = AudioSampleBuilder.makeSampleBuffer(
-          samples: output.samples,
-          formatDescription: formatDescription,
-          presentationTime: CMTime(seconds: presentationSeconds, preferredTimescale: 48_000)
-        )
-      else { continue }
-
-      // The recording's mix waits for sound that arrives late, so it takes it now, stamped with
-      // when it was captured, rather than when the delay line below lets it play.
-      recording?(AudioFrame(
-        sourceID: sourceID,
-        sampleBuffer: sampleBuffer,
-        wallClock: capture.map { WallClock(seconds: $0) } ?? arrival
-      ))
-      guard wantsMix else { continue }
-
-      lock.lock()
-      let nowUptime = Self.seconds(.now())
-      // The picture's timing when the mix can use it, and the sound's own arrival when it cannot:
-      // a picture seconds behind its sound would otherwise leave every sample due where the queue
-      // and the mixer drop it.
-      let scheduled = audioAnchor.schedule(
-        due: playout.scheduleTime(presentationSeconds: presentationSeconds, nowUptime: nowUptime),
-        nowUptime: nowUptime,
-        holdSeconds: playout.holdSeconds
+      guard wantsMix || recording != nil, !awaitingClock, let decoder, let output = decoder.decode(accessUnit) else { continue }
+      deliverDecodedSound(
+        output,
+        rtpTimestamp: rtpTimestamp,
+        sourceRate: config?.sampleRate,
+        capture: capture,
+        captureUptime: captureUptime,
+        arrival: arrival
       )
-      if scheduled.reanchored { stats.audioReanchors &+= 1 }
-      let due = scheduled.due
-      let dueWall = clock.now + (due - nowUptime)
-      // Same delay line as the picture, against the camera's RTP timeline. Stamping arrival time
-      // and holding a flat `holdSeconds` stacked every access unit that rode behind a keyframe
-      // onto one mix slot, which the operator heard as stutter and pumping.
-      audioFrames.enqueue(
-        AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: dueWall),
-        due: due,
-        keepingAtMost: 120
-      )
-      lock.unlock()
     }
+  }
+
+  /// Hands decoded sound on at once, on the receive thread, stamped with its capture time.
+  ///
+  /// It used to wait in the picture's delay line and leave on the drain queue after that drain's
+  /// picture decodes, with the picture's playout offset as its timing: any stall on the iPad became
+  /// silence, and every reconnect re-rolled the timing, as two of the first games heard.
+  /// Now each camera's sound goes straight to its timeline, which places it by capture time.
+  func deliverDecodedSound(
+    _ output: AACAudioDecoder.Output,
+    rtpTimestamp: UInt32,
+    sourceRate: Double?,
+    capture: Double?,
+    captureUptime: Double? = nil,
+    arrival: WallClock
+  ) {
+    lock.lock()
+    if audioFormatDescription == nil {
+      audioFormatDescription = AudioSampleBuilder.makeFormatDescription(
+        AudioSampleBuilder.interleavedInt16Description(
+          sampleRate: output.sampleRate,
+          channels: UInt32(output.channelCount)
+        )
+      )
+    }
+    let formatDescription = audioFormatDescription
+    let rate = sourceRate ?? output.sampleRate
+    let elapsed = audioTimeline.unwrap(rtpTimestamp)
+    let presentationSeconds = rate > 0 ? Double(elapsed) / rate : 0
+    let session = soundSession
+    let recording = sinks.recordingAudio
+    let tap = sinks.audio
+    lock.unlock()
+
+    guard
+      let formatDescription,
+      let sampleBuffer = AudioSampleBuilder.makeSampleBuffer(
+        samples: output.samples,
+        formatDescription: formatDescription,
+        presentationTime: CMTime(seconds: presentationSeconds, preferredTimescale: 48_000)
+      )
+    else { return }
+
+    let frame = AudioFrame(
+      sourceID: sourceID,
+      sampleBuffer: sampleBuffer,
+      wallClock: capture.map { WallClock(seconds: $0) } ?? arrival,
+      sessionID: session,
+      sourceSamplePosition: Int64((presentationSeconds * AudioSampleBuilder.sampleRate).rounded()),
+      isCaptureTime: capture != nil,
+      captureUptime: captureUptime
+    )
+    recording?(frame)
+    tap?(frame)
   }
 
   // MARK: - Supervision
@@ -836,16 +883,27 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       let started = sessionStartedAt
       let isRunning = running
       let hasSession = session != nil
+      let now = Date()
+      let timeout = StallWatchdog.pictureTimeout(
+        now: now,
+        lastSoundAt: lastSoundUnitAt,
+        timeout: Self.stallTimeout,
+        pictureOnlyTimeout: Self.pictureOnlyStallTimeout,
+        stallReconnects: pictureStallReconnects
+      )
       lock.unlock()
 
       guard isRunning, hasSession else { return }
       guard StallWatchdog.shouldReconnect(
-        now: Date(),
+        now: now,
         lastAccessUnitAt: last,
         sessionStartedAt: started,
-        timeout: Self.stallTimeout
+        timeout: timeout
       ) else { return }
-      scheduleReconnect(reason: "no frames for \(Int(Self.stallTimeout))s")
+      lock.lock()
+      if timeout > Self.stallTimeout { pictureStallReconnects += 1 }
+      lock.unlock()
+      scheduleReconnect(reason: "no frames for \(Int(timeout))s")
     }
 
     lock.lock()

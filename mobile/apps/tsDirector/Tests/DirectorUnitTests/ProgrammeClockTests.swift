@@ -43,12 +43,13 @@ struct ProgrammeClockTests {
   @Test("A timer firing twice for one tick makes one frame, and one firing late skips a number")
   func timerJitter() {
     var clock = ProgrammeClock(recordingRate: 30, streamRate: 30)
-    #expect(clock.tick(at: 10) == ProgrammeClock.Tick(index: 0, recordingFrame: 0, streamFrame: 0))
+    #expect(clock.tick(at: 10) == ProgrammeClock.Tick(index: 0, recordingFrame: 0, streamFrame: 0, lateness: 0))
     #expect(clock.tick(at: 10 + 0.002) == nil)
-    #expect(
-      clock.tick(at: 10 + 2.0 / 30)
-        == ProgrammeClock.Tick(index: 2, recordingFrame: 2, streamFrame: 2, recordingFramesMissed: 1)
-    )
+    let late = clock.tick(at: 10 + 2.0 / 30)
+    #expect(late?.index == 2 && late?.recordingFrame == 2 && late?.streamFrame == 2)
+    #expect(late?.recordingFramesMissed == 1)
+    #expect(late?.ticksMissed == 1)
+    #expect(abs(late?.lateness ?? 1) < 1e-9)
   }
 
   @Test("A late timer says how many recording frames it skipped, so they can be filled")

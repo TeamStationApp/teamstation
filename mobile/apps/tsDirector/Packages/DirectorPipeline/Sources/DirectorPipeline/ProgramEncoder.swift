@@ -206,12 +206,18 @@ public final class ProgramEncoder: @unchecked Sendable {
     _ wall: WallClock
   ) -> Void
 
+  /// The clock the anchors and the parts are timed on: the one the pictures' capture times and
+  /// `start(at:)` come from (the steady wall clock in the app), never the device's own, which steps.
+  private let clock: DirectorClock
+
   public init(
     telemetry: PipelineTelemetry,
     converter: PixelConverter,
     config: AppConfig,
-    directory: URL = DirectorPaths.program
+    directory: URL = DirectorPaths.program,
+    clock: DirectorClock = SystemClock()
   ) {
+    self.clock = clock
     self.telemetry = telemetry
     self.converter = converter
     self.width = config.programResolution.width
@@ -518,7 +524,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       // still arriving pick their timestamps up from that fill and anchor it as real time.
       if resumedAwaitingPicture, let startedAt {
         resumedAwaitingPicture = false
-        previousPartsDuration = max(0, Date().timeIntervalSince1970 - startedAt.seconds)
+        previousPartsDuration = max(0, clock.now.seconds - startedAt.seconds)
       }
       if !sessionStarted {
         writer.startSession(atSourceTime: .zero)
@@ -569,7 +575,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     // A replay frame's or a recovery's arithmetic on source time stays consistent with where this
     // frame went.
     baseTime = CMTimeSubtract(presentationTime, time)
-    let nowWall = Date().timeIntervalSince1970
+    let nowWall = clock.now.seconds
     lastTime = time
     lastAppendHost = nowHost
     lastSourceTime = presentationTime
@@ -1288,7 +1294,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       ? "program writer cancelled: \(Self.describe(failed.error))"
       : "program writer failed: \(Self.describe(failed.error))"
     if lastTime.isNumeric, lastTime >= .zero {
-      let elapsed = startedAt.map { Date().timeIntervalSince($0.date) } ?? lastTime.seconds
+      let elapsed = startedAt.map { clock.now.seconds - $0.seconds } ?? lastTime.seconds
       previousPartsDuration += min(max(0, lastTime.seconds), max(0, elapsed) + 1)
     }
     videoInput?.markAsFinished()
@@ -1321,7 +1327,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     } else if failed.status == .unknown {
       failed.cancelWriting()
     }
-    let wall = WallClock(date: Date())
+    let wall = clock.now
     do {
       try start(at: wall)
     } catch {

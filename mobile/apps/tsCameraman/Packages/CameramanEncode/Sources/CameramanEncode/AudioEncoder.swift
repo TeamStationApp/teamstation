@@ -25,7 +25,20 @@ public final class AudioEncoder: @unchecked Sendable {
   private var sourceFormat = AudioStreamBasicDescription()
   private var destinationFormat = AudioStreamBasicDescription()
   private var pcmPending = PCMPendingBuffer()
+  /// Where the first sample waiting in `pcmPending` sits on the sample-count timeline: set from the
+  /// first buffer's capture time, then only ever counted on. A stretch the microphone lost is not on
+  /// it; `captureAnchors` carries the jump onto the capture clock.
   private var pendingTime: Double = 0
+  /// Whether `pendingTime` has been set since the converter was made.
+  private var hasTimeline = false
+  /// Where each 1024-sample chunk handed to the converter began, oldest first, until the access unit
+  /// it is the start of comes out. The converter can hold a chunk or two before its first packet,
+  /// and how many varies; matching packets to chunks in order, rather than counting packets from
+  /// where the input began, keeps every access unit at its own samples' time.
+  private var chunkTimes: [Double] = []
+  /// The encoder's priming: a packet's decoded sound is the input from this long before the chunk
+  /// it was cut against. 2,112 samples for Apple's AAC-LC, read from the converter.
+  private var primingSeconds: Double = 0
   /// Recent capture buffers: where each one's first sample sits on the sample-count timeline, and
   /// when it was captured. A frame's capture time comes from the latest buffer at or before its own
   /// position, moved by how far into it the frame starts. The newest buffer alone is wrong for a
@@ -54,6 +67,8 @@ public final class AudioEncoder: @unchecked Sendable {
 
   /// AAC-LC always codes 1024 samples per access unit, which is also what the RTP timestamp step is.
   public static let samplesPerFrame = 1024
+  /// Apple's AAC-LC encoder priming, used if the converter will not say.
+  static let defaultPrimingSamples = 2_112
 
   public init() {}
 
@@ -100,6 +115,12 @@ public final class AudioEncoder: @unchecked Sendable {
         return
       }
       converter = created
+      var prime = AudioConverterPrimeInfo()
+      var primeSize = UInt32(MemoryLayout<AudioConverterPrimeInfo>.size)
+      let leading = AudioConverterGetProperty(created, kAudioConverterPrimeInfo, &primeSize, &prime) == noErr
+        ? Double(prime.leadingFrames)
+        : Double(Self.defaultPrimingSamples)
+      primingSeconds = leading / Double(sampleRate)
       audioSpecificConfig = config
       silentAU = encodeAccessUnit(Data(count: Self.samplesPerFrame * bytesPerSourceFrame))
     }
@@ -125,15 +146,22 @@ public final class AudioEncoder: @unchecked Sendable {
       if silent && !wasSilent {
         pcmPending.replaceReadableWithZeros()
         if let converter { AudioConverterReset(converter) }
+        // What the converter held is gone with the reset.
+        chunkTimes.removeAll()
       }
       wasSilent = silent
-      if pcmPending.readableCount == 0 {
+      // Once only. Restarting the count at each buffer's capture time whenever the queue happened
+      // to be empty put a lost stretch into the count, and a packet the converter still held from
+      // before the gap was stamped after it: up to the gap late, as was the sender report it was
+      // paired into, and with it every sound placed by that report.
+      if !hasTimeline, pts.isFinite {
         pendingTime = pts
+        hasTimeline = true
       }
       if pts.isFinite, bytesPerSourceFrame > 0, sourceFormat.mSampleRate > 0 {
         let queued = Double(pcmPending.readableCount / bytesPerSourceFrame) / sourceFormat.mSampleRate
         captureAnchors.append((position: pendingTime + queued, capture: pts))
-        if captureAnchors.count > 16 { captureAnchors.removeFirst(captureAnchors.count - 16) }
+        if captureAnchors.count > 64 { captureAnchors.removeFirst(captureAnchors.count - 64) }
       }
       pcmPending.append(pcm)
       dropIfBackedUp()
@@ -153,25 +181,32 @@ public final class AudioEncoder: @unchecked Sendable {
     guard bytesPerSourceFrame > 0 else { return }
     let bytesPerFrame = Self.samplesPerFrame * bytesPerSourceFrame
 
+    let chunkSeconds = Double(Self.samplesPerFrame) / destinationFormat.mSampleRate
     while let chunk = pcmPending.take(bytesPerFrame) {
+      chunkTimes.append(pendingTime)
+      if chunkTimes.count > 16 { chunkTimes.removeFirst(chunkTimes.count - 16) }
+      pendingTime += chunkSeconds
       var encoded = encodeAccessUnit(chunk)
       if silent {
         if let encoded, !encoded.isEmpty { silentAU = encoded }
         if encoded == nil || encoded?.isEmpty == true { encoded = silentAU }
       }
-      guard let encoded, !encoded.isEmpty else {
-        if !silent { return }
-        continue
-      }
+      // A converter still filling its delay gives no packet yet; the chunk waits for the one it
+      // starts.
+      guard let encoded, !encoded.isEmpty else { continue }
 
+      // The packet's decoded sound is the input from the priming before its chunk: stamped there,
+      // it plays with the pictures captured with it. Stamped at the chunk, every iPhone's sound
+      // sat 44 ms late, plus 21 ms for each chunk the converter held at the start of a session.
+      let chunkTime = chunkTimes.isEmpty ? pendingTime - chunkSeconds : chunkTimes.removeFirst()
+      let time = chunkTime - primingSeconds
       onFrame?(EncodedAudioFrame(
         data: encoded,
-        presentationTime: pendingTime,
+        presentationTime: time,
         sampleRate: Int(destinationFormat.mSampleRate),
         channelCount: Int(destinationFormat.mChannelsPerFrame),
-        captureTime: captureTime(at: pendingTime)
+        captureTime: captureTime(at: time)
       ))
-      pendingTime += Double(Self.samplesPerFrame) / destinationFormat.mSampleRate
     }
   }
 
@@ -231,10 +266,13 @@ public final class AudioEncoder: @unchecked Sendable {
 
   private func teardownLocked() {
     captureAnchors.removeAll()
+    chunkTimes.removeAll()
+    primingSeconds = 0
     if let converter { AudioConverterDispose(converter) }
     converter = nil
     pcmPending.reset()
     pendingTime = 0
+    hasTimeline = false
     audioSpecificConfig = nil
     wasSilent = false
     silentAU = nil

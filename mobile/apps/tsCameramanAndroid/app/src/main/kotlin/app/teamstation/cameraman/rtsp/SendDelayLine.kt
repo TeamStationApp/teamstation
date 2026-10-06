@@ -43,6 +43,22 @@ class SendDelayLine {
     private var heldFrames = 0L
     private var isScheduled = false
 
+    /**
+     * The struggling-phone hold: given monotonic seconds now, when a packet handed over now may
+     * leave, or null for at once. Holds every packet of both streams and releases them in a burst.
+     */
+    private var holdRelease: ((Double) -> Double?)? = null
+
+    /**
+     * True while a drain is handing frames on, outside the lock. A send arriving then waits its turn
+     * rather than going out at once ahead of them, which reordered the first frames after a hold.
+     */
+    private var delivering = false
+
+    fun setHoldRelease(release: ((Double) -> Double?)?) {
+        lock.withLock { holdRelease = release }
+    }
+
     private val queue: ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor { runnable ->
             Thread(runnable, "cameraman-senddelay").apply { isDaemon = true }
@@ -96,9 +112,12 @@ class SendDelayLine {
     /** Routes one send. Returns at once either way; [deliver] runs now or later on the delay queue. */
     fun submit(deliver: () -> Unit) {
         val immediate = lock.withLock {
-            if (delaySeconds <= 0 && jitterSeconds <= 0 && burstSeconds <= 0) return@withLock true
-
             val now = System.nanoTime()
+            val held = holdRelease?.invoke(now / 1_000_000_000.0)
+            if (delaySeconds <= 0 && jitterSeconds <= 0 && burstSeconds <= 0 && held == null && pending.isEmpty() && !delivering) {
+                return@withLock true
+            }
+
             // Jitter is symmetric about the delay and never pulls a frame earlier than the moment it
             // was handed over: a negative total would deliver out of order, a different fault.
             val spread = if (jitterSeconds > 0) {
@@ -113,6 +132,10 @@ class SendDelayLine {
                 // Everything in this window leaves together at its end, which is the clumping.
                 due = maxOf(due, opened + (burstSeconds * 1_000_000_000).toLong())
             }
+            // While a hold is set, nothing overtakes what is already waiting: a packet after a hold
+            // leaves with or after the hold's burst, never before it.
+            if (holdRelease != null) pending.maxOfOrNull { it.due }?.let { due = maxOf(due, it) }
+            if (held != null) due = maxOf(due, (held * 1_000_000_000).toLong())
             pending.add(Pending(due, nextSequence, deliver))
             nextSequence += 1
             heldFrames += 1
@@ -140,8 +163,13 @@ class SendDelayLine {
             pending.removeAll { it.due <= now }
             if (pending.isEmpty()) burstOpenedAt = null
             scheduleLocked()
+            delivering = true
             due
         }
-        for (item in ready) item.deliver()
+        try {
+            for (item in ready) item.deliver()
+        } finally {
+            lock.withLock { delivering = false }
+        }
     }
 }

@@ -112,6 +112,9 @@ public struct RecordingListing: Codable, Equatable, Sendable {
   public var gameId: String?
   /// That game's dated title, `2026-09-20 Mission Trails at Bandits`, which titles its videos.
   public var gameTitle: String?
+  /// The take's once-a-second telemetry log (`rec-<id>-telemetry.jsonl` beside the programme
+  /// master), when the Director kept one. TS Distributor saves it beside the take's files.
+  public var telemetry: RemoteFile?
 
   public init(
     id: Int64,
@@ -123,7 +126,8 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     preparedTracks: [Track],
     soundShortfall: Double? = nil,
     gameId: String? = nil,
-    gameTitle: String? = nil
+    gameTitle: String? = nil,
+    telemetry: RemoteFile? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -135,6 +139,7 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     self.soundShortfall = soundShortfall
     self.gameId = gameId
     self.gameTitle = gameTitle
+    self.telemetry = telemetry
   }
 }
 

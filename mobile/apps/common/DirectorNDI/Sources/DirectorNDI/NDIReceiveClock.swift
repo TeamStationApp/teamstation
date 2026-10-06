@@ -93,6 +93,28 @@ public final class NDIReceiveClock: @unchecked Sendable {
   /// The window's maximum, kept rather than recomputed so the per-frame cost is a comparison.
   private var cachedFilteredOffset: Double?
 
+  /// Sound with no timestamp: arrival less the sample count's own time, the smallest in the window.
+  /// Arrival is capture plus transit, and transit only ever adds, so the least-delayed buffer is the
+  /// one closest to when the sound was made: the same minimum-delay filter as the clock offset.
+  private var audioArrivalOffsets: [(atSeconds: Double, offset: Double)] = []
+  /// Sender UTC minus ours as the sound's own frames observe it, the largest in the window: what
+  /// stands in for the pictures' offset before any picture has measured one.
+  private var audioTimestampOffsets: [(atSeconds: Double, offset: Double)] = []
+  /// When every offset sample started reading more than `stepThresholdSeconds` below the filtered
+  /// offset; see `RTPClockAudit` for why ten seconds of that is a clock step and not transit.
+  private var lowSince: Double?
+  private var senderClockSteps: UInt64 = 0
+  static let stepThresholdSeconds: Double = 0.05
+  static let stepHoldSeconds: Double = 10
+
+  /// Times the sender's wall clock stepped back and the offset followed it.
+  public var clockSteps: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return senderClockSteps
+  }
+  private static let audioArrivalWindowSeconds: Double = 30
+
   public init(clock: DirectorClock = SystemClock()) {
     self.clock = clock
   }
@@ -129,6 +151,9 @@ public final class NDIReceiveClock: @unchecked Sendable {
     rateEstimator.reset()
     lastRateSampleTimestamp = 0
     lastArrivalSeconds = 0
+    audioArrivalOffsets.removeAll(keepingCapacity: true)
+    audioTimestampOffsets.removeAll(keepingCapacity: true)
+    lowSince = nil
     lock.unlock()
   }
 
@@ -233,6 +258,20 @@ public final class NDIReceiveClock: @unchecked Sendable {
       if abs(offset) <= Self.maximumClockSkewSeconds,
          arrival.seconds - lastOffsetSampleAt >= Self.offsetSampleIntervalSeconds {
         lastOffsetSampleAt = arrival.seconds
+        // A sender clock that steps back reads low on every frame; held for ten seconds it is the
+        // clock, not transit, and what was measured before the step is dropped.
+        if let filtered = cachedFilteredOffset, offset < filtered - Self.stepThresholdSeconds {
+          let since = lowSince ?? arrival.seconds
+          lowSince = since
+          if arrival.seconds - since >= Self.stepHoldSeconds {
+            offsetSamples.removeAll { $0.atSeconds < since }
+            cachedFilteredOffset = offsetSamples.map(\.offset).max()
+            senderClockSteps &+= 1
+            lowSince = nil
+          }
+        } else {
+          lowSince = nil
+        }
         offsetSamples.append((atSeconds: arrival.seconds, offset: offset))
         let cutoff = arrival.seconds - Self.offsetWindowSeconds
         if let oldest = offsetSamples.first, oldest.atSeconds < cutoff {
@@ -255,6 +294,37 @@ public final class NDIReceiveClock: @unchecked Sendable {
       captureWallClock: capture ?? arrival,
       frameID: id
     )
+  }
+
+  /// When a buffer of sound was captured, on our clock.
+  ///
+  /// By its NDI `timestamp` (the sender's UTC at its first sample) through the same clock offset
+  /// as the pictures, so the sound lands where the pictures of the same moment do. Before any
+  /// picture has measured the offset, the sound's own observations stand in, through the same
+  /// minimum-delay filter. A buffer with no
+  /// usable timestamp is placed by its sample count against the least-delayed arrival seen in the
+  /// last 30 s, which is jitter-free where arrival is not.
+  public func audioCaptureSeconds(timestamp: Int64, sampleIndex: Int64, sampleRate: Double) -> Double {
+    let arrival = clock.now.seconds
+    lock.lock()
+    defer { lock.unlock() }
+    if timestamp != NDIlib_recv_timestamp_undefined, timestamp > 0 {
+      let senderSeconds = Double(timestamp) / Self.ticksPerSecond
+      let observed = senderSeconds - arrival
+      if abs(observed) <= Self.maximumClockSkewSeconds {
+        if let filteredOffsetSeconds { return senderSeconds - filteredOffsetSeconds }
+        let cutoff = arrival - Self.audioArrivalWindowSeconds
+        audioTimestampOffsets.removeAll { $0.atSeconds < cutoff }
+        audioTimestampOffsets.append((arrival, observed))
+        return senderSeconds - (audioTimestampOffsets.map(\.offset).max() ?? observed)
+      }
+    }
+    let counted = sampleRate > 0 ? Double(sampleIndex) / sampleRate : 0
+    let offset = arrival - counted
+    let cutoff = arrival - Self.audioArrivalWindowSeconds
+    audioArrivalOffsets.removeAll { $0.atSeconds < cutoff }
+    audioArrivalOffsets.append((arrival, offset))
+    return counted + (audioArrivalOffsets.map(\.offset).min() ?? offset)
   }
 
   /// Audio runs on its own counter, in its own timebase, exactly as the RTSP path treats a
