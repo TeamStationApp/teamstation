@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -5,6 +6,8 @@ import { expect } from 'chai'
 import { after, afterEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
+
+import { presignGetUrl } from '../../server/media/presign'
 
 /**
  * The chat's browser scenarios, against a running API and web app with
@@ -33,6 +36,17 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
  * `TS_CHAT_FIXTURES` (default `<artifacts>/../fixtures`) and reads the
  * stand-in Space's files under `TS_FAKE_SPACE_DIR`.
  *
+ * **On a deployed copy of the branch** (`TS_CHAT_WEB_URL` and
+ * `TS_CHAT_API_URL` on its address), database checks run where its database
+ * is instead: `TS_CHAT_SEAT_SSH` is the ssh target there, and
+ * `TS_CHAT_SEAT_PSQL` the command, run there, that opens its database in
+ * psql. `TS_CHAT_API_LOG` is a local file the runner keeps filled with that
+ * API's log. E11 reads the Space objects from its bucket with the key named
+ * by `TS_CHAT_SPACE_KEY` in the JSON file `TS_CHAT_SPACE_KEYS` (its
+ * `endpoint`, `region`, `bucket`, `accessKeyId`, `secretAccessKey`). Its
+ * database is reset beforehand (recreated, migrated, and seeded with
+ * `npm run chat-seed`), and the seed's output is the run's `seed.txt`.
+ *
  * Scenarios run in the order they are written, each on the state the ones
  * before it left.
  */
@@ -46,6 +60,8 @@ const API = (
   process.env.TS_CHAT_API_URL ?? 'http://127.0.0.1:9100/api/v1'
 ).replace(/\/+$/, '')
 const API_LOG = process.env.TS_CHAT_API_LOG ?? ''
+const SEAT_SSH = process.env.TS_CHAT_SEAT_SSH ?? ''
+const SEAT_PSQL = process.env.TS_CHAT_SEAT_PSQL ?? ''
 
 interface Seed {
   ids: Record<string, string>
@@ -220,8 +236,18 @@ function logLength(): number {
       readFileSync(API_LOG, 'utf8').split('\n').length - 1
 }
 
-/** The database the local API runs on, for checks the screens cannot make. */
-function localDatabase(): Pool {
+/** Where the checks the screens cannot make are read. */
+interface CheckDatabase {
+  query: (sql: string, values?: unknown[]) => Promise<{ rows: any[] }>
+  end: () => Promise<void>
+}
+
+/**
+ * The database the API runs on: the local `serverConfig.json`'s, or on a
+ * deployed copy, its own database, reached over ssh.
+ */
+function database(): CheckDatabase {
+  if (SEAT_SSH !== '') return seatDatabase()
   const config = JSON.parse(readFileSync('serverConfig.json', 'utf8')) as {
     databaseUrl: string
   }
@@ -230,7 +256,101 @@ function localDatabase(): Pool {
   ) {
     throw new Error('serverConfig.json does not name a local database')
   }
-  return new Pool({ connectionString: config.databaseUrl })
+  const pool = new Pool({ connectionString: config.databaseUrl })
+  return {
+    query: async (sql, values) => await pool.query(sql, values),
+    end: async () => {
+      await pool.end()
+    }
+  }
+}
+
+/** A value written into SQL, for the seat's psql, which takes no parameters. */
+function sqlLiteral(value: unknown): string {
+  if (value == null) return 'null'
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  if (Array.isArray(value)) {
+    return sqlLiteral(
+      `{${value
+        .map(item => `"${String(item).replace(/["\\]/g, '\\$&')}"`)
+        .join(',')}}`
+    )
+  }
+  const text = typeof value === 'string' ? value : JSON.stringify(value)
+  return `'${text.replace(/'/g, "''")}'`
+}
+
+/**
+ * The seat's database, read with `TS_CHAT_SEAT_PSQL` at `TS_CHAT_SEAT_SSH`.
+ * Each query's rows come back as JSON, so numbers read as numbers where the
+ * local driver hands back strings; the checks compare through `Number()`.
+ */
+function seatDatabase(): CheckDatabase {
+  if (SEAT_PSQL === '') {
+    throw new Error(
+      'TS_CHAT_SEAT_PSQL must name the command that opens the seat database'
+    )
+  }
+  return {
+    query: async (sql, values = []) => {
+      const text = sql.replace(/\$(\d+)/g, (_, n: string) =>
+        sqlLiteral(values[Number(n) - 1])
+      )
+      const out = execFileSync(
+        'ssh',
+        [SEAT_SSH, `${SEAT_PSQL} -X -A -t -q -v ON_ERROR_STOP=1`],
+        {
+          input: `select coalesce(json_agg(t), '[]'::json) from (${text}) t;\n`,
+          encoding: 'utf8'
+        }
+      )
+      return { rows: JSON.parse(out.trim()) as any[] }
+    },
+    end: async () => {}
+  }
+}
+
+/**
+ * The first bytes of a stored attachment: from the stand-in Space's files,
+ * or on a seat from its bucket, signed with its key.
+ */
+async function objectHead(objectKey: string): Promise<Buffer> {
+  const keyName = process.env.TS_CHAT_SPACE_KEY ?? ''
+  if (keyName === '') {
+    const space =
+      process.env.TS_FAKE_SPACE_DIR ?? '/tmp/ts-encryptedChat-m13/space'
+    return readFileSync(join(space, ...objectKey.split('/'))).subarray(0, 12)
+  }
+  const keys = (
+    JSON.parse(
+      readFileSync(process.env.TS_CHAT_SPACE_KEYS ?? '', 'utf8')
+    ) as Record<
+      string,
+      {
+        endpoint: string
+        region: string
+        bucket: string
+        accessKeyId: string
+        secretAccessKey: string
+      }
+    >
+  )[keyName]
+  const url = presignGetUrl({
+    endpoint: keys.endpoint,
+    region: keys.region,
+    bucket: keys.bucket,
+    accessKeyId: keys.accessKeyId,
+    secretAccessKey: keys.secretAccessKey,
+    key: objectKey,
+    expiresSec: 300
+  })
+  const response = await fetch(url, { headers: { range: 'bytes=0-11' } })
+  if (!response.ok) {
+    throw new Error(`${keys.bucket}/${objectKey}: HTTP ${response.status}`)
+  }
+  return Buffer.from(await response.arrayBuffer()).subarray(0, 12)
 }
 
 async function shot(page: Page, name: string): Promise<void> {
@@ -474,7 +594,7 @@ describe('chat scenarios in the browser', function () {
    * use the uncle's; parent B is linked as family; G1 is unlinked.
    */
   it('E2: guardians and family from the player’s Settings tab', async function () {
-    const db = localDatabase()
+    const db = database()
     try {
       const pat = seed.people.P
       const hawks = seed.ids.Hawks
@@ -769,7 +889,7 @@ describe('chat scenarios in the browser', function () {
     console.log(`      E6 seen: ${JSON.stringify(seen)}`)
     // J's device joined the chat without its key, and Hc's open page
     // granted it: J's box for the epoch was made by Hc, after J's identity.
-    const db = localDatabase()
+    const db = database()
     try {
       const rows = (
         await db.query(
@@ -823,7 +943,7 @@ describe('chat scenarios in the browser', function () {
    * and D has no box for it.
    */
   it('E7: a removed member gets nothing new', async function () {
-    const db = localDatabase()
+    const db = database()
     try {
       const coach = await signedIn('Hc')
       const members = await chatIdOf(coach, 'Hawks Members')
@@ -876,7 +996,7 @@ describe('chat scenarios in the browser', function () {
          where conversation_id = $1 and epoch = $2 and user_id = $3`,
         [members, epochBefore + 1, seed.people.D.userId]
       )
-      expect(boxes.rowCount).equals(0)
+      expect(boxes.rows.length).equals(0)
       console.log(
         `      E7 epoch ${epochBefore} → ${epochBefore + 1}, no box for D`
       )
@@ -953,7 +1073,7 @@ describe('chat scenarios in the browser', function () {
    * the post starts a new chain and the earlier messages stay unopenable.
    */
   it('E9: with no holder left, the next message breaks the chain', async function () {
-    const db = localDatabase()
+    const db = database()
     try {
       const coach = await signedIn('Ec')
       await openChatTab(coach)
@@ -1134,9 +1254,7 @@ describe('chat scenarios in the browser', function () {
     expect(duration).greaterThan(30)
     await shot(coach, 'e11-2-hc-opened')
 
-    const space =
-      process.env.TS_FAKE_SPACE_DIR ?? '/tmp/ts-encryptedChat-m13/space'
-    const db = localDatabase()
+    const db = database()
     try {
       const rows = (
         await db.query(
@@ -1146,8 +1264,7 @@ describe('chat scenarios in the browser', function () {
       ).rows as Array<{ object_key: string; size: string }>
       expect(rows.length).equals(2)
       for (const row of rows) {
-        const path = join(space, ...row.object_key.split('/'))
-        const head = readFileSync(path).subarray(0, 12)
+        const head = await objectHead(row.object_key)
         expect(head.subarray(0, 3).toString('hex')).not.equals('ffd8ff')
         expect(head.subarray(4, 8).toString('latin1')).not.equals('ftyp')
         console.log(
@@ -1224,7 +1341,7 @@ describe('chat scenarios in the browser', function () {
     expect(await bodyText(parentB)).not.contains('first from C')
     await shot(parentC, 'e12-3-c-removed-by-moderator')
 
-    const db = localDatabase()
+    const db = database()
     try {
       const rows = (
         await db.query(
@@ -1435,6 +1552,93 @@ describe('chat scenarios in the browser', function () {
     await toggle(false)
     await shot(league, 'e14-9-l-switch-off')
   })
+  /**
+   * E15: C posts "second from C" in Hawks Members and parent B reports it
+   * from the long-press menu. Site admin Z opens /admin/chat/reports and
+   * sees C's text, verified; B, who is no administrator, finds nothing
+   * there. Z resolves it.
+   */
+  it('E15: a reported message reaches the site administrators, verified', async function () {
+    const parentC = await signedIn('C')
+    await openChat(parentC, 'Hawks Members')
+    await send(parentC, 'second from C')
+
+    const parentB = await signedIn('B')
+    await openChat(parentB, 'Hawks Members')
+    await waitForText(parentB, 'second from C')
+    await longPress(parentB, 'second from C')
+    await pressText(parentB, 'Report')
+    await waitForText(parentB, 'Report this message?')
+    await shot(parentB, 'e15-1-b-asks')
+    await pressText(parentB, 'Report message')
+    await waitForText(parentB, 'Reported.')
+    await shot(parentB, 'e15-2-b-reported')
+
+    const db = database()
+    try {
+      const rows = (
+        await db.query(
+          `select r.verified, r.plaintext, m.sender_user_id::text as sender,
+             r.reporter_user_id::text as reporter,
+             octet_length(r.message_key) as key_length
+           from chat_reports r join chat_messages m on m.id = r.message_id
+           order by r.created_at desc limit 1`
+        )
+      ).rows as Array<{
+        verified: boolean
+        plaintext: string
+        sender: string
+        reporter: string
+        key_length: number
+      }>
+      expect(rows.length).equals(1)
+      expect(rows[0].verified).equals(true)
+      expect(rows[0].sender).equals(seed.people.C.userId)
+      expect(rows[0].reporter).equals(seed.people.B.userId)
+      expect(Number(rows[0].key_length)).equals(32)
+      expect((JSON.parse(rows[0].plaintext) as { body: string }).body).equals(
+        'second from C'
+      )
+    } finally {
+      await db.end()
+    }
+
+    await parentB.goto(`${WEB}/admin/chat/reports`, {
+      waitUntil: 'networkidle2'
+    })
+    await waitForText(parentB, 'There is nothing here.')
+    expect(await bodyText(parentB)).not.contains('second from C')
+    await shot(parentB, 'e15-3-b-not-found')
+
+    const admin = await signedIn('Z')
+    await admin.goto(`${WEB}/admin/chat/reports`, {
+      waitUntil: 'networkidle2'
+    })
+    await waitForText(admin, 'second from C')
+    const card = await until(
+      'the report',
+      async () =>
+        await admin.evaluate(() => {
+          const found = Array.from(
+            document.querySelectorAll<HTMLElement>('[aria-label^="From "]')
+          ).find(node => node.innerText.includes('second from C'))
+          return found === undefined ? undefined : found.innerText
+        })
+    )
+    expect(card).contains('Hawks Members')
+    expect(card).contains('Casey')
+    expect(card).match(/(^|\n)verified(\n|$)/)
+    expect(card).not.contains('not verified')
+    expect(card).contains('Reported by Blair')
+    await shot(admin, 'e15-4-z-report')
+
+    await pressInRow(admin, 'second from C', 'Resolve')
+    await until('the report to leave the open list', async () =>
+      (await bodyText(admin)).includes('second from C') ? undefined : true
+    )
+    await shot(admin, 'e15-5-z-resolved')
+  })
+
   /**
    * E17: Eagles parent D2 finds Hawks from Home, follows it, and opens it:
    * the schedule and the team, and nothing of its games.

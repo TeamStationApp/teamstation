@@ -129,6 +129,7 @@ export function ConversationScreen(
   const [picked, setPicked] = useState<PickedFile[]>([])
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [reported, setReported] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
@@ -222,6 +223,7 @@ export function ConversationScreen(
   const run = useCallback(
     (work: () => Promise<unknown>, failure = lstrings.chat_send_failed) => {
       setError(undefined)
+      setReported(false)
       work().catch(() => {
         setError(failure)
       })
@@ -467,6 +469,11 @@ export function ConversationScreen(
           </Text>
         )}
         {error != null && <Text style={shared.error}>{error}</Text>}
+        {reported && (
+          <Text style={shared.muted} accessibilityLiveRegion="polite">
+            {lstrings.chat_reported}
+          </Text>
+        )}
         {view.composer === 'closed' ? (
           <View style={shared.banner}>
             <Text style={shared.bannerText}>{lstrings.chat_closed_notice}</Text>
@@ -557,6 +564,14 @@ export function ConversationScreen(
             run(async () => {
               await engine.moderatorDelete(conversationId, target.id)
             })
+          }}
+          onReport={() => {
+            const target = menu
+            setMenu(undefined)
+            run(async () => {
+              await engine.report(conversationId, target.id)
+              setReported(true)
+            }, lstrings.chat_report_failed)
           }}
         />
       )}
