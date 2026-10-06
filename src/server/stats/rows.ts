@@ -140,9 +140,48 @@ export async function statRows(
     db,
     rows.map(row => row.userId)
   )
-  return rows.map(row => ({
-    ...row,
-    extra: row.extra == null ? null : asStatExtras(row.extra),
-    userId: survivors.get(row.userId) ?? row.userId
-  }))
+  // And their name with it. A row written under a row that has since closed
+  // still joins the closed row's name, and a screen names a person by
+  // whichever of their rows it reads first, so a child once imported as
+  // `Unknown player`, and later merged into their own row, was listed under
+  // that name.
+  const merged = [
+    ...new Set(
+      rows
+        .map(row => survivors.get(row.userId) ?? row.userId)
+        .filter((id, at) => id !== rows[at].userId)
+    )
+  ]
+  const names = new Map(
+    merged.length === 0
+      ? []
+      : (
+          await db
+            .selectFrom('users')
+            .select([
+              'id',
+              'first_name as firstName',
+              'last_name as lastName',
+              'display_name as displayName'
+            ])
+            .where('id', 'in', merged)
+            .execute()
+        ).map(user => [user.id, user])
+  )
+  return rows.map(row => {
+    const userId = survivors.get(row.userId) ?? row.userId
+    const name = names.get(userId)
+    return {
+      ...row,
+      ...(name == null
+        ? {}
+        : {
+            firstName: name.firstName,
+            lastName: name.lastName,
+            displayName: name.displayName
+          }),
+      extra: row.extra == null ? null : asStatExtras(row.extra),
+      userId
+    }
+  })
 }
