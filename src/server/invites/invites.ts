@@ -16,6 +16,7 @@ import {
   relationshipSides,
   withdrawRelationshipRequest
 } from '../groups/requests'
+import { linkGuardian, type RelativeKind } from '../people/guardians'
 import { addToScope } from './people'
 
 /**
@@ -50,6 +51,15 @@ export interface Invite {
   /** The one person it was made out to, or null for a link anybody may use. */
   forEmail: string | null
   requestId?: string | null
+  /** Who made it, or null when nobody is recorded. */
+  createdBy: number | null
+  /**
+   * The player whose guardian, or adult family member by `relativeKind`,
+   * redeeming this makes somebody. Only the address it was made out to may
+   * redeem it.
+   */
+  guardianOfUserId: number | null
+  relativeKind: RelativeKind | null
 }
 
 /** Why an invite cannot be redeemed, or null when it can. */
@@ -67,7 +77,10 @@ const FIELDS = [
   'revoked_at',
   'created_at',
   'for_email',
-  'request_id'
+  'request_id',
+  'created_by',
+  'guardian_of_user_id',
+  'relative_kind'
 ] as const
 
 interface InviteFields {
@@ -83,6 +96,9 @@ interface InviteFields {
   created_at: Date | string
   for_email: string | null
   request_id?: string | null
+  created_by: number | null
+  guardian_of_user_id: number | null
+  relative_kind: RelativeKind | null
 }
 
 const asDate = (value: Date | string | null): Date | null =>
@@ -101,7 +117,10 @@ function shape(row: InviteFields): Invite {
     revokedAt: asDate(row.revoked_at),
     createdAt: asDate(row.created_at) ?? new Date(),
     forEmail: row.for_email,
-    requestId: row.request_id ?? null
+    requestId: row.request_id ?? null,
+    createdBy: row.created_by,
+    guardianOfUserId: row.guardian_of_user_id,
+    relativeKind: row.relative_kind
   }
 }
 
@@ -240,6 +259,8 @@ export interface NewInvite {
   /** Made out to one address, mailed to it, and good for one use. */
   forEmail?: string
   requestId?: string
+  /** For a team invite that makes its redeemer a relative of this player. */
+  guardianOf?: { userId: number; kind: RelativeKind }
 }
 
 export async function createInvite(
@@ -270,6 +291,8 @@ export async function createInvite(
     source: invite.source ?? 'manual',
     for_email: invite.forEmail ?? null,
     request_id: invite.requestId ?? null,
+    guardian_of_user_id: invite.guardianOf?.userId ?? null,
+    relative_kind: invite.guardianOf?.kind ?? null,
     ...(invite.createdAt == null ? {} : { created_at: invite.createdAt })
   }
   await db.insertInto('invites').values(row).execute()
@@ -377,6 +400,9 @@ export async function redeemInvite(
 ): Promise<Redemption> {
   const problem = inviteProblem(invite)
   if (problem != null) throw badRequest(`That invite is ${problem}`)
+  if (invite.guardianOfUserId != null) {
+    await mustHoldInvitedAddress(db, invite, userId)
+  }
 
   return await atomic(db, async trx => {
     await lockKeys(trx, [
@@ -446,7 +472,19 @@ export async function redeemInvite(
 
     const granted =
       requestGrant ??
-      (await addToScope(trx, current.scopeType, current.scopeId, userId)).added
+      (current.scopeType === 'team' && current.guardianOfUserId != null
+        ? (
+            await linkGuardian(
+              trx,
+              current.guardianOfUserId,
+              userId,
+              current.scopeId,
+              current.createdBy,
+              current.relativeKind ?? 'guardian'
+            )
+          ).created
+        : (await addToScope(trx, current.scopeType, current.scopeId, userId))
+            .added)
 
     if (recorded != null) {
       await trx
@@ -458,4 +496,34 @@ export async function redeemInvite(
 
     return { granted, scopeType: invite.scopeType, scopeId: invite.scopeId }
   })
+}
+
+/**
+ * A guardian invite is good only for the address it was made out to.
+ *
+ * The redeemer must hold that address on `user_emails`, compared without
+ * regard to case. An account made by signing in through the invite from
+ * that address holds it, so a forwarded link opens nothing under any other
+ * account, and is refused with reason `inviteForAnotherEmail`.
+ */
+async function mustHoldInvitedAddress(
+  db: Kysely<Database>,
+  invite: Invite,
+  userId: number
+): Promise<void> {
+  const wanted = (invite.forEmail ?? '').trim().toLowerCase()
+  const held =
+    wanted === ''
+      ? undefined
+      : await db
+          .selectFrom('user_emails')
+          .select(['id'])
+          .where('user_id', '=', userId)
+          .where(eb => eb.fn('lower', ['email']), '=', wanted)
+          .executeTakeFirst()
+  if (held == null) {
+    throw forbidden('This invitation was sent to another address', {
+      reason: 'inviteForAnotherEmail'
+    })
+  }
 }
