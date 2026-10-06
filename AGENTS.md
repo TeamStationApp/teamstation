@@ -16,6 +16,64 @@ files. Work that is not pushed is work he cannot review.
 
 If a change is not ready to push, it is not finished; say so rather than leaving it on disk.
 
+## This repository is public: privacy and security
+
+Everything committed here — code, tests, fixtures, docs, comments and commit messages, in every
+commit of every branch — is published. A branch is not ready for a PR or a merge until you have
+reviewed it for what follows and fixed what you found.
+
+### Never commit
+
+- **Real people's names**: players (most of them children), parents, guardians, coaches,
+  scorekeepers, users. Nor anything that identifies them indirectly: their teams, clubs, leagues,
+  fields, schools or neighbourhoods, real game dates and scores, screenshots or photos of rosters.
+  The project's developers' own names and emails are fine.
+- **Credentials of any kind**: API keys, tokens, passwords, private keys, session or signing
+  secrets, invite codes, stream keys, including "test" values copied from a real system.
+- **How the servers are laid out or run**: hostnames other than the public product domains,
+  addresses of real networks (the test bench included), which port or database serves what in
+  production, bucket, cluster, cache and volume names, server paths, process-manager and
+  reverse-proxy setup, deploy and provisioning steps, firewall rules, SSH access, which accounts can
+  do what, and counts or contents of production data. Deployment scripts and runbooks are kept in a
+  separate private repository: never add them here.
+- **Personal device identifiers**: UDIDs, serial numbers, MAC addresses, device names
+  (`<name>'s iPhone`), Wi-Fi network names, local hostnames, home-directory paths.
+- `Co-authored-by:` trailers.
+
+### What to use instead
+
+| Instead of | Use |
+| --- | --- |
+| A person's name | A real MLB player's name. A team named for its coach takes an MLB player's surname. |
+| A real team, league, club, field or place | A neutral invented one. |
+| A real network address | `192.168.x.x` where the code needs a private address, otherwise a documentation range (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`). Never an address from a real network. |
+| A hostname | `*.example.test` (or `example.com`). |
+| A server or home path | `/var/app/...`, `/Users/dev/...`. |
+| A device identifier | A zero-filled value of the same format (`00000000-0000-4000-8000-000000000001`, `02:00:00:00:00:01`), keeping any prefix the code requires. |
+| A secret, code or key | A placeholder of the same shape. |
+| Prose about the infrastructure | The engineering reason without the layout: "behind the reverse proxy, the client address comes from X-Forwarded-For", not where the proxy runs or what it forwards to. |
+
+### Before every PR or merge
+
+1. **Read every commit on the branch yourself**, in order, with its message:
+   `git log --reverse --format='%n==== %h %an%n%B' -p origin/master..HEAD`. Read every added file in
+   full, not only the hunks, and open every added image, video, audio file and PDF.
+2. Ask of each line whether it could identify a real person, or help someone map or reach the
+   servers. When you cannot tell whether a name is real, replace it.
+3. **Fix each finding by hand**, one occurrence at a time, in the file with the context in front of
+   you. No search-and-replace tools, regex replacement or scripts: use `grep` only to find what is
+   left. Keep the shape the code and tests rely on (length, initials, a required prefix, an escaped
+   apostrophe) and keep it consistent across every file that refers to the same thing.
+4. **Fix it in the commit that introduced it**, not in a commit on top: the history is published
+   too. Fold the fixes in with fixup commits and a rebase of your own branch.
+5. Change data only (fixtures, test strings, comments, docs, commit messages), never behaviour, and
+   run the tests the changed files belong to.
+6. Optionally, check for credentials with gitleaks:
+   `gitleaks git --log-opts="origin/master..HEAD"`. It is a second opinion, not the review.
+7. When you hand the branch back or open the PR, say that you did this review and what you changed,
+   by kind, without quoting what you removed. Tell Paul at once about anything that may already have
+   leaked: a credential has to be rotated and an invite code revoked, whatever the history says.
+
 ## API design
 
 Before adding or changing a route under `/api/v1`, read [docs/api.md](docs/api.md). A filter
