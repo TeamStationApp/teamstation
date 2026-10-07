@@ -40,6 +40,7 @@ const asApple = object({
   identity: text(256),
   profileNames: record(text(256)),
   architectures: asArray(text(32)),
+  requiredDevices: asOptional(asArray(text(128)), []),
   notarizationProfile: asOptional(text(256))
 })
 const asPlatform = object({
@@ -50,6 +51,7 @@ const asPlatform = object({
 })
 const asApp = object({
   repository: asOptional(text()),
+  apiOrigin: asOptional(httpsOrigin),
   version: text(80),
   ios: asOptional(asPlatform),
   android: asOptional(asPlatform),
@@ -57,6 +59,7 @@ const asApp = object({
 })
 const asTools = object({
   git: asOptional(text(), 'git'),
+  gh: asOptional(text(), 'gh'),
   node: asOptional(text(), process.execPath),
   npm: asOptional(text(), 'npm'),
   socket: asOptional(text(), 'socket'),
@@ -76,9 +79,27 @@ const asMatch = object({
   repository: text(),
   branch: branchName,
   password: text(),
-  apiKeyFile: text(),
+  apiKeyFile: asOptional(text()),
+  appleLoginFile: asOptional(text()),
+  checkout: asOptional(text()),
   keychainPassword: text(),
-  gitPrivateKey: asOptional(text())
+  p12Password: asOptional(text()),
+  gitPrivateKey: asOptional(text()),
+  imports: asOptional(
+    record(
+      object({
+        certificate: text(),
+        privateKey: text(),
+        profile: asOptional(text())
+      })
+    ),
+    {}
+  )
+})
+export const asAppleLogin = object({
+  username: text(254),
+  password: text(4096),
+  cookieDirectory: text()
 })
 export const asSettings = object({
   repository: text(),
@@ -210,9 +231,19 @@ export function loadSettings(file: string, branch: string): Settings {
     }
   }
   if (out.match != null) {
-    out.match.apiKeyFile = resolve(out.match.apiKeyFile)
+    if (out.match.apiKeyFile != null)
+      out.match.apiKeyFile = resolve(out.match.apiKeyFile)
+    if (out.match.appleLoginFile != null)
+      out.match.appleLoginFile = resolve(out.match.appleLoginFile)
+    if (out.match.checkout != null)
+      out.match.checkout = resolve(out.match.checkout)
     if (out.match.gitPrivateKey != null)
       out.match.gitPrivateKey = resolve(out.match.gitPrivateKey)
+    for (const entry of Object.values(out.match.imports)) {
+      entry.certificate = resolve(entry.certificate)
+      entry.privateKey = resolve(entry.privateKey)
+      if (entry.profile != null) entry.profile = resolve(entry.profile)
+    }
   }
   for (const key of Object.keys(out.tools) as Array<keyof Settings['tools']>) {
     const tool = out.tools[key]
