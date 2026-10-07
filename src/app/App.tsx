@@ -24,7 +24,12 @@ import {
 } from './components'
 import { StandaloneField } from './field/StandaloneField'
 import { lstrings, sprintf } from './locales/strings'
-import { parseRoute, type Route, type When } from './navigation/routes'
+import {
+  parseRoute,
+  type Route,
+  routePath,
+  type When
+} from './navigation/routes'
 import {
   filtersForRoute,
   initialTabFilters,
@@ -49,6 +54,7 @@ import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { ManageScreen } from './screens/ManageScreen'
+import { OAuthScreen } from './screens/OAuthScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
@@ -465,6 +471,7 @@ function Shell(props: AppProps): React.ReactElement {
     if (session == null) return
     // Nor while an invitation is open, for the same reason.
     if (joining != null) return
+    if (route.name === 'oauthApprove' || route.name === 'oauthNative') return
     // Nor between a team or season link arriving and its screen being pushed.
     if (resolvingLink.current) return
     showRoute(
@@ -473,7 +480,7 @@ function Shell(props: AppProps): React.ReactElement {
     )
     firstRender.current = false
     inPlace.current = false
-  }, [joining, session, tab, top, filters])
+  }, [joining, session, tab, top, filters, route.name])
 
   const goToRoute = useCallback((route: Route): void => {
     setRoute(route)
@@ -653,8 +660,67 @@ function Shell(props: AppProps): React.ReactElement {
     rememberSession(next)
     if (route.name === 'signIn' && route.next != null) {
       const [path, search = ''] = route.next.split('?')
-      goToRoute(parseRoute(path, search))
+      const destination = parseRoute(path, search)
+      goToRoute(destination)
+      if (
+        destination.name === 'oauthApprove' ||
+        destination.name === 'oauthNative'
+      )
+        showRoute(destination, true)
     }
+  }
+
+  if (
+    askedAboutSession &&
+    (route.name === 'oauthApprove' || route.name === 'oauthNative')
+  ) {
+    return (
+      <View style={styles.app}>
+        <AppHeader
+          title={lstrings.oauth_title}
+          showMark
+          buildsClient={session == null ? undefined : client}
+          onBack={
+            route.name !== 'oauthNative'
+              ? undefined
+              : () => {
+                  const destination: Route = { name: 'home' }
+                  goToRoute(destination)
+                  showRoute(destination, true)
+                }
+          }
+        />
+        <OAuthScreen
+          key={routePath(route)}
+          client={client}
+          uid={route.name === 'oauthApprove' ? route.uid : undefined}
+          handle={route.name === 'oauthNative' ? route.handle : undefined}
+          accountName={session?.user.displayName}
+          onSwitchAccount={
+            route.name !== 'oauthApprove'
+              ? undefined
+              : async () => {
+                  await client.signOut()
+                  rememberSession(undefined)
+                  const destination: Route = {
+                    name: 'signIn',
+                    next: routePath(route)
+                  }
+                  goToRoute(destination)
+                  showRoute(destination)
+                }
+          }
+          onLogin={() => {
+            const destination: Route = {
+              name: 'signIn',
+              next: routePath(route)
+            }
+            goToRoute(destination)
+            showRoute(destination)
+          }}
+        />
+      </View>
+    )
   }
 
   if (session == null && props.fieldPreview !== true) {
@@ -733,7 +799,11 @@ function Shell(props: AppProps): React.ReactElement {
   if (joining != null) {
     return (
       <View style={styles.app}>
-        <AppHeader title={lstrings.join_header} showMark />
+        <AppHeader
+          title={lstrings.join_header}
+          showMark
+          buildsClient={client}
+        />
         <JoinScreen
           client={client}
           code={joining}
@@ -1093,6 +1163,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   const header = (
     <AppHeader
+      buildsClient={session == null ? undefined : client}
       title={titleFor(tab, top)}
       // The mark on every screen that is a destination in its own right —
       // home, and the two lists — and on none that was pushed on top of one,

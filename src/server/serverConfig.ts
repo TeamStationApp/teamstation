@@ -8,6 +8,7 @@ import {
   asString
 } from 'cleaners'
 
+import { asHttpsUrl } from '../common/distribution'
 import {
   asAuthority,
   type Authority,
@@ -19,6 +20,7 @@ import { asOAuthConfig } from './oauth/config'
 
 export const asServerConfig = asObject({
   oauth: asOptional(asOAuthConfig),
+  buildsUrl: asOptional(asHttpsUrl),
   /** Where the API listens. */
   listenHost: asOptional(asString, '127.0.0.1'),
   listenPort: asOptional(asNumber, 9100),

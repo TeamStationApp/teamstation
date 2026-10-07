@@ -1521,6 +1521,18 @@ export function openApiDocument(version: string): OpenApiDocument {
     },
     paths: {
       ...accountPaths,
+      '/me/builds': {
+        get: {
+          summary: 'Read the optional build distribution link',
+          description:
+            'Human sessions only. The distribution service independently decides access. An absent URL means no link should be shown.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Optional HTTPS URL' },
+            401: { description: 'Active human session required' }
+          }
+        }
+      },
       '/oauth/approvals/{handle}': {
         get: {
           summary: 'Read an OAuth request to approve in the mobile app',
