@@ -172,7 +172,7 @@ describe('shared roster dragging', function () {
       insertion: 'row',
       drop: (id, edge) => drops.push([id, edge])
     })
-    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, 'source')
     await engine.move({ x: 120, y: 55 })
     expect(engine.preview?.cardRect).deep.equals({
       x: 100,
@@ -193,7 +193,7 @@ describe('shared roster dragging', function () {
     await engine.release({ x: 120, y: 35 })
     expect(drops).deep.equals([[7, 'before']])
     expect(observed.at(-1)).equals(null)
-    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, 'source')
     await engine.move({ x: 450, y: 35 })
     expect(engine.preview?.target).equals(undefined)
     engine.cancel()
@@ -220,7 +220,7 @@ describe('shared roster dragging', function () {
       insertion: 'row',
       drop: () => undefined
     })
-    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, 'source')
     // With the dragged card lifted out, the next card moves up into its place:
     // its top is exactly where the dragged card's top was.
     await engine.move({ x: 120, y: 40 })
@@ -240,7 +240,7 @@ describe('shared roster dragging', function () {
         }),
       content: null
     })
-    engine.begin(1, 'One', { x: 0, y: 0 }, true, 'source')
+    engine.begin(1, 'One', { x: 0, y: 0 }, 'source')
     engine.cancel()
     finish(box)
     await engine.move({ x: 10, y: 10 })
@@ -251,7 +251,7 @@ describe('shared roster dragging', function () {
       },
       content: null
     })
-    engine.begin(1, 'One', { x: 0, y: 0 }, true, 'source')
+    engine.begin(1, 'One', { x: 0, y: 0 }, 'source')
     await engine.move({ x: 10, y: 10 })
     expect(engine.active).equals(null)
   })

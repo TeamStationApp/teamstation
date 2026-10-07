@@ -35,7 +35,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         const p = latest.current
         if (p.playerId == null || p.disabled === true) return
         moved.current = true
-        engine.begin(p.playerId, p.label ?? '', point, true, source)
+        engine.begin(p.playerId, p.label ?? '', point, source)
         if (contact.current?.kind !== 'touch' && contact.current != null)
           node.current?.setPointerCapture(contact.current.pointer)
       })

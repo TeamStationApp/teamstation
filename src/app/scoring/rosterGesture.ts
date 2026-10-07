@@ -75,17 +75,11 @@ export class RosterGesture {
     private readonly notify: (preview: RosterPreview | null) => void
   ) {}
 
-  setHeld(held: boolean): void {
+  private setHeld(held: boolean): void {
     for (const listener of this.heldListeners) listener(held)
   }
 
-  begin(
-    id: number,
-    label: string,
-    point: RosterPoint,
-    lockScroll = true,
-    source?: string
-  ): void {
+  begin(id: number, label: string, point: RosterPoint, source?: string): void {
     this.cancel()
     const drag: NonNullable<RosterGesture['active']> = {
       id,
@@ -126,7 +120,7 @@ export class RosterGesture {
           })().catch(() => {
             if (this.active === drag) this.cancel()
           })
-    if (lockScroll) this.setHeld(true)
+    this.setHeld(true)
   }
 
   cancel(): void {
