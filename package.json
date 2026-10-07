@@ -76,7 +76,8 @@
     "signing:import": "node -r sucrase/register scripts/deploy/signing.ts",
     "test:deploy": "mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
     "coverage.deploy": "c8 --all --include 'scripts/deploy.ts' --include 'scripts/deploy/**/*.ts' --exclude '**/*.test.ts' --report-dir coverage/deploy --reporter text --reporter json --reporter lcov --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
-    "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts"
+    "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts",
+    "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
