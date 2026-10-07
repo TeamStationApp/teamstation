@@ -190,6 +190,12 @@ describe('OAuth provider and native approval over HTTPS', function () {
       })
       .execute()
     session = await createSession(db, 123, 'fixture')
+    await pool.query(
+      "insert into teams (id,name) values ('tem_builds_fixture','Demo Hawks')"
+    )
+    await pool.query(
+      "insert into invites (id,code,scope_type,scope_id,created_by) values ('inv_builds_fixture','demo-builds','team','tem_builds_fixture',123)"
+    )
     const app = express()
     const ui = express()
     ui.use(express.static(path.resolve('dist')))
