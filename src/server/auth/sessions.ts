@@ -10,6 +10,8 @@ export interface Actor {
   isAdmin: boolean
   /** Set when the caller used a machine token rather than signing in. */
   apiTokenId?: string
+  /** The human login this actor came from; absent for machine tokens. */
+  sessionId?: string
   scopes: string[]
 }
 
@@ -88,7 +90,12 @@ export async function actorForToken(
       .set({ last_used_at: now })
       .where('id', '=', session.sessionId)
       .execute()
-    return { userId: session.userId, isAdmin: session.isAdmin, scopes: [] }
+    return {
+      userId: session.userId,
+      isAdmin: session.isAdmin,
+      sessionId: session.sessionId,
+      scopes: []
+    }
   }
 
   const apiToken = await db
