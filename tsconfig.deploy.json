@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "rootDir": ".",
+    "outDir": "lib/deploy",
+    "allowJs": false,
+    "noEmit": true
+  },
+  "include": ["scripts/deploy.ts", "scripts/deploy/**/*.ts"]
+}

@@ -28,6 +28,16 @@ export default [
     }
   },
 
+  {
+    files: ['scripts/deploy.ts', 'scripts/deploy/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.deploy.json'
+      }
+    }
+  },
+
   // Global ignores need to be in their own block:
   {
     ignores: [
