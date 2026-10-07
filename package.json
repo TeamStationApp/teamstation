@@ -70,7 +70,8 @@
     "coverage.account": "node scripts/account-coverage.mjs",
     "coverage.password": "node scripts/password-coverage.mjs",
     "test:oauth": "mocha -r sucrase/register src/server/oauth/oauth.test.ts src/server/openapi.test.ts",
-    "coverage.builds": "node scripts/builds-coverage.mjs"
+    "coverage.builds": "node scripts/builds-coverage.mjs",
+    "test:builds-ui": "node scripts/build-builds-ui-tests.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs lib/builds-tests.cjs src/common/distribution.test.ts src/app/navigation/routes.test.ts"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
