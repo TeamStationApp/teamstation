@@ -185,7 +185,14 @@ export class RosterGesture {
         )
           return undefined
         const clip = target.clip == null ? rect : await target.clip()
-        return containsRosterPoint(rect, point) &&
+        // Anywhere below the top of the end target is the end of the list.
+        // Hovering it opens a gap above it, so an auto-scroll at the bottom
+        // edge can carry it up past a finger resting below its label.
+        const zone =
+          target.insertion === 'end'
+            ? { ...rect, height: Number.POSITIVE_INFINITY }
+            : rect
+        return containsRosterPoint(zone, point) &&
           containsRosterPoint(clip, point)
           ? {
               key,

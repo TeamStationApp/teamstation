@@ -103,6 +103,48 @@ describe('shared roster dragging', function () {
     await engine.release({ x: 120, y: 220 })
     expect(engine.preview).equals(null)
   })
+  it('takes a drop anywhere below the top of the end target, inside its list, as the end', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const drops: string[] = []
+    const clip = async (): Promise<typeof box> => ({
+      x: 100,
+      y: 0,
+      width: 200,
+      height: 600
+    })
+    engine.targets.set('lineup-0', {
+      measure: async () => ({ x: 100, y: 100, width: 200, height: 48 }),
+      clip,
+      insertion: 'row',
+      drop: () => drops.push('row')
+    })
+    engine.targets.set('lineup-end', {
+      measure: async () => ({ x: 100, y: 164, width: 200, height: 73 }),
+      clip,
+      insertion: 'end',
+      drop: (_, edge) => drops.push(`end ${edge}`)
+    })
+    for (const y of [170, 236, 400, 599]) {
+      engine.begin(1, 'One', { x: 0, y: 0 })
+      await engine.move({ x: 150, y })
+      expect(engine.preview?.target).equals('lineup-end')
+      await engine.release({ x: 150, y })
+    }
+    // Above the end target (in the gap after a row) and below the list,
+    // nothing takes the drop.
+    for (const y of [156, 700]) {
+      engine.begin(1, 'One', { x: 0, y: 0 })
+      await engine.move({ x: 150, y })
+      expect(engine.preview?.target).equals(undefined)
+      await engine.release({ x: 150, y })
+    }
+    expect(drops).deep.equals([
+      'end before',
+      'end before',
+      'end before',
+      'end before'
+    ])
+  })
   it('auto-scrolls only an active drag at a visible edge and remeasures', async function () {
     const deltas: number[] = []
     const engine = new RosterGesture(() => undefined)

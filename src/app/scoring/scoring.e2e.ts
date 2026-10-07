@@ -163,6 +163,18 @@ async function open(
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
       body = { id: 100, displayName: 'Scorer', isAdmin: false }
+    // What the app also asks of every server: who holds which team role, the
+    // teams' saved default lineups (none here), and the server's health.
+    else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
+    else if (url.pathname.endsWith('/default-lineup'))
+      body = { lineup: null, fromGameId: null, setAt: null }
+    else if (url.pathname === '/api/v1/health')
+      body = {
+        status: 'ok',
+        version: 'fixture',
+        database: 'ok',
+        migrations: 0
+      }
     else if (url.pathname === '/api/v1/games/g1/events') {
       const answer = async (): Promise<void> => {
         if (saving) keep(JSON.parse((await request.fetchPostData()) ?? '{}'))
@@ -4750,6 +4762,16 @@ describe('scoring browser', function () {
         {},
         source
       )
+      // The dropped card lands in the gap the drag held open: full height,
+      // one gap from each neighbour, drawn over neither.
+      const landed = await rect('[data-roster-target="lineup-1"]')
+      expect(landed.height).closeTo(a.height, 1)
+      expect(
+        landed.y - (await rect('[data-roster-target="lineup-0"]')).bottom
+      ).closeTo(ROSTER_CARD_GAP, 0.5)
+      expect(
+        (await rect('[data-roster-target="lineup-2"]')).y - landed.bottom
+      ).closeTo(ROSTER_CARD_GAP, 0.5)
       await click(page, 'Save Rosters')
       await page.waitForSelector('[aria-label="Undo Set team roster"]')
     } finally {

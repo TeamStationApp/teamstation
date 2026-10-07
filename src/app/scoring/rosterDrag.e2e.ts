@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   const asserting = phase === 'after'
   const device = required('TEST_DEVICE')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
-  const only = (process.env.TEST_ONLY ?? 'D1,D4,D6').split(',')
+  const only = (process.env.TEST_ONLY ?? 'D1,D2,D3,D4,D6,D7').split(',')
   await mkdir(artifacts, { recursive: true })
   const requireClient = createRequire(
     join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -322,6 +322,18 @@ async function main(): Promise<void> {
     }
     const centreX = (b: Bounds): number => b.x + b.width / 2
     const third = (b: Bounds): number => b.y + b.height / 3
+    /** Neighbouring cards stand exactly one gap apart, none over another. */
+    const spaced = (column: string, list: Card[]): void => {
+      for (let i = 1; i < list.length; i++) {
+        const prev = list[i - 1].bounds
+        const next = list[i].bounds
+        const between = next.y - (prev.y + prev.height)
+        check(
+          Math.abs(between - gap) <= tolerance,
+          `${column}: ${list[i - 1].name} to ${list[i].name} is ${(between / scale).toFixed(1)} apart (want ${ROSTER_CARD_GAP})`
+        )
+      }
+    }
     const order = (list: Card[]): string => list.map(c => c.name).join(', ')
 
     if (only.includes('D1')) {
@@ -368,15 +380,13 @@ async function main(): Promise<void> {
       const got = after.map(c => c.name)
       log(`D1 order before ${names.join(', ')}`)
       log(`D1 order after ${got.join(', ')}`)
-      // Before M2 lands, the dropped card reopens at height 0 and the phone
-      // leaves it out of the hierarchy; D2 asserts its height. A failed drop
-      // leaves it visible in its old slot. Android lists only the cards on
-      // screen, so compare the ones both reads saw.
+      // Android lists only the cards on screen, so compare the ones both reads
+      // saw. The dropped card is among them: the list did not scroll.
       const heldName = names[k]
       check(
         want.filter(name => got.includes(name)).join(', ') ===
           got.filter(name => names.includes(name)).join(', ') &&
-          (!got.includes(heldName) || got.indexOf(heldName) === k + 3),
+          got.indexOf(heldName) === k + 3,
         `the held card moved from slot ${k} to slot ${k + 3}`
       )
       for (let i = 0; i < k; i++) {
@@ -387,6 +397,108 @@ async function main(): Promise<void> {
           `${names[i]} above the held card kept its y (${start[i].bounds.y} → ${moved?.bounds.y})`
         )
       }
+    }
+
+    if (only.includes('D2')) {
+      log('D2 a drop lands separate (before edge)')
+      await open()
+      const start = await lineup()
+      await held(
+        {
+          x: centreX(start[0].bounds),
+          y: start[0].bounds.y + start[0].bounds.height / 2
+        },
+        { x: centreX(start[3].bounds), y: third(start[3].bounds) }
+      )
+      const after = await lineup()
+      await shot('lineup-drop-overlap')
+      const names = start.map(c => c.name)
+      const want = [names[1], names[2], names[3], names[0], names[4]].join(', ')
+      log(`D2 order after ${order(after)}`)
+      check(order(after.slice(0, 5)) === want, `the order starts ${want}`)
+      const dropped = after.find(c => c.name === names[0])
+      check(
+        dropped != null &&
+          Math.abs(dropped.bounds.height - start[0].bounds.height) <= tolerance,
+        `${names[0]} is at full height (${dropped?.bounds.height})`
+      )
+      spaced('lineup', after)
+    }
+
+    if (only.includes('D3')) {
+      log('D3 a drop lands separate (after edge, and from the roster)')
+      await open()
+      const start = await lineup()
+      const names = start.map(c => c.name)
+      await held(
+        {
+          x: centreX(start[1].bounds),
+          y: start[1].bounds.y + start[1].bounds.height / 2
+        },
+        {
+          x: centreX(start[4].bounds),
+          y: start[4].bounds.y + (start[4].bounds.height * 3) / 4
+        }
+      )
+      const first = await lineup()
+      const want = [
+        names[0],
+        names[2],
+        names[3],
+        names[4],
+        names[5],
+        names[1],
+        names[6]
+      ].join(', ')
+      log(`D3 order after the first drop ${order(first)}`)
+      check(order(first.slice(0, 7)) === want, `the order starts ${want}`)
+      spaced('lineup', first)
+      // A player in view in both columns, so the remove button can be tapped
+      // and the roster drag starts on screen.
+      const rosterList = await bounds('Roster players')
+      const lineupList = await bounds('Batting lineup')
+      const inView = (b: Bounds, list: Bounds): boolean =>
+        b.y >= list.y && b.y + b.height <= list.y + list.height
+      const removed = (await cards('Add ', ' to Lineup'))
+        .filter(c => inView(c.bounds, rosterList))
+        .map(c => c.name.replace(/ to Lineup$/, ''))
+        .find(name =>
+          first.some(c => c.name === name && inView(c.bounds, lineupList))
+        )
+      assert(removed != null, 'A player in view in both columns')
+      await m.tapOn({ text: `Remove ${removed}`, timeout: 10000 })
+      await pause(600)
+      const source = (await cards('Add ', ' to Lineup')).find(
+        c => c.name === `${removed} to Lineup`
+      )
+      assert(
+        source != null &&
+          source.bounds.y + source.bounds.height <=
+            rosterList.y + rosterList.height,
+        `${removed} is back in the roster, in view`
+      )
+      const target = (await lineup())[2]
+      await held(
+        {
+          x: centreX(source.bounds),
+          y: source.bounds.y + source.bounds.height / 2
+        },
+        { x: centreX(target.bounds), y: third(target.bounds) }
+      )
+      const second = await lineup()
+      log(`D3 order after the roster drop ${order(second)}`)
+      check(second[2]?.name === removed, `${removed} is back at slot 2`)
+      spaced('lineup', second)
+      const roster = await cards('Add ', ' to Lineup')
+      const card = roster.find(c => c.name === `${removed} to Lineup`)
+      check(
+        card != null &&
+          !card.enabled &&
+          Math.abs(card.bounds.height - source.bounds.height) <= tolerance,
+        `${removed}'s roster card is disabled at full height (${card?.bounds.height})`
+      )
+      spaced('roster', roster)
+      await shot('roster-drop')
     }
 
     if (only.includes('D4')) {
@@ -446,8 +558,49 @@ async function main(): Promise<void> {
       )
       const clear = (await all()).find(n => label(n) === 'Clear P')
       check(clear != null && clear.enabled !== false, `${name} fills P`)
+      const card = (await all()).find(n => label(n) === name)
+      check(
+        card?.enabled === false &&
+          Math.abs(card.bounds!.height - player.bounds.height) <= tolerance,
+        `${name}'s roster card is disabled at full height (${card?.bounds?.height})`
+      )
       await shot('defense-drop')
     }
+    if (only.includes('D7')) {
+      log('D7 a drop low on the end of the lineup lands at the end')
+      await open()
+      const list = await bounds('Batting lineup')
+      for (let i = 0; i < 4; i++)
+        await swipe(
+          list.x + list.width / 2,
+          list.y + list.height - 20 * scale,
+          list.y + 20 * scale
+        )
+      const start = await settled()
+      const end = await bounds('Drop at end of lineup')
+      const moving = start.find(
+        c =>
+          c.bounds.y >= list.y &&
+          c.bounds.y + c.bounds.height <= end.y &&
+          c.name !== start.at(-1)!.name
+      )
+      assert(moving != null, 'A card in view above the end of the lineup')
+      // Low on the end target, inside the bottom auto-scroll band.
+      await held(
+        {
+          x: centreX(moving.bounds),
+          y: moving.bounds.y + moving.bounds.height / 2
+        },
+        { x: centreX(end), y: end.y + end.height - 4 * scale }
+      )
+      const after = await settled()
+      log(`D7 order after ${order(after)}`)
+      check(
+        after.at(-1)?.name === moving.name,
+        `${moving.name} is last in the lineup`
+      )
+    }
+
     log(`PASS phase ${phase} on ${platform}: ${only.join(', ')}`)
   } finally {
     await writeFile(
