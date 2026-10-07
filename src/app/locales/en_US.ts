@@ -10,6 +10,34 @@
  * Keys read as `area_thing`, and no screen contains a literal sentence.
  */
 export const enUs = {
+  about_title: 'About TeamStation',
+  about_version: 'Version',
+  about_number: 'Build number',
+  about_branch: 'Branch',
+  about_commit: 'Commit',
+  about_time: 'Built',
+  about_builds: 'Download builds',
+  about_close: 'Close',
+  about_close_button: 'Close build information',
+  about_open_failed: 'Could not open the download site. Please try again.',
+  oauth_title: 'Authorize access',
+  oauth_request: '%s wants to use your TeamStation identity.',
+  oauth_identity: 'Signed in as %s',
+  oauth_profile: 'Share your name',
+  oauth_email: 'Share your email address and verification status',
+  oauth_signin: 'Confirm your TeamStation identity',
+  oauth_approve: 'Allow',
+  oauth_deny: 'Deny',
+  oauth_app: 'Approve in the TeamStation app',
+  oauth_open_app: 'Open TeamStation',
+  oauth_waiting: 'Waiting for your decision in the app…',
+  oauth_done:
+    'Your decision was saved. Return to the browser that requested access.',
+  oauth_return: 'Return to browser',
+  oauth_failed:
+    'This request expired or could not be completed. Return to the requesting site and sign in again.',
+  oauth_login: 'Sign in to continue',
+  oauth_switch: 'Use a different account',
   // Sign in
   login_title: 'Sign in',
   login_email: 'E-mail address',

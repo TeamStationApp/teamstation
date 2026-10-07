@@ -15,7 +15,14 @@ const required = [
   'src/server/oauth/maintenance.ts',
   'src/server/oauth/provider.ts',
   'src/server/oauth/routes.ts',
-  'src/migrate/migrations/050oauth.ts'
+  'src/migrate/migrations/050oauth.ts',
+  'src/common/distribution.ts',
+  'src/app/oauth/approvalClient.ts',
+  'src/app/screens/OAuthScreen.tsx',
+  'src/app/components/BuildInfoModal.tsx',
+  'src/app/platform/externalBrowser.ts',
+  'src/app/platform/externalBrowser.native.ts',
+  'scripts/build-info.cjs'
 ]
 const reportDir = resolve('coverage/builds')
 const temp = resolve(reportDir, 'tmp')
@@ -26,6 +33,17 @@ function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit', env })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
+run(process.execPath, ['scripts/build-builds-ui-tests.mjs'])
+run('node_modules/.bin/mocha', [
+  '-r',
+  'sucrase/register',
+  '-r',
+  './src/test/scoringDomSetup.cjs',
+  'lib/builds-tests.cjs',
+  'src/common/distribution.test.ts',
+  'src/common/buildInfoGenerator.test.ts',
+  'src/app/navigation/routes.test.ts'
+])
 run('node_modules/.bin/mocha', [
   '-r',
   'sucrase/register',
@@ -68,6 +86,12 @@ run('node_modules/.bin/c8', [
   '--exclude-after-remap',
   ...[
     ...required,
+    'src/common/api.ts',
+    'src/app/components/AppHeader.tsx',
+    'src/app/App.tsx',
+    'src/app/navigation/routes.ts',
+    'src/app/locales/en_US.ts',
+    'src/server/routes/me.ts',
     'src/server/auth/sessions.ts',
     'src/server/index.ts',
     'src/server/serverConfig.ts',

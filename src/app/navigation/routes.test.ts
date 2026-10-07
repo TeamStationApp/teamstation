@@ -10,6 +10,23 @@ const roundTrip = (route: Route): Route => {
 }
 
 describe('addresses', function () {
+  it('preserves bounded OAuth interaction and native approval paths', () => {
+    const handle = 'a'.repeat(43)
+    for (const route of [
+      { name: 'oauthApprove', uid: 'request-1' },
+      { name: 'oauthNative', handle }
+    ] as const) {
+      expect(parseRoute(routePath(route))).deep.equals(route)
+    }
+    for (const path of [
+      '/oauth/unknown/id',
+      '/oauth/approve',
+      '/oauth/approve/a/b',
+      '/oauth/native-approval/short',
+      '/oauth/approve/%2f'
+    ])
+      expect(parseRoute(path)).deep.equals({ name: 'home' })
+  })
   it('reads the home screen from the root', function () {
     expect(parseRoute('/')).deep.equals({ name: 'home' })
     expect(parseRoute('')).deep.equals({ name: 'home' })

@@ -15,6 +15,8 @@ export type When = 'upcoming' | 'past' | 'all'
 
 export type Route =
   | { name: 'home' }
+  | { name: 'oauthApprove'; uid: string }
+  | { name: 'oauthNative'; handle: string }
   | { name: 'scoreGame'; gameId: string }
   /**
    * DJ Game: both teams' batters and their walk-up songs, on a phone. The
@@ -117,6 +119,13 @@ export function parseRoute(path: string, search = ''): Route {
   const head = parts[0]
   const id = parts[1]
   switch (head) {
+    case 'oauth':
+      if (parts.length !== 3) return { name: 'home' }
+      if (id === 'approve' && /^[A-Za-z0-9_-]{1,128}$/.test(parts[2]))
+        return { name: 'oauthApprove', uid: parts[2] }
+      if (id === 'native-approval' && /^[A-Za-z0-9_-]{43}$/.test(parts[2]))
+        return { name: 'oauthNative', handle: parts[2] }
+      return { name: 'home' }
     case 'videos':
       return { name: 'videos', when: whenOf(query.get('when'), 'past') }
     case 'schedule':
@@ -243,6 +252,10 @@ export function parseRoute(path: string, search = ''): Route {
 /** The address of a route, ready for the history. */
 export function routePath(route: Route): string {
   switch (route.name) {
+    case 'oauthApprove':
+      return `/oauth/approve/${route.uid}`
+    case 'oauthNative':
+      return `/oauth/native-approval/${route.handle}`
     case 'home':
       return '/'
     case 'scoreGame':
