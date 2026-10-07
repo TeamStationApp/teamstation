@@ -1,3 +1,5 @@
+import '../test/fixtureRoots.test'
+
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
