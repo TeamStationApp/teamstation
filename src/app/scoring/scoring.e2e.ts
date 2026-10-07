@@ -297,6 +297,21 @@ async function startScoring(page: Page): Promise<void> {
   await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
 }
+async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
+  await click(page, 'Add Placeholder Players')
+  // Let the slide-up Modal install its focus trap before keyboard input.
+  await new Promise(resolve => setTimeout(resolve, 400))
+  await page.focus('[aria-label="Number of placeholder players"]')
+  await page.keyboard.press(count === 16 ? 'End' : 'Home')
+  await page.waitForSelector(
+    `[aria-label="Player count ${count}"][aria-selected="true"]`
+  )
+  await click(page, 'Add')
+  await page.waitForSelector('[aria-label="Number of placeholder players"]', {
+    hidden: true
+  })
+  await new Promise(resolve => setTimeout(resolve, 400))
+}
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
   await page.waitForFunction(
@@ -1381,21 +1396,8 @@ describe('scoring browser', function () {
         { hidden: true }
       )
       await new Promise(resolve => setTimeout(resolve, 400))
-      const add = async (count: number): Promise<void> => {
-        await click(page, 'Add Placeholder Players')
-        // Let the slide-up Modal install its focus trap before keyboard input.
-        await new Promise(resolve => setTimeout(resolve, 400))
-        await page.focus('[aria-label="Number of placeholder players"]')
-        await page.keyboard.press(count === 16 ? 'End' : 'Home')
-        await page.waitForSelector(
-          `[aria-label="Player count ${count}"][aria-selected="true"]`
-        )
-        await click(page, 'Add')
-        await page.waitForSelector(
-          '[aria-label="Number of placeholder players"]',
-          { hidden: true }
-        )
-        await new Promise(resolve => setTimeout(resolve, 400))
+      const add = async (count: 1 | 16): Promise<void> => {
+        await addPlaceholders(page, count)
       }
       await add(1)
       await add(16)
@@ -1404,7 +1406,7 @@ describe('scoring browser', function () {
       )
       expect(
         await page.$$('[data-roster-target="roster"] [data-roster-player]')
-      ).length(26)
+      ).length(17)
       await click(page, 'Home Team')
       expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
       await add(1)
@@ -1417,7 +1419,7 @@ describe('scoring browser', function () {
       await click(page, 'Set Team Rosters')
       expect(
         await page.$$('[data-roster-target="roster"] [data-roster-player]')
-      ).length(9)
+      ).length(0)
       await add(1)
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
@@ -1658,11 +1660,8 @@ describe('scoring browser', function () {
           .textContent!.includes('Player 1')
       )
       expect(
-        await page.$eval(
-          '[data-roster-target="roster"] [data-roster-player="11"]',
-          n => n.getAttribute('aria-disabled')
-        )
-      ).equals('false')
+        await page.$('[data-roster-target="roster"] [data-roster-player="11"]')
+      ).not.equals(null)
       await swipe('[aria-label="Home Team"]', '[aria-label="Away Team"]')
       await swipe('[aria-label="Set Defense"]', '[aria-label="Set Lineup"]')
       await page.waitForSelector(
@@ -1767,6 +1766,7 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Remove Player 2')
+      await addPlaceholders(page, 16)
       await page.waitForSelector('[role="dialog"]')
       const order = async (): Promise<string[]> =>
         await page.$$eval(
@@ -4561,7 +4561,7 @@ describe('scoring browser', function () {
           nodes => nodes.map(n => String(n.textContent).trim())
         )
       const rows = await roster()
-      expect(rows).length(9 + 2 + 5)
+      expect(rows).length(2 + 5)
       const numbers = rows.map(row => /^#(\d+)/.exec(row)?.[1])
       const numbered = numbers.filter(number => number != null)
       // Numbers first, lowest first; then everyone without one, by name.
@@ -4657,8 +4657,14 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Remove Player 2')
+      for (const name of ['Jordan K.', 'Player 2', 'Player 3'])
+        await click(page, `Remove ${name}`)
       await new Promise(resolve => setTimeout(resolve, 350))
+      await page.waitForFunction(() =>
+        document
+          .getAnimations()
+          .every(animation => animation.playState !== 'running')
+      )
       for (const [width, height] of [
         [390, 844],
         [844, 390]
@@ -4696,7 +4702,15 @@ describe('scoring browser', function () {
         isMobile: true,
         hasTouch: true
       })
-      await new Promise(resolve => setTimeout(resolve, 250))
+      await page.$$eval(
+        '[aria-label="Roster players"], [aria-label="Batting lineup"]',
+        lists => {
+          lists.forEach(n => {
+            n.scrollTop = 0
+          })
+        }
+      )
+      await new Promise(resolve => setTimeout(resolve, 1200))
       const source = '[data-roster-target="roster"] [data-roster-player="2"]'
       const third = '[data-roster-target="roster"] [data-roster-player="3"]'
       const a = await rect(source)
@@ -4757,8 +4771,7 @@ describe('scoring browser', function () {
       )
       expect(await page.$(ghost)).equals(null)
       await page.waitForFunction(
-        selector =>
-          document.querySelector(selector)!.getBoundingClientRect().height > 40,
+        selector => document.querySelector(selector) == null,
         {},
         source
       )

@@ -287,11 +287,14 @@ describe('scoring slide-up sheets', function () {
     expect(lineup().slice(0, 3)).deep.equals([1, 2, 3])
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
-    ).includes('#1 Player 1')
+    ).not.includes('#1 Player 1')
     await click('Set Defense')
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
     ).includes('P#1 Player 1')
+    expect(
+      document.querySelector('[data-roster-target="roster"]')!.textContent
+    ).not.includes('#1 Player 1')
     await click('Cancel')
   })
   it('validates override fields and player collisions, then reconciles the chosen half', async function () {
@@ -413,7 +416,12 @@ describe('scoring slide-up sheets', function () {
     expect(
       document.querySelector('[data-roster-target="lineup-0"]')!.textContent
     ).includes('1. #2 Player 2')
-    expect(source.getAttribute('aria-disabled')).equals('true')
+    expect(source.isConnected).equals(false)
+    expect(
+      document.querySelector(
+        '[data-roster-target="roster"] [data-roster-player="2"]'
+      )
+    ).equals(null)
     await click('Cancel')
   })
   it('enters fielder selection from a tapped outcome and restores ready with Undo', async function () {

@@ -453,19 +453,14 @@ async function main(): Promise<void> {
       log(`D3 order after the first drop ${order(first)}`)
       check(order(first.slice(0, 7)) === want, `the order starts ${want}`)
       spaced('lineup', first)
-      // A player in view in both columns, so the remove button can be tapped
-      // and the roster drag starts on screen.
+      // A lineup player in view, so the remove button can be tapped and the
+      // roster drag starts on screen once it is back in the roster.
       const rosterList = await bounds('Roster players')
       const lineupList = await bounds('Batting lineup')
       const inView = (b: Bounds, list: Bounds): boolean =>
         b.y >= list.y && b.y + b.height <= list.y + list.height
-      const removed = (await cards('Add ', ' to Lineup'))
-        .filter(c => inView(c.bounds, rosterList))
-        .map(c => c.name.replace(/ to Lineup$/, ''))
-        .find(name =>
-          first.some(c => c.name === name && inView(c.bounds, lineupList))
-        )
-      assert(removed != null, 'A player in view in both columns')
+      const removed = first.find(c => inView(c.bounds, lineupList))?.name
+      assert(removed != null, 'A lineup player in view')
       await m.tapOn({ text: `Remove ${removed}`, timeout: 10000 })
       await pause(600)
       const source = (await cards('Add ', ' to Lineup')).find(
@@ -490,12 +485,9 @@ async function main(): Promise<void> {
       check(second[2]?.name === removed, `${removed} is back at slot 2`)
       spaced('lineup', second)
       const roster = await cards('Add ', ' to Lineup')
-      const card = roster.find(c => c.name === `${removed} to Lineup`)
       check(
-        card != null &&
-          !card.enabled &&
-          Math.abs(card.bounds.height - source.bounds.height) <= tolerance,
-        `${removed}'s roster card is disabled at full height (${card?.bounds.height})`
+        !roster.some(c => c.name === `${removed} to Lineup`),
+        `${removed} left the roster once placed in the lineup`
       )
       spaced('roster', roster)
       await shot('roster-drop')
