@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   const asserting = phase === 'after'
   const device = required('TEST_DEVICE')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
-  const only = (process.env.TEST_ONLY ?? 'D1,D2,D3,D4,D6,D7').split(',')
+  const only = (process.env.TEST_ONLY ?? 'D1,D2,D3,D4,D5,D6,D7').split(',')
   await mkdir(artifacts, { recursive: true })
   const requireClient = createRequire(
     join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -527,6 +527,29 @@ async function main(): Promise<void> {
         common(after, start) === common(start, after),
         'the order is unchanged'
       )
+    }
+
+    if (only.includes('D5')) {
+      log('D5 one rem apart in all three columns')
+      await open()
+      await shot('roster-spacing')
+      spaced('roster', await cards('Add ', ' to Lineup'))
+      spaced('lineup', await lineup())
+      await m.tapOn({ text: 'Set Defense', timeout: 10000 })
+      await pause(800)
+      await shot('defense-spacing')
+      // A defense card is the view that directly holds its Clear button.
+      const defense = flatten(await m.hierarchy())
+        .filter(
+          n =>
+            n.bounds != null &&
+            (n.children ?? []).some(c => /^Clear [A-Z0-9]+$/.test(label(c)))
+        )
+        .map(n => ({ name: label(n), enabled: true, bounds: n.bounds! }))
+      const unique = [
+        ...new Map(defense.map(r => [r.bounds.y, r])).values()
+      ].sort((a, b) => a.bounds.y - b.bounds.y)
+      spaced('defense', unique)
     }
 
     if (only.includes('D6')) {
