@@ -16,6 +16,7 @@ import {
   asAccountSettings
 } from './accountSettings'
 import { asLiteral } from './asLiteral'
+import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
@@ -1088,6 +1089,27 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  async buildsLink(): Promise<string | undefined> {
+    return (await this.request('GET', '/me/builds', asBuildsLink)).url
+  }
+
+  async oauthApproval(handle: string): Promise<Approval> {
+    return await this.request(
+      'GET',
+      `/oauth/approvals/${encodeURIComponent(handle)}`,
+      asApproval
+    )
+  }
+
+  async decideOAuth(handle: string, approve: boolean): Promise<void> {
+    await this.request(
+      'POST',
+      `/oauth/approvals/${encodeURIComponent(handle)}`,
+      asObject({ approved: asBoolean }),
+      { approve }
+    )
   }
 
   async setAccountName(displayName: string): Promise<AccountSettings> {

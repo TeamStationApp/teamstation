@@ -1,5 +1,10 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import {
+  createHash,
+  generateKeyPairSync,
+  randomBytes,
+  X509Certificate
+} from 'node:crypto'
 import { once } from 'node:events'
 import {
   chmod,
@@ -16,12 +21,14 @@ import path from 'node:path'
 
 import { expect } from 'chai'
 import express from 'express'
+import { JSDOM } from 'jsdom'
 import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import * as client from 'openid-client'
 import { Pool } from 'pg'
 import { Agent } from 'undici'
 
+import { verifyOAuthWeb } from '../../app/oauth/oauthWeb.e2e'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -30,6 +37,7 @@ import { hashToken, makeToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { meRoutes } from '../routes/me'
 import {
   makeOAuthAdapter,
   oauthHash,
@@ -74,7 +82,7 @@ class Browser {
 }
 
 describe('OAuth provider and native approval over HTTPS', function () {
-  this.timeout(60000)
+  this.timeout(process.env.TS_OAUTH_WEB_E2E === '1' ? 180000 : 60000)
   let admin: Pool
   let pool: Pool
   let db: Kysely<Database>
@@ -87,6 +95,8 @@ describe('OAuth provider and native approval over HTTPS', function () {
   let rp: client.Configuration
   let session: Awaited<ReturnType<typeof createSession>>
   let backendPort: number | undefined
+  let serveUi = false
+  let lastCallback: URL | undefined
   before(async () => {
     const root = process.env.TS_BUILDS_TEST_ROOT
     if (root == null)
@@ -179,12 +189,31 @@ describe('OAuth provider and native approval over HTTPS', function () {
       .execute()
     session = await createSession(db, 123, 'fixture')
     const app = express()
+    const ui = express()
+    ui.use(express.static(path.resolve('dist')))
+    ui.get('/{*path}', (_req, res) => {
+      res.sendFile(path.resolve('dist/index.html'))
+    })
     server = createServer(
       {
         key: await readFile(path.join(dir, 'tls.key')),
         cert: await readFile(path.join(dir, 'tls.crt'))
       },
       (req, res) => {
+        if (serveUi && req.url?.startsWith('/fixture/callback') === true) {
+          lastCallback = new URL(req.url, origin)
+          res.end('Authorization complete')
+          return
+        }
+        if (
+          serveUi &&
+          ((req.url?.startsWith('/api/') !== true &&
+            req.url?.startsWith('/oauth/') !== true) ||
+            /^\/oauth\/approve\/[A-Za-z0-9_-]+$/.test(req.url ?? ''))
+        ) {
+          ui(req, res)
+          return
+        }
         if (backendPort == null) {
           app(req, res)
           return
@@ -211,11 +240,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
     ).listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server.once('listening', resolve))
     origin = `https://app.example.test:${(server.address() as AddressInfo).port}`
+    config.clients[0].redirectUris.push(`${origin}/fixture/callback`)
     app.use(withActor(db))
     app.use(oauthRequestLimit(db))
     const provider = createOAuthProvider(db, config, origin)
     app.use(oauthInteractionRoutes(db, provider, origin))
     app.use('/oauth', provider.callback())
+    app.use('/api/v1', meRoutes(db))
     app.use(errorHandler)
     agent = new Agent({
       connect: {
@@ -254,7 +285,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
     }
     if (dir != null) await rm(dir, { recursive: true })
   })
-  async function start(): Promise<{
+  async function start(browser = new Browser(fetcher)): Promise<{
     browser: Browser
     verifier: string
     state: string
@@ -262,7 +293,6 @@ describe('OAuth provider and native approval over HTTPS', function () {
     approval: string
     csrf: string
   }> {
-    const browser = new Browser(fetcher)
     const verifier = client.randomPKCECodeVerifier()
     const state = client.randomState()
     const nonce = client.randomNonce()
@@ -307,7 +337,31 @@ describe('OAuth provider and native approval over HTTPS', function () {
   ): Promise<URL> {
     expect(response.status).equals(200)
     const { redirectTo } = (await response.json()) as { redirectTo: string }
-    const resumed = await flow.browser.request(redirectTo)
+    let resumed = await flow.browser.request(redirectTo)
+    // The provider clears an older OIDC account with a self-submitting form
+    // before resuming a deliberate switch to another TeamStation account.
+    for (let count = 0; count < 4; count++) {
+      if (resumed.status === 200) {
+        const dom = new JSDOM(await resumed.text())
+        const form = dom.window.document.querySelector('form')
+        const action = new URL(form?.getAttribute('action') ?? '', origin)
+        expect(action.origin).equals(origin)
+        const body = new URLSearchParams()
+        for (const input of dom.window.document.querySelectorAll('input'))
+          body.set(input.name, input.value)
+        dom.window.close()
+        resumed = await flow.browser.request(action, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: body.toString()
+        })
+      } else {
+        const location = resumed.headers.get('location')
+        if (location == null || new URL(location, origin).origin !== origin)
+          break
+        resumed = await flow.browser.request(new URL(location, origin))
+      }
+    }
     expect(resumed.status).equals(303)
     return new URL(resumed.headers.get('location')!)
   }
@@ -396,6 +450,38 @@ describe('OAuth provider and native approval over HTTPS', function () {
         })
       ).status
     ).equals(400)
+  })
+  it('does not reuse an OAuth identity after the TeamStation account changes', async () => {
+    const first = await start()
+    first.browser.cookies.set('ts_session', session.token)
+    await callback(first, await post(first, '/decision', { approve: true }))
+    await db
+      .insertInto('users')
+      .values({
+        id: 456,
+        legacyId: 'usr_BBBBBBBBBBBBBBBB',
+        display_name: 'Jordan Smith',
+        login_enabled: true
+      })
+      .execute()
+    const other = await createSession(db, 456, 'fixture')
+    first.browser.cookies.set('ts_session', other.token)
+    const changed = await start(first.browser)
+    const url = await callback(
+      changed,
+      await post(changed, '/decision', { approve: true })
+    )
+    const tokens = await client.authorizationCodeGrant(rp, url, {
+      pkceCodeVerifier: changed.verifier,
+      expectedState: changed.state,
+      expectedNonce: changed.nonce
+    })
+    expect(tokens.claims()?.sub).equals('456')
+    first.browser.cookies.delete('ts_session')
+    const signedOut = await start(first.browser)
+    expect(
+      (await post(signedOut, '/decision', { approve: true })).status
+    ).equals(401)
   })
   it('denies untrusted web origins, anonymous approval and user denial', async () => {
     const flow = await start()
@@ -633,6 +719,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
       ).status
     ).equals(400)
   })
+  it('omits the distribution link when it is not configured', async () => {
+    const response = await fetcher(`${origin}/api/v1/me/builds`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    })
+    expect(response.status).equals(200)
+    expect(await response.json()).deep.equals({})
+  })
   it('prunes expired OAuth records and bounds repeated protocol requests', async () => {
     const timer = scheduleOAuthPrune(db, 10)
     try {
@@ -684,6 +777,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
       path.join(dir, 'serverConfig.json'),
       JSON.stringify({
         oauth: config,
+        buildsUrl: 'https://builds.example.test',
         databaseUrl,
         clusterWorkers: 1,
         statsBuilder: false,
@@ -729,6 +823,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
           await new Promise(resolve => setTimeout(resolve, 30))
         }
         backendPort = port
+        const link = await fetcher(`${origin}/api/v1/me/builds`, {
+          headers: { authorization: `Bearer ${session.token}` }
+        })
+        expect(await link.json()).deep.equals({
+          url: 'https://builds.example.test'
+        })
+        expect((await fetcher(`${origin}/api/v1/me/builds`)).status).equals(401)
         const discovered = await client.discovery(
           new URL(`${origin}/oauth`),
           'fixture-client',
@@ -764,6 +865,65 @@ describe('OAuth provider and native approval over HTTPS', function () {
         ).equals(true)
         expect(output).not.includes(session.token)
         expect(output).not.includes(secret)
+        if (!compiled && process.env.TS_OAUTH_WEB_E2E === '1') {
+          execFileSync(process.execPath, ['src/build.mjs'], {
+            cwd: repo,
+            stdio: 'pipe'
+          })
+          const browserBin = process.env.TS_TEST_BROWSER_BIN
+          if (browserBin == null)
+            throw new Error('Set TS_TEST_BROWSER_BIN for browser acceptance')
+          const cert = new X509Certificate(
+            await readFile(path.join(dir, 'tls.crt'))
+          )
+          const pin = createHash('sha256')
+            .update(cert.publicKey.export({ type: 'spki', format: 'der' }))
+            .digest('base64')
+          const wrapper = path.join(dir, 'fixture-browser')
+          const quote = (value: string): string =>
+            "'" + value.replace(/'/g, "'\\''") + "'"
+          await writeFile(
+            wrapper,
+            `#!/bin/sh\nexec ${quote(browserBin)} --host-resolver-rules='MAP app.example.test 127.0.0.1' --ignore-certificate-errors-spki-list=${quote(pin)} "$@"\n`,
+            { mode: 0o700 }
+          )
+          const verifier = client.randomPKCECodeVerifier()
+          const state = client.randomState()
+          const nonce = client.randomNonce()
+          const authorize = client.buildAuthorizationUrl(discovered, {
+            redirect_uri: `${origin}/fixture/callback`,
+            scope: 'openid profile email',
+            code_challenge: await client.calculatePKCECodeChallenge(verifier),
+            code_challenge_method: 'S256',
+            state,
+            nonce
+          })
+          serveUi = true
+          try {
+            const callbackUrl = await verifyOAuthWeb({
+              origin,
+              browserBin: wrapper,
+              sessionToken: session.token,
+              authorizeUrl: authorize.href,
+              waitForCallback: async () => {
+                if (lastCallback == null) throw new Error('No browser callback')
+                return lastCallback
+              }
+            })
+            const browserTokens = await client.authorizationCodeGrant(
+              discovered,
+              callbackUrl,
+              {
+                pkceCodeVerifier: verifier,
+                expectedState: state,
+                expectedNonce: nonce
+              }
+            )
+            expect(browserTokens.claims()?.sub).equals('123')
+          } finally {
+            serveUi = false
+          }
+        }
       } finally {
         backendPort = undefined
         child.kill('SIGTERM')
