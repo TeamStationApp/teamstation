@@ -1,9 +1,12 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import type { TeamStationClient } from '../../common/api'
 import { edgeMarginRem } from '../layout/margins'
+import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { BuildInfoModal } from './BuildInfoModal'
 import { Emblem } from './Emblem'
 import { GlassView } from './GlassView'
 import { Icon } from './Icon'
@@ -11,6 +14,7 @@ import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface AppHeaderProps {
+  buildsClient?: TeamStationClient
   /** The name of the screen, centred. Absent on screens that say it below. */
   title?: string
   /** Home only. Everywhere else the screen says what it is. */
@@ -51,6 +55,7 @@ export interface AppHeaderProps {
  * number that would then have to be kept in step.
  */
 export function AppHeader(props: AppHeaderProps): React.ReactElement {
+  const [about, setAbout] = useState(false)
   const {
     title,
     showMark = false,
@@ -76,87 +81,107 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   const margin = theme.rem(edgeMarginRem(theme, wide ? 'tablet' : 'phone'))
 
   return (
-    <GlassView
-      style={[
-        styles.header,
-        wide && styles.headerWide,
-        {
-          height: theme.rem(3) + insets.top,
-          paddingTop: insets.top,
-          paddingLeft: Math.max(margin, insets.left),
-          paddingRight: Math.max(margin, insets.right)
-        }
-      ]}
-      onLayout={event => {
-        onHeight?.(event.nativeEvent.layout.height)
-      }}
-    >
-      {/*
+    <>
+      <GlassView
+        style={[
+          styles.header,
+          wide && styles.headerWide,
+          {
+            height: theme.rem(3) + insets.top,
+            paddingTop: insets.top,
+            paddingLeft: Math.max(margin, insets.left),
+            paddingRight: Math.max(margin, insets.right)
+          }
+        ]}
+        onLayout={event => {
+          onHeight?.(event.nativeEvent.layout.height)
+        }}
+      >
+        {/*
         Three columns of equal weight, so the middle is centred in the header
         rather than in the space left over. With `flex: 1` on the title alone
         it drifted as the left side changed — a chevron on one screen, a mark
         on another, neither on a third.
       */}
-      {/*
+        {/*
         Left-justified, beside the mark, which is where every other title in
         the app sits. Centring it looked tidy in isolation and broke the one
         line everything else is aligned to.
       */}
-      <View style={styles.side}>
-        {onBack != null && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-            onPress={onBack}
-            style={({ pressed }) => [styles.back, pressed && styles.pressed]}
-          >
-            {/* `size` is in rem, like every other size in the app: 2.5 is
+        <View style={styles.side}>
+          {onBack != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+              onPress={onBack}
+              style={({ pressed }) => [styles.back, pressed && styles.pressed]}
+            >
+              {/* `size` is in rem, like every other size in the app: 2.5 is
                 double the 1.25 default. */}
-            <Icon
-              name="chevron_left"
-              size={2.5}
-              color={theme.headerTextColor}
-            />
-          </Pressable>
-        )}
-        {showMark && (
-          <View style={[styles.mark, wide && styles.markWide]}>
-            <TsMark size={1.75} />
-          </View>
-        )}
-        {handoff != null ? (
-          <View style={styles.handoffLeft}>{handoff}</View>
-        ) : (
-          title != null && (
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-          )
-        )}
-      </View>
+              <Icon
+                name="chevron_left"
+                size={2.5}
+                color={theme.headerTextColor}
+              />
+            </Pressable>
+          )}
+          {showMark && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={lstrings.about_title}
+              onPress={() => {
+                setAbout(true)
+              }}
+              style={[styles.mark, wide && styles.markWide]}
+            >
+              <TsMark size={1.75} />
+            </Pressable>
+          )}
+          {handoff != null ? (
+            <View style={styles.handoffLeft}>{handoff}</View>
+          ) : (
+            title != null && (
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
+              </Text>
+            )
+          )}
+        </View>
 
-      <View style={[styles.side, styles.sideEnd]}>
-        {nav}
-        {account != null && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Account, ${account.name}`}
-            onPress={() => {
-              account.onPress()
-            }}
-            style={({ pressed }) => [styles.account, pressed && styles.pressed]}
-          >
-            <Emblem
-              key={account.avatarUrl}
-              uri={account.avatarUrl}
-              fallback={initials(account.name)}
-              shape="circle"
-              size={2}
-            />
-          </Pressable>
-        )}
-      </View>
-    </GlassView>
+        <View style={[styles.side, styles.sideEnd]}>
+          {nav}
+          {account != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Account, ${account.name}`}
+              onPress={() => {
+                account.onPress()
+              }}
+              style={({ pressed }) => [
+                styles.account,
+                pressed && styles.pressed
+              ]}
+            >
+              <Emblem
+                key={account.avatarUrl}
+                uri={account.avatarUrl}
+                fallback={initials(account.name)}
+                shape="circle"
+                size={2}
+              />
+            </Pressable>
+          )}
+        </View>
+      </GlassView>
+      {about && (
+        <BuildInfoModal
+          client={props.buildsClient}
+          onClose={() => {
+            setAbout(false)
+          }}
+        />
+      )}
+    </>
   )
 }
 

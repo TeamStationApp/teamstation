@@ -133,6 +133,13 @@ export function oauthInteractionRoutes(
     '/oauth/approve/:uid/details',
     withAsync(async (req, res) => {
       const interaction = await details(req, res)
+      const nativeRows = await sql<{
+        decision: string
+      }>`select decision from oauth_approvals
+        where interaction_id = ${interaction.uid} and expires_at > now() and consumed_at is null`.execute(
+        db
+      )
+      const nativeDecision = nativeRows.rows[0]
       const csrfToken = randomBytes(32).toString('base64url')
       res.cookie(CSRF_COOKIE, csrfToken, {
         secure: true,
@@ -144,6 +151,7 @@ export function oauthInteractionRoutes(
       res.json({
         ...(await present(interaction)),
         csrfToken,
+        decision: nativeDecision?.decision,
         signedIn: (await activeHuman(db, req.actor)) != null
       })
     })

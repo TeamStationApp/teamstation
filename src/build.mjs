@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
+import buildInfoTools from '../scripts/build-info.cjs'
 import { webSettings } from '../scripts/web-build-settings.mjs'
 
 /**
@@ -120,6 +121,9 @@ const options = {
   minify: !serve,
   logLevel: 'info',
   define: {
+    'process.env.TS_BUILD_INFO': JSON.stringify(
+      buildInfoTools.bundleBuildInfo()
+    ),
     'process.env.NODE_ENV': JSON.stringify(
       serve ? 'development' : 'production'
     ),

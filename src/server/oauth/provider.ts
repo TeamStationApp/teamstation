@@ -1,5 +1,6 @@
+import type { Request } from 'express'
 import { type Kysely, sql } from 'kysely'
-import Provider from 'oidc-provider'
+import Provider, { interactionPolicy } from 'oidc-provider'
 
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
@@ -34,6 +35,22 @@ export function createOAuthProvider(
   if (url.protocol !== 'https:' || url.origin !== origin)
     throw new Error('OAuth requires a canonical HTTPS origin')
   const secrets = loadOAuthSecrets(config)
+  const policy = interactionPolicy.base()
+  policy.get('login')!.checks.add(
+    new interactionPolicy.Check(
+      'human_session_changed',
+      'Confirm the current TeamStation account',
+      async ctx => {
+        // A native decision authenticates this one interaction without moving
+        // the native TeamStation session token into the browser.
+        if (ctx.oidc.result?.login != null) return false
+        const actor = await activeHuman(db, (ctx.req as Request).actor)
+        return (
+          actor == null || String(actor.userId) !== ctx.oidc.session?.accountId
+        )
+      }
+    )
+  )
   const provider = new Provider(`${origin}/oauth`, {
     adapter: makeOAuthAdapter(db, secrets.storageKey),
     jwks: secrets.jwks,
@@ -72,6 +89,7 @@ export function createOAuthProvider(
       Grant: 2592000
     },
     interactions: {
+      policy,
       url: (_ctx, interaction) => `${origin}/oauth/approve/${interaction.uid}`
     },
     findAccount: async (_ctx, id) => {

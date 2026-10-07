@@ -9,6 +9,9 @@
  * Reanimated runs on the UI thread, and it has to see them after every other
  * transform has had its turn.
  */
+const { bundleBuildInfo } = require('./scripts/build-info.cjs')
+process.env.TS_BUILD_INFO = bundleBuildInfo()
+
 module.exports = {
   presets: ['module:@react-native/babel-preset'],
   plugins: [
@@ -20,7 +23,7 @@ module.exports = {
     // environment, which would bake whatever is in the shell into the app.
     [
       'transform-inline-environment-variables',
-      { include: ['TS_API_BASE_URL'] }
+      { include: ['TS_API_BASE_URL', 'TS_BUILD_INFO'] }
     ],
     // three.js, which the scoring field draws with, declares static blocks
     // inside its classes, and neither React Native's preset nor Hermes
