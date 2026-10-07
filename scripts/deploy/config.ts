@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { asArray, asBoolean, asOptional, type Cleaner } from 'cleaners'
 
+import { asHosting } from './hosting/config'
 import {
   appId,
   branchName,
@@ -102,6 +103,7 @@ export const asSettings = object({
   tools: asOptional(asTools, () => asTools({})),
   inhibitSleep: asOptional(asBoolean, true),
   match: asOptional(asMatch),
+  hosting: asOptional(asHosting),
   apps: record(asApp)
 })
 export type Settings = ReturnType<typeof asSettings>
@@ -214,6 +216,14 @@ export function loadSettings(file: string, branch: string): Settings {
   out.stateDirectory = resolve(out.stateDirectory)
   out.worktreeDirectory = resolve(out.worktreeDirectory)
   out.outputDirectory = resolve(out.outputDirectory)
+  if (out.hosting != null) {
+    out.hosting.repository = resolve(out.hosting.repository)
+    out.hosting.configFile = resolve(out.hosting.configFile)
+    out.hosting.ssh.identityFile = resolve(out.hosting.ssh.identityFile)
+    out.hosting.ssh.knownHostsFile = resolve(out.hosting.ssh.knownHostsFile)
+    if (out.hosting.dns != null)
+      out.hosting.dns.tokenFile = resolve(out.hosting.dns.tokenFile)
+  }
   for (const app of Object.values(out.apps)) {
     if (app.repository != null) app.repository = resolve(app.repository)
     for (const platform of [app.ios, app.android, app.macos]) {
