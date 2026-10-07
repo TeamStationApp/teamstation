@@ -1,0 +1,103 @@
+import { type ChildProcess, spawn } from 'node:child_process'
+import { once } from 'node:events'
+
+/** Only explicit nonsecret environment values reach compilers; signing adapters add their own. */
+export function childEnvironment(
+  extra: NodeJS.ProcessEnv = {}
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { LANG: 'en_US.UTF-8', CI: '1' }
+  for (const key of [
+    'PATH',
+    'HOME',
+    'USER',
+    'TMPDIR',
+    'DEVELOPER_DIR',
+    'JAVA_HOME',
+    'ANDROID_HOME',
+    'ANDROID_SDK_ROOT',
+    'SSH_AUTH_SOCK'
+  ])
+    if (process.env[key] != null) out[key] = process.env[key]
+  return { ...out, ...extra }
+}
+export interface Command {
+  file: string
+  args: string[]
+  cwd: string
+  env?: NodeJS.ProcessEnv
+  input?: string
+  capture?: boolean
+}
+export class Processes {
+  private readonly children = new Set<ChildProcess>()
+  constructor(readonly signal: AbortSignal) {}
+  async run(command: Command): Promise<string> {
+    this.signal.throwIfAborted()
+    return await new Promise((resolve, reject) => {
+      const child = spawn(command.file, command.args, {
+        cwd: command.cwd,
+        env: childEnvironment(command.env),
+        stdio: 'pipe',
+        detached: true
+      })
+      this.children.add(child)
+      let stdout = ''
+      let overflow = false
+      let killTimer: NodeJS.Timeout | undefined
+      function kill(signal: NodeJS.Signals): void {
+        if (child.pid != null) {
+          try {
+            process.kill(-child.pid, signal)
+          } catch {
+            /* Already exited. */
+          }
+        }
+      }
+      const abort = (): void => {
+        kill('SIGTERM')
+        killTimer = setTimeout(() => {
+          kill('SIGKILL')
+        }, 3000)
+        killTimer.unref()
+      }
+      this.signal.addEventListener('abort', abort, { once: true })
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (command.capture === false) return
+        if (stdout.length + chunk.length <= 1024 * 1024)
+          stdout += chunk.toString()
+        else overflow = true
+      })
+      // Compiler output may contain credentials. Consume it without printing it.
+      child.stderr.resume()
+      child.stdin.on('error', () => {})
+      child.stdin.end(command.input)
+      child.once('error', () => {
+        reject(new Error('Could not start deployment tool'))
+      })
+      child.once('close', code => {
+        this.children.delete(child)
+        this.signal.removeEventListener('abort', abort)
+        if (killTimer != null) clearTimeout(killTimer)
+        if (this.signal.aborted) reject(new Error('Deployment cancelled'))
+        else if (code !== 0) reject(new Error('Deployment tool failed'))
+        else if (overflow)
+          reject(new Error('Deployment tool output exceeded limit'))
+        else resolve(stdout.trim())
+      })
+      if (this.signal.aborted) abort()
+    })
+  }
+
+  async inhibit(file: string, cwd: string): Promise<() => void> {
+    this.signal.throwIfAborted()
+    const child = spawn(file, ['-dimsu', '-w', String(process.pid)], {
+      cwd,
+      env: childEnvironment(),
+      stdio: 'ignore'
+    })
+    await once(child, 'spawn')
+    return () => {
+      child.kill('SIGTERM')
+    }
+  }
+}
