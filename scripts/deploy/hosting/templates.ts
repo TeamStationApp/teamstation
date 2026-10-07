@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import path from 'node:path'
 
 import { httpsOrigin } from '../validation'
 import type { Remote } from './config'
@@ -43,7 +44,7 @@ export function caddySite(origin: string, port: number): string {
   const host = new URL(httpsOrigin(origin)).host
   return `${host} {\n\t# Request URLs can contain short-lived installation credentials.\n\tlog_skip\n\treverse_proxy 127.0.0.1:${port}\n}\n`
 }
-export const oauthRoutes = `\n\t@masonOAuth {\n\t\tpath /oauth/* /.well-known/openid-configuration\n\t\tnot path /oauth/approve/*\n\t}\n\tlog_skip /oauth/*\n\thandle @masonOAuth {\n\t\treverse_proxy 127.0.0.1:{args[0]}\n\t}\n`
+export const oauthRoutes = `\n\t@masonOAuth {\n\t\tpath /oauth/* /.well-known/openid-configuration\n\t\tnot path_regexp ^/oauth/approve/[A-Za-z0-9_-]+/?$\n\t}\n\t@masonAuthLog path /oauth/* /api/v1/oauth/*\n\tlog_skip @masonAuthLog\n\thandle @masonOAuth {\n\t\treverse_proxy 127.0.0.1:{args[0]}\n\t}\n`
 export function buildRedirect(origin: string): string {
   return `\n\t@masonLegacyBuilds path /builds /builds/*\n\thandle @masonLegacyBuilds {\n\t\theader Cache-Control no-store\n\t\tredir ${httpsOrigin(origin)}/ 302\n\t}\n`
 }
@@ -140,7 +141,7 @@ export function caddyCandidate(
       block.depth === 1 &&
       block.start > site.open &&
       block.end < site.end &&
-      block.header === 'handle /builds/*'
+      ['handle /builds/*', 'handle @legacyBuilds'].includes(block.header)
   )
   const edits: Array<{ start: number; end: number; value: string }> = []
   const section = live.slice(site.open, site.end)
@@ -168,7 +169,15 @@ export function caddyCandidate(
   for (const edit of edits.sort((a, b) => b.start - a.start))
     live = live.slice(0, edit.start) + edit.value + live.slice(edit.end)
   const include = `import ${remote.caddyInclude}`
-  if (!live.split('\n').some(line => line.trim() === include))
+  const optionalSites = path.posix.join(
+    path.posix.dirname(remote.caddyFile),
+    'mason-sites'
+  )
+  const coveredByGlob =
+    path.posix.dirname(remote.caddyInclude) === optionalSites &&
+    remote.caddyInclude.endsWith('.caddy') &&
+    live.split('\n').some(line => line.trim() === 'import mason-sites/*.caddy')
+  if (!coveredByGlob && !live.split('\n').some(line => line.trim() === include))
     live += `\n${include}\n`
   return live
 }

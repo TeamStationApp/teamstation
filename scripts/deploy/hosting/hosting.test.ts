@@ -189,7 +189,7 @@ describe('Standalone distribution hosting', function () {
     assert.match(timer(remote), /Persistent=true/)
     assert.match(caddySite(origin, 19100), /log_skip/)
     assert.match(buildRedirect(origin), /302/)
-    assert.match(oauthRoutes, /not path \/oauth\/approve/)
+    assert.match(oauthRoutes, /not path_regexp \^\/oauth\/approve/)
     assert.equal(shellQuote("one'two"), "'one'\\''two'")
     assert.deepEqual(hostingOptions(['--branch', 'feature/demo']), {
       file: 'deployConfig.json',
