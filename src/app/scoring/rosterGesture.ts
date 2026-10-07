@@ -75,17 +75,11 @@ export class RosterGesture {
     private readonly notify: (preview: RosterPreview | null) => void
   ) {}
 
-  setHeld(held: boolean): void {
+  private setHeld(held: boolean): void {
     for (const listener of this.heldListeners) listener(held)
   }
 
-  begin(
-    id: number,
-    label: string,
-    point: RosterPoint,
-    lockScroll = true,
-    source?: string
-  ): void {
+  begin(id: number, label: string, point: RosterPoint, source?: string): void {
     this.cancel()
     const drag: NonNullable<RosterGesture['active']> = {
       id,
@@ -126,7 +120,7 @@ export class RosterGesture {
           })().catch(() => {
             if (this.active === drag) this.cancel()
           })
-    if (lockScroll) this.setHeld(true)
+    this.setHeld(true)
   }
 
   cancel(): void {
@@ -190,8 +184,23 @@ export class RosterGesture {
           target.insertion === 'row'
         )
           return undefined
-        const clip = target.clip == null ? rect : await target.clip()
-        return containsRosterPoint(rect, point) &&
+        // Every card takes half the gap above it and half the gap below it,
+        // so a release between two lineup cards or two defensive positions
+        // is never lost. Anywhere below the end target, down to the bottom of
+        // its list, is the end of the list: hovering it opens a gap above it,
+        // so an auto-scroll at the bottom edge can carry it up past a finger
+        // resting below its label. Without a list to bound it, the end target
+        // is just itself.
+        const zone = {
+          ...rect,
+          y: rect.y - ROSTER_CARD_GAP / 2,
+          height:
+            target.insertion === 'end' && target.clip != null
+              ? Number.POSITIVE_INFINITY
+              : rect.height + ROSTER_CARD_GAP
+        }
+        const clip = target.clip == null ? zone : await target.clip()
+        return containsRosterPoint(zone, point) &&
           containsRosterPoint(clip, point)
           ? {
               key,

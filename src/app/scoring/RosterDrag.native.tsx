@@ -26,10 +26,13 @@ export function rosterResponder(
     x: e.nativeEvent.pageX,
     y: e.nativeEvent.pageY
   })
+  // The lists lock the moment the hold fires, while the finger is still: on
+  // iOS the first move would otherwise start the list's own pan, which takes
+  // the touch before this row can be granted it.
   const hold = new RosterHold(p => {
     const latest = current()
     if (latest.playerId != null && latest.disabled !== true)
-      engine.begin(latest.playerId, latest.label ?? '', p, false, source)
+      engine.begin(latest.playerId, latest.label ?? '', p, source)
   })
   const cancel = (): void => {
     hold.cancel()
@@ -68,7 +71,6 @@ export function rosterResponder(
     onMoveShouldSetResponder: () => hold.active,
     onResponderGrant: () => {
       owned = true
-      engine.setHeld(true)
     },
     onResponderMove: move,
     onResponderRelease: end,

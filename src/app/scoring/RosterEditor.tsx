@@ -208,36 +208,36 @@ export function RosterEditor({
                 targetId="roster"
                 onDropPlayer={defense ? undefined : remove}
               >
-                {byJersey(team.players, names).map(id => (
-                  <RosterDrag
-                    key={id}
-                    playerId={id}
-                    label={
-                      defense
-                        ? names[id].fullName
-                        : `Add ${names[id].fullName} to Lineup`
-                    }
-                    disabled={assigned.includes(id)}
-                    onTap={
-                      defense
-                        ? undefined
-                        : () => {
-                            if (!assigned.includes(id))
+                {byJersey(team.players, names)
+                  .filter(id => !assigned.includes(id))
+                  .map(id => (
+                    <RosterDrag
+                      key={id}
+                      playerId={id}
+                      label={
+                        defense
+                          ? names[id].fullName
+                          : `Add ${names[id].fullName} to Lineup`
+                      }
+                      onTap={
+                        defense
+                          ? undefined
+                          : () => {
                               place(id, team.battingOrder.length)
-                          }
-                    }
-                  >
-                    <View style={row}>
-                      <Text
-                        selectable={false}
-                        {...nameProps}
-                        style={{ ...text, flex: 1 }}
-                      >
-                        {display(id)}
-                      </Text>
-                    </View>
-                  </RosterDrag>
-                ))}
+                            }
+                      }
+                    >
+                      <View style={row}>
+                        <Text
+                          selectable={false}
+                          {...nameProps}
+                          style={{ ...text, flex: 1 }}
+                        >
+                          {display(id)}
+                        </Text>
+                      </View>
+                    </RosterDrag>
+                  ))}
                 {!defense && (
                   <Text
                     style={{
