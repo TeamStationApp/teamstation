@@ -511,7 +511,7 @@ function runWorker(): void {
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db))
-  app.use('/api/v1', meRoutes(db))
+  app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use(
     '/api/v1',
     accountRoutes(db, {

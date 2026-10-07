@@ -11,6 +11,15 @@ import { type Adapter, type AdapterPayload, errors } from 'oidc-provider'
 
 import type { Database } from '../db/database'
 
+const GRANT_BOUND_MODELS = new Set([
+  'Grant',
+  'AccessToken',
+  'AuthorizationCode',
+  'RefreshToken',
+  'DeviceCode',
+  'BackchannelAuthenticationRequest'
+])
+
 export const oauthHash = (value: string): string =>
   createHash('sha256').update(value).digest('hex')
 
@@ -106,7 +115,11 @@ export function makeOAuthAdapter(
         grant_hash: asUnknown
       })(result.rows[0])
       const grantHash = this.model === 'Grant' ? row.id_hash : row.grant_hash
-      if (typeof grantHash === 'string' && !(await liveGrant(db, grantHash)))
+      if (
+        GRANT_BOUND_MODELS.has(this.model) &&
+        typeof grantHash === 'string' &&
+        !(await liveGrant(db, grantHash))
+      )
         return undefined
       const payload = openPayload(
         row.payload,
@@ -145,17 +158,19 @@ export function makeOAuthAdapter(
       await sql`delete from oauth_records where model = ${this.model} and id_hash = ${oauthHash(id)}`.execute(
         db
       )
+      if (this.model === 'Grant')
+        await sql`delete from oauth_grant_sessions where grant_hash = ${oauthHash(id)}`.execute(
+          db
+        )
     }
 
     async revokeByGrantId(id: string): Promise<void> {
-      await db.transaction().execute(async tx => {
-        await sql`delete from oauth_records where grant_hash = ${oauthHash(id)} or (model = 'Grant' and id_hash = ${oauthHash(id)})`.execute(
-          tx
-        )
-        await sql`delete from oauth_grant_sessions where grant_hash = ${oauthHash(id)}`.execute(
-          tx
-        )
-      })
+      // The provider invokes this per token model. An Interaction can refer
+      // to the previous grant while completing an account switch, so deleting
+      // every row with that grant would destroy the in-progress approval.
+      await sql`delete from oauth_records where model = ${this.model} and grant_hash = ${oauthHash(id)}`.execute(
+        db
+      )
     }
   }
 }

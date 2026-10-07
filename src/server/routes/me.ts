@@ -7,6 +7,7 @@ import { roleScopes, rolesOnTeam } from '../access'
 import type { Database } from '../db/database'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { activeHuman } from '../oauth/provider'
 
 /**
  * What the signed-in person may do, for the few buttons no other answer
@@ -18,8 +19,17 @@ import { withAsync } from '../middleware/withErrors'
  * hold none is left out rather than listed empty. A site administrator holds
  * every role on every team.
  */
-export function meRoutes(db: Kysely<Database>): Router {
+export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
   const router = Router()
+
+  router.get(
+    '/me/builds',
+    requireActor,
+    withAsync(async (req, res) => {
+      if ((await activeHuman(db, req.actor)) == null) throw unauthorized()
+      res.set('Cache-Control', 'no-store').json({ url: buildsUrl })
+    })
+  )
 
   router.get(
     '/me/roles',
