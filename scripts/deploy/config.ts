@@ -41,7 +41,8 @@ const asApple = object({
   profileNames: record(text(256)),
   architectures: asArray(text(32)),
   requiredDevices: asOptional(asArray(text(128)), []),
-  notarizationProfile: asOptional(text(256))
+  notarizationProfile: asOptional(text(256)),
+  notarizationKeychain: asOptional(text())
 })
 const asPlatform = object({
   upload: asUpload,
@@ -220,6 +221,10 @@ export function loadSettings(file: string, branch: string): Settings {
       platform.upload.tokenFile = resolve(platform.upload.tokenFile)
       if (platform.android != null)
         platform.android.keystore = resolve(platform.android.keystore)
+      if (platform.apple?.notarizationKeychain != null)
+        platform.apple.notarizationKeychain = resolve(
+          platform.apple.notarizationKeychain
+        )
     }
   }
   if (out.match != null) {
