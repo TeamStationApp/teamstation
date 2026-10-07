@@ -8,7 +8,9 @@ import path from 'node:path'
 
 import { describe, it } from 'mocha'
 
+import { bundleEnvironment } from './apple'
 import { app, fixtureSettings, testRoot } from './config.test'
+import { Processes } from './process'
 import { nativeNumber, options, run } from './runner'
 import { gitFixture } from './source.test'
 import { State } from './state'
@@ -163,6 +165,40 @@ describe('Deployment runner with actual Mason', () => {
         const record = state.load(id)
         state.close()
         assert.equal(record.artifacts[0].published, 1)
+        const pluginOutput = await new Processes(
+          new AbortController().signal
+        ).run({
+          file: process.env.DEPLOY_TEST_BUNDLE ?? 'bundle',
+          args: [
+            'exec',
+            'ruby',
+            '-e',
+            `require 'json'; require 'fastlane'; Fastlane.load_actions; require 'fastlane/plugin/zealot'; begin; input=JSON.parse(STDIN.read, symbolize_names: true); params=FastlaneCore::Configuration.create(Fastlane::Actions::ZealotAction.available_options,input); Fastlane::Actions::ZealotAction.run(params); puts "RELEASE_ID=#{Fastlane::Actions.lane_context[Fastlane::Actions::SharedValues::ZEALOT_RELEASE_ID]}"; rescue => error; puts "PLUGIN_ERROR=#{error.class}: #{error.message}"; end`
+          ],
+          cwd: root,
+          env: {
+            ...bundleEnvironment(),
+            SSL_CERT_FILE: path.join(root, 'tls.crt')
+          },
+          input: JSON.stringify({
+            endpoint: service.origin,
+            token: JSON.parse(credential).token,
+            channel_key: 'fixture',
+            file: path.join(root, 'output', id, 'ios.ipa'),
+            branch: record.branch,
+            git_commit: record.commit,
+            source: 'api',
+            hide_user_token: true,
+            verify_ssl: true,
+            fail_on_error: true,
+            timeout: 15
+          })
+        })
+        assert(
+          pluginOutput.includes('RELEASE_ID=1'),
+          pluginOutput.replaceAll(JSON.parse(credential).token, '[redacted]')
+        )
+        assert(!pluginOutput.includes(JSON.parse(credential).token))
         assert.equal(
           await run(
             { ...selected, publishOnly: id },

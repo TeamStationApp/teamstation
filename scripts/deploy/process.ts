@@ -27,6 +27,7 @@ export interface Command {
   env?: NodeJS.ProcessEnv
   input?: string
   capture?: boolean
+  captureStderr?: boolean
 }
 export class Processes {
   private readonly children = new Set<ChildProcess>()
@@ -68,7 +69,13 @@ export class Processes {
         else overflow = true
       })
       // Compiler output may contain credentials. Consume it without printing it.
-      child.stderr.resume()
+      if (command.captureStderr === true)
+        child.stderr.on('data', (chunk: Buffer) => {
+          if (stdout.length + chunk.length <= 1024 * 1024)
+            stdout += chunk.toString()
+          else overflow = true
+        })
+      else child.stderr.resume()
       child.stdin.on('error', () => {})
       child.stdin.end(command.input)
       child.once('error', () => {
