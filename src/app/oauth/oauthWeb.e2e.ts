@@ -104,6 +104,44 @@ export async function verifyOAuthWeb(options: {
     )
     await device.tapOn({ css: '[aria-label="Close build information"]' })
     console.log('Web acceptance: modal closed')
+    await device.openBrowser({ url: options.origin + '/i/demo-builds' })
+    await device.assertVisible({
+      text: '^You have been invited$',
+      timeout: 10000
+    })
+    await device.assertVisible({ text: 'Demo Hawks', timeout: 10000 })
+    await device.tapOn({ css: '[aria-label="About TeamStation"]' })
+    await device.assertVisible({ text: '^Build number$' })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await writeFile(
+      path.join(artifacts, 'teamstation-web-join-after.png'),
+      await device.screenshot()
+    )
+    await device.tapOn({ css: '[aria-label="Close build information"]' })
+    await device.assertVisible({ text: '^Accept the invitation$' })
+    await device.openBrowser({
+      url: options.origin + '/oauth/approve/expired-fixture'
+    })
+    await device.assertVisible({
+      text: 'This request expired or could not be completed.',
+      timeout: 10000
+    })
+    await device.openBrowser({ url: options.authorizeUrl })
+    await device.assertVisible({ text: '^Deny$', timeout: 10000 })
+    await device.tapOn({ text: '^Deny$' })
+    try {
+      await device.assertVisible({
+        text: '^Authorization complete$',
+        timeout: 10000
+      })
+    } catch {
+      await device.assertVisible({
+        text: '^Authorization complete$',
+        timeout: 10000
+      })
+    }
+    const denied = await options.waitForCallback()
+    assert.equal(denied.searchParams.get('error'), 'access_denied')
     await device.openBrowser({ url: options.authorizeUrl })
     await device.assertVisible({
       text: 'Example builds wants to use your TeamStation identity.',
