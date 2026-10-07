@@ -1,8 +1,10 @@
+import { android } from './deploy/android'
+import { ios } from './deploy/apple'
 import { type Builders, options, run } from './deploy/runner'
 
 export async function main(
   args: string[],
-  builders: Builders = {}
+  builders: Builders = { ios, android }
 ): Promise<number> {
   let parsed
   try {
