@@ -52,3 +52,11 @@ coverage/
 
 # Locally generated Android debug signing key
 /android/app/debug.keystore
+
+# Private deployment settings and decrypted signing material:
+/deployConfig.json
+/.bundle/
+/vendor/bundle/
+/fastlane/report.xml
+/fastlane/README.md
+/fastlane/Preview.html

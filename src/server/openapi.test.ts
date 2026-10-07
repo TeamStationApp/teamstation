@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import type { Router } from 'express'
 import type { Kysely } from 'kysely'
 import { describe, it } from 'mocha'
+import type Provider from 'oidc-provider'
 
 import {
   HIT_TRAJECTORIES,
@@ -11,6 +12,7 @@ import {
 } from '../common/gumbo/reference'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
+import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
@@ -47,6 +49,11 @@ import type { ScoreboardStore } from './scoreboard/scoreboardStore'
 
 const db = {} as unknown as Kysely<Database>
 const store = {} as unknown as ScoreboardStore
+const provider = {} as unknown as Provider
+const oauthRoutes = (): string[] =>
+  routesOf(oauthInteractionRoutes(db, provider, 'https://example.test'))
+    .filter(route => route.includes(' /api/v1/'))
+    .map(route => route.replace(' /api/v1/', ' /'))
 const media: MediaContext = {
   ffmpegPath: '/usr/bin/ffmpeg',
   mediaRoot: '/tmp',
@@ -124,6 +131,7 @@ const UPGRADE_ONLY = new Set([
 describe('the API document', function () {
   it('describes every route the server answers', function () {
     const mounted = [
+      ...oauthRoutes(),
       ...routesOf(healthRoutes(db, '0.0.0')),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(
@@ -165,6 +173,7 @@ describe('the API document', function () {
 
   it('describes nothing the server does not answer', function () {
     const mounted = new Set([
+      ...oauthRoutes(),
       ...routesOf(healthRoutes(db, '0.0.0')),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(
