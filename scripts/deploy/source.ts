@@ -19,11 +19,32 @@ export async function prepareSource(
   id: string,
   processes: Processes
 ): Promise<Source> {
+  const required =
+    target.kind === 'react-native'
+      ? 'package.json'
+      : target.kind === 'swift'
+        ? 'project.yml'
+        : 'build.gradle.kts'
+  return await prepareRepository(
+    settings,
+    settings.apps[target.app].repository ?? settings.repository,
+    path.join(target.path, required),
+    branch,
+    id,
+    processes
+  )
+}
+export async function prepareRepository(
+  settings: Settings,
+  repository: string,
+  required: string,
+  branch: string,
+  id: string,
+  processes: Processes
+): Promise<Source> {
   branchName(branch)
   runId(id)
-  const repo = realpathSync(
-    settings.apps[target.app].repository ?? settings.repository
-  )
+  const repo = realpathSync(repository)
   const git = async (args: string[]): Promise<string> =>
     await processes.run({ file: settings.tools.git, args, cwd: repo })
   const top = await git(['rev-parse', '--show-toplevel'])
@@ -74,13 +95,7 @@ export async function prepareSource(
       cwd: repo
     })
   }
-  const required =
-    target.kind === 'react-native'
-      ? 'package.json'
-      : target.kind === 'swift'
-        ? 'project.yml'
-        : 'build.gradle.kts'
-  if (!existsSync(path.join(directory, target.path, required))) {
+  if (!existsSync(path.join(directory, required))) {
     await cleanup()
     throw new Error('Selected branch does not contain the requested target')
   }
