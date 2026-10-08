@@ -2,7 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "commonjs",
-    "rootDir": "scripts",
+    "rootDir": ".",
     "outDir": "lib/deploy",
     "allowJs": false,
     "noEmit": true
