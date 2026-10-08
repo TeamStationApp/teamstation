@@ -14,6 +14,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { gunzipSync } from 'node:zlib'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
@@ -214,6 +215,18 @@ describe('Standalone distribution hosting', function () {
     assert(result.includes('respond "keep me"'))
     assert(!result.includes('old builds'))
     assert.equal(caddyCandidate(result, remote, origin), result)
+    const upgraded = caddyCandidate(
+      result.replace(
+        '\theader @masonAuthLog Referrer-Policy no-referrer\n',
+        ''
+      ),
+      remote,
+      origin
+    )
+    assert(
+      upgraded.includes('header @masonAuthLog Referrer-Policy no-referrer')
+    )
+    assert.equal(caddyCandidate(upgraded, remote, origin), upgraded)
     writeFileSync(remote.caddyFile, result)
     execFileSync(
       remote.caddy,
@@ -570,6 +583,13 @@ describe('Standalone distribution hosting', function () {
           mkdirSync(`${command.cwd}/lib/nested`, { recursive: true })
           writeFileSync(`${command.cwd}/lib/nested/fixture.js`, 'export {}')
           writeFileSync(`${command.cwd}/package-lock.json`, '{}')
+          if (process.platform === 'darwin')
+            execFileSync('xattr', [
+              '-w',
+              'user.fixture',
+              'metadata',
+              `${command.cwd}/package.json`
+            ])
           return ''
         }
         if (command.file === 'ssh') {
@@ -577,6 +597,21 @@ describe('Standalone distribution hosting', function () {
           assert(command.args.includes('StrictHostKeyChecking=yes'))
           assert(!command.args.join(' ').includes('providers'))
           const input = JSON.parse(command.input!)
+          const tar = gunzipSync(Buffer.from(input.request.archive, 'base64'))
+          for (let offset = 0; offset + 512 <= tar.length;) {
+            const name = tar
+              .subarray(offset, offset + 100)
+              .toString()
+              .split('\0')[0]
+            if (name === '') break
+            assert(!name.split('/').some(part => part.startsWith('._')), name)
+            const size = parseInt(
+              tar.subarray(offset + 124, offset + 136).toString(),
+              8
+            )
+            assert(Number.isFinite(size))
+            offset += 512 + Math.ceil(size / 512) * 512
+          }
           assert.equal(input.program.includes('deployRemote'), true)
           return JSON.stringify(
             await deployRemote(input.request, exec, healthy)

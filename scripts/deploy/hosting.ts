@@ -141,6 +141,7 @@ export async function host(
       await processes.run({
         file: 'tar',
         args: ['-czf', archiveFile, 'lib', 'package.json', 'package-lock.json'],
+        env: { COPYFILE_DISABLE: '1' },
         cwd: source.directory
       })
       const archive = readFileSync(archiveFile)

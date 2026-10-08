@@ -44,7 +44,7 @@ export function caddySite(origin: string, port: number): string {
   const host = new URL(httpsOrigin(origin)).host
   return `${host} {\n\t# Request URLs can contain short-lived installation credentials.\n\tlog_skip\n\treverse_proxy 127.0.0.1:${port}\n}\n`
 }
-export const oauthRoutes = `\n\t@masonOAuth {\n\t\tpath /oauth/* /.well-known/openid-configuration\n\t\tnot path_regexp ^/oauth/approve/[A-Za-z0-9_-]+/?$\n\t}\n\t@masonAuthLog path /oauth/* /api/v1/oauth/*\n\tlog_skip @masonAuthLog\n\thandle @masonOAuth {\n\t\treverse_proxy 127.0.0.1:{args[0]}\n\t}\n`
+export const oauthRoutes = `\n\t@masonOAuth {\n\t\tpath /oauth/* /.well-known/openid-configuration\n\t\tnot path_regexp ^/oauth/approve/[A-Za-z0-9_-]+/?$\n\t}\n\t@masonAuthLog path /oauth/* /api/v1/oauth/*\n\theader @masonAuthLog Referrer-Policy no-referrer\n\tlog_skip @masonAuthLog\n\thandle @masonOAuth {\n\t\treverse_proxy 127.0.0.1:{args[0]}\n\t}\n`
 export function buildRedirect(origin: string): string {
   return `\n\t@masonLegacyBuilds path /builds /builds/*\n\thandle @masonLegacyBuilds {\n\t\theader Cache-Control no-store\n\t\tredir ${httpsOrigin(origin)}/ 302\n\t}\n`
 }
@@ -160,11 +160,20 @@ export function caddyCandidate(
     })
   else if (!section.includes(`redir ${httpsOrigin(origin)}/ 302`))
     throw new Error('Existing build destination differs')
-  if (!live.slice(snippet.open, snippet.end).includes('@masonOAuth'))
+  const snippetText = live.slice(snippet.open, snippet.end)
+  if (!snippetText.includes('@masonOAuth'))
     edits.push({
       start: snippet.open + 1,
       end: snippet.open + 1,
       value: oauthRoutes
+    })
+  else if (
+    !snippetText.includes('header @masonAuthLog Referrer-Policy no-referrer')
+  )
+    edits.push({
+      start: snippet.open + 1,
+      end: snippet.open + 1,
+      value: '\n\theader @masonAuthLog Referrer-Policy no-referrer\n'
     })
   for (const edit of edits.sort((a, b) => b.start - a.start))
     live = live.slice(0, edit.start) + edit.value + live.slice(edit.end)
