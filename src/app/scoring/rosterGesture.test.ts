@@ -158,6 +158,39 @@ describe('shared roster dragging', function () {
     }
     expect(drops).deep.equals(['defense-P', 'defense-C'])
   })
+  for (const height of [80, 120, 240]) {
+    for (const reversed of [false, true]) {
+      it(`drops on the visible SS/P edge instead of neighboring padding at ${height}px (reversed ${reversed})`, async function () {
+        const engine = new RosterGesture(() => undefined)
+        const drops: string[] = []
+        const cardHeight = Math.max(12, Math.min(36, height * 0.18))
+        const targets = [
+          [
+            'defense-P',
+            { x: 105, y: height * 0.51, width: 90, height: cardHeight }
+          ],
+          [
+            'defense-SS',
+            { x: 54, y: height * 0.3, width: 90, height: cardHeight }
+          ]
+        ] as const
+        for (const [key, rect] of reversed ? [...targets].reverse() : targets)
+          engine.targets.set(key, {
+            measure: async () => rect,
+            drop: () => drops.push(key)
+          })
+        for (const point of [
+          { x: 120, y: height * 0.3 + cardHeight - 1 },
+          { x: 120, y: height * 0.51 + 1 }
+        ]) {
+          engine.begin(1, 'One', { x: 0, y: 0 })
+          await engine.move(point)
+          await engine.release(point)
+        }
+        expect(drops).deep.equals(['defense-SS', 'defense-P'])
+      })
+    }
+  }
   it('takes a drop anywhere below the top of the end target, inside its list, as the end', async function () {
     const engine = new RosterGesture(() => undefined)
     const drops: string[] = []

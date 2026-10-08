@@ -434,7 +434,7 @@ describe('scoring slide-up sheets', function () {
     await click('Set Defense')
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
-    ).includes('P#1 Player 1')
+    ).includes('P · #1 Player 1')
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')

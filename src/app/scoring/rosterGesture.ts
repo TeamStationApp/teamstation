@@ -205,6 +205,7 @@ export class RosterGesture {
           ? {
               key,
               area: rect.width * rect.height,
+              insideCard: containsRosterPoint(rect, point),
               edge:
                 target.insertion == null
                   ? undefined
@@ -216,9 +217,12 @@ export class RosterGesture {
           : undefined
       })
     )
+    // A visible card wins over a neighbor's gap padding on compact fields.
     const hit = candidates
       .filter((c): c is NonNullable<typeof c> => c != null)
-      .sort((a, b) => a.area - b.area)[0]
+      .sort((a, b) =>
+        a.insideCard === b.insideCard ? a.area - b.area : a.insideCard ? -1 : 1
+      )[0]
     return hit
   }
 

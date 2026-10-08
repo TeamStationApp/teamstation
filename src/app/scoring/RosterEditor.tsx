@@ -53,6 +53,16 @@ export const rosterNameProps = (
   os === 'web'
     ? {}
     : { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.75 }
+/** The complete field takes priority when a wrapping error leaves less list room. */
+export function defenseRosterMinimum(
+  areaHeight: number,
+  dense: boolean
+): number {
+  const preferred = dense ? 64 : 88
+  return areaHeight <= 0
+    ? preferred
+    : Math.min(preferred, Math.max(0, areaHeight - 60 - (dense ? 2 : 8)))
+}
 export function RosterEditor({
   state,
   initialDraft,
@@ -67,11 +77,10 @@ export function RosterEditor({
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
 }): React.ReactElement {
   const theme = useTheme()
-  const { height } = useWindowDimensions()
+  const { height, width } = useWindowDimensions()
   const measuredHeight = useContext(ScoringSheetHeight)
   const availableHeight =
     measuredHeight != null && measuredHeight > 0 ? measuredHeight : height
-  const dense = availableHeight > 0 && availableHeight < 330
   const [draft, setDraft] = useState(() =>
     copyState(initialDraft?.draft ?? state.session)
   )
@@ -79,6 +88,11 @@ export function RosterEditor({
     initialDraft?.side ?? battingSide(state.session)
   )
   const [defense, setDefense] = useState(initialDraft?.defense ?? false)
+  const dense = availableHeight > 0 && availableHeight < (defense ? 440 : 330)
+  const narrowDefense = dense && defense && width < 600
+  const inlineValidation = dense && defense && !narrowDefense
+  const [areaHeight, setAreaHeight] = useState(0)
+  const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
@@ -145,16 +159,22 @@ export function RosterEditor({
     backgroundColor: theme.scoringSelectorIdle
   }
   return (
-    <View style={{ flex: 1, minHeight: 0, gap: dense ? 4 : 8 }}>
+    <View
+      style={{
+        flex: 1,
+        minHeight: 0,
+        gap: dense && defense ? 2 : dense ? 4 : 8
+      }}
+    >
       <ScrollView
         testID="Roster editor top"
         // Browser chrome can leave much less room than the screen height.
         // Instructions remain reachable by scrolling this compact header.
         style={{
           flexGrow: 0,
-          maxHeight: dense ? 48 : height < 500 ? 113 : 230
+          maxHeight: dense ? (defense ? 28 : 48) : height < 500 ? 113 : 230
         }}
-        contentContainerStyle={{ gap: 4 }}
+        contentContainerStyle={{ gap: 4, marginTop: dense && defense ? -6 : 0 }}
         keyboardShouldPersistTaps="handled"
       >
         <View style={{ flexDirection: dense ? 'row' : 'column', gap: 4 }}>
@@ -175,8 +195,14 @@ export function RosterEditor({
           </View>
           <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
             <RosterSelector
-              fitContent
-              labels={['Set Lineup', 'Set Defense']}
+              fitContent={!narrowDefense}
+              compact={narrowDefense}
+              labels={
+                narrowDefense
+                  ? ['Lineup', 'Defense']
+                  : ['Set Lineup', 'Set Defense']
+              }
+              accessibilityLabels={['Set Lineup', 'Set Defense']}
               value={defense ? 1 : 0}
               onChange={index => {
                 setDefense(index === 1)
@@ -214,11 +240,14 @@ export function RosterEditor({
       </ScrollView>
       <RosterDragGroup key={`${side}:${defense}`}>
         <View
+          onLayout={event => {
+            setAreaHeight(event.nativeEvent.layout.height)
+          }}
           style={{
             flex: 1,
             minHeight: 0,
             flexDirection: defense ? 'column' : 'row',
-            gap: 8
+            gap: dense && defense ? 2 : 8
           }}
         >
           {defense && (
@@ -240,7 +269,13 @@ export function RosterEditor({
               }}
             />
           )}
-          <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
+          <View
+            style={{
+              flex: 1,
+              minHeight: rosterMinimum,
+              gap: 6
+            }}
+          >
             {!dense && (
               <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
             )}
@@ -396,14 +431,15 @@ export function RosterEditor({
           }}
         />
       )}
-      <View testID="Roster footer" style={{ gap: 6 }}>
-        <ScoringError message={validation} />
+      <View testID="Roster footer" style={{ gap: dense && defense ? 2 : 6 }}>
+        {!inlineValidation && <ScoringError message={validation} />}
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Button
               color={theme.scoringMenuActiveBackground}
               textColor={theme.scoringMenuActiveText}
               compact
+              style={dense && defense ? { minHeight: 28 } : undefined}
               accessibilityLabel="Create Player"
               label="Add Player"
               onPress={() => {
@@ -416,6 +452,7 @@ export function RosterEditor({
               color={theme.scoringMenuActiveBackground}
               textColor={theme.scoringMenuActiveText}
               compact
+              style={dense && defense ? { minHeight: 28 } : undefined}
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={validation != null}
@@ -425,28 +462,50 @@ export function RosterEditor({
             />
           </View>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Cancel"
-          onPress={() => {
-            onCancel?.()
-          }}
+        <View
           style={{
-            minHeight: dense ? 36 : 44,
-            alignItems: 'center',
-            justifyContent: 'center'
+            flexDirection: inlineValidation ? 'row' : 'column',
+            alignItems: inlineValidation ? 'center' : undefined
           }}
         >
-          <Text
+          {inlineValidation && (
+            <View style={{ flex: 1, minWidth: 0 }}>
+              {validation != null && (
+                <Text
+                  accessibilityRole="alert"
+                  numberOfLines={1}
+                  style={{ color: theme.dangerColor, fontSize: 11 }}
+                >
+                  {validation}
+                </Text>
+              )}
+            </View>
+          )}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+            onPress={() => {
+              onCancel?.()
+            }}
             style={{
-              ...text,
-              color: theme.dangerColor,
-              fontFamily: theme.semiBoldTextFont
+              minHeight: dense ? (defense ? 28 : 36) : 44,
+              minWidth: inlineValidation ? 80 : undefined,
+              alignItems: 'center',
+              justifyContent: 'center'
             }}
           >
-            Cancel
-          </Text>
-        </Pressable>
+            <Text
+              style={{
+                ...text,
+                color: theme.dangerColor,
+                fontFamily: theme.semiBoldTextFont
+              }}
+            >
+              Cancel
+            </Text>
+          </Pressable>
+          {inlineValidation && <View style={{ flex: 1 }} />}
+        </View>
       </View>
     </View>
   )
