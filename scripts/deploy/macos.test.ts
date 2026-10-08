@@ -73,7 +73,7 @@ async function fake(command: Command): Promise<string> {
   if (command.file === 'plutil')
     return JSON.stringify({
       CFBundleIdentifier: id,
-      CFBundleVersion: '1.0.42',
+      CFBundleVersion: '26093004',
       CFBundleShortVersionString: '1.2.3',
       CFBundleExecutable: 'Example'
     })
@@ -116,7 +116,7 @@ describe('Notarized macOS packaging', () => {
       branch: 'master',
       commit: 'a'.repeat(40),
       version: '1.2.3',
-      buildNumber: 42,
+      buildNumber: 26093004,
       buildTime: '2026-01-01T00:00:00Z',
       processes: new Processes(new AbortController().signal)
     }
@@ -164,7 +164,7 @@ describe('Notarized macOS packaging', () => {
   it('archives universal code, signs from the inside out, notarizes and staples app and disk image', async () => {
     const out = await macos(context)
     assert(existsSync(out.file))
-    assert.equal(out.buildNumber, '1.0.42')
+    assert.equal(out.buildNumber, '26093004')
     assert(calls.some(c => c.args.includes('ARCHS=arm64 x86_64')))
     assert.equal(calls.filter(c => c.args[0] === 'notarytool').length, 2)
     assert.equal(

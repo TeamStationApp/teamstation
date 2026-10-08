@@ -60,3 +60,6 @@ coverage/
 /fastlane/report.xml
 /fastlane/README.md
 /fastlane/Preview.html
+
+# Local build counter snapshot
+/buildNum.json

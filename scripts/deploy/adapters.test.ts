@@ -41,7 +41,7 @@ const team = 'EXAMPLETEAM'
 function info(): object {
   return {
     CFBundleIdentifier: context.target.app,
-    CFBundleVersion: '1.0.42',
+    CFBundleVersion: '26093004',
     CFBundleShortVersionString: '1.2.3',
     CFBundleExecutable: 'Example',
     UIDeviceFamily: [1, 2]
@@ -109,7 +109,7 @@ async function fake(command: Command): Promise<string> {
       path.join(command.cwd, 'app/build/outputs/apk/release/app-release.apk')
     )
   if (command.file === 'aapt')
-    return `package: name='${context.target.app}' versionCode='42' versionName='1.2.3'`
+    return `package: name='${context.target.app}' versionCode='26093004' versionName='1.2.3'`
   if (command.file === 'apksigner')
     return `Signer #1 certificate SHA-256 digest: ${'a'.repeat(64)}`
   if (command.file === 'unzip')
@@ -170,7 +170,7 @@ describe('Native build and signing adapters', () => {
       branch: 'master',
       commit: 'a'.repeat(40),
       version: '1.2.3',
-      buildNumber: 42,
+      buildNumber: 26093004,
       buildTime: '2026-01-01T00:00:00Z',
       processes: new Processes(new AbortController().signal)
     }
@@ -257,7 +257,7 @@ describe('Native build and signing adapters', () => {
     context.target = target(app, 'android')
     const result = await android(context)
     assert(result.file.endsWith('.apk'))
-    assert.equal(result.buildNumber, '42')
+    assert.equal(result.buildNumber, '26093004')
     assert(calls.some(c => c.args.includes('--no-daemon')))
     assert(!existsSync(path.join(context.source, '.deploy/signing.gradle')))
     const id = 'app.teamstation.cameraman'
@@ -271,7 +271,7 @@ describe('Native build and signing adapters', () => {
         `Signer #1 certificate SHA-256 digest: ${'a'.repeat(64)}`
       ],
       [
-        `package: name='${id}' versionCode='42' versionName='1.2.3'`,
+        `package: name='${id}' versionCode='26093004' versionName='1.2.3'`,
         `Signer #1 certificate SHA-256 digest: ${'b'.repeat(64)}`
       ],
       ['bad', 'bad']
@@ -380,7 +380,7 @@ describe('Native build and signing adapters', () => {
   it('archives and exports the actual target contract, verifies final IPA metadata, certificate, entitlements and JS', async () => {
     const result = await ios(context, path.join(root, 'home'))
     assert(result.file.endsWith('.ipa'))
-    assert.equal(result.buildNumber, '1.0.42')
+    assert.equal(result.buildNumber, '26093004')
     assert(
       calls.some(c => c.file === 'bundle' && c.args.includes('--deployment'))
     )
@@ -460,7 +460,7 @@ describe('Native build and signing adapters', () => {
         identity: 'Fixture Distribution',
         keychain: path.join(root, 'keychain'),
         profiles: { [app]: 'Fixture' },
-        number: '1.0.42',
+        number: '26093004',
         version: '1.2.3'
       },
       root
@@ -487,7 +487,7 @@ describe('Native build and signing adapters', () => {
     // The real system plist reader is exercised with a generated scalar-only plist.
     writeFileSync(
       path.join(appPath, 'Info.plist'),
-      `<plist version="1.0">${xml({ CFBundleIdentifier: app, CFBundleVersion: '1.0.42', CFBundleShortVersionString: '1.2.3', CFBundleExecutable: 'Example' })}</plist>`
+      `<plist version="1.0">${xml({ CFBundleIdentifier: app, CFBundleVersion: '26093004', CFBundleShortVersionString: '1.2.3', CFBundleExecutable: 'Example' })}</plist>`
     )
     assert.equal((await readInfo(context, appPath)).CFBundleIdentifier, app)
   })

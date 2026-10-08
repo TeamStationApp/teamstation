@@ -119,6 +119,8 @@ describe('Deployment runner with actual Mason', () => {
           { mode: 0o600 }
         )
         const selected = options([
+          '--build-number-file',
+          path.join(root, 'source/.git/buildNum.json'),
           '--config',
           config,
           '--app',

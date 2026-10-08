@@ -201,7 +201,19 @@ describe('Actual CLI publishing compatibility', () => {
             tokenFile: `${root}/token.json`
           }
           // A fresh version avoids a previous disposable-fixture run colliding with this run.
-          settings.apps[app].version = `1.2.${Date.now() % 100000000}`
+          writeFileSync(
+            `${root}/source/package.json`,
+            JSON.stringify({ version: `1.2.${Date.now() % 100000000}` })
+          )
+          for (const command of [
+            ['add', 'package.json'],
+            ['commit', '-m', 'Set fixture version'],
+            ['push', 'origin', 'master']
+          ])
+            execFileSync('git', command, {
+              cwd: `${root}/source`,
+              stdio: 'pipe'
+            })
           writeFileSync(
             `${root}/token.json`,
             JSON.stringify({ schemaVersion: 1, origin: service.origin, token }),
@@ -217,6 +229,8 @@ describe('Actual CLI publishing compatibility', () => {
             { mode: 0o600 }
           )
           const args = [
+            '--build-number-file',
+            path.join(root, 'source/.git/buildNum.json'),
             '--config',
             config,
             '--app',
@@ -288,7 +302,7 @@ describe('Actual CLI publishing compatibility', () => {
             )!
             assert.equal(partialRun.artifacts[0].published != null, true)
             assert.deepEqual(partialRun.failed, ['android'])
-            assert.equal(finalState.reserve(app, 'ios', 42), 45)
+            assert(records.every(record => record.buildNumberFormat === 'date'))
           } finally {
             finalState.close()
           }
