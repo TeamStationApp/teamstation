@@ -2,21 +2,22 @@
   "name": "teamstation",
   "version": "0.1.0",
   "private": true,
-  "description": "TeamStation — video server and app, serving app.teamstation.app",
+  "description": "TeamStation \u2014 video server and app, serving app.teamstation.app",
   "engines": {
     "node": ">=24.9.0"
   },
   "codegenConfig": {
     "name": "TeamStationWalkUpMusicSpec",
     "type": "modules",
-    "jsSrcsDir": "src/app/walkup",
+    "jsSrcsDir": "src/app",
     "android": {
       "javaPackageName": "app.teamstation.app.walkup"
     },
     "ios": {
       "modulesProvider": {
         "WalkUpMusic": "RCTWalkUpMusic",
-        "DictationMicrophone": "RCTDictationMicrophone"
+        "DictationMicrophone": "RCTDictationMicrophone",
+        "TSHaptics": "RCTHaptics"
       }
     }
   },
