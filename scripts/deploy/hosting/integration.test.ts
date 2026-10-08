@@ -353,13 +353,9 @@ const enabled =
         }
       })
       try {
-        const denied = await fetch(
-          `${masonOrigin}/`,
-          Object.assign(
-            { redirect: 'manual' as const },
-            { dispatcher: anonymous }
-          )
-        )
+        const anonymousOptions: RequestInit = { redirect: 'manual' }
+        Object.assign(anonymousOptions, { dispatcher: anonymous })
+        const denied = await fetch(`${masonOrigin}/`, anonymousOptions)
         assert.equal(denied.status, 303)
         assert.match(denied.headers.get('location')!, /^\/auth\/login/)
         await denied.text()
@@ -442,10 +438,9 @@ const enabled =
           assert.equal(completed.status, 303)
           return
         }
-        assert.match(
-          await (await browse(approval)).text(),
-          /approval web shell/
-        )
+        const document = await browse(approval)
+        assert.equal(document.headers.get('referrer-policy'), 'no-referrer')
+        assert.match(await document.text(), /approval web shell/)
         const details = await browse(approval + '/details')
         assert.equal(details.status, 200)
         const csrf = ((await details.json()) as { csrfToken: string }).csrfToken
