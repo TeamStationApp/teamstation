@@ -696,6 +696,20 @@ function Shell(props: AppProps): React.ReactElement {
           uid={route.name === 'oauthApprove' ? route.uid : undefined}
           handle={route.name === 'oauthNative' ? route.handle : undefined}
           accountName={session?.user.displayName}
+          onSwitchAccount={
+            route.name !== 'oauthApprove'
+              ? undefined
+              : async () => {
+                  await client.signOut()
+                  rememberSession(undefined)
+                  const destination: Route = {
+                    name: 'signIn',
+                    next: routePath(route)
+                  }
+                  goToRoute(destination)
+                  showRoute(destination)
+                }
+          }
           onLogin={() => {
             const destination: Route = {
               name: 'signIn',

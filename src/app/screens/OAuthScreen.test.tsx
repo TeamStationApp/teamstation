@@ -209,6 +209,54 @@ describe('OAuth consent and loaded build information', () => {
     await show(<App key="native" />)
     expect(document.body.textContent).includes('Example builds')
   })
+  it('signs out to choose a different account while preserving the approval request', async () => {
+    const seen: string[] = []
+    globalThis.fetch = async input => {
+      const url = urlText(input)
+      seen.push(url)
+      if (url.endsWith('/auth/me'))
+        return Response.json({
+          id: 123,
+          displayName: 'Alex Lee',
+          email: 'alex@example.test',
+          isAdmin: false,
+          avatarUrl: null
+        })
+      if (url.endsWith('/details'))
+        return Response.json({
+          clientName: 'Example builds',
+          scopes: ['openid'],
+          csrfToken: 'proof'
+        })
+      return Response.json({ teams: {} })
+    }
+    window.history.replaceState(null, '', '/oauth/approve/request')
+    await show(<App />)
+    await press('Use a different account')
+    expect(seen.some(url => url.endsWith('/auth/logout'))).equals(true)
+    expect(window.location.pathname).equals('/sign-in')
+    expect(new URLSearchParams(window.location.search).get('next')).equals(
+      '/oauth/approve/request'
+    )
+    expect(document.body.textContent).includes('Send me a sign-in code')
+  })
+  it('shows account switching failures without completing authorization', async () => {
+    globalThis.fetch = async () =>
+      Response.json({ clientName: 'Example', scopes: [], csrfToken: 'proof' })
+    await show(
+      <OAuthScreen
+        client={client}
+        uid="switch"
+        accountName="Alex"
+        onLogin={() => undefined}
+        onSwitchAccount={async () => {
+          throw new Error('offline')
+        }}
+      />
+    )
+    await press('Use a different account')
+    expect(document.body.textContent).includes('expired')
+  })
   it('can leave native consent from pending, approved, denied and expired states on iOS', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
     try {

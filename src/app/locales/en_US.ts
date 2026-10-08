@@ -37,6 +37,7 @@ export const enUs = {
   oauth_failed:
     'This request expired or could not be completed. Return to the requesting site and sign in again.',
   oauth_login: 'Sign in to continue',
+  oauth_switch: 'Use a different account',
   // Sign in
   login_title: 'Sign in',
   login_email: 'E-mail address',

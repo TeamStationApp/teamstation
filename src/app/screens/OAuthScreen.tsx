@@ -18,13 +18,15 @@ export function OAuthScreen({
   uid,
   handle,
   accountName,
-  onLogin
+  onLogin,
+  onSwitchAccount
 }: {
   client: TeamStationClient
   uid?: string
   handle?: string
   accountName?: string
   onLogin: () => void
+  onSwitchAccount?: () => Promise<void>
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const browser = useMemo(
@@ -173,6 +175,23 @@ export function OAuthScreen({
                   </Text>
                 ))}
               </>
+            )}
+            {info != null && accountName != null && onSwitchAccount != null && (
+              <Button
+                label={lstrings.oauth_switch}
+                kind="text"
+                busy={busy}
+                onPress={() => {
+                  setBusy(true)
+                  onSwitchAccount()
+                    .catch(() => {
+                      setFailed(true)
+                    })
+                    .finally(() => {
+                      setBusy(false)
+                    })
+                }}
+              />
             )}
             {accountName == null ? (
               <Button label={lstrings.oauth_login} onPress={onLogin} />
