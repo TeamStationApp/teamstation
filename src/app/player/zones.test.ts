@@ -95,10 +95,8 @@ describe('control geometry', function () {
     expect(spacer?.w).is.at.least(100)
   })
 
-  it('cuts WebKit s corners and centre cluster out', function () {
+  it('cuts WebKit s control bars and centre cluster out', function () {
     const rects = controlRects(390, 219, 'webkit')
-    expect(rects).deep.include({ x: 0, y: 0, w: 44, h: 44 })
-    expect(rects).deep.include({ x: 346, y: 0, w: 44, h: 44 })
     expect(rects).deep.include({ x: 0, y: 179, w: 390, h: 40 })
     const live = liveRects(390, 219, 'webkit')
     const overlaps = live.some(
@@ -106,6 +104,43 @@ describe('control geometry', function () {
     )
     expect(overlaps, 'nothing live over the fullscreen button').equals(false)
   })
+
+  for (const engine of ['webkit', 'avplayer'] as const) {
+    for (const [width, height] of [
+      [360, 203],
+      [390, 219],
+      [844, 390]
+    ]) {
+      it(`leaves ${engine} top controls reachable at ${width}x${height}`, function () {
+        const live = liveRects(width, height, engine)
+        const captures = (x: number, y: number): boolean =>
+          live.some(
+            rect =>
+              x >= rect.x &&
+              x < rect.x + rect.w &&
+              y >= rect.y &&
+              y < rect.y + rect.h
+          )
+
+        // Exercise the complete touch targets, including their inset, for
+        // fullscreen, PiP and route buttons grouped on either side.
+        for (const start of [8, width - 140]) {
+          for (let x = start; x < start + 132; x++) {
+            for (let y = 8; y < 52; y++) {
+              expect(captures(x, y), `control at ${x},${y}`).equals(false)
+            }
+          }
+        }
+        // The app's play/pause, ten-second seeks and slow-motion hold still
+        // have reachable gesture areas below the native top controls.
+        expect(captures(width / 2, 64), 'play/pause').equals(true)
+        expect(captures(10, height / 2), 'seek back').equals(true)
+        expect(captures(width - 10, height / 2), 'seek forward / hold').equals(
+          true
+        )
+      })
+    }
+  }
 
   it('gives an unmeasured engine no holes at all', function () {
     const live = liveRects(W, H, 'unknown')
