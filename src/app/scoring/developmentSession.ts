@@ -59,12 +59,17 @@ export function startingSetup(
   game: GameDetail,
   away: RosterEntry[],
   home: RosterEntry[],
-  defaults: DefaultLineups = {}
+  defaults: DefaultLineups = {},
+  fillRoster = true
 ): GameSetup {
-  const setup = newSetup(teamsOf(game), {
-    away: rosterOf(away),
-    home: rosterOf(home)
-  })
+  const setup = newSetup(
+    teamsOf(game),
+    {
+      away: rosterOf(away),
+      home: rosterOf(home)
+    },
+    fillRoster
+  )
   for (const side of ['away', 'home'] as const) {
     const lineup = defaults[side]
     if (lineup != null) arrangeFromDefault(setup, teamsOf(game), side, lineup)
@@ -77,8 +82,7 @@ export function startingSetup(
  * with a user id is today's roster player of that id, and anybody no longer
  * on the roster is dropped; a placeholder is made again, with his name and
  * jersey. Roster players the default leaves out stay on the bench, out of
- * the order and the field. A default that no longer leaves a batter and a
- * pitcher leaves the side as the roster makes it.
+ * the order and the field. Incomplete defaults stay incomplete for setup.
  */
 function arrangeFromDefault(
   setup: GameSetup,
@@ -93,10 +97,6 @@ function arrangeFromDefault(
     const userId = setup.players[id].userId
     if (userId != null) byUser.set(userId, id)
   }
-  const kept = (person: LineupPerson | null): boolean =>
-    person != null && (person.userId == null || byUser.has(person.userId))
-  if (!lineup.batters.some(kept) || !kept(lineup.defense.P)) return
-
   // The roster's made-up players give way to the default's own.
   for (const id of team.players)
     if (setup.players[id].local) {

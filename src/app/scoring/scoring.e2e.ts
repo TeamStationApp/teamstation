@@ -236,8 +236,28 @@ async function open(
               bats,
               throws: 'right'
             }
-          ]
-        : []
+          ].concat(
+            Array.from({ length: 8 }, (_, i) => ({
+              userId: 102 + i,
+              shortName: `Player ${i + 2}`,
+              jersey: String(i + 2),
+              positions: [createPlayers()[i + 1].id],
+              isPlayer: true,
+              role: 'member',
+              bats: 'right' as const,
+              throws: 'right'
+            }))
+          )
+        : Array.from({ length: 9 }, (_, i) => ({
+            userId: 201 + i,
+            shortName: `Player ${i + 1}`,
+            jersey: String(i + 1),
+            positions: [createPlayers()[i].id],
+            isPlayer: true,
+            role: 'member',
+            bats: 'right',
+            throws: 'right'
+          }))
     } else if (url.pathname.endsWith('/live-streams'))
       body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
     else {

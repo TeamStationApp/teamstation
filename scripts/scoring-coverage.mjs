@@ -10,9 +10,15 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const includes = JSON.parse(
-  readFileSync('src/test/scoringCoveragePaths.json', 'utf8')
+const currentSetupScope = process.argv.includes('--current-setup')
+const { coverageSources } = createRequire(import.meta.url)(
+  './coverage-source-paths.cjs'
 )
+const includes = currentSetupScope
+  ? coverageSources(process.env.TS_COVERAGE_BASE ?? 'origin/master').paths
+  : JSON.parse(readFileSync('src/test/scoringCoveragePaths.json', 'utf8'))
+if (currentSetupScope && includes.length === 0)
+  throw new Error('Current setup coverage requires changed production paths.')
 console.log('Scoring coverage includes:', includes.join('\n'))
 const temp = resolve('coverage/tmp')
 rmSync(temp, { recursive: true, force: true })
@@ -26,12 +32,24 @@ const test = spawnSync(
     './src/test/scoringDomSetup.cjs',
     '--extension',
     'ts',
-    '--spec',
-    'src/**/*.test.ts',
+    ...(currentSetupScope
+      ? [
+          'src/common/scoring/*.test.ts',
+          'src/app/scoring/*.test.ts',
+          'src/app/field/*.test.ts'
+        ]
+      : ['src/**/*.test.ts']
+    ).flatMap(spec => ['--spec', spec]),
     '--spec',
     'lib/scoring-tests.cjs',
     '--ignore',
-    '**/node_modules/**'
+    '**/node_modules/**',
+    ...(currentSetupScope
+      ? [
+          '--grep',
+          'scoring|field|pitch|inning|roster|lineup|runner|athlete|reel|batter|ball|nameplate|base|uniform|player|toast|defensive|sheets'
+        ]
+      : [])
   ],
   { stdio: 'inherit', env: { ...process.env, NODE_V8_COVERAGE: temp } }
 )
@@ -75,7 +93,14 @@ process.exitCode = test.status !== 0 ? (test.status ?? 1) : (report.status ?? 1)
 const summary = JSON.parse(
   readFileSync('coverage/coverage-summary.json', 'utf8')
 )
-const screen = summary[resolve('src/app/screens/GameScreen.tsx')]
+const screen =
+  summary[
+    resolve(
+      currentSetupScope
+        ? 'src/app/scoring/ScoringScreen.tsx'
+        : 'src/app/screens/GameScreen.tsx'
+    )
+  ]
 if (
   screen == null ||
   screen.functions.total === 0 ||
@@ -88,9 +113,6 @@ if (
 }
 
 // Keep the whole changed-source aggregate honest as this plan grows.
-const { coverageSources } = createRequire(import.meta.url)(
-  './coverage-source-paths.cjs'
-)
 // The commit this branch was cut from, unless TS_COVERAGE_BASE names another.
 // Everything after it is this work.
 const base =

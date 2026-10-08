@@ -12,7 +12,13 @@ export interface ScoreboardBounds {
   width: number
   height: number
 }
+export interface SetupToast {
+  message?: string
+  onSetLineup?: () => void
+  onAcceptLineup?: () => void
+}
 export function InstructionToast({
+  setup,
   instruction,
   detail,
   status,
@@ -25,6 +31,7 @@ export function InstructionToast({
   minTop = 62,
   below = 0
 }: {
+  setup?: SetupToast
   instruction?: string
   detail?: string
   status?: string
@@ -73,6 +80,70 @@ export function InstructionToast({
       >
         {instruction ?? CORRECTION_INSTRUCTION}
       </Text>
+      {setup?.message != null && (
+        <Text
+          style={{
+            color: theme.scoringInstructionText,
+            fontFamily: theme.regularTextFont
+          }}
+        >
+          {setup.message}
+        </Text>
+      )}
+      {setup?.onSetLineup != null && (
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 12
+          }}
+        >
+          {setup.onAcceptLineup != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Accept Lineup"
+              onPress={() => {
+                setup.onAcceptLineup?.()
+              }}
+              style={{
+                minHeight: 44,
+                justifyContent: 'center',
+                paddingHorizontal: 8
+              }}
+            >
+              <Text
+                style={{ color: '#ffb4b4', fontFamily: theme.semiBoldTextFont }}
+              >
+                Accept Lineup
+              </Text>
+            </Pressable>
+          )}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Set Lineup"
+            onPress={() => {
+              setup.onSetLineup?.()
+            }}
+            style={{
+              minHeight: 44,
+              paddingHorizontal: 16,
+              borderRadius: theme.rem(theme.radiusRem),
+              backgroundColor: theme.scoringSafeColor,
+              justifyContent: 'center'
+            }}
+          >
+            <Text
+              style={{
+                color: theme.scoringDecisionText,
+                fontFamily: theme.semiBoldTextFont
+              }}
+            >
+              Set Lineup
+            </Text>
+          </Pressable>
+        </View>
+      )}
       {[
         { label: 'Home run type', value: status },
         { label: 'Ball trajectory', value: detail }
