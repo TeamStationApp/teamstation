@@ -3,6 +3,8 @@ export interface RosterDragProps {
   targetId?: string
   playerId?: number
   label?: string
+  /** Player information announced with the control action. */
+  value?: string
   disabled?: boolean
   onTap?: () => void
   onReorder?: (delta: number) => void
