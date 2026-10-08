@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Linking } from 'react-native'
+import { Linking, NativeModules, Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { App } from '../App'
@@ -51,6 +51,123 @@ async function press(label: string): Promise<void> {
 }
 const client = {} as unknown as TeamStationClient
 describe('OAuth consent and loaded build information', () => {
+  it('restores the approval address after an email sign-in completes', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/sign-in?next=%2Foauth%2Fapprove%2Frequest'
+    )
+    const originalInterval = globalThis.setInterval
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((
+      callback: (...args: unknown[]) => void,
+      ms?: number
+    ) => {
+      if (ms === 3000) poll = callback
+      return originalInterval(callback, ms)
+    }) as typeof setInterval
+    const session = {
+      token: 'fixture-session',
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      user: {
+        id: 123,
+        displayName: 'Alex Lee',
+        isAdmin: false,
+        avatarUrl: null
+      }
+    }
+    globalThis.fetch = async input => {
+      const url = urlText(input)
+      if (url.endsWith('/auth/me')) return new Response('{}', { status: 401 })
+      if (url.endsWith('/auth/email-code'))
+        return new Response(
+          '{"requestId":"fixture","clientSecret":"fixture-secret"}'
+        )
+      if (url.endsWith('/auth/request/claim'))
+        return new Response(JSON.stringify(session))
+      if (url.endsWith('/details'))
+        return new Response(
+          '{"clientName":"Example builds","scopes":[],"csrfToken":"proof"}'
+        )
+      return new Response('{"teams":{}}')
+    }
+    try {
+      await show(<App />)
+      const input = document.querySelector<HTMLInputElement>(
+        'input[aria-label="E-mail address"]'
+      )!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, 'alex@example.test')
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+        await delay()
+      })
+      await press('Send me a sign-in code')
+      expect(poll).not.equals(undefined)
+      await act(async () => {
+        poll!()
+        await delay()
+      })
+      expect(window.location.pathname).equals('/oauth/approve/request')
+      expect(document.body.textContent).includes('Example builds')
+    } finally {
+      globalThis.setInterval = originalInterval
+    }
+  })
+  it('uses Android browser routing rather than an app-linked URL intent', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    const before = NativeModules.TSExternalBrowser
+    const seen: string[] = []
+    try {
+      Object.defineProperty(Platform, 'OS', {
+        value: 'android',
+        configurable: true
+      })
+      NativeModules.TSExternalBrowser = {
+        open: async (url: string) => {
+          seen.push(url)
+        }
+      }
+      await nativeExternal.openExternal(
+        'https://app.example.test/oauth/approve/request'
+      )
+      expect(seen).deep.equals([
+        'https://app.example.test/oauth/approve/request'
+      ])
+      delete NativeModules.TSExternalBrowser
+      try {
+        await nativeExternal.openExternal('https://app.example.test/')
+        throw new Error('unexpected success')
+      } catch (error) {
+        expect((error as Error).message).includes('not available')
+      }
+    } finally {
+      Object.defineProperty(Platform, 'OS', descriptor)
+      NativeModules.TSExternalBrowser = before
+    }
+  })
+  it('resumes a completed native decision when the original browser mounts again', async () => {
+    window.history.replaceState(null, '', '/oauth/approve/request')
+    const seen: string[] = []
+    globalThis.fetch = async input => {
+      const url = urlText(input)
+      seen.push(url)
+      return new Response(
+        url.endsWith('/details')
+          ? '{"clientName":"Example","scopes":[],"csrfToken":"proof","decision":"approved"}'
+          : '{"redirectTo":"/oauth/approve/request"}'
+      )
+    }
+    await show(
+      <OAuthScreen client={client} uid="request" onLogin={() => undefined} />
+    )
+    expect(seen).deep.equals([
+      '/oauth/approve/request/details',
+      '/oauth/approve/request/resume'
+    ])
+  })
   it('keeps OAuth navigation in the actual app shell across session restoration', async () => {
     let signedIn = true
     globalThis.fetch = async input => {
@@ -216,6 +333,7 @@ describe('OAuth consent and loaded build information', () => {
           />
         )
         await press('Approve in the TeamStation app')
+        await press('Open TeamStation')
         expect(document.body.textContent).includes('Waiting for your decision')
         await act(async () => {
           poll?.()

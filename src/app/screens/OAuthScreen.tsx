@@ -36,17 +36,28 @@ export function OAuthScreen({
   const [busy, setBusy] = useState(false)
   const [waiting, setWaiting] = useState(false)
   const [done, setDone] = useState(false)
+  const [appUrl, setAppUrl] = useState<string>()
   useEffect(() => {
     let active = true
     setInfo(undefined)
     setFailed(false)
     setDone(false)
+    setWaiting(false)
+    setAppUrl(undefined)
     if (handle != null && accountName == null) return
     const load =
       handle == null ? browser!.details() : client.oauthApproval(handle)
     load
-      .then(value => {
-        if (active) setInfo(value)
+      .then(async value => {
+        if (!active) return
+        setInfo(value)
+        if (browser != null && value.decision != null) {
+          if (value.decision === 'pending') setWaiting(true)
+          else {
+            const url = await browser.resume()
+            if (active && url != null) await resumeBrowser(url)
+          }
+        }
       })
       .catch(() => {
         if (active) setFailed(true)
@@ -190,12 +201,25 @@ export function OAuthScreen({
               <Button
                 label={lstrings.oauth_app}
                 kind="text"
-                disabled={waiting}
+                disabled={waiting || appUrl != null}
                 onPress={() => {
                   browser
                     .native()
-                    .then(async url => {
-                      await openExternal(url)
+                    .then(url => {
+                      setAppUrl(url)
+                    })
+                    .catch(() => {
+                      setFailed(true)
+                    })
+                }}
+              />
+            )}
+            {appUrl != null && !waiting && (
+              <Button
+                label={lstrings.oauth_open_app}
+                onPress={() => {
+                  resumeBrowser(appUrl)
+                    .then(() => {
                       setWaiting(true)
                     })
                     .catch(() => {

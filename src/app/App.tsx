@@ -660,7 +660,13 @@ function Shell(props: AppProps): React.ReactElement {
     rememberSession(next)
     if (route.name === 'signIn' && route.next != null) {
       const [path, search = ''] = route.next.split('?')
-      goToRoute(parseRoute(path, search))
+      const destination = parseRoute(path, search)
+      goToRoute(destination)
+      if (
+        destination.name === 'oauthApprove' ||
+        destination.name === 'oauthNative'
+      )
+        showRoute(destination, true)
     }
   }
 

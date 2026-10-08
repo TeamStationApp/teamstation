@@ -431,6 +431,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
       { method: 'POST', headers, body: '{"approve":true}' }
     )
     expect(approved.status).equals(200)
+    const restored = await flow.browser.request(flow.approval + '/details')
+    const reloaded = (await restored.json()) as {
+      decision: string
+      csrfToken: string
+    }
+    expect(reloaded.decision).equals('approved')
+    flow.csrf = reloaded.csrfToken
     const stolen = new Browser(fetcher)
     const rejected = await stolen.request(flow.approval + '/resume', {
       method: 'POST',

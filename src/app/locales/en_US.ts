@@ -29,6 +29,7 @@ export const enUs = {
   oauth_approve: 'Allow',
   oauth_deny: 'Deny',
   oauth_app: 'Approve in the TeamStation app',
+  oauth_open_app: 'Open TeamStation',
   oauth_waiting: 'Waiting for your decision in the app…',
   oauth_done:
     'Your decision was saved. Return to the browser that requested access.',
