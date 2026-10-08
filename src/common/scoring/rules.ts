@@ -25,6 +25,7 @@ import {
   type GameSetup,
   type GameState,
   type Movement,
+  POSITIONS,
   type ResolutionOutcome
 } from './state'
 
@@ -53,6 +54,18 @@ export {
   validateRoster
 }
 export type { HomeRunKind, Override, RosterPlayer }
+
+/** Readiness for a new scoring action in the current half, never the next. */
+export function currentSetupError(state: GameState): string | undefined {
+  const defense = state.liveData.boxscore.teams[fieldingSide(state)].defense
+  const missing = POSITIONS.filter(position => defense[position] == null)
+  if (missing.length > 0)
+    return `Missing defensive positions: ${missing.join(', ')}`
+  if (
+    state.liveData.boxscore.teams[battingSide(state)].battingOrder.length === 0
+  )
+    return 'No players in lineup'
+}
 
 /** Why this roster could not be taken now, or undefined when it could. */
 export function rosterError(

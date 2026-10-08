@@ -4,12 +4,22 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
+import { freshGame } from '../../common/scoring/rules'
+import { applyAction, ScoringSession } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { createDevelopmentSession } from './developmentSession'
+import type { UseDictationOptions } from './dictationTypes'
 import { gameFixture } from './isUnscoredGame.test'
 import { ScoringScreen } from './ScoringScreen'
-import { DevelopmentScoringSource } from './scoringSource'
+import {
+  DevelopmentScoringSource,
+  memoryStore,
+  type ScoringSource
+} from './scoringSource'
+import { POSITIONS } from './scoringTypes'
 
 type Props = Parameters<typeof BaseballScreen>[0]
 type FieldProps = NonNullable<Props['field']>
@@ -23,6 +33,7 @@ interface Fiber {
   memoizedProps?: unknown
   child?: Fiber | null
   sibling?: Fiber | null
+  memoizedState?: { memoizedState?: unknown; next?: Fiber['memoizedState'] }
 }
 
 // The screen's props to the field are read from React's own tree, so each
@@ -51,6 +62,27 @@ function props(): Props {
   const found = find(root?.current ?? host, 'BaseballScreen')
   if (found == null) throw new Error('The screen has not rendered')
   return found.memoizedProps as Props
+}
+function dictate(transcript: string): void {
+  const key = Object.keys(container ?? {}).find(name =>
+    name.startsWith('__reactContainer$')
+  )!
+  const host = (
+    container as unknown as Record<
+      string,
+      Fiber & { stateNode?: { current?: Fiber } }
+    >
+  )[key]
+  const panel = find(host.stateNode?.current ?? host, 'ScoringPanel')!
+  for (let hook = panel.memoizedState; hook != null; hook = hook.next) {
+    const ref = hook.memoizedState as
+      { current?: Partial<UseDictationOptions> } | undefined
+    if (ref?.current != null && typeof ref.current.onActions === 'function') {
+      ref.current.onActions(transcript, [{ type: 'pitch', call: 'B' }])
+      return
+    }
+  }
+  throw new Error('Missing dictated scoring callback')
 }
 function field(): FieldProps {
   const value = props().field
@@ -112,7 +144,7 @@ function placement(entityId: string): FieldPlacement {
 let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
-async function mount(source?: DevelopmentScoringSource): Promise<void> {
+async function mount(source?: ScoringSource): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
@@ -137,6 +169,209 @@ async function mount(source?: DevelopmentScoringSource): Promise<void> {
 }
 
 describe('scoring screen field wiring', function () {
+  it('offers safe setup for an old unresolved partial-defense play without writing when the picker opens', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const setup = setupOf(initial)
+    setup.sides.home.defense.C = null
+    const before = applyAction(initial, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    }).state
+    const store = memoryStore()
+    const legacy = ScoringSession.start(store, 'g1', before)
+    legacy.apply({
+      type: 'ballInPlay',
+      contact: 'swing',
+      fielder: initial.liveData.boxscore.teams.home.defense.RF!,
+      launchAngle: 15,
+      location: { x: 20, z: -60 }
+    })
+    await legacy.flush()
+    const context = {
+      gamePk: 'g1',
+      teams: initial.gameData.teams,
+      setup: setupOf(initial)
+    }
+    const live = await ScoringSession.open(store, 'g1', context, {
+      requireCurrentSetup: true
+    })
+    const saved = JSON.stringify(store.games.get('g1'))
+    await mount({ persistent: true, open: async () => live })
+    expect(props().canPitch).equals(false)
+    await step(() => field().onPlayerTap?.('empty-C'))
+    expect(JSON.stringify(store.games.get('g1'))).equals(saved)
+    expect(
+      document.querySelector('[aria-label="Defensive roster"]')
+    ).not.equals(null)
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Assign C #2 P2"]')!
+        .click()
+    })
+    expect(props().canPitch).equals(true)
+    expect(live.state.liveData.plays.allPlays).has.length(0)
+  })
+  it('does not mutate a peer-started active play after a picker refresh', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const store = memoryStore()
+    const context = {
+      gamePk: 'g1',
+      teams: initial.gameData.teams,
+      setup: setupOf(initial)
+    }
+    const first = await ScoringSession.open(store, 'g1', context)
+    const peer = await ScoringSession.open(store, 'g1', context)
+    await mount({ persistent: true, open: async () => first })
+    await step(() =>
+      field().onPlayerTap?.(
+        field().players.find(player => player.label === 'P')!.id
+      )
+    )
+    peer.apply({
+      type: 'ballInPlay',
+      contact: 'swing',
+      fielder: initial.liveData.boxscore.teams.home.defense.RF!
+    })
+    await peer.flush()
+    const saved = JSON.stringify(store.games.get('g1'))
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+        .click()
+    })
+    expect(JSON.stringify(store.games.get('g1'))).equals(saved)
+    expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
+      null
+    )
+  })
+  it('gates the actual dictated callback until a partial current lineup is accepted', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    initial.liveData.boxscore.teams.away.battingOrder.pop()
+    await mount({
+      open: async () => ScoringSession.start(memoryStore(), 'g1', initial)
+    })
+    await step(() => {
+      dictate('Ball')
+    })
+    expect(props().summary).includes('0 balls')
+    await step(() => props().setupToast?.onAcceptLineup?.())
+    await step(() => {
+      dictate('Ball')
+    })
+    expect(props().summary).includes('1 balls')
+  })
+  for (const route of ['lineup', 'defender', 'placeholder'] as const)
+    it(`preserves another scorer's saved pitches through ${route} setup`, async function () {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      initial.liveData.boxscore.teams.away.battingOrder.pop()
+      if (route === 'placeholder') {
+        const home = initial.liveData.boxscore.teams.home
+        home.players.pop()
+        home.battingOrder.pop()
+        home.defense.RF = null
+      }
+      const prepared = freshGame(
+        initial.gamePk,
+        initial.gameData.teams,
+        setupOf(initial)
+      )
+      const context = {
+        gamePk: 'g1',
+        teams: prepared.gameData.teams,
+        setup: setupOf(prepared)
+      }
+      const store = memoryStore()
+      const first = await ScoringSession.open(store, 'g1', context)
+      const peer = await ScoringSession.open(store, 'g1', context)
+      await mount({ persistent: true, open: async () => first })
+      if (route === 'defender')
+        await step(() =>
+          field().onPlayerTap?.(
+            field().players.find(player => player.label === 'P')!.id
+          )
+        )
+      if (route === 'placeholder')
+        await step(() => field().onPlayerTap?.('empty-RF'))
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await peer.flush()
+      if (route === 'lineup') {
+        await step(() => props().setupToast?.onSetLineup?.())
+        await step(() => {
+          document
+            .querySelector<HTMLElement>('[aria-label="Save Rosters"]')!
+            .click()
+        })
+      } else if (route === 'defender') {
+        await step(() => {
+          document
+            .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+            .click()
+        })
+      } else {
+        await step(() => {
+          document
+            .querySelector<HTMLElement>(
+              '[aria-label="Create Placeholder Players"]'
+            )!
+            .click()
+        })
+        await step(() => {
+          document
+            .querySelector<HTMLElement>('[aria-label="Player count 2"]')!
+            .click()
+        })
+        await step(() => {
+          document.querySelector<HTMLElement>('[aria-label="Add"]')!.click()
+        })
+      }
+      await step(() => undefined)
+      await first.flush()
+      const saved = await ScoringSession.open(store, 'g1', context)
+      expect(saved.state.liveData.linescore.balls).equals(2)
+      if (route === 'defender')
+        expect(saved.state.liveData.linescore.defense.P?.id).equals(
+          prepared.liveData.boxscore.teams.home.defense.C
+        )
+      if (route === 'placeholder')
+        expect(saved.state.liveData.boxscore.teams.home.players).has.length(10)
+    })
+  it('revalidates the defending side when a peer changes halves while the picker is open', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const context = {
+      gamePk: 'g1',
+      teams: initial.gameData.teams,
+      setup: setupOf(initial)
+    }
+    const store = memoryStore()
+    const first = await ScoringSession.open(store, 'g1', context)
+    const peer = await ScoringSession.open(store, 'g1', context)
+    await mount({ persistent: true, open: async () => first })
+    await step(() =>
+      field().onPlayerTap?.(
+        field().players.find(player => player.label === 'P')!.id
+      )
+    )
+    peer.apply({ type: 'gameFlow', kind: 'endHalf' })
+    await peer.flush()
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+        .click()
+    })
+    await first.flush()
+    expect(first.state.liveData.linescore.isTopInning).equals(false)
+    expect(first.state.liveData.boxscore.teams.away.defense).deep.equals(
+      initial.liveData.boxscore.teams.away.defense
+    )
+    expect(first.state.liveData.boxscore.teams.home.defense).deep.equals(
+      initial.liveData.boxscore.teams.home.defense
+    )
+    expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
+      null
+    )
+  })
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -315,5 +550,103 @@ describe('scoring screen field wiring', function () {
       more.props.onChoose({ action: 'Hit by Pitch' })
     })
     expect(props().summary).to.be.a('string')
+  })
+  it('assigns current defense from the field, reuses placeholder quantity and dismisses complete warnings', async function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const home = session.liveData.boxscore.teams.home
+    home.players = home.players.slice(0, 8)
+    home.battingOrder = [...home.players]
+    for (const slot of POSITIONS) home.defense[slot] = null
+    const prepared = freshGame(
+      session.gamePk,
+      session.gameData.teams,
+      setupOf(session)
+    )
+    await mount({
+      open: async () => ScoringSession.start(memoryStore(), 'g1', prepared)
+    })
+    expect(props().canPitch).equals(false)
+    expect(
+      field().players.filter(player => player.emptyPosition === true)
+    ).has.length(9)
+    await step(() => field().onPlayerTap?.('empty-P'))
+    expect(document.body.textContent).includes('Create Placeholder Players')
+    const click = async (label: string): Promise<void> => {
+      await step(() => {
+        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+      })
+    }
+    await click('Create Placeholder Players')
+    await click('Player count 2')
+    await click('Add')
+    expect(document.querySelectorAll('[aria-label^="Assign P #"]')).has.length(
+      10
+    )
+    expect(
+      document.querySelector('[aria-label="Create Placeholder Players"]')
+    ).equals(null)
+    await click('Assign P #1 P1')
+    expect(props().instruction).not.includes('P,')
+    const pitcher = field().players.find(player => player.label === 'P')!
+    await step(() => field().onPlayerTap?.(pitcher.id))
+    expect(
+      document.querySelector('[aria-label="Create Placeholder Players"]')
+    ).equals(null)
+    await click('Cancel')
+    for (const [index, slot] of POSITIONS.entries()) {
+      if (slot === 'P') continue
+      await step(() => field().onPlayerTap?.(`empty-${slot}`))
+      await click(
+        index < 8
+          ? `Assign ${slot} #${index + 1} P${index + 1}`
+          : `Assign ${slot} #— HA`
+      )
+    }
+    expect(props().instruction).equals(undefined)
+    expect(props().canPitch).equals(true)
+  })
+  it('shows zero and partial current batting warnings with accurate routes, acceptance and guards', async function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    session.liveData.boxscore.teams.away.battingOrder = []
+    const prepared = freshGame(
+      session.gamePk,
+      session.gameData.teams,
+      setupOf(session)
+    )
+    await mount({
+      open: async () => ScoringSession.start(memoryStore(), 'g1', prepared)
+    })
+    expect(props().canPitch).equals(false)
+    expect(field().scoreboard?.batter.firstName).equals('')
+    await step(() => {
+      props().onPitch('ball')
+    })
+    expect(props().summary).includes('0 balls')
+    expect(props().instruction).equals('Insufficient batting lineup.')
+    expect(props().setupToast?.message).equals('No players in lineup')
+    expect(props().setupToast?.onAcceptLineup).equals(undefined)
+    await step(() => props().setupToast?.onSetLineup?.())
+    expect(
+      document.querySelector('[aria-label="Away Team"][aria-selected="true"]')
+    ).not.equals(null)
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Add Player 1 to Lineup"]')!
+        .click()
+    })
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Save Rosters"]')!
+        .click()
+    })
+    expect(props().setupToast?.message).equals('Only one player in lineup')
+    expect(props().canPitch).equals(false)
+    await step(() => props().setupToast?.onAcceptLineup?.())
+    expect(props().instruction).equals(undefined)
+    expect(props().canPitch).equals(true)
+    await step(() => {
+      props().onPitch('ball')
+    })
+    expect(props().summary).includes('1 balls')
   })
 })

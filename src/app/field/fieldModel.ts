@@ -6,6 +6,8 @@ export interface GroundPoint {
   z: number
 }
 export interface FieldPlayer {
+  /** An unassigned defensive slot, drawn as a square rather than an athlete. */
+  emptyPosition?: boolean
   slowApproach?: boolean
   uniformSide?: 'away' | 'home'
   hasBall?: boolean

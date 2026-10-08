@@ -98,11 +98,13 @@ describe('atomic scoring edits', function () {
         d.liveData.boxscore.teams.home.defense.P = 1
       }
     ]
-    for (const change of cases) {
+    for (const [index, change] of cases.entries()) {
       const bad = copyState(initial().session)
       change(bad)
       expect(validateRoster(bad)).is.a('string')
-      expect(applyRosterDraft(state, bad).error).is.a('string')
+      if (index === 3)
+        expect(applyRosterDraft(state, bad).error).equals(undefined)
+      else expect(applyRosterDraft(state, bad).error).is.a('string')
     }
     // With nobody on base, so the new man bats rather than running for a
     // runner the new order leaves out.

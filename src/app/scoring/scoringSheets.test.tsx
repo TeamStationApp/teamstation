@@ -405,7 +405,7 @@ describe('scoring slide-up sheets', function () {
       document
         .querySelector('[aria-label="Save Rosters"]')
         ?.getAttribute('aria-disabled')
-    ).equals('true')
+    ).not.equals('true')
     await drag(
       '[data-roster-target="roster"] [data-roster-player="1"]',
       'defense-P'

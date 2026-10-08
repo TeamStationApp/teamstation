@@ -155,6 +155,8 @@ export function swipeCloses(dy: number, vy: number): boolean {
 const SheetArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
 
 export function ScoringSheet({
+  compact = false,
+  placement = 'bottom',
   title,
   headerless = false,
   textCancel = false,
@@ -165,9 +167,12 @@ export function ScoringSheet({
   scroll = true,
   scrollReset = 0,
   onShow,
+  onBackdropPress,
   onClose,
   children
 }: {
+  compact?: boolean
+  placement?: 'top' | 'bottom'
   title: string
   /** A compact full-screen editor supplies its own bottom close action. */
   headerless?: boolean
@@ -183,6 +188,7 @@ export function ScoringSheet({
   /** Increment to return a repeated-entry form to its first field. */
   scrollReset?: number
   onShow?: () => void
+  onBackdropPress?: () => void
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
@@ -256,20 +262,22 @@ export function ScoringSheet({
         >
           <SheetArea
             edges={
-              fullScreen || tall
+              fullScreen || tall || placement === 'top'
                 ? ['top', 'bottom', 'left', 'right']
                 : ['bottom', 'left', 'right']
             }
             style={{
               flex: 1,
-              justifyContent: 'flex-end',
+              justifyContent: placement === 'top' ? 'flex-start' : 'flex-end',
               backgroundColor: fullScreen ? theme.backgroundColor : undefined
             }}
           >
             {!fullScreen && (
               <Pressable
                 accessibilityLabel="Dismiss sheet"
-                onPress={onClose}
+                onPress={() => {
+                  ;(onBackdropPress ?? onClose)()
+                }}
                 style={{
                   position: 'absolute',
                   inset: 0,
@@ -291,15 +299,15 @@ export function ScoringSheet({
                 borderTopRightRadius: fullScreen
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
-                padding: 16,
+                padding: compact ? 12 : 16,
                 paddingBottom: headerless ? 0 : 16,
-                gap: 12
+                gap: compact ? 8 : 12
               }}
             >
               {!headerless && (
                 <View
                   {...(swipeToDismiss ? pull.panHandlers : {})}
-                  style={{ gap: 12 }}
+                  style={{ gap: compact ? 8 : 12 }}
                 >
                   {swipeToDismiss && (
                     <View
@@ -326,7 +334,7 @@ export function ScoringSheet({
                       accessibilityRole="header"
                       style={{
                         fontFamily: theme.boldTextFont,
-                        fontSize: 22,
+                        fontSize: compact ? 18 : 22,
                         color: theme.primaryTextColor,
                         flex: 1
                       }}
@@ -339,7 +347,7 @@ export function ScoringSheet({
                         accessibilityLabel="Cancel"
                         onPress={onClose}
                         style={{
-                          minHeight: 44,
+                          minHeight: compact ? 32 : 44,
                           paddingHorizontal: 10,
                           justifyContent: 'center'
                         }}

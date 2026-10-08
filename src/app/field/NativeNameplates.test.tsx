@@ -38,6 +38,43 @@ const plate = (
 })
 
 describe('the phone’s nameplates over the field', function () {
+  it('draws empty position squares with the same red appearance and acronym', async function () {
+    let report: ((plates: NameplatePlacement[]) => void) | undefined
+    function Harness(): React.ReactElement {
+      const nameplates = useFieldNameplates()
+      report = nameplates.report
+      return (
+        <FieldNameplates faces={nameplates.faces} spots={nameplates.spots} />
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(<Harness />)
+    })
+    await act(async () => {
+      report?.([
+        plate('empty-P', {
+          emptyPosition: true,
+          name: 'P',
+          number: '',
+          width: 40,
+          height: 40,
+          anchorY: 0.5
+        })
+      ])
+      await delay(30)
+    })
+    const node = document.querySelector<HTMLElement>('[aria-label="Assign P"]')!
+    expect(node.textContent).equals('P')
+    expect(getComputedStyle(node).width).equals('40px')
+    expect(getComputedStyle(node).height).equals('40px')
+    expect(getComputedStyle(node).borderStyle).equals('dashed')
+    expect(getComputedStyle(node).backgroundColor).equals(
+      'rgba(255, 190, 190, 0.22)'
+    )
+  })
   it('draws what the scene reports, and moves it without rendering again', async function () {
     let report: ((plates: NameplatePlacement[]) => void) | undefined
     let renders = 0

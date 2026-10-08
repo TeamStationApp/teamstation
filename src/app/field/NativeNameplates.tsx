@@ -105,11 +105,23 @@ function Nameplate({
     >
       <View style={{ position: 'absolute', ...frame }}>
         <View
+          accessibilityLabel={
+            face.emptyPosition === true ? `Assign ${face.name}` : undefined
+          }
           style={{
             padding: NAMEPLATE_PAD,
             gap: face.number === '' ? 0 : NAMEPLATE_LINE_GAP,
-            borderRadius: 8,
-            backgroundColor: face.color,
+            borderRadius: face.emptyPosition === true ? 2 : 8,
+            backgroundColor:
+              face.emptyPosition === true
+                ? 'rgba(255, 190, 190, 0.22)'
+                : face.color,
+            borderWidth: face.emptyPosition === true ? 2 : 0,
+            borderStyle: face.emptyPosition === true ? 'dashed' : 'solid',
+            borderColor: '#d65454',
+            width: face.emptyPosition === true ? 40 : undefined,
+            height: face.emptyPosition === true ? 40 : undefined,
+            justifyContent: 'center',
             alignItems: 'center'
           }}
         >
@@ -117,7 +129,11 @@ function Nameplate({
             numberOfLines={1}
             style={[
               styles.line,
-              { fontSize: NAMEPLATE_FONT, lineHeight: NAMEPLATE_FONT }
+              {
+                fontSize: NAMEPLATE_FONT,
+                lineHeight: NAMEPLATE_FONT,
+                color: face.emptyPosition === true ? '#ffb6b6' : '#ffffff'
+              }
             ]}
           >
             {face.name}
