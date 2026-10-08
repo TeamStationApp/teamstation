@@ -251,6 +251,24 @@ describe('shared roster dragging', function () {
     await engine.tick()
     expect(deltas).deep.equals([-18, 18])
   })
+  it('keeps a stationary drop zone in the middle of short scroll regions', async function () {
+    const deltas: number[] = []
+    const engine = new RosterGesture(() => undefined)
+    engine.scrolls.set('short field', {
+      measure: async () => ({ x: 0, y: 0, width: 200, height: 52 }),
+      scroll: delta => deltas.push(delta)
+    })
+    engine.begin(1, 'Player', { x: 100, y: 70 })
+    await engine.move({ x: 100, y: 26 })
+    await engine.tick()
+    expect(deltas).deep.equals([])
+    await engine.move({ x: 100, y: 2 })
+    await engine.tick()
+    await engine.move({ x: 100, y: 50 })
+    await engine.tick()
+    expect(deltas).deep.equals([-18, 18])
+    engine.cancel()
+  })
   it('freezes full-card geometry, keeps the grab offset and follows scroll without gap feedback', async function () {
     const engine = new RosterGesture(() => undefined)
     const observed: Array<RosterPreview | null> = []

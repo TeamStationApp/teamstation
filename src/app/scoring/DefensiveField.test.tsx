@@ -5,10 +5,55 @@ import { createRoot } from 'react-dom/client'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import { DEFENSE_LOCATIONS, DefensiveField } from './DefensiveField'
+import { createDevelopmentSession } from './developmentSession'
+import { gameFixture } from './isUnscoredGame.test'
 import { RosterDragGroup } from './RosterDrag'
+import { RosterEditor } from './RosterEditor'
+import { initialScoringState } from './scoringMachine'
+import { ScoringSheetHeight } from './ScoringSheet'
 import { POSITIONS } from './scoringTypes'
 
 describe('compact defensive field', function () {
+  it('uses measured short sheet height to condense controls and retain list space', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <ScoringSheetHeight.Provider value={260}>
+              <RosterEditor
+                state={initialScoringState(
+                  createDevelopmentSession(gameFixture, [], [])
+                )}
+                onSave={() => undefined}
+              />
+            </ScoringSheetHeight.Provider>
+          </ThemeProvider>
+        )
+      })
+      expect(
+        host.querySelector<HTMLElement>('[data-testid="Roster editor top"]')!
+          .style.maxHeight
+      ).equals('48px')
+      expect(
+        host.querySelector('[data-testid="Roster selector captions"]')
+      ).equals(null)
+      expect(
+        host.querySelector<HTMLElement>('[aria-label="Cancel"]')!.style
+          .minHeight
+      ).equals('36px')
+      expect(host.querySelector('[aria-label="Batting lineup"]')).not.equals(
+        null
+      )
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
   it('keeps every position in a scrollable field on short screens and clears assigned cards', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)

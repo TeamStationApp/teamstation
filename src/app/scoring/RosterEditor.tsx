@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useContext, useEffect, useState } from 'react'
 import {
   Platform,
   Pressable,
@@ -22,7 +22,7 @@ import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
 import { copyState } from './scoringMachine'
 import { baseIds, battingSide } from './scoringSelectors'
-import { ScoringButton, ScoringError } from './ScoringSheet'
+import { ScoringButton, ScoringError, ScoringSheetHeight } from './ScoringSheet'
 import type {
   Position,
   ScoringSessionState,
@@ -68,6 +68,8 @@ export function RosterEditor({
 }): React.ReactElement {
   const theme = useTheme()
   const { height } = useWindowDimensions()
+  const availableHeight = useContext(ScoringSheetHeight) ?? height
+  const dense = availableHeight < 330
   const [draft, setDraft] = useState(() =>
     copyState(initialDraft?.draft ?? state.session)
   )
@@ -141,37 +143,45 @@ export function RosterEditor({
     backgroundColor: theme.scoringSelectorIdle
   }
   return (
-    <View style={{ flex: 1, minHeight: 0, gap: 8 }}>
+    <View style={{ flex: 1, minHeight: 0, gap: dense ? 4 : 8 }}>
       <ScrollView
         testID="Roster editor top"
-        // Short landscape shows both pills whole and no more: captions 17,
-        // gap 4, compact team pill 40, gap 4, Set Lineup 36 with 6 above and
-        // below. The instructions scroll under them.
-        style={{ flexGrow: 0, maxHeight: height < 500 ? 113 : 230 }}
+        // Browser chrome can leave much less room than the screen height.
+        // Instructions remain reachable by scrolling this compact header.
+        style={{
+          flexGrow: 0,
+          maxHeight: dense ? 48 : height < 500 ? 113 : 230
+        }}
         contentContainerStyle={{ gap: 4 }}
         keyboardShouldPersistTaps="handled"
       >
-        <RosterSelector
-          labels={[
-            draft.gameData.teams.away.name,
-            draft.gameData.teams.home.name
-          ]}
-          captions={['Away', 'Home']}
-          compact={height < 500}
-          accessibilityLabels={['Away Team', 'Home Team']}
-          value={side === 'away' ? 0 : 1}
-          onChange={index => {
-            setSide(index === 0 ? 'away' : 'home')
-          }}
-        />
-        <RosterSelector
-          fitContent
-          labels={['Set Lineup', 'Set Defense']}
-          value={defense ? 1 : 0}
-          onChange={index => {
-            setDefense(index === 1)
-          }}
-        />
+        <View style={{ flexDirection: dense ? 'row' : 'column', gap: 4 }}>
+          <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
+            <RosterSelector
+              labels={[
+                draft.gameData.teams.away.name,
+                draft.gameData.teams.home.name
+              ]}
+              captions={dense ? undefined : ['Away', 'Home']}
+              compact={height < 500}
+              accessibilityLabels={['Away Team', 'Home Team']}
+              value={side === 'away' ? 0 : 1}
+              onChange={index => {
+                setSide(index === 0 ? 'away' : 'home')
+              }}
+            />
+          </View>
+          <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
+            <RosterSelector
+              fitContent
+              labels={['Set Lineup', 'Set Defense']}
+              value={defense ? 1 : 0}
+              onChange={index => {
+                setDefense(index === 1)
+              }}
+            />
+          </View>
+        </View>
         <Text numberOfLines={defense ? 1 : undefined} style={text}>
           {defense
             ? 'Drag player into defensive position'
@@ -229,7 +239,9 @@ export function RosterEditor({
             />
           )}
           <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
-            <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
+            {!dense && (
+              <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
+            )}
             <RosterScrollArea name="Roster players">
               <RosterDrag
                 targetId="roster"
@@ -294,7 +306,9 @@ export function RosterEditor({
           </View>
           {!defense && (
             <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
-              <Text style={{ ...text, fontWeight: '700' }}>Lineup</Text>
+              {!dense && (
+                <Text style={{ ...text, fontWeight: '700' }}>Lineup</Text>
+              )}
               <RosterScrollArea name="Batting lineup">
                 <>
                   {team.battingOrder.map((id, index) => (
@@ -411,7 +425,7 @@ export function RosterEditor({
             onCancel?.()
           }}
           style={{
-            minHeight: 44,
+            minHeight: dense ? 36 : 44,
             alignItems: 'center',
             justifyContent: 'center'
           }}
