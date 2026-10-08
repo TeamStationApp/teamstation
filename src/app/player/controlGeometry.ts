@@ -36,6 +36,11 @@ export interface Rect {
 
 export type Engine = 'chrome' | 'webkit' | 'avplayer' | 'exoplayer' | 'unknown'
 
+// iOS places fullscreen, PiP and route controls along the top. Their grouping
+// varies by player and available routes, so leave the whole strip to iOS,
+// including the inset around its 44-point touch targets.
+const IOS_TOP_CONTROLS_HEIGHT = 60
+
 /**
  * Chrome 147, macOS. Probed through the debugging protocol, which can read into
  * the shadow root, at 390x219, 640x360, 952x536 and 1280x720 and again in
@@ -70,8 +75,7 @@ function webkitRects(w: number, h: number): Rect[] {
   const cx = w / 2
   const cy = h / 2
   return [
-    { x: 0, y: 0, w: T, h: T }, // fullscreen
-    { x: w - T, y: 0, w: T, h: T }, // speaker
+    { x: 0, y: 0, w, h: IOS_TOP_CONTROLS_HEIGHT },
     { x: cx - 78 - T / 2, y: cy - T / 2, w: T, h: T }, // back ten
     { x: cx - T / 2, y: cy - T / 2, w: T, h: T }, // play / pause
     { x: cx + 78 - T / 2, y: cy - T / 2, w: T, h: T }, // forward ten
@@ -83,18 +87,16 @@ function webkitRects(w: number, h: number): Rect[] {
 /**
  * AVPlayer's inline controls, iOS 26.
  *
- * The same bar Safari draws, because Safari's controls *are* AVPlayer's — the
- * numbers below are `webkitRects`' own, which were photographed on an iPhone,
- * with the fullscreen and speaker buttons moved: in the native player they sit
- * at the **top right** together rather than at either corner, and the route
- * button joins them.
+ * Reserve the entire top strip for fullscreen, PiP, routing and volume. The
+ * controls can appear on either side; assuming a top-right cluster leaves
+ * the iPhone's top-left buttons covered by our play/pause gesture layer.
  */
 function avPlayerRects(w: number, h: number): Rect[] {
   const T = 44
   const cx = w / 2
   const cy = h / 2
   return [
-    { x: w - T * 3, y: 0, w: T * 3, h: T }, // route, speaker, fullscreen
+    { x: 0, y: 0, w, h: IOS_TOP_CONTROLS_HEIGHT },
     { x: cx - 78 - T / 2, y: cy - T / 2, w: T, h: T }, // back ten
     { x: cx - T / 2, y: cy - T / 2, w: T, h: T }, // play / pause
     { x: cx + 78 - T / 2, y: cy - T / 2, w: T, h: T }, // forward ten
