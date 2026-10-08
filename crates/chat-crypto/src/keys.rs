@@ -13,15 +13,16 @@ use crate::error::Result;
 use crate::hpke::KeyPair;
 use crate::prim;
 use crate::random;
+use zeroize::Zeroizing;
 
 pub fn new_box_key_pair() -> Result<KeyPair> {
-    let secret_key: [u8; 32] = random::array()?;
-    let public_key = prim::x25519_public_key(&secret_key)?;
-    Ok(KeyPair { secret_key, public_key })
+    let secret_key = Zeroizing::new(random::array::<32>()?);
+    let public_key = prim::x25519_public_key(&*secret_key)?;
+    Ok(KeyPair { secret_key: *secret_key, public_key })
 }
 
 pub fn new_signing_key_pair() -> Result<KeyPair> {
-    let secret_key: [u8; 32] = random::array()?;
-    let public_key = prim::ed25519_public_key(&secret_key)?;
-    Ok(KeyPair { secret_key, public_key })
+    let secret_key = Zeroizing::new(random::array::<32>()?);
+    let public_key = prim::ed25519_public_key(&*secret_key)?;
+    Ok(KeyPair { secret_key: *secret_key, public_key })
 }

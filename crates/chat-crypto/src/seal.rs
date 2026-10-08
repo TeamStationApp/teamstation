@@ -58,7 +58,8 @@ pub fn seal_message(fields: &Fields, epoch_key: &[u8], plaintext: &[u8], identit
     };
     let aad = fields.aad();
     let key = Zeroizing::new(message_key(epoch_key, fields.conversation_id, fields.message_id)?);
-    let ciphertext = prim::xchacha20_poly1305_seal(&key, &nonce, &aad, &pad(plaintext)?)?;
+    let padded = Zeroizing::new(pad(plaintext)?);
+    let ciphertext = prim::xchacha20_poly1305_seal(&key, &nonce, &aad, &padded)?;
     let signature = prim::ed25519_sign(&signed_digest(&aad, &nonce, &ciphertext), identity_secret_key)?;
     Ok(Sealed { nonce, ciphertext, signature: signature.to_vec() })
 }

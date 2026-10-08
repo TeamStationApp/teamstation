@@ -15,14 +15,15 @@ process.env.TS_BUILD_INFO = bundleBuildInfo()
 module.exports = {
   presets: ['module:@react-native/babel-preset'],
   plugins: [
-    // Two variables, inlined at build time. Metro does not read the
+    // Selected variables, inlined at build time. Metro does not read the
     // environment on its own — `process.env.ANYTHING` is simply undefined in a
     // bundle — so without this the override documented in
     // `src/app/native/config.ts` would be a comment describing something that
     // cannot happen. `TS_CHAT_BENCH=1` makes the chat crypto bench build
     // (`src/app/dev/chatBench.native.ts`). Named explicitly rather than
     // inlining the whole environment, which would bake whatever is in the
-    // shell into the app. `metro.config.js` keys its cache on the same two.
+    // shell into the app. `metro.config.js` keys its cache on the API address
+    // and bench flag.
     [
       'transform-inline-environment-variables',
       {
