@@ -69,6 +69,23 @@ describe('player entry sheet', function () {
     await tap('Add Player')
     expect(document.body.textContent).includes('Enter a player name.')
     await input('First Name', 'Alex')
+    const enter = async (label: string): Promise<void> => {
+      await act(async () => {
+        node(label).dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            bubbles: true
+          })
+        )
+      })
+    }
+    await enter('First Name')
+    expect(document.activeElement).equals(node('Last Name'))
+    await enter('Last Name')
+    expect(document.activeElement).equals(node('Jersey Number'))
+    await enter('Jersey Number')
+    expect(document.activeElement).not.equals(node('Jersey Number'))
     await input('Last Name', 'Local')
     await input('Jersey Number', '7x')
     await tap('Add Player')
@@ -87,7 +104,15 @@ describe('player entry sheet', function () {
     expect(node('Player position P').getAttribute('aria-checked')).equals(
       'false'
     )
+    const scroll = node('First Name').closest<HTMLElement>(
+      '[data-testid="Scoring sheet content"]'
+    )!
+    scroll.scrollTop = 280
     await tap('Save and Add Another Player')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 40))
+    })
+    expect(scroll.scrollTop).equals(0)
     expect(added).deep.equals([
       {
         firstName: 'Alex',

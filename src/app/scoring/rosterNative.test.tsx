@@ -31,6 +31,30 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 describe('native roster responder', function () {
+  it('activates a tap-only defensive target and yields to a scrolling movement', function () {
+    const engine = new RosterGesture(() => undefined)
+    let taps = 0
+    const handlers = rosterResponder(engine, {
+      children: null,
+      targetId: 'defense-P',
+      onTap: () => {
+        taps++
+      }
+    })
+    try {
+      handlers.onTouchStart!(event(10, 10))
+      handlers.onTouchEnd!(event(10, 10))
+      expect(taps).equals(1)
+      expect(engine.active).equals(null)
+      handlers.onTouchStart!(event(10, 10))
+      handlers.onTouchMove!(event(10, 50))
+      handlers.onTouchEnd!(event(10, 50))
+      expect(taps).equals(1)
+      expect(engine.active).equals(null)
+    } finally {
+      handlers.dispose()
+    }
+  })
   it('appends on a tap, yields until a half-second hold, drops by native window coordinates and never taps after a drag', async function () {
     const drops: number[] = []
     let taps = 0

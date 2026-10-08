@@ -57,7 +57,11 @@ export function rosterResponder(
     dispose: cancel,
     onStartShouldSetResponder: () => false,
     onTouchStart: e => {
-      if (current().playerId == null || current().disabled === true) return
+      if (
+        (current().playerId == null && current().onTap == null) ||
+        current().disabled === true
+      )
+        return
       contact = true
       hold.start(point(e))
     },
