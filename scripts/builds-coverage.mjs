@@ -113,9 +113,10 @@ for (const file of required) {
 // Gate changed executable lines as well as every new module.
 const { changedLines, istanbulCounts, lineReportFromCounts } =
   await import('./changed-line-coverage.cjs')
-const baseline =
-  process.env.BUILDS_COVERAGE_BASE ?? 'a8266816833e111783a9e16fcf544ff3de47c10a'
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' })
+const baseline =
+  process.env.BUILDS_COVERAGE_BASE ??
+  git('merge-base', 'HEAD', 'origin/master').trim()
 const changes = Object.fromEntries(
   Object.entries(changedLines(git('diff', '--unified=0', baseline))).filter(
     ([file]) =>
