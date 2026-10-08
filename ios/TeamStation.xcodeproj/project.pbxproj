@@ -24,6 +24,7 @@
 		A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */; };
 		A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */; };
 		A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */; };
+		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
@@ -52,6 +53,7 @@
 		A9244C9899EB18E867E716E9 /* SpaceGrotesk-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Regular.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Regular.ttf"; sourceTree = SOURCE_ROOT; };
 		BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-TeamStation/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		C9B14565B09802CB64B889F5 /* SpaceGrotesk-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Medium.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Medium.ttf"; sourceTree = SOURCE_ROOT; };
+		E62A480C138F4F68BF682000 /* RCTHaptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTHaptics.mm; path = TeamStation/RCTHaptics.mm; sourceTree = SOURCE_ROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -120,6 +122,7 @@
 				5F96401EA5A8CCF14CB6DAAA /* SpaceGrotesk-Bold.ttf */,
 				16074B6B89A9C3D672728466 /* MaterialSymbolsOutlined.ttf */,
 				12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */,
+				E62A480C138F4F68BF682000 /* RCTHaptics.mm */,
 				6F1B2D3E4A5C6B7A89D2E3F4 /* TSExpoModules.mm */,
 				7990DFAEBE7A9CCB1B99DE57 /* ExpoModulesProviders */,
 			);
@@ -353,6 +356,7 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */,
+				D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */,
 				5E0A1C2D3F4B5A6978C1D2E3 /* TSExpoModules.mm in Sources */,
 				A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */,
 				3780FF159797B70C60AA4C1F /* RCTWalkUpMusic.mm in Sources */,

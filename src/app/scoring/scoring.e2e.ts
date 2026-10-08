@@ -1558,6 +1558,176 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('pulses drag-ready rows and limits light feedback to valid entries', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Set Defense')
+      await click(page, 'Clear P')
+      const supported = await page.evaluate(() => {
+        Reflect.set(window, 'gestureHaptics', [])
+        const original =
+          typeof navigator.vibrate === 'function'
+            ? navigator.vibrate.bind(navigator)
+            : undefined
+        if (original == null) return false
+        Object.defineProperty(navigator, 'vibrate', {
+          configurable: true,
+          value: (pattern: VibratePattern): boolean => {
+            const calls = Reflect.get(
+              window,
+              'gestureHaptics'
+            ) as VibratePattern[]
+            calls.push(pattern)
+            return original(pattern)
+          }
+        })
+        return true
+      })
+      const calls = async (): Promise<number> =>
+        await page.evaluate(
+          () =>
+            (Reflect.get(window, 'gestureHaptics') as VibratePattern[]).length
+        )
+      const point = async (
+        selector: string
+      ): Promise<{ x: number; y: number; width: number }> =>
+        await page.$eval(selector, node => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width }
+        })
+      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const from = await point(source)
+      await page.mouse.move(from.x, from.y)
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 150))
+      expect(await page.$('[data-testid="Roster dragged card"]')).equals(null)
+      expect(await calls()).equals(0)
+      await page.mouse.up()
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 100))
+      await page.mouse.move(from.x + 20, from.y)
+      await new Promise(resolve => setTimeout(resolve, 600))
+      expect(await page.$('[data-testid="Roster dragged card"]')).equals(null)
+      expect(await calls()).equals(0)
+      await page.mouse.up()
+      await page.mouse.move(from.x, from.y)
+      await page.mouse.down()
+      await page.waitForFunction(
+        width => {
+          const node = document.querySelector(
+            '[data-testid="Roster dragged card"]'
+          )
+          const r = node == null ? null : node.getBoundingClientRect()
+          return r != null && r.width > width * 1.025
+        },
+        { timeout: 3000 },
+        from.width
+      )
+      const peak = await point('[data-testid="Roster dragged card"]')
+      expect(peak.width / from.width).within(1.025, 1.061)
+      if (supported) expect(await calls()).equals(1)
+      await page.mouse.move(from.x + 20, from.y - 20)
+      await page.waitForFunction(
+        width =>
+          Math.abs(
+            document
+              .querySelector('[data-testid="Roster dragged card"]')!
+              .getBoundingClientRect().width - width
+          ) < 1,
+        {},
+        from.width
+      )
+      const pitcher = await point('[data-roster-target="defense-P"]')
+      const catcher = await point('[data-roster-target="defense-C"]')
+      await page.mouse.move(pitcher.x, pitcher.y)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      if (supported) expect(await calls()).equals(2)
+      await page.mouse.move(pitcher.x + 1, pitcher.y)
+      await page.mouse.move(pitcher.x + 2, pitcher.y)
+      await new Promise(resolve => setTimeout(resolve, 250))
+      if (supported) expect(await calls()).equals(2)
+      await page.mouse.move(catcher.x, catcher.y)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      if (supported) expect(await calls()).equals(3)
+      await page.mouse.move(1, catcher.y)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      if (supported) expect(await calls()).equals(3)
+      await page.mouse.move(catcher.x, catcher.y)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      if (supported) expect(await calls()).equals(4)
+      await page.mouse.up()
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="Roster dragged card"]') == null
+      )
+      expect(await page.$(source)).equals(null)
+      await click(page, 'Cancel')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Set Defense')
+      await click(page, 'Clear P')
+      await page.emulateMediaFeatures([
+        { name: 'prefers-reduced-motion', value: 'reduce' }
+      ])
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const reducedFrom = await point(source)
+      const before = await calls()
+      await page.mouse.move(reducedFrom.x, reducedFrom.y)
+      await page.mouse.down()
+      await page.waitForSelector('[data-testid="Roster dragged card"]')
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(
+        (await point('[data-testid="Roster dragged card"]')).width /
+          reducedFrom.width
+      ).within(0.99, 1.01)
+      if (supported) expect(await calls()).equals(before + 1)
+      await page.mouse.up()
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="Roster dragged card"]') == null
+      )
+      await click(page, 'Cancel')
+      await page.emulateMediaFeatures([
+        { name: 'prefers-reduced-motion', value: 'no-preference' }
+      ])
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await page.waitForFunction(() =>
+        document
+          .getAnimations()
+          .every(animation => animation.playState !== 'running')
+      )
+      const lineupSource = '[data-roster-target^="lineup-"][data-roster-player]'
+      const lineupFrom = await point(lineupSource)
+      const lineupBefore = await calls()
+      await page.mouse.move(lineupFrom.x, lineupFrom.y)
+      await page.mouse.down()
+      await page.waitForFunction(
+        width => {
+          const node = document.querySelector(
+            '[data-testid="Roster dragged card"]'
+          )
+          return (
+            node != null && node.getBoundingClientRect().width > width * 1.025
+          )
+        },
+        { timeout: 3000 },
+        lineupFrom.width
+      )
+      if (supported) expect(await calls()).equals(lineupBefore + 1)
+      await page.mouse.move(lineupFrom.x + 20, lineupFrom.y - 20)
+      await page.mouse.up()
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="Roster dragged card"]') == null
+      )
+    } finally {
+      await page.close()
+    }
+  })
   it('fits narrow defense selectors and exposes the entire roster error', async function () {
     awayTeamName = 'Demo Northern Hawks'
     const { page } = await open('/games/g1/score')

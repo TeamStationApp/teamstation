@@ -6,7 +6,18 @@ import React, {
   useState
 } from 'react'
 import { ScrollView, View } from 'react-native'
+import Animated, {
+  cancelAnimation,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming
+} from 'react-native-reanimated'
 
+import { useMotionPreference } from '../components/useMotionPreference'
+import { lightHaptic } from './lightHaptic'
+import { RosterFeedback } from './rosterFeedback'
 import {
   RosterGesture,
   type RosterPreview,
@@ -40,6 +51,55 @@ export function RosterDragGroup({
   const [preview, setPreview] = useState<RosterPreview | null>(null)
   const [engine] = useState(() => new RosterGesture(setPreview))
   const root = useRef<React.ComponentRef<typeof View>>(null)
+  const reduced = useMotionPreference()
+  const preference = useRef(reduced)
+  preference.current = reduced
+  const scale = useSharedValue(1)
+  const feedbackStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }]
+  }))
+  useEffect(() => {
+    const reset = (): void => {
+      cancelAnimation(scale)
+      scale.value = 1
+    }
+    const feedback = new RosterFeedback({
+      ready: () => {
+        lightHaptic(root.current)
+        if (!preference.current) {
+          cancelAnimation(scale)
+          scale.value = withSequence(
+            withTiming(1.05, {
+              duration: 80,
+              reduceMotion: ReduceMotion.Never
+            }),
+            withTiming(1, { duration: 120, reduceMotion: ReduceMotion.Never })
+          )
+        }
+      },
+      hover: () => {
+        lightHaptic(root.current)
+      },
+      reset
+    })
+    const listen = (value: RosterPreview | null): void => {
+      feedback.update(
+        value,
+        value?.source != null && engine.sources.has(value.source)
+      )
+    }
+    engine.listeners.add(listen)
+    return () => {
+      engine.listeners.delete(listen)
+      feedback.reset()
+    }
+  }, [engine, scale])
+  useEffect(() => {
+    if (reduced) {
+      cancelAnimation(scale)
+      scale.value = 1
+    }
+  }, [reduced, scale])
   const [origin, setOrigin] = useState({ x: 0, y: 0 })
   useEffect(() => {
     const timer = setInterval(() => {
@@ -73,6 +133,7 @@ export function RosterDragGroup({
     <RosterContext.Provider value={engine}>
       <View
         ref={root}
+        collapsable={false}
         style={{ flex: 1, minHeight: 0 }}
         onLayout={() => {
           measureRosterView(root.current)
@@ -82,26 +143,29 @@ export function RosterDragGroup({
       >
         {children}
         {preview != null && (
-          <View
+          <Animated.View
             testID="Roster dragged card"
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
             aria-hidden
             pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: preview.x - origin.x - (preview.grab?.x ?? 0),
-              top: preview.y - origin.y - (preview.grab?.y ?? 0),
-              width: preview.cardRect?.width,
-              height: preview.cardRect?.height,
-              zIndex: 100
-            }}
+            style={[
+              feedbackStyle,
+              {
+                position: 'absolute',
+                left: preview.x - origin.x - (preview.grab?.x ?? 0),
+                top: preview.y - origin.y - (preview.grab?.y ?? 0),
+                width: preview.cardRect?.width,
+                height: preview.cardRect?.height,
+                zIndex: 100
+              }
+            ]}
           >
             {preview.source == null
               ? null
               : (engine.sources.get(preview.source)
                   ?.content as React.ReactNode)}
-          </View>
+          </Animated.View>
         )}
       </View>
     </RosterContext.Provider>
