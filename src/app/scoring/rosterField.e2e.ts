@@ -83,7 +83,12 @@ const flatten = (node: Element): Element[] => [
   ...(node.children ?? []).flatMap(flatten)
 ]
 const label = (node: Element): string =>
-  node.accessibilityText ?? node.text ?? ''
+  (node.accessibilityText ?? node.text ?? '').replace(
+    /^(Clear|Assign) ([^,]+),.*$/,
+    '$1 $2'
+  )
+const actionPattern = (text: string): string =>
+  `^${text}${/^(Clear|Assign) /.test(text) ? '(?:, .*)?' : ''}$`
 async function main(): Promise<void> {
   const platform = required('TEST_PLATFORM')
   const device = required('TEST_DEVICE')
@@ -158,7 +163,7 @@ async function main(): Promise<void> {
           })
           await pause(300)
         }
-        await m.assertVisible({ text: `^${text}$`, timeout: 15000 })
+        await m.assertVisible({ text: actionPattern(text), timeout: 15000 })
         const first = await bounds(text)
         await pause(500)
         const fresh = await bounds(text)
@@ -166,7 +171,12 @@ async function main(): Promise<void> {
         await m.tapOn({
           point: `${Math.round(fresh.x + fresh.width / 2)},${Math.round(fresh.y + fresh.height / 2)}`
         })
-      } else await m.tapOn({ text: `^${text}$`, enabled: true, timeout: 15000 })
+      } else
+        await m.tapOn({
+          text: actionPattern(text),
+          enabled: true,
+          timeout: 15000
+        })
       await pause(500)
     }
     const shot = async (name: string): Promise<void> => {
@@ -192,7 +202,7 @@ async function main(): Promise<void> {
       await m.assertVisible({ text: '^Drag player into defensive position$' })
       await shot('defense')
       await tap('Clear P')
-      await m.assertVisible({ text: '^Assign P$' })
+      await m.assertVisible({ text: actionPattern('Assign P') })
     }
     let readValues: (() => Promise<string>) | undefined
     const drag = async (fromName: string, toName: string): Promise<void> => {
@@ -276,9 +286,9 @@ async function main(): Promise<void> {
     }
     if (resume == null) {
       await drag('Player 1', 'Assign P')
-      await m.assertVisible({ text: '^Clear P$' })
+      await m.assertVisible({ text: actionPattern('Clear P') })
       await tap('Clear P')
-      await m.assertVisible({ text: '^Assign P$' })
+      await m.assertVisible({ text: actionPattern('Assign P') })
       log('PASS held upward defensive drag and whole-card clear')
       await drag('Player 1', 'Clear C')
       await noRosterCard('Player 1')
@@ -288,7 +298,7 @@ async function main(): Promise<void> {
       await tap('Away Team')
       await tap('Set Lineup')
       await tap('Set Defense')
-      await m.assertVisible({ text: '^Clear P$' })
+      await m.assertVisible({ text: actionPattern('Clear P') })
       log(
         'PASS occupied-target replacement and draft across team/mode switches'
       )
@@ -296,7 +306,7 @@ async function main(): Promise<void> {
       await tap('Open scoring menu')
       await tap('Set Team Rosters')
       await tap('Set Defense')
-      await m.assertVisible({ text: '^Clear P$' })
+      await m.assertVisible({ text: actionPattern('Clear P') })
       await tap('Cancel')
       await tap('Undo Set team roster')
       log('PASS Save/reopen and Undo')
@@ -337,14 +347,14 @@ async function main(): Promise<void> {
         timeout: 15000
       })
     await drag('Player 14', 'Assign P')
-    await m.assertVisible({ text: '^Clear P$' })
+    await m.assertVisible({ text: actionPattern('Clear P') })
     await noRosterCard('Player 14')
     log('PASS scroll lower roster and drag upward to field')
     await tap('Cancel')
     await tap('Open scoring menu')
     await tap('Set Team Rosters')
     await tap('Set Defense')
-    await m.assertVisible({ text: '^Clear P$' })
+    await m.assertVisible({ text: actionPattern('Clear P') })
     log('PASS Cancel restores original defense')
     await tap('Create Player')
     await m.assertVisible({ text: '^First Name$' })

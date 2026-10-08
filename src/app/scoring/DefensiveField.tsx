@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Text, View } from 'react-native'
 
 import { DefensiveFieldArt } from './DefensiveFieldArt'
@@ -32,12 +32,14 @@ export function DefensiveField({
   onPlace: (id: number, position: Position) => void
   onClear: (position: Position) => void
 }): React.ReactElement {
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const scroll = compact || (viewportHeight > 0 && viewportHeight < 240)
   const field = (
     <View
       testID="Defensive field"
       style={{
-        flex: compact ? undefined : 1,
-        height: compact ? 240 : undefined,
+        flex: scroll ? undefined : 1,
+        height: scroll ? 240 : undefined,
         minHeight: 0,
         backgroundColor: '#eeeeee',
         borderRadius: 8
@@ -59,6 +61,7 @@ export function DefensiveField({
           >
             <RosterDrag
               targetId={`defense-${position}`}
+              value={id == null ? undefined : display(id)}
               label={id == null ? `Assign ${position}` : `Clear ${position}`}
               onTap={
                 id == null
@@ -110,9 +113,19 @@ export function DefensiveField({
       })}
     </View>
   )
-  return compact ? (
-    <RosterScrollArea name="Defensive positions">{field}</RosterScrollArea>
-  ) : (
-    field
+  return (
+    <View
+      testID="Defensive field viewport"
+      style={{ flex: 1, minHeight: 0 }}
+      onLayout={event => {
+        setViewportHeight(event.nativeEvent.layout.height)
+      }}
+    >
+      {scroll ? (
+        <RosterScrollArea name="Defensive positions">{field}</RosterScrollArea>
+      ) : (
+        field
+      )}
+    </View>
   )
 }

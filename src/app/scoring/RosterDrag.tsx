@@ -182,7 +182,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       }
       aria-description={
         grab == null
-          ? undefined
+          ? props.value
           : 'Grabbed. Arrow keys move; Enter drops; Escape cancels.'
       }
       tabIndex={
