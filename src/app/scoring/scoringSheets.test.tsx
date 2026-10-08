@@ -370,15 +370,30 @@ describe('scoring slide-up sheets', function () {
     await menu('Set Team Rosters')
     await click('Remove Player 2')
     await click('Add Player 2 to Lineup')
-    await keys('Reorder Player 2', [' ', 'ArrowUp', 'Escape'])
-    expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
-      null
-    )
-    expect(
-      document.querySelector('[data-roster-target="lineup-8"]')!.textContent
-    ).includes('Player 2')
-    await keys('Reorder Player 2', [' ', 'ArrowUp', 'Enter'])
-    await keys('Reorder Player 2', [' ', 'ArrowDown', 'Enter'])
+    const vibration = Object.getOwnPropertyDescriptor(navigator, 'vibrate')
+    let keyboardCues = 0
+    Object.defineProperty(navigator, 'vibrate', {
+      configurable: true,
+      value: () => {
+        keyboardCues++
+        return false
+      }
+    })
+    try {
+      await keys('Reorder Player 2', [' ', 'ArrowUp', 'Escape'])
+      expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
+        null
+      )
+      expect(
+        document.querySelector('[data-roster-target="lineup-8"]')!.textContent
+      ).includes('Player 2')
+      await keys('Reorder Player 2', [' ', 'ArrowUp', 'Enter'])
+      await keys('Reorder Player 2', [' ', 'ArrowDown', 'Enter'])
+      expect(keyboardCues).equals(0)
+    } finally {
+      if (vibration == null) delete (navigator as Partial<Navigator>).vibrate
+      else Object.defineProperty(navigator, 'vibrate', vibration)
+    }
     await click('Create Player')
     await input('First Name', 'Alex')
     await input('Last Name', 'Local')
