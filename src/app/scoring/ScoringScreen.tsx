@@ -45,17 +45,27 @@ import { WalkUpControl } from '../walkup/WalkUpControl'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
+import {
+  assignDefender,
+  battingWarningKey,
+  emptyDefensePlayers,
+  lineupCountMessage,
+  missingDefense,
+  setupEditable
+} from './currentSetup'
+import { DefensiveRosterSheet } from './DefensiveRosterSheet'
 import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
+import { addPlaceholderPlayers } from './placeholderPlayers'
 import {
   describeEntryPlays,
   describeLastPlay,
   describePlay
 } from './playDescription'
-import { RosterEditor } from './RosterEditor'
+import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
@@ -64,6 +74,7 @@ import { runnerDecisionError } from './scoringFlow'
 import {
   actsOnOpening,
   atRest,
+  copyState,
   resumedScoringState,
   scoringScreenModel,
   scoringScreenReducer,
@@ -74,14 +85,22 @@ import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
 import {
   baseIds,
+  battingSide,
   bottomActionsAllowed,
   canSwitchBatter,
+  fieldingSide,
   scoreboardFor
 } from './scoringSelectors'
 import { ScoringSettings } from './ScoringSettings'
-import { ScoringButton, ScoringSheet } from './ScoringSheet'
+import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 import { DevelopmentScoringSource, type ScoringSource } from './scoringSource'
-import type { HistoryEntry, ScoringEvent } from './scoringTypes'
+import {
+  type HistoryEntry,
+  type Position,
+  POSITIONS,
+  type ScoringEvent,
+  type Side
+} from './scoringTypes'
 import { dictationUrl } from './useDictation'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
@@ -287,6 +306,7 @@ function ScoringPanel(props: {
   )
   const state = model.scoring
   const openedLog = useRef(state.log)
+  const refreshedLog = useRef<readonly ScoringAction[] | undefined>(undefined)
   const [status, setStatus] = useState(() => statusOf(props.game))
   useEffect(() => {
     // What the screen shows of the save is read in a task of its own: the
@@ -319,6 +339,14 @@ function ScoringPanel(props: {
   }, [props.game])
   // The screen's log is the game: the session saves whatever it says.
   useEffect(() => {
+    if (
+      refreshedLog.current != null &&
+      sameActions(state.log, refreshedLog.current)
+    ) {
+      refreshedLog.current = undefined
+      return
+    }
+    refreshedLog.current = undefined
     if (state.log !== openedLog.current) props.game.sync(state.log)
   }, [props.game, state.log])
   // Undo taps into play scored before this screen opened, one at a time,
@@ -398,6 +426,16 @@ function ScoringPanel(props: {
   const [sheet, setSheet] = useState<
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'game'
   >()
+  const [defensiveSlot, setDefensiveSlot] = useState<{
+    position: Position
+    openedEmpty: boolean
+    side: Side
+  }>()
+  const [rosterLoading, setRosterLoading] = useState(false)
+  const [rosterProblem, setRosterProblem] = useState<string>()
+  const [rosterInitial, setRosterInitial] = useState<RosterEditorDraft>()
+  const [acceptedLineup, setAcceptedLineup] = useState<string>()
+  const defensiveOpen = defensiveSlot != null
   const confirmation = useRef<((value: boolean) => void) | null>(null)
   const requestConfirmation = useCallback(
     async () =>
@@ -431,6 +469,7 @@ function ScoringPanel(props: {
     state,
     menu ||
       sheet != null ||
+      defensiveOpen ||
       outcomeMenu ||
       moreOpen ||
       gestureActive ||
@@ -447,8 +486,29 @@ function ScoringPanel(props: {
   )
   // Read-only takes no input at all, from the pointer, the keyboard or a
   // screen reader.
-  const actionsAllowed = bottomActionsAllowed(state) && !status.readOnly
   const session = state.session
+  const missing = missingDefense(session)
+  const battingCount =
+    session.liveData.boxscore.teams[battingSide(session)].battingOrder.length
+  const lineupKey = battingWarningKey(session)
+  const lineupAccepted =
+    battingCount >= 9 || (battingCount > 0 && acceptedLineup === lineupKey)
+  const setupReady =
+    awaitingResult(session) || (missing.length === 0 && lineupAccepted)
+  const actionsAllowed =
+    bottomActionsAllowed(state) &&
+    !status.readOnly &&
+    !rosterLoading &&
+    setupReady
+  const canEditDefense =
+    setupEditable(state) &&
+    !status.readOnly &&
+    !menu &&
+    sheet == null &&
+    !defensiveOpen &&
+    !rosterLoading &&
+    !outcomeMenu &&
+    !moreOpen
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
   const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
@@ -575,15 +635,25 @@ function ScoringPanel(props: {
     question: state.dictationQuestion,
     played,
     onAnswer: answer => {
-      dispatch({ type: 'DICTATION_ANSWER', ...answer })
+      if (rosterLoading || (!lineupAccepted && !awaitingResult(session))) return
+      dispatch({
+        type: 'DICTATION_ANSWER',
+        ...answer,
+        acceptedLineup: acceptedLineup ?? null
+      })
     },
     onDismissQuestion: () => {
       dispatch({ type: 'DICTATION_DISMISS' })
     },
     // While a play is drawn or a player dragged, Space is the field's.
-    spaceTalks: (atRest(state) || state.reel != null) && !gestureActive,
+    spaceTalks:
+      (atRest(state) || state.reel != null) &&
+      !gestureActive &&
+      !rosterLoading &&
+      (lineupAccepted || awaitingResult(session)),
     undone,
     onActions: (transcript, actions, undo) => {
+      if (rosterLoading) return
       if (undo === true) {
         // Undone now, before the rest of the sentence is applied. With a
         // question open, what is taken back is the unanswered sentence.
@@ -595,8 +665,17 @@ function ScoringPanel(props: {
           dispatch({ type: 'DICTATION_DISMISS' })
         setUndone(last => ({ id: (last?.id ?? 0) + 1, line }))
       }
-      if (actions.length > 0)
-        dispatch({ type: 'DICTATED', transcript, actions })
+      if (
+        actions.length > 0 &&
+        !rosterLoading &&
+        (lineupAccepted || awaitingResult(session))
+      )
+        dispatch({
+          type: 'DICTATED',
+          transcript,
+          actions,
+          acceptedLineup: acceptedLineup ?? null
+        })
     }
   })
   const line = session.liveData.linescore
@@ -634,28 +713,127 @@ function ScoringPanel(props: {
   // last one saved wins.
   const [rosterRead, setRosterRead] = useState(0)
   const shownLog = useRef(state.log)
+  const resumedAppearance = useRef(
+    awaitingResult(props.game.state)
+      ? props.game.state.liveData.plays.currentPlay?.about.atBatIndex
+      : undefined
+  )
+  // A peer can replace a play without changing its appearance index. Bind
+  // safe resumption to the original record and its starting player context.
+  const resumeIdentity = (game: GameState): string =>
+    JSON.stringify({
+      players: game.gameData.players,
+      teams: game.liveData.boxscore.teams,
+      plays: game.liveData.plays
+    })
+  const [originalResume] = useState(() => resumeIdentity(props.game.state))
   shownLog.current = state.log
-  const openRosters = (): void => {
-    setSheet('rosters')
-    if (!props.persistent) return
-    props.game
-      .reload()
-      .then(changed => {
-        // The server's copy can read back differently with the same plays
-        // (its players in another order). Then the screen is the game
-        // already, and keeps its Undo history; only another scorer's plays
-        // start it again from the server's.
-        if (!changed || sameActions(shownLog.current, props.game.actions))
-          return
+  const refreshSetup = async (): Promise<GameState | null> => {
+    setRosterLoading(true)
+    setRosterProblem(undefined)
+    try {
+      if (!props.persistent) return session
+      const changed = await props.game.reload()
+      const oldUnresolved =
+        awaitingResult(props.game.state) &&
+        props.game.state.liveData.plays.currentPlay?.about.atBatIndex ===
+          resumedAppearance.current &&
+        resumeIdentity(props.game.state) === originalResume
+      const resumed = oldUnresolved
+        ? props.game.resumable()
+        : { state: props.game.state, actions: [...props.game.actions] }
+      // The server's copy can read back differently with the same plays
+      // (its players in another order). Then the screen is the game
+      // already, and keeps its Undo history; only another scorer's plays
+      // start it again from the server's.
+      if (changed && !sameActions(shownLog.current, props.game.actions)) {
+        if (oldUnresolved) refreshedLog.current = resumed.actions
         dispatch({
           type: 'RESET',
-          session: props.game.state,
-          log: [...props.game.actions]
+          session: resumed.state,
+          log: resumed.actions
         })
-        // The editor starts again from the game the server holds.
+      }
+      if (
+        props.game.readOnly ||
+        props.game.state.pending != null ||
+        (awaitingResult(props.game.state) && !oldUnresolved)
+      ) {
+        setSheet(undefined)
+        setDefensiveSlot(undefined)
+        return null
+      }
+      return resumed.state
+    } catch {
+      setRosterProblem('Unable to refresh the game. Please try again.')
+      return null
+    } finally {
+      setRosterLoading(false)
+    }
+  }
+  const openRosters = (lineup = false): void => {
+    setRosterInitial(undefined)
+    setSheet('rosters')
+    refreshSetup()
+      .then(fresh => {
+        if (fresh == null) return
+        setRosterInitial(
+          lineup
+            ? { draft: fresh, side: battingSide(fresh), defense: false }
+            : undefined
+        )
         setRosterRead(value => value + 1)
       })
-      .catch(() => undefined)
+      .catch(() => {
+        setRosterProblem('Unable to refresh the game. Please try again.')
+      })
+  }
+  const editableSetup = (fresh: GameState): boolean =>
+    setupEditable(resumedScoringState(fresh, [], state.presentationEnabled))
+  const chooseDefender = (id: number): void => {
+    const slot = defensiveSlot
+    if (slot == null || rosterLoading) return
+    refreshSetup()
+      .then(fresh => {
+        if (fresh == null) return
+        if (
+          fieldingSide(fresh) === slot.side &&
+          editableSetup(fresh) &&
+          fresh.liveData.boxscore.teams[slot.side].players.includes(id)
+        ) {
+          if (
+            fresh.liveData.boxscore.teams[slot.side].defense[slot.position] !==
+            id
+          )
+            dispatch({
+              type: 'ROSTER',
+              draft: assignDefender(fresh, slot.position, id)
+            })
+        }
+        setDefensiveSlot(undefined)
+      })
+      .catch(() => {
+        setRosterProblem('Unable to refresh the game. Please try again.')
+      })
+  }
+  const createDefensivePlaceholders = (count: number): void => {
+    const slot = defensiveSlot
+    if (slot == null || rosterLoading) return
+    refreshSetup()
+      .then(fresh => {
+        if (fresh == null) return
+        if (fieldingSide(fresh) !== slot.side || !editableSetup(fresh)) {
+          setDefensiveSlot(undefined)
+          return
+        }
+        if (fresh.liveData.boxscore.teams[slot.side].players.length >= 9) return
+        const draft = copyState(fresh)
+        addPlaceholderPlayers(draft, slot.side, count)
+        dispatch({ type: 'ROSTER', draft })
+      })
+      .catch(() => {
+        setRosterProblem('Unable to refresh the game. Please try again.')
+      })
   }
   const { phase, pendingPlay, motions, runnerAction, presentation } = state
   const previousPlayers = useRef<FieldPlayer[]>([])
@@ -671,8 +849,9 @@ function ScoringPanel(props: {
       },
       previousPlayers.current
     )
-    previousPlayers.current = next
-    return next
+    const complete = [...next, ...emptyDefensePlayers(session)]
+    previousPlayers.current = complete
+    return complete
   }, [session, phase, pendingPlay, motions, runnerAction, presentation])
   useEffect(() => {
     setAngle(startingAngle(state))
@@ -773,30 +952,36 @@ function ScoringPanel(props: {
   const homeWaiting =
     state.phase === 'homeDecision' &&
     !state.motions.some(motion => !motion.complete)
-  const runnerIds = relayForce
-    ? players
-        .filter(
-          player =>
-            player.team === 'runner' &&
-            player.batting !== true &&
-            player.playerId != null &&
-            forcedFrom(session, baseIds(session).indexOf(player.playerId) + 1)
-        )
-        .map(player => player.id)
-    : homeWaiting
-      ? hitOfferHomeIds
-      : runnerEnabled
+  const runnerIds =
+    !setupReady || rosterLoading
+      ? []
+      : relayForce
         ? players
             .filter(
               player =>
                 player.team === 'runner' &&
-                (state.phase === 'resolveBatter' ||
-                state.runnerAction?.returnPhase === 'resolveBatter'
-                  ? player.playerId === unresolvedRunner?.playerId
-                  : player.batting !== true)
+                player.batting !== true &&
+                player.playerId != null &&
+                forcedFrom(
+                  session,
+                  baseIds(session).indexOf(player.playerId) + 1
+                )
             )
             .map(player => player.id)
-        : []
+        : homeWaiting
+          ? hitOfferHomeIds
+          : runnerEnabled
+            ? players
+                .filter(
+                  player =>
+                    player.team === 'runner' &&
+                    (state.phase === 'resolveBatter' ||
+                    state.runnerAction?.returnPhase === 'resolveBatter'
+                      ? player.playerId === unresolvedRunner?.playerId
+                      : player.batting !== true)
+                )
+                .map(player => player.id)
+            : []
   const retreatIds =
     state.phase === 'correctionWindow' || state.phase === 'homeDecision'
       ? hitOfferRetreatIds
@@ -811,7 +996,8 @@ function ScoringPanel(props: {
             ? 'Drag batter to a base, or hold to mark Out'
             : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
           : undefined))
-  const celebrationPaused = menu || sheet != null || outcomeMenu || moreOpen
+  const celebrationPaused =
+    menu || sheet != null || defensiveOpen || outcomeMenu || moreOpen
   useHomeRunCelebration(state.celebration, celebrationPaused, dispatch)
   const fieldScoreboard = {
     ...scoreboardFor(session),
@@ -839,17 +1025,79 @@ function ScoringPanel(props: {
       })
     } else dispatch(event)
   }
+  const setupWarning =
+    !status.readOnly &&
+    setupEditable(state) &&
+    !menu &&
+    sheet == null &&
+    !defensiveOpen &&
+    !rosterLoading &&
+    !outcomeMenu &&
+    !moreOpen
+  const openLineup = (): void => {
+    openRosters(true)
+  }
+  const setupInstruction = setupWarning
+    ? missing.length > 0
+      ? `Missing defensive positions\n${missing.join(', ')}`
+      : !lineupAccepted
+        ? 'Insufficient batting lineup.'
+        : undefined
+    : undefined
+  const defensiveIds = canEditDefense
+    ? players
+        .filter(player => player.team === 'defense')
+        .map(player => player.id)
+    : []
   return (
     <BaseballScreen
+      setupToast={
+        setupInstruction === 'Insufficient batting lineup.'
+          ? {
+              message: lineupCountMessage(battingCount),
+              onSetLineup: openLineup,
+              onAcceptLineup:
+                battingCount > 0
+                  ? () => {
+                      setAcceptedLineup(lineupKey)
+                    }
+                  : undefined
+            }
+          : undefined
+      }
       field={{
         teams: session.gameData.teams,
         players,
+        tapIds: defensiveIds,
+        onPlayerTap: id => {
+          if (!canEditDefense) return
+          const player = players.find(item => item.id === id)
+          if (player == null || !POSITIONS.includes(player.label as Position))
+            return
+          setDefensiveSlot({
+            position: player.label as Position,
+            openedEmpty: player.emptyPosition === true,
+            side: fieldingSide(session)
+          })
+          const side = fieldingSide(session)
+          refreshSetup()
+            .then(fresh => {
+              if (
+                fresh != null &&
+                (fieldingSide(fresh) !== side || !editableSetup(fresh))
+              )
+                setDefensiveSlot(undefined)
+            })
+            .catch(() => {
+              setRosterProblem('Unable to refresh the game. Please try again.')
+            })
+        },
         onBaseProjection: setBaseProjection,
         ...battedBallField(
           state,
           angle,
           landingArc,
-          menu || sheet != null || outcomeMenu || moreOpen,
+          menu || sheet != null || defensiveOpen || outcomeMenu || moreOpen,
           {
             dispatch,
             landing: arc => {
@@ -914,6 +1162,7 @@ function ScoringPanel(props: {
             status.readOnly ||
             menu ||
             sheet != null ||
+            defensiveOpen ||
             outcomeMenu ||
             moreOpen ||
             state.presentation != null
@@ -925,12 +1174,15 @@ function ScoringPanel(props: {
                     ...players
                       .filter(
                         player =>
-                          player.team !== 'runner' && player.hasBall !== true
+                          player.team !== 'runner' &&
+                          player.hasBall !== true &&
+                          player.emptyPosition !== true
                       )
                       .map(player => player.id),
                     ...(relayForce ? runnerIds : [])
                   ]
                 : [
+                    ...defensiveIds,
                     ...runnerIds,
                     ...(switchable && batterId != null
                       ? [`offense-${batterId}`]
@@ -940,6 +1192,7 @@ function ScoringPanel(props: {
             status.readOnly ||
             menu ||
             sheet != null ||
+            defensiveOpen ||
             outcomeMenu ||
             moreOpen ||
             state.presentation != null
@@ -1072,7 +1325,7 @@ function ScoringPanel(props: {
       }}
       onUndo={() => {
         scoringAudio.stop()
-        if (status.readOnly) return
+        if (status.readOnly || rosterLoading) return
         // The reducer decides, from the state every earlier tap left, whether
         // this one is the screen's to take back or the saved game's.
         dispatch({ type: 'UNDO' })
@@ -1093,14 +1346,15 @@ function ScoringPanel(props: {
       historyDetail={status.readOnly ? undefined : lastPlay}
       // Read-only asks nothing of the scorer, so it shows no instruction.
       instruction={
-        status.readOnly
+        setupInstruction ??
+        (status.readOnly
           ? undefined
           : state.moreDraft != null
             ? `Drag a runner for ${state.moreDraft.action}`
             : (instruction ??
               (state.phase === 'awaitingBatter'
                 ? 'Next batter is on base. Update lineup to continue.'
-                : undefined))
+                : undefined)))
       }
       instructionStatus={
         state.pendingPlay?.outcome === 'Home Run' &&
@@ -1176,6 +1430,7 @@ function ScoringPanel(props: {
         actionsAllowed &&
         !menu &&
         sheet == null &&
+        !defensiveOpen &&
         !outcomeMenu &&
         !moreOpen &&
         state.moreDraft == null &&
@@ -1186,6 +1441,21 @@ function ScoringPanel(props: {
       dictationLog={dictation.log}
       accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
+      {defensiveSlot != null && (
+        <DefensiveRosterSheet
+          session={session}
+          side={fieldingSide(session)}
+          position={defensiveSlot.position}
+          openedEmpty={defensiveSlot.openedEmpty}
+          busy={rosterLoading}
+          problem={rosterProblem}
+          onClose={() => {
+            setDefensiveSlot(undefined)
+          }}
+          onChoose={chooseDefender}
+          onAddPlaceholders={createDefensivePlaceholders}
+        />
+      )}
       <ErrorCreditSheet state={state} dispatch={dispatch} />
       <RelayedRunnerDragTargets
         relay={runnerDrag}
@@ -1354,17 +1624,31 @@ function ScoringPanel(props: {
               }}
             />
           )}
-          {sheet === 'rosters' && (
-            <RosterEditor
-              key={rosterRead}
-              state={state}
-              onCancel={closeSheet}
-              onSave={(draft, nextBatter) => {
-                dispatch({ type: 'ROSTER', draft, nextBatter })
-                closeSheet()
-              }}
-            />
-          )}
+          {sheet === 'rosters' &&
+            (rosterLoading ? (
+              <ActivityIndicator accessibilityLabel="Refreshing game" />
+            ) : rosterProblem != null ? (
+              <>
+                <ScoringError message={rosterProblem} />
+                <ScoringButton
+                  label="Retry refreshing game"
+                  onPress={() => {
+                    openRosters(rosterInitial != null)
+                  }}
+                />
+              </>
+            ) : (
+              <RosterEditor
+                key={rosterRead}
+                initialDraft={rosterInitial}
+                state={state}
+                onCancel={closeSheet}
+                onSave={(draft, nextBatter) => {
+                  dispatch({ type: 'ROSTER', draft, nextBatter })
+                  closeSheet()
+                }}
+              />
+            ))}
           {sheet === 'overrides' && (
             <OverridesEditor
               state={state}

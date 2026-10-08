@@ -69,10 +69,12 @@ describe('compact defensive field', function () {
       await act(async () => {
         host.querySelector<HTMLElement>('[aria-label="Clear P"]')!.click()
       })
+      expect(host.querySelector('[role="alert"]')).equals(null)
       expect(
-        host.querySelector('[role="alert"]')!.parentElement!.parentElement!
-          .textContent
-      ).includes('Cancel')
+        host
+          .querySelector('[aria-label="Save Rosters"]')!
+          .getAttribute('aria-disabled')
+      ).not.equals('true')
     } finally {
       await act(async () => {
         root.unmount()

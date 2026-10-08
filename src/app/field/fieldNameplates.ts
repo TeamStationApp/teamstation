@@ -83,5 +83,16 @@ export function syncFieldNameplates(
     node.style.transform = `translate(${-plate.anchorX * 100}%, ${-plate.anchorY * 100}%)`
     node.style.visibility = plate.visible ? 'visible' : 'hidden'
     node.style.backgroundColor = nameplateColor(plate)
+    node.style.border = plate.emptyPosition === true ? '2px dashed #d65454' : ''
+    node.style.borderRadius = plate.emptyPosition === true ? '2px' : '8px'
+    node.style.backgroundColor =
+      plate.emptyPosition === true
+        ? 'rgba(255, 190, 190, 0.22)'
+        : nameplateColor(plate)
+    node.style.color = plate.emptyPosition === true ? '#ffb6b6' : '#ffffff'
+    node.setAttribute(
+      'aria-label',
+      plate.emptyPosition === true ? `Assign ${plate.name}` : plate.name
+    )
   }
 }
