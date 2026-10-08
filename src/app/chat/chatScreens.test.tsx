@@ -45,6 +45,7 @@ import {
   recordToJson,
   unb64
 } from './keyRecord'
+import { keyStore } from './keyStore'
 import { LinkDeviceScreen } from './LinkDeviceScreen'
 import { browserName, thisDevice } from './thisDevice'
 import { thisDevice as phoneDevice } from './thisDevice.native'
@@ -1071,6 +1072,41 @@ describe('chat devices in the app', function () {
     expect(revoke).greaterThan(-1)
     expect(revoke).lessThan(asked.indexOf('POST /auth/logout'))
     expect(fake.devices[0].revokedAt).not.equals(null)
+  })
+
+  it('clears chat before switching OAuth accounts even when revocation ends the session', async function () {
+    const fake = new FakeKeys()
+    const asked = fakeApi(fake)
+    const fetchApi = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      if (input === '/oauth/approve/test-approval/details') {
+        return Response.json({ clientName: 'Fixture app', scopes: ['openid'] })
+      }
+      const answer = await fetchApi(input, init)
+      if (typeof input === 'string' && input.endsWith('/auth/logout')) {
+        return Response.json({ error: 'unauthorized' }, { status: 401 })
+      }
+      return answer
+    }
+    showRoute({ name: 'chatDevices' }, true)
+    await render(<App />)
+    await until('the list', () => text().includes('YOUR DEVICES'))
+    expect(await keyStore.exists()).equals(true)
+    await act(async () => {
+      root?.unmount()
+    })
+    showRoute({ name: 'oauthApprove', uid: 'test-approval' }, true)
+    await render(<App />)
+    await until('approval', () => text().includes('Use a different account'))
+    await press('Use a different account')
+    await until('sign in', () => currentRoute().name === 'signIn')
+    expect(await keyStore.exists()).equals(false)
+    expect(fake.devices[0].revokedAt).not.equals(null)
+    const revoke = asked.findIndex(call =>
+      call.startsWith('DELETE /chat/devices/')
+    )
+    expect(revoke).greaterThan(-1)
+    expect(revoke).lessThan(asked.indexOf('POST /auth/logout'))
   })
 
   /** The chat routes' answers: a list, an empty chat, and a new DM. */
