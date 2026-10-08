@@ -680,6 +680,15 @@ function Shell(props: AppProps): React.ReactElement {
           title={lstrings.oauth_title}
           showMark
           buildsClient={session == null ? undefined : client}
+          onBack={
+            route.name !== 'oauthNative'
+              ? undefined
+              : () => {
+                  const destination: Route = { name: 'home' }
+                  goToRoute(destination)
+                  showRoute(destination, true)
+                }
+          }
         />
         <OAuthScreen
           key={routePath(route)}

@@ -209,6 +209,51 @@ describe('OAuth consent and loaded build information', () => {
     await show(<App key="native" />)
     expect(document.body.textContent).includes('Example builds')
   })
+  it('can leave native consent from pending, approved, denied and expired states on iOS', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    try {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: 'ios'
+      })
+      for (const state of ['pending', 'approved', 'denied', 'expired']) {
+        globalThis.fetch = async input => {
+          const url = urlText(input)
+          if (url.endsWith('/auth/me'))
+            return new Response(
+              JSON.stringify({
+                id: 123,
+                displayName: 'Alex Lee',
+                email: 'alex@example.test',
+                isAdmin: false,
+                avatarUrl: null
+              })
+            )
+          if (url.includes('/oauth/approvals/'))
+            return new Response(
+              '{"clientName":"Example builds","scopes":["openid"]}',
+              { status: state === 'expired' ? 400 : 200 }
+            )
+          return new Response(url.endsWith('/me/roles') ? '{"teams":{}}' : '[]')
+        }
+        window.history.replaceState(
+          null,
+          '',
+          `/oauth/native-approval/${'a'.repeat(43)}`
+        )
+        await show(<App key={state} />)
+        if (state === 'approved') await press('Allow')
+        if (state === 'denied') await press('Deny')
+        if (state === 'expired')
+          expect(document.body.textContent).includes('expired')
+        await press('Back')
+        expect(window.location.pathname).equals('/')
+        expect(document.body.textContent).not.includes('Authorize access')
+      }
+    } finally {
+      Object.defineProperty(Platform, 'OS', descriptor)
+    }
+  })
   it('opens native external links using the platform browser', async () => {
     const original = Linking.openURL.bind(Linking)
     const seen: string[] = []
