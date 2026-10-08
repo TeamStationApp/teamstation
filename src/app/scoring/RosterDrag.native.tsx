@@ -57,7 +57,11 @@ export function rosterResponder(
     dispose: cancel,
     onStartShouldSetResponder: () => false,
     onTouchStart: e => {
-      if (current().playerId == null || current().disabled === true) return
+      if (
+        (current().playerId == null && current().onTap == null) ||
+        current().disabled === true
+      )
+        return
       contact = true
       hold.start(point(e))
     },
@@ -159,17 +163,33 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
     <View
       ref={ref}
       {...handlers}
+      accessible={
+        props.label != null || props.onTap != null || props.onReorder != null
+      }
+      onAccessibilityTap={
+        props.onTap == null
+          ? undefined
+          : () => {
+              rosterAccessibilityAction(latest.current, 'activate')
+            }
+      }
       accessibilityRole={props.onTap != null ? 'button' : undefined}
       accessibilityLabel={props.label}
-      accessibilityState={{ disabled: props.disabled }}
-      accessibilityActions={
-        props.onReorder == null
-          ? undefined
-          : [
-              { name: 'increment', label: 'Move down' },
-              { name: 'decrement', label: 'Move up' }
-            ]
+      accessibilityValue={
+        props.value == null ? undefined : { text: props.value }
       }
+      accessibilityState={{ disabled: props.disabled }}
+      accessibilityActions={[
+        ...(props.onTap == null
+          ? []
+          : [{ name: 'activate' as const, label: props.label ?? 'Activate' }]),
+        ...(props.onReorder == null
+          ? []
+          : [
+              { name: 'increment' as const, label: 'Move down' },
+              { name: 'decrement' as const, label: 'Move up' }
+            ])
+      ]}
       onAccessibilityAction={event => {
         rosterAccessibilityAction(props, event.nativeEvent.actionName)
       }}

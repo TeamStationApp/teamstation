@@ -267,10 +267,11 @@ export class RosterGesture {
       const rect = await scroll.measure()
       if (revision !== this.revision) return
       if (!containsRosterPoint(rect, drag.point)) continue
+      const band = Math.min(36, rect.height / 4)
       const delta =
-        drag.point.y < rect.y + 36
+        drag.point.y < rect.y + band
           ? -18
-          : drag.point.y > rect.y + rect.height - 36
+          : drag.point.y > rect.y + rect.height - band
             ? 18
             : 0
       if (delta !== 0) scroll.scroll(delta)
