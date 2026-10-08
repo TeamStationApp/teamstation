@@ -9,20 +9,26 @@ import {
   type PlayerDraft,
   playerDraftError
 } from './playerDraft'
+import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { RosterSelector } from './RosterSelector'
 import { ScoringError, ScoringSheet } from './ScoringSheet'
 
 export function PlayerEntrySheet({
   onClose,
+  onAddPlaceholders,
   onAdd
 }: {
   onClose: () => void
+  onAddPlaceholders?: (count: number) => void
   onAdd: (draft: PlayerDraft) => void
 }): React.ReactElement {
   const theme = useTheme()
   const [draft, setDraft] = useState(emptyPlayerDraft)
   const [submitted, setSubmitted] = useState(false)
+  const [placeholders, setPlaceholders] = useState(false)
   const first = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const last = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const jersey = useRef<React.ComponentRef<typeof TextInput>>(null)
   const saving = useRef(false)
   const text = {
     fontFamily: theme.regularTextFont,
@@ -78,11 +84,28 @@ export function PlayerEntrySheet({
                   <View key={key} style={{ gap: 4 }}>
                     <Text style={text}>{label}</Text>
                     <TextInput
-                      ref={key === 'firstName' ? first : undefined}
+                      ref={
+                        key === 'firstName'
+                          ? first
+                          : key === 'lastName'
+                            ? last
+                            : jersey
+                      }
+                      returnKeyType={key === 'jersey' ? 'done' : 'next'}
+                      submitBehavior={
+                        key === 'jersey' ? 'blurAndSubmit' : 'submit'
+                      }
+                      onSubmitEditing={() => {
+                        if (key === 'firstName') last.current?.focus()
+                        else if (key === 'lastName') jersey.current?.focus()
+                        else jersey.current?.blur()
+                      }}
                       autoFocus={key === 'firstName'}
                       accessibilityLabel={label}
                       value={draft[key]}
-                      keyboardType={key === 'jersey' ? 'number-pad' : 'default'}
+                      keyboardType={
+                        key === 'jersey' ? 'numbers-and-punctuation' : 'default'
+                      }
                       autoCapitalize="words"
                       onChangeText={value => {
                         setDraft(previous => ({ ...previous, [key]: value }))
@@ -231,7 +254,39 @@ export function PlayerEntrySheet({
             Save and Add Another Player
           </Text>
         </Pressable>
+        {onAddPlaceholders != null && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add Placeholder Players"
+            onPress={() => {
+              setPlaceholders(true)
+            }}
+            style={{
+              minHeight: 44,
+              justifyContent: 'center',
+              alignItems: 'center'
+            }}
+          >
+            <Text
+              style={{
+                ...text,
+                color: theme.successColor,
+                fontFamily: theme.semiBoldTextFont
+              }}
+            >
+              Add Placeholder Players
+            </Text>
+          </Pressable>
+        )}
       </View>
+      {placeholders && onAddPlaceholders != null && (
+        <PlaceholderPlayersSheet
+          onClose={() => {
+            setPlaceholders(false)
+          }}
+          onAdd={onAddPlaceholders}
+        />
+      )}
     </ScoringSheet>
   )
 }

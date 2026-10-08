@@ -12,8 +12,8 @@ import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
+import { DefensiveField } from './DefensiveField'
 import { addPlaceholderPlayers } from './placeholderPlayers'
-import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { addPlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
@@ -23,11 +23,11 @@ import { RosterSelector } from './RosterSelector'
 import { copyState } from './scoringMachine'
 import { baseIds, battingSide } from './scoringSelectors'
 import { ScoringButton, ScoringError } from './ScoringSheet'
-import {
-  POSITIONS,
-  type ScoringSessionState,
-  type ScoringState,
-  type Side
+import type {
+  Position,
+  ScoringSessionState,
+  ScoringState,
+  Side
 } from './scoringTypes'
 
 export interface RosterEditorDraft {
@@ -57,9 +57,11 @@ export function RosterEditor({
   state,
   initialDraft,
   onDraftChange,
+  onCancel,
   onSave
 }: {
   state: ScoringState
+  onCancel?: () => void
   initialDraft?: RosterEditorDraft
   onDraftChange?: (draft: RosterEditorDraft) => void
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
@@ -74,7 +76,6 @@ export function RosterEditor({
   )
   const [defense, setDefense] = useState(initialDraft?.defense ?? false)
   const [adding, setAdding] = useState(false)
-  const [placeholders, setPlaceholders] = useState(false)
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
   )
@@ -171,9 +172,9 @@ export function RosterEditor({
             setDefense(index === 1)
           }}
         />
-        <Text style={text}>
+        <Text numberOfLines={defense ? 1 : undefined} style={text}>
           {defense
-            ? 'Hold a player briefly, then drag into a defensive position.'
+            ? 'Drag player into defensive position'
             : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
         </Text>
         {state.phase === 'awaitingBatter' && (
@@ -200,7 +201,33 @@ export function RosterEditor({
         )}
       </ScrollView>
       <RosterDragGroup key={`${side}:${defense}`}>
-        <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', gap: 8 }}>
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            flexDirection: defense ? 'column' : 'row',
+            gap: 8
+          }}
+        >
+          {defense && (
+            <DefensiveField
+              defense={team.defense}
+              compact={height < 500}
+              display={display}
+              onPlace={(player, position) => {
+                if (!team.players.includes(player) || assigned.includes(player))
+                  return
+                edit(next => {
+                  next.liveData.boxscore.teams[side].defense[position] = player
+                })
+              }}
+              onClear={(position: Position) => {
+                edit(next => {
+                  next.liveData.boxscore.teams[side].defense[position] = null
+                })
+              }}
+            />
+          )}
           <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
             <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
             <RosterScrollArea name="Roster players">
@@ -208,36 +235,49 @@ export function RosterEditor({
                 targetId="roster"
                 onDropPlayer={defense ? undefined : remove}
               >
-                {byJersey(team.players, names)
-                  .filter(id => !assigned.includes(id))
-                  .map(id => (
-                    <RosterDrag
-                      key={id}
-                      playerId={id}
-                      label={
-                        defense
-                          ? names[id].fullName
-                          : `Add ${names[id].fullName} to Lineup`
-                      }
-                      onTap={
-                        defense
-                          ? undefined
-                          : () => {
-                              place(id, team.battingOrder.length)
-                            }
-                      }
-                    >
-                      <View style={row}>
-                        <Text
-                          selectable={false}
-                          {...nameProps}
-                          style={{ ...text, flex: 1 }}
+                <View
+                  testID={defense ? 'Defense roster grid' : undefined}
+                  style={
+                    defense
+                      ? { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }
+                      : { gap: 16 }
+                  }
+                >
+                  {byJersey(team.players, names)
+                    .filter(id => !assigned.includes(id))
+                    .map(id => (
+                      <View
+                        key={id}
+                        style={defense ? { width: '47%' } : undefined}
+                      >
+                        <RosterDrag
+                          playerId={id}
+                          label={
+                            defense
+                              ? names[id].fullName
+                              : `Add ${names[id].fullName} to Lineup`
+                          }
+                          onTap={
+                            defense
+                              ? undefined
+                              : () => {
+                                  place(id, team.battingOrder.length)
+                                }
+                          }
                         >
-                          {display(id)}
-                        </Text>
+                          <View style={row}>
+                            <Text
+                              selectable={false}
+                              {...nameProps}
+                              style={{ ...text, flex: 1 }}
+                            >
+                              {display(id)}
+                            </Text>
+                          </View>
+                        </RosterDrag>
                       </View>
-                    </RosterDrag>
-                  ))}
+                    ))}
+                </View>
                 {!defense && (
                   <Text
                     style={{
@@ -252,72 +292,10 @@ export function RosterEditor({
               </RosterDrag>
             </RosterScrollArea>
           </View>
-          <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
-            <Text style={{ ...text, fontWeight: '700' }}>
-              {defense ? 'Defense' : 'Lineup'}
-            </Text>
-            <RosterScrollArea
-              name={defense ? 'Defensive positions' : 'Batting lineup'}
-            >
-              {defense ? (
-                POSITIONS.map(position => {
-                  const id = team.defense[position]
-                  return (
-                    <RosterDrag
-                      key={position}
-                      targetId={`defense-${position}`}
-                      onDropPlayer={player => {
-                        if (
-                          !team.players.includes(player) ||
-                          assigned.includes(player)
-                        )
-                          return
-                        edit(next => {
-                          next.liveData.boxscore.teams[side].defense[position] =
-                            player
-                        })
-                      }}
-                    >
-                      <View style={row}>
-                        <View
-                          style={{
-                            width: 24,
-                            height: 24,
-                            borderRadius: 6,
-                            backgroundColor: '#fff',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                        >
-                          <Text
-                            style={{
-                              ...text,
-                              color: '#19251a',
-                              textAlign: 'center'
-                            }}
-                          >
-                            {position}
-                          </Text>
-                        </View>
-                        <Text {...nameProps} style={{ ...text, flex: 1 }}>
-                          {id == null ? 'Unassigned' : display(id)}
-                        </Text>
-                        <RosterRemoveButton
-                          label={`Clear ${position}`}
-                          disabled={id == null}
-                          onPress={() => {
-                            edit(next => {
-                              next.liveData.boxscore.teams[side].defense[
-                                position
-                              ] = null
-                            })
-                          }}
-                        />
-                      </View>
-                    </RosterDrag>
-                  )
-                })
-              ) : (
+          {!defense && (
+            <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
+              <Text style={{ ...text, fontWeight: '700' }}>Lineup</Text>
+              <RosterScrollArea name="Batting lineup">
                 <>
                   {team.battingOrder.map((id, index) => (
                     <RosterDrag
@@ -375,15 +353,20 @@ export function RosterEditor({
                     </Text>
                   </RosterDrag>
                 </>
-              )}
-            </RosterScrollArea>
-          </View>
+              </RosterScrollArea>
+            </View>
+          )}
         </View>
       </RosterDragGroup>
       {adding && (
         <PlayerEntrySheet
           onClose={() => {
             setAdding(false)
+          }}
+          onAddPlaceholders={count => {
+            edit(next => {
+              addPlaceholderPlayers(next, side, count)
+            })
           }}
           onAdd={player => {
             edit(next => {
@@ -393,6 +376,7 @@ export function RosterEditor({
         />
       )}
       <View testID="Roster footer" style={{ gap: 6 }}>
+        <ScoringError message={validation} />
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Button
@@ -420,12 +404,11 @@ export function RosterEditor({
             />
           </View>
         </View>
-        <ScoringError message={validation} />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Add Placeholder Players"
+          accessibilityLabel="Cancel"
           onPress={() => {
-            setPlaceholders(true)
+            onCancel?.()
           }}
           style={{
             minHeight: 44,
@@ -436,26 +419,14 @@ export function RosterEditor({
           <Text
             style={{
               ...text,
-              color: theme.successColor,
+              color: theme.dangerColor,
               fontFamily: theme.semiBoldTextFont
             }}
           >
-            Add Placeholder Players
+            Cancel
           </Text>
         </Pressable>
       </View>
-      {placeholders && (
-        <PlaceholderPlayersSheet
-          onClose={() => {
-            setPlaceholders(false)
-          }}
-          onAdd={count => {
-            edit(next => {
-              addPlaceholderPlayers(next, side, count)
-            })
-          }}
-        />
-      )}
     </View>
   )
 }
