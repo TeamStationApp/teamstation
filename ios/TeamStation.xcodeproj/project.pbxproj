@@ -24,8 +24,8 @@
 		A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */; };
 		A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */; };
 		A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */; };
-		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		AF107DC2F99C16BDC99E1EAC /* NativeChatCrypto.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 513962B8AB54F3D2A1045C0C /* NativeChatCrypto.cpp */; };
+		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */; };
 		E5877E23843C3DB5EB6E0DB1 /* ChatCryptoProvider.mm in Sources */ = {isa = PBXBuildFile; fileRef = 082EAD2A56E0FED3688B7251 /* ChatCryptoProvider.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };

@@ -25,6 +25,10 @@ const keychain = {
     AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY:
       'AccessibleAfterFirstUnlockThisDeviceOnly'
   },
+  async hasGenericPassword(options?: { service?: string }) {
+    keychain.calls.push('has')
+    return keychain.saved.has(options?.service ?? '')
+  },
   async getGenericPassword(options?: { service?: string }) {
     keychain.calls.push('get')
     const found = keychain.saved.get(options?.service ?? '')
@@ -99,7 +103,7 @@ describe('chat key store on the phone', function () {
     expect(await keyStore.exists()).equals(true)
     await keyStore.wipe()
     expect(await keyStore.exists()).equals(false)
-    expect(keychain.calls).deep.equals(['get', 'set', 'get', 'reset', 'get'])
+    expect(keychain.calls).deep.equals(['has', 'set', 'has', 'reset', 'has'])
   })
 
   it('wipes it', async function () {
