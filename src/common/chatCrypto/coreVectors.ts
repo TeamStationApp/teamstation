@@ -3,13 +3,14 @@ import { call } from './core'
 import { type CoreCall, flag, num, readFlag, readNumber } from './coreCall'
 import vectorFile from './frozenVectors.json'
 import { openAttachmentWith, sealAttachmentWith } from './stream'
+import { fromHex, toHex } from './vectors'
 
 /**
  * Every frozen vector, straight through this platform's chat crypto core
  * (`call`), with the fixed inputs `vectors.ts` and the crate's tests use:
- * `seed(label)` is SHA-256 of the label. The bench screen shows `vectors ok`
- * from it on a phone, `scripts/chatCryptoBench.mjs` in Node, and the web
- * bench in a browser, so each platform's core is checked byte for byte.
+ * `seed(label)` is SHA-256 of the label. Core and WASM tests use these
+ * direct calls; the phone, web and Node benches use `vectors.ts` through
+ * the same TypeScript wrappers as chat.
  */
 
 export interface CoreVectorResult {
@@ -17,20 +18,6 @@ export interface CoreVectorResult {
   ok: boolean
   got: string
   want: string
-}
-
-const toHex = (bytes: Uint8Array): string => {
-  let out = ''
-  for (const byte of bytes) out += byte.toString(16).padStart(2, '0')
-  return out
-}
-
-const fromHex = (text: string): Uint8Array => {
-  const out = new Uint8Array(text.length / 2)
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(text.slice(2 * i, 2 * i + 2), 16)
-  }
-  return out
 }
 
 export function runCoreVectors(core: CoreCall = call): CoreVectorResult[] {

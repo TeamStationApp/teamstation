@@ -76,4 +76,22 @@ describe('the WASM chat crypto core', () => {
     expect(sizes).deep.equals([65536, 65536, 7168])
     expect(drawn.some(byte => byte !== 0)).equals(true)
   })
+
+  it('stays stopped even when the trapping import throws undefined', async () => {
+    let calls = 0
+    const call = makeCall(
+      await instantiateCore(bytes(), () => {
+        calls++
+        // An imported function may throw any JavaScript value.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw undefined
+      })
+    )
+    for (let i = 0; i < 2; i++) {
+      expect(() => call('randomBytes', [num(32)]))
+        .throws(ChatCryptoUnavailable)
+        .with.property('reason', 'trapped')
+    }
+    expect(calls).equals(1)
+  })
 })

@@ -51,8 +51,9 @@ function rawCallOf(exports: CoreExports): RawCall {
   // A trap (out of memory, say) leaves the module's heap in an unknown state:
   // the module is not called again, and every later call throws.
   let trapped: unknown
+  let dead = false
   return (op, input) => {
-    if (trapped !== undefined) {
+    if (dead) {
       throw new ChatCryptoUnavailable('trapped', { cause: trapped })
     }
     try {
@@ -74,6 +75,7 @@ function rawCallOf(exports: CoreExports): RawCall {
       exports.chat_crypto_free(slot, 8)
       return answer
     } catch (error) {
+      dead = true
       trapped = error
       throw new ChatCryptoUnavailable('trapped', { cause: error })
     }
