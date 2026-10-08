@@ -1,5 +1,6 @@
 import { createHash, X509Certificate } from 'node:crypto'
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -401,57 +402,64 @@ export async function archive(
       ? `ios/${context.target.scheme}.xcodeproj`
       : `${context.target.scheme}.xcodeproj`
   )
-  await ruby(
-    context,
-    'project',
-    {
-      project,
-      platform: context.target.platform,
-      appId: context.target.app,
-      teamId: apple.teamId,
-      identity: apple.identity,
-      keychain: signing.keychain,
-      profiles: apple.profileNames,
-      number: nativeNumber(context.target.platform, context.buildNumber),
-      version: context.version
-    },
-    signing.directory
-  )
-  const destination = path.join(
-    directory,
-    '.deploy',
-    `${context.target.platform}.xcarchive`
-  )
-  const args = [
-    'archive',
-    ...(context.target.workspace == null
-      ? ['-project', project]
-      : ['-workspace', path.join(directory, context.target.workspace)]),
-    '-scheme',
-    context.target.scheme!,
-    '-configuration',
-    'Release',
-    '-destination',
-    isIos ? 'generic/platform=iOS' : 'generic/platform=macOS',
-    '-archivePath',
-    destination,
-    '-derivedDataPath',
-    path.join(directory, '.deploy/DerivedData'),
-    'ONLY_ACTIVE_ARCH=NO',
-    `ARCHS=${apple.architectures.join(' ')}`,
-    `CURRENT_PROJECT_VERSION=${nativeNumber(context.target.platform, context.buildNumber)}`,
-    `MARKETING_VERSION=${context.version}`,
-    'OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo',
-    ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES'])
-  ]
-  await context.processes.run({
-    file: context.settings.tools.xcodebuild,
-    args,
-    cwd: directory,
-    env,
-    capture: false
-  })
-  return destination
+  const projectFile = path.join(project, 'project.pbxproj')
+  noSymlinks(projectFile)
+  const originalProject = readFileSync(projectFile)
+  try {
+    await ruby(
+      context,
+      'project',
+      {
+        project,
+        platform: context.target.platform,
+        appId: context.target.app,
+        teamId: apple.teamId,
+        identity: apple.identity,
+        keychain: signing.keychain,
+        profiles: apple.profileNames,
+        number: nativeNumber(context.target.platform, context.buildNumber),
+        version: context.version
+      },
+      signing.directory
+    )
+    const destination = path.join(
+      directory,
+      '.deploy',
+      `${context.target.platform}.xcarchive`
+    )
+    const args = [
+      'archive',
+      ...(context.target.workspace == null
+        ? ['-project', project]
+        : ['-workspace', path.join(directory, context.target.workspace)]),
+      '-scheme',
+      context.target.scheme!,
+      '-configuration',
+      'Release',
+      '-destination',
+      isIos ? 'generic/platform=iOS' : 'generic/platform=macOS',
+      '-archivePath',
+      destination,
+      '-derivedDataPath',
+      path.join(directory, '.deploy/DerivedData'),
+      'ONLY_ACTIVE_ARCH=NO',
+      `ARCHS=${apple.architectures.join(' ')}`,
+      `CURRENT_PROJECT_VERSION=${nativeNumber(context.target.platform, context.buildNumber)}`,
+      `MARKETING_VERSION=${context.version}`,
+      'OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo',
+      ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES'])
+    ]
+    await context.processes.run({
+      file: context.settings.tools.xcodebuild,
+      args,
+      cwd: directory,
+      env,
+      capture: false
+    })
+    return destination
+  } finally {
+    writeFileSync(projectFile, originalProject)
+  }
 }
 export async function verifyApp(
   context: BuildContext,
@@ -603,7 +611,7 @@ export async function ios(
         `<?xml version="1.0"?><plist version="1.0">${xml({ method, signingStyle: 'manual', teamID: apple.teamId, signingCertificate: apple.identity, provisioningProfiles: apple.profileNames, manageAppVersionAndBuildNumber: false, stripSwiftSymbols: true })}</plist>`,
         { mode: 0o600 }
       )
-      const exported = path.join(context.source, '.deploy-export')
+      const exported = path.join(signing.directory, 'export')
       await context.processes.run({
         file: context.settings.tools.xcodebuild,
         args: [
@@ -631,7 +639,12 @@ export async function ios(
       const apps = readdirSync(payload).filter(name => name.endsWith('.app'))
       if (apps.length !== 1) throw new Error('Expected one IPA application')
       await verifyApp(context, path.join(payload, apps[0]), signing)
-      return { file, buildNumber: nativeNumber('ios', context.buildNumber) }
+      const retained = path.join(context.output, 'ios.ipa')
+      copyFileSync(file, retained, 1)
+      return {
+        file: retained,
+        buildNumber: nativeNumber('ios', context.buildNumber)
+      }
     },
     profileHome
   )

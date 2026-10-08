@@ -73,7 +73,7 @@ async function fake(command: Command): Promise<string> {
   if (command.file === 'plutil')
     return JSON.stringify({
       CFBundleIdentifier: id,
-      CFBundleVersion: '1.0.42',
+      CFBundleVersion: '26093004',
       CFBundleShortVersionString: '1.2.3',
       CFBundleExecutable: 'Example'
     })
@@ -116,7 +116,7 @@ describe('Notarized macOS packaging', () => {
       branch: 'master',
       commit: 'a'.repeat(40),
       version: '1.2.3',
-      buildNumber: 42,
+      buildNumber: 26093004,
       buildTime: '2026-01-01T00:00:00Z',
       processes: new Processes(new AbortController().signal)
     }
@@ -124,6 +124,14 @@ describe('Notarized macOS packaging', () => {
       recursive: true
     })
     mkdirSync(context.output)
+    file(
+      path.join(
+        context.source,
+        context.target.path,
+        context.target.scheme! + '.xcodeproj/project.pbxproj'
+      ),
+      'original project'
+    )
     execFileSync(
       'openssl',
       [
@@ -164,7 +172,7 @@ describe('Notarized macOS packaging', () => {
   it('archives universal code, signs from the inside out, notarizes and staples app and disk image', async () => {
     const out = await macos(context)
     assert(existsSync(out.file))
-    assert.equal(out.buildNumber, '1.0.42')
+    assert.equal(out.buildNumber, '26093004')
     assert(calls.some(c => c.args.includes('ARCHS=arm64 x86_64')))
     assert.equal(calls.filter(c => c.args[0] === 'notarytool').length, 2)
     assert.equal(
@@ -174,7 +182,11 @@ describe('Notarized macOS packaging', () => {
     )
     assert.equal(calls.filter(c => c.file === 'spctl').length, 2)
     assert.equal(keychains.length, 1)
-    assert.equal(readdirSync(context.output).length, 0)
+    assert.deepEqual(readdirSync(context.output), ['macos.dmg'])
+    const nextOutput = path.join(root, 'next-output')
+    mkdirSync(nextOutput)
+    await macos({ ...context, output: nextOutput })
+    assert.deepEqual(readdirSync(nextOutput), ['macos.dmg'])
   })
   it('fails closed on missing configuration, rejected notarization, wrong identity or tooling failure', async () => {
     const config = context.settings.apps[id].macos!.apple!
@@ -197,7 +209,6 @@ describe('Notarized macOS packaging', () => {
     config.notarizationKeychain = undefined
     details = 'TeamIdentifier=OTHER'
     await assert.rejects(packageMac(context, signing), /team/)
-    rmSync(path.join(context.source, '.deploy-macos'), { recursive: true })
     details = 'TeamIdentifier=EXAMPLETEAM\nflags=0x10000(runtime)'
     config.teamId = 'OTHER'
     details = 'TeamIdentifier=OTHER\nflags=0x10000(runtime)'

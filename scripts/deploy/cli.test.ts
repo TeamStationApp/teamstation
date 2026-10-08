@@ -66,6 +66,7 @@ function wrapper(root: string): string {
     `const {main}=require(${JSON.stringify(path.resolve('scripts/deploy.ts'))});
 const {nativeNumber}=require(${JSON.stringify(path.resolve('scripts/deploy/runner.ts'))});
 const fs=require('node:fs'), path=require('node:path'), cp=require('node:child_process');
+process.chdir(${JSON.stringify(path.join(root, 'source'))});
 const compiler=async ctx=>{
  if(process.env.FIXTURE_BUILD_HOLD==='1')await ctx.processes.run({file:process.execPath,args:['-e',"require('node:fs').writeFileSync(process.argv[1],'ready');setInterval(()=>{},1000)",path.join(ctx.settings.stateDirectory,'fixture-ready')],cwd:ctx.source});
  const dir=path.join(ctx.source,'Payload','Fixture.app');fs.mkdirSync(dir,{recursive:true});
@@ -201,7 +202,19 @@ describe('Actual CLI publishing compatibility', () => {
             tokenFile: `${root}/token.json`
           }
           // A fresh version avoids a previous disposable-fixture run colliding with this run.
-          settings.apps[app].version = `1.2.${Date.now() % 100000000}`
+          writeFileSync(
+            `${root}/source/package.json`,
+            JSON.stringify({ version: `1.2.${Date.now() % 100000000}` })
+          )
+          for (const command of [
+            ['add', 'package.json'],
+            ['commit', '-m', 'Set fixture version'],
+            ['push', 'origin', 'master']
+          ])
+            execFileSync('git', command, {
+              cwd: `${root}/source`,
+              stdio: 'pipe'
+            })
           writeFileSync(
             `${root}/token.json`,
             JSON.stringify({ schemaVersion: 1, origin: service.origin, token }),
@@ -217,6 +230,8 @@ describe('Actual CLI publishing compatibility', () => {
             { mode: 0o600 }
           )
           const args = [
+            '--build-number-file',
+            path.join(root, 'source/.git/buildNum.json'),
             '--config',
             config,
             '--app',
@@ -288,7 +303,7 @@ describe('Actual CLI publishing compatibility', () => {
             )!
             assert.equal(partialRun.artifacts[0].published != null, true)
             assert.deepEqual(partialRun.failed, ['android'])
-            assert.equal(finalState.reserve(app, 'ios', 42), 45)
+            assert(records.every(record => record.buildNumberFormat === 'date'))
           } finally {
             finalState.close()
           }

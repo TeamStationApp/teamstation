@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.deploy.json",
+  "compilerOptions": { "module": "esnext", "allowImportingTsExtensions": true },
+  "include": ["Masonfile.ts"]
+}

@@ -120,3 +120,36 @@ export async function remoteCommit(
     throw new Error('Unexpected remote source branch')
   return sha(commit)
 }
+
+/** Inspect the caller-owned checkout without fetching, resetting or removing it. */
+export async function currentSource(
+  settings: Settings,
+  selected: Target,
+  processes: Processes,
+  workingDirectory = process.cwd()
+): Promise<{ directory: string; commit: string }> {
+  const directory = realpathSync(workingDirectory)
+  const top = await processes.run({
+    file: settings.tools.git,
+    args: ['rev-parse', '--show-toplevel'],
+    cwd: directory
+  })
+  if (realpathSync(top) !== directory)
+    throw new Error('Run deploy from the repository root')
+  const required =
+    selected.kind === 'react-native'
+      ? 'package.json'
+      : selected.kind === 'swift'
+        ? 'project.yml'
+        : 'build.gradle.kts'
+  if (!existsSync(path.join(directory, selected.path, required)))
+    throw new Error('Current checkout does not contain the requested target')
+  const commit = sha(
+    await processes.run({
+      file: settings.tools.git,
+      args: ['rev-parse', 'HEAD^{commit}'],
+      cwd: directory
+    })
+  )
+  return { directory, commit }
+}

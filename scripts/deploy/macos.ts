@@ -3,12 +3,13 @@ import {
   closeSync,
   constants,
   lstatSync,
-  mkdirSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
   readSync,
   realpathSync,
+  rmSync,
   symlinkSync
 } from 'node:fs'
 import path from 'node:path'
@@ -120,121 +121,127 @@ export async function packageMac(
   const names = readdirSync(applications).filter(name => name.endsWith('.app'))
   if (names.length !== 1)
     throw new Error('Expected one archived macOS application')
-  const staged = path.join(context.source, '.deploy-macos')
-  mkdirSync(staged, { mode: 0o700 })
-  const app = path.join(staged, names[0])
-  await context.processes.run({
-    file: 'ditto',
-    args: [path.join(applications, names[0]), app],
-    cwd: context.source
-  })
-  for (const code of signingOrder(app))
+  const staged = mkdtempSync(path.join(context.output, '.macos-'))
+  try {
+    const app = path.join(staged, names[0])
+    await context.processes.run({
+      file: 'ditto',
+      args: [path.join(applications, names[0]), app],
+      cwd: context.source
+    })
+    for (const code of signingOrder(app))
+      await context.processes.run({
+        file: context.settings.tools.codesign,
+        args: [
+          '--force',
+          '--sign',
+          config.identity,
+          '--keychain',
+          signing.keychain,
+          '--timestamp',
+          '--options',
+          'runtime',
+          '--preserve-metadata=entitlements,requirements',
+          code
+        ],
+        cwd: context.source
+      })
+    await verifyApp(context, app, signing)
+    const details = await context.processes.run({
+      file: context.settings.tools.codesign,
+      args: ['-d', '--verbose=4', app],
+      cwd: context.source,
+      captureStderr: true
+    })
+    if (
+      !details.includes(`TeamIdentifier=${config.teamId}`) ||
+      !/flags=.*\(runtime\)/.test(details)
+    )
+      throw new Error('App lacks the expected team or hardened runtime')
+    const cert = path.join(signing.directory, 'developer-id')
+    await context.processes.run({
+      file: context.settings.tools.codesign,
+      args: ['-d', '--extract-certificates', cert, app],
+      cwd: context.source
+    })
+    const leaf = new X509Certificate(readFileSync(cert + '0'))
+    if (
+      !leaf.subject.split('\n').includes(`OU=${config.teamId}`) ||
+      !leaf.subject
+        .split('\n')
+        .some(line => line.startsWith('CN=Developer ID Application:')) ||
+      Date.parse(leaf.validTo) <= Date.now() ||
+      Date.parse(leaf.validFrom) > Date.now()
+    )
+      throw new Error('Developer ID certificate is invalid')
+    const zip = path.join(signing.directory, 'application.zip')
+    await context.processes.run({
+      file: 'ditto',
+      args: ['-c', '-k', '--keepParent', app, zip],
+      cwd: context.source
+    })
+    await notarize(context, zip)
+    await ticket(context, app)
+    await context.processes.run({
+      file: 'spctl',
+      args: ['--assess', '--type', 'execute', app],
+      cwd: context.source
+    })
+    symlinkSync('/Applications', path.join(staged, 'Applications'))
+    const dmg = path.join(context.output, 'macos.dmg')
+    await context.processes.run({
+      file: context.settings.tools.hdiutil,
+      args: [
+        'create',
+        '-volname',
+        'Application',
+        '-srcfolder',
+        staged,
+        '-format',
+        'UDZO',
+        dmg
+      ],
+      cwd: context.source,
+      capture: false
+    })
     await context.processes.run({
       file: context.settings.tools.codesign,
       args: [
-        '--force',
         '--sign',
         config.identity,
         '--keychain',
         signing.keychain,
         '--timestamp',
-        '--options',
-        'runtime',
-        '--preserve-metadata=entitlements,requirements',
-        code
+        dmg
       ],
       cwd: context.source
     })
-  await verifyApp(context, app, signing)
-  const details = await context.processes.run({
-    file: context.settings.tools.codesign,
-    args: ['-d', '--verbose=4', app],
-    cwd: context.source,
-    captureStderr: true
-  })
-  if (
-    !details.includes(`TeamIdentifier=${config.teamId}`) ||
-    !/flags=.*\(runtime\)/.test(details)
-  )
-    throw new Error('App lacks the expected team or hardened runtime')
-  const cert = path.join(signing.directory, 'developer-id')
-  await context.processes.run({
-    file: context.settings.tools.codesign,
-    args: ['-d', '--extract-certificates', cert, app],
-    cwd: context.source
-  })
-  const leaf = new X509Certificate(readFileSync(cert + '0'))
-  if (
-    !leaf.subject.split('\n').includes(`OU=${config.teamId}`) ||
-    !leaf.subject
-      .split('\n')
-      .some(line => line.startsWith('CN=Developer ID Application:')) ||
-    Date.parse(leaf.validTo) <= Date.now() ||
-    Date.parse(leaf.validFrom) > Date.now()
-  )
-    throw new Error('Developer ID certificate is invalid')
-  const zip = path.join(signing.directory, 'application.zip')
-  await context.processes.run({
-    file: 'ditto',
-    args: ['-c', '-k', '--keepParent', app, zip],
-    cwd: context.source
-  })
-  await notarize(context, zip)
-  await ticket(context, app)
-  await context.processes.run({
-    file: 'spctl',
-    args: ['--assess', '--type', 'execute', app],
-    cwd: context.source
-  })
-  symlinkSync('/Applications', path.join(staged, 'Applications'))
-  const dmg = path.join(context.source, 'distribution.dmg')
-  await context.processes.run({
-    file: context.settings.tools.hdiutil,
-    args: [
-      'create',
-      '-volname',
-      'Application',
-      '-srcfolder',
-      staged,
-      '-format',
-      'UDZO',
-      dmg
-    ],
-    cwd: context.source,
-    capture: false
-  })
-  await context.processes.run({
-    file: context.settings.tools.codesign,
-    args: [
-      '--sign',
-      config.identity,
-      '--keychain',
-      signing.keychain,
-      '--timestamp',
-      dmg
-    ],
-    cwd: context.source
-  })
-  await notarize(context, dmg)
-  await ticket(context, dmg)
-  await context.processes.run({
-    file: context.settings.tools.codesign,
-    args: ['--verify', '--strict', dmg],
-    cwd: context.source
-  })
-  await context.processes.run({
-    file: 'spctl',
-    args: [
-      '--assess',
-      '--type',
-      'open',
-      '--context',
-      'context:primary-signature',
-      dmg
-    ],
-    cwd: context.source
-  })
-  return { file: dmg, buildNumber: nativeNumber('macos', context.buildNumber) }
+    await notarize(context, dmg)
+    await ticket(context, dmg)
+    await context.processes.run({
+      file: context.settings.tools.codesign,
+      args: ['--verify', '--strict', dmg],
+      cwd: context.source
+    })
+    await context.processes.run({
+      file: 'spctl',
+      args: [
+        '--assess',
+        '--type',
+        'open',
+        '--context',
+        'context:primary-signature',
+        dmg
+      ],
+      cwd: context.source
+    })
+    return {
+      file: dmg,
+      buildNumber: nativeNumber('macos', context.buildNumber)
+    }
+  } finally {
+    rmSync(staged, { recursive: true, force: true })
+  }
 }
 export async function macos(context: BuildContext): Promise<BuiltPackage> {
   return await withSigning(
