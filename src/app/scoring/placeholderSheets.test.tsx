@@ -54,6 +54,7 @@ describe('placeholder count sheet and platform adapters', function () {
         onSave={() => undefined}
       />
     )
+    await click('Create Player')
     expect(
       (node('Add Placeholder Players').firstChild as HTMLElement).style.color
     ).equals('rgb(122, 152, 96)')

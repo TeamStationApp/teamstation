@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { GestureResponderEvent } from 'react-native'
+import { type GestureResponderEvent, Text, type ViewProps } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -14,6 +14,7 @@ import {
 import { measureRosterView, RosterContext } from './RosterDragContext'
 import { RosterGesture } from './rosterGesture'
 import { ROSTER_CARD_GAP } from './rosterLayout'
+import { RosterRemoveButton } from './RosterRemoveButton'
 import { rosterSegmentAt } from './RosterSelector'
 
 const event = (x: number, y: number): GestureResponderEvent =>
@@ -31,6 +32,123 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 describe('native roster responder', function () {
+  it('activates a tap-only defensive target and yields to a scrolling movement', function () {
+    const engine = new RosterGesture(() => undefined)
+    let taps = 0
+    const handlers = rosterResponder(engine, {
+      children: null,
+      targetId: 'defense-P',
+      onTap: () => {
+        taps++
+      }
+    })
+    try {
+      handlers.onTouchStart!(event(10, 10))
+      handlers.onTouchEnd!(event(10, 10))
+      expect(taps).equals(1)
+      expect(engine.active).equals(null)
+      handlers.onTouchStart!(event(10, 10))
+      handlers.onTouchMove!(event(10, 50))
+      handlers.onTouchEnd!(event(10, 50))
+      expect(taps).equals(1)
+      expect(engine.active).equals(null)
+    } finally {
+      handlers.dispose()
+    }
+  })
+  it('renders an accessible tap action for assigned defensive cards', async function () {
+    const engine = new RosterGesture(() => undefined)
+    let activated = 0
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterContext.Provider value={engine}>
+            <RosterDrag
+              targetId="defense-P"
+              label="Clear P"
+              value="#7 Alex Demo"
+              onTap={() => {
+                activated++
+              }}
+            >
+              <Text>Player</Text>
+            </RosterDrag>
+          </RosterContext.Provider>
+        </ThemeProvider>
+      )
+    })
+    const node = host.querySelector('[aria-label="Clear P"]')!
+    const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'))!
+    interface Fiber {
+      memoizedProps: ViewProps
+      return: Fiber | null
+    }
+    // Inspect the rendered native View props before the web test adapter filters them.
+    let fiber = Reflect.get(node, key) as Fiber | null
+    while (fiber != null && fiber.memoizedProps.accessibilityActions == null)
+      fiber = fiber.return
+    expect(fiber).not.equals(null)
+    const props = fiber!.memoizedProps
+    expect(props.accessible).equals(true)
+    expect(props.accessibilityActions).deep.equals([
+      { name: 'activate', label: 'Clear P' }
+    ])
+    expect(props.accessibilityValue).deep.equals({ text: '#7 Alex Demo' })
+    await act(async () => {
+      props.onAccessibilityTap?.()
+    })
+    expect(activated).equals(1)
+    const activation = { nativeEvent: { actionName: 'activate' } }
+    const handler = props.onAccessibilityAction!
+    await act(async () => {
+      handler(activation as Parameters<typeof handler>[0])
+    })
+    expect(activated).equals(2)
+  })
+  it('keeps reorder containers ungrouped so their nested Remove remains accessible', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const engine = new RosterGesture(() => undefined)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterContext.Provider value={engine}>
+            <RosterDrag
+              playerId={1}
+              label="Reorder Alex Demo"
+              onReorder={() => undefined}
+            >
+              <Text>Alex Demo</Text>
+              <RosterRemoveButton
+                label="Remove Alex Demo"
+                onPress={() => undefined}
+              />
+            </RosterDrag>
+          </RosterContext.Provider>
+        </ThemeProvider>
+      )
+    })
+    const node = host.querySelector('[aria-label="Reorder Alex Demo"]')!
+    interface Fiber {
+      memoizedProps: ViewProps
+      return: Fiber | null
+    }
+    const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'))!
+    let fiber = Reflect.get(node, key) as Fiber | null
+    while (fiber != null && fiber.memoizedProps.accessibilityActions == null)
+      fiber = fiber.return
+    expect(fiber!.memoizedProps.accessible).equals(undefined)
+    expect(
+      fiber!.memoizedProps.accessibilityActions?.map(action => action.name)
+    ).deep.equals(['increment', 'decrement'])
+    expect(
+      host.querySelector('[aria-label="Remove Alex Demo"][role="button"]')
+    ).not.equals(null)
+  })
   it('appends on a tap, yields until a half-second hold, drops by native window coordinates and never taps after a drag', async function () {
     const drops: number[] = []
     let taps = 0

@@ -297,10 +297,21 @@ async function startScoring(page: Page): Promise<void> {
   await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
 }
-async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
+async function openPlaceholderSheet(page: Page): Promise<void> {
+  if ((await page.$('[aria-label="First Name"]')) == null)
+    await click(page, 'Create Player')
   await click(page, 'Add Placeholder Players')
+}
+async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
+  await openPlaceholderSheet(page)
   // Let the slide-up Modal install its focus trap before keyboard input.
   await new Promise(resolve => setTimeout(resolve, 400))
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('[aria-label="Number of placeholder players"]')!
+        .closest('[role="dialog"]') != null
+  )
   await page.focus('[aria-label="Number of placeholder players"]')
   await page.keyboard.press(count === 16 ? 'End' : 'Home')
   await page.waitForSelector(
@@ -311,6 +322,8 @@ async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
     hidden: true
   })
   await new Promise(resolve => setTimeout(resolve, 400))
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
 }
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
@@ -327,6 +340,12 @@ async function click(page: Page, label: string): Promise<void> {
     selector
   )
   await page.locator(selector).click()
+  if (label === 'Create Player')
+    await page.waitForFunction(() => {
+      const field = document.querySelector('[aria-label="First Name"]')
+      if (field == null) return false
+      return field.closest('[role="dialog"]') != null
+    })
 }
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await click(page, 'Swing in Play')
@@ -1262,6 +1281,154 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('keeps short portrait field targets separate and drops onto the visible position', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 500 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Set Defense')
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-testid="Defensive field"]')!
+            .getBoundingClientRect().height >= 240
+      )
+      await click(page, 'Clear P')
+      await click(page, 'Clear 2B')
+      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const target = '[data-roster-target="defense-2B"]'
+      const firstBase = await page.$eval(
+        '[data-roster-target="defense-1B"]',
+        node => node.textContent
+      )
+      const name = await page.$eval(source, node => node.textContent!.trim())
+      await page.$eval(target, node => {
+        node.scrollIntoView({ block: 'center', inline: 'nearest' })
+      })
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const point = async (
+        selector: string
+      ): Promise<{ x: number; y: number }> =>
+        await page.$eval(selector, node => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x + r.width / 2, y: r.y + 14 }
+        })
+      const from = await point(source)
+      const to = await point(target)
+      const clip = await page.$eval(
+        '[aria-label="Defensive positions"]',
+        node => {
+          const r = node.getBoundingClientRect()
+          return { top: r.top, height: r.height }
+        }
+      )
+      expect(to.y).within(
+        clip.top + clip.height / 4,
+        clip.top + (3 * clip.height) / 4
+      )
+      await page.mouse.move(from.x, from.y)
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 550))
+      await page.waitForSelector('[data-testid="Roster dragged card"]', {
+        timeout: 2000
+      })
+
+      await page.mouse.move(to.x, to.y)
+      // Await the real hit preview before releasing, as a user sees the outlined position.
+      await page.waitForFunction(
+        selector =>
+          document.querySelector<HTMLElement>(selector)!.style.outline !== '',
+        {},
+        target
+      )
+      await page.mouse.up()
+      await new Promise(resolve => setTimeout(resolve, 300))
+      await page.waitForFunction(
+        (selector, name) =>
+          document.querySelector(selector)!.textContent!.includes(name),
+        {},
+        target,
+        name
+      )
+      expect(
+        await page.$eval(
+          '[data-roster-target="defense-1B"]',
+          node => node.textContent
+        )
+      ).equals(firstBase)
+    } finally {
+      await page.close()
+    }
+  })
+  it('uses the compact defensive field and advances player input with Enter', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      expect(await page.$$('[aria-label="Cancel"]')).length(1)
+      expect(await page.$('[aria-label="Add Placeholder Players"]')).equals(
+        null
+      )
+      await click(page, 'Set Defense')
+      expect(await page.$$('[data-roster-target^="defense-"]')).length(9)
+      await click(page, 'Clear P')
+      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const target = '[data-roster-target="defense-P"]'
+      const point = async (
+        selector: string
+      ): Promise<{ x: number; y: number }> =>
+        await page.$eval(selector, node => {
+          const box = node.getBoundingClientRect()
+          return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+        })
+      const from = await point(source)
+      const to = await point(target)
+      await page.mouse.move(from.x, from.y)
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 550))
+      await page.mouse.move(to.x, to.y, { steps: 15 })
+      await page.mouse.up()
+      await page.waitForSelector('[aria-label="Clear P"]')
+      expect(await page.$(source)).equals(null)
+      await click(page, 'Clear P')
+      await page.waitForSelector(source)
+      await click(page, 'Cancel')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Set Defense')
+      await page.waitForSelector('[aria-label="Clear P"]')
+      await click(page, 'Create Player')
+      await page.waitForFunction(
+        () =>
+          document.activeElement!.getAttribute('aria-label') === 'First Name'
+      )
+      await page.keyboard.type('Alex')
+      await page.keyboard.press('Enter')
+      await page.waitForFunction(
+        () => document.activeElement!.getAttribute('aria-label') === 'Last Name'
+      )
+      await page.keyboard.type('Demo')
+      await page.keyboard.press('Enter')
+      await page.waitForFunction(
+        () =>
+          document.activeElement!.getAttribute('aria-label') === 'Jersey Number'
+      )
+      await page.keyboard.type('42')
+      await page.keyboard.press('Enter')
+      await page.waitForFunction(
+        () =>
+          document.activeElement!.getAttribute('aria-label') !== 'Jersey Number'
+      )
+      expect(await page.$('[aria-label="Add Placeholder Players"]')).not.equals(
+        null
+      )
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('edits rosters with a captured drag, validates overrides, and uses slide-up settings', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
@@ -1382,7 +1549,7 @@ describe('scoring browser', function () {
       await page.setViewport({ width: 390, height: 844 })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Add Placeholder Players')
+      await openPlaceholderSheet(page)
       await page.waitForSelector('[aria-label="Number of placeholder players"]')
       await new Promise(resolve => setTimeout(resolve, 400))
       const cancels = await page.$$('[aria-label="Cancel"]')
@@ -4538,7 +4705,7 @@ describe('scoring browser', function () {
       // Added out of order, then five placeholders.
       await create('Amy', 'Blank', '')
       await create('Zed', 'Ten', '10')
-      await click(page, 'Add Placeholder Players')
+      await openPlaceholderSheet(page)
       await new Promise(resolve => setTimeout(resolve, 400))
       await click(page, 'Player count 5')
       await page.waitForSelector(
@@ -4555,6 +4722,8 @@ describe('scoring browser', function () {
         { hidden: true }
       )
       await new Promise(resolve => setTimeout(resolve, 400))
+      await page.keyboard.press('Escape')
+      await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
       const roster = async (): Promise<string[]> =>
         await page.$$eval(
           '[data-roster-target="roster"] [data-roster-player]',

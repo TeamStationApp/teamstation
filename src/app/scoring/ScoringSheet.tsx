@@ -1,4 +1,10 @@
-import React, { createContext, useMemo, useRef, useState } from 'react'
+import React, {
+  createContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   Animated,
   KeyboardAvoidingView,
@@ -150,17 +156,21 @@ const SheetArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
 
 export function ScoringSheet({
   title,
+  headerless = false,
   textCancel = false,
   fullScreen = false,
   tall = false,
   done = false,
   swipeToDismiss = false,
   scroll = true,
+  scrollReset = 0,
   onShow,
   onClose,
   children
 }: {
   title: string
+  /** A compact full-screen editor supplies its own bottom close action. */
+  headerless?: boolean
   textCancel?: boolean
   fullScreen?: boolean
   /** The whole height of the screen, still a sheet over the game. */
@@ -170,6 +180,8 @@ export function ScoringSheet({
   /** Pulled down by its handle or its title, it closes. */
   swipeToDismiss?: boolean
   scroll?: boolean
+  /** Increment to return a repeated-entry form to its first field. */
+  scrollReset?: number
   onShow?: () => void
   onClose: () => void
   children: React.ReactNode
@@ -177,6 +189,16 @@ export function ScoringSheet({
   const theme = useTheme()
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
+  const contentScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  useEffect(() => {
+    if (!scroll || scrollReset === 0) return
+    const frame = requestAnimationFrame(() => {
+      contentScroll.current?.scrollTo({ y: 0, animated: false })
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [scroll, scrollReset])
   const close = useRef(onClose)
   close.current = onClose
   const pulled = useRef(new Animated.Value(0)).current
@@ -270,71 +292,76 @@ export function ScoringSheet({
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
                 padding: 16,
+                paddingBottom: headerless ? 0 : 16,
                 gap: 12
               }}
             >
-              <View
-                {...(swipeToDismiss ? pull.panHandlers : {})}
-                style={{ gap: 12 }}
-              >
-                {swipeToDismiss && (
-                  <View
-                    accessibilityLabel="Pull down to close"
-                    style={{
-                      alignSelf: 'center',
-                      width: 40,
-                      height: 5,
-                      borderRadius: 3,
-                      marginTop: -6,
-                      backgroundColor: theme.secondaryTextColor
-                    }}
-                  />
-                )}
+              {!headerless && (
                 <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12
-                  }}
+                  {...(swipeToDismiss ? pull.panHandlers : {})}
+                  style={{ gap: 12 }}
                 >
-                  <Text
-                    accessibilityRole="header"
+                  {swipeToDismiss && (
+                    <View
+                      accessibilityLabel="Pull down to close"
+                      style={{
+                        alignSelf: 'center',
+                        width: 40,
+                        height: 5,
+                        borderRadius: 3,
+                        marginTop: -6,
+                        backgroundColor: theme.secondaryTextColor
+                      }}
+                    />
+                  )}
+                  <View
                     style={{
-                      fontFamily: theme.boldTextFont,
-                      fontSize: 22,
-                      color: theme.primaryTextColor,
-                      flex: 1
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12
                     }}
                   >
-                    {title}
-                  </Text>
-                  {done ? null : textCancel ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Cancel"
-                      onPress={onClose}
+                    <Text
+                      accessibilityRole="header"
                       style={{
-                        minHeight: 44,
-                        paddingHorizontal: 10,
-                        justifyContent: 'center'
+                        fontFamily: theme.boldTextFont,
+                        fontSize: 22,
+                        color: theme.primaryTextColor,
+                        flex: 1
                       }}
                     >
-                      <Text
+                      {title}
+                    </Text>
+                    {done ? null : textCancel ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel"
+                        onPress={onClose}
                         style={{
-                          fontFamily: theme.semiBoldTextFont,
-                          color: theme.dangerColor
+                          minHeight: 44,
+                          paddingHorizontal: 10,
+                          justifyContent: 'center'
                         }}
                       >
-                        Cancel
-                      </Text>
-                    </Pressable>
-                  ) : (
-                    <ScoringButton label="Cancel" onPress={onClose} />
-                  )}
+                        <Text
+                          style={{
+                            fontFamily: theme.semiBoldTextFont,
+                            color: theme.dangerColor
+                          }}
+                        >
+                          Cancel
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <ScoringButton label="Cancel" onPress={onClose} />
+                    )}
+                  </View>
                 </View>
-              </View>
+              )}
               <Content
+                testID="Scoring sheet content"
+                ref={scroll ? contentScroll : undefined}
                 style={{
                   flex: fullScreen || tall ? 1 : undefined,
                   minHeight: 0
