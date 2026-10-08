@@ -193,3 +193,57 @@ describe('the baseline', function () {
     expect(result.applied).deep.equals(['031scoring'])
   })
 })
+
+// Both histories exist before the branches meet: OAuth on main, and chat
+// on a development database. Applied names must remain stable on upgrade.
+for (const history of ['oauth', 'chat'] as const) {
+  describe(`upgrade from the ${history} migration history`, function () {
+    this.timeout(60000)
+    const name = `teamstation_upgrade_${history}_${Date.now()}_${process.pid}`
+    let admin: Pool
+    let pool: Pool
+
+    before(async function () {
+      admin = new Pool({ connectionString: adminUrl })
+      await admin.query(`create database ${name}`)
+      pool = new Pool({
+        connectionString: adminUrl.replace(/\/[^/]*$/, `/${name}`)
+      })
+    })
+
+    after(async function () {
+      if (pool != null) await pool.end()
+      if (admin != null) {
+        await admin.query(`drop database if exists ${name}`)
+        await admin.end()
+      }
+    })
+
+    it('applies only the missing migrations and preserves existing users', async function () {
+      const prior = migrations.filter(migration =>
+        history === 'chat'
+          ? migration.name !== '050oauth'
+          : migration.name <= '050oauth'
+      )
+      await migrateUp(pool, prior)
+      await pool.query(
+        'insert into users (id, "legacyId", display_name) values (1001, $1, $2)',
+        ['upgrade-fixture', 'Upgrade fixture']
+      )
+      const result = await migrateUp(pool, migrations)
+      expect(result.applied).deep.equals(
+        history === 'chat'
+          ? ['050oauth']
+          : ['050teamFollows', '051guardiansAndAccounts', '052chat']
+      )
+      expect(result.alreadyApplied).deep.equals(
+        prior.map(migration => migration.name)
+      )
+      const { rows } = await pool.query(
+        'select display_name from users where id = 1001'
+      )
+      expect(rows).deep.equals([{ display_name: 'Upgrade fixture' }])
+      expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    })
+  })
+}

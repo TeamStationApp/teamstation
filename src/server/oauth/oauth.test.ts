@@ -490,6 +490,15 @@ describe('OAuth provider and native approval over HTTPS', function () {
         login_enabled: true
       })
       .execute()
+    await db
+      .insertInto('user_emails')
+      .values({
+        id: 'uem_other_fixture',
+        user_id: 456,
+        email: 'other@example.test',
+        is_primary: true
+      })
+      .execute()
     const other = await createSession(db, 456, 'fixture')
     first.browser.cookies.set('ts_session', other.token)
     const changed = await start(first.browser)
@@ -679,7 +688,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
       .where('user_id', '=', 123)
       .execute()
   })
-  it('rejects machine tokens and disabled or merged accounts at approval', async () => {
+  it('rejects machine tokens and accounts without sign-ins or merged accounts at approval', async () => {
     const flow = await start()
     const response = await post(flow, '/native', {})
     const handle = ((await response.json()) as { appUrl: string }).appUrl
@@ -706,23 +715,31 @@ describe('OAuth provider and native approval over HTTPS', function () {
         body: JSON.stringify({ approve: true })
       })
     expect((await decision(token)).status).equals(401)
+    // Sign-in eligibility is derived from credentials, not a writable switch.
+    const emails = await db
+      .deleteFrom('user_emails')
+      .where('user_id', '=', 123)
+      .returningAll()
+      .execute()
+    try {
+      expect((await decision(session.token)).status).equals(401)
+    } finally {
+      await db.insertInto('user_emails').values(emails).execute()
+    }
     await db
       .updateTable('users')
-      .set({ login_enabled: false })
+      .set({ merged_into: 456 })
       .where('id', '=', 123)
       .execute()
-    expect((await decision(session.token)).status).equals(401)
-    await db
-      .updateTable('users')
-      .set({ login_enabled: true, merged_into: 123 })
-      .where('id', '=', 123)
-      .execute()
-    expect((await decision(session.token)).status).equals(401)
-    await db
-      .updateTable('users')
-      .set({ merged_into: null })
-      .where('id', '=', 123)
-      .execute()
+    try {
+      expect((await decision(session.token)).status).equals(401)
+    } finally {
+      await db
+        .updateTable('users')
+        .set({ merged_into: null })
+        .where('id', '=', 123)
+        .execute()
+    }
   })
   it('keeps native approval pending until a decision and rejects expired handles', async () => {
     const flow = await start()

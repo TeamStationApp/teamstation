@@ -279,7 +279,7 @@ Randomness comes from the core too, so the app has no
 ### The bench build
 
 `/dev/chat-bench` (`src/app/dev/ChatBenchScreen.tsx`) first runs every frozen
-vector (`chatCrypto/frozenVectors.json`, through `coreVectors.ts`) through
+vector (`chatCrypto/frozenVectors.json`, through `vectors.ts`) through
 the phone's core and shows `vectors ok`. Then it times the core: 20 MiB
 sealed and opened, and 1,000 HPKE wraps. The route
 exists only in a build made with `TS_CHAT_BENCH=1`

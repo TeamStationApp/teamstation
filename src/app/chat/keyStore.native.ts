@@ -21,7 +21,10 @@ export const KEY_SERVICE = 'app.teamstation.chat'
 /** The part of `react-native-keychain` this store uses. */
 export type KeychainModule = Pick<
   typeof Keychain,
-  'getGenericPassword' | 'setGenericPassword' | 'resetGenericPassword'
+  | 'getGenericPassword'
+  | 'hasGenericPassword'
+  | 'setGenericPassword'
+  | 'resetGenericPassword'
 > & {
   ACCESSIBLE: Pick<
     typeof Keychain.ACCESSIBLE,
@@ -59,9 +62,7 @@ export function nativeKeyStore(keychain: KeychainModule): ChatKeyStore {
     },
 
     async exists(): Promise<boolean> {
-      return (
-        (await keychain.getGenericPassword({ service: KEY_SERVICE })) !== false
-      )
+      return await keychain.hasGenericPassword({ service: KEY_SERVICE })
     }
   }
 }

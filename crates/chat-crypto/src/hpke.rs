@@ -124,9 +124,9 @@ pub fn setup_sender(recipient_public_key: &[u8], info: &[u8], ephemeral_ikm: Opt
     let ephemeral = match ephemeral_ikm {
         Some(ikm) => derive_key_pair(ikm)?,
         None => {
-            let secret_key: [u8; 32] = random::array()?;
-            let public_key = prim::x25519_public_key(&secret_key)?;
-            KeyPair { secret_key, public_key }
+            let secret_key = Zeroizing::new(random::array::<32>()?);
+            let public_key = prim::x25519_public_key(&*secret_key)?;
+            KeyPair { secret_key: *secret_key, public_key }
         }
     };
     let mut dh = prim::x25519(&ephemeral.secret_key, recipient_public_key)?;

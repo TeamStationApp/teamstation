@@ -24,7 +24,8 @@ module.exports = {
     // cannot happen. `TS_CHAT_BENCH=1` makes the chat crypto bench build
     // (`src/app/dev/chatBench.native.ts`). Named explicitly rather than
     // inlining the whole environment, which would bake whatever is in the
-    // shell into the app. `metro.config.js` keys its cache on the same two.
+    // shell into the app. `metro.config.js` keys its cache on the API address
+    // and bench flag.
     [
       'transform-inline-environment-variables',
       {
