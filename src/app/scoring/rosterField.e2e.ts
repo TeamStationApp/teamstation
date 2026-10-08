@@ -88,6 +88,8 @@ async function main(): Promise<void> {
   const platform = required('TEST_PLATFORM')
   const device = required('TEST_DEVICE')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
+  const resume = process.env.TEST_START_AT
+  assert(resume == null || resume === 'scroll', 'TEST_START_AT supports scroll')
   const browser = process.env.TEST_BROWSER_URL
   const appId =
     browser == null ? 'app.teamstation.app' : 'com.apple.mobilesafari'
@@ -114,16 +116,33 @@ async function main(): Promise<void> {
     const m = await daemon.attach({ device, platform, appId })
     const all = async (): Promise<Element[]> => flatten(await m.hierarchy())
     const bounds = async (text: string): Promise<Bounds> => {
-      const found = (await all()).find(
-        node =>
-          label(node) === text &&
-          node.visible !== false &&
-          node.enabled !== false &&
-          (node.bounds?.width ?? 0) > 0 &&
-          (node.bounds?.height ?? 0) > 0
-      )?.bounds
+      const found = (await all())
+        .filter(
+          node =>
+            label(node) === text &&
+            node.visible !== false &&
+            node.enabled !== false &&
+            (node.bounds?.width ?? 0) > 0 &&
+            (node.bounds?.height ?? 0) > 0
+        )
+        .sort(
+          (a, b) =>
+            (b.bounds?.width ?? 0) * (b.bounds?.height ?? 0) -
+            (a.bounds?.width ?? 0) * (a.bounds?.height ?? 0)
+        )[0]?.bounds
       assert(found != null, `${text} is visible`)
       return found
+    }
+    const noRosterCard = async (name: string): Promise<void> => {
+      assert(
+        !(await all()).some(
+          node =>
+            label(node) === name &&
+            (node.bounds?.width ?? 0) >= 80 &&
+            (node.bounds?.height ?? 0) >= 32
+        ),
+        `${name} left the roster grid`
+      )
     }
     const tap = async (text: string): Promise<void> => {
       if (browser == null) {
@@ -160,18 +179,21 @@ async function main(): Promise<void> {
         JSON.stringify(await m.hierarchy(), null, 2)
       )
     }
-    await m.stopApp({ appId })
-    await m.openLink({ link: browser ?? 'teamstation:///games/g1/score' })
-    await m.assertVisible({ text: '^Open scoring menu$', timeout: 30000 })
-    if ((await all()).some(node => label(node) === 'Close')) await tap('Close')
-    await tap('Open scoring menu')
-    await tap('Set Team Rosters')
-    await shot('lineup')
-    await tap('Set Defense')
-    await m.assertVisible({ text: '^Drag player into defensive position$' })
-    await shot('defense')
-    await tap('Clear P')
-    await m.assertVisible({ text: '^Assign P$' })
+    if (resume == null) {
+      await m.stopApp({ appId })
+      await m.openLink({ link: browser ?? 'teamstation:///games/g1/score' })
+      await m.assertVisible({ text: '^Open scoring menu$', timeout: 30000 })
+      if ((await all()).some(node => label(node) === 'Close'))
+        await tap('Close')
+      await tap('Open scoring menu')
+      await tap('Set Team Rosters')
+      await shot('lineup')
+      await tap('Set Defense')
+      await m.assertVisible({ text: '^Drag player into defensive position$' })
+      await shot('defense')
+      await tap('Clear P')
+      await m.assertVisible({ text: '^Assign P$' })
+    }
     let readValues: (() => Promise<string>) | undefined
     const drag = async (fromName: string, toName: string): Promise<void> => {
       const from = await bounds(fromName)
@@ -252,41 +274,71 @@ async function main(): Promise<void> {
         })
       await pause(400)
     }
-    await drag('Player 1', 'Assign P')
-    await m.assertVisible({ text: '^Clear P$' })
-    await tap('Clear P')
-    await m.assertVisible({ text: '^Assign P$' })
-    log('PASS held upward defensive drag and whole-card clear')
-    await drag('Player 1', 'Clear C')
-    await m.assertNotVisible({ text: '^Player 1$' })
-    await m.assertVisible({ text: '^Player 2$' })
-    await drag('Player 2', 'Assign P')
-    await tap('Home Team')
-    await tap('Away Team')
-    await tap('Set Lineup')
-    await tap('Set Defense')
-    await m.assertVisible({ text: '^Clear P$' })
-    log('PASS occupied-target replacement and draft across team/mode switches')
-    await tap('Save Rosters')
-    await tap('Open scoring menu')
-    await tap('Set Team Rosters')
-    await tap('Set Defense')
-    await m.assertVisible({ text: '^Clear P$' })
-    await tap('Cancel')
-    await tap('Undo Set team roster')
-    log('PASS Save/reopen and Undo')
-    await tap('Open scoring menu')
-    await tap('Set Team Rosters')
-    await tap('Set Defense')
-    for (const position of ['P', 'C', '1B', '2B', 'SS'])
-      await tap(`Clear ${position}`)
-    await m.scrollUntilVisible({
-      element: { text: '^Player 14$' },
-      from: { text: '^Roster players$' },
-      direction: 'DOWN',
-      timeout: 15000
-    })
+    if (resume == null) {
+      await drag('Player 1', 'Assign P')
+      await m.assertVisible({ text: '^Clear P$' })
+      await tap('Clear P')
+      await m.assertVisible({ text: '^Assign P$' })
+      log('PASS held upward defensive drag and whole-card clear')
+      await drag('Player 1', 'Clear C')
+      await noRosterCard('Player 1')
+      await m.assertVisible({ text: '^Player 2$' })
+      await drag('Player 2', 'Assign P')
+      await tap('Home Team')
+      await tap('Away Team')
+      await tap('Set Lineup')
+      await tap('Set Defense')
+      await m.assertVisible({ text: '^Clear P$' })
+      log(
+        'PASS occupied-target replacement and draft across team/mode switches'
+      )
+      await tap('Save Rosters')
+      await tap('Open scoring menu')
+      await tap('Set Team Rosters')
+      await tap('Set Defense')
+      await m.assertVisible({ text: '^Clear P$' })
+      await tap('Cancel')
+      await tap('Undo Set team roster')
+      log('PASS Save/reopen and Undo')
+      await tap('Open scoring menu')
+      await tap('Set Team Rosters')
+      await tap('Set Defense')
+    }
+    if (resume == null)
+      for (const position of ['P', 'C', '1B', '2B', 'SS'])
+        await tap(`Clear ${position}`)
+    if (platform === 'ios') {
+      const roster = await bounds('Roster players')
+      let visible = false
+      for (let attempt = 0; attempt < 8; attempt++) {
+        visible = (await all()).some(
+          node =>
+            label(node) === 'Player 14' &&
+            node.bounds != null &&
+            node.bounds.y >= roster.y &&
+            node.bounds.y + node.bounds.height <= roster.y + roster.height
+        )
+        if (visible) break
+        await m.swipe({
+          startX: Math.round(roster.x + roster.width / 2),
+          startY: Math.round(roster.y + roster.height * 0.8),
+          endX: Math.round(roster.x + roster.width / 2),
+          endY: Math.round(roster.y + roster.height * 0.2),
+          duration: 250
+        })
+        await pause(500)
+      }
+      assert(visible, 'Lower roster card scrolled into view')
+    } else
+      await m.scrollUntilVisible({
+        element: { text: '^Player 14$' },
+        from: { text: '^Roster players$' },
+        direction: 'DOWN',
+        timeout: 15000
+      })
     await drag('Player 14', 'Assign P')
+    await m.assertVisible({ text: '^Clear P$' })
+    await noRosterCard('Player 14')
     log('PASS scroll lower roster and drag upward to field')
     await tap('Cancel')
     await tap('Open scoring menu')
@@ -297,11 +349,23 @@ async function main(): Promise<void> {
     await tap('Create Player')
     await m.assertVisible({ text: '^First Name$' })
     await m.inputText({ text: 'Alex' })
-    await m.pressKey({ key: 'Enter' })
+    if (platform === 'android') {
+      await tap('Next')
+      await m.assertVisible({ text: '^Next$' })
+    } else await m.pressKey({ key: 'Enter' })
+    await pause(700)
     await m.inputText({ text: 'Demo' })
-    await m.pressKey({ key: 'Enter' })
+    if (platform === 'android') {
+      await tap('Next')
+      await m.assertVisible({ text: '^Done$' })
+    } else await m.pressKey({ key: 'Enter' })
+    await pause(700)
     await m.inputText({ text: '42' })
-    await m.pressKey({ key: 'Enter' })
+    if (platform === 'android') {
+      await tap('Done')
+      await m.assertNotVisible({ text: '^Done$' })
+    } else await m.pressKey({ key: 'Enter' })
+    await pause(700)
     const entered = await all()
     const xml = readValues == null ? '' : await readValues()
     for (const value of ['Alex', 'Demo', '42'])

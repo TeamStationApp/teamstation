@@ -3,13 +3,13 @@ import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
+import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
   emptyPlayerDraft,
   PLAYER_POSITIONS,
   type PlayerDraft,
   playerDraftError
 } from './playerDraft'
-import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { RosterSelector } from './RosterSelector'
 import { ScoringError, ScoringSheet } from './ScoringSheet'
 
@@ -26,6 +26,7 @@ export function PlayerEntrySheet({
   const [draft, setDraft] = useState(emptyPlayerDraft)
   const [submitted, setSubmitted] = useState(false)
   const [placeholders, setPlaceholders] = useState(false)
+  const [scrollReset, setScrollReset] = useState(0)
   const first = useRef<React.ComponentRef<typeof TextInput>>(null)
   const last = useRef<React.ComponentRef<typeof TextInput>>(null)
   const jersey = useRef<React.ComponentRef<typeof TextInput>>(null)
@@ -59,6 +60,7 @@ export function PlayerEntrySheet({
     if (another) {
       setDraft(emptyPlayerDraft())
       setSubmitted(false)
+      setScrollReset(previous => previous + 1)
       saving.current = false
       focus()
     } else onClose()
@@ -67,6 +69,7 @@ export function PlayerEntrySheet({
     <ScoringSheet
       title="Create Player"
       textCancel
+      scrollReset={scrollReset}
       onClose={onClose}
       onShow={focus}
     >

@@ -340,6 +340,12 @@ async function click(page: Page, label: string): Promise<void> {
     selector
   )
   await page.locator(selector).click()
+  if (label === 'Create Player')
+    await page.waitForFunction(() => {
+      const field = document.querySelector('[aria-label="First Name"]')
+      if (field == null) return false
+      return field.closest('[role="dialog"]') != null
+    })
 }
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await click(page, 'Swing in Play')

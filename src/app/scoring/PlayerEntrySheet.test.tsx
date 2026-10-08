@@ -104,7 +104,15 @@ describe('player entry sheet', function () {
     expect(node('Player position P').getAttribute('aria-checked')).equals(
       'false'
     )
+    const scroll = node('First Name').closest<HTMLElement>(
+      '[data-testid="Scoring sheet content"]'
+    )!
+    scroll.scrollTop = 280
     await tap('Save and Add Another Player')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 40))
+    })
+    expect(scroll.scrollTop).equals(0)
     expect(added).deep.equals([
       {
         firstName: 'Alex',

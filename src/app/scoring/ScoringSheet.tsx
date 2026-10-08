@@ -1,4 +1,10 @@
-import React, { createContext, useMemo, useRef, useState } from 'react'
+import React, {
+  createContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   Animated,
   KeyboardAvoidingView,
@@ -157,6 +163,7 @@ export function ScoringSheet({
   done = false,
   swipeToDismiss = false,
   scroll = true,
+  scrollReset = 0,
   onShow,
   onClose,
   children
@@ -173,6 +180,8 @@ export function ScoringSheet({
   /** Pulled down by its handle or its title, it closes. */
   swipeToDismiss?: boolean
   scroll?: boolean
+  /** Increment to return a repeated-entry form to its first field. */
+  scrollReset?: number
   onShow?: () => void
   onClose: () => void
   children: React.ReactNode
@@ -180,6 +189,16 @@ export function ScoringSheet({
   const theme = useTheme()
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
+  const contentScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  useEffect(() => {
+    if (!scroll || scrollReset === 0) return
+    const frame = requestAnimationFrame(() => {
+      contentScroll.current?.scrollTo({ y: 0, animated: false })
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [scroll, scrollReset])
   const close = useRef(onClose)
   close.current = onClose
   const pulled = useRef(new Animated.Value(0)).current
@@ -341,6 +360,8 @@ export function ScoringSheet({
                 </View>
               )}
               <Content
+                testID="Scoring sheet content"
+                ref={scroll ? contentScroll : undefined}
                 style={{
                   flex: fullScreen || tall ? 1 : undefined,
                   minHeight: 0
