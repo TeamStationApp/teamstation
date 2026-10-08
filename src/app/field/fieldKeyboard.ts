@@ -66,6 +66,13 @@ export function fieldKey(
   if (eligible.length === 0) return false
   const index = eligible.findIndex(player => player.id === props.selected)
   const player = eligible[Math.max(0, index)]
+  if (
+    (key === ' ' || key === 'Enter') &&
+    props.tapIds?.includes(player.id) === true
+  ) {
+    props.onPlayerTap?.(player.id)
+    return true
+  }
   const cancel = (): void => {
     if (player.keyboardOrigin != null) {
       player.position = { ...player.keyboardOrigin }

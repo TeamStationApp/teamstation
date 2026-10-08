@@ -32,6 +32,9 @@ export interface BaseProjection {
   height: number
 }
 export interface FieldCanvasProps {
+  /** Setup taps use field picking without starting a placement gesture. */
+  tapIds?: readonly string[]
+  onPlayerTap?: (id: string) => void
   teams?: FieldTeams
   constrainPlacement?: (point: GroundPoint) => GroundPoint
   acceptDefenderTap?: boolean

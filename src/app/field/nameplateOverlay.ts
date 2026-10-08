@@ -19,6 +19,7 @@ export function nameplateColor(plate: {
  * without React (`NativeNameplates.tsx`).
  */
 export interface NameplateFace {
+  emptyPosition?: boolean
   id: string
   name: string
   /** `#` plus the jersey, or empty. */
@@ -41,6 +42,7 @@ export function nameplateFaces(plates: NameplatePlacement[]): NameplateFace[] {
     name: plate.name,
     number: plate.number,
     color: nameplateColor(plate),
+    ...(plate.emptyPosition === true ? { emptyPosition: true } : {}),
     anchorX: plate.anchorX,
     anchorY: plate.anchorY
   }))

@@ -31,12 +31,13 @@ function context(
   game: GameDetail,
   away: RosterEntry[],
   home: RosterEntry[],
-  defaults: DefaultLineups = {}
+  defaults: DefaultLineups = {},
+  fillRoster = true
 ): Parameters<typeof ScoringSession.open>[2] {
   return {
     gamePk: game.id,
     teams: teamsOf(game),
-    setup: startingSetup(game, away, home, defaults),
+    setup: startingSetup(game, away, home, defaults, fillRoster),
     fenceDistanceFt: game.fenceDistanceFt
   }
 }
@@ -83,7 +84,8 @@ export class ServerScoringSource implements ScoringSource {
     return await ScoringSession.open(
       store,
       game.id,
-      context(game, away, home, defaults)
+      context(game, away, home, defaults, false),
+      { requireCurrentSetup: true }
     )
   }
 }
@@ -137,7 +139,8 @@ export class DevelopmentScoringSource implements ScoringSource {
     return await ScoringSession.open(
       this.store,
       game.id,
-      context(game, away, home)
+      context(game, away, home),
+      { requireCurrentSetup: true }
     )
   }
 }
