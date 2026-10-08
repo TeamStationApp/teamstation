@@ -14,6 +14,7 @@ import {
 import { measureRosterView, RosterContext } from './RosterDragContext'
 import { RosterGesture } from './rosterGesture'
 import { ROSTER_CARD_GAP } from './rosterLayout'
+import { RosterRemoveButton } from './RosterRemoveButton'
 import { rosterSegmentAt } from './RosterSelector'
 
 const event = (x: number, y: number): GestureResponderEvent =>
@@ -106,6 +107,47 @@ describe('native roster responder', function () {
       handler(activation as Parameters<typeof handler>[0])
     })
     expect(activated).equals(2)
+  })
+  it('keeps reorder containers ungrouped so their nested Remove remains accessible', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const engine = new RosterGesture(() => undefined)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterContext.Provider value={engine}>
+            <RosterDrag
+              playerId={1}
+              label="Reorder Alex Demo"
+              onReorder={() => undefined}
+            >
+              <Text>Alex Demo</Text>
+              <RosterRemoveButton
+                label="Remove Alex Demo"
+                onPress={() => undefined}
+              />
+            </RosterDrag>
+          </RosterContext.Provider>
+        </ThemeProvider>
+      )
+    })
+    const node = host.querySelector('[aria-label="Reorder Alex Demo"]')!
+    interface Fiber {
+      memoizedProps: ViewProps
+      return: Fiber | null
+    }
+    const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'))!
+    let fiber = Reflect.get(node, key) as Fiber | null
+    while (fiber != null && fiber.memoizedProps.accessibilityActions == null)
+      fiber = fiber.return
+    expect(fiber!.memoizedProps.accessible).equals(undefined)
+    expect(
+      fiber!.memoizedProps.accessibilityActions?.map(action => action.name)
+    ).deep.equals(['increment', 'decrement'])
+    expect(
+      host.querySelector('[aria-label="Remove Alex Demo"][role="button"]')
+    ).not.equals(null)
   })
   it('appends on a tap, yields until a half-second hold, drops by native window coordinates and never taps after a drag', async function () {
     const drops: number[] = []

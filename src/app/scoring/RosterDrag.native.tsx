@@ -164,7 +164,9 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       ref={ref}
       {...handlers}
       accessible={
-        props.label != null || props.onTap != null || props.onReorder != null
+        props.onReorder == null && (props.label != null || props.onTap != null)
+          ? true
+          : undefined
       }
       onAccessibilityTap={
         props.onTap == null
