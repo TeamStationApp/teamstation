@@ -1,0 +1,1534 @@
+{
+  "description": "Receiver behaviour, step by step. Each scenario starts a fresh receiver: instance 'receiver', key 'one' (keys.json), consent true unless 'consent' says otherwise, an apply that answers 'applied' (or 'apply'), the clock at 1790013600000 ms with no automatic expiry, and nonces drawn from 'nonces' in order. A send step encodes the named message from 'director' with header requestId, the connection's challenge (challenges[connection]) and the receiverNonce the receiver last announced on that connection (empty before; 'nonce' overrides), signed with 'key' (default 'one'; 'forged' is a key nobody holds, with key one's tag and key ID). 'tamper' flips the last MAC byte. 'replay' resends the exact payload of step 'fromStep' (0-based). 'raw' sends 'hex' as is. The director's address is hosts[director]. 'duringApply' runs once inside the apply closure before it answers: one op, or a list of ops run in order. After each step: 'reply' is the decoded reply (null for none), checked for the requestId and challenge of the payload it answers echoed back (or the requestId given, and an all-zero challenge, for 'unsupported', whose request could not be read), its body fields, and a MAC made with 'replyKey' (default 'one'); 'sameReplyAs' means byte-identical to that step's reply; 'close' whether the receiver closes; 'lease' the override afterwards (null for none); 'applies' how many times apply has run in this scenario; 'ended' the reason of the last overrideEnded event; 'keyMismatch' that a keyMismatch event named that key's keyId. 'advance' moves the clock and then checks expiry.",
+  "instances": {
+    "receiver": "0000000000000000000000000000e001",
+    "dirA": "0000000000000000000000000000d001",
+    "dirB": "0000000000000000000000000000d002"
+  },
+  "hosts": {
+    "dirA": "192.0.2.10",
+    "dirB": "192.0.2.11"
+  },
+  "challenges": {
+    "1": "00000000000000000000000000000c01",
+    "2": "00000000000000000000000000000c02"
+  },
+  "nonces": [
+    "0000000000000000000000000000a001",
+    "0000000000000000000000000000a002",
+    "0000000000000000000000000000a003",
+    "0000000000000000000000000000a004"
+  ],
+  "forgedKey": "00000000000000000000000000000000000000000000000000000000000000f0",
+  "clockStartMs": 1790013600000,
+  "assignments": {
+    "A": {
+      "gameId": "gam_demoA",
+      "title": "Visitors at Pioneers",
+      "startAt": "2026-09-21T18:00:00Z"
+    },
+    "B": {
+      "gameId": "gam_demoB",
+      "title": "Pioneers at Comets",
+      "startAt": "2026-09-22T01:30:00Z"
+    },
+    "untrimmed": {
+      "gameId": "gam_demoA ",
+      "title": "Visitors at Pioneers",
+      "startAt": "2026-09-21T18:00:00Z"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "assignRenewRelease",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 0
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "3",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "3",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "sameReplyAs": 2,
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "4",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "release",
+          "requestId": "5",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 1,
+            "ended": "released"
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "6",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "expired",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "release",
+          "requestId": "7",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "expired",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "retryOnNewConnection",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "op": "closeConnection",
+          "connection": 1,
+          "expect": {
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            }
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "heldBySender",
+              "leaseRevision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "3",
+          "revision": "200",
+          "assignment": "B",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "200"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "200",
+              "assignment": "B",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "staleRevisionsAndRequests",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "200",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "200"
+            },
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "3",
+          "revision": "150",
+          "assignment": "B",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "stale",
+              "revision": "150"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "200",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "300",
+          "assignment": "B",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "stale",
+              "revision": "300"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "200",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "5",
+          "revision": "200",
+          "assignment": "B",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "200"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "200",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "6",
+          "revision": "150",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "stale",
+              "revision": "150"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "200",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "competingDirectors",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirB",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "heldByOther",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirB",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "500",
+          "assignment": "B",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "busy",
+              "revision": "500"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            },
+            "applies": 1
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirB",
+          "send": "renew",
+          "requestId": "3",
+          "revision": "500",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "busy",
+              "revision": "500"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirB",
+          "send": "release",
+          "requestId": "4",
+          "revision": "500",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "busy",
+              "revision": "500"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            }
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 14999,
+          "expect": {
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            }
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 1,
+          "expect": {
+            "lease": null,
+            "ended": "expired"
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirB",
+          "send": "assign",
+          "requestId": "5",
+          "revision": "500",
+          "assignment": "B",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "500"
+            },
+            "close": false,
+            "lease": {
+              "owner": "dirB",
+              "revision": "500",
+              "assignment": "B",
+              "ownerHost": "192.0.2.11"
+            },
+            "applies": 2
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "3",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "busy",
+              "revision": "100"
+            },
+            "close": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "renewKeepsTheLease",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 10000
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "3",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 10000,
+          "expect": {
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            }
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 5000,
+          "expect": {
+            "lease": null,
+            "ended": "expired"
+          }
+        }
+      ]
+    },
+    {
+      "name": "consent",
+      "consent": false,
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": false,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "disabled",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 0
+          }
+        },
+        {
+          "op": "setConsent",
+          "value": true
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "3",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "op": "setConsent",
+          "value": false,
+          "expect": {
+            "lease": null,
+            "ended": "consentOff"
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "4",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "disabled",
+              "revision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "op": "setConsent",
+          "value": true
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "5",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "expired",
+              "revision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "6",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "otherAccount",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "key": "two",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "wrongAccount",
+              "revision": "0"
+            },
+            "close": true,
+            "lease": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "otherServer",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "key": "oneOtherServer",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "wrongAccount",
+              "revision": "0"
+            },
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "rotatedSecret",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "key": "oneRotated",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "keyMismatch",
+              "revision": "0"
+            },
+            "close": true,
+            "keyMismatch": "oneRotated"
+          }
+        }
+      ]
+    },
+    {
+      "name": "tamperedAssign",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "tamper": true,
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true,
+            "lease": null,
+            "applies": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "wrongKeySameIds",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "key": "forged",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "replayAcrossConnections",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 1
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "release",
+          "requestId": "3",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirA",
+          "send": "replay",
+          "fromStep": 1,
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true,
+            "lease": null,
+            "applies": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "assignBeforeDiscover",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "1",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true,
+            "applies": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "wrongNonce",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "nonce": "000000000000000000000000000000ff",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true,
+            "applies": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "anotherDirectorOnTheConnection",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirB",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true,
+            "applies": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "unsupportedVersion",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "raw",
+          "hex": "0201",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "unsupported",
+              "revision": "0",
+              "requestId": "0"
+            },
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformedClosesSilently",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "raw",
+          "hex": "0101",
+          "expect": {
+            "reply": null,
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "receiverMessageFromADirector",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "ack",
+          "requestId": "1",
+          "status": "applied",
+          "revision": "0",
+          "expect": {
+            "reply": null,
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalidAssignmentFields",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "untrimmed",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 0
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "3",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false,
+            "applies": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "accountChangesWhileApplying",
+      "duringApply": {
+        "op": "setCredentials",
+        "key": "two"
+      },
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "wrongAccount",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "consentOffWhileApplying",
+      "duringApply": {
+        "op": "setConsent",
+        "value": false
+      },
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "disabled",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "lastInterruptionWins",
+      "duringApply": [
+        {
+          "op": "setConsent",
+          "value": false
+        },
+        {
+          "op": "setCredentials",
+          "key": "two"
+        }
+      ],
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "wrongAccount",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "applyFails",
+      "apply": "failed",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "failed",
+              "revision": "100"
+            },
+            "close": false,
+            "lease": null,
+            "applies": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "restartDropsLeaseAndSessions",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "op": "restart",
+          "expect": {
+            "lease": null,
+            "ended": "restarted"
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "3",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "invalid",
+              "revision": "0"
+            },
+            "close": true
+          }
+        },
+        {
+          "connection": 2,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "signedOutClosesUnanswered",
+      "steps": [
+        {
+          "op": "setCredentials",
+          "key": null
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": null,
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "accountChangeEndsLease",
+      "steps": [
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "discover",
+          "requestId": "1",
+          "expect": {
+            "reply": {
+              "type": "announce",
+              "consent": true,
+              "lease": "free",
+              "leaseRevision": "0"
+            },
+            "close": false
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "assign",
+          "requestId": "2",
+          "revision": "100",
+          "assignment": "A",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "applied",
+              "revision": "100"
+            },
+            "close": false
+          }
+        },
+        {
+          "op": "setCredentials",
+          "key": "one",
+          "expect": {
+            "lease": {
+              "owner": "dirA",
+              "revision": "100",
+              "assignment": "A",
+              "ownerHost": "192.0.2.10"
+            }
+          }
+        },
+        {
+          "op": "setCredentials",
+          "key": "two",
+          "expect": {
+            "lease": null,
+            "ended": "accountChanged"
+          }
+        },
+        {
+          "connection": 1,
+          "director": "dirA",
+          "send": "renew",
+          "requestId": "3",
+          "revision": "100",
+          "expect": {
+            "reply": {
+              "type": "ack",
+              "status": "wrongAccount",
+              "revision": "0"
+            },
+            "close": true,
+            "replyKey": "two"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
+import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
@@ -152,6 +153,7 @@ describe('the API document', function () {
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
+      ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(userRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(scoreboardRoutes(db, store))
@@ -194,6 +196,7 @@ describe('the API document', function () {
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
+      ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(userRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
       // Only the player routes the document describes: the reads of a

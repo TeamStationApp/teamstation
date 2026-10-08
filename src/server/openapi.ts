@@ -1533,6 +1533,64 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/device-event-control/key': {
+        get: {
+          summary: "Read the caller's device event-control key",
+          description:
+            "Human sessions only; a machine API token gets 401. The key lets devices signed in to the same account on this server authenticate the local event-control protocol, in which a Director sets the publishing event of nearby devices. It is derived from the caller's own user ID and this server's origin, is never accepted as a bearer token, and changes when the server rotates its secret (the key ID changes with it). Not cached (`Cache-Control: no-store`).",
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The account scope and its key',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: [
+                      'version',
+                      'issuer',
+                      'userId',
+                      'accountTag',
+                      'keyId',
+                      'key'
+                    ],
+                    properties: {
+                      version: { type: 'integer', enum: [1] },
+                      issuer: {
+                        type: 'string',
+                        description: "The server's canonical public origin"
+                      },
+                      userId: {
+                        type: 'string',
+                        description: "The caller's user ID, in decimal"
+                      },
+                      accountTag: {
+                        type: 'string',
+                        description:
+                          'Opaque, equal for every device of the account: 32 hex characters'
+                      },
+                      keyId: {
+                        type: 'string',
+                        description:
+                          'Names the server secret the key came from: 16 hex characters'
+                      },
+                      key: {
+                        type: 'string',
+                        description: 'HMAC-SHA256 key: 64 hex characters'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: 'Active human session required' },
+            503: {
+              description:
+                'Not set up on this server: `{ code: "unavailable", error: "deviceEventControlUnavailable" }`'
+            }
+          }
+        }
+      },
       '/oauth/approvals/{handle}': {
         get: {
           summary: 'Read an OAuth request to approve in the mobile app',

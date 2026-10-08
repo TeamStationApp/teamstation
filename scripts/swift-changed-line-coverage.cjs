@@ -23,14 +23,23 @@ const {
 // package, which Xcode builds as its own framework, so `--derived-data` adds
 // the run's profile exported with `llvm-cov` from the app and every package
 // framework built beside it. Either way the checker is always given
-// `--ext .swift` and `--exclude '**/Tests/**'`: Xcode and SwiftPM both report
-// coverage for test sources, and a test is not the code it tests.
+// `--ext .swift`, `--exclude '**/Tests/**'` and `--exclude '**/Package.swift'`:
+// Xcode and SwiftPM both report coverage for test sources, and a test is not
+// the code it tests; a package manifest is build metadata that no test runs,
+// so a new package would otherwise fail on its own manifest.
 
 const USAGE =
   'usage: swift-changed-line-coverage.cjs (--spm <dir> | --xcresult <path> ' +
   '[--derived-data <dir>]) [--exclude <path>] <pathspec>…'
 
-const ALWAYS = ['--ext', '.swift', '--exclude', '**/Tests/**']
+const ALWAYS = [
+  '--ext',
+  '.swift',
+  '--exclude',
+  '**/Tests/**',
+  '--exclude',
+  '**/Package.swift'
+]
 
 function parseArgs(argv) {
   const args = { rest: [] }

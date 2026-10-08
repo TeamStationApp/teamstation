@@ -469,6 +469,18 @@ describe('the Swift changed-line coverage', function () {
     expect(run.log.join('\n')).not.includes('TallyTests.swift')
   })
 
+  it('never counts a package manifest, which no test runs', function () {
+    // A new package adds its Package.swift, which has no coverage record.
+    const run = swiftCheck(['--spm', 'Tally', 'Tally'], {
+      [TALLY]: [2, 3, 5, 6, 7, 8, 9, 11],
+      'Tally/Package.swift': [1, 2, 3]
+    })
+    expect(run.log.join('\n')).not.includes('Package.swift')
+    expect(run.log.at(-1)).equals(
+      'Changed executable line coverage: 7/8 (87.50%) FAILED'
+    )
+  })
+
   it('reads each changed file out of a result bundle by the path it recorded', function () {
     // The build recorded the real path of a top level reached through a
     // symlink, as /tmp is on macOS.

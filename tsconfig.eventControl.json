@@ -1,0 +1,15 @@
+{
+  // The event-control tools and their tests, which live outside `src` and
+  // run under Node with sucrase. Checked here so `npm run typecheck` and
+  // `npm run test.eventControl` see the same types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "commonjs",
+    "target": "es2022",
+    "lib": ["es2023"]
+  },
+  "include": ["tools/eventControl/**/*.ts"],
+  "exclude": ["lib", "node_modules"]
+}

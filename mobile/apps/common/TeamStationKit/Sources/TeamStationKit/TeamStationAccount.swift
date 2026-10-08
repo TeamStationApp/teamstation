@@ -35,6 +35,24 @@ public final class TeamStationAccount: TeamStationEventService {
 
   public var isSignedIn: Bool { user != nil }
 
+  /// The account and server this device last proved its token belongs to.
+  ///
+  /// Set when a sign-in completes or the server answers `auth/me`, kept across relaunches, and
+  /// left alone when the server cannot be reached — so a Director relaunched with no network,
+  /// whose `user` stays nil, still knows who it is. Cleared by sign-out and by the server
+  /// rejecting the token.
+  public private(set) var scope: TeamStationAccountScope?
+
+  /// Whether a token is kept, whether or not the server has been reached since.
+  public var hasToken: Bool { keychain.token() != nil }
+
+  /// Whether this device may take part in device event control as the account in `scope`: it
+  /// holds a token, and the identity it proved is for the server it is pointed at now.
+  public var isEventControlEligible: Bool {
+    guard hasToken, let scope else { return false }
+    return scope.server == TeamStationAccountScope.origin(of: serverURL)
+  }
+
   /// Where TeamStation is. Changed only in Settings, and only by Paul.
   public var serverURL: URL
 
@@ -53,6 +71,7 @@ public final class TeamStationAccount: TeamStationEventService {
     self.keychain = keychain
     self.session = session
     chosen = keychain.chosenEvent()
+    scope = keychain.token() == nil ? nil : keychain.accountScope()
   }
 
   /// What was picked, kept whole so the app can show the row and stream to it
@@ -256,28 +275,70 @@ public final class TeamStationAccount: TeamStationEventService {
   private func adopt(_ session: TeamStationSession) {
     keychain.setToken(session.token)
     user = session.user
+    remember(session.user.id)
     waiting = nil
     lastError = nil
+  }
+
+  private func remember(_ userId: String) {
+    let next = TeamStationAccountScope(
+      server: TeamStationAccountScope.origin(of: serverURL),
+      userId: userId
+    )
+    guard next != scope else { return }
+    scope = next
+    keychain.setAccountScope(next)
   }
 
   /// Picks the signed-in account up again after a relaunch.
   public func restore() async {
     guard keychain.token() != nil else { return }
     do {
-      user = try await client.whoAmI()
+      let who = try await client.whoAmI()
+      user = who
+      remember(who.id)
     } catch TeamStationError.notSignedIn {
       // The session was revoked or ran out. Forget it rather than leave the
       // screen claiming to be signed in as somebody.
       signOut()
     } catch {
       // Offline. The account is still ours; the name simply is not known until
-      // there is a network, and the cached event still streams.
+      // there is a network, and the cached event still streams. `scope` keeps
+      // the identity proved before.
+    }
+  }
+
+  /**
+   * This device's key for device event control, fetched with its own session.
+   *
+   * The answer names the user the server holds this token for, which is
+   * remembered as `scope`. The server rejecting the token signs this device
+   * out, as `restore` does; anything else is thrown and changes nothing.
+   *
+   * An answer that arrives after the token changed (a sign-out, or a sign-in
+   * as someone else, while it was on its way) is for the token it was asked
+   * with, not the one kept now: it is thrown away as `accountChanged`, and
+   * neither remembered nor allowed to sign the new session out.
+   */
+  public func deviceEventControlKey() async throws -> TeamStationEventControlKey {
+    let askedWith = keychain.token()
+    do {
+      let key = try await client.deviceEventControlKey()
+      guard keychain.token() == askedWith else { throw TeamStationError.accountChanged }
+      remember(key.userId)
+      return key
+    } catch TeamStationError.notSignedIn {
+      guard keychain.token() == askedWith else { throw TeamStationError.accountChanged }
+      signOut()
+      throw TeamStationError.notSignedIn
     }
   }
 
   public func signOut() {
     keychain.setToken(nil)
     keychain.setChosenEvent(nil)
+    keychain.setAccountScope(nil)
+    scope = nil
     user = nil
     events = []
     chosen = nil

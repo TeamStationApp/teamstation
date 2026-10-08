@@ -15,6 +15,7 @@ public struct KeychainStore: Sendable {
   private let memory: Memory?
   private static let tokenKey = "teamStationToken"
   private static let eventKey = "teamStationChosenEvent"
+  private static let scopeKey = "teamStationAccountScope"
 
   public init(service: String) {
     self.service = service
@@ -67,6 +68,17 @@ public struct KeychainStore: Sendable {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     write(Self.eventKey, data: try? encoder.encode(event))
+  }
+
+  /// The account and server the token was last validated against; nil when none was kept
+  /// (including every keychain written before this was).
+  public func accountScope() -> TeamStationAccountScope? {
+    guard let data = read(Self.scopeKey) else { return nil }
+    return try? JSONDecoder().decode(TeamStationAccountScope.self, from: data)
+  }
+
+  public func setAccountScope(_ scope: TeamStationAccountScope?) {
+    write(Self.scopeKey, data: scope.flatMap { try? JSONEncoder().encode($0) })
   }
 
   // MARK: - The keychain itself

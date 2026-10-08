@@ -8,6 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
+import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
 import { makeDatabase } from './db/database'
 import { modelsOf } from './dictation/models'
@@ -39,6 +40,7 @@ import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
+import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
@@ -495,6 +497,13 @@ function runWorker(): void {
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use(
     '/api/v1',
+    deviceEventControlRoutes(db, {
+      secret: serverConfig.deviceEventControlSecret,
+      issuer: publicUrl
+    })
+  )
+  app.use(
+    '/api/v1',
     accountRoutes(db, {
       ...mediaContext,
       sendCode: async (email, code) => {
@@ -639,6 +648,17 @@ const workerCount =
   serverConfig.clusterWorkers > 0
     ? serverConfig.clusterWorkers
     : availableParallelism()
+
+// Said once, by the process that starts the rest, rather than by every worker.
+const eventControlProblem = deviceEventControlSecretProblem(
+  serverConfig.deviceEventControlSecret
+)
+if (cluster.isPrimary && eventControlProblem != null) {
+  console.log(
+    `device event control is off: ${eventControlProblem}, so ` +
+      'GET /api/v1/device-event-control/key answers 503'
+  )
+}
 
 if (cluster.isPrimary && workerCount > 1) runPrimary(workerCount)
 else runWorker()
