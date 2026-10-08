@@ -11,7 +11,7 @@ import path from 'node:path'
 import { allocateBuildNumber, packageVersion } from './buildNumber'
 import { loadSettings, type Settings } from './config'
 import { Processes } from './process'
-import { prepareSource, remoteCommit } from './source'
+import { currentSource } from './source'
 import {
   type Artifact,
   asRun,
@@ -115,7 +115,8 @@ export async function run(
   options: Options,
   builders: Builders,
   signal: AbortSignal,
-  output: (line: string) => void = console.log
+  output: (line: string) => void = console.log,
+  workingDirectory = process.cwd()
 ): Promise<number> {
   const settings = loadSettings(options.config, options.branch)
   const configured = settings.apps[options.app]
@@ -126,11 +127,11 @@ export async function run(
     throw new Error('App/platform is missing deployment settings')
   const processes = new Processes(signal)
   if (options.dryRun) {
-    const commit = await remoteCommit(
+    const { commit } = await currentSource(
       settings,
-      options.app,
-      options.branch,
-      processes
+      target(options.app, options.platforms[0]),
+      processes,
+      workingDirectory
     )
     output(`Validate ${options.app} at ${options.branch} (${commit})`)
     for (const os of options.platforms)
@@ -146,7 +147,7 @@ export async function run(
   try {
     state.prune(settings.outputDirectory)
     releaseSleep = settings.inhibitSleep
-      ? await processes.inhibit(settings.tools.caffeinate, settings.repository)
+      ? await processes.inhibit(settings.tools.caffeinate, workingDirectory)
       : undefined
     let record: Run, directory: string
     if (options.publishOnly != null) {
@@ -166,86 +167,80 @@ export async function run(
     } else {
       const id = randomBytes(16).toString('hex')
       directory = createOutput(settings.outputDirectory, id)
-      const source = await prepareSource(
+      const source = await currentSource(
         settings,
         target(options.app, options.platforms[0]),
-        options.branch,
-        id,
-        processes
+        processes,
+        workingDirectory
       ).catch((error: unknown) => {
         rmSync(directory, { recursive: true, force: true })
         throw error
       })
-      try {
-        const version = packageVersion(source.directory)
-        const buildTime = new Date()
-        const buildNumber = allocateBuildNumber(
-          options.buildNumberFile!,
-          source.directory,
-          options.branch,
-          buildTime
-        )
-        record = asRun({
-          id,
-          app: options.app,
-          branch: options.branch,
-          commit: source.commit,
-          createdAt: buildTime.getTime(),
-          version,
-          buildNumberFormat: 'date',
-          platforms: options.platforms,
-          artifacts: [],
-          failed: []
-        })
-        state.save(record)
-        output(`Build run ${id} pinned to ${source.commit}`)
-        for (const os of options.platforms) {
-          if (signal.aborted) break
-          const selected = target(options.app, os)
-          try {
-            const builder = builders[os]
-            if (builder == null)
-              throw new Error('Signed build adapter is unavailable')
-            const built = await builder({
-              source: source.directory,
-              output: directory,
-              settings,
-              target: selected,
-              branch: record.branch,
-              commit: source.commit,
-              version: record.version,
-              buildNumber,
-              buildTime: new Date(record.createdAt).toISOString(),
-              processes
-            })
-            if (built.buildNumber !== nativeNumber(os, buildNumber))
-              throw new Error('Package build number did not match allocation')
-            const format =
-              os === 'ios' ? 'ipa' : os === 'android' ? 'apk' : 'dmg'
-            const name = `${os}.${format}`
-            const destination = path.join(directory, name)
-            noSymlinks(built.file)
-            if (path.resolve(built.file) !== destination)
-              copyFileSync(built.file, destination, 1)
-            chmodSync(destination, 0o400)
-            const checksum = await fingerprint(destination)
-            record.artifacts.push({
-              platform: os,
-              file: name,
-              version: record.version,
-              buildNumber,
-              published: undefined,
-              error: undefined,
-              ...checksum
-            })
-          } catch {
-            record.failed.push(os)
-            output(`${os} build failed; no package was published`)
-          }
-          state.save(record)
+      const version = packageVersion(source.directory)
+      const buildTime = new Date()
+      const buildNumber = allocateBuildNumber(
+        options.buildNumberFile!,
+        source.directory,
+        options.branch,
+        buildTime
+      )
+      record = asRun({
+        id,
+        app: options.app,
+        branch: options.branch,
+        commit: source.commit,
+        createdAt: buildTime.getTime(),
+        version,
+        buildNumberFormat: 'date',
+        platforms: options.platforms,
+        artifacts: [],
+        failed: []
+      })
+      state.save(record)
+      output(`Build run ${id} pinned to ${source.commit}`)
+      for (const os of options.platforms) {
+        if (signal.aborted) break
+        const selected = target(options.app, os)
+        try {
+          const builder = builders[os]
+          if (builder == null)
+            throw new Error('Signed build adapter is unavailable')
+          const built = await builder({
+            source: source.directory,
+            output: directory,
+            settings,
+            target: selected,
+            branch: record.branch,
+            commit: source.commit,
+            version: record.version,
+            buildNumber,
+            buildTime: new Date(record.createdAt).toISOString(),
+            processes
+          })
+          if (built.buildNumber !== nativeNumber(os, buildNumber))
+            throw new Error('Package build number did not match allocation')
+          const format = os === 'ios' ? 'ipa' : os === 'android' ? 'apk' : 'dmg'
+          const name = `${os}.${format}`
+          const destination = path.join(directory, name)
+          noSymlinks(built.file)
+          if (path.resolve(built.file) !== destination)
+            copyFileSync(built.file, destination, 1)
+          chmodSync(destination, 0o400)
+          const checksum = await fingerprint(destination)
+          record.artifacts.push({
+            platform: os,
+            file: name,
+            version: record.version,
+            buildNumber,
+            published: undefined,
+            error: undefined,
+            ...checksum
+          })
+        } catch {
+          record.failed.push(os)
+          output(`${os} build failed; no package was published`)
         }
-      } finally {
-        await source.cleanup()
+        state.save(record)
       }
     }
     for (const os of options.platforms) {

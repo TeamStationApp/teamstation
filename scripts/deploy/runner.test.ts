@@ -3,7 +3,6 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync
@@ -12,13 +11,25 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { main } from '../deploy'
+import { main as deployMain } from '../deploy'
 import { app, fixtureSettings, testRoot } from './config.test'
-import { type Builder, nativeNumber, options, run } from './runner'
+import {
+  type Builder,
+  nativeNumber,
+  options,
+  run as runCheckout
+} from './runner'
 import { gitFixture } from './source.test'
 import { State } from './state'
 import { type Endpoint, endpoint } from './upload.test'
 let root: string, service: Endpoint, config: string, source: string
+const deployFile = path.resolve('scripts/deploy.ts')
+const register = require.resolve('sucrase/register')
+const run: typeof runCheckout = async (options, builders, signal, output) =>
+  await runCheckout(options, builders, signal, output, source)
+const main: typeof deployMain = async (args, builders) =>
+  await deployMain(args, builders, source)
+
 function parse(platforms = 'ios,android'): ReturnType<typeof options> {
   return options([
     '--build-number-file',
@@ -89,8 +100,8 @@ describe('Pinned multi-app deployment orchestration', () => {
   it('dry-runs the actual CLI without allocating numbers, creating checkouts or leaking config', async () => {
     const args = [
       '-r',
-      'sucrase/register',
-      'scripts/deploy.ts',
+      register,
+      deployFile,
       '--config',
       config,
       '--app',
@@ -103,7 +114,8 @@ describe('Pinned multi-app deployment orchestration', () => {
     ]
     const output = execFileSync(process.execPath, args, {
       encoding: 'utf8',
-      stdio: 'pipe'
+      stdio: 'pipe',
+      cwd: source
     })
     assert(output.includes('Build, verify and upload ios'))
     assert(!output.includes('synthetic'))
@@ -146,20 +158,20 @@ describe('Pinned multi-app deployment orchestration', () => {
     )
   })
   it('pins all platforms, retains verified retry files and publishes successes after partial failure', async () => {
-    writeFileSync(path.join(source, 'package.json'), 'dirty')
+    writeFileSync(path.join(source, 'package.json'), '{"version":"9.8.7"}')
     const logs: string[] = []
     const commits: string[] = []
     const numbers: number[] = []
     const ios: Builder = async context => {
       commits.push(context.commit)
       numbers.push(context.buildNumber)
-      assert.equal(context.version, '1.0.0')
+      assert.equal(context.version, '9.8.7')
       return await builder(context)
     }
     const android: Builder = async context => {
       commits.push(context.commit)
       numbers.push(context.buildNumber)
-      assert.equal(context.version, '1.0.0')
+      assert.equal(context.version, '9.8.7')
       throw new Error('synthetic-private-error')
     }
     assert.equal(
@@ -175,7 +187,7 @@ describe('Pinned multi-app deployment orchestration', () => {
     assert(!logs.join('\n').includes('synthetic-private-error'))
     assert.equal(
       readFileSync(path.join(source, 'package.json'), 'utf8'),
-      'dirty'
+      '{"version":"9.8.7"}'
     )
     assert.equal(
       execFileSync('git', ['worktree', 'list', '--porcelain'], {
@@ -189,7 +201,7 @@ describe('Pinned multi-app deployment orchestration', () => {
     const record = state.load(id)
     assert.equal(record.artifacts[0].published, 7)
     assert.deepEqual(record.failed, ['android'])
-    assert.equal(record.version, '1.0.0')
+    assert.equal(record.version, '9.8.7')
     assert.equal(record.buildNumberFormat, 'date')
     state.close()
     const counterBefore = readFileSync(
@@ -401,6 +413,7 @@ describe('Pinned multi-app deployment orchestration', () => {
       ),
       1
     )
-    assert.equal(readdirSync(path.join(root, 'worktrees')).length, 0)
+    assert(existsSync(path.join(source, 'package.json')))
+    assert(!existsSync(path.join(root, 'worktrees')))
   })
 })

@@ -11,7 +11,7 @@ import { describe, it } from 'mocha'
 import { bundleEnvironment } from './apple'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { Processes } from './process'
-import { nativeNumber, options, run } from './runner'
+import { nativeNumber, options, run as runCheckout } from './runner'
 import { gitFixture } from './source.test'
 import { State } from './state'
 import { endpoint } from './upload.test'
@@ -98,6 +98,19 @@ describe('Deployment runner with actual Mason', () => {
         }
         assert(ready)
         gitFixture(root)
+        const run: typeof runCheckout = async (
+          options,
+          builders,
+          signal,
+          output
+        ) =>
+          await runCheckout(
+            options,
+            builders,
+            signal,
+            output,
+            path.join(root, 'source')
+          )
         const settings = fixtureSettings(root) as Record<string, unknown>
         const apps = settings.apps as Record<
           string,

@@ -5,7 +5,8 @@ import { type Builders, options, run } from './deploy/runner'
 
 export async function main(
   args: string[],
-  builders: Builders = { ios, android, macos }
+  builders: Builders = { ios, android, macos },
+  workingDirectory = process.cwd()
 ): Promise<number> {
   let parsed
   try {
@@ -23,7 +24,13 @@ export async function main(
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
   try {
-    return await run(parsed, builders, cancel.signal)
+    return await run(
+      parsed,
+      builders,
+      cancel.signal,
+      console.log,
+      workingDirectory
+    )
   } catch (error) {
     if (
       error instanceof Error &&
