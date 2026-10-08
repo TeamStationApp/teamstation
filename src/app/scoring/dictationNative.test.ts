@@ -177,7 +177,8 @@ describe('dictation on the phone', function () {
 
   it('forwards whole frames from the microphone and drops an empty chunk', async function () {
     const frames: ArrayBuffer[] = []
-    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
+    let listener:
+      ((event: { pcm?: string; error?: string }) => void) | undefined
     let removed = 0
     let stopped = 0
     const module: PcmModule = {
@@ -210,7 +211,8 @@ describe('dictation on the phone', function () {
 
   it('reports a microphone that stops after it has started', async function () {
     const ended: string[] = []
-    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
+    let listener:
+      ((event: { pcm?: string; error?: string }) => void) | undefined
     const module: PcmModule = {
       async start() {},
       stop() {},
@@ -265,7 +267,8 @@ describe('dictation on the phone', function () {
   it('forwards a late microphone failure through the phone opener', async function () {
     const nativeSpec = require.resolve('../walkup/NativeDictationMicrophone')
     const ended: string[] = []
-    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
+    let listener:
+      ((event: { pcm?: string; error?: string }) => void) | undefined
     const fake: PcmModule = {
       async start() {},
       stop() {},
@@ -277,9 +280,12 @@ describe('dictation on the phone', function () {
     const prior = require.cache[nativeSpec]
     require.cache[nativeSpec] = cachedModule(nativeSpec, { default: fake })
     try {
-      await openMicrophone(() => undefined, message => {
-        ended.push(message)
-      })
+      await openMicrophone(
+        () => undefined,
+        message => {
+          ended.push(message)
+        }
+      )
       listener?.({ error: 'the microphone stopped' })
       expect(ended).deep.equals(['the microphone stopped'])
     } finally {
@@ -315,7 +321,8 @@ describe('dictation on the phone', function () {
   it('loads the native module when no stand-in is passed', async function () {
     const nativeSpec = require.resolve('../walkup/NativeDictationMicrophone')
     const frames: ArrayBuffer[] = []
-    let listener: ((event: { pcm?: string; error?: string }) => void) | undefined
+    let listener:
+      ((event: { pcm?: string; error?: string }) => void) | undefined
     let removed = 0
     const fake: PcmModule = {
       async start() {},
@@ -400,6 +407,9 @@ describe('dictation on the phone', function () {
         kind: ControlKind
       }) => ReturnType<typeof createElement>
     }
+    const field = require('./DefensiveFieldArt.native.tsx') as {
+      DefensiveFieldArt: () => ReturnType<typeof createElement>
+    }
     const icons: ControlKind[] = [
       'more',
       'undo',
@@ -424,6 +434,7 @@ describe('dictation on the phone', function () {
                 kind: kind as keyof typeof CONTROL_COLORS
               })
             ),
+            createElement(field.DefensiveFieldArt),
             ...icons.map(kind =>
               createElement(art.ControlIcon, { key: `icon-${kind}`, kind })
             )
@@ -431,7 +442,7 @@ describe('dictation on the phone', function () {
         )
       })
       expect(host.querySelectorAll('svg').length).equals(
-        Object.keys(CONTROL_COLORS).length + icons.length
+        Object.keys(CONTROL_COLORS).length + icons.length + 1
       )
     } finally {
       await act(async () => {
