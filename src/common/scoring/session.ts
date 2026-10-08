@@ -73,6 +73,8 @@ export interface SessionContext {
   fenceDistanceFt?: number
 }
 export interface SessionOptions {
+  /** Live scorekeeping requires current setup; record replay remains compatible. */
+  requireCurrentSetup?: boolean
   now?: () => Date
   setTimer?: (run: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
@@ -349,7 +351,10 @@ export class ScoringSession {
       }
     // The copy shares the finished plays (`copyGame`), and the action is
     // applied to it in place: `applyAction`'s own copy is of the whole game.
-    const applied = applyAction(copyGame(this.game), action, { inPlace: true })
+    const applied = applyAction(copyGame(this.game), action, {
+      inPlace: true,
+      requireCurrentSetup: this.options.requireCurrentSetup === true
+    })
     if (applied.problems.length > 0)
       return {
         ...applied,

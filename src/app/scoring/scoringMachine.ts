@@ -733,7 +733,8 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
             batter: event.draft.batter ?? undefined,
             pitcher: event.draft.pitcher ?? undefined
           })
-        next.phase = 'ready'
+        next.phase =
+          next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
         next.generation++
       }
     )

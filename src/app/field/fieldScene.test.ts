@@ -13,6 +13,81 @@ import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 describe('rendered field interaction', function () {
+  it('opens setup on a completed square tap, renders no athlete, and cancels moved or interrupted taps', async function () {
+    const players = createPlayers()
+      .slice(0, 1)
+      .map(player => ({
+        ...player,
+        id: 'empty-P',
+        jersey: '',
+        displayName: 'P',
+        emptyPosition: true
+      }))
+    const tapped: string[] = []
+    let camera: Camera | undefined
+    const props = {
+      players,
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1,
+      tapIds: ['empty-P'],
+      onPlayerTap: (id: string) => tapped.push(id)
+    }
+    const renderer = await create(React.createElement(FieldScene, props), {
+      width: 390,
+      height: 844,
+      onCreated: state => {
+        camera = state.camera
+      }
+    })
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(
+        renderer.scene.findAllByProps({ name: 'player-empty-P' })
+      ).has.length(0)
+      if (!(camera instanceof PerspectiveCamera))
+        throw new Error('Missing camera')
+      const plate = projectPlayerLabel(players[0], camera, 390, 844)
+      const screen = new Vector3(
+        (plate.x / 390) * 2 - 1,
+        1 - (plate.y / 844) * 2,
+        0.5
+      )
+      const world = screen.clone().unproject(camera)
+      const event = {
+        button: 0,
+        pointerId: 9,
+        pointer: new Vector2(screen.x, screen.y),
+        ray: new Ray(
+          camera.position.clone(),
+          world.sub(camera.position).normalize()
+        ),
+        target: { setPointerCapture() {}, releasePointerCapture() {} }
+      }
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      expect(tapped).deep.equals([])
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      expect(tapped).deep.equals(['empty-P'])
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerCancel', event)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      expect(tapped).has.length(1)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerUp', {
+        ...event,
+        pointer: new Vector2(screen.x + 0.1, screen.y)
+      })
+      await new Promise(resolve => setTimeout(resolve, 5))
+      expect(tapped).has.length(1)
+    } finally {
+      await renderer.unmount()
+    }
+  })
   it('previews movement without running, commits on release, and cancels cleanly', async function () {
     const players = createPlayers()
     let captured = false

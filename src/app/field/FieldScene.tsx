@@ -384,6 +384,20 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         props.interaction.selectableIds.includes(player.id)
       : props.selectableIds == null || props.selectableIds.includes(player.id)
   )
+  const setupTap = useRef<{
+    id: string
+    pointer: number
+    x: number
+    y: number
+    generation: number
+  } | null>(null)
+  const setupTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (setupTapTimer.current != null) clearTimeout(setupTapTimer.current)
+    },
+    []
+  )
   const down = (event: ThreeEvent<PointerEvent>): void => {
     if (
       arcMode !== 'off' ||
@@ -406,9 +420,22 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       !eligible.some(player => object?.name === `player-${player.id}`)
     )
       object = object.parent ?? undefined
-    let nearest: FieldPlayer | undefined = eligible.find(
-      player => object?.name === `player-${player.id}`
-    )
+    let nearest: FieldPlayer | undefined =
+      camera instanceof PerspectiveCamera
+        ? eligible.find(
+            player =>
+              player.emptyPosition === true &&
+              nameplateContains(
+                player,
+                camera,
+                size.width,
+                size.height,
+                (event.pointer.x * 0.5 + 0.5) * size.width,
+                (0.5 - event.pointer.y * 0.5) * size.height
+              )
+          )
+        : undefined
+    nearest ??= eligible.find(player => object?.name === `player-${player.id}`)
     if (nearest == null && camera instanceof PerspectiveCamera) {
       const pointerX = (event.pointer.x * 0.5 + 0.5) * size.width
       const pointerY = (0.5 - event.pointer.y * 0.5) * size.height
@@ -440,6 +467,17 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     }
     const player = nearest
     if (player == null) return
+    if (props.tapIds?.includes(player.id) === true) {
+      setupTap.current = {
+        id: player.id,
+        pointer: event.pointerId,
+        x: event.pointer.x,
+        y: event.pointer.y,
+        generation: props.interaction?.generation ?? 0
+      }
+      ;(event.target as Element).setPointerCapture(event.pointerId)
+      return
+    }
     if (event.ray.intersectPlane(ground, point) == null) {
       if (nearest == null) return
       point.set(player.position.x, TERRAIN.players, player.position.z)
@@ -489,6 +527,32 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     invalidate()
   }
   const up = (event: ThreeEvent<PointerEvent>, cancel = false): void => {
+    const tap = setupTap.current
+    if (tap?.pointer === event.pointerId) {
+      setupTap.current = null
+      event.stopPropagation()
+      ;(event.target as Element).releasePointerCapture(event.pointerId)
+      if (
+        !cancel &&
+        tap.generation === (props.interaction?.generation ?? 0) &&
+        props.tapIds?.includes(tap.id) === true &&
+        Math.hypot(
+          ((event.pointer.x - tap.x) * size.width) / 2,
+          ((event.pointer.y - tap.y) * size.height) / 2
+        ) <= 8
+      )
+        // Mount the sheet after this pointer's synthetic click finishes, so
+        // that click cannot immediately dismiss the new sheet's backdrop.
+        setupTapTimer.current = setTimeout(() => {
+          setupTapTimer.current = null
+          if (
+            callbacks.current.tapIds?.includes(tap.id) === true &&
+            tap.generation === (callbacks.current.interaction?.generation ?? 0)
+          )
+            callbacks.current.onPlayerTap?.(tap.id)
+        }, 0)
+      return
+    }
     if (drag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
     if (!cancel && runnerDrag.current != null) move(event)
@@ -580,6 +644,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   } | null>(null)
   useEffect(() => {
     const cancel = (): void => {
+      setupTap.current = null
       clearHold()
       if (runnerDrag.current != null) {
         runnerDrag.current = null
@@ -828,7 +893,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         scoreboard={props.scoreboard}
         teams={props.teams}
       />
-      <PlayerShadows players={players} />
+      <PlayerShadows
+        players={players.filter(player => player.emptyPosition !== true)}
+      />
       {props.presentation != null && (
         <PlayAnimation
           key={props.presentation.id}
@@ -887,19 +954,21 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         <planeGeometry />
         <meshBasicMaterial visible={false} />
       </mesh>
-      {players.map(player => (
-        <Player
-          key={player.id}
-          player={player}
-          fabric={textures.cloth}
-          onMovementComplete={props.onMovementComplete}
-          paused={props.presentationPaused}
-          selected={
-            (preview?.id === player.id || player.keyboardOrigin != null) &&
-            eligible.some(item => item.id === player.id)
-          }
-        />
-      ))}
+      {players
+        .filter(player => player.emptyPosition !== true)
+        .map(player => (
+          <Player
+            key={player.id}
+            player={player}
+            fabric={textures.cloth}
+            onMovementComplete={props.onMovementComplete}
+            paused={props.presentationPaused}
+            selected={
+              (preview?.id === player.id || player.keyboardOrigin != null) &&
+              eligible.some(item => item.id === player.id)
+            }
+          />
+        ))}
     </>
   )
 }

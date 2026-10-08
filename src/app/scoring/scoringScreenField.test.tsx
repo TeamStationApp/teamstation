@@ -4,12 +4,21 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
+import { freshGame } from '../../common/scoring/rules'
+import { ScoringSession } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { ScoringScreen } from './ScoringScreen'
-import { DevelopmentScoringSource } from './scoringSource'
+import {
+  DevelopmentScoringSource,
+  memoryStore,
+  type ScoringSource
+} from './scoringSource'
+import { POSITIONS } from './scoringTypes'
 
 type Props = Parameters<typeof BaseballScreen>[0]
 type FieldProps = NonNullable<Props['field']>
@@ -112,7 +121,7 @@ function placement(entityId: string): FieldPlacement {
 let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
-async function mount(source?: DevelopmentScoringSource): Promise<void> {
+async function mount(source?: ScoringSource): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
@@ -315,5 +324,103 @@ describe('scoring screen field wiring', function () {
       more.props.onChoose({ action: 'Hit by Pitch' })
     })
     expect(props().summary).to.be.a('string')
+  })
+  it('assigns current defense from the field, reuses placeholder quantity and dismisses complete warnings', async function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const home = session.liveData.boxscore.teams.home
+    home.players = home.players.slice(0, 8)
+    home.battingOrder = [...home.players]
+    for (const slot of POSITIONS) home.defense[slot] = null
+    const prepared = freshGame(
+      session.gamePk,
+      session.gameData.teams,
+      setupOf(session)
+    )
+    await mount({
+      open: async () => ScoringSession.start(memoryStore(), 'g1', prepared)
+    })
+    expect(props().canPitch).equals(false)
+    expect(
+      field().players.filter(player => player.emptyPosition === true)
+    ).has.length(9)
+    await step(() => field().onPlayerTap?.('empty-P'))
+    expect(document.body.textContent).includes('Create Placeholder Players')
+    const click = async (label: string): Promise<void> => {
+      await step(() => {
+        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+      })
+    }
+    await click('Create Placeholder Players')
+    await click('Player count 2')
+    await click('Add')
+    expect(document.querySelectorAll('[aria-label^="Assign P #"]')).has.length(
+      10
+    )
+    expect(
+      document.querySelector('[aria-label="Create Placeholder Players"]')
+    ).equals(null)
+    await click('Assign P #1 P1')
+    expect(props().instruction).not.includes('P,')
+    const pitcher = field().players.find(player => player.label === 'P')!
+    await step(() => field().onPlayerTap?.(pitcher.id))
+    expect(
+      document.querySelector('[aria-label="Create Placeholder Players"]')
+    ).equals(null)
+    await click('Cancel')
+    for (const [index, slot] of POSITIONS.entries()) {
+      if (slot === 'P') continue
+      await step(() => field().onPlayerTap?.(`empty-${slot}`))
+      await click(
+        index < 8
+          ? `Assign ${slot} #${index + 1} P${index + 1}`
+          : `Assign ${slot} #— HA`
+      )
+    }
+    expect(props().instruction).equals(undefined)
+    expect(props().canPitch).equals(true)
+  })
+  it('shows zero and partial current batting warnings with accurate routes, acceptance and guards', async function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    session.liveData.boxscore.teams.away.battingOrder = []
+    const prepared = freshGame(
+      session.gamePk,
+      session.gameData.teams,
+      setupOf(session)
+    )
+    await mount({
+      open: async () => ScoringSession.start(memoryStore(), 'g1', prepared)
+    })
+    expect(props().canPitch).equals(false)
+    expect(field().scoreboard?.batter.firstName).equals('')
+    await step(() => {
+      props().onPitch('ball')
+    })
+    expect(props().summary).includes('0 balls')
+    expect(props().instruction).equals('Insufficient batting lineup.')
+    expect(props().setupToast?.message).equals('No players in lineup')
+    expect(props().setupToast?.onAcceptLineup).equals(undefined)
+    await step(() => props().setupToast?.onSetLineup?.())
+    expect(
+      document.querySelector('[aria-label="Away Team"][aria-selected="true"]')
+    ).not.equals(null)
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Add Player 1 to Lineup"]')!
+        .click()
+    })
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Save Rosters"]')!
+        .click()
+    })
+    expect(props().setupToast?.message).equals('Only one player in lineup')
+    expect(props().canPitch).equals(false)
+    await step(() => props().setupToast?.onAcceptLineup?.())
+    expect(props().instruction).equals(undefined)
+    expect(props().canPitch).equals(true)
+    await step(() => {
+      props().onPitch('ball')
+    })
+    expect(props().summary).includes('1 balls')
   })
 })

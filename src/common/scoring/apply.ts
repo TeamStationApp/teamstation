@@ -74,6 +74,7 @@ import {
   type PlayerRef,
   type PlayEvent,
   type Point,
+  POSITIONS,
   type Resolution,
   type ResolutionOutcome,
   type RunnerCredit,
@@ -1885,7 +1886,10 @@ const CLOSES_FIRST = new Set<ScoringAction['type']>([
 export function applyAction(
   state: GameState,
   raw: ScoringAction,
-  { inPlace = false }: { inPlace?: boolean } = {}
+  {
+    inPlace = false,
+    requireCurrentSetup = false
+  }: { inPlace?: boolean; requireCurrentSetup?: boolean } = {}
 ): Applied {
   const cleaned = cleanAction(raw)
   const unchanged = (problem: Problem): Applied => ({
@@ -1916,6 +1920,23 @@ export function applyAction(
       action.type !== 'gameFlow'
     )
       refuse('notNow', 'The batter due is on base: change the lineup first')
+    if (
+      requireCurrentSetup &&
+      ctx.state.pending == null &&
+      action.type !== 'lineup' &&
+      action.type !== 'gameFlow'
+    ) {
+      const defense =
+        ctx.state.liveData.boxscore.teams[fieldingSide(ctx.state)].defense
+      const missing = POSITIONS.filter(position => defense[position] == null)
+      if (missing.length > 0)
+        refuse('notNow', `Missing defensive positions: ${missing.join(', ')}`)
+      if (
+        ctx.state.liveData.boxscore.teams[battingSide(ctx.state)].battingOrder
+          .length === 0
+      )
+        refuse('notNow', 'No players in lineup')
+    }
     ;(HANDLERS[action.type] as (ctx: Ctx, action: ScoringAction) => void)(
       ctx,
       action
