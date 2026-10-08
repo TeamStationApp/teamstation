@@ -9,6 +9,7 @@ import {
   openPreviousEpochKey,
   verifyEpoch
 } from '../../../common/chatCrypto/chain'
+import { ChatCryptoUnavailable } from '../../../common/chatCrypto/coreCall'
 import { epochAad, hpkeOpen } from '../../../common/chatCrypto/hpke'
 import {
   type MessageFields,
@@ -202,7 +203,8 @@ export async function openEpochKeys(
         unb64(box.box)
       )
       if (key.length === 32) found.set(box.epoch, key)
-    } catch {
+    } catch (error) {
+      if (error instanceof ChatCryptoUnavailable) throw error
       // A box that does not open is no key; the chat stays locked.
     }
   }
@@ -229,7 +231,8 @@ export async function openEpochKeys(
           previousKeyBox: unb64(epoch.record.previousKeyBox)
         })
       )
-    } catch {
+    } catch (error) {
+      if (error instanceof ChatCryptoUnavailable) throw error
       // A broken link: what lies below it stays closed.
     }
   }
@@ -319,7 +322,8 @@ export async function openEnvelope(
         messageKey: messageKey(epochKey, fields.conversationId, envelope.id)
       })
     )
-  } catch {
+  } catch (error) {
+    if (error instanceof ChatCryptoUnavailable) throw error
     return { status: 'invalid', reason: 'content' }
   }
   if (

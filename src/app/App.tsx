@@ -24,6 +24,7 @@ import { ChatMembersScreen } from './chat/ChatMembersScreen'
 import { hasUnread } from './chat/chatModel'
 import { ConversationScreen } from './chat/ConversationScreen'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
+import { leaveChat } from './chat/engine/links'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
@@ -830,7 +831,13 @@ function Shell(props: AppProps): React.ReactElement {
             route.name !== 'oauthApprove'
               ? undefined
               : async () => {
-                  await client.signOut()
+                  await leaveChat({ client, store: keyStore }).catch(
+                    () => undefined
+                  )
+                  // Removing the chat device may already have revoked this
+                  // session, so logout can legitimately answer unauthorized.
+                  await client.signOut().catch(() => undefined)
+                  client.token = undefined
                   rememberSession(undefined)
                   const destination: Route = {
                     name: 'signIn',
