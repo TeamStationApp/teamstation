@@ -8,6 +8,7 @@ import {
   asString
 } from 'cleaners'
 
+import { asHttpsUrl } from '../common/distribution'
 import {
   asAuthority,
   type Authority,
@@ -15,8 +16,11 @@ import {
   httpOrigin,
   PRIMARY_HOST
 } from '../common/primaryUrl'
+import { asOAuthConfig } from './oauth/config'
 
 export const asServerConfig = asObject({
+  oauth: asOptional(asOAuthConfig),
+  buildsUrl: asOptional(asHttpsUrl),
   /** Where the API listens. */
   listenHost: asOptional(asString, '127.0.0.1'),
   listenPort: asOptional(asNumber, 9100),
@@ -257,10 +261,16 @@ export type ServerConfig = ReturnType<typeof asServerConfig>
 export type SmtpSettings = ServerConfig['smtp']
 export type LiveSettings = ServerConfig['live']
 
-export const serverConfig: ServerConfig = makeConfig(
-  asServerConfig,
-  './serverConfig.json'
-)
+function loadServerConfig(): ServerConfig {
+  try {
+    return makeConfig(asServerConfig, './serverConfig.json')
+  } catch {
+    // cleaner-config includes the entire input in validation errors, which
+    // can contain OAuth client secrets and other private configuration.
+    throw new Error('Invalid server configuration')
+  }
+}
+export const serverConfig: ServerConfig = loadServerConfig()
 
 /**
  * What this server is called: a host, with a port only where it has one.

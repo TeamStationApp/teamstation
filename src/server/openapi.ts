@@ -1521,6 +1521,77 @@ export function openApiDocument(version: string): OpenApiDocument {
     },
     paths: {
       ...accountPaths,
+      '/me/builds': {
+        get: {
+          summary: 'Read the optional build distribution link',
+          description:
+            'Human sessions only. The distribution service independently decides access. An absent URL means no link should be shown.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Optional HTTPS URL' },
+            401: { description: 'Active human session required' }
+          }
+        }
+      },
+      '/oauth/approvals/{handle}': {
+        get: {
+          summary: 'Read an OAuth request to approve in the mobile app',
+          description:
+            'Requires an active human session. Available when OAuth is configured. The opaque handle expires after five minutes.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'handle',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'Registered client name, requested scopes, decision and browser resume URL'
+            },
+            400: { description: 'Expired or unavailable approval' },
+            401: { description: 'An active human session is required' }
+          }
+        },
+        post: {
+          summary: 'Approve or deny an OAuth request from the mobile app',
+          description:
+            'Requires a human Bearer session and no browser Origin header. The decision is single-use; only the initiating browser can complete authorization.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'handle',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['approve'],
+                  additionalProperties: false,
+                  properties: { approve: { type: 'boolean' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Decision saved; resume the original browser' },
+            400: {
+              description: 'Invalid, expired or already decided approval'
+            },
+            401: { description: 'An active human session is required' },
+            403: { description: 'Native Bearer authorization is required' }
+          }
+        }
+      },
       '/health': {
         get: {
           summary:

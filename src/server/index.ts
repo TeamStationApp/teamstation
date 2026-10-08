@@ -30,6 +30,9 @@ import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
 import { errorHandler, notFoundHandler } from './middleware/withErrors'
+import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
+import { createOAuthProvider } from './oauth/provider'
+import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
@@ -457,6 +460,13 @@ function runWorker(): void {
   // Who is calling, then their body, which for a picture is read only when
   // somebody is signed in, then what they changed, then the routes.
   app.use(withActor(db))
+  if (serverConfig.oauth?.enabled === true) {
+    const provider = createOAuthProvider(db, serverConfig.oauth, publicUrl)
+    app.use(['/oauth', '/api/v1/oauth/approvals'], oauthRequestLimit(db))
+    app.use(oauthInteractionRoutes(db, provider, publicUrl))
+    scheduleOAuthPrune(db)
+    app.use('/oauth', provider.callback())
+  }
   app.use(jsonBody)
   app.use(withAudit(db))
 
@@ -501,7 +511,7 @@ function runWorker(): void {
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db))
-  app.use('/api/v1', meRoutes(db))
+  app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use(
     '/api/v1',
     accountRoutes(db, {

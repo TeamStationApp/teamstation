@@ -68,7 +68,16 @@
     "typecheck.native": "tsc -p tsconfig.native.json",
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts",
     "coverage.account": "node scripts/account-coverage.mjs",
-    "coverage.password": "node scripts/password-coverage.mjs"
+    "coverage.password": "node scripts/password-coverage.mjs",
+    "test:oauth": "mocha -r sucrase/register src/server/oauth/oauth.test.ts src/server/openapi.test.ts",
+    "coverage.builds": "node scripts/builds-coverage.mjs",
+    "test:builds-ui": "node scripts/build-builds-ui-tests.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs lib/builds-tests.cjs src/common/distribution.test.ts src/app/navigation/routes.test.ts",
+    "deploy": "node -r sucrase/register scripts/deploy.ts",
+    "signing:import": "node -r sucrase/register scripts/deploy/signing.ts",
+    "test:deploy": "mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
+    "coverage.deploy": "c8 --all --include 'scripts/deploy.ts' --include 'scripts/deploy/**/*.ts' --exclude '**/*.test.ts' --report-dir coverage/deploy --reporter text --reporter json --reporter lcov --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
+    "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts",
+    "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
@@ -89,6 +98,7 @@
     "kysely": "^0.29.6",
     "node-media-server": "4.2.4",
     "nodemailer": "^10.0.10",
+    "oidc-provider": "9.12.2",
     "pg": "^8.13.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -128,6 +138,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.3.1",
     "@types/nodemailer": "^8.0.2",
+    "@types/oidc-provider": "9.12.1",
     "@types/pg": "^8.11.10",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -142,11 +153,13 @@
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "mocha": "^12.0.1",
+    "openid-client": "6.8.8",
     "prettier": "^3.5.3",
     "puppeteer": "^25.11.0",
     "rimraf": "^6.0.1",
     "sucrase": "^3.35.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "undici": "7.29.1"
   },
   "overrides": {
     "expo-modules-core": {
