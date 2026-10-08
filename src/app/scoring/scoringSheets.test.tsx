@@ -99,7 +99,8 @@ async function input(label: string, value: string): Promise<void> {
   })
 }
 async function mount(
-  prepare?: (session: ScoringSessionState) => void
+  prepare?: (session: ScoringSessionState) => void,
+  onStoreWrite?: () => void
 ): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
@@ -109,7 +110,13 @@ async function mount(
     open: async () => {
       const session = createDevelopmentSession(gameFixture, [], [])
       prepare?.(session)
-      return ScoringSession.start(memoryStore(), 'g1', session)
+      const store = memoryStore()
+      const save = store.save
+      store.save = async (gameId, change) => {
+        onStoreWrite?.()
+        return await save(gameId, change)
+      }
+      return ScoringSession.start(store, 'g1', session)
     }
   }
   const host = document.createElement('div')
@@ -171,6 +178,141 @@ describe('scoring slide-up sheets', function () {
     }
   })
 
+  it('writes the defense draft only after Save Rosters', async function () {
+    this.timeout(10000)
+    let writes = 0
+    await mount(undefined, () => {
+      writes++
+    })
+    await menu('Set Team Rosters')
+    await click('Set Defense')
+    const originalWrites = writes
+    await click('Clear P')
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="1"]',
+      'defense-C'
+    )
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="2"]',
+      'defense-P'
+    )
+    expect(writes).equals(originalWrites)
+    await click('Save Rosters')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(writes).greaterThan(originalWrites)
+    await menu('Set Team Rosters')
+    await click('Set Defense')
+    expect(
+      document.querySelector('[data-roster-target="defense-P"]')!.textContent
+    ).includes('Player 2')
+    expect(
+      document.querySelector('[data-roster-target="defense-C"]')!.textContent
+    ).includes('Player 1')
+    await click('Cancel')
+  })
+  it('uses a compact roster shell and drafts field assignment, replacement, clear and cancellation', async function () {
+    this.timeout(10000)
+    await mount()
+    await menu('Set Team Rosters')
+    expect(document.querySelector('[role="heading"]')?.textContent).not.equals(
+      'Set Team Rosters'
+    )
+    expect(document.querySelectorAll('[aria-label="Cancel"]')).length(1)
+    expect(
+      document.querySelector('[aria-label="Add Placeholder Players"]')
+    ).equals(null)
+    const footer = document.querySelector('[data-testid="Roster footer"]')!
+    expect(footer.textContent).includes('Add PlayerSave RostersCancel')
+    await click('Set Defense')
+    expect(document.body.textContent).includes(
+      'Drag player into defensive position'
+    )
+    expect(
+      document.querySelector('[aria-label="Top-down baseball field"]')
+    ).not.equals(null)
+    expect(
+      document.querySelectorAll('[data-roster-target^="defense-"]')
+    ).length(9)
+    const grid = document.querySelector<HTMLElement>(
+      '[data-testid="Defense roster grid"]'
+    )!
+    expect(grid.style.flexDirection).equals('row')
+    await act(async () => {
+      document.querySelector('[data-roster-target="defense-P"]')!.dispatchEvent(
+        new window.MouseEvent('pointerout', {
+          bubbles: true,
+          relatedTarget: document.body
+        })
+      )
+    })
+    await click('Clear P')
+    const roster = (): string =>
+      document.querySelector('[data-roster-target="roster"]')!.textContent!
+    expect(roster()).includes('Player 1')
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="1"]',
+      'defense-C'
+    )
+    expect(
+      document.querySelector('[data-roster-target="defense-C"]')!.textContent
+    ).includes('Player 1')
+    expect(roster()).not.includes('#1 Player 1')
+    expect(roster()).includes('Player 2')
+    await click('Clear C')
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="2"]',
+      'defense-P'
+    )
+    expect(
+      document.querySelector('[data-roster-target="defense-P"]')!.textContent
+    ).includes('Player 2')
+    await click('Home Team')
+    await click('Away Team')
+    expect(
+      document.querySelector('[data-roster-target="defense-P"]')!.textContent
+    ).includes('Player 2')
+    await click('Cancel')
+    await menu('Set Team Rosters')
+    await click('Set Defense')
+    expect(
+      document.querySelector('[data-roster-target="defense-P"]')!.textContent
+    ).includes('Player 1')
+    await click('Cancel')
+  })
+  it('adds placeholders through player entry while keeping additions in the roster draft', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Create Player')
+    const more = document.querySelector(
+      '[aria-label="Save and Add Another Player"]'
+    )!
+    const placeholders = document.querySelector(
+      '[aria-label="Add Placeholder Players"]'
+    )!
+    expect(more.compareDocumentPosition(placeholders) & 4).equals(4)
+    await click('Add Placeholder Players')
+    await click('Player count 3')
+    await click('Add')
+    expect(document.querySelector('[aria-label="First Name"]')).not.equals(null)
+    await act(async () => {
+      const cancels = document.querySelectorAll<HTMLElement>(
+        '[aria-label="Cancel"]'
+      )
+      cancels[cancels.length - 1].click()
+    })
+    expect(
+      document.querySelector('[data-roster-target="roster"]')!.textContent
+    ).includes('Owls A')
+    await click('Cancel')
+    await menu('Set Team Rosters')
+    expect(
+      document.querySelector('[data-roster-target="roster"]')!.textContent
+    ).not.includes('Owls A')
+    await click('Cancel')
+  })
+
   it('lists the roster by jersey number, numbers first and no number last, in both modes', async function () {
     await mount()
     await menu('Set Team Rosters')
@@ -207,7 +349,8 @@ describe('scoring slide-up sheets', function () {
         lineup.findIndex(row => row.startsWith('#10 '))
       )
       await click('Set Defense')
-      expect(roster()).deep.equals(lineup)
+      inOrder(roster())
+      expect(roster().every(row => lineup.includes(row))).equals(true)
       await click('Set Lineup')
       // Adding to the lineup puts him last there; the lineup is not sorted.
       await click('Add Zed Ten to Lineup')
@@ -227,15 +370,30 @@ describe('scoring slide-up sheets', function () {
     await menu('Set Team Rosters')
     await click('Remove Player 2')
     await click('Add Player 2 to Lineup')
-    await keys('Reorder Player 2', [' ', 'ArrowUp', 'Escape'])
-    expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
-      null
-    )
-    expect(
-      document.querySelector('[data-roster-target="lineup-8"]')!.textContent
-    ).includes('Player 2')
-    await keys('Reorder Player 2', [' ', 'ArrowUp', 'Enter'])
-    await keys('Reorder Player 2', [' ', 'ArrowDown', 'Enter'])
+    const vibration = Object.getOwnPropertyDescriptor(navigator, 'vibrate')
+    let keyboardCues = 0
+    Object.defineProperty(navigator, 'vibrate', {
+      configurable: true,
+      value: () => {
+        keyboardCues++
+        return false
+      }
+    })
+    try {
+      await keys('Reorder Player 2', [' ', 'ArrowUp', 'Escape'])
+      expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
+        null
+      )
+      expect(
+        document.querySelector('[data-roster-target="lineup-8"]')!.textContent
+      ).includes('Player 2')
+      await keys('Reorder Player 2', [' ', 'ArrowUp', 'Enter'])
+      await keys('Reorder Player 2', [' ', 'ArrowDown', 'Enter'])
+      expect(keyboardCues).equals(0)
+    } finally {
+      if (vibration == null) delete (navigator as Partial<Navigator>).vibrate
+      else Object.defineProperty(navigator, 'vibrate', vibration)
+    }
     await click('Create Player')
     await input('First Name', 'Alex')
     await input('Last Name', 'Local')
@@ -291,7 +449,7 @@ describe('scoring slide-up sheets', function () {
     await click('Set Defense')
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
-    ).includes('P#1 Player 1')
+    ).includes('P · #1 Player 1')
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')

@@ -1301,6 +1301,7 @@ function ScoringPanel(props: {
       )}
       {sheet != null && (
         <ScoringSheet
+          headerless={sheet === 'rosters'}
           textCancel={sheet === 'rosters'}
           fullScreen={sheet === 'rosters'}
           tall={sheet === 'settings'}
@@ -1357,6 +1358,7 @@ function ScoringPanel(props: {
             <RosterEditor
               key={rosterRead}
               state={state}
+              onCancel={closeSheet}
               onSave={(draft, nextBatter) => {
                 dispatch({ type: 'ROSTER', draft, nextBatter })
                 closeSheet()

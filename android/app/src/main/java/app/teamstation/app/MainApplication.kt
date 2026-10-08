@@ -2,6 +2,7 @@ package app.teamstation.app
 
 import android.app.Application
 import app.teamstation.app.browser.ExternalBrowserPackage
+import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.orientation.OrientationPackage
 import app.teamstation.app.walkup.DictationMicrophonePackage
@@ -31,6 +32,7 @@ class MainApplication : Application(), ReactApplication {
           // Lets the multi-camera view turn sideways in an upright app.
           add(OrientationPackage())
           add(ExternalBrowserPackage())
+          add(HapticsPackage())
         },
     )
   }
