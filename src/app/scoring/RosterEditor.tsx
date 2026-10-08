@@ -68,8 +68,10 @@ export function RosterEditor({
 }): React.ReactElement {
   const theme = useTheme()
   const { height } = useWindowDimensions()
-  const availableHeight = useContext(ScoringSheetHeight) ?? height
-  const dense = availableHeight < 330
+  const measuredHeight = useContext(ScoringSheetHeight)
+  const availableHeight =
+    measuredHeight != null && measuredHeight > 0 ? measuredHeight : height
+  const dense = availableHeight > 0 && availableHeight < 330
   const [draft, setDraft] = useState(() =>
     copyState(initialDraft?.draft ?? state.session)
   )
@@ -257,12 +259,10 @@ export function RosterEditor({
                 >
                   {byJersey(team.players, names)
                     .filter(id => !assigned.includes(id))
-                    .map(id => (
-                      <View
-                        key={id}
-                        style={defense ? { width: '47%' } : undefined}
-                      >
+                    .map(id => {
+                      const card = (
                         <RosterDrag
+                          key={id}
                           playerId={id}
                           label={
                             defense
@@ -287,8 +287,15 @@ export function RosterEditor({
                             </Text>
                           </View>
                         </RosterDrag>
-                      </View>
-                    ))}
+                      )
+                      return defense ? (
+                        <View key={id} style={{ width: '47%' }}>
+                          {card}
+                        </View>
+                      ) : (
+                        card
+                      )
+                    })}
                 </View>
                 {!defense && (
                   <Text
