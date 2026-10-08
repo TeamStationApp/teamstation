@@ -103,7 +103,7 @@ export async function importSigning(
       target: target(selected.app, platform),
       branch: selected.branch,
       commit: '0'.repeat(40),
-      version: settings.apps[selected.app].version,
+      version: settings.apps[selected.app].version ?? '0.0.0',
       buildNumber: 1,
       buildTime: new Date().toISOString(),
       processes

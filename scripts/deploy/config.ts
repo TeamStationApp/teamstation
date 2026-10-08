@@ -47,14 +47,14 @@ const asApple = object({
 })
 const asPlatform = object({
   upload: asUpload,
-  seedBuildNumber: integer(1, 2100000000),
+  seedBuildNumber: asOptional(integer(1, 2100000000)),
   android: asOptional(asAndroid),
   apple: asOptional(asApple)
 })
 const asApp = object({
   repository: asOptional(text()),
   apiOrigin: asOptional(httpsOrigin),
-  version: text(80),
+  version: asOptional(text(80)),
   ios: asOptional(asPlatform),
   android: asOptional(asPlatform),
   macos: asOptional(asPlatform)

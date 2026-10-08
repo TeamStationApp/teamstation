@@ -84,6 +84,10 @@ export const asRun = object({
   commit: sha,
   createdAt: integer(),
   version: text(80),
+  buildNumberFormat: asOptional((value: unknown): 'date' => {
+    if (value !== 'date') throw new Error('Invalid build number format')
+    return value
+  }),
   platforms: asArray(platform),
   artifacts: asArray(asArtifact),
   failed: asArray(platform)

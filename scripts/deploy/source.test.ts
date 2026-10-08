@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { resolveSettings, type Settings } from './config'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { Processes } from './process'
-import { prepareSource, remoteCommit } from './source'
+import { currentSource, prepareSource, remoteCommit } from './source'
 import { target } from './targets'
 let root: string, settings: Settings, source: string
 export function gitFixture(root: string): string {
@@ -55,6 +55,64 @@ describe('Exact source branch preparation', () => {
   })
   afterEach(() => {
     rmSync(root, { recursive: true, force: true })
+  })
+  it('builds the current root without remote access, cleaning or replacing local files', async () => {
+    execFileSync('git', ['remote', 'remove', 'origin'], { cwd: source })
+    writeFileSync(path.join(source, 'package.json'), '{"version":"9.8.7"}')
+    writeFileSync(path.join(source, 'untracked.txt'), 'keep')
+    const processes = new Processes(new AbortController().signal)
+    const original = processes.run.bind(processes)
+    const commands: string[][] = []
+    processes.run = async command => {
+      commands.push(command.args)
+      return await original(command)
+    }
+    try {
+      const current = await currentSource(
+        settings,
+        target(app, 'ios'),
+        processes,
+        source
+      )
+      assert.equal(current.directory, source)
+      assert.equal(
+        current.commit,
+        execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: source,
+          encoding: 'utf8'
+        }).trim()
+      )
+      assert(commands.every(args => args[0] === 'rev-parse'))
+      assert.equal(
+        readFileSync(path.join(source, 'untracked.txt'), 'utf8'),
+        'keep'
+      )
+      assert.equal(
+        readFileSync(path.join(source, 'package.json'), 'utf8'),
+        '{"version":"9.8.7"}'
+      )
+      await assert.rejects(
+        currentSource(
+          settings,
+          target('app.teamstation.director', 'ios'),
+          processes,
+          source
+        ),
+        /requested target/
+      )
+      mkdirSync(path.join(source, 'nested'))
+      await assert.rejects(
+        currentSource(
+          settings,
+          target(app, 'ios'),
+          processes,
+          path.join(source, 'nested')
+        ),
+        /repository root/
+      )
+    } finally {
+      processes.run = original
+    }
   })
   it('pins one fetched commit, preserves dirty source, owns dependencies and safely removes only its checkout', async () => {
     const processes = new Processes(new AbortController().signal)
