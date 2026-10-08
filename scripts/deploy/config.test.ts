@@ -1,3 +1,5 @@
+import '../../src/test/fixtureRoots.test'
+
 import assert from 'node:assert/strict'
 import {
   chmodSync,
