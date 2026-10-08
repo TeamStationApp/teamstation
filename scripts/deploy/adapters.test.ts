@@ -208,6 +208,19 @@ describe('Native build and signing adapters', () => {
       context.commit
     )
     assert.equal(buildEnvironment(context).TS_PRIMARY_HOST, 'app.example.test')
+    assert.equal(
+      buildEnvironment(context).TS_API_BASE_URL,
+      'https://app.example.test/api/v1'
+    )
+    context.settings.apps[app].apiOrigin = 'https://api.example.test:8443'
+    assert.equal(
+      buildEnvironment(context).TS_PRIMARY_HOST,
+      'api.example.test:8443'
+    )
+    assert.equal(
+      buildEnvironment(context).TS_API_BASE_URL,
+      'https://api.example.test:8443/api/v1'
+    )
     assert.equal(await prepare(context), context.source)
     await prepare(context)
     assert.equal(calls.filter(c => c.file === 'socket').length, 1)

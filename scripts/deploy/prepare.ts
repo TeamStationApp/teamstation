@@ -20,7 +20,10 @@ export function buildEnvironment(context: BuildContext): NodeJS.ProcessEnv {
     }),
     ...(origin == null
       ? {}
-      : { TS_API_BASE_URL: origin, TS_PRIMARY_HOST: new URL(origin).hostname })
+      : {
+          TS_API_BASE_URL: `${origin}/api/v1`,
+          TS_PRIMARY_HOST: new URL(origin).host
+        })
   }
 }
 export function appDirectory(context: BuildContext): string {
