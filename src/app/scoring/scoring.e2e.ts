@@ -1887,7 +1887,7 @@ describe('scoring browser', function () {
       })
       await page.mouse.move(from.x, from.y)
       await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 550))
+      await page.waitForSelector('[data-testid="Roster dragged card"]')
       await page.mouse.move(to.x, to.y, { steps: 12 })
       await page.mouse.up()
       await page.waitForFunction(() =>
