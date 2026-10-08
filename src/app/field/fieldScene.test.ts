@@ -78,6 +78,15 @@ describe('rendered field interaction', function () {
       await new Promise(resolve => setTimeout(resolve, 5))
       expect(tapped).has.length(1)
       await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerMove', {
+        ...event,
+        pointer: new Vector2(screen.x + 0.2, screen.y)
+      })
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      expect(tapped).has.length(1)
+      await renderer.fireEvent(surface, 'pointerDown', event)
       await renderer.fireEvent(surface, 'pointerUp', {
         ...event,
         pointer: new Vector2(screen.x + 0.1, screen.y)

@@ -291,6 +291,17 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     size.height
   ])
   const move = (event: ThreeEvent<PointerEvent>): void => {
+    const tap = setupTap.current
+    if (tap?.pointer === event.pointerId) {
+      if (
+        Math.hypot(
+          ((event.pointer.x - tap.x) * size.width) / 2,
+          ((event.pointer.y - tap.y) * size.height) / 2
+        ) > 8
+      )
+        tap.moved = true
+      return
+    }
     if (drag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
     const runner = runnerDrag.current
@@ -390,6 +401,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     x: number
     y: number
     generation: number
+    moved: boolean
   } | null>(null)
   const setupTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
@@ -473,7 +485,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         pointer: event.pointerId,
         x: event.pointer.x,
         y: event.pointer.y,
-        generation: props.interaction?.generation ?? 0
+        generation: props.interaction?.generation ?? 0,
+        moved: false
       }
       ;(event.target as Element).setPointerCapture(event.pointerId)
       return
@@ -534,6 +547,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       ;(event.target as Element).releasePointerCapture(event.pointerId)
       if (
         !cancel &&
+        !tap.moved &&
         tap.generation === (props.interaction?.generation ?? 0) &&
         props.tapIds?.includes(tap.id) === true &&
         Math.hypot(

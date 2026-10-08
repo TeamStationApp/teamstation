@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import {
   Pressable,
   ScrollView,
@@ -35,6 +35,7 @@ export function DefensiveRosterSheet({
   const { height } = useWindowDimensions()
   const compact = height < 650
   const [adding, setAdding] = useState(false)
+  const shown = useRef(false)
   const team = session.liveData.boxscore.teams[side]
   const names = session.gameData.players
   return (
@@ -45,6 +46,12 @@ export function DefensiveRosterSheet({
         placement={compact ? 'top' : 'bottom'}
         textCancel
         scroll={false}
+        onShow={() => {
+          shown.current = true
+        }}
+        onBackdropPress={() => {
+          if (shown.current) onClose()
+        }}
         onClose={onClose}
       >
         <ScrollView

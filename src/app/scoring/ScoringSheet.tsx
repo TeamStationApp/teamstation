@@ -167,6 +167,7 @@ export function ScoringSheet({
   scroll = true,
   scrollReset = 0,
   onShow,
+  onBackdropPress,
   onClose,
   children
 }: {
@@ -187,6 +188,7 @@ export function ScoringSheet({
   /** Increment to return a repeated-entry form to its first field. */
   scrollReset?: number
   onShow?: () => void
+  onBackdropPress?: () => void
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
@@ -273,7 +275,9 @@ export function ScoringSheet({
             {!fullScreen && (
               <Pressable
                 accessibilityLabel="Dismiss sheet"
-                onPress={onClose}
+                onPress={() => {
+                  ;(onBackdropPress ?? onClose)()
+                }}
                 style={{
                   position: 'absolute',
                   inset: 0,

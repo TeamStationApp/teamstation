@@ -87,6 +87,7 @@ async function open(
   const page = await browser.newPage()
   const unexpected: string[] = []
   page.setDefaultTimeout(10000)
+  page.setDefaultNavigationTimeout(30000)
   page.on('pageerror', error => unexpected.push(String(error)))
   // Desktop browser at a narrow CSS width: no device or mobile emulation.
   await page.setViewport({ width: 390, height: fixture.height ?? 844 })
@@ -199,7 +200,7 @@ async function open(
     }
     respond().catch((error: unknown) => unexpected.push(String(error)))
   })
-  await page.goto(`${base}/games/g1/score`)
+  await page.goto(`${base}/games/g1/score`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('canvas[data-field-ready="true"]')
   return { page, unexpected }
 }
@@ -224,8 +225,7 @@ async function tapSlot(page: Page, slot: Position): Promise<void> {
   })
   const empty = await page.$(`[data-nameplate="empty-${slot}"]`)
   if (empty != null) {
-    const box = (await empty.boundingBox())!
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await page.locator(`[data-nameplate="empty-${slot}"]`).click()
   } else {
     const player = createPlayers().find(p => p.id === slot)!
     const camera = new PerspectiveCamera()
@@ -246,7 +246,7 @@ async function tapSlot(page: Page, slot: Position): Promise<void> {
       rect.y + ((1 - v.y) * rect.height) / 2
     )
   }
-  await page.waitForSelector('[aria-label="Defensive roster"]')
+  await page.waitForSelector('[role="dialog"] [aria-label="Defensive roster"]')
   await page.waitForFunction(() => {
     const node = document.querySelector('[aria-label="Defensive roster"]')
     if (node == null) return false
@@ -266,6 +266,11 @@ async function choose(
   )
   await page.waitForFunction(
     () => document.querySelector('[aria-label="Defensive roster"]') == null
+  )
+  await page.waitForFunction(
+    slot => document.querySelector(`[data-nameplate="empty-${slot}"]`) == null,
+    {},
+    position
   )
 }
 describe('current defensive scoring setup browser', function () {
@@ -420,6 +425,9 @@ describe('current defensive scoring setup browser', function () {
           el.scrollTop = el.scrollHeight
         })
         await click(page, 'Assign P #— HA')
+        await page.waitForFunction(
+          () => document.querySelector('[data-nameplate="empty-P"]') == null
+        )
         await page.waitForSelector('[data-nameplate="empty-C"]')
         await tapSlot(page, 'P')
         expect(
@@ -582,6 +590,28 @@ describe('current defensive scoring setup browser', function () {
       expect(
         await page.$('[aria-label="Away Team"][aria-selected="true"]')
       ).not.equals(null)
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('E8 cancels an away-and-return setup drag and still accepts a subsequent tap', async () => {
+    const { page, unexpected } = await open({ missing: [...POSITIONS] })
+    try {
+      await page.waitForSelector('[data-nameplate="empty-P"]')
+      const square = (await page.$('[data-nameplate="empty-P"]'))!
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const box = (await square.boundingBox())!
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      await page.mouse.move(x + 32, y)
+      await page.mouse.move(x, y)
+      await page.mouse.up()
+      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
+      await tapSlot(page, 'P')
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()
