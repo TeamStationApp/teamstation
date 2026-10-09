@@ -1579,6 +1579,59 @@ async function disposableDelete(daemon: Daemon): Promise<void> {
   }
 }
 
+async function coarseTouch(daemon: Daemon): Promise<void> {
+  const m = await daemon.attach({
+    device: 'chat-ui-actual-coarse-touch',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '390x844',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'Hs')
+    await m.openLink({ link: WEB + '/chat' })
+    await m.assertVisible({ text: 'Team Members', timeout: 60000 })
+    console.log(
+      '$ Actual Chrome raw TouchEvent list movement>10px cancels row hold and release navigation; no nativeEvent.pageX shortcut'
+    )
+    console.log(
+      await m.evalBrowserScript({
+        script: `const row=document.querySelector('[role="button"][aria-label="Hawks Members"]');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
+      })
+    )
+    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.assertVisible({
+      text: required('CHAT_UI_TARGET_TEXT'),
+      timeout: 60000
+    })
+    await m.evalBrowserScript({
+      script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
+    })
+    await m.tapOn({ text: 'Conversation actions' })
+    await m.assertVisible({ text: 'Mark unread' })
+    await m.pressKey({ key: 'Escape' })
+    console.log(
+      '$ Actual Chrome coarse media + rawTouchEvent bubble500ms recognizes exactly one menu'
+    )
+    await m.evalBrowserScript({
+      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-message-' + required('CHAT_UI_MESSAGE') + '"] [tabindex="0"]')});bubble.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,300));const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
+    })
+    await m.assertVisible({ text: 'Copy' })
+    await m.assertVisible({ text: 'Reply' })
+    await m.pressKey({ key: 'Escape' })
+    console.log(
+      'Actual Chrome coarse touch row cancellation and message hold PASS'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
 async function main(): Promise<void> {
   const scenario = process.argv[2]
   assert(
@@ -1599,6 +1652,7 @@ async function main(): Promise<void> {
       scenario === 'maappOff' ||
       scenario === 'disposablePrepare' ||
       scenario === 'disposableDelete' ||
+      scenario === 'coarseTouch' ||
       scenario === 'S5' ||
       scenario === 'S6' ||
       scenario === 'S9' ||
@@ -1634,6 +1688,7 @@ async function main(): Promise<void> {
     else if (scenario === 'maappOff') await maappToggle(daemon, false)
     else if (scenario === 'disposablePrepare') await disposablePrepare(daemon)
     else if (scenario === 'disposableDelete') await disposableDelete(daemon)
+    else if (scenario === 'coarseTouch') await coarseTouch(daemon)
     else if (scenario === 'S5') await s5(daemon)
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
