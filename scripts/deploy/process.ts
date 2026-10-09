@@ -1,5 +1,80 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { once } from 'node:events'
+import path from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
+
+const diagnosticLimit = 32 * 1024
+
+/** Redact complete lines before retaining a bounded compiler failure tail. */
+class CompilerDiagnostics {
+  private tail = ''
+  private readonly lines = { stdout: '', stderr: '' }
+  private readonly dropping = { stdout: false, stderr: false }
+  private readonly decoders = {
+    stdout: new StringDecoder('utf8'),
+    stderr: new StringDecoder('utf8')
+  }
+
+  private readonly secrets: string[]
+
+  constructor(env: NodeJS.ProcessEnv) {
+    this.secrets = Object.entries(env)
+      .filter(
+        ([key, value]) =>
+          /password|token|secret|authorization|dsn|private.?key|(^|_)pin($|_)/i.test(
+            key
+          ) && value != null
+      )
+      .flatMap(([, value]) => {
+        const secret = value!
+        return [secret, encodeURIComponent(secret), ...secret.split(/\r?\n/)]
+      })
+      .filter(secret => secret.length > 2)
+      .sort((a, b) => b.length - a.length)
+  }
+
+  private retain(line: string): void {
+    if (
+      /(password|token|secret|authorization|dsn|private_key)[^\r\n:=]{0,40}[:=]/i.test(
+        line
+      )
+    ) {
+      line = '[redacted sensitive compiler output]'
+    } else {
+      for (const secret of this.secrets)
+        line = line.split(secret).join('[redacted]')
+      line = line.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1[redacted]@')
+    }
+    this.tail = (this.tail + line + '\n').slice(-diagnosticLimit)
+  }
+
+  write(stream: 'stdout' | 'stderr', chunk: Buffer): void {
+    const pieces = this.decoders[stream].write(chunk).split('\n')
+    for (let i = 0; i < pieces.length; i++) {
+      if (!this.dropping[stream]) {
+        this.lines[stream] += pieces[i]
+        if (this.lines[stream].length > diagnosticLimit) {
+          this.lines[stream] = ''
+          this.dropping[stream] = true
+        }
+      }
+      if (i < pieces.length - 1) {
+        if (!this.dropping[stream]) this.retain(this.lines[stream])
+        this.lines[stream] = ''
+        this.dropping[stream] = false
+      }
+    }
+  }
+
+  finish(): string {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      this.lines[stream] += this.decoders[stream].end()
+      if (this.lines[stream] !== '' && !this.dropping[stream])
+        this.retain(this.lines[stream])
+    }
+    return this.tail.trim()
+  }
+}
 
 /** Only explicit nonsecret environment values reach compilers; signing adapters add their own. */
 export function childEnvironment(
@@ -35,9 +110,17 @@ export class Processes {
   async run(command: Command): Promise<string> {
     this.signal.throwIfAborted()
     return await new Promise((resolve, reject) => {
+      const env = childEnvironment(command.env)
+      const tool = path.basename(command.file)
+      const compiler =
+        ['xcodebuild', 'gradlew', 'sentry-cli', 'cargo'].includes(tool) ||
+        (tool === 'bundle' &&
+          command.args[0] === 'exec' &&
+          command.args[1] === 'pod')
+      const diagnostics = compiler ? new CompilerDiagnostics(env) : undefined
       const child = spawn(command.file, command.args, {
         cwd: command.cwd,
-        env: childEnvironment(command.env),
+        env,
         stdio: 'pipe',
         detached: true
       })
@@ -63,12 +146,17 @@ export class Processes {
       }
       this.signal.addEventListener('abort', abort, { once: true })
       child.stdout.on('data', (chunk: Buffer) => {
+        diagnostics?.write('stdout', chunk)
         if (command.capture === false) return
         if (stdout.length + chunk.length <= 1024 * 1024)
           stdout += chunk.toString()
         else overflow = true
       })
-      // Compiler output may contain credentials. Consume it without printing it.
+      // Successful output and signing-tool output stay private. Only compiler
+      // failures print a bounded tail, redacted before it is retained.
+      child.stderr.on('data', (chunk: Buffer) => {
+        diagnostics?.write('stderr', chunk)
+      })
       if (command.captureStderr === true)
         child.stderr.on('data', (chunk: Buffer) => {
           if (stdout.length + chunk.length <= 1024 * 1024)
@@ -79,6 +167,7 @@ export class Processes {
       child.stdin.on('error', () => {})
       child.stdin.end(command.input)
       child.once('error', () => {
+        console.error(`Deployment tool could not start: ${tool}`)
         reject(new Error('Could not start deployment tool'))
       })
       child.once('close', code => {
@@ -86,8 +175,13 @@ export class Processes {
         this.signal.removeEventListener('abort', abort)
         if (killTimer != null) clearTimeout(killTimer)
         if (this.signal.aborted) reject(new Error('Deployment cancelled'))
-        else if (code !== 0) reject(new Error('Deployment tool failed'))
-        else if (overflow)
+        else if (code !== 0) {
+          const tail = diagnostics?.finish()
+          console.error(
+            `${tool} failed (exit ${code})${tail == null || tail === '' ? '' : `:\n${tail}`}`
+          )
+          reject(new Error('Deployment tool failed'))
+        } else if (overflow)
           reject(new Error('Deployment tool output exceeded limit'))
         else resolve(stdout.trim())
       })
