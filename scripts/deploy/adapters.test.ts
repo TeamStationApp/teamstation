@@ -397,6 +397,23 @@ describe('Native build and signing adapters', () => {
     context.target = target(id, 'android')
     file(path.join(context.source, context.target.path, 'gradlew'))
     await android(context)
+    const validBadging = `package: name='${id}' versionCode='26093004' versionName='1.2.3'`
+    const v2Certificate = `Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${'a'.repeat(64)}`
+    verifyAndroidMetadata(validBadging, v2Certificate, context)
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        validBadging,
+        v2Certificate.replace('Number of signers: 1', 'Number of signers: 2'),
+        context
+      )
+    })
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        validBadging,
+        v2Certificate.replace('certificate SHA-256', 'public key SHA-256'),
+        context
+      )
+    })
     for (const [badging, cert] of [
       [
         `package: name='${id}' versionCode='41' versionName='1.2.3'`,

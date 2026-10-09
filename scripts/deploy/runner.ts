@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { allocateBuildNumber, packageVersion } from './buildNumber'
 import { loadSettings, type Settings } from './config'
-import { Processes } from './process'
+import { DeploymentToolError, Processes } from './process'
 import { currentSource } from './source'
 import {
   type Artifact,
@@ -250,9 +250,21 @@ export async function run(
             error: undefined,
             ...checksum
           })
-        } catch {
+        } catch (error) {
           record.failed.push(os)
-          output(`${os} build failed; no package was published`)
+          const tool =
+            error instanceof DeploymentToolError
+              ? ` (${error.tool} ${
+                  error.exitCode != null
+                    ? `exited ${error.exitCode}`
+                    : error.signal != null
+                      ? `terminated by ${error.signal}`
+                      : error.message === 'Could not start deployment tool'
+                        ? 'could not start'
+                        : 'failed without an exit status'
+                })`
+              : ''
+          output(`${os} build failed${tool}; no package was published`)
         }
         state.save(record)
       }

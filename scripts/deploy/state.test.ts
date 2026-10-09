@@ -13,7 +13,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { app, testRoot } from './config.test'
-import { childEnvironment, Processes } from './process'
+import { childEnvironment, DeploymentToolError, Processes } from './process'
 import {
   asRun,
   atomicJson,
@@ -188,7 +188,28 @@ describe('Deployment state and owned processes', () => {
         args: ['-e', 'console.error("synthetic-secret");process.exit(1)'],
         cwd: root
       }),
-      /Deployment tool failed/
+      (error: unknown) => {
+        assert(error instanceof DeploymentToolError)
+        assert.equal(error.tool, path.basename(process.execPath))
+        assert.equal(error.exitCode, 1)
+        assert.equal(error.message, 'Deployment tool failed')
+        assert(!JSON.stringify(error).includes('synthetic-secret'))
+        return true
+      }
+    )
+    await assert.rejects(
+      processGroup.run({
+        file: process.execPath,
+        args: ['-e', 'process.kill(process.pid, "SIGTERM")'],
+        cwd: root
+      }),
+      (error: unknown) => {
+        assert(error instanceof DeploymentToolError)
+        assert.equal(error.signal, 'SIGTERM')
+        assert.equal(error.exitCode, undefined)
+        assert.equal(error.message, 'Deployment tool failed')
+        return true
+      }
     )
     await assert.rejects(
       processGroup.run({
