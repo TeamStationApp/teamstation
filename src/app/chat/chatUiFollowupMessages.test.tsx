@@ -1282,7 +1282,8 @@ interface ReadingGeometry {
 function readingGeometry(
   messageId: string,
   y = 400,
-  height = 2200
+  height = 2200,
+  viewportHeight = 400
 ): ReadingGeometry {
   const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
     node => getComputedStyle(node).overflowY === 'auto'
@@ -1291,13 +1292,14 @@ function readingGeometry(
   const row = positionWrapper(messageId)
   const geometry = { y, height }
   const moves: number[] = []
-  scroller.getBoundingClientRect = () => new window.DOMRect(0, 0, 640, 400)
+  scroller.getBoundingClientRect = () =>
+    new window.DOMRect(0, 0, 640, viewportHeight)
   body.getBoundingClientRect = () =>
     new window.DOMRect(0, -scroller.scrollTop, 640, geometry.height)
   row.getBoundingClientRect = () =>
     new window.DOMRect(0, geometry.y - scroller.scrollTop, 640, 800)
   Object.defineProperties(scroller, {
-    offsetHeight: { value: 400, configurable: true },
+    offsetHeight: { value: viewportHeight, configurable: true },
     offsetWidth: { value: 640, configurable: true },
     scrollHeight: { get: () => geometry.height, configurable: true }
   })
@@ -1331,7 +1333,7 @@ function readingGeometry(
     geometry,
     moves,
     async layout(): Promise<void> {
-      await measured(scroller, 640, 400)
+      await measured(scroller, 640, viewportHeight)
       await measured(body, 640, geometry.height)
       await measured(row, 640, 800, geometry.y)
       nativeRow.measureLayout = measureCurrentRow
@@ -1352,7 +1354,138 @@ function readingGeometry(
   }
 }
 
+interface ScrollEvent {
+  nativeEvent: {
+    contentOffset: { x: number; y: number }
+    contentSize: { width: number; height: number }
+    layoutMeasurement: { width: number; height: number }
+  }
+}
+
+function renderedScrollHandler(
+  node: HTMLElement
+): (event: ScrollEvent) => void {
+  interface RenderedFiber {
+    memoizedProps?: {
+      onContentSizeChange?: unknown
+      onScroll?: (event: ScrollEvent) => void
+    }
+    return?: RenderedFiber
+  }
+  const fiberKey = Object.keys(node).find(key =>
+    key.startsWith('__reactFiber$')
+  )!
+  let fiber = (node as unknown as Record<string, RenderedFiber | undefined>)[
+    fiberKey
+  ]
+  let handler: ((event: ScrollEvent) => void) | undefined
+  while (fiber != null) {
+    if (typeof fiber.memoizedProps?.onContentSizeChange === 'function') {
+      handler = fiber.memoizedProps.onScroll
+      break
+    }
+    fiber = fiber.return
+  }
+  expect(handler, 'the actual rendered ScrollView callback').not.equals(
+    undefined
+  )
+  return handler!
+}
+
 describe('chat follow-up conversation message integration', function () {
+  it('keeps the genuine scroll offset and measured-pane reading anchor when a scroll event carries stale viewport and content geometry', async function () {
+    pointer(true)
+    const engine = new FakeEngine()
+    const reading = safeMessage({
+      id: 'msg_stale_scroll_geometry',
+      body: 'Current reading row'
+    })
+    engine.current.messages = [reading]
+    let saved: ChatDraft = {
+      text: 'Current draft',
+      picked: [],
+      scrollOffset: 6000,
+      hasScrollPosition: true
+    }
+    const remember = (next: ChatDraft): void => {
+      saved = next
+    }
+    const show = async (active = true): Promise<void> => {
+      await render(
+        <ChatOverlayHost>
+          <ConversationScreen
+            key="cnv_fixture"
+            engine={engine}
+            conversationId="cnv_fixture"
+            userId={1}
+            onMembers={() => {}}
+            files={files}
+            swipe={false}
+            embedded
+            active={active}
+            draft={saved}
+            onDraftChange={remember}
+          />
+        </ChatOverlayHost>
+      )
+    }
+    await show()
+    let visible = readingGeometry(reading.id, 6700, 7424, 472)
+    await visible.layout()
+    await act(async () => {
+      visible.scroller.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 795 })
+      )
+      visible.scroller.scrollTop = 6795
+      renderedScrollHandler(visible.scroller)({
+        nativeEvent: {
+          contentOffset: { x: 0, y: 6795 },
+          contentSize: { width: 640, height: 786 },
+          layoutMeasurement: { width: 640, height: 628 }
+        }
+      })
+    })
+    expect(
+      saved.scrollOffset,
+      'the genuine gesture position is recorded'
+    ).equals(6795)
+    expect(saved.followNewest, 'the current viewport is not at the end').equals(
+      false
+    )
+    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -95 })
+    expect(visible.row.getBoundingClientRect().top).equals(-95)
+
+    await show(false)
+    const other = new FakeEngine()
+    other.current.conversation = chat({
+      id: 'cnv_other',
+      scopeName: 'Solstice'
+    })
+    await render(
+      <ChatOverlayHost>
+        <ConversationScreen
+          key="cnv_other"
+          engine={other}
+          conversationId="cnv_other"
+          userId={1}
+          onMembers={() => {}}
+          files={files}
+          swipe={false}
+          embedded
+        />
+      </ChatOverlayHost>
+    )
+    await show()
+    visible = readingGeometry(reading.id, 6700, 7424, 472)
+    await visible.layout()
+    expect(visible.moves.length).greaterThan(0)
+    expect(visible.moves.every(offset => offset === 6795)).equals(true)
+    expect(visible.scroller.scrollTop).equals(6795)
+    expect(visible.row.getBoundingClientRect().top).equals(-95)
+    expect(saved.scrollOffset).equals(6795)
+    expect(saved.followNewest).equals(false)
+  })
+
   it('keeps newly typed text, reply context and prepared files after queued scrolling and a retained older active-pane scroll callback', async function () {
     pointer(true)
     const engine = new FakeEngine()
@@ -1391,37 +1524,7 @@ describe('chat follow-up conversation message integration', function () {
     const visible = readingGeometry(original.id)
     await visible.layout()
     await visible.userScroll(647)
-    interface ScrollEvent {
-      nativeEvent: {
-        contentOffset: { x: number; y: number }
-        contentSize: { width: number; height: number }
-        layoutMeasurement: { width: number; height: number }
-      }
-    }
-    interface RenderedFiber {
-      memoizedProps?: {
-        onContentSizeChange?: unknown
-        onScroll?: (event: ScrollEvent) => void
-      }
-      return?: RenderedFiber
-    }
-    const fiberKey = Object.keys(visible.scroller).find(key =>
-      key.startsWith('__reactFiber$')
-    )!
-    let fiber = (
-      visible.scroller as unknown as Record<string, RenderedFiber | undefined>
-    )[fiberKey]
-    let olderScroll: ((event: ScrollEvent) => void) | undefined
-    while (fiber != null) {
-      if (typeof fiber.memoizedProps?.onContentSizeChange === 'function') {
-        olderScroll = fiber.memoizedProps.onScroll
-        break
-      }
-      fiber = fiber.return
-    }
-    expect(olderScroll, 'the actual rendered ScrollView callback').not.equals(
-      undefined
-    )
+    const olderScroll = renderedScrollHandler(visible.scroller)
     await act(async () => {
       visible.scroller.dispatchEvent(
         new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
@@ -1455,7 +1558,7 @@ describe('chat follow-up conversation message integration', function () {
     // RNW forwards that end event through its current ScrollView props.
     // Also deliver the retained native callback from the earlier render.
     await act(async () => {
-      olderScroll!({
+      olderScroll({
         nativeEvent: {
           contentOffset: { x: 0, y: 700 },
           contentSize: { width: 640, height: visible.geometry.height },
