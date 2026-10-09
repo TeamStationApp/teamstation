@@ -16,6 +16,7 @@ import path from 'node:path'
 import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
 
 import { asAppleLogin, privateJson } from './config'
+import { BuildValidationFailure, type ValidationCheck } from './failure'
 import { buildEnvironment, prepare } from './prepare'
 import { Processes } from './process'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
@@ -514,13 +515,20 @@ export async function verifyApp(
   const apple =
     context.settings.apps[context.target.app][context.target.platform]!.apple!
   const info = await readInfo(context, app)
+  const checks: ValidationCheck[] = []
+  if (info.CFBundleIdentifier !== context.target.app) checks.push('bundle-id')
   if (
-    info.CFBundleIdentifier !== context.target.app ||
     info.CFBundleVersion !==
-      nativeNumber(context.target.platform, context.buildNumber) ||
-    info.CFBundleShortVersionString !== context.version
+    nativeNumber(context.target.platform, context.buildNumber)
   )
-    throw new Error('Apple package metadata did not match')
+    checks.push('build-number')
+  if (info.CFBundleShortVersionString !== context.version)
+    checks.push('version')
+  if (checks.length > 0)
+    throw new BuildValidationFailure(
+      'Apple package metadata did not match',
+      checks
+    )
   await context.processes.run({
     file: context.settings.tools.codesign,
     args: ['--verify', '--deep', '--strict', app],

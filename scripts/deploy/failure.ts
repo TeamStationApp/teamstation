@@ -15,6 +15,23 @@ export const buildStages = [
 ] as const
 export type BuildStage = (typeof buildStages)[number]
 
+const validationChecks = [
+  'bundle-id',
+  'version',
+  'build-number',
+  'certificate',
+  'signer-count',
+  'debuggable'
+] as const
+export type ValidationCheck = (typeof validationChecks)[number]
+export class BuildValidationFailure extends Error {
+  readonly checks: ValidationCheck[]
+  constructor(message: string, checks: ValidationCheck[]) {
+    super(message)
+    this.checks = checks.filter(check => validationChecks.includes(check))
+  }
+}
+
 /** Only fixed deployment messages may leave a caught exception. */
 const publicMessages = new Set([
   'Android package identity, version or signing certificate did not match',
@@ -79,8 +96,16 @@ const systemCodes = new Set([
 ])
 
 export function buildFailureReason(error: unknown): string {
-  if (error instanceof Error && publicMessages.has(error.message))
+  if (error instanceof Error && publicMessages.has(error.message)) {
+    if (error instanceof BuildValidationFailure) {
+      const checks = error.checks.filter(check =>
+        validationChecks.includes(check)
+      )
+      if (checks.length > 0)
+        return `${error.message}; failed checks: ${checks.join(', ')}`
+    }
     return error.message
+  }
   if (
     error != null &&
     typeof error === 'object' &&
