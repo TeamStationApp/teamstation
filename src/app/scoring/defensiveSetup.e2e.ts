@@ -994,4 +994,64 @@ describe('current defensive scoring setup browser', function () {
       }
     }
   })
+  it('E12 repairs the current defense and lineup after reopening a saved third out', async () => {
+    for (const problem of ['defense', 'empty lineup', 'partial lineup']) {
+      const count = problem === 'empty lineup' ? 0 : 8
+      const { page, peer, unexpected, savedPlays } = await open({
+        animationsOff: true,
+        ...(problem === 'defense'
+          ? { nextMissing: ['C'] }
+          : { homeCount: count })
+      })
+      try {
+        // The peer saves the deciding pitch without a screen to close it.
+        await peer(
+          Array.from({ length: 9 }, () => ({ type: 'pitch', call: 'C' }))
+        )
+        await page.reload()
+        await page.waitForSelector('[aria-label*="Bottom 1st"]')
+        if (problem === 'defense') {
+          await page.waitForSelector('[data-nameplate="empty-C"]')
+          await tapSlot(page, 'C')
+          await page.waitForSelector('[aria-label="Defensive roster"]')
+          await click(page, 'Create Player')
+          await click(page, 'Add Placeholder Players')
+          await click(page, 'Add')
+          await page.waitForSelector('[aria-label="Defensive roster"]')
+          await choose(page, 'C', 1)
+        } else {
+          await page.waitForSelector('[aria-label="Set Lineup"]')
+          await click(page, 'Set Lineup')
+          await page.waitForSelector(
+            '[aria-label="Home Team"][aria-selected="true"]'
+          )
+          for (const row of roster('home').slice(count, 9))
+            await click(page, `Add ${row.shortName} to Lineup`)
+          await click(page, 'Save Rosters')
+        }
+        await page.waitForFunction(
+          () =>
+            document
+              .querySelector('[aria-label="Ball"]')
+              ?.getAttribute('aria-disabled') !== 'true'
+        )
+        await page.waitForFunction(
+          () => document.querySelector('[aria-label="Save status"]') == null
+        )
+        const persisted = await peer([])
+        expect(persisted.pending).equals(null)
+        expect(persisted.liveData.linescore.isTopInning).equals(false)
+        expect(savedPlays()).equals(3)
+        await page.reload()
+        await page.waitForSelector('[aria-label*="Bottom 1st"]')
+        expect(await text(page)).not.includes('Missing defensive positions')
+        expect(await text(page)).not.includes('Insufficient batting lineup.')
+        await click(page, 'Ball')
+        await page.waitForSelector('[aria-label*="1 balls"]')
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
 })

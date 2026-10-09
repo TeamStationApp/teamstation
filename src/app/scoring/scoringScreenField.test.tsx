@@ -360,6 +360,99 @@ describe('scoring screen field wiring', function () {
       const reopened = await ScoringSession.open(store, 'g1', context)
       expect(reopened.state.liveData.plays.allPlays).has.length(1)
     })
+  for (const problem of ['defense', 'lineup'] as const)
+    it(`repairs ${problem} setup after reopening an automatically closed third out`, async function () {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      const away = initial.liveData.boxscore.teams.away
+      const home = initial.liveData.boxscore.teams.home
+      const catcher = away.defense.C!
+      if (problem === 'defense') away.defense.C = null
+      else home.battingOrder = []
+      const store = memoryStore()
+      const context = {
+        gamePk: 'g1',
+        teams: initial.gameData.teams,
+        setup: setupOf(initial)
+      }
+      const original = ScoringSession.start(store, 'g1', initial, {
+        requireCurrentSetup: true
+      })
+      for (let i = 0; i < 9; i++)
+        expect(
+          original.apply({ type: 'pitch', call: 'C' }).problems
+        ).deep.equals([])
+      await original.flush()
+      const live = await ScoringSession.open(store, 'g1', context, {
+        requireCurrentSetup: true
+      })
+      expect(live.state.pending).not.equals(null)
+      expect(live.actions).has.length(9)
+      await mount({ persistent: true, open: async () => live })
+      expect(props().summary).includes('Bottom 1st')
+      expect(props().canPitch).equals(false)
+      const click = async (label: string): Promise<void> => {
+        const button = document.querySelector<HTMLElement>(
+          `[aria-label="${label}"]`
+        )
+        expect(button, label).not.equals(null)
+        await step(() => {
+          button!.click()
+        })
+      }
+      if (problem === 'defense') {
+        await step(() => field().onPlayerTap?.('empty-C'))
+        expect(
+          document.querySelector('[aria-label="Defensive roster"]')
+        ).not.equals(null)
+        await click('Create Player')
+        await click('Add Placeholder Players')
+        await click('Add')
+        expect(
+          document.querySelector('[aria-label="Defensive roster"]')
+        ).not.equals(null)
+        expect(live.state.liveData.boxscore.teams.away.players).has.length(10)
+        expect(live.state.liveData.boxscore.teams.away.defense.C).equals(null)
+        await click(
+          `Assign C #${initial.gameData.players[catcher].jersey} Player 2`
+        )
+        expect(live.state.liveData.boxscore.teams.away.defense.C).equals(
+          catcher
+        )
+      } else {
+        await step(() => props().setupToast?.onSetLineup())
+        expect(
+          document.querySelector(
+            '[aria-label="Home Team"][aria-selected="true"]'
+          )
+        ).not.equals(null)
+        for (const id of home.players)
+          await click(`Add ${initial.gameData.players[id].fullName} to Lineup`)
+        await click('Save Rosters')
+        expect(live.state.liveData.boxscore.teams.home.battingOrder).has.length(
+          9
+        )
+      }
+      await live.flush()
+      const rosterIndex = live.actions.findIndex(
+        action => action.type === 'lineup' && action.kind === 'roster'
+      )
+      expect(rosterIndex).greaterThan(9)
+      expect(live.actions[9]).deep.equals({
+        type: 'gameFlow',
+        kind: 'closePlay'
+      })
+      const reopened = await ScoringSession.open(store, 'g1', context, {
+        requireCurrentSetup: true
+      })
+      expect(reopened.state.liveData.linescore.isTopInning).equals(false)
+      expect(reopened.state.liveData.plays.allPlays).has.length(3)
+      expect(props().canPitch).equals(true)
+      await step(() => {
+        props().onPitch('ball')
+      })
+      await live.flush()
+      expect(live.state.liveData.linescore.balls).equals(1)
+    })
   it('saves only the completed prior-half dictated prefix before newly current lineup acceptance', async function () {
     const initial = createDevelopmentSession(gameFixture, [], [])
     initial.liveData.boxscore.teams.home.battingOrder.pop()

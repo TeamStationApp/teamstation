@@ -752,28 +752,35 @@ function ScoringPanel(props: {
       const resumed = oldUnresolved
         ? props.game.resumable()
         : { state: props.game.state, actions: [...props.game.actions] }
+      // Opening may close a decided play automatically. Refresh must use the
+      // same current half, while retaining that close in the next saved log.
+      const refreshed = resumedScoringState(
+        resumed.state,
+        resumed.actions,
+        state.presentationEnabled
+      )
       // The server's copy can read back differently with the same plays
       // (its players in another order). Then the screen is the game
       // already, and keeps its Undo history; only another scorer's plays
       // start it again from the server's.
       if (changed && !sameActions(shownLog.current, props.game.actions)) {
-        if (oldUnresolved) refreshedLog.current = resumed.actions
+        if (oldUnresolved) refreshedLog.current = refreshed.log
         dispatch({
           type: 'RESET',
-          session: resumed.state,
-          log: resumed.actions
+          session: refreshed.session,
+          log: refreshed.log
         })
       }
       if (
         props.game.readOnly ||
-        props.game.state.pending != null ||
+        refreshed.session.pending != null ||
         (awaitingResult(props.game.state) && !oldUnresolved)
       ) {
         setSheet(undefined)
         setDefensiveSlot(undefined)
         return null
       }
-      return resumed.state
+      return refreshed.session
     } catch {
       setRosterProblem('Unable to refresh the game. Please try again.')
       return null
