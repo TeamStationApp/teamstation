@@ -1,10 +1,12 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { Icon } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { sendAllowed } from './chatComposeModel'
 import type { PickedFile, PickSource } from './chatFileTypes'
+import { bindComposerKeys } from './chatWebInteractions'
 import { EmojiPicker } from './EmojiPicker'
 
 export interface ComposerProps {
@@ -13,6 +15,7 @@ export interface ComposerProps {
   /** Off while history is locked: the composer shows, but takes nothing. */
   enabled: boolean
   sending: boolean
+  preparing?: boolean
   /** "Replying to <name>" with its snippet, or the edit being made. */
   context:
     | { kind: 'reply'; name: string; snippet: string }
@@ -40,8 +43,33 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const styles = getStyles(theme)
   const [emoji, setEmoji] = useState(false)
   const [choosing, setChoosing] = useState(false)
-  const canSend =
-    enabled && !sending && (text.trim() !== '' || attachments.length > 0)
+  const input = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const latest = useRef(props)
+  latest.current = props
+  const canSend = sendAllowed({
+    enabled,
+    sending,
+    preparing: props.preparing === true,
+    text,
+    attachments
+  })
+  useEffect(
+    () =>
+      bindComposerKeys(input.current, () => {
+        const current = latest.current
+        if (
+          sendAllowed({
+            enabled: current.enabled,
+            sending: current.sending,
+            preparing: current.preparing === true,
+            text: current.text,
+            attachments: current.attachments
+          })
+        )
+          current.onSend()
+      }),
+    []
+  )
 
   const attach = (source: PickSource): void => {
     setChoosing(false)
@@ -188,6 +216,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           />
         </Pressable>
         <TextInput
+          ref={input}
           onFocus={props.onRead}
           testID="chat-composer"
           accessibilityLabel={lstrings.chat_composer}

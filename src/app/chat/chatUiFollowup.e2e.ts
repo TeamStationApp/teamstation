@@ -25,7 +25,10 @@ interface Device {
   pressKey: (options: { key: string }) => Promise<unknown>
   longPressOn: (options: { text?: string; css?: string }) => Promise<unknown>
   setOrientation: (options: { orientation: string }) => Promise<unknown>
-  grantPermissions: (options: { permissions: string[]; origin: string }) => Promise<unknown>
+  grantPermissions: (options: {
+    permissions: string[]
+    origin: string
+  }) => Promise<unknown>
   detach: () => Promise<unknown>
 }
 interface Daemon {
@@ -42,19 +45,24 @@ const API = required('TS_CHAT_API_URL').replace(/\/+$/, '')
 const hidden: string[] = []
 
 async function signIn(device: Device, key: string): Promise<void> {
-  let credentials: { email: string; password: string } | undefined
+  let credentials:
+    { userId: number; email: string; password: string } | undefined
   for (const line of readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8').split(
     '\n'
   )) {
     const match = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
     if (match?.[1] === key)
-      credentials = { email: match[3], password: match[4] }
+      credentials = {
+        userId: Number(match[2]),
+        email: match[3],
+        password: match[4]
+      }
   }
   assert(credentials != null, 'Fixture sign-in unavailable')
   hidden.push(credentials.password)
   await device.openLink({ link: WEB })
   const authorized = (await device.evalBrowserScript({
-    script: `return (await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'})).status === 200`
+    script: `const response=await fetch(${JSON.stringify(API + '/auth/me')},{credentials:'include'});if(response.ok){const user=await response.json();if(Number(user.id)!==${credentials.userId})throw new Error('Fixture profile belongs to another user');return true}return false`
   })) as { data?: unknown }
   if (authorized.data === 'true' || authorized.data === true) return
   await device.tapOn({ text: 'Sign in', optional: true, timeout: 3000 })
@@ -195,22 +203,6 @@ async function s2(daemon: Daemon): Promise<void> {
       script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations/' + required('CHAT_UI_CONVERSATION') + '/preferences')},{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({pinned:false,muted:false,manualUnread:false})});if(!r.ok)throw new Error('Fixture preferences unavailable');return true`
     })
     await m.openLink({ link: WEB + '/chat' })
-    if (process.env.CHAT_UI_INSPECT_KEYS === '1') {
-      console.log(
-        await m.evalBrowserScript({
-          script: `
-        const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('ts-chat',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
-        const read=key=>new Promise((resolve,reject)=>{const r=db.transaction('keys','readonly').objectStore('keys').get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
-        const sealed=await read('record'),wrap=await read('wrap');
-        let local={readable:false};
-        if(sealed && wrap){try{const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:sealed.iv,additionalData:new TextEncoder().encode('ts-chat/v1/key-record')},wrap,sealed.ciphertext);const r=JSON.parse(new TextDecoder().decode(bytes));local={readable:true,userId:r.userId,deviceId:r.deviceId,hasIdentity:r.identity!=null,pukCount:r.puks?.length??0}}catch{}}
-        db.close();const response=await fetch(${JSON.stringify(API + '/chat/me/keys')},{credentials:'include'});const remote=await response.json();
-        return JSON.stringify({origin:location.origin,local,remote:{userId:remote.userId,deviceId:remote.deviceId,linked:remote.linked,hasIdentity:remote.identity!=null}});
-      `
-        })
-      )
-      return
-    }
     await m.assertVisible({ text: 'Team Members', timeout: 60000 })
     console.log('$ S2 inspect scope pills and responsive pane visibility')
     console.log(
@@ -407,7 +399,10 @@ async function s5(daemon: Daemon): Promise<void> {
       await m.screenshot()
     )
     await m.tapOn({ text: 'Copy text' })
-    await m.grantPermissions({ permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: WEB })
+    await m.grantPermissions({
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      origin: WEB
+    })
     console.log(
       await m.evalBrowserScript({
         script: `if(await navigator.clipboard.readText()!==${JSON.stringify(target)})throw new Error('Copy included extra content or failed');return JSON.stringify({copiedOwnBodyOnly:true});`
@@ -450,13 +445,92 @@ async function s5(daemon: Daemon): Promise<void> {
   }
 }
 
+async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
+  const conversation = keyboard
+    ? required('CHAT_UI_TEST_CONVERSATION')
+    : required('CHAT_UI_CONVERSATION')
+  if (keyboard)
+    assert.notEqual(
+      conversation,
+      required('CHAT_UI_CONVERSATION'),
+      'Keyboard sends require a separate synthetic test conversation'
+    )
+  const m = await daemon.attach({
+    device: 'chat-ui-compose-wide',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const listed = `const response=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const chat=(await response.json()).find(chat=>chat.id===${JSON.stringify(conversation)});if(!chat)throw new Error('Synthetic conversation unavailable');`
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({ link: WEB + '/chat/' + conversation })
+    await m.assertVisible({ text: 'Message', timeout: 60000 })
+    console.log(
+      '$ S9 file drag across nested composer children, exact overlay, prepare without sending'
+    )
+    await m.evalBrowserScript({
+      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
+    })
+    await m.assertVisible({ text: 'Attaching file to chat' })
+    writeFileSync(
+      join(required('CHAT_UI_ARTIFACTS'), 'desktop-file-drop-after.png'),
+      await m.screenshot()
+    )
+    console.log(
+      await m.evalBrowserScript({
+        script: `const pane=document.querySelector('[data-testid="chat-drop-target"]');const event=new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:window.chatUiDropTransfer});pane.dispatchEvent(event);if(!event.defaultPrevented)throw new Error('File drop could navigate');return JSON.stringify({fileNavigationPrevented:true});`
+      })
+    )
+    await m.assertVisible({ text: 'Remove notes.txt', timeout: 30000 })
+    console.log(
+      await m.evalBrowserScript({
+        script: `${listed}if(chat.lastSeq!==window.chatUiDropSeq)throw new Error('File drop sent automatically');if(document.querySelector('[data-testid="chat-drop-overlay"]'))throw new Error('Drop overlay did not clear');return JSON.stringify({preparedChip:true,noAutomaticSend:true,overlayCleared:true});`
+      })
+    )
+    await m.tapOn({ text: 'Remove notes.txt' })
+    if (keyboard) {
+      console.log(
+        '$ S10 actual desktop Enter once and Shift+Enter newline in a separate synthetic conversation'
+      )
+      await m.tapOn({ css: '[data-testid="chat-composer"]' })
+      await m.inputText({ text: 'Desktop keyboard probe' })
+      await m.pressKey({ key: 'Shift+Enter' })
+      await m.inputText({ text: 'Second line' })
+      console.log(
+        await m.evalBrowserScript({
+          script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!=='Desktop keyboard probe\\nSecond line')throw new Error('Shift+Enter lost multiline text');return JSON.stringify({shiftEnterNewline:true});`
+        })
+      )
+      await m.pressKey({ key: 'Enter' })
+      await m.assertVisible({ text: 'Desktop keyboard probe', timeout: 30000 })
+      console.log(
+        await m.evalBrowserScript({
+          script: `${listed}if(chat.lastSeq!==window.chatUiDropSeq+1)throw new Error('Enter did not send exactly once');if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Successful send did not clear draft');return JSON.stringify({enterSentExactlyOnce:true,draftCleared:true});`
+        })
+      )
+    }
+    console.log(keyboard ? 'S9/S10 wide core PASS' : 'S9 wide PASS')
+  } finally {
+    await m.detach()
+  }
+}
+
 async function main(): Promise<void> {
   const scenario = process.argv[2]
   assert(
     scenario === 'S1' ||
       scenario === 'S2' ||
       scenario === 'S4' ||
-      scenario === 'S5',
+      scenario === 'S5' ||
+      scenario === 'S9' ||
+      scenario === 'S10',
     'Name a supported follow-up scenario'
   )
   const root = required('MAESTRO_D_CLIENT_ROOT')
@@ -472,7 +546,8 @@ async function main(): Promise<void> {
     if (scenario === 'S1') await s1(daemon)
     else if (scenario === 'S2') await s2(daemon)
     else if (scenario === 'S4') await s4(daemon)
-    else await s5(daemon)
+    else if (scenario === 'S5') await s5(daemon)
+    else await s9(daemon, scenario === 'S10')
   } finally {
     await daemon.close()
   }

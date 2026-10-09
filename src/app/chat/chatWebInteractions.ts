@@ -25,6 +25,40 @@ export function isFinePointer(): boolean {
     matchMedia('(any-pointer: fine)').matches
   )
 }
+export function bindComposerKeys(
+  view: unknown,
+  onSend: () => void
+): () => void {
+  if (!(view instanceof HTMLElement)) return () => {}
+  let composing = false
+  const start = (): void => {
+    composing = true
+  }
+  const end = (): void => {
+    composing = false
+  }
+  const key = (event: KeyboardEvent): void => {
+    if (
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      composing ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      !isFinePointer()
+    )
+      return
+    event.preventDefault()
+    if (!event.repeat) onSend()
+  }
+  view.addEventListener('compositionstart', start)
+  view.addEventListener('compositionend', end)
+  view.addEventListener('keydown', key)
+  return () => {
+    view.removeEventListener('compositionstart', start)
+    view.removeEventListener('compositionend', end)
+    view.removeEventListener('keydown', key)
+  }
+}
 /** RNW's scroll-begin callback also fires for programmatic focus scrolling. */
 export function bindUserScroll(view: unknown, read: () => void): () => void {
   const node = view as { getScrollableNode?: () => unknown } | null
