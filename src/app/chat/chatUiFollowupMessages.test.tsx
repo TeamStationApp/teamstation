@@ -1353,6 +1353,130 @@ function readingGeometry(
 }
 
 describe('chat follow-up conversation message integration', function () {
+  it('keeps newly typed text, reply context and prepared files after queued scrolling and a retained older active-pane scroll callback', async function () {
+    pointer(true)
+    const engine = new FakeEngine()
+    const original = safeMessage({ body: 'Current reply target' })
+    engine.current.messages = [original]
+    const prepared: PickedFile = {
+      fileName: 'notes.pdf',
+      contentType: 'application/pdf',
+      bytes: new Uint8Array([1])
+    }
+    let saved: ChatDraft = {
+      text: 'Older draft',
+      picked: [],
+      scrollOffset: 647,
+      hasScrollPosition: true
+    }
+    const changes: ChatDraft[] = []
+    await render(
+      <ChatOverlayHost>
+        <ConversationScreen
+          engine={engine}
+          conversationId="cnv_fixture"
+          userId={1}
+          onMembers={() => {}}
+          files={{ ...files, pickFiles: async () => [prepared] }}
+          swipe={false}
+          embedded
+          draft={saved}
+          onDraftChange={next => {
+            saved = next
+            changes.push(next)
+          }}
+        />
+      </ChatOverlayHost>
+    )
+    const visible = readingGeometry(original.id)
+    await visible.layout()
+    await visible.userScroll(647)
+    interface ScrollEvent {
+      nativeEvent: {
+        contentOffset: { x: number; y: number }
+        contentSize: { width: number; height: number }
+        layoutMeasurement: { width: number; height: number }
+      }
+    }
+    interface RenderedFiber {
+      memoizedProps?: {
+        onContentSizeChange?: unknown
+        onScroll?: (event: ScrollEvent) => void
+      }
+      return?: RenderedFiber
+    }
+    const fiberKey = Object.keys(visible.scroller).find(key =>
+      key.startsWith('__reactFiber$')
+    )!
+    let fiber = (
+      visible.scroller as unknown as Record<string, RenderedFiber | undefined>
+    )[fiberKey]
+    let olderScroll: ((event: ScrollEvent) => void) | undefined
+    while (fiber != null) {
+      if (typeof fiber.memoizedProps?.onContentSizeChange === 'function') {
+        olderScroll = fiber.memoizedProps.onScroll
+        break
+      }
+      fiber = fiber.return
+    }
+    expect(olderScroll, 'the actual rendered ScrollView callback').not.equals(
+      undefined
+    )
+    await act(async () => {
+      visible.scroller.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+      )
+      visible.scroller.scrollTop = 700
+      visible.scroller.dispatchEvent(
+        new window.Event('scroll', { bubbles: true })
+      )
+    })
+    await act(async () => {
+      const input = labelled('Message') as HTMLTextAreaElement
+      Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )!.set!.call(input, 'Latest draft body')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      button('Reply').click()
+      button('Attach').click()
+    })
+    expect(saved.text).equals('Latest draft body')
+    expect(saved.replyTo?.id).equals(original.id)
+    expect(saved.picked).deep.equals([prepared])
+    const beforeQueuedCallback = changes.length
+    await act(async () => {
+      await wait(120)
+    })
+    expect(
+      changes.length,
+      'the queued scroll-end callback was delivered'
+    ).equals(beforeQueuedCallback + 1)
+    // RNW forwards that end event through its current ScrollView props.
+    // Also deliver the retained native callback from the earlier render.
+    await act(async () => {
+      olderScroll!({
+        nativeEvent: {
+          contentOffset: { x: 0, y: 700 },
+          contentSize: { width: 640, height: visible.geometry.height },
+          layoutMeasurement: { width: 640, height: 400 }
+        }
+      })
+    })
+    expect(changes.length).equals(beforeQueuedCallback + 2)
+    expect(saved.text).equals('Latest draft body')
+    expect(saved.replyTo?.id).equals(original.id)
+    expect(saved.picked).deep.equals([prepared])
+    expect(saved.scrollOffset).equals(700)
+    expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+      'Latest draft body'
+    )
+    expect(document.body.textContent)
+      .contains('Replying to Shohei Ohtani')
+      .and.contains('notes.pdf')
+    expect(engine.calls).deep.equals([])
+  })
+
   it('discards a pending saved-anchor measurement after newer layout moves the row and restores from fresh geometry', async function () {
     const engine = new FakeEngine()
     const reading = safeMessage({
