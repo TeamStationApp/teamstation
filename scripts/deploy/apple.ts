@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync
@@ -18,6 +19,7 @@ import path from 'node:path'
 import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
 
 import { asAppleLogin, privateJson, type Settings } from './config'
+import { BuildValidationFailure, type ValidationCheck } from './failure'
 import { buildEnvironment, prepare } from './prepare'
 import { Processes } from './process'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
@@ -136,8 +138,10 @@ export async function ruby(
   processes = context.processes
 ): Promise<string> {
   const file = path.join(directory, `${operation}.json`)
-  const checkout = context.settings.match?.checkout
+  let checkout = context.settings.match?.checkout
   if ((operation === 'match' || operation === 'import') && checkout != null) {
+    context.reportStage?.('apple.signing-checkout')
+    checkout = realpathSync(checkout)
     noSymlinks(checkout)
     const stat = statSync(checkout)
     if (
@@ -155,9 +159,9 @@ export async function ruby(
     loginFile != null
   ) {
     login = privateJson(loginFile, asAppleLogin)
-    login.cookieDirectory = path.resolve(
-      path.dirname(loginFile),
-      login.cookieDirectory
+    context.reportStage?.('apple.session-store')
+    login.cookieDirectory = realpathSync(
+      path.resolve(path.dirname(loginFile), login.cookieDirectory)
     )
     noSymlinks(login.cookieDirectory)
     const stat = statSync(login.cookieDirectory)
@@ -215,7 +219,7 @@ export interface Signing {
   /** The App Store profiles, fetched only for an app that goes to TestFlight. */
   appStoreProfiles?: Map<string, Profile>
 }
-function profileDirectories(home: string): string[] {
+export function profileDirectories(home: string): string[] {
   const legacy = path.resolve(
     home,
     'Library/MobileDevice/Provisioning Profiles'
@@ -236,6 +240,8 @@ function profileDirectories(home: string): string[] {
     noSymlinks(modern)
     return [modern]
   }
+  noSymlinks(legacy)
+  noSymlinks(modern)
   return [legacy, modern]
 }
 export async function withSigning<T>(
@@ -243,6 +249,7 @@ export async function withSigning<T>(
   action: (signing: Signing) => Promise<T>,
   profileHome = os.homedir()
 ): Promise<T> {
+  context.reportStage?.('apple.signing')
   const apple =
     context.settings.apps[context.target.app][context.target.platform]?.apple
   const match = context.settings.match
@@ -321,6 +328,7 @@ export async function withSigning<T>(
       if (context.target.platform !== 'ios') return profiles
       for (const name of readdirSync(profilesDirectory)) {
         if (!name.endsWith('.mobileprovision')) continue
+        context.reportStage?.('apple.profiles')
         const file = path.join(profilesDirectory, name)
         noSymlinks(file)
         const xml = path.join(directory, 'profile.plist')
@@ -453,6 +461,7 @@ export async function archive(
   context: BuildContext,
   signing: Signing
 ): Promise<string> {
+  context.reportStage?.('apple.prepare')
   // The token file is read before the archive, so a bad one fails in seconds.
   const sentry = context.settings.apps[context.target.app].sentry
   const sentryEnvironment =
@@ -552,6 +561,7 @@ export async function archive(
       ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES']),
       ...(sourceMap == null ? [] : [`SOURCEMAP_FILE=${sourceMap}`])
     ]
+    context.reportStage?.('apple.archive')
     await context.processes.run({
       file: context.settings.tools.xcodebuild,
       args,
@@ -566,9 +576,11 @@ export async function archive(
         context.processes,
         directory
       )
+      context.reportStage?.('sentry.dsyms')
       await upload.dsyms(path.join(destination, 'dSYMs'))
       if (sourceMap != null) {
         const app = builtApp(path.join(destination, 'Products/Applications'))
+        context.reportStage?.('sentry.source-map')
         await upload.bundle(
           path.join(app, 'main.jsbundle'),
           sourceMap,
@@ -596,13 +608,20 @@ export async function verifyApp(
   const apple =
     context.settings.apps[context.target.app][context.target.platform]!.apple!
   const info = await readInfo(context, app)
+  const checks: ValidationCheck[] = []
+  if (info.CFBundleIdentifier !== context.target.app) checks.push('bundle-id')
   if (
-    info.CFBundleIdentifier !== context.target.app ||
     info.CFBundleVersion !==
-      nativeNumber(context.target.platform, context.buildNumber) ||
-    info.CFBundleShortVersionString !== context.version
+    nativeNumber(context.target.platform, context.buildNumber)
   )
-    throw new Error('Apple package metadata did not match')
+    checks.push('build-number')
+  if (info.CFBundleShortVersionString !== context.version)
+    checks.push('version')
+  if (checks.length > 0)
+    throw new BuildValidationFailure(
+      'Apple package metadata did not match',
+      checks
+    )
   await context.processes.run({
     file: context.settings.tools.codesign,
     args: ['--verify', '--deep', '--strict', app],
@@ -740,6 +759,7 @@ async function exportIpa(
     { mode: 0o600 }
   )
   const exported = path.join(signing.directory, names.exported)
+  context.reportStage?.('apple.export')
   await context.processes.run({
     file: context.settings.tools.xcodebuild,
     args: [
@@ -766,6 +786,7 @@ async function exportIpa(
   const payload = path.join(unpacked, 'Payload')
   const apps = readdirSync(payload).filter(item => item.endsWith('.app'))
   if (apps.length !== 1) throw new Error('Expected one IPA application')
+  context.reportStage?.('apple.verify')
   await verifyApp(context, path.join(payload, apps[0]), signing, kind)
   return file
 }
@@ -826,6 +847,7 @@ export async function ios(
         'adHoc'
       )
       const retained = path.join(context.output, 'ios.ipa')
+      context.reportStage?.('package.retain')
       if (testflight == null) {
         copyFileSync(file, retained, 1)
         return {
