@@ -10,6 +10,7 @@ import path from 'node:path'
 
 import { allocateBuildNumber, packageVersion } from './buildNumber'
 import { loadSettings, type Settings } from './config'
+import { buildFailureReason, type BuildStage, buildStages } from './failure'
 import { Processes } from './process'
 import { currentSource } from './source'
 import {
@@ -86,6 +87,7 @@ export function options(args: string[]): Options {
   return out
 }
 export interface BuildContext {
+  reportStage?: (stage: BuildStage) => void
   source: string
   output: string
   settings: Settings
@@ -215,11 +217,15 @@ export async function run(
       for (const os of options.platforms) {
         if (signal.aborted) break
         const selected = target(options.app, os)
+        let stage: BuildStage = 'builder'
         try {
           const builder = builders[os]
           if (builder == null)
             throw new Error('Signed build adapter is unavailable')
           const built = await builder({
+            reportStage: next => {
+              if (buildStages.includes(next)) stage = next
+            },
             source: source.directory,
             output: directory,
             settings,
@@ -233,6 +239,7 @@ export async function run(
           })
           if (built.buildNumber !== nativeNumber(os, buildNumber))
             throw new Error('Package build number did not match allocation')
+          stage = 'package.retain'
           const format = os === 'ios' ? 'ipa' : os === 'android' ? 'apk' : 'dmg'
           const name = `${os}.${format}`
           const destination = path.join(directory, name)
@@ -250,8 +257,11 @@ export async function run(
             error: undefined,
             ...checksum
           })
-        } catch {
+        } catch (error) {
           record.failed.push(os)
+          output(
+            `${os} build failure reason (${stage}): ${buildFailureReason(error)}`
+          )
           output(`${os} build failed; no package was published`)
         }
         state.save(record)

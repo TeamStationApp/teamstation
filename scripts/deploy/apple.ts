@@ -197,6 +197,7 @@ export async function withSigning<T>(
   action: (signing: Signing) => Promise<T>,
   profileHome = os.homedir()
 ): Promise<T> {
+  context.reportStage?.('apple.signing')
   const apple =
     context.settings.apps[context.target.app][context.target.platform]?.apple
   const match = context.settings.match
@@ -386,6 +387,7 @@ export async function archive(
   context: BuildContext,
   signing: Signing
 ): Promise<string> {
+  context.reportStage?.('apple.prepare')
   // The token file is read before the archive, so a bad one fails in seconds.
   const sentry = context.settings.apps[context.target.app].sentry
   const sentryEnvironment =
@@ -466,6 +468,7 @@ export async function archive(
       ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES']),
       ...(sourceMap == null ? [] : [`SOURCEMAP_FILE=${sourceMap}`])
     ]
+    context.reportStage?.('apple.archive')
     await context.processes.run({
       file: context.settings.tools.xcodebuild,
       args,
@@ -480,9 +483,11 @@ export async function archive(
         context.processes,
         directory
       )
+      context.reportStage?.('sentry.dsyms')
       await upload.dsyms(path.join(destination, 'dSYMs'))
       if (sourceMap != null) {
         const app = builtApp(path.join(destination, 'Products/Applications'))
+        context.reportStage?.('sentry.source-map')
         await upload.bundle(
           path.join(app, 'main.jsbundle'),
           sourceMap,
@@ -652,6 +657,7 @@ export async function ios(
         { mode: 0o600 }
       )
       const exported = path.join(signing.directory, 'export')
+      context.reportStage?.('apple.export')
       await context.processes.run({
         file: context.settings.tools.xcodebuild,
         args: [
@@ -678,8 +684,10 @@ export async function ios(
       const payload = path.join(unpacked, 'Payload')
       const apps = readdirSync(payload).filter(name => name.endsWith('.app'))
       if (apps.length !== 1) throw new Error('Expected one IPA application')
+      context.reportStage?.('apple.verify')
       await verifyApp(context, path.join(payload, apps[0]), signing)
       const retained = path.join(context.output, 'ios.ipa')
+      context.reportStage?.('package.retain')
       copyFileSync(file, retained, 1)
       return {
         file: retained,
