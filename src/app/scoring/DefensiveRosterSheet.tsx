@@ -21,7 +21,9 @@ export function DefensiveRosterSheet({
   openedEmpty,
   onClose,
   onChoose,
-  onAddPlaceholders
+  onAddPlaceholders,
+  busy = false,
+  problem
 }: {
   session: ScoringSessionState
   side: Side
@@ -30,6 +32,8 @@ export function DefensiveRosterSheet({
   onClose: () => void
   onChoose: (id: number) => void
   onAddPlaceholders: (count: number) => void
+  busy?: boolean
+  problem?: string
 }): React.ReactElement {
   const theme = useTheme()
   const { height } = useWindowDimensions()
@@ -41,7 +45,7 @@ export function DefensiveRosterSheet({
   return (
     <>
       <ScoringSheet
-        title={`Assign ${position}`}
+        title={busy ? 'Refreshing game...' : `Assign ${position}`}
         compact={compact}
         placement={compact ? 'top' : 'bottom'}
         textCancel
@@ -54,6 +58,11 @@ export function DefensiveRosterSheet({
         }}
         onClose={onClose}
       >
+        {problem != null && (
+          <Text accessibilityRole="alert" style={{ color: theme.dangerColor }}>
+            {problem}
+          </Text>
+        )}
         <ScrollView
           accessibilityLabel="Defensive roster"
           style={{ maxHeight: compact ? 44 : 104 }}
@@ -67,6 +76,7 @@ export function DefensiveRosterSheet({
               <Pressable
                 key={id}
                 accessibilityRole="button"
+                disabled={busy}
                 accessibilityLabel={`Assign ${position} ${defensiveRosterLabel(names[id])}`}
                 onPress={() => {
                   onChoose(id)
@@ -95,6 +105,7 @@ export function DefensiveRosterSheet({
         {openedEmpty && team.players.length < 9 && (
           <Pressable
             accessibilityRole="button"
+            disabled={busy}
             accessibilityLabel="Create Placeholder Players"
             onPress={() => {
               setAdding(true)

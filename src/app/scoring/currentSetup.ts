@@ -1,3 +1,4 @@
+import { awaitingResult } from '../../common/scoring/rules'
 import { copyState } from '../../common/scoring/state'
 import { createPlayers, type FieldPlayer } from '../field/fieldModel'
 import { battingSide, fieldingSide } from './scoringSelectors'
@@ -18,6 +19,7 @@ export function setupEditable(state: ScoringState): boolean {
     ['ready', 'awaitingBatter'].includes(state.phase) &&
     state.pendingPlay == null &&
     state.session.pending == null &&
+    !awaitingResult(state.session) &&
     state.runnerAction == null &&
     state.runnerDraft == null &&
     state.moreDraft == null &&

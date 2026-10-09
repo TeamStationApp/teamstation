@@ -92,13 +92,14 @@ import {
   scoreboardFor
 } from './scoringSelectors'
 import { ScoringSettings } from './ScoringSettings'
-import { ScoringButton, ScoringSheet } from './ScoringSheet'
+import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 import { DevelopmentScoringSource, type ScoringSource } from './scoringSource'
 import {
   type HistoryEntry,
   type Position,
   POSITIONS,
-  type ScoringEvent
+  type ScoringEvent,
+  type Side
 } from './scoringTypes'
 import { dictationUrl } from './useDictation'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
@@ -305,6 +306,7 @@ function ScoringPanel(props: {
   )
   const state = model.scoring
   const openedLog = useRef(state.log)
+  const refreshedLog = useRef<readonly ScoringAction[] | undefined>(undefined)
   const [status, setStatus] = useState(() => statusOf(props.game))
   useEffect(() => {
     // What the screen shows of the save is read in a task of its own: the
@@ -337,6 +339,14 @@ function ScoringPanel(props: {
   }, [props.game])
   // The screen's log is the game: the session saves whatever it says.
   useEffect(() => {
+    if (
+      refreshedLog.current != null &&
+      sameActions(state.log, refreshedLog.current)
+    ) {
+      refreshedLog.current = undefined
+      return
+    }
+    refreshedLog.current = undefined
     if (state.log !== openedLog.current) props.game.sync(state.log)
   }, [props.game, state.log])
   // Undo taps into play scored before this screen opened, one at a time,
@@ -419,7 +429,10 @@ function ScoringPanel(props: {
   const [defensiveSlot, setDefensiveSlot] = useState<{
     position: Position
     openedEmpty: boolean
+    side: Side
   }>()
+  const [rosterLoading, setRosterLoading] = useState(false)
+  const [rosterProblem, setRosterProblem] = useState<string>()
   const [rosterInitial, setRosterInitial] = useState<RosterEditorDraft>()
   const [acceptedLineup, setAcceptedLineup] = useState<string>()
   const defensiveOpen = defensiveSlot != null
@@ -483,14 +496,15 @@ function ScoringPanel(props: {
   const actionsAllowed =
     bottomActionsAllowed(state) &&
     !status.readOnly &&
-    missing.length === 0 &&
-    lineupAccepted
+    !rosterLoading &&
+    (awaitingResult(session) || (missing.length === 0 && lineupAccepted))
   const canEditDefense =
     setupEditable(state) &&
     !status.readOnly &&
     !menu &&
     sheet == null &&
     !defensiveOpen &&
+    !rosterLoading &&
     !outcomeMenu &&
     !moreOpen
   const { client } = props
@@ -619,13 +633,18 @@ function ScoringPanel(props: {
     question: state.dictationQuestion,
     played,
     onAnswer: answer => {
+      if (rosterLoading || (!lineupAccepted && !awaitingResult(session))) return
       dispatch({ type: 'DICTATION_ANSWER', ...answer })
     },
     onDismissQuestion: () => {
       dispatch({ type: 'DICTATION_DISMISS' })
     },
     // While a play is drawn or a player dragged, Space is the field's.
-    spaceTalks: (atRest(state) || state.reel != null) && !gestureActive,
+    spaceTalks:
+      (atRest(state) || state.reel != null) &&
+      !gestureActive &&
+      !rosterLoading &&
+      (lineupAccepted || awaitingResult(session)),
     undone,
     onActions: (transcript, actions, undo) => {
       if (undo === true) {
@@ -639,7 +658,11 @@ function ScoringPanel(props: {
           dispatch({ type: 'DICTATION_DISMISS' })
         setUndone(last => ({ id: (last?.id ?? 0) + 1, line }))
       }
-      if (actions.length > 0)
+      if (
+        actions.length > 0 &&
+        !rosterLoading &&
+        (lineupAccepted || awaitingResult(session))
+      )
         dispatch({ type: 'DICTATED', transcript, actions })
     }
   })
@@ -678,29 +701,119 @@ function ScoringPanel(props: {
   // last one saved wins.
   const [rosterRead, setRosterRead] = useState(0)
   const shownLog = useRef(state.log)
+  const resumedAppearance = useRef(
+    awaitingResult(props.game.state)
+      ? props.game.state.liveData.plays.currentPlay?.about.atBatIndex
+      : undefined
+  )
   shownLog.current = state.log
-  const openRosters = (): void => {
-    setRosterInitial(undefined)
-    setSheet('rosters')
-    if (!props.persistent) return
-    props.game
-      .reload()
-      .then(changed => {
-        // The server's copy can read back differently with the same plays
-        // (its players in another order). Then the screen is the game
-        // already, and keeps its Undo history; only another scorer's plays
-        // start it again from the server's.
-        if (!changed || sameActions(shownLog.current, props.game.actions))
-          return
+  const refreshSetup = async (): Promise<GameState | null> => {
+    setRosterLoading(true)
+    setRosterProblem(undefined)
+    try {
+      if (!props.persistent) return session
+      const changed = await props.game.reload()
+      const oldUnresolved =
+        awaitingResult(props.game.state) &&
+        props.game.state.liveData.plays.currentPlay?.about.atBatIndex ===
+          resumedAppearance.current
+      const resumed = oldUnresolved
+        ? props.game.resumable()
+        : { state: props.game.state, actions: [...props.game.actions] }
+      // The server's copy can read back differently with the same plays
+      // (its players in another order). Then the screen is the game
+      // already, and keeps its Undo history; only another scorer's plays
+      // start it again from the server's.
+      if (changed && !sameActions(shownLog.current, props.game.actions)) {
+        if (oldUnresolved) refreshedLog.current = resumed.actions
         dispatch({
           type: 'RESET',
-          session: props.game.state,
-          log: [...props.game.actions]
+          session: resumed.state,
+          log: resumed.actions
         })
-        // The editor starts again from the game the server holds.
+      }
+      if (
+        props.game.readOnly ||
+        props.game.state.pending != null ||
+        (awaitingResult(props.game.state) &&
+          props.game.state.liveData.plays.currentPlay?.about.atBatIndex !==
+            resumedAppearance.current)
+      ) {
+        setSheet(undefined)
+        setDefensiveSlot(undefined)
+        return null
+      }
+      return resumed.state
+    } catch {
+      setRosterProblem('Unable to refresh the game. Please try again.')
+      return null
+    } finally {
+      setRosterLoading(false)
+    }
+  }
+  const openRosters = (lineup = false): void => {
+    setRosterInitial(undefined)
+    setSheet('rosters')
+    refreshSetup()
+      .then(fresh => {
+        if (fresh == null) return
+        setRosterInitial(
+          lineup
+            ? { draft: fresh, side: battingSide(fresh), defense: false }
+            : undefined
+        )
         setRosterRead(value => value + 1)
       })
-      .catch(() => undefined)
+      .catch(() => {
+        setRosterProblem('Unable to refresh the game. Please try again.')
+      })
+  }
+  const editableSetup = (fresh: GameState): boolean =>
+    setupEditable(resumedScoringState(fresh, [], state.presentationEnabled))
+  const chooseDefender = (id: number): void => {
+    const slot = defensiveSlot
+    if (slot == null || rosterLoading) return
+    refreshSetup()
+      .then(fresh => {
+        if (fresh == null) return
+        if (
+          fieldingSide(fresh) === slot.side &&
+          editableSetup(fresh) &&
+          fresh.liveData.boxscore.teams[slot.side].players.includes(id)
+        ) {
+          if (
+            fresh.liveData.boxscore.teams[slot.side].defense[slot.position] !==
+            id
+          )
+            dispatch({
+              type: 'ROSTER',
+              draft: assignDefender(fresh, slot.position, id)
+            })
+        }
+        setDefensiveSlot(undefined)
+      })
+      .catch(() => {
+        setRosterProblem('Unable to refresh the game. Please try again.')
+      })
+  }
+  const createDefensivePlaceholders = (count: number): void => {
+    const slot = defensiveSlot
+    if (slot == null || rosterLoading) return
+    refreshSetup()
+      .then(fresh => {
+        if (fresh == null) return
+        if (fieldingSide(fresh) !== slot.side || !editableSetup(fresh)) {
+          setDefensiveSlot(undefined)
+          return
+        }
+        if (fresh.liveData.boxscore.teams[slot.side].players.length >= 9) return
+        const draft = copyState(fresh)
+        addPlaceholderPlayers(draft, slot.side, count)
+        dispatch({ type: 'ROSTER', draft })
+      })
+      .catch(() => {
+        setRosterProblem('Unable to refresh the game. Please try again.')
+      })
   }
   const { phase, pendingPlay, motions, runnerAction, presentation } = state
   const previousPlayers = useRef<FieldPlayer[]>([])
@@ -892,15 +1005,11 @@ function ScoringPanel(props: {
     !menu &&
     sheet == null &&
     !defensiveOpen &&
+    !rosterLoading &&
     !outcomeMenu &&
     !moreOpen
   const openLineup = (): void => {
-    setRosterInitial({
-      draft: session,
-      side: battingSide(session),
-      defense: false
-    })
-    setSheet('rosters')
+    openRosters(true)
   }
   const setupInstruction = setupWarning
     ? missing.length > 0
@@ -941,8 +1050,21 @@ function ScoringPanel(props: {
             return
           setDefensiveSlot({
             position: player.label as Position,
-            openedEmpty: player.emptyPosition === true
+            openedEmpty: player.emptyPosition === true,
+            side: fieldingSide(session)
           })
+          const side = fieldingSide(session)
+          refreshSetup()
+            .then(fresh => {
+              if (
+                fresh != null &&
+                (fieldingSide(fresh) !== side || !editableSetup(fresh))
+              )
+                setDefensiveSlot(undefined)
+            })
+            .catch(() => {
+              setRosterProblem('Unable to refresh the game. Please try again.')
+            })
         },
         onBaseProjection: setBaseProjection,
         ...battedBallField(
@@ -1177,7 +1299,7 @@ function ScoringPanel(props: {
       }}
       onUndo={() => {
         scoringAudio.stop()
-        if (status.readOnly) return
+        if (status.readOnly || rosterLoading) return
         // The reducer decides, from the state every earlier tap left, whether
         // this one is the screen's to take back or the saved game's.
         dispatch({ type: 'UNDO' })
@@ -1299,26 +1421,13 @@ function ScoringPanel(props: {
           side={fieldingSide(session)}
           position={defensiveSlot.position}
           openedEmpty={defensiveSlot.openedEmpty}
+          busy={rosterLoading}
+          problem={rosterProblem}
           onClose={() => {
             setDefensiveSlot(undefined)
           }}
-          onChoose={id => {
-            if (
-              session.liveData.boxscore.teams[fieldingSide(session)].defense[
-                defensiveSlot.position
-              ] !== id
-            )
-              dispatch({
-                type: 'ROSTER',
-                draft: assignDefender(session, defensiveSlot.position, id)
-              })
-            setDefensiveSlot(undefined)
-          }}
-          onAddPlaceholders={count => {
-            const draft = copyState(session)
-            addPlaceholderPlayers(draft, fieldingSide(session), count)
-            dispatch({ type: 'ROSTER', draft })
-          }}
+          onChoose={chooseDefender}
+          onAddPlaceholders={createDefensivePlaceholders}
         />
       )}
       <ErrorCreditSheet state={state} dispatch={dispatch} />
@@ -1489,18 +1598,31 @@ function ScoringPanel(props: {
               }}
             />
           )}
-          {sheet === 'rosters' && (
-            <RosterEditor
-              key={rosterRead}
-              initialDraft={rosterInitial}
-              state={state}
-              onCancel={closeSheet}
-              onSave={(draft, nextBatter) => {
-                dispatch({ type: 'ROSTER', draft, nextBatter })
-                closeSheet()
-              }}
-            />
-          )}
+          {sheet === 'rosters' &&
+            (rosterLoading ? (
+              <ActivityIndicator accessibilityLabel="Refreshing game" />
+            ) : rosterProblem != null ? (
+              <>
+                <ScoringError message={rosterProblem} />
+                <ScoringButton
+                  label="Retry refreshing game"
+                  onPress={() => {
+                    openRosters(rosterInitial != null)
+                  }}
+                />
+              </>
+            ) : (
+              <RosterEditor
+                key={rosterRead}
+                initialDraft={rosterInitial}
+                state={state}
+                onCancel={closeSheet}
+                onSave={(draft, nextBatter) => {
+                  dispatch({ type: 'ROSTER', draft, nextBatter })
+                  closeSheet()
+                }}
+              />
+            ))}
           {sheet === 'overrides' && (
             <OverridesEditor
               state={state}

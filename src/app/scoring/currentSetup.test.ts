@@ -8,6 +8,7 @@ import {
   ScoringSession
 } from '../../common/scoring/session'
 import { copyState, setupOf } from '../../common/scoring/state'
+import { completeMotions } from '../../test/scoringHelpers'
 import { fieldKey } from '../field/fieldKeyboard'
 import { projectPlayerLabel } from '../field/playerPresentation'
 import {
@@ -34,6 +35,118 @@ const applyAction = (
 const game = (): ReturnType<typeof createDevelopmentSession> =>
   createDevelopmentSession(gameFixture, [], [])
 describe('current scoring setup', function () {
+  it('preserves an automatically closed third out before rejecting the next incomplete half pitch', async function () {
+    const initial = game()
+    const store = memoryStore()
+    const session = ScoringSession.start(store, 'g1', initial, {
+      requireCurrentSetup: true
+    })
+    const setup = setupOf(initial)
+    setup.sides.away.defense.C = null
+    let screen = scoringReducer(initialScoringState(initial), {
+      type: 'ROSTER',
+      draft: applyStoredAction(initial, {
+        type: 'lineup',
+        kind: 'roster',
+        setup
+      }).state
+    })
+    for (let i = 0; i < 9; i++)
+      screen = completeMotions(
+        scoringReducer(screen, { type: 'PITCH', kind: 'called' })
+      )
+    session.sync(screen.log)
+    expect(session.state.liveData.linescore.isTopInning).equals(false)
+    expect(session.state.liveData.plays.allPlays).has.length(3)
+    expect(
+      session.apply({ type: 'pitch', call: 'B' }).problems[0].message
+    ).includes('C')
+    expect(session.state.liveData.plays.allPlays).has.length(3)
+    await session.flush()
+    expect(store.games.get('g1')!.plays).has.length(3)
+  })
+  it('finishes an old partial-defense ball in play and gates the following appearance', async function () {
+    const initial = game()
+    const setup = setupOf(initial)
+    const store = memoryStore()
+    setup.sides.home.defense.C = null
+    const legacy = ScoringSession.start(
+      store,
+      'g1',
+      applyStoredAction(initial, { type: 'lineup', kind: 'roster', setup })
+        .state
+    )
+    expect(
+      legacy.apply({
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: initial.liveData.boxscore.teams.home.defense.RF!,
+        location: { x: 20, z: -60 },
+        launchAngle: 15
+      }).problems
+    ).deep.equals([])
+    await legacy.flush()
+    const live = await ScoringSession.open(
+      store,
+      'g1',
+      { gamePk: 'g1', teams: initial.gameData.teams, setup: setupOf(initial) },
+      { requireCurrentSetup: true }
+    )
+    expect(setupEditable(initialScoringState(live.state))).equals(false)
+    expect(
+      live.apply({ type: 'result', eventType: 'single' }).problems
+    ).deep.equals([])
+    expect(
+      live.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    expect(live.state.liveData.plays.allPlays).has.length(1)
+    expect(
+      live.apply({ type: 'pitch', call: 'B' }).problems[0].message
+    ).includes('C')
+    await live.flush()
+    expect(store.games.get('g1')!.plays).has.length(1)
+  })
+  it('blocks the next pitch after two balls and a defender move, while preserving the count', function () {
+    const initial = game()
+    let pitched = applyAction(initial, { type: 'pitch', call: 'B' }).state
+    pitched = applyAction(pitched, { type: 'pitch', call: 'B' }).state
+    const moved = assignDefender(
+      pitched,
+      'P',
+      pitched.liveData.boxscore.teams.home.defense.C!
+    )
+    const changed = applyAction(pitched, {
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(moved)
+    })
+    expect(changed.problems).deep.equals([])
+    const next = applyAction(changed.state, { type: 'pitch', call: 'B' })
+    expect(next.problems[0].message).includes('C')
+    expect(next.state.liveData.linescore.balls).equals(2)
+  })
+  it('reports current setup problems consistently for dictation, including a missing pitcher', function () {
+    for (const slot of ['C', 'P'] as const) {
+      const initial = game()
+      const setup = setupOf(initial)
+      setup.sides.home.defense[slot] = null
+      const missing = applyStoredAction(initial, {
+        type: 'lineup',
+        kind: 'roster',
+        setup
+      }).state
+      const state = initialScoringState(missing)
+      const next = scoringReducer(state, {
+        type: 'DICTATED',
+        transcript: 'Ball',
+        actions: [{ type: 'pitch', call: 'B' }]
+      })
+      expect(next.dictation?.problem?.message).equals(
+        `Missing defensive positions: ${slot}`
+      )
+      expect(next.session.liveData.linescore.balls).equals(0)
+    }
+  })
   it('moves defenders uniquely, keeps the full roster and leaves the original untouched', function () {
     const original = game()
     const { P: pitcher, C: catcher } =

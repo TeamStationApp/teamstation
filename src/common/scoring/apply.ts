@@ -51,6 +51,7 @@ import { pitchZone } from './pitchLocation'
 import {
   choiceOpen,
   completesHitOffer,
+  currentSetupError,
   forcedFrom,
   hasEligiblePitch,
   HIT_BASES,
@@ -74,7 +75,6 @@ import {
   type PlayerRef,
   type PlayEvent,
   type Point,
-  POSITIONS,
   type Resolution,
   type ResolutionOutcome,
   type RunnerCredit,
@@ -1923,19 +1923,12 @@ export function applyAction(
     if (
       requireCurrentSetup &&
       ctx.state.pending == null &&
+      !inPlay(ctx.state.liveData.plays.currentPlay) &&
       action.type !== 'lineup' &&
       action.type !== 'gameFlow'
     ) {
-      const defense =
-        ctx.state.liveData.boxscore.teams[fieldingSide(ctx.state)].defense
-      const missing = POSITIONS.filter(position => defense[position] == null)
-      if (missing.length > 0)
-        refuse('notNow', `Missing defensive positions: ${missing.join(', ')}`)
-      if (
-        ctx.state.liveData.boxscore.teams[battingSide(ctx.state)].battingOrder
-          .length === 0
-      )
-        refuse('notNow', 'No players in lineup')
+      const problem = currentSetupError(ctx.state)
+      if (problem != null) refuse('notNow', problem)
     }
     ;(HANDLERS[action.type] as (ctx: Ctx, action: ScoringAction) => void)(
       ctx,

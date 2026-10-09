@@ -1,5 +1,10 @@
 import type { ScoringAction } from '../../common/scoring/actions'
-import { completesHitOffer, undoesHitOffer } from '../../common/scoring/rules'
+import {
+  awaitingResult,
+  completesHitOffer,
+  currentSetupError,
+  undoesHitOffer
+} from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { copyGame, setupOf } from '../../common/scoring/state'
 import {
@@ -897,6 +902,20 @@ function dictated(
 ): ScoringState {
   const { transcript } = event
   if (event.actions.length === 0) return state
+  if (
+    state.readOnly !== true &&
+    state.session.pending == null &&
+    !awaitingResult(state.session) &&
+    !['lineup', 'gameFlow'].includes(event.actions[0].type)
+  ) {
+    const problem = currentSetupError(state.session)
+    if (problem != null)
+      return {
+        ...state,
+        dictationQuestion: undefined,
+        dictation: { transcript, problem: { code: 'notNow', message: problem } }
+      }
+  }
   // What was left to be assumed is filled in, a steal is the runner's on the
   // base before the one taken, and runners who move together go lead runner
   // first, however they were said.
@@ -949,7 +968,7 @@ function dictated(
     }
   let game = state.session
   for (const action of actions) {
-    const applied = applyAction(game, action)
+    const applied = applyAction(game, action, { requireCurrentSetup: true })
     if (applied.problems.length > 0)
       return {
         ...current,

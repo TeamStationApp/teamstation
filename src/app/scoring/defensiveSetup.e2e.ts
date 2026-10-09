@@ -5,8 +5,16 @@ import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import { asGameDetail, asRosterEntry } from '../../common/api'
+import type { ScoringAction } from '../../common/scoring/actions'
+import { ScoringSession, type StoredGame } from '../../common/scoring/session'
 import { applyFieldCamera } from '../field/cameraModel'
 import { createPlayers } from '../field/fieldModel'
+import {
+  type DefaultLineups,
+  startingSetup,
+  teamsOf
+} from './developmentSession'
 import { type Position, POSITIONS } from './scoringTypes'
 
 const base = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8088'
@@ -71,6 +79,7 @@ const person = (
   jersey: row.jersey
 })
 interface Fixture {
+  animationsOff?: boolean
   noDefault?: boolean
   awayRoster?: number
   missing?: Position[]
@@ -80,10 +89,42 @@ interface Fixture {
   nextMissing?: Position[]
   height?: number
 }
+function defaultLineups(fixture: Fixture): DefaultLineups {
+  if (fixture.noDefault === true) return {}
+  return Object.fromEntries(
+    ['away', 'home'].map(side => {
+      const rows = roster(
+        side,
+        side === 'home'
+          ? (fixture.homeRoster ?? 10)
+          : (fixture.awayRoster ?? 10)
+      )
+      const count =
+        side === 'away' ? (fixture.awayCount ?? 9) : (fixture.homeCount ?? 9)
+      const missing =
+        side === 'home' ? (fixture.missing ?? []) : (fixture.nextMissing ?? [])
+      return [
+        side,
+        {
+          batters: rows.slice(0, count).map(person),
+          defense: Object.fromEntries(
+            POSITIONS.map((slot, i) => [
+              slot,
+              missing.includes(slot) || rows[i] == null ? null : person(rows[i])
+            ])
+          )
+        }
+      ]
+    })
+  )
+}
 let browser: Browser
-async function open(
-  fixture: Fixture = {}
-): Promise<{ page: Page; unexpected: string[] }> {
+async function open(fixture: Fixture = {}): Promise<{
+  page: Page
+  unexpected: string[]
+  peer: (actions: ScoringAction[]) => Promise<ScoringSession['state']>
+  savedPlays: () => number
+}> {
   const page = await browser.newPage()
   const unexpected: string[] = []
   page.setDefaultTimeout(10000)
@@ -91,13 +132,75 @@ async function open(
   page.on('pageerror', error => unexpected.push(String(error)))
   // Desktop browser at a narrow CSS width: no device or mobile emulation.
   await page.setViewport({ width: 390, height: fixture.height ?? 844 })
+  if (fixture.animationsOff === true)
+    await page.evaluateOnNewDocument(() => {
+      localStorage.setItem(
+        'teamstation:scoring:999:switch-hitter',
+        JSON.stringify({ help: false, shown: 0, animations: false })
+      )
+    })
   const held: { plays: unknown[]; currentPlay: unknown } = {
     plays: [],
     currentPlay: null
   }
+  const fixtureGame = asGameDetail(game)
+  const context = {
+    gamePk: 'g1',
+    teams: teamsOf(fixtureGame),
+    setup: startingSetup(
+      fixtureGame,
+      roster('away', fixture.awayRoster ?? 10).map(asRosterEntry),
+      roster('home', fixture.homeRoster ?? 10).map(asRosterEntry),
+      defaultLineups(fixture),
+      false
+    )
+  }
+  const peer = async (
+    actions: ScoringAction[]
+  ): Promise<ScoringSession['state']> => {
+    const store = {
+      load: async (): Promise<StoredGame> => held as StoredGame,
+      save: async (
+        _id: string,
+        change: {
+          plays: StoredGame['plays']
+          remove: number[]
+          currentPlay?: StoredGame['currentPlay']
+        }
+      ): Promise<StoredGame> => {
+        const kept = new Map(
+          (held.plays as StoredGame['plays']).map(play => [
+            play.about.atBatIndex,
+            play
+          ])
+        )
+        for (const index of change.remove) kept.delete(index)
+        for (const play of change.plays) kept.set(play.about.atBatIndex, play)
+        held.plays = [...kept.values()]
+        if (change.currentPlay !== undefined)
+          held.currentPlay = change.currentPlay
+        return held as StoredGame
+      }
+    }
+    const other = await ScoringSession.open(store, 'g1', context, {
+      requireCurrentSetup: true
+    })
+    for (const action of actions)
+      expect(other.apply(action).problems).deep.equals([])
+    await other.flush()
+    return other.state
+  }
   await page.setRequestInterception(true)
   page.on('request', request => {
     const u = new URL(request.url())
+    // Test the app's documented font fallback without depending on remote font delivery.
+    if (
+      u.hostname === 'fonts.googleapis.com' ||
+      u.hostname === 'fonts.gstatic.com'
+    ) {
+      request.abort().catch(() => undefined)
+      return
+    }
     if (!u.pathname.startsWith('/api/')) {
       request.continue().catch(() => undefined)
       return
@@ -202,7 +305,7 @@ async function open(
   })
   await page.goto(`${base}/games/g1/score`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('canvas[data-field-ready="true"]')
-  return { page, unexpected }
+  return { page, unexpected, peer, savedPlays: () => held.plays.length }
 }
 async function click(page: Page, label: string): Promise<void> {
   await page.waitForSelector(`[aria-label="${label}"]`)
@@ -464,6 +567,9 @@ describe('current defensive scoring setup browser', function () {
             (node: unknown) => (count === 0 ? node === null : node != null)
           )
           await click(page, 'Set Lineup')
+          await page.waitForSelector(
+            '[aria-label="Away Team"][aria-selected="true"]'
+          )
           expect(
             await page.$('[aria-label="Away Team"][aria-selected="true"]')
           ).not.equals(null)
@@ -504,6 +610,9 @@ describe('current defensive scoring setup browser', function () {
       await page.waitForSelector('[aria-label="Set Lineup"]')
       expect(await text(page)).includes('Only eight players in lineup')
       await click(page, 'Set Lineup')
+      await page.waitForSelector(
+        '[aria-label="Home Team"][aria-selected="true"]'
+      )
       expect(
         await page.$('[aria-label="Home Team"][aria-selected="true"]')
       ).not.equals(null)
@@ -587,6 +696,9 @@ describe('current defensive scoring setup browser', function () {
         )
       ).equals('true')
       await click(page, 'Set Lineup')
+      await page.waitForSelector(
+        '[aria-label="Away Team"][aria-selected="true"]'
+      )
       expect(
         await page.$('[aria-label="Away Team"][aria-selected="true"]')
       ).not.equals(null)
@@ -612,6 +724,92 @@ describe('current defensive scoring setup browser', function () {
       await new Promise(resolve => setTimeout(resolve, 300))
       expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
       await tapSlot(page, 'P')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('E9 preserves peer-saved pitches through warning and field roster mutations', async () => {
+    for (const route of ['lineup', 'defender'] as const) {
+      const { page, peer, unexpected } = await open({ awayCount: 8 })
+      try {
+        if (route === 'defender') await tapSlot(page, 'P')
+        await peer([
+          { type: 'pitch', call: 'B' },
+          { type: 'pitch', call: 'B' }
+        ])
+        if (route === 'lineup') {
+          await click(page, 'Set Lineup')
+          await click(page, 'Save Rosters')
+        } else await choose(page, 'P', 1)
+        await page.waitForSelector('[aria-label*="2 balls"]')
+        await new Promise(resolve => setTimeout(resolve, 150))
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        await page.waitForSelector('[aria-label*="2 balls"]')
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    }
+    const { page, peer, unexpected } = await open({ homeRoster: 8 })
+    try {
+      await tapSlot(page, 'RF')
+      await click(page, 'Create Placeholder Players')
+      await click(page, 'Player count 2')
+      const added = await peer([
+        {
+          type: 'lineup',
+          kind: 'addPlayer',
+          side: 'home',
+          name: 'Julio Rodriguez',
+          jersey: '10'
+        }
+      ])
+      await peer([
+        {
+          type: 'lineup',
+          kind: 'position',
+          side: 'home',
+          position: 'RF',
+          player: added.liveData.boxscore.teams.home.players.at(-1)!
+        },
+        { type: 'pitch', call: 'B' },
+        { type: 'pitch', call: 'B' }
+      ])
+      await click(page, 'Add')
+      await page.waitForSelector('[aria-label*="2 balls"]')
+      expect(await page.$$('[aria-label^="Assign RF #"]')).has.length(9)
+      expect(await page.$('[aria-label="Create Placeholder Players"]')).equals(
+        null
+      )
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('E10 closes the third strikeout before the next incomplete defense blocks another pitch', async () => {
+    const { page, unexpected, savedPlays } = await open({
+      nextMissing: ['C'],
+      animationsOff: true
+    })
+    try {
+      for (let i = 0; i < 9; i++) await click(page, 'Called Strike')
+      await page.waitForSelector('[aria-label*="Bottom 1st"]')
+      await page.waitForSelector('[data-nameplate="empty-C"]')
+      expect(await text(page)).includes('Missing defensive positions\nC')
+      expect(
+        await page.$eval('[aria-label="Ball"]', el =>
+          el.getAttribute('aria-disabled')
+        )
+      ).equals('true')
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Save status"]') == null
+      )
+      await new Promise(resolve => setTimeout(resolve, 150))
+      expect(savedPlays()).equals(3)
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.waitForSelector('[aria-label*="Bottom 1st"]')
+      expect(savedPlays()).equals(3)
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()

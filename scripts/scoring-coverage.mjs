@@ -41,15 +41,9 @@ const test = spawnSync(
       : ['src/**/*.test.ts']
     ).flatMap(spec => ['--spec', spec]),
     '--spec',
-    'lib/scoring-tests.cjs',
+    currentSetupScope ? 'lib/current-setup-tests.cjs' : 'lib/scoring-tests.cjs',
     '--ignore',
-    '**/node_modules/**',
-    ...(currentSetupScope
-      ? [
-          '--grep',
-          'scoring|field|pitch|inning|roster|lineup|runner|athlete|reel|batter|ball|nameplate|base|uniform|player|toast|defensive|sheets'
-        ]
-      : [])
+    '**/node_modules/**'
   ],
   { stdio: 'inherit', env: { ...process.env, NODE_V8_COVERAGE: temp } }
 )

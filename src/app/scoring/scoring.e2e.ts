@@ -1754,7 +1754,19 @@ describe('scoring browser', function () {
     try {
       await page.setViewport({ width: 320, height: 400 })
       await click(page, 'Open scoring menu')
+      await click(page, 'Overrides')
+      await click(page, 'First base')
+      await click(page, 'Choose First base Player 2')
+      await click(page, 'Apply Override')
+      await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Set Lineup')
+      const removals = await page.$$eval('[aria-label^="Remove "]', nodes =>
+        nodes
+          .map(node => node.getAttribute('aria-label')!)
+          .filter(label => label !== 'Remove Player 2')
+      )
+      for (const label of removals) await click(page, label)
       await click(page, 'Set Defense')
       await new Promise(resolve => setTimeout(resolve, 500))
       for (const width of [320, 390]) {
@@ -1798,7 +1810,9 @@ describe('scoring browser', function () {
           scroll: node.scrollWidth,
           style: getComputedStyle(node).textOverflow
         }))
-        expect(error.text).equals('Demo Northern Hawks needs a pitcher.')
+        expect(error.text).equals(
+          'Choose a next batter in the lineup who is not already on base.'
+        )
         expect(error.scroll).at.most(error.width + 1)
         expect(error.style).not.equals('ellipsis')
         expect(
