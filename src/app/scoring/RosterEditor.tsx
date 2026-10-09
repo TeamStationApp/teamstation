@@ -223,7 +223,7 @@ export function RosterEditor({
         </View>
         <Text numberOfLines={defense ? 1 : undefined} style={text}>
           {defense
-            ? 'Drag player into defensive position'
+            ? 'Drag player into position. On touch, hold briefly first.'
             : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
         </Text>
         {state.phase === 'awaitingBatter' && (
@@ -310,6 +310,7 @@ export function RosterEditor({
                         <RosterDrag
                           key={id}
                           playerId={id}
+                          immediateMouseDrag={defense}
                           label={
                             defense
                               ? names[id].fullName

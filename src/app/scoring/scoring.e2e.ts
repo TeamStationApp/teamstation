@@ -1622,19 +1622,6 @@ describe('scoring browser', function () {
       const from = await point(source)
       await page.mouse.move(from.x, from.y)
       await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 150))
-      expect(await page.$('[data-testid="Roster dragged card"]')).equals(null)
-      expect(await calls()).equals(0)
-      await page.mouse.up()
-      await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 100))
-      await page.mouse.move(from.x + 20, from.y)
-      await new Promise(resolve => setTimeout(resolve, 600))
-      expect(await page.$('[data-testid="Roster dragged card"]')).equals(null)
-      expect(await calls()).equals(0)
-      await page.mouse.up()
-      await page.mouse.move(from.x, from.y)
-      await page.mouse.down()
       await page.waitForFunction(
         width => {
           const node = document.querySelector(
