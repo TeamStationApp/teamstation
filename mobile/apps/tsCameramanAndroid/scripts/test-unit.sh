@@ -18,7 +18,9 @@ log "Running unit tests with coverage"
 TOP="$(git rev-parse --show-toplevel)"
 log "Changed-line coverage"
 # The GL renderer and the Camera2 session need a device's EGL and camera, and SentryTest's native
-# crash needs the device's library; the gate holds the logic they call into. A branch that changed nothing here passes.
+# crash needs the device's library; the gate holds the logic they call into. Device event control
+# (eventcontrol/, and the scoreboard and settings code it drives) is under app/src/main and held
+# like the rest. A branch that changed nothing here passes.
 node "$TOP/scripts/changed-line-check.cjs" \
   --jacoco "$CAMERAMAN_ROOT/app/build/reports/kover/reportDebug.xml" \
   --source-root "$CAMERAMAN_ROOT/app/src/main/kotlin" \

@@ -1,0 +1,246 @@
+{
+  "description": "build: the Director-side builder from a selected event (startAtMs is Unix milliseconds); either expected or error. wire: fields as received; error null means accepted unchanged. Trimming removes ASCII space, tab, LF, VT, FF and CR only. Titles over 256 UTF-8 bytes are cut at the last whole character that fits; game IDs are never cut.",
+  "build": [
+    {
+      "name": "plain",
+      "input": {
+        "gameId": "gam_demoA",
+        "title": "Visitors at Pioneers",
+        "startAtMs": 1790013600123
+      },
+      "expected": {
+        "gameId": "gam_demoA",
+        "title": "Visitors at Pioneers",
+        "startAt": "2026-09-21T18:00:00Z"
+      }
+    },
+    {
+      "name": "trimsAsciiWhitespace",
+      "input": {
+        "gameId": " \t\ngam_demoA\r\n",
+        "title": "  Visitors at Pioneers \u000b",
+        "startAtMs": 1790013600999
+      },
+      "expected": {
+        "gameId": "gam_demoA",
+        "title": "Visitors at Pioneers",
+        "startAt": "2026-09-21T18:00:00Z"
+      }
+    },
+    {
+      "name": "nbspIsKept",
+      "input": {
+        "gameId": " gam_demoA",
+        "title": "Visitors at Pioneers",
+        "startAtMs": 1790013600000
+      },
+      "expected": {
+        "gameId": " gam_demoA",
+        "title": "Visitors at Pioneers",
+        "startAt": "2026-09-21T18:00:00Z"
+      }
+    },
+    {
+      "name": "emptyGameId",
+      "input": {
+        "gameId": " \t ",
+        "title": "Visitors at Pioneers",
+        "startAtMs": 1790013600000
+      },
+      "error": "emptyGameId"
+    },
+    {
+      "name": "gameIdOf128Bytes",
+      "input": {
+        "gameId": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        "title": "Visitors at Pioneers",
+        "startAtMs": 0
+      },
+      "expected": {
+        "gameId": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        "title": "Visitors at Pioneers",
+        "startAt": "1970-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "gameIdOf129Bytes",
+      "input": {
+        "gameId": "ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        "title": "Visitors at Pioneers",
+        "startAtMs": 0
+      },
+      "error": "gameIdTooLong"
+    },
+    {
+      "name": "gameIdMultibyteOver",
+      "input": {
+        "gameId": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "title": "Visitors at Pioneers",
+        "startAtMs": 0
+      },
+      "error": "gameIdTooLong"
+    },
+    {
+      "name": "emptyTitle",
+      "input": {
+        "gameId": "gam_demoA",
+        "title": "   ",
+        "startAtMs": 0
+      },
+      "error": "emptyTitle"
+    },
+    {
+      "name": "longTitleCut",
+      "input": {
+        "gameId": "gam_demoA",
+        "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+        "startAtMs": 0
+      },
+      "expected": {
+        "gameId": "gam_demoA",
+        "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+        "startAt": "1970-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "longMultibyteTitleCut",
+      "input": {
+        "gameId": "gam_demoA",
+        "title": "ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄB",
+        "startAtMs": 0
+      },
+      "expected": {
+        "gameId": "gam_demoA",
+        "title": "ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ",
+        "startAt": "1970-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "cutLeavesNoTrailingSpace",
+      "input": {
+        "gameId": "gam_demoA",
+        "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT x",
+        "startAtMs": 0
+      },
+      "expected": {
+        "gameId": "gam_demoA",
+        "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+        "startAt": "1970-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "wire": [
+    {
+      "name": "ok",
+      "gameId": "gam_demoA",
+      "title": "Visitors at Pioneers",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": null
+    },
+    {
+      "name": "untrimmedGameId",
+      "gameId": " gam_demoA",
+      "title": "Visitors at Pioneers",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": "untrimmedGameId"
+    },
+    {
+      "name": "untrimmedTitle",
+      "gameId": "gam_demoA",
+      "title": "Visitors at Pioneers\n",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": "untrimmedTitle"
+    },
+    {
+      "name": "emptyGameId",
+      "gameId": "",
+      "title": "Visitors at Pioneers",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": "emptyGameId"
+    },
+    {
+      "name": "emptyTitle",
+      "gameId": "gam_demoA",
+      "title": "",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": "emptyTitle"
+    },
+    {
+      "name": "gameIdTooLong",
+      "gameId": "ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+      "title": "T",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": "gameIdTooLong"
+    },
+    {
+      "name": "titleTooLong",
+      "gameId": "g",
+      "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+      "startAt": "2026-09-21T18:00:00Z",
+      "error": "titleTooLong"
+    },
+    {
+      "name": "fractionalSeconds",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-09-21T18:00:00.000Z",
+      "error": "badStartAt"
+    },
+    {
+      "name": "offset",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-09-21T18:00:00+00:00",
+      "error": "badStartAt"
+    },
+    {
+      "name": "space",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-09-21 18:00:00Z",
+      "error": "badStartAt"
+    },
+    {
+      "name": "february30",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-02-30T00:00:00Z",
+      "error": "badStartAt"
+    },
+    {
+      "name": "month13",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-13-01T00:00:00Z",
+      "error": "badStartAt"
+    },
+    {
+      "name": "hour24",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-09-21T24:00:00Z",
+      "error": "badStartAt"
+    },
+    {
+      "name": "second60",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2026-09-21T18:00:60Z",
+      "error": "badStartAt"
+    },
+    {
+      "name": "leapDay",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2028-02-29T12:00:00Z",
+      "error": null
+    },
+    {
+      "name": "nonLeapDay",
+      "gameId": "g",
+      "title": "T",
+      "startAt": "2027-02-29T12:00:00Z",
+      "error": "badStartAt"
+    }
+  ]
+}

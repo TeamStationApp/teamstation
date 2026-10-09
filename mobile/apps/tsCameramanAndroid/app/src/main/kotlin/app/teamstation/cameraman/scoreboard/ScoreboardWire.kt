@@ -1,5 +1,9 @@
 package app.teamstation.cameraman.scoreboard
 
+import app.teamstation.cameraman.eventcontrol.EventControlCredentials
+import app.teamstation.cameraman.eventcontrol.EventControlFetchException
+import app.teamstation.cameraman.eventcontrol.EventControlFetchFailure
+import app.teamstation.cameraman.eventcontrol.EventControlKeyFetcher
 import app.teamstation.cameraman.radar.ScoreboardSocketTarget
 import app.teamstation.cameraman.radar.ScoreboardTarget
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,7 +20,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-internal class ScoreboardWireException(message: String) : Exception(message)
+/** [status] is the server's HTTP status, or 0 when it could not be reached. */
+internal class ScoreboardWireException(message: String, val status: Int = 0) : Exception(message)
 
 internal data class ScoreboardSignInStarted(
     val requestId: String,
@@ -26,7 +31,9 @@ internal data class ScoreboardSignInStarted(
 internal data class ScoreboardSignedIn(
     val token: String,
     val displayName: String,
-    val email: String
+    val email: String,
+    /** The account's canonical ID in decimal; empty when the server's answer did not carry one. */
+    val userId: String = ""
 )
 
 internal data class ScoreboardEventRow(
@@ -41,7 +48,10 @@ internal data class ScoreboardEventLists(
     val upcoming: List<ScoreboardEventRow>
 )
 
-/** The three TeamStation calls Cameraman makes: mail a code, spend it, list events. */
+/**
+ * The TeamStation calls Cameraman makes: mail a code, spend it, list events, and, for device event
+ * control, who the token belongs to and that account's control key.
+ */
 internal interface ScoreboardAccount {
     fun startSignIn(server: String, email: String, origin: String): ScoreboardSignInStarted
     fun completeSignIn(
@@ -51,6 +61,41 @@ internal interface ScoreboardAccount {
         deviceName: String
     ): ScoreboardSignedIn
     fun events(server: String, token: String, zone: ZoneId): ScoreboardEventLists
+
+    /** `GET auth/me`: the canonical user ID, in decimal, of the account [token] belongs to. */
+    fun me(server: String, token: String): String
+
+    /** `GET device-event-control/key` with this device's own [token]: the server's JSON reply. */
+    fun eventControlKey(server: String, token: String): String
+}
+
+/**
+ * The key fetch as event control wants it: a 401 is a refused session, a 404 or 503 says the server
+ * does not offer event control, and anything else (no answer, another error) is offline, as on iOS.
+ */
+internal fun ScoreboardAccount.eventControlKeyFetcher(): EventControlKeyFetcher =
+    EventControlKeyFetcher { server, token ->
+        val reply = try {
+            eventControlKey(server, token)
+        } catch (error: ScoreboardWireException) {
+            val failure = when (error.status) {
+                401 -> EventControlFetchFailure.Unauthorized
+                404, 503 -> EventControlFetchFailure.Unavailable
+                else -> EventControlFetchFailure.Offline
+            }
+            throw EventControlFetchException(failure, error.message ?: "")
+        }
+        EventControlCredentials.decode(reply)
+    }
+
+/** A user ID as the server writes it, a JSON number or string, in decimal; empty when absent. */
+internal fun decimalUserId(raw: Any?): String {
+    val text = when (raw) {
+        is Int, is Long -> raw.toString()
+        is String -> raw.trim()
+        else -> return ""
+    }
+    return if (text.isNotEmpty() && text.length <= 32 && text.all { it in '0'..'9' }) text else ""
 }
 
 internal class OkHttpScoreboardAccount(
@@ -89,9 +134,19 @@ internal class OkHttpScoreboardAccount(
         return ScoreboardSignedIn(
             token = body.getString("token"),
             displayName = user.optString("displayName"),
-            email = user.optString("email").ifEmpty { email }
+            email = user.optString("email").ifEmpty { email },
+            userId = decimalUserId(user.opt("id"))
         )
     }
+
+    override fun me(server: String, token: String): String {
+        val userId = decimalUserId(get(server, "auth/me", token).opt("id"))
+        if (userId.isEmpty()) throw ScoreboardWireException("The server's answer was not understood", 200)
+        return userId
+    }
+
+    override fun eventControlKey(server: String, token: String): String =
+        getText(server, "device-event-control/key", token)
 
     override fun events(server: String, token: String, zone: ZoneId): ScoreboardEventLists {
         val text = getText(server, "events?scope=run&lookbackHours=2&limit=20", token)
@@ -111,7 +166,7 @@ internal class OkHttpScoreboardAccount(
         }
         val text = response.body?.string().orEmpty()
         if (response.code !in 200..299) {
-            throw ScoreboardWireException(messageOf(text) ?: "The server answered ${response.code}")
+            throw ScoreboardWireException(messageOf(text) ?: "The server answered ${response.code}", response.code)
         }
         return text
     }
@@ -148,7 +203,7 @@ internal class OkHttpScoreboardAccount(
         }
         val text = response.body?.string().orEmpty()
         if (response.code !in 200..299) {
-            throw ScoreboardWireException(messageOf(text) ?: "The server answered ${response.code}")
+            throw ScoreboardWireException(messageOf(text) ?: "The server answered ${response.code}", response.code)
         }
         return try {
             JSONObject(text)
@@ -190,6 +245,14 @@ internal class OkHttpScoreboardAccount(
     }
 }
 
+/** Where readings go out. [ScoreboardSocket] on a device; a recorder in tests. */
+internal interface ScoreboardPublisher {
+    fun send(target: ScoreboardSocketTarget?, text: String)
+
+    /** Drops the socket, any reading still waiting for it, and the retry stop. */
+    fun close()
+}
+
 /**
  * One scoreboard socket. A new target replaces the old one. A reading that arrives before the
  * handshake finishes is kept and sent when the socket opens. Close 4401, 4403, and 4404 stop
@@ -200,7 +263,7 @@ internal class ScoreboardSocket(
         .pingInterval(20, TimeUnit.SECONDS)
         .build(),
     private val onStatus: (String) -> Unit = {}
-) {
+) : ScoreboardPublisher {
     private val lock = ReentrantLock()
     private var socket: WebSocket? = null
     private var openUrl: String? = null
@@ -209,7 +272,7 @@ internal class ScoreboardSocket(
     private var stopped = false
     private var pending: String? = null
 
-    fun send(target: ScoreboardSocketTarget?, text: String) {
+    override fun send(target: ScoreboardSocketTarget?, text: String) {
         if (target == null) return
         var outbound: WebSocket? = null
         var outboundText: String? = null
@@ -239,7 +302,7 @@ internal class ScoreboardSocket(
         if (outboundText != null) outbound?.send(outboundText)
     }
 
-    fun close() {
+    override fun close() {
         lock.withLock {
             socket?.close(1000, null)
             socket = null

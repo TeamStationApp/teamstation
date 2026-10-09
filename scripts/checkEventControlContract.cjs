@@ -23,9 +23,11 @@ const FILES = [
 ]
 
 // Directories holding copies of the fixtures. Each must hold every file, each
-// identical to the canonical one. The Android test resources join this list
-// when the Android implementation lands.
-const COPIES = []
+// identical to the canonical one: the Android Cameraman's JVM tests read theirs
+// from its test resources.
+const COPIES = [
+  'mobile/apps/tsCameramanAndroid/app/src/test/resources/eventcontrol'
+]
 
 // The Node reference names the canonical directory itself, in this file.
 const NODE_READER = 'tools/eventControl/fixtures.ts'

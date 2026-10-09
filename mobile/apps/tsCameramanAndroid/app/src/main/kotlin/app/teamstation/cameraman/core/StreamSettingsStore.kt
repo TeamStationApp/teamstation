@@ -15,6 +15,11 @@ import kotlin.concurrent.withLock
 interface SettingsStore {
     fun string(key: String): String?
     fun setString(value: String, key: String)
+
+    /** Several values in one write: a store that can, writes all of them or none. */
+    fun setStrings(values: Map<String, String>) {
+        for ((key, value) in values) setString(value, key)
+    }
 }
 
 class InMemorySettingsStore(values: Map<String, String> = emptyMap()) : SettingsStore {
@@ -25,6 +30,10 @@ class InMemorySettingsStore(values: Map<String, String> = emptyMap()) : Settings
 
     override fun setString(value: String, key: String) {
         lock.withLock { values[key] = value }
+    }
+
+    override fun setStrings(values: Map<String, String>) {
+        lock.withLock { this.values.putAll(values) }
     }
 }
 

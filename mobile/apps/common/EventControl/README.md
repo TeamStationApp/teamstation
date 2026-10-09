@@ -473,9 +473,9 @@ connection:remoteHost:)` are the two state machines with no transport at all.
 
 ## Fixtures and conformance
 
-`Tests/Fixtures` is the contract, and the only copy in this repository: the Node reference reads
-it in place, and `scripts/checkEventControlContract.cjs` fails if any other copy differs by a
-byte.
+`Tests/Fixtures` is the contract. The Node reference reads it in place; the Android Cameraman's
+JVM tests read a copy in their test resources, and `scripts/checkEventControlContract.cjs` fails
+if that or any other copy differs by a byte.
 
 | File | What every implementation must do with it |
 | --- | --- |

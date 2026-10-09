@@ -307,7 +307,8 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                 onV1 = { server, event -> environment.scoreboard.setV1(server, event) },
                 onOpenEvents = { environment.scoreboard.openEvents() },
                 onDismissEvents = { environment.scoreboard.dismissEvents() },
-                onChoose = { environment.scoreboard.choose(it) }
+                onChoose = { environment.scoreboard.choose(it) },
+                onAllowOverride = { environment.scoreboard.setAllowOverride(it) }
             )
         }
         // Landscape: left is video, audio, name; right is lenses, stream, radar.

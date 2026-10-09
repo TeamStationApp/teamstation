@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,6 +23,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +43,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
@@ -308,6 +311,26 @@ private fun LoginDialog(
     }
 }
 
+/** Change Game: a compact green pill under the event, gray and untappable while the picker is off. */
+@Composable
+private fun ChangeGameButton(enabled: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(percent = 50),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        modifier = Modifier
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .wrapContentWidth()
+            .testTag("scoreboard-change-game")
+    ) {
+        Text("Change Game", fontWeight = FontWeight.SemiBold)
+    }
+}
+
 @Composable
 private fun PillAction(label: String, tag: String, onClick: () -> Unit) {
     Button(
@@ -337,7 +360,8 @@ internal fun ScoreboardSettingsCard(
     onOpenEvents: () -> Unit,
     onDismissEvents: () -> Unit,
     onChoose: (ScoreboardEventRow) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onAllowOverride: (Boolean) -> Unit = {}
 ) {
     var apiServer by remember { mutableStateOf(state.apiServer) }
     var eventId by remember { mutableStateOf(state.v1EventId) }
@@ -413,9 +437,12 @@ internal fun ScoreboardSettingsCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp)
             )
+            // The event's time and title read in full white, even while a Director holds it; only
+            // the ways to change it switch off.
+            val canPick = state.signedIn && !state.eventLocked
             TextButton(
                 onClick = onOpenEvents,
-                enabled = state.signedIn,
+                enabled = canPick,
                 modifier = Modifier
                     .padding(horizontal = 12.dp)
                     .testTag("scoreboard-choose-event")
@@ -425,11 +452,63 @@ internal fun ScoreboardSettingsCard(
                         Text(
                             state.gameWhen,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    Text(if (state.gameTitle.isEmpty()) "Tap to pick an event" else state.gameTitle)
+                    Text(
+                        if (state.gameTitle.isEmpty()) "Tap to pick an event" else state.gameTitle,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
+            }
+            ChangeGameButton(enabled = canPick, onClick = onOpenEvents)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = state.allowOverride,
+                        enabled = state.overrideToggleEnabled,
+                        role = Role.Switch,
+                        onValueChange = onAllowOverride
+                    )
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .testTag("scoreboard-allow-override")
+            ) {
+                Text(
+                    "Allow Director Override",
+                    modifier = Modifier.weight(1f),
+                    color = if (state.overrideToggleEnabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    }
+                )
+                Switch(
+                    checked = state.allowOverride,
+                    onCheckedChange = null,
+                    enabled = state.overrideToggleEnabled
+                )
+            }
+            if (state.overrideHost.isNotEmpty()) {
+                Text(
+                    "Override from Director ${state.overrideHost}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                        .testTag("scoreboard-override-from")
+                )
+            }
+            if (state.overrideStatus.isNotEmpty()) {
+                Text(
+                    state.overrideStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                        .testTag("scoreboard-override-status")
+                )
             }
             if (isRouteStatus(state.status)) {
                 Text(
@@ -443,7 +522,7 @@ internal fun ScoreboardSettingsCard(
             }
         }
     }
-    if (state.pickerOpen) {
+    if (state.pickerOpen && !state.eventLocked) {
         EventPicker(state, onDismissEvents, onChoose)
     }
 }
