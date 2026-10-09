@@ -1,3 +1,4 @@
+import { lstrings } from '../locales/strings'
 import type { MessageView } from './engine/apply'
 import type {
   ConversationListItem,
@@ -15,73 +16,95 @@ import type {
 /** One heading of the chat list and its chats. */
 export interface ChatGroup {
   key: string
-  /** The league, season or team name; undefined for direct messages. */
+  /** The personal Pinned or Chats heading. */
   title: string | undefined
-  kind: 'league' | 'season' | 'team' | 'dm'
+  kind: 'pinned' | 'chats'
   chats: ConversationListItem[]
 }
 
-const SCOPE_ORDER = { league: 0, season: 1, team: 2 } as const
-
-/** The order of a scope's chats within its group. */
-const KIND_ORDER: Record<ConversationListItem['kind'], number> = {
-  leagueOrg: 0,
-  seasonAnnouncements: 0,
-  seasonAllStaff: 1,
-  seasonStaff: 2,
-  teamMembers: 0,
-  teamStaff: 1,
-  teamFans: 2,
-  dm: 0
+const time = (chat: ConversationListItem): number => {
+  const value = Date.parse(
+    (chat.lastPostAt === undefined ? chat.lastMessageAt : chat.lastPostAt) ?? ''
+  )
+  return Number.isFinite(value) ? value : 0
 }
 
-const time = (chat: ConversationListItem): number =>
-  chat.lastMessageAt == null ? 0 : Date.parse(chat.lastMessageAt)
-
 /**
- * The list as the screen shows it: leagues, then seasons, then teams, each
- * under its name, and then the direct messages, newest first.
+ * Personal pins precede other chats; each section ranks DMs before groups,
+ * then latest posts with a stable id tie-breaker.
  */
 export function groupChats(chats: ConversationListItem[]): ChatGroup[] {
-  const groups = new Map<string, ChatGroup>()
-  const dms: ConversationListItem[] = []
-  for (const chat of chats) {
-    if (chat.scope == null) {
-      dms.push(chat)
-      continue
-    }
-    const key = `${chat.scope.type}:${chat.scope.id}`
-    let group = groups.get(key)
-    if (group == null) {
-      group = {
-        key,
-        title: chat.scopeName ?? undefined,
-        kind: chat.scope.type,
-        chats: []
-      }
-      groups.set(key, group)
-    }
-    group.chats.push(chat)
-  }
-  const scoped = [...groups.values()].sort((a, b) => {
-    const order =
-      SCOPE_ORDER[a.kind as keyof typeof SCOPE_ORDER] -
-      SCOPE_ORDER[b.kind as keyof typeof SCOPE_ORDER]
-    return order !== 0 ? order : (a.title ?? '').localeCompare(b.title ?? '')
+  return ([true, false] as const).flatMap(pinned => {
+    const sorted = chats
+      .filter(chat => (chat.preferences?.pinned === true) === pinned)
+      .sort((a, b) => {
+        const kind = Number(a.kind !== 'dm') - Number(b.kind !== 'dm')
+        const recency = time(b) - time(a)
+        return kind !== 0
+          ? kind
+          : recency !== 0
+            ? recency
+            : a.id < b.id
+              ? -1
+              : a.id > b.id
+                ? 1
+                : 0
+      })
+    return sorted.length === 0
+      ? []
+      : [
+          {
+            key: pinned ? 'pinned' : 'chats',
+            kind: pinned ? ('pinned' as const) : ('chats' as const),
+            title: pinned ? lstrings.chat_pinned : lstrings.chat_chats,
+            chats: sorted
+          }
+        ]
   })
-  for (const group of scoped) {
-    group.chats.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
-  }
-  const result = [...scoped]
-  if (dms.length > 0) {
-    result.push({
-      key: 'dm',
-      title: undefined,
-      kind: 'dm',
-      chats: [...dms].sort((a, b) => time(b) - time(a))
-    })
-  }
-  return result
+}
+
+const SUBGROUP: Record<ConversationListItem['kind'], string> = {
+  leagueOrg: 'Org',
+  seasonStaff: 'Staff',
+  seasonAllStaff: 'All Staff',
+  seasonAnnouncements: 'Announcements',
+  teamStaff: 'Staff',
+  teamMembers: 'Members',
+  teamFans: 'Fans',
+  dm: ''
+}
+
+export function conversationTitle(chat: ConversationListItem): string {
+  return chat.kind === 'dm' || chat.scope == null ? chat.title : (chat.scopeName ?? chat.title)
+}
+
+export function conversationPill(
+  chat: ConversationListItem
+): string | undefined {
+  if (chat.kind === 'dm' || chat.scope == null) return undefined
+  return `${chat.scope.type[0].toUpperCase()}${chat.scope.type.slice(1)} ${SUBGROUP[chat.kind]}`
+}
+
+/** Only verified accessible message content may become a local preview. */
+export function messagePreview(message: MessageView | undefined): string {
+  if (message == null) return lstrings.chat_message_unavailable
+  if (message.status !== 'ok')
+    return {
+      removed: lstrings.chat_removed_author,
+      locked: lstrings.chat_locked_message,
+      lost: lstrings.chat_lost_message,
+      invalid: lstrings.chat_invalid_message
+    }[message.status]
+  if (message.body !== '') return message.body
+  if (message.attachments.length > 1)
+    return `${message.attachments.length} ${lstrings.chat_attachments_label}`
+  const attachment = message.attachments[0]
+  if (attachment == null) return lstrings.chat_message_unavailable
+  if (attachment.contentType.startsWith('image/'))
+    return lstrings.chat_photo_label
+  if (attachment.contentType.startsWith('video/'))
+    return lstrings.chat_video_label
+  return `${lstrings.chat_file}: ${attachment.fileName}`
 }
 
 /**
@@ -103,7 +126,9 @@ export function canStartDm(chats: ConversationListItem[]): boolean {
 
 /** Whether anything in the list is unread, for the tab's dot. */
 export function hasUnread(chats: ConversationListItem[]): boolean {
-  return chats.some(chat => chat.unread > 0)
+  return chats.some(
+    chat => chat.unread > 0 || chat.preferences?.manualUnread === true
+  )
 }
 
 /** A DM holds at most this many people (the server's `DM_MAX_MEMBERS`). */

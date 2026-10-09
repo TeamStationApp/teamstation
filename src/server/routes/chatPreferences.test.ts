@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'mocha'
 import { ChatEngine } from '../../app/chat/engine/engine'
 import type { ChatKeyRecord, ChatKeyStore } from '../../app/chat/keyRecord'
 import { TeamStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import type {
   ChatSocketEvent,
   ChatSocketListener
@@ -34,6 +35,8 @@ describe('personal chat preferences and pins', function () {
   this.timeout(120000)
   let fixture: ChatFixture
   let engine: ChatEngine
+  let client: TeamStationClient
+  let store: Store
   let listener: ChatSocketListener | undefined
   let conversationId: string
   let messageId: string
@@ -47,13 +50,14 @@ describe('personal chat preferences and pins', function () {
     }
     fixture = opened
     await fixture.signIn('Hc2', 'Hc')
-    const client = new TeamStationClient({
+    client = new TeamStationClient({
       baseUrl: fixture.api,
       token: fixture.tokenOf('Hc')
     })
+    store = new Store()
     engine = new ChatEngine({
       client,
-      store: new Store(),
+      store,
       userId: fixture.id('Hc'),
       device: { name: 'Test browser', platform: 'web' },
       socket: {
@@ -229,6 +233,175 @@ describe('personal chat preferences and pins', function () {
     ).equals(404)
   })
 
+  it('loads local previews with at most three requests and never changes read receipts', async function () {
+    const ids: string[] = []
+    for (const who of ['Ha', 'Hs', 'Hk', 'N']) {
+      const made = await client.createDm([fixture.id(who)])
+      ids.push(made.id)
+      await engine.refresh()
+      await engine.open(made.id)
+      await engine.sendText(made.id, 'Preview ' + who)
+      engine.close(made.id)
+    }
+    await engine.refresh()
+    const receipts = await fixture.db
+      .selectFrom('chat_read_cursors')
+      .selectAll()
+      .where('conversation_id', 'in', ids)
+      .execute()
+    const original = client.chatMessages.bind(client)
+    let active = 0
+    let maximum = 0
+    let release: () => void = () => {}
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    client.chatMessages = async (...args) => {
+      active += 1
+      maximum = Math.max(maximum, active)
+      await gate
+      try {
+        return await original(...args)
+      } finally {
+        active -= 1
+      }
+    }
+    try {
+      const work = Promise.all(
+        ids.map(async id => {
+          await engine.loadPreview(id)
+        })
+      )
+      for (let attempt = 0; attempt < 200 && active < 3; attempt++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      expect(active).equals(3)
+      release()
+      await work
+      expect(maximum).equals(3)
+      await engine.loadPreview(ids[0])
+      await engine.loadPreview('missing')
+    } finally {
+      release()
+      client.chatMessages = original
+    }
+    expect(
+      await fixture.db
+        .selectFrom('chat_read_cursors')
+        .selectAll()
+        .where('conversation_id', 'in', ids)
+        .execute()
+    ).deep.equals(receipts)
+    expect(
+      engine.conversations().find(item => item.id === ids[0])!.preview
+    ).equals('Preview Ha')
+    const wire = await fixture.call('Hc', 'GET', '/chat/conversations')
+    expect(JSON.stringify(wire.body)).not.includes('Preview Ha')
+
+    const first = engine.view(ids[0])!.messages[0]
+    for (let at = 0; at < 5; at++)
+      await engine.react(ids[0], first.id, '👍', at % 2 === 1)
+    await engine.refresh()
+    const fresh = new ChatEngine({
+      client,
+      store,
+      userId: fixture.id('Hc'),
+      device: { name: 'Fixture viewer', platform: 'web' },
+      pageSize: 2
+    })
+    try {
+      expect(await fresh.start()).equals('ready')
+      await fresh.loadPreview(ids[0])
+      expect(
+        fresh.view(ids[0])!.messages.some(message => message.id === first.id)
+      ).equals(true)
+      expect(
+        fresh.conversations().find(item => item.id === ids[0])!.preview
+      ).equals('Preview Ha')
+
+      const members = client.chatMembers.bind(client)
+      client.chatMembers = async id => {
+        if (id === ids[1])
+          throw new HttpError('internal', 'Fixture temporary error')
+        return await members(id)
+      }
+      let failed = false
+      try {
+        await fresh.loadPreview(ids[1])
+      } catch {
+        failed = true
+      }
+      expect(failed).equals(true)
+      client.chatMembers = members
+      await fresh.loadPreview(ids[1])
+      expect(
+        fresh.conversations().find(item => item.id === ids[1])!.preview
+      ).equals('Preview Hs')
+
+      await client.leaveDm(ids[2])
+      await fresh.loadPreview(ids[2])
+      expect(fresh.view(ids[2])).equals(undefined)
+    } finally {
+      fresh.stop()
+    }
+  })
+
+  it('announces new received posts once, keeps muted delivery and stays quiet on resync', async function () {
+    const peerClient = new TeamStationClient({
+      baseUrl: fixture.api,
+      token: fixture.tokenOf('N')
+    })
+    const peer = new ChatEngine({
+      client: peerClient,
+      store: new Store(),
+      userId: fixture.id('N'),
+      device: { name: 'Fixture peer', platform: 'web' }
+    })
+    try {
+      expect(await peer.start()).equals('ready')
+      await engine.fillGrants()
+      await peer.open(conversationId)
+      await engine.setPreferences(conversationId, { muted: false })
+      const before = events.filter(type => type === 'messageAlert').length
+      const posted = await peer.sendText(conversationId, 'Bring spare gloves.')
+      const hint = {
+        type: 'chat' as const,
+        conversationId,
+        kind: 'message' as const,
+        seq: posted!.seq,
+        at: new Date().toISOString()
+      }
+      listener!(hint)
+      await engine.idle()
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 1
+      )
+      listener!(hint)
+      await engine.idle()
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 1
+      )
+      await engine.setPreferences(conversationId, { muted: true })
+      const quiet = await peer.sendText(conversationId, 'Quiet update.')
+      listener!({ ...hint, seq: quiet!.seq })
+      await engine.idle()
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 1
+      )
+      expect(
+        engine
+          .view(conversationId)!
+          .messages.some(message => message.body === 'Quiet update.')
+      ).equals(true)
+      listener!({ type: 'resync' })
+      await engine.idle()
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 1
+      )
+    } finally {
+      peer.stop()
+    }
+  })
+
   it('uses post recency through reaction/edit/deletion and removes every pin on delete', async function () {
     const before = (
       await fixture.call('Hc', 'GET', '/chat/conversations')
@@ -245,7 +418,7 @@ describe('personal chat preferences and pins', function () {
     const after = (
       await fixture.call('Hc', 'GET', '/chat/conversations')
     ).body.find((item: { id: string }) => item.id === conversationId)
-    expect(after.lastPostId).equals(messageId)
+    expect(after.lastPostId).equals(before.lastPostId)
     expect(after.lastPostAt).equals(before.lastPostAt)
     expect(after.lastPostSeq).equals(before.lastPostSeq)
     expect(JSON.stringify(after)).not.includes('Remember water')
