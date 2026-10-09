@@ -50,9 +50,15 @@ export function lineupCountMessage(count: number): string {
     ? 'No players in lineup'
     : `Only ${words[count] ?? String(count)} ${count === 1 ? 'player' : 'players'} in lineup`
 }
+export function defensiveRosterName(player: ScoringPlayer): string {
+  // Server roster names already resolve collisions across that team's players.
+  const name = player.local
+    ? shortName({ id: player.id, displayName: player.fullName })
+    : player.fullName.trim()
+  return name === '' ? '?' : name
+}
 export function defensiveRosterLabel(player: ScoringPlayer): string {
-  const short = shortName({ id: player.id, displayName: player.fullName })
-  const name = short === '' ? '?' : short
+  const name = defensiveRosterName(player)
   const jersey = player.jersey.trim()
   return `${jersey === '' ? '' : `#${jersey} `}${name}`
 }

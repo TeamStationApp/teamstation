@@ -102,6 +102,34 @@ describe('defensive roster sheet', function () {
     await click('Assign P #0 Mike T')
     expect(choices).deep.equals([bench, catcher])
   })
+  it('preserves distinct server roster names in tiles and accessible labels without jerseys', async () => {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const team = session.liveData.boxscore.teams.home
+    const ids = team.players.slice(0, 2)
+    team.players = ids
+    for (const slot of POSITIONS) team.defense[slot] = null
+    for (const [i, id] of ids.entries())
+      session.gameData.players[id] = {
+        ...session.gameData.players[id],
+        local: false,
+        userId: 200 + i,
+        fullName: i === 0 ? 'Luis Ga' : 'Luis Gi',
+        jersey: ''
+      }
+    const choices: number[] = []
+    await mount({
+      session,
+      onChoose: id => {
+        choices.push(id)
+      }
+    })
+    const bench = document.querySelector('[data-testid="Defensive Bench"]')!
+    expect(bench.textContent).equals('BenchLuis GaLuis Gi')
+    expect(node('Assign P Luis G')).equals(null)
+    await click('Assign P Luis Ga')
+    await click('Assign P Luis Gi')
+    expect(choices).deep.equals(ids)
+  })
   for (const assigned of [false, true])
     it(`keeps both headers and Create Player with an empty ${assigned ? 'bench' : 'fielders'} section`, async () => {
       const session = createDevelopmentSession(gameFixture, [], [])

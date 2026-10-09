@@ -15,6 +15,7 @@ import { memoryStore, type ScoringSource } from '../app/scoring/scoringSource'
 import { type Position, POSITIONS } from '../app/scoring/scoringTypes'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail, asRosterEntry, TeamStationClient } from '../common/api'
+import { shortName } from '../common/names'
 import { freshGame } from '../common/scoring/rules'
 import { ScoringSession } from '../common/scoring/session'
 import { setupOf } from '../common/scoring/state'
@@ -65,10 +66,10 @@ const numbers = [
   '0'
 ]
 const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
-  names.map((shortName, i) =>
+  names.map((displayName, i) =>
     asRosterEntry({
       userId: (side === 'home' ? 200 : 100) + i,
-      shortName,
+      shortName: shortName({ id: i, displayName }),
       jersey: numbers[i],
       positions: [POSITIONS[i % 9]],
       isPlayer: true,

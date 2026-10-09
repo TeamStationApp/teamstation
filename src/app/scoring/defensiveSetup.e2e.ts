@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'mocha'
 import { PerspectiveCamera, Vector3 } from 'three'
 
 import { asGameDetail, asRosterEntry } from '../../common/api'
+import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -57,7 +58,8 @@ const game = {
 }
 const roster = (
   side: string,
-  count = 10
+  count = 10,
+  collisionNames = false
 ): Array<{
   userId: number
   shortName: string
@@ -70,8 +72,11 @@ const roster = (
 }> =>
   Array.from({ length: count }, (_, i) => ({
     userId: (side === 'away' ? 100 : 200) + i,
-    shortName: names[i],
-    jersey: String(i + 1),
+    shortName:
+      collisionNames && side === 'home' && i < 2
+        ? ['Luis Ga', 'Luis Gi'][i]
+        : shortName({ id: i, displayName: names[i] }),
+    jersey: collisionNames && side === 'home' && i < 2 ? '' : String(i + 1),
     positions: [POSITIONS[i % 9]],
     isPlayer: true,
     role: 'member',
@@ -87,6 +92,7 @@ const person = (
 })
 interface Fixture {
   animationsOff?: boolean
+  collisionNames?: boolean
   noDefault?: boolean
   awayRoster?: number
   missing?: Position[]
@@ -104,7 +110,8 @@ function defaultLineups(fixture: Fixture): DefaultLineups {
         side,
         side === 'home'
           ? (fixture.homeRoster ?? 10)
-          : (fixture.awayRoster ?? 10)
+          : (fixture.awayRoster ?? 10),
+        fixture.collisionNames
       )
       const count =
         side === 'away' ? (fixture.awayCount ?? 9) : (fixture.homeCount ?? 9)
@@ -294,8 +301,12 @@ async function open(fixture: Fixture = {}): Promise<{
     teams: teamsOf(fixtureGame),
     setup: startingSetup(
       fixtureGame,
-      roster('away', fixture.awayRoster ?? 10).map(asRosterEntry),
-      roster('home', fixture.homeRoster ?? 10).map(asRosterEntry),
+      roster('away', fixture.awayRoster ?? 10, fixture.collisionNames).map(
+        asRosterEntry
+      ),
+      roster('home', fixture.homeRoster ?? 10, fixture.collisionNames).map(
+        asRosterEntry
+      ),
       defaultLineups(fixture),
       false
     )
@@ -390,7 +401,8 @@ async function open(fixture: Fixture = {}): Promise<{
           u.pathname.includes('/away/') ? 'away' : 'home',
           u.pathname.includes('/home/')
             ? (fixture.homeRoster ?? 10)
-            : (fixture.awayRoster ?? 10)
+            : (fixture.awayRoster ?? 10),
+          fixture.collisionNames
         )
       else if (u.pathname.endsWith('/default-lineup')) {
         const side = u.pathname.includes('/away/') ? 'away' : 'home'
@@ -728,7 +740,7 @@ describe('current defensive scoring setup browser', function () {
             await page.$('[aria-label="Set Lineup"][aria-selected="true"]')
           ).not.equals(null)
           if (count === 0) {
-            await click(page, 'Add Mookie Betts to Lineup')
+            await click(page, `Add ${roster('away')[0].shortName} to Lineup`)
             await click(page, 'Save Rosters')
             expect(await text(page)).includes('Only one player in lineup')
           } else await click(page, 'Cancel')
@@ -1029,12 +1041,12 @@ describe('current defensive scoring setup browser', function () {
             await click(page, `Add ${row.shortName} to Lineup`)
           await click(page, 'Save Rosters')
         }
-        await page.waitForFunction(
-          () =>
-            document
-              .querySelector('[aria-label="Ball"]')
-              ?.getAttribute('aria-disabled') !== 'true'
-        )
+        await page.waitForFunction(() => {
+          const button = document.querySelector('[aria-label="Ball"]')
+          return (
+            button != null && button.getAttribute('aria-disabled') !== 'true'
+          )
+        })
         await page.waitForFunction(
           () => document.querySelector('[aria-label="Save status"]') == null
         )
@@ -1052,6 +1064,36 @@ describe('current defensive scoring setup browser', function () {
       } finally {
         await page.close()
       }
+    }
+  })
+  it('E13 distinguishes server roster abbreviations with matching initials and blank jerseys', async () => {
+    const { page, peer, unexpected } = await open({
+      collisionNames: true,
+      missing: ['P', 'C']
+    })
+    try {
+      await tapSlot(page, 'P')
+      expect(await page.$('[aria-label="Assign P Luis G"]')).equals(null)
+      expect(await text(page)).includes('Luis Ga')
+      expect(await text(page)).includes('Luis Gi')
+      await click(page, 'Assign P Luis Ga')
+      await page.waitForFunction(
+        () => document.querySelector('[data-nameplate="empty-P"]') == null
+      )
+      await tapSlot(page, 'C')
+      await click(page, 'Assign C Luis Gi')
+      await page.waitForFunction(
+        () => document.querySelector('[data-nameplate="empty-C"]') == null
+      )
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Save status"]') == null
+      )
+      const team = (await peer([])).liveData.boxscore.teams.home
+      expect(team.defense.P).equals(team.players[0])
+      expect(team.defense.C).equals(team.players[1])
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
     }
   })
 })

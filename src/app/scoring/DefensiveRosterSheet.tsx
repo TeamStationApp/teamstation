@@ -7,9 +7,8 @@ import {
   View
 } from 'react-native'
 
-import { shortName } from '../../common/names'
 import { useTheme } from '../theme/ThemeContext'
-import { defensiveRosterLabel } from './currentSetup'
+import { defensiveRosterLabel, defensiveRosterName } from './currentSetup'
 import type { PlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { byJersey } from './rosterOrder'
@@ -122,7 +121,7 @@ export function DefensiveRosterSheet({
                 {group.ids.map(id => {
                   const player = names[id]
                   const slot = fieldPosition(id)
-                  const name = shortName({ id, displayName: player.fullName })
+                  const name = defensiveRosterName(player)
                   const jersey = player.jersey.trim()
                   return (
                     <Pressable
@@ -185,7 +184,7 @@ export function DefensiveRosterSheet({
                           fontSize: 13
                         }}
                       >
-                        {name === '' ? '?' : name}
+                        {name}
                         {jersey === '' ? '' : ` #${jersey}`}
                       </Text>
                     </Pressable>
