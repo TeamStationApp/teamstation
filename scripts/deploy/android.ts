@@ -76,6 +76,7 @@ export function verifyAndroidMetadata(
     )
 }
 export async function android(context: BuildContext): Promise<BuiltPackage> {
+  context.reportStage?.('android.prepare')
   const config = context.settings.apps[context.target.app].android?.android
   const { tools } = context.settings
   if (config == null || tools.aapt == null || tools.apksigner == null)
@@ -118,6 +119,7 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
     DEPLOY_KEY_ALIAS: config.alias
   }
   try {
+    context.reportStage?.('android.compile')
     await context.processes.run({
       file: path.join(project, 'gradlew'),
       args: ['--no-daemon', '--init-script', init, ':app:assembleRelease'],
@@ -125,6 +127,7 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
       env,
       capture: false
     })
+    context.reportStage?.('android.verify')
     const outputs = path.join(project, 'app/build/outputs/apk/release')
     const names = readdirSync(outputs).filter(name => name.endsWith('.apk'))
     if (names.length !== 1)
@@ -152,7 +155,8 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
         !/\s[1-9]\d*\s+[^\n]*assets\/index\.android\.bundle\s*$/m.test(entries)
       )
         throw new Error('Release APK has no bundled JavaScript')
-      if (upload != null)
+      if (upload != null) {
+        context.reportStage?.('sentry.source-map')
         await upload.bundle(
           path.join(project, ANDROID_BUNDLE),
           path.join(project, ANDROID_SOURCE_MAP),
@@ -164,9 +168,12 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
           ),
           directory
         )
+      }
     }
-    if (upload != null && context.target.kind === 'kotlin')
+    if (upload != null && context.target.kind === 'kotlin') {
+      context.reportStage?.('sentry.native-libraries')
       await upload.nativeLibraries(path.join(project, ANDROID_NATIVE_LIBS))
+    }
     return { file, buildNumber: nativeNumber('android', context.buildNumber) }
   } finally {
     rmSync(init, { force: true })
