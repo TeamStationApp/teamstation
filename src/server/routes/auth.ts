@@ -280,6 +280,9 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         clientIp(req)
       )
       await chargePasswordAttempt(db, rules)
+      // An address of an account that was merged into another finds the
+      // account that was kept, so it signs in with that account's password;
+      // the merged account's own password is no longer anybody's.
       const user = await findUserByEmail(db, email)
 
       // Keep the failure message uniform. The public parameter handshake can

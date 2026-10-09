@@ -1,5 +1,6 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
+import { signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 
@@ -67,7 +68,40 @@ export async function onePerson(
 }
 
 /**
+ * The open row that `userId` is now: itself when it is open, otherwise the row
+ * at the end of its chain of merges.
+ *
+ * Undefined when the walk does not reach an open row within `MAX_DEPTH`
+ * steps — a loop, or a chain too long to be anything but a mistake — and when
+ * there is no such row at all. Signing in follows this, so a row it cannot
+ * settle is answered as nobody rather than as a closed row.
+ */
+export async function openRowOf(
+  db: Kysely<Database>,
+  userId: number
+): Promise<number | undefined> {
+  let at = userId
+  for (let step = 0; step <= MAX_DEPTH; step += 1) {
+    const row = await db
+      .selectFrom('users')
+      .select(['merged_into'])
+      .where('id', '=', at)
+      .executeTakeFirst()
+    if (row == null) return undefined
+    if (row.merged_into == null) return at
+    at = row.merged_into
+  }
+  return undefined
+}
+
+/**
  * Closes one row into another: the merge itself.
+ *
+ * The closing row is signed out of everything at the same moment
+ * (`signOutEverywhere`): every device signed in as it has to sign in again,
+ * and the address it signs in with, either row's, lands on the row kept. Its
+ * addresses stay where they are — a merge moves no data — and sign-in follows
+ * `merged_into` from the address to the open row instead.
  *
  * The memberships move with it. A membership is a person on a team — the
  * jersey, the positions, the role — and leaving it under a closed row is what
@@ -220,6 +254,7 @@ async function moveAndClose(
     .set({ merged_into: keeping })
     .where('id', '=', closing)
     .execute()
+  await signOutEverywhere(db, closing)
   return moved
 }
 

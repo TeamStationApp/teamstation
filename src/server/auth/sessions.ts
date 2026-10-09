@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
@@ -61,6 +61,13 @@ export async function createSession(
  * Resolves a bearer token to whoever is behind it, trying sessions first and
  * then machine tokens. Returns undefined for anything expired, revoked or
  * unknown — a caller cannot tell which, on purpose.
+ *
+ * A token whose account has been merged into another is refused the same way.
+ * A merge revokes everything the closing account held (`signOutEverywhere`),
+ * so this is the second lock on the same door: it holds for a row closed before
+ * merges revoked anything, and for one closed by hand. Every client already
+ * treats a refused token as "signed out, sign in again", and signing in again
+ * with either account's address lands on the account that was kept.
  */
 export async function actorForToken(
   db: Kysely<Database>,
@@ -77,13 +84,15 @@ export async function actorForToken(
       'auth_sessions.user_id as userId',
       'auth_sessions.expires_at as expiresAt',
       'auth_sessions.revoked_at as revokedAt',
-      'users.is_admin as isAdmin'
+      'users.is_admin as isAdmin',
+      'users.merged_into as mergedInto'
     ])
     .where('auth_sessions.token_hash', '=', tokenHash)
     .executeTakeFirst()
 
   if (session != null) {
     if (session.revokedAt != null) return undefined
+    if (session.mergedInto != null) return undefined
     if (new Date(session.expiresAt).getTime() <= now.getTime()) return undefined
     await db
       .updateTable('auth_sessions')
@@ -107,13 +116,15 @@ export async function actorForToken(
       'api_tokens.scopes as scopes',
       'api_tokens.expires_at as expiresAt',
       'api_tokens.revoked_at as revokedAt',
-      'users.is_admin as isAdmin'
+      'users.is_admin as isAdmin',
+      'users.merged_into as mergedInto'
     ])
     .where('api_tokens.token_hash', '=', tokenHash)
     .executeTakeFirst()
 
   if (apiToken == null) return undefined
   if (apiToken.revokedAt != null) return undefined
+  if (apiToken.mergedInto != null) return undefined
   if (
     apiToken.expiresAt != null &&
     new Date(apiToken.expiresAt).getTime() <= now.getTime()
@@ -145,6 +156,63 @@ export async function revokeSession(
     .where('token_hash', '=', hashToken(token))
     .where('revoked_at', 'is', null)
     .execute()
+}
+
+/** What `signOutEverywhere` took away. */
+export interface SignedOut {
+  sessions: number
+  apiTokens: number
+  oauthGrants: number
+}
+
+/**
+ * Signs one account out of everything it is signed in to: every session on
+ * every device, every machine token, and every OAuth grant with the tokens
+ * issued under it.
+ *
+ * A merge calls this for the account it closes, inside the merge's own
+ * transaction, so a device signed in as the closed account can make no request
+ * once the merge has committed. It must sign in again, and doing so with
+ * either account's address lands on the account that was kept.
+ *
+ * Sessions and machine tokens are marked revoked rather than deleted: when they
+ * were last used is still the answer to "has this account ever been used", and
+ * a merge that is undone leaves them revoked, because a device that was signed
+ * out should not find itself signed back in to an account it was told had gone.
+ * OAuth records are deleted, which is how the provider itself revokes them; a
+ * grant is dead in any case once the session that approved it is.
+ */
+export async function signOutEverywhere(
+  db: Kysely<Database>,
+  userId: number,
+  at = new Date()
+): Promise<SignedOut> {
+  const sessions = await db
+    .updateTable('auth_sessions')
+    .set({ revoked_at: at })
+    .where('user_id', '=', userId)
+    .where('revoked_at', 'is', null)
+    .executeTakeFirst()
+  const apiTokens = await db
+    .updateTable('api_tokens')
+    .set({ revoked_at: at })
+    .where('user_id', '=', userId)
+    .where('revoked_at', 'is', null)
+    .executeTakeFirst()
+  // A Grant is stored under its own id; every token issued under it carries
+  // the grant's id in `grant_hash`.
+  await sql`delete from oauth_records r using oauth_grant_sessions g
+    where g.user_id = ${userId}
+      and (r.grant_hash = g.grant_hash or (r.model = 'Grant' and r.id_hash = g.grant_hash))`.execute(
+    db
+  )
+  const grants = await sql`delete from oauth_grant_sessions
+    where user_id = ${userId}`.execute(db)
+  return {
+    sessions: Number(sessions.numUpdatedRows),
+    apiTokens: Number(apiTokens.numUpdatedRows),
+    oauthGrants: Number(grants.numAffectedRows ?? 0)
+  }
 }
 
 /** Drops sessions that expired a while ago. Called by the nightly job. */

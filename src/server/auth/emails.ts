@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { makeId } from '../../common/ids'
+import { openRowOf } from '../admin/people'
 import type { Database } from '../db/database'
 
 /**
@@ -8,9 +9,14 @@ import type { Database } from '../db/database'
  *
  * An address is an attribute of an account, not its identity: one person holds
  * several, and signing in with any of them reaches the same account. So every
- * lookup goes through `user_emails`, and a merged-away account is never
- * returned — its addresses have already moved to the account that absorbed it,
- * and answering as the closed one would sign somebody in to a dead row.
+ * lookup goes through `user_emails`.
+ *
+ * A merge moves no addresses: they stay on the account that was closed, with
+ * everything else it had. So the address is looked up wherever it is, and an
+ * account that has been merged answers as the open account at the end of its
+ * chain of merges (`openRowOf`) — its name, its password, whether it may sign
+ * in. Signing in with a merged-away address signs in to the account that was
+ * kept; when that chain reaches no open account the address finds nobody.
  */
 
 export interface FoundUser {
@@ -30,22 +36,31 @@ export async function findUserByEmail(
   const wanted = email.trim().toLowerCase()
   if (wanted === '') return undefined
 
-  const row = await db
+  const held = await db
     .selectFrom('user_emails')
-    .innerJoin('users', 'users.id', 'user_emails.user_id')
-    .select([
-      'users.id as id',
-      'users.display_name as displayName',
-      'user_emails.email as email',
-      'users.password_hash as passwordHash',
-      'users.login_enabled as loginEnabled',
-      'users.is_admin as isAdmin'
-    ])
-    .where(eb => eb.fn('lower', ['user_emails.email']), '=', wanted)
-    .where('users.merged_into', 'is', null)
+    .select(['user_id', 'email'])
+    .where(eb => eb.fn('lower', ['email']), '=', wanted)
     .executeTakeFirst()
+  if (held == null) return undefined
 
-  return row
+  const userId = await openRowOf(db, held.user_id)
+  if (userId == null) return undefined
+
+  const row = await db
+    .selectFrom('users')
+    .select([
+      'id',
+      'display_name as displayName',
+      'password_hash as passwordHash',
+      'login_enabled as loginEnabled',
+      'is_admin as isAdmin'
+    ])
+    .where('id', '=', userId)
+    .where('merged_into', 'is', null)
+    .executeTakeFirst()
+  if (row == null) return undefined
+
+  return { ...row, email: held.email }
 }
 
 /** A person's primary address, for showing back to them. */
