@@ -469,6 +469,15 @@ describe('Native build and signing adapters', () => {
     verifyAndroidMetadata(badging, report + report, context)
     const scoped = `Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ${digest}\nSigner (minSdkVersion=33 (dev release=true), maxSdkVersion=2147483647) certificate SHA-256 digest: ${digest}`
     verifyAndroidMetadata(badging, scoped, context)
+    const v2 = `Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${digest}`
+    verifyAndroidMetadata(badging, v2, context)
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        badging,
+        v2.replace('Number of signers: 1', 'Number of signers: 2'),
+        context
+      )
+    })
     assert.throws(() => {
       verifyAndroidMetadata(
         badging,
