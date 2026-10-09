@@ -1,6 +1,12 @@
 /** Functional follow-up scenarios run only on explicitly supplied fixture surfaces. */
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
@@ -1587,6 +1593,151 @@ async function disposableDelete(daemon: Daemon): Promise<void> {
   }
 }
 
+/** Upload a new ordinary video fixture without changing existing messages. */
+async function videoFixture(daemon: Daemon): Promise<void> {
+  const history = JSON.parse(
+    readFileSync(required('CHAT_UI_HISTORY_FIXTURE_FILE'), 'utf8')
+  ) as { conversationId: string }
+  const m = await daemon.attach({
+    device: 'chat-ui-video-fixture',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({ link: `${WEB}/chat/${history.conversationId}` })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    const before = (await m.evalBrowserScript({
+      script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});if(!r.ok)throw new Error('Video fixture scope unavailable');return (await r.json()).find(c=>c.id===${JSON.stringify(history.conversationId)}).lastSeq`
+    })) as { data?: unknown }
+    const sequence = Number(before.data)
+    assert(Number.isInteger(sequence))
+    await m.evalBrowserScript({
+      script: `window.chatUiVideoInputClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';return}return window.chatUiVideoInputClick.call(this)};return true`
+    })
+    await m.tapOn({ text: 'Attach' })
+    await m.uploadFile({
+      css: 'input[type="file"]',
+      path: required('CHAT_UI_VIDEO_FILE')
+    })
+    await m.assertVisible({ text: 'Remove practice-clip.mp4', timeout: 30000 })
+    const caption = `Practice video ${Date.now()}`
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: caption })
+    await m.tapOn({ text: 'Send' })
+    const result = (await m.evalBrowserScript({
+      script: `for(let n=0;n<150;n++){const r=await fetch(${JSON.stringify(API + '/chat/conversations/' + history.conversationId + '/messages?after=')}+${sequence},{credentials:'include'});if(!r.ok)throw new Error('Video acknowledgment unavailable');const posts=(await r.json()).filter(p=>p.kind==='post');if(posts.length){if(posts.length!==1)throw new Error('Video Send must make exactlyone post');const row=document.querySelector('[data-testid="chat-message-'+posts[0].id+'"]');if(row&&row.textContent.includes(${JSON.stringify(caption)})&&row.querySelector('[aria-label="Open practice-clip.mp4"]')&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify({conversationId:${JSON.stringify(history.conversationId)},videoMessageId:posts[0].id,videoCaption:${JSON.stringify(caption)},fileName:'practice-clip.mp4',contentType:'video/mp4',normalAttachAndSend:true,encryptedPost:true})}await new Promise(r=>setTimeout(r,100))}throw new Error('Video fixture did not render its decrypted thumbnail')`
+    })) as { data?: unknown }
+    assert.equal(typeof result.data, 'string')
+    writeFileSync(
+      required('CHAT_UI_VIDEO_FIXTURE_RESULT'),
+      result.data as string,
+      { mode: 0o600 }
+    )
+    console.log(
+      'NEW normal encrypted video fixture READY; existing protected messages unchanged'
+    )
+  } finally {
+    await m
+      .evalBrowserScript({
+        script: `if(window.chatUiVideoInputClick)HTMLInputElement.prototype.click=window.chatUiVideoInputClick;return true`
+      })
+      .catch(() => undefined)
+    await m.detach()
+  }
+}
+
+/** Refresh only the reply used by live tests; the protected original stays intact. */
+async function currentHistoryReply(daemon: Daemon): Promise<void> {
+  const original = JSON.parse(
+    readFileSync(required('CHAT_UI_HISTORY_FIXTURE_FILE'), 'utf8')
+  ) as {
+    conversationId: string
+    originalId: string
+    originalBody: string
+    replyId: string
+  }
+  const m = await daemon.attach({
+    device: 'chat-ui-current-history-reply',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const selector = `[data-testid="chat-message-${original.originalId}"]`
+  const api = `const path=${JSON.stringify(API + '/chat/conversations/' + original.conversationId)};async function get(url){const r=await fetch(url,{credentials:'include'});if(!r.ok)throw new Error('Owned history metadata unavailable');return r.json()}`
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({ link: `${WEB}/chat/${original.conversationId}` })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    for (let count = 0; count < 20; count += 1) {
+      const result = (await m.evalBrowserScript({
+        script: `for(let n=0;n<120;n++){if(document.querySelector(${JSON.stringify(selector)}))return 'found';const earlier=[...document.querySelectorAll('[role="button"]')].find(n=>n.getAttribute('aria-label')==='Load earlier messages'||n.textContent.trim()==='Load earlier messages');if(earlier){const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-1}));earlier.scrollIntoView({block:'center'});earlier.setAttribute('data-chat-current-earlier','true');await new Promise(r=>setTimeout(r,300));return 'page'}await new Promise(r=>setTimeout(r,100))}throw new Error('Protected original is unavailable before current-reply setup')`
+      })) as { data?: unknown }
+      if (result.data === 'found') break
+      await m.tapOn({ css: '[data-chat-current-earlier="true"]' })
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    await m.evalBrowserScript({
+      script: `const node=document.querySelector(${JSON.stringify(selector)});if(!node)throw new Error('Protected original did not load');const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));node.scrollIntoView({block:'center'});node.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await m.tapOn({ css: selector + ' [aria-label="Reply"]' })
+    await m.assertVisible({ text: 'Cancel reply' })
+    const before = (await m.evalBrowserScript({
+      script: `${api}return (await get(${JSON.stringify(API + '/chat/conversations')})).find(c=>c.id===${JSON.stringify(original.conversationId)}).lastSeq`
+    })) as { data?: unknown }
+    const seq = Number(before.data)
+    assert(Number.isInteger(seq), 'Current sequence required')
+    const body = `Current history reply ${Date.now()}`
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: body })
+    await m.tapOn({ text: 'Send' })
+    const posted = (await m.evalBrowserScript({
+      script: `${api}for(let n=0;n<100;n++){const rows=await get(path+'/messages?after='+${seq}),posts=rows.filter(r=>r.kind==='post');if(posts.length){if(posts.length!==1)throw new Error('Current reply must create exactly one post');return JSON.stringify({replyId:posts[0].id,replyBody:${JSON.stringify(body)},targetOriginalUnchanged:true,normalUi:true})}await new Promise(r=>setTimeout(r,100))}throw new Error('Current history reply was not acknowledged')`
+    })) as { data?: unknown }
+    assert.equal(typeof posted.data, 'string')
+    const current = JSON.parse(posted.data as string) as {
+      replyId: string
+      replyBody: string
+    }
+    await m.evalBrowserScript({
+      script: `for(let n=0;n<100;n++){const row=document.querySelector('[data-testid="chat-message-'+${JSON.stringify(current.replyId)}+'"]');if(row&&row.textContent.includes(${JSON.stringify(body)})&&row.querySelector('[aria-label^="Jump to message from "]')&&document.querySelector('[data-testid="chat-composer"]').value==='')return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Current reply plaintext/quote did not render')`
+    })
+    writeFileSync(
+      required('CHAT_UI_CURRENT_HISTORY_REPLY_RESULT'),
+      JSON.stringify(
+        { ...original, ...current, previousReplyId: original.replyId },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    )
+    console.log(
+      'NEW normal encrypted current reply READY; protected original/file/old reply unchanged'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
 /** Repeatable live-purge fixture: only new normal encrypted posts are deleted. */
 async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
   const fixtureFile = required('CHAT_UI_PURGE_FIXTURE_FILE')
@@ -1732,17 +1883,36 @@ async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
         'Never repeat an attempted author Delete'
       )
       const signals = required('CHAT_UI_PURGE_READY_SIGNALS').split(',')
-      assert.equal(signals.length, 2, 'Both native watchers are required')
-      for (const signal of signals) {
-        const ready = JSON.parse(readFileSync(signal, 'utf8')) as {
-          ready?: boolean
-          originalId?: string
+      const platforms = (
+        process.env.CHAT_UI_PURGE_EXPECTED_PLATFORMS ?? 'ios,android'
+      ).split(',')
+      assert(
+        platforms.length > 0 &&
+          platforms.length <= 2 &&
+          new Set(platforms).size === platforms.length &&
+          platforms.every(platform => ['ios', 'android'].includes(platform)),
+        'Explicit live observer platforms required'
+      )
+      assert.equal(signals.length, platforms.length)
+      const verifyReady = (): void => {
+        for (const [index, signal] of signals.entries()) {
+          const ready = JSON.parse(readFileSync(signal, 'utf8')) as {
+            ready?: boolean
+            originalId?: string
+            conversationId?: string
+            platform?: string
+          }
+          assert(
+            ready.ready === true &&
+              ready.originalId === fixture.originalId &&
+              ready.conversationId === conversationId &&
+              ready.platform === platforms[index] &&
+              Date.now() - statSync(signal).mtimeMs < 240000,
+            'Exact live native observer must acknowledge with time left before Delete'
+          )
         }
-        assert(
-          ready.ready === true && ready.originalId === fixture.originalId,
-          'Both exact native watchers must acknowledge before Delete'
-        )
       }
+      verifyReady()
       const before = await data<number>(
         `${api}return (await get('/chat/conversations')).find(c=>c.id===id).lastSeq`
       )
@@ -1751,6 +1921,7 @@ async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
       await m.assertVisible({
         text: 'This message will be removed for everyone.'
       })
+      verifyReady()
       fixture.attemptedDelete = true
       writeFileSync(fixtureFile, JSON.stringify(fixture, null, 2))
       await m.tapOn({ text: 'Delete' })
@@ -1847,6 +2018,8 @@ async function main(): Promise<void> {
       scenario === 'coarseTouch' ||
       scenario === 'purgePrepare' ||
       scenario === 'purgeDelete' ||
+      scenario === 'currentHistoryReply' ||
+      scenario === 'videoFixture' ||
       scenario === 'S5' ||
       scenario === 'S6' ||
       scenario === 'S9' ||
@@ -1885,6 +2058,9 @@ async function main(): Promise<void> {
     else if (scenario === 'coarseTouch') await coarseTouch(daemon)
     else if (scenario === 'purgePrepare') await purgeFixture(daemon, false)
     else if (scenario === 'purgeDelete') await purgeFixture(daemon, true)
+    else if (scenario === 'currentHistoryReply')
+      await currentHistoryReply(daemon)
+    else if (scenario === 'videoFixture') await videoFixture(daemon)
     else if (scenario === 'S5') await s5(daemon)
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
