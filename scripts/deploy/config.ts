@@ -4,6 +4,7 @@ import path from 'node:path'
 import { asArray, asBoolean, asOptional, type Cleaner } from 'cleaners'
 
 import { asHosting } from './hosting/config'
+import { rememberSecrets } from './redact'
 import {
   appId,
   branchName,
@@ -232,7 +233,9 @@ export function privateJson<T>(file: string, cleaner: Cleaner<T>): T {
       stat.size > 1024 * 1024
     )
       throw new Error('Insecure configuration')
-    return cleaner(JSON.parse(readFileSync(actual, 'utf8')))
+    const value: unknown = JSON.parse(readFileSync(actual, 'utf8'))
+    rememberSecrets(value)
+    return cleaner(value)
   } catch {
     throw new Error('Invalid or insecure deployment configuration')
   }

@@ -3,7 +3,19 @@ import { once } from 'node:events'
 import { constants } from 'node:os'
 import path from 'node:path'
 
-/** Safe diagnostics retain tool identity and status, never arguments or output. */
+import { redactedTail, rememberEnvironment } from './redact'
+
+/**
+ * What each failed tool wrote, kept off the error itself so that logging or
+ * serializing the error can never print it.
+ */
+const outputs = new WeakMap<DeploymentToolError, string>()
+
+/**
+ * A tool that failed. Its name and status are always safe to print. The end
+ * of what it wrote may carry the credentials it was given, so it leaves only
+ * through `lastLines`, redacted.
+ */
 export class DeploymentToolError extends Error {
   readonly tool: string
   readonly signal?: NodeJS.Signals
@@ -11,13 +23,20 @@ export class DeploymentToolError extends Error {
     message: string,
     file: string,
     readonly exitCode?: number,
-    signal?: NodeJS.Signals
+    signal?: NodeJS.Signals,
+    output = ''
   ) {
     super(message)
     const name = path.basename(file)
     this.tool = /^[a-zA-Z0-9._-]+$/.test(name) ? name : 'tool'
     if (signal != null && Object.hasOwn(constants.signals, signal))
       this.signal = signal
+    outputs.set(this, output)
+  }
+
+  /** The last `count` nonblank lines the tool wrote, redacted. */
+  lastLines(count: number): string[] {
+    return redactedTail(outputs.get(this) ?? '', count)
   }
 }
 
@@ -49,6 +68,23 @@ export interface Command {
   capture?: boolean
   captureStderr?: boolean
 }
+/** How much of a tool's latest output is kept, unprinted, for its failure. */
+const tailLimit = 64 * 1024
+
+/** How many of a failed tool's last lines the build log shows. */
+const reportedLines = 80
+
+/**
+ * A failed tool's last lines, redacted and indented, for the log under the
+ * line that names the tool and its status. Any other error prints nothing,
+ * since its message can carry private configuration. Indented so Mason's
+ * one-line results skip them.
+ */
+export function describeFailure(error: unknown): string[] {
+  if (!(error instanceof DeploymentToolError)) return []
+  return error.lastLines(reportedLines).map(line => `  | ${line}`)
+}
+
 export class Processes {
   private readonly children = new Set<ChildProcess>()
   constructor(readonly signal: AbortSignal) {}
@@ -62,7 +98,12 @@ export class Processes {
         detached: true
       })
       this.children.add(child)
+      rememberEnvironment(command.env)
       let stdout = ''
+      let tail = ''
+      const keep = (chunk: Buffer): void => {
+        tail = (tail + chunk.toString()).slice(-tailLimit)
+      }
       let overflow = false
       let killTimer: NodeJS.Timeout | undefined
       function kill(signal: NodeJS.Signals): void {
@@ -83,19 +124,21 @@ export class Processes {
       }
       this.signal.addEventListener('abort', abort, { once: true })
       child.stdout.on('data', (chunk: Buffer) => {
+        keep(chunk)
         if (command.capture === false) return
         if (stdout.length + chunk.length <= 1024 * 1024)
           stdout += chunk.toString()
         else overflow = true
       })
-      // Compiler output may contain credentials. Consume it without printing it.
-      if (command.captureStderr === true)
-        child.stderr.on('data', (chunk: Buffer) => {
-          if (stdout.length + chunk.length <= 1024 * 1024)
-            stdout += chunk.toString()
-          else overflow = true
-        })
-      else child.stderr.resume()
+      // Compiler output may contain credentials. It is never printed as it
+      // arrives; a failure prints its redacted tail.
+      child.stderr.on('data', (chunk: Buffer) => {
+        keep(chunk)
+        if (command.captureStderr !== true) return
+        if (stdout.length + chunk.length <= 1024 * 1024)
+          stdout += chunk.toString()
+        else overflow = true
+      })
       child.stdin.on('error', () => {})
       child.stdin.end(command.input)
       child.once('error', () => {
@@ -117,7 +160,8 @@ export class Processes {
               'Deployment tool failed',
               command.file,
               code ?? undefined,
-              signal ?? undefined
+              signal ?? undefined,
+              tail
             )
           )
         else if (overflow)
