@@ -60,6 +60,7 @@ interface Device {
 }
 interface Daemon {
   attach: (options: object) => Promise<Device>
+  shutdown: (options: { wait: boolean }) => Promise<unknown>
   close: () => Promise<unknown>
 }
 function required(key: string): string {
@@ -2036,6 +2037,256 @@ async function boundedMedia(daemon: Daemon): Promise<void> {
 }
 
 /** Upload a new ordinary video fixture without changing existing messages. */
+async function adultReplyFixture(daemon: Daemon): Promise<void> {
+  const actor = required('CHAT_UI_FIXTURE_ACTOR')
+  const peerActor = required('CHAT_UI_FIXTURE_PEER')
+  const output = required('CHAT_UI_FIXTURE_RESULT')
+  assert(!existsSync(output), 'Never replace an already prepared fixture')
+  const prepared: Record<string, unknown> = { complete: false }
+  const checkpoint = (): void => {
+    writeFileSync(output, JSON.stringify(prepared, null, 2), { mode: 0o600 })
+  }
+  const seed = readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8')
+  const uid = (key: string): number => {
+    for (const line of seed.split('\n')) {
+      const match = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
+      if (match?.[1] === key) return Number(match[2])
+    }
+    throw new Error('Explicit fixture actor missing')
+  }
+  const attach = async (name: string, profile: string): Promise<Device> =>
+    await daemon.attach({
+      device: name,
+      platform: 'web',
+      driver: 'cdp',
+      url: WEB,
+      artifacts: 'on-failure',
+      extra: {
+        browser: await puppeteer.executablePath(),
+        windowSize: '1440x1000',
+        userDataDir: profile
+      }
+    })
+  const own = await attach(
+    'chat-ui-adult-fixture-owner',
+    required('CHAT_UI_PROFILE_DIR')
+  )
+  const peer = await attach(
+    'chat-ui-adult-fixture-peer',
+    required('CHAT_UI_PEER_PROFILE_DIR')
+  )
+  const read = async <T>(device: Device, script: string): Promise<T> => {
+    const result = (await device.evalBrowserScript({ script })) as {
+      data: unknown
+    }
+    return (
+      typeof result.data === 'string' ? JSON.parse(result.data) : result.data
+    ) as T
+  }
+  const api = `async function get(path){const r=await fetch(${JSON.stringify(API)}+path,{credentials:'include'});if(!r.ok)throw new Error('Normal fixture metadata unavailable');return await r.json()}`
+  const send = async (
+    device: Device,
+    id: string,
+    body: string
+  ): Promise<string> => {
+    const before = await read<number>(
+      device,
+      `${api};return (await get('/chat/conversations')).find(c=>c.id===${JSON.stringify(id)}).lastSeq`
+    )
+    assert(
+      await read<boolean>(
+        device,
+        'return JSON.stringify(document.querySelector("[data-testid=\\"chat-composer\\"]").value==="")'
+      ),
+      'Fixture preparation must not overwrite an existing draft'
+    )
+    await device.tapOn({ css: '[data-testid="chat-composer"]' })
+    await device.inputText({ text: body })
+    await device.tapOn({ text: 'Send' })
+    return await read<string>(
+      device,
+      `${api};for(let n=0;n<150;n++){const posts=(await get('/chat/conversations/'+${JSON.stringify(id)}+'/messages?after='+${before})).filter(p=>p.kind==='post');if(posts.length){if(posts.length!==1)throw new Error('Normal fixture Send must create exactlyone post');const row=document.querySelector('[data-testid="chat-message-'+posts[0].id+'"]');if(row&&row.textContent.includes(${JSON.stringify(body)})&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify(posts[0].id)}await new Promise(r=>setTimeout(r,100))}throw new Error('Normal fixture post not acknowledged')`
+    )
+  }
+  try {
+    await signIn(own, actor)
+    await signIn(peer, peerActor)
+    await own.openLink({ link: WEB + '/chat' })
+    await own.assertVisible({ text: 'New message', timeout: 60000 })
+    const before = await read<string[]>(
+      own,
+      `${api};return JSON.stringify((await get('/chat/conversations')).map(c=>c.id))`
+    )
+    const candidate = await read<{ shortName: string } | null>(
+      own,
+      `${api};return JSON.stringify((await get('/chat/dm-candidates?q=')).find(p=>Number(p.userId)===${uid(peerActor)})??null)`
+    )
+    assert(
+      candidate != null,
+      'Assigned adult must be a normal eligible candidate'
+    )
+    await own.tapOn({ text: 'New message' })
+    await own.tapOn({
+      css:
+        '[role="button"][aria-label=' +
+        JSON.stringify('Pick ' + candidate.shortName) +
+        ']'
+    })
+    await own.tapOn({ text: 'Start conversation' })
+    await own.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    const conversationId = await read<string>(
+      own,
+      'return JSON.stringify(location.pathname.split("/")[2])'
+    )
+    assert(
+      conversationId.startsWith('cnv_') && !before.includes(conversationId),
+      'A new normal DM is required'
+    )
+    const members = await read<number[]>(
+      own,
+      `${api};return JSON.stringify((await get('/chat/conversations/'+${JSON.stringify(conversationId)}+'/members')).map(m=>Number(m.userId)).sort((a,b)=>a-b))`
+    )
+    assert.deepEqual(
+      members,
+      [uid(actor), uid(peerActor)].sort((a, b) => a - b),
+      'Exact two-adult membership required'
+    )
+    Object.assign(prepared, {
+      conversationId,
+      actorUserId: uid(actor),
+      peerUserId: uid(peerActor),
+      normalMembership: true
+    })
+    checkpoint()
+    const originalBody = 'Adult fixture original ' + Date.now()
+    Object.assign(prepared, { originalBody, attemptedOriginalSend: true })
+    checkpoint()
+    const originalId = await send(own, conversationId, originalBody)
+    Object.assign(prepared, { originalId })
+    checkpoint()
+    await peer.openLink({ link: WEB + '/chat/' + conversationId })
+    await peer.assertVisible({ text: originalBody, timeout: 60000 })
+    await peer.evalBrowserScript({
+      script: `const row=document.querySelector('[data-testid="chat-message-${originalId}"]');row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await peer.tapOn({
+      css: `[data-testid="chat-message-${originalId}"] [aria-label="Reply"]`
+    })
+    const replyBody = 'Incoming adult reply ' + Date.now()
+    Object.assign(prepared, { replyBody, attemptedPeerReplySend: true })
+    checkpoint()
+    const replyId = await send(peer, conversationId, replyBody)
+    Object.assign(prepared, { replyId })
+    checkpoint()
+    await own.assertVisible({ text: replyBody, timeout: 60000 })
+    let other = await read<{ id: string; title: string } | null>(
+      own,
+      `${api};for(const chat of await get('/chat/conversations')){if(chat.id===${JSON.stringify(conversationId)}||!chat.canPost||chat.closed||chat.locked||chat.noHolder||chat.lastSeq!==0)continue;const members=await get('/chat/conversations/'+chat.id+'/members');if(members.some(m=>Number(m.userId)===${uid(peerActor)}))return JSON.stringify({id:chat.id,title:chat.title})}return null`
+    )
+    if (other == null) {
+      await own.openLink({ link: WEB + '/chat/new' })
+      await own.tapOn({
+        css:
+          '[role="button"][aria-label=' +
+          JSON.stringify('Pick ' + candidate.shortName) +
+          ']',
+        timeout: 30000
+      })
+      await own.tapOn({ text: 'Start conversation' })
+      await own.assertVisible({
+        css: '[data-testid="chat-composer"]',
+        timeout: 60000
+      })
+      const id = await read<string>(
+        own,
+        'return JSON.stringify(location.pathname.split("/")[2])'
+      )
+      assert(
+        id.startsWith('cnv_') && id !== conversationId && !before.includes(id),
+        'A separate new ordinary scope is required'
+      )
+      const secondMembers = await read<number[]>(
+        own,
+        `${api};return JSON.stringify((await get('/chat/conversations/'+${JSON.stringify(id)}+'/members')).map(m=>Number(m.userId)).sort((a,b)=>a-b))`
+      )
+      assert.deepEqual(
+        secondMembers,
+        members,
+        'Second normal adult room must have the same eligible pair'
+      )
+      other = { id, title: candidate.shortName }
+    }
+    await own.openLink({ link: WEB + '/chat/' + other.id })
+    await own.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    const navigationBody = 'Adult navigation notes ' + Date.now()
+    Object.assign(prepared, {
+      otherConversationId: other.id,
+      otherTitle: other.title,
+      otherBody: navigationBody,
+      attemptedNavigationSend: true
+    })
+    checkpoint()
+    const navigationId = await send(own, other.id, navigationBody)
+    Object.assign(prepared, { otherMessageId: navigationId })
+    checkpoint()
+    await peer.openLink({ link: WEB + '/chat/' + other.id })
+    await peer.assertVisible({ text: navigationBody, timeout: 60000 })
+    await peer.evalBrowserScript({
+      script: `const row=document.querySelector('[data-testid="chat-message-${navigationId}"]');row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await peer.tapOn({
+      css: `[data-testid="chat-message-${navigationId}"] [aria-label="Reply"]`
+    })
+    const navigationReplyBody = 'Adult navigation reply ' + Date.now()
+    Object.assign(prepared, {
+      otherReplyBody: navigationReplyBody,
+      attemptedNavigationReplySend: true
+    })
+    checkpoint()
+    const navigationReplyId = await send(peer, other.id, navigationReplyBody)
+    await own.assertVisible({ text: navigationReplyBody, timeout: 60000 })
+    writeFileSync(
+      output,
+      JSON.stringify(
+        {
+          conversationId,
+          actorUserId: uid(actor),
+          peerUserId: uid(peerActor),
+          originalId,
+          originalBody,
+          replyId,
+          replyBody,
+          otherConversationId: other.id,
+          otherTitle: other.title,
+          otherMessageId: navigationId,
+          otherBody: navigationBody,
+          otherReplyId: navigationReplyId,
+          otherReplyBody: navigationReplyBody,
+          normalUi: true,
+          normalMembership: true,
+          encryptedPosts: true,
+          complete: true
+        },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    )
+    console.log(
+      'NEW ordinary two-adult DM, incoming reply and separate readable scope READY; identities/protected originals unchanged'
+    )
+  } finally {
+    await own.detach()
+    await peer.detach()
+  }
+}
+
 async function videoFixture(daemon: Daemon): Promise<void> {
   const history = JSON.parse(
     readFileSync(required('CHAT_UI_HISTORY_FIXTURE_FILE'), 'utf8')
@@ -2464,6 +2715,7 @@ async function main(): Promise<void> {
       scenario === 'purgeDelete' ||
       scenario === 'currentHistoryReply' ||
       scenario === 'videoFixture' ||
+      scenario === 'adultReplyFixture' ||
       scenario === 'boundedMedia' ||
       scenario === 'S5' ||
       scenario === 'S6' ||
@@ -2508,11 +2760,13 @@ async function main(): Promise<void> {
     else if (scenario === 'currentHistoryReply')
       await currentHistoryReply(daemon)
     else if (scenario === 'videoFixture') await videoFixture(daemon)
+    else if (scenario === 'adultReplyFixture') await adultReplyFixture(daemon)
     else if (scenario === 'boundedMedia') await boundedMedia(daemon)
     else if (scenario === 'S5') await s5(daemon)
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
   } finally {
+    await daemon.shutdown({ wait: true })
     await daemon.close()
   }
 }
