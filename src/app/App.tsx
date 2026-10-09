@@ -26,6 +26,25 @@ import { managesRoster } from '../common/roles'
 import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
+import { ChatCoreGate } from './chat/ChatCoreGate'
+import { chatCoreLog } from './chat/chatCoreLog'
+import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
+import { ChatGate } from './chat/ChatGate'
+import type { ChatLink } from './chat/ChatLinks'
+import { ChatMembersScreen } from './chat/ChatMembersScreen'
+import { hasUnread } from './chat/chatModel'
+import { ChatOverlayHost } from './chat/ChatOverlayHost'
+import { ChatWorkspace } from './chat/ChatWorkspace'
+import {
+  ChatListNavigationCapture,
+  newChatWorkspaceState
+} from './chat/chatWorkspaceModel'
+import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
+import { leaveChat } from './chat/engine/links'
+import { keyStore } from './chat/keyStore'
+import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
+import { NewDmScreen } from './chat/NewDmScreen'
+import { thisDevice } from './chat/thisDevice'
 import {
   AppHeader,
   AppNav,
@@ -40,6 +59,7 @@ import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
+import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
@@ -102,6 +122,7 @@ import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
 import { AutoSchedulerScreen } from './screens/AutoSchedulerScreen'
+import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
@@ -268,6 +289,18 @@ type Pushed =
       highlightUntil?: number
     }
   | { name: 'account' }
+  /** Chat devices, from the account screen or `/chat/devices`. */
+  | { name: 'chatDevices' }
+  /** Linking this device for chat, or resetting the user's chat keys. */
+  | { name: 'chatLink' }
+  /** Starting a direct message. */
+  | { name: 'chatNew' }
+  /** One chat, and what it is called once known. */
+  | { name: 'conversation'; conversationId: string; title: string }
+  /** A chat's members, safety numbers and approvals. */
+  | { name: 'chatMembers'; conversationId: string }
+  /** Reported chat messages, for site administrators. */
+  | { name: 'chatReports' }
   /**
    * One player, and what their stats and videos are narrowed to.
    *
@@ -413,6 +446,11 @@ function Shell(props: AppProps): React.ReactElement {
   const refreshRoles = useCallback((): void => {
     setRoleRevision(revision => revision + 1)
   }, [])
+  /** Why chat's crypto core is not here, to the console and the server's log. */
+  const reportChatCore = useMemo(
+    () => chatCoreLog(apiBaseUrl, Platform.OS),
+    [apiBaseUrl]
+  )
   /**
    * A sign-in, or a sign-out, and what the platform should remember of it.
    *
@@ -521,18 +559,29 @@ function Shell(props: AppProps): React.ReactElement {
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
     const opened = stackFor(currentRoute())
-    return { home: [], videos: [], schedule: [], search: [], ...opened }
+    return {
+      home: [],
+      videos: [],
+      schedule: [],
+      search: [],
+      chat: [],
+      ...opened
+    }
   })
   /** Forgets the session and starts every tab over, for sign-out and deletion alike. */
   const leaveSession = (): void => {
     rememberSession(undefined)
-    setStacks({ home: [], videos: [], schedule: [], search: [] })
+    setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
     setTab('home')
   }
   /** Sign Out, pressed: the server's session and the phone's file go. */
   const signOutNow = (): void => {
-    client.signOut().catch(() => undefined)
-    leaveSession()
+    leaveChat({ client, store: keyStore })
+      .finally(() => {
+        client.signOut().catch(() => undefined)
+        leaveSession()
+      })
+      .catch(() => undefined)
   }
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const settingsVisitId = useRef(0)
@@ -639,7 +688,10 @@ function Shell(props: AppProps): React.ReactElement {
       .catch(() => undefined)
   }
 
-  const needsSession = props.fieldPreview !== true
+  // The chat crypto bench, in a phone build made for it, needs no account and
+  // no server, so it never asks who is signed in.
+  const benching = route.name === 'chatBench'
+  const needsSession = props.fieldPreview !== true && !benching
 
   /**
    * The roles the signed-in person holds, refreshed after permission changes.
@@ -750,7 +802,7 @@ function Shell(props: AppProps): React.ReactElement {
     // Reads refused together end it once.
     if (client.token == null) return
     sessionRefused()
-    setStacks({ home: [], videos: [], schedule: [], search: [] })
+    setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
     setTab('home')
   }, [client, sessionRefused])
   // A REST call refused for want of a session stops the screen's scope until
@@ -855,6 +907,78 @@ function Shell(props: AppProps): React.ReactElement {
       reconnected()
     }
   }, [caching, signedInAs, prefetchDocuments])
+  /**
+   * The chat engine, for as long as somebody is signed in. It hears the
+   * socket's chat hints from the start, so they arrive on every screen; it
+   * touches no keys until a chat screen starts it.
+   */
+  const chatEngine = useMemo(
+    () =>
+      signedInAs == null || gameSocket == null
+        ? undefined
+        : new ChatEngine({
+            client,
+            store: keyStore,
+            userId: signedInAs,
+            device: thisDevice(),
+            socket: gameSocket
+          }),
+    [client, gameSocket, signedInAs]
+  )
+  const chatWorkspaceState = useMemo(newChatWorkspaceState, [chatEngine])
+  const chatListNavigation = useMemo(
+    () => new ChatListNavigationCapture(chatEngine),
+    [chatEngine]
+  )
+  useEffect(() => {
+    chatListNavigation.setContextActive(true)
+    return () => {
+      chatListNavigation.setContextActive(false)
+    }
+  }, [chatListNavigation])
+  /**
+   * The chat list as last read, for the Chat tab's unread dot and the links
+   * to a team's, season's or league's chats. Read once at sign-in (no keys
+   * are needed for the list) and kept current from the engine's hints.
+   */
+  const [chatList, setChatList] = useState<ConversationListItem[]>([])
+  useEffect(() => {
+    setChatList([])
+    if (chatEngine == null) return
+    let live = true
+    const unsubscribe = chatEngine.subscribe(event => {
+      if (live && event.type === 'conversations') {
+        setChatList(chatEngine.conversations())
+      }
+    })
+    chatEngine
+      .refresh()
+      .then(list => {
+        if (live) setChatList(list)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [chatEngine])
+  const chatsOf = (type: 'team' | 'season', id: string): ChatLink[] =>
+    chatList
+      .filter(chat => chat.scope?.type === type && chat.scope.id === id)
+      .map(chat => ({ id: chat.id, title: chat.title }))
+  useEffect(() => {
+    if (chatEngine == null) return
+    let stopListening = (): void => {}
+    try {
+      stopListening = chatEngine.listen()
+    } catch {
+      // A platform with no socket address has no live chat hints.
+    }
+    return () => {
+      stopListening()
+      chatEngine.stop()
+    }
+  }, [chatEngine])
   useEffect(() => {
     setRoleSnapshot(undefined)
     if (signedInAs == null) return
@@ -1185,8 +1309,21 @@ function Shell(props: AppProps): React.ReactElement {
     },
     [clearScoringVisit, guardUmpireLeave]
   )
+  const goFromAddress = useCallback(
+    (route: Route, onHandled?: (accepted: boolean) => void): void => {
+      chatListNavigation
+        .navigate(() => {
+          goToRoute(route, onHandled)
+        })
+        .catch((error: unknown) => {
+          reportNavigationError(error)
+          onHandled?.(false)
+        })
+    },
+    [chatListNavigation, goToRoute]
+  )
   useBrowserBack(
-    goToRoute,
+    goFromAddress,
     top?.name === 'umpireSchedule' ? checkUmpireLeave : undefined
   )
 
@@ -1262,6 +1399,17 @@ function Shell(props: AppProps): React.ReactElement {
   const tessScreen = useCallback(() => paneScreen.current(), [])
   const tessColumn = tessShown && tessWide
 
+  const captureChatLeave = useCallback(
+    (change: () => void): void => {
+      if (!chatListNavigation.hasReader()) {
+        change()
+        return
+      }
+      chatListNavigation.navigate(change).catch(reportNavigationError)
+    },
+    [chatListNavigation]
+  )
+
   /** The tab, or — pressed on the tab already showing — that tab's root. */
   const selectTab = (next: NavTabId): void => {
     if (
@@ -1276,17 +1424,22 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
-    if (next === tab && stacks[tab].length > 0)
-      dropRouteSuffix(stacks[tab], routePath(routeOf(tab, undefined, filters)))
-    setTab(next)
-    setStacks(current => stacksAfterTabPress(current, tab, next))
-    if (session == null || props.fieldPreview === true) {
-      if (next === tab) return
-      const destination = routeOf(next, undefined, filters)
-      setRoute(destination)
-      setJoining(undefined)
-      showRoute(destination)
-    }
+    captureChatLeave(() => {
+      if (next === tab && stacks[tab].length > 0)
+        dropRouteSuffix(
+          stacks[tab],
+          routePath(routeOf(tab, undefined, filters))
+        )
+      setTab(next)
+      setStacks(current => stacksAfterTabPress(current, tab, next))
+      if (session == null || props.fieldPreview === true) {
+        if (next === tab) return
+        const destination = routeOf(next, undefined, filters)
+        setRoute(destination)
+        setJoining(undefined)
+        showRoute(destination)
+      }
+    })
   }
 
   const push = (next: Pushed): void => {
@@ -1308,22 +1461,28 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
-    setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
+    captureChatLeave(() => {
+      setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
+    })
   }
   const openGroup = useCallback(
     (group: GroupRef): void => {
-      setStacks(current => ({
-        ...current,
-        [tab]: [...current[tab], { name: 'group', ...group }]
-      }))
+      captureChatLeave(() => {
+        setStacks(current => ({
+          ...current,
+          [tab]: [...current[tab], { name: 'group', ...group }]
+        }))
+      })
     },
-    [tab]
+    [tab, captureChatLeave]
   )
   const replace = (next: Pushed): void => {
-    setStacks(current => ({
-      ...current,
-      [tab]: [...current[tab].slice(0, -1), next]
-    }))
+    captureChatLeave(() => {
+      setStacks(current => ({
+        ...current,
+        [tab]: [...current[tab].slice(0, -1), next]
+      }))
+    })
   }
   const openPrivateGroup = async (group: GroupRef): Promise<void> => {
     if (group.kind === 'team') {
@@ -1357,8 +1516,10 @@ function Shell(props: AppProps): React.ReactElement {
     // history and this does nothing; on a phone the two are kept by hand, and
     // a chevron that left a step behind would make the next press of the
     // system Back button appear to do nothing.
-    popRoute()
-    setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
+    captureChatLeave(() => {
+      popRoute()
+      setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
+    })
   }
 
   const openGame = (
@@ -1572,6 +1733,22 @@ function Shell(props: AppProps): React.ReactElement {
   const openSeason = (season: SeasonSummary): void => {
     push({ name: 'season', season })
   }
+  /** A chat, from the list or from a team's, season's or league's page. */
+  const openChat = (chat: { id: string; title: string }): void => {
+    push({ name: 'conversation', conversationId: chat.id, title: chat.title })
+  }
+  /**
+   * What every chat screen stands behind: chat's crypto core on this
+   * platform, then this device set up for chat.
+   */
+  const gated = (screen: React.ReactNode): React.ReactNode =>
+    chatEngine == null || session == null ? null : (
+      <ChatCoreGate onUnavailable={reportChatCore}>
+        <ChatGate engine={chatEngine} client={client} userId={session.user.id}>
+          {screen}
+        </ChatGate>
+      </ChatCoreGate>
+    )
   /**
    * Somebody who has just signed in, back to where the sign-in was for.
    *
@@ -1637,7 +1814,13 @@ function Shell(props: AppProps): React.ReactElement {
             route.name !== 'oauthApprove'
               ? undefined
               : async () => {
-                  await client.signOut()
+                  await leaveChat({ client, store: keyStore }).catch(
+                    () => undefined
+                  )
+                  // Removing the chat device may already have revoked this
+                  // session, so logout can legitimately answer unauthorized.
+                  await client.signOut().catch(() => undefined)
+                  client.token = undefined
                   rememberSession(undefined)
                   const destination: Route = {
                     name: 'signIn',
@@ -1656,6 +1839,16 @@ function Shell(props: AppProps): React.ReactElement {
             showRoute(destination)
           }}
         />
+      </View>
+    )
+  }
+
+  // Before the session check, as the field preview is: the bench build is
+  // never signed in to anything.
+  if (benching && ChatBench != null) {
+    return (
+      <View style={styles.app}>
+        <ChatBench />
       </View>
     )
   }
@@ -1707,7 +1900,12 @@ function Shell(props: AppProps): React.ReactElement {
           showMark
           nav={
             isWide ? (
-              <AppNav mode="header" selected={tab} onSelect={selectTab} />
+              <AppNav
+                mode="header"
+                selected={tab}
+                onSelect={selectTab}
+                dots={{ chat: hasUnread(chatList) }}
+              />
             ) : undefined
           }
         />
@@ -1868,6 +2066,44 @@ function Shell(props: AppProps): React.ReactElement {
           selectTab('home')
         }}
       />
+    ) : top?.name === 'conversation' || (top == null && tab === 'chat') ? (
+      gated(
+        <ChatWorkspace
+          engine={chatEngine!}
+          userId={session?.user.id ?? 0}
+          state={chatWorkspaceState}
+          listNavigation={chatListNavigation}
+          conversationId={
+            top?.name === 'conversation' ? top.conversationId : undefined
+          }
+          onOpen={openChat}
+          onNewMessage={() => {
+            push({ name: 'chatNew' })
+          }}
+          onFollowTeam={() => {
+            push({ name: 'discover', kind: 'team', follow: true })
+          }}
+          onMembers={conversationId => {
+            push({ name: 'chatMembers', conversationId })
+          }}
+          onTitle={(conversationId, title) => {
+            setStacks(current => {
+              const held = current[tab]
+              const last = held[held.length - 1]
+              if (
+                last?.name !== 'conversation' ||
+                last.conversationId !== conversationId ||
+                last.title === title
+              )
+                return current
+              return {
+                ...current,
+                [tab]: [...held.slice(0, -1), { ...last, title }]
+              }
+            })
+          }}
+        />
+      )
     ) : top == null ? (
       tab === 'home' ? (
         <HomeScreen
@@ -1878,6 +2114,18 @@ function Shell(props: AppProps): React.ReactElement {
           onCreateGroup={kind => {
             push({ name: 'createGroup', kind })
           }}
+          leagueChats={chatList.flatMap(chat =>
+            chat.kind === 'leagueOrg'
+              ? [
+                  {
+                    id: chat.id,
+                    title: chat.title,
+                    league: chat.scopeName ?? chat.title
+                  }
+                ]
+              : []
+          )}
+          onOpenChat={openChat}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
           onLoaded={prefetchAfterHome}
@@ -2399,6 +2647,77 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
       />
+    ) : top.name === 'chatMembers' ? (
+      gated(
+        <ChatMembersScreen
+          engine={chatEngine!}
+          client={client}
+          conversationId={top.conversationId}
+          userId={session?.user.id ?? 0}
+          onLeft={() => {
+            // Out of the chat and its members, back to the list.
+            setStacks(current => ({
+              ...current,
+              [tab]: current[tab].filter(
+                step =>
+                  step.name !== 'chatMembers' && step.name !== 'conversation'
+              )
+            }))
+          }}
+        />
+      )
+    ) : top.name === 'chatNew' ? (
+      gated(
+        <NewDmScreen
+          client={client}
+          engine={chatEngine!}
+          onCreated={conversation => {
+            const listed = chatEngine
+              ?.conversations()
+              .find(chat => chat.id === conversation.id)
+            // The new chat takes this screen's place, so Back goes to the
+            // list rather than to a finished form.
+            setStacks(current => ({
+              ...current,
+              [tab]: [
+                ...current[tab].slice(0, -1),
+                {
+                  name: 'conversation',
+                  conversationId: conversation.id,
+                  title: listed?.title ?? conversation.title ?? ''
+                }
+              ]
+            }))
+          }}
+        />
+      )
+    ) : top.name === 'chatDevices' ? (
+      session == null ? null : (
+        <ChatCoreGate onUnavailable={reportChatCore}>
+          <ChatDevicesScreen client={client} userId={session.user.id} />
+        </ChatCoreGate>
+      )
+    ) : top.name === 'chatReports' ? (
+      session == null ? null : (
+        <ChatReportsScreen client={client} isAdmin={session.user.isAdmin} />
+      )
+    ) : top.name === 'chatLink' ? (
+      session == null ? null : (
+        <ChatCoreGate onUnavailable={reportChatCore}>
+          <LinkDeviceScreen
+            client={client}
+            userId={session.user.id}
+            onDone={() => {
+              // Linked or reset: the devices list takes this screen's place,
+              // so Back does not return to a finished link.
+              setStacks(current => ({
+                ...current,
+                [tab]: [...current[tab].slice(0, -1), { name: 'chatDevices' }]
+              }))
+            }}
+          />
+        </ChatCoreGate>
+      )
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
@@ -2411,7 +2730,14 @@ function Shell(props: AppProps): React.ReactElement {
           )
         }}
         session={session}
-        onSignOut={() => {
+        onChatDevices={() => {
+          push({ name: 'chatDevices' })
+        }}
+        onChatReports={() => {
+          push({ name: 'chatReports' })
+        }}
+        onSignOut={leaveSession}
+        onSignOutRequest={() => {
           // Unsent changes go with the phone's file: ask first.
           if ((outbox?.count ?? 0) > 0) {
             setConfirmingSignOut(true)
@@ -2545,6 +2871,8 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         initialTab={top.tab}
         onTab={setTopTab}
+        chats={chatsOf('team', top.team.id)}
+        onOpenChat={openChat}
       />
     ) : top.name === 'season' ? (
       <SeasonScreen
@@ -2561,6 +2889,8 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         initialTab={top.tab}
         onTab={setTopTab}
+        chats={chatsOf('season', top.season.id)}
+        onOpenChat={openChat}
         initialWhen={top.when}
         onWhen={next => {
           setStacks(current => {
@@ -2849,7 +3179,12 @@ function Shell(props: AppProps): React.ReactElement {
       onHeight={setHeaderHeight}
       nav={
         isWide ? (
-          <AppNav mode="header" selected={tab} onSelect={selectTab} />
+          <AppNav
+            mode="header"
+            selected={tab}
+            onSelect={selectTab}
+            dots={{ chat: hasUnread(chatList) }}
+          />
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
@@ -2933,103 +3268,110 @@ function Shell(props: AppProps): React.ReactElement {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <TessOverlayProvider active={tessColumn}>
-        <View style={[styles.app, tessColumn && styles.split]}>
-          {tessPanel}
-          <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-            <PaneBesideTess open={tessColumn}>
-              <HeaderSlotProvider
-                headerHeight={
-                  immersiveField
-                    ? 0
-                    : headerHeight + (bannerShown ? bannerHeight : 0)
-                }
-                onHandoff={setHandoff}
-                onBackOverride={setBack}
-              >
-                <View style={styles.body}>
-                  <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
-                    <ScoringPlayerSettingsFlow
-                      scoring={scoringBody}
-                      active={scoringActive}
-                    >
-                      {body}
-                    </ScoringPlayerSettingsFlow>
-                  </ScreenScopeProvider>
-                </View>
-              </HeaderSlotProvider>
-              {!immersiveField && (
-                <View style={styles.headerLayer}>
-                  {header}
-                  <OfflineBanner
-                    text={bannerText}
-                    refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-                    held={heldTeams}
-                    onLayout={setBannerHeight}
-                  />
-                </View>
-              )}
-              <TessOverlayHost />
-            </PaneBesideTess>
-          </View>
-          {!isWide && !immersiveField && !tessLayer && (
-            <AppNav
-              key="nav"
-              mode="floating"
-              selected={tab}
-              onSelect={selectTab}
-            />
-          )}
-          <SuccessToast notice={successNotice} />
-          {confirmingSignOut && (
-            <ChoiceSheet
-              title="Sign Out?"
-              choices={[
-                {
-                  label: 'Sign Out',
-                  detail: unsentLossText(outbox?.count ?? 0),
-                  destructive: true,
-                  onPress: signOutNow
-                }
-              ]}
-              onClose={() => {
-                setConfirmingSignOut(false)
-              }}
-            />
-          )}
-          {askingTeam != null && caching != null && (
-            <ChoiceSheet
-              title="Player Not Saved"
-              choices={[
-                ...(askingTeam.state === 'dead'
-                  ? [
-                      {
-                        label: 'Try Again',
-                        onPress: () => {
-                          caching
-                            .retryTeam(askingTeam.id)
-                            .catch(() => undefined)
-                        }
-                      }
-                    ]
-                  : []),
-                {
-                  label: "Use Server's Copy",
-                  detail:
-                    "Takes the player off this phone and shows the team's roster as the server has it.",
-                  destructive: true,
-                  onPress: () => {
-                    caching.discardTeam(askingTeam.id).catch(() => false)
+      <ChatOverlayHost>
+        <TessOverlayProvider active={tessColumn}>
+          <View style={[styles.app, tessColumn && styles.split]}>
+            {tessPanel}
+            <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
+              <PaneBesideTess open={tessColumn}>
+                <HeaderSlotProvider
+                  headerHeight={
+                    immersiveField
+                      ? 0
+                      : headerHeight + (bannerShown ? bannerHeight : 0)
                   }
-                }
-              ]}
-              onClose={() => {
-                setAskingTeam(undefined)
-              }}
-            />
-          )}
-        </View>
-      </TessOverlayProvider>
+                  onHandoff={setHandoff}
+                  onBackOverride={setBack}
+                >
+                  <View style={styles.body}>
+                    <ScreenScopeProvider
+                      socket={gameSocket}
+                      scope={visibleScope}
+                    >
+                      <ScoringPlayerSettingsFlow
+                        scoring={scoringBody}
+                        active={scoringActive}
+                      >
+                        {body}
+                      </ScoringPlayerSettingsFlow>
+                    </ScreenScopeProvider>
+                  </View>
+                </HeaderSlotProvider>
+                {!immersiveField && (
+                  <View style={styles.headerLayer}>
+                    {header}
+                    <OfflineBanner
+                      text={bannerText}
+                      refusal={
+                        createRefused ? OFFLINE_CREATE_MESSAGE : undefined
+                      }
+                      held={heldTeams}
+                      onLayout={setBannerHeight}
+                    />
+                  </View>
+                )}
+                <TessOverlayHost />
+              </PaneBesideTess>
+            </View>
+            {!isWide && !immersiveField && !tessLayer && (
+              <AppNav
+                key="nav"
+                mode="floating"
+                selected={tab}
+                onSelect={selectTab}
+              />
+            )}
+            <SuccessToast notice={successNotice} />
+            {confirmingSignOut && (
+              <ChoiceSheet
+                title="Sign Out?"
+                choices={[
+                  {
+                    label: 'Sign Out',
+                    detail: unsentLossText(outbox?.count ?? 0),
+                    destructive: true,
+                    onPress: signOutNow
+                  }
+                ]}
+                onClose={() => {
+                  setConfirmingSignOut(false)
+                }}
+              />
+            )}
+            {askingTeam != null && caching != null && (
+              <ChoiceSheet
+                title="Player Not Saved"
+                choices={[
+                  ...(askingTeam.state === 'dead'
+                    ? [
+                        {
+                          label: 'Try Again',
+                          onPress: () => {
+                            caching
+                              .retryTeam(askingTeam.id)
+                              .catch(() => undefined)
+                          }
+                        }
+                      ]
+                    : []),
+                  {
+                    label: "Use Server's Copy",
+                    detail:
+                      "Takes the player off this phone and shows the team's roster as the server has it.",
+                    destructive: true,
+                    onPress: () => {
+                      caching.discardTeam(askingTeam.id).catch(() => false)
+                    }
+                  }
+                ]}
+                onClose={() => {
+                  setAskingTeam(undefined)
+                }}
+              />
+            )}
+          </View>
+        </TessOverlayProvider>
+      </ChatOverlayHost>
     </GestureHandlerRootView>
   )
 }
@@ -3227,6 +3569,27 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  if (route.name === 'chatDevices') return { [tab]: [{ name: 'chatDevices' }] }
+  if (route.name === 'chatLink') return { [tab]: [{ name: 'chatLink' }] }
+
+  if (route.name === 'chatReports') return { [tab]: [{ name: 'chatReports' }] }
+  if (route.name === 'chatNew') return { [tab]: [{ name: 'chatNew' }] }
+  if (route.name === 'conversation' || route.name === 'chatMembers') {
+    const conversation: Pushed = {
+      name: 'conversation',
+      conversationId: route.conversationId,
+      title: ''
+    }
+    return {
+      [tab]:
+        route.name === 'conversation'
+          ? [conversation]
+          : [
+              conversation,
+              { name: 'chatMembers', conversationId: route.conversationId }
+            ]
+    }
+  }
   if (route.name === 'player') {
     return {
       [tab]: [
@@ -3269,6 +3632,15 @@ function tabOf(route: Route): NavTabId {
   // Following from Home's Add stays on Home's stack; plain discovery is the
   // Search tab itself.
   if (route.name === 'discover' && route.follow !== true) return 'search'
+
+  if (
+    route.name === 'chat' ||
+    route.name === 'chatNew' ||
+    route.name === 'conversation' ||
+    route.name === 'chatMembers'
+  ) {
+    return 'chat'
+  }
   return 'home'
 }
 
@@ -3302,6 +3674,17 @@ function routeOf(
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'chatDevices') return { name: 'chatDevices' }
+    if (top.name === 'chatLink') return { name: 'chatLink' }
+
+    if (top.name === 'chatReports') return { name: 'chatReports' }
+    if (top.name === 'chatNew') return { name: 'chatNew' }
+    if (top.name === 'conversation') {
+      return { name: 'conversation', conversationId: top.conversationId }
+    }
+    if (top.name === 'chatMembers') {
+      return { name: 'chatMembers', conversationId: top.conversationId }
+    }
     if (top.name === 'player') {
       return {
         name: 'player',
@@ -3348,6 +3731,8 @@ function routeOf(
   if (tab === 'videos') return { name: 'videos', when: filters.videos }
   if (tab === 'schedule') return { name: 'schedule', when: filters.schedule }
   if (tab === 'search') return { name: 'discover' }
+
+  if (tab === 'chat') return { name: 'chat' }
   return { name: 'home' }
 }
 
@@ -3461,7 +3846,8 @@ const TAB_TITLES: Record<NavTabId, string> = {
   home: 'Your Home',
   videos: 'Videos',
   schedule: 'Schedule',
-  search: 'Search'
+  search: 'Search',
+  chat: 'Chat'
 }
 
 /**
@@ -3481,6 +3867,15 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
         : undefined
     if (top.name === 'season') return undefined
     if (top.name === 'account') return 'Account'
+    if (top.name === 'chatDevices') return lstrings.chat_devices_title
+    if (top.name === 'chatLink') return lstrings.chat_link_title
+
+    if (top.name === 'chatReports') return lstrings.chat_reports_title
+    if (top.name === 'chatNew') return lstrings.chat_new_title
+    if (top.name === 'conversation') {
+      return top.title === '' ? lstrings.chat_title : top.title
+    }
+    if (top.name === 'chatMembers') return lstrings.chat_members
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {
       return sprintf(lstrings.walkup_title, top.playerName)
@@ -3493,6 +3888,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     return undefined
   }
   if (tab === 'home') return 'Your Home'
+  if (tab === 'chat') return lstrings.chat_title
   return undefined
 }
 
@@ -3554,3 +3950,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     zIndex: 4
   }
 }))
+
+function reportNavigationError(error: unknown): void {
+  console.error(error)
+}

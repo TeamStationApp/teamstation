@@ -19,6 +19,7 @@ import { localityLabel } from '../../common/locality'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
+import type { ChatLink } from '../chat/ChatLinks'
 import {
   Button,
   Card,
@@ -75,6 +76,12 @@ export interface HomeScreenProps {
    * and Home then offers it as Help Umpire.
    */
   onOpenUmpireSchedule?: () => void
+  /**
+   * The leagues whose Org chat the person is in. A league has no page of
+   * its own, so its card opens its chat.
+   */
+  leagueChats?: Array<ChatLink & { league: string }>
+  onOpenChat?: (chat: ChatLink) => void
 }
 
 /**
@@ -691,6 +698,28 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
           </ListCard>
         </View>
       )}
+      {props.leagueChats != null &&
+        props.leagueChats.length > 0 &&
+        props.onOpenChat != null && (
+          <View style={styles.section}>
+            <SectionHeader title="Leagues" />
+            <ListCard>
+              {props.leagueChats.map(chat => (
+                <View key={chat.id}>
+                  <ListRow
+                    title={chat.league}
+                    subtitle={chat.title}
+                    emblemIcon="chat"
+                    onPress={() => {
+                      props.onOpenChat?.(chat)
+                    }}
+                  />
+                </View>
+              ))}
+            </ListCard>
+          </View>
+        )}
+
       {counts.league > 0 && (
         <View style={styles.section}>
           <SectionHeader
