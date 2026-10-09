@@ -279,6 +279,7 @@ function ConversationRow(props: {
       style={[styles.row, props.selected && styles.selected]}
     >
       <Pressable
+        testID={'chat-conversation-' + chat.id}
         {...immediatePressProps}
         style={styles.openRow}
         accessibilityRole="button"
