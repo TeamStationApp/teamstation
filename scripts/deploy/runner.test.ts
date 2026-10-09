@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync
@@ -346,6 +347,8 @@ describe('Pinned multi-app deployment orchestration', () => {
       console.error = old
     }
     assert.deepEqual(errors, ['maximum build number reached'])
+    const output = path.join(root, 'output')
+    assert.deepEqual(readdirSync(output), ['.teamstation-deploy'])
     assert.equal(service.requests.length, 0)
   })
   it('rejects wrong package numbers, missing adapters, tampered retry files and cancelled builds', async () => {

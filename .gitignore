@@ -63,3 +63,10 @@ coverage/
 
 # Local build counter snapshot
 /buildNum.json
+
+# Generated deployment staging, archives and dependency markers at any app depth:
+.deploy/
+.deploy-dependencies
+/.deploy-export/
+/.deploy-macos/
+/distribution.dmg
