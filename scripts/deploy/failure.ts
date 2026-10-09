@@ -95,6 +95,21 @@ const systemCodes = new Set([
   'ENFILE'
 ])
 
+function sourceLocation(error: unknown): string {
+  if (!(error instanceof Error) || typeof error.stack !== 'string') return ''
+  const header = `${error.name}: ${error.message}\n`
+  if (!error.stack.startsWith(header)) return ''
+  // Strip the entire message before reading frames, including any newlines
+  // in a private input. Only known repository filenames and line numbers leave.
+  const frame =
+    /\/scripts\/deploy\/(apple|android|sentry|prepare|config|state)\.ts:(\d{1,6}):\d+/.exec(
+      error.stack.slice(header.length)
+    )
+  return frame == null
+    ? ''
+    : `; source: scripts/deploy/${frame[1]}.ts:${frame[2]}`
+}
+
 export function buildFailureReason(error: unknown): string {
   if (error instanceof Error && publicMessages.has(error.message)) {
     if (error instanceof BuildValidationFailure) {
@@ -116,5 +131,8 @@ export function buildFailureReason(error: unknown): string {
     return `Build filesystem operation failed (${error.code})`
   // Cleaner and filesystem errors may contain credentials or whole private
   // objects. Neither arbitrary messages nor stacks are safe to log.
-  return 'Unexpected build validation error; private details withheld'
+  return (
+    'Unexpected build validation error; private details withheld' +
+    sourceLocation(error)
+  )
 }
