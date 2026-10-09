@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import type { TagTarget } from '../../common/eventTags'
 import { GlassView } from '../components/GlassView'
 import { PillButton } from '../components/PillTabs'
 import { lstrings, sprintf } from '../locales/strings'
@@ -19,7 +20,10 @@ import {
   ControlIcon,
   DICTATION_LOG_HEIGHT
 } from '../scoring/ScoringControlAppearance'
+import { type HistoryBounds, HistoryPopup } from '../scoring/ScoringHistory'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
+import { useHoldSelection } from '../scoring/useHoldSelection'
+import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
 import { FieldCanvas } from './FieldCanvas'
 import {
@@ -48,6 +52,12 @@ export interface BaseballScreenProps {
   onMenuButton?: (edges: MenuButtonEdges) => void
   onUndo: () => void
   onPitch: (kind: (typeof PITCH_CONTROLS)[number]['kind']) => void
+  historyRows?: TagTarget[]
+  /** Undo wording only when its action produced the newest tag target. */
+  tagHistoryDetail?: { primary: string; secondary?: string }
+  onHistoryOpen?: () => void
+  onHistoryClose?: () => void
+  onTagSelect?: (target: TagTarget) => void
   historyLabel?: string
   /** The last play in two lines, shown in place of the label and the hint. */
   historyDetail?: { primary: string; secondary?: string }
@@ -78,6 +88,26 @@ export interface BaseballScreenProps {
 }
 /** Immersive scoring surface, with one fixed responsive camera. */
 export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
+  const [historyBounds, setHistoryBounds] = useState<HistoryBounds | null>(null)
+  const undoButton = useRef<React.ComponentRef<typeof View>>(null)
+  const {
+    onPressIn: handleUndoPressIn,
+    onPressOut: handleUndoPressOut,
+    onLongPress: handleUndoLongPress
+  } = useHoldSelection()
+  const { onHistoryClose } = props
+  const closeHistory = useCallback(() => {
+    setHistoryBounds(null)
+    onHistoryClose?.()
+  }, [onHistoryClose])
+  useMenuEscape(
+    historyBounds != null,
+    closeHistory,
+    `Undo ${props.historyLabel ?? ''}`
+  )
+  useEffect(() => {
+    if (props.historyLabel == null) closeHistory()
+  }, [props.historyLabel, closeHistory])
   const surface = useFieldSurface()
   const theme = useTheme()
   const [bounds, setBounds] = useState<ScoreboardBounds>()
@@ -106,6 +136,19 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         setViewportWidth(event.nativeEvent.layout.width)
       }}
     >
+      {historyBounds != null && (
+        <HistoryPopup
+          viewport={{ width: viewportWidth, height: viewportHeight }}
+          bounds={historyBounds}
+          rows={(props.historyRows ?? []).slice(-6)}
+          latest={props.tagHistoryDetail}
+          onClose={closeHistory}
+          onSelect={target => {
+            closeHistory()
+            props.onTagSelect?.(target)
+          }}
+        />
+      )}
       <View style={{ flex: 1 }}>
         <FieldCanvas
           {...props.field}
@@ -279,8 +322,27 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                         ? 'Nothing to undo'
                         : `Undo ${props.historyLabel}`
                     }
+                    ref={undoButton}
                     disabled={props.historyLabel == null}
-                    onPress={props.onUndo}
+                    delayLongPress={1500}
+                    onPressIn={handleUndoPressIn}
+                    onPressOut={handleUndoPressOut}
+                    onLongPress={
+                      props.onHistoryOpen == null
+                        ? undefined
+                        : () => {
+                            handleUndoLongPress?.()
+                            props.onHistoryOpen?.()
+                            undoButton.current?.measureInWindow(
+                              (x, y, width, height) => {
+                                setHistoryBounds({ x, y, width, height })
+                              }
+                            )
+                          }
+                    }
+                    onPress={() => {
+                      props.onUndo()
+                    }}
                     style={{
                       ...button,
                       flexDirection: 'row',
