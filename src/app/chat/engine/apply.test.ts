@@ -221,7 +221,8 @@ describe('chat engine fold', function () {
       id: id(1),
       authorId: 2,
       snippet: 'first',
-      authorName: 'Bo'
+      authorName: 'Bo',
+      status: 'ok'
     })
     expect(views[1].attachments).deep.equals([attachment])
     expect(views[0].readBy).deep.equals([1, 3])

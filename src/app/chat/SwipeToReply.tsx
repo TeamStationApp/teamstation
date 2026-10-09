@@ -8,6 +8,7 @@ export interface SwipeToReplyProps {
   /** On a phone; the web has no swipe, only the long press. */
   enabled: boolean
   onReply: () => void
+  onStart?: () => void
   children: React.ReactNode
 }
 
@@ -28,6 +29,7 @@ export function SwipeToReply(props: SwipeToReplyProps): React.ReactElement {
     activeOffsetX: 16,
     failOffsetY: [-12, 12],
     onUpdate: event => {
+      props.onStart?.()
       swipe.onUpdate(event)
     },
     onDeactivate: event => {

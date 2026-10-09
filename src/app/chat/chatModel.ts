@@ -75,7 +75,9 @@ const SUBGROUP: Record<ConversationListItem['kind'], string> = {
 }
 
 export function conversationTitle(chat: ConversationListItem): string {
-  return chat.kind === 'dm' || chat.scope == null ? chat.title : (chat.scopeName ?? chat.title)
+  return chat.kind === 'dm' || chat.scope == null
+    ? chat.title
+    : (chat.scopeName ?? chat.title)
 }
 
 export function conversationPill(
@@ -165,10 +167,10 @@ export function readLine(
 }
 
 /** The six reactions a long press offers before the picker. */
-export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🎉'] as const
+export const QUICK_REACTIONS = ['❤️', '👍', '👎', '😂', '😮', '😢'] as const
 
 export type MessageAction =
-  'reply' | 'react' | 'edit' | 'delete' | 'deleteForEveryone' | 'report'
+  'reply' | 'react' | 'copy' | 'pin' | 'unpin' | 'delete' | 'deleteForEveryone'
 
 /**
  * What a long press on a message offers this person: reply and react to
@@ -179,15 +181,18 @@ export type MessageAction =
  */
 export function actionsFor(
   message: MessageView,
-  view: Pick<ConversationView, 'composer' | 'conversation'>
+  view: Pick<ConversationView, 'composer' | 'conversation' | 'pins'>
 ): MessageAction[] {
+  const pinned = view.pins?.some(pin => pin.messageId === message.id) === true
   if (message.status !== 'ok') {
     // A locked or removed message can still be removed by its author or a
     // moderator, but nothing else.
-    if (message.status === 'removed') return []
-    if (view.composer !== 'enabled') return []
-    if (message.mine) return ['delete']
-    return view.conversation.canModerate ? ['deleteForEveryone'] : []
+    const actions: MessageAction[] = pinned ? ['unpin'] : []
+    if (message.status !== 'removed' && view.composer === 'enabled') {
+      if (message.mine) actions.push('delete')
+      else if (view.conversation.canModerate) actions.push('deleteForEveryone')
+    }
+    return actions
   }
   const actions: MessageAction[] = []
   const closed = view.composer === 'closed'
@@ -195,11 +200,12 @@ export function actionsFor(
   if (posting) actions.push('reply')
   // Readers of Announcements react too; a locked device cannot send at all.
   if (!closed && view.composer !== 'locked') actions.push('react')
-  if (message.mine && posting) actions.push('edit', 'delete')
+  if (message.body !== '') actions.push('copy')
+  actions.push(pinned ? 'unpin' : 'pin')
+  if (message.mine && posting) actions.push('delete')
   if (!message.mine && posting && view.conversation.canModerate) {
     actions.push('deleteForEveryone')
   }
-  if (!message.mine) actions.push('report')
   return actions
 }
 

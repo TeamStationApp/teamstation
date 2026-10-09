@@ -1,12 +1,20 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { lstrings, sprintf } from '../locales/strings'
+import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AttachmentView, type ChatFileOps } from './AttachmentView'
-import { readLine } from './chatModel'
+import { type MessageAction, messagePreview, readLine } from './chatModel'
+import {
+  bindMessageHover,
+  immediatePressProps,
+  isFinePointer
+} from './chatWebInteractions'
 import type { MessageView } from './engine/apply'
 import type { ConversationListItem, MemberView } from './engine/engine'
+import { MessageActions } from './MessageActions'
+import { ReplyQuote } from './ReplyQuote'
 import type { ChatScreenEngine } from './screenEngine'
 import { SwipeToReply } from './SwipeToReply'
 
@@ -18,9 +26,17 @@ export interface MessageBubbleProps {
   files: ChatFileOps
   maxWidth: number
   swipe: boolean
-  onLongPress: (message: MessageView) => void
+  onLongPress: (message: MessageView, anchor?: unknown) => void
   onReply: (message: MessageView) => void
   onToggleReaction: (message: MessageView, emoji: string, mine: boolean) => void
+  onReact?: (message: MessageView) => void
+  onJump?: (id: string) => void
+  userId?: number
+  actions?: MessageAction[]
+  pinned?: boolean
+  highlighted?: boolean
+  gestureGeneration?: React.RefObject<number>
+  selected?: boolean
 }
 
 const clock = (iso: string): string =>
@@ -57,6 +73,37 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
   const { message, conversation, members, onLongPress, onReply } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const desktop = isFinePointer()
+  const row = useRef<React.ComponentRef<typeof View>>(null)
+  const [hovered, setHovered] = useState(false)
+  const held = useRef({
+    x: 0,
+    y: 0,
+    generation: 0,
+    cancelled: false,
+    recognized: false
+  })
+  useEffect(
+    () =>
+      props.selected === true
+        ? undefined
+        : bindMessageHover(row.current, setHovered),
+    [props.selected]
+  )
+  const openActions = (): void => {
+    if (
+      held.current.cancelled ||
+      held.current.recognized ||
+      held.current.generation !== (props.gestureGeneration?.current ?? 0)
+    )
+      return
+    held.current.recognized = true
+    lightHaptic(row.current)
+    onLongPress(message)
+  }
+  const actions =
+    props.actions ??
+    (message.status === 'ok' ? ['reply', 'react', 'copy', 'pin'] : [])
   const sender = message.mine
     ? lstrings.chat_you
     : (message.senderName ?? lstrings.chat_former_member)
@@ -71,72 +118,174 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
       onReply={() => {
         onReply(message)
       }}
+      onStart={() => {
+        held.current.cancelled = true
+      }}
     >
-      <View style={[styles.row, message.mine && styles.rowMine]}>
-        <Pressable
-          // The words inside stay their own elements to a screen reader and
-          // to the UI tests: no label of its own.
-          accessible={false}
-          onLongPress={() => {
-            onLongPress(message)
-          }}
-          delayLongPress={400}
-          style={[
-            styles.bubble,
-            message.mine ? styles.bubbleMine : styles.bubbleTheirs,
-            said != null && styles.bubbleMuted
-          ]}
-        >
-          {!message.mine && <Text style={styles.sender}>{sender}</Text>}
-          {message.quote != null && (
-            <View style={styles.quote}>
-              <Text style={styles.quoteName}>
-                {message.quote.authorName ?? lstrings.chat_former_member}
+      <View
+        ref={row}
+        collapsable={false}
+        testID={`chat-message-${message.id}`}
+        style={[
+          styles.row,
+          message.mine && styles.rowMine,
+          props.highlighted === true && {
+            backgroundColor: theme.pillBackground,
+            borderRadius: theme.rem(1)
+          }
+        ]}
+      >
+        <View style={[styles.bubbleRow, message.mine && styles.bubbleRowMine]}>
+          {desktop &&
+            props.selected !== true &&
+            actions.length > 0 &&
+            message.mine && (
+              <MessageActions
+                visible={hovered}
+                reply={actions.includes('reply')}
+                react={actions.includes('react')}
+                onReply={() => {
+                  onReply(message)
+                }}
+                onReact={() => props.onReact?.(message)}
+                onMore={anchor => {
+                  onLongPress(message, anchor)
+                }}
+              />
+            )}
+          <Pressable
+            {...immediatePressProps}
+            // The words inside stay their own elements to a screen reader and
+            // to the UI tests: no label of its own.
+            accessible={false}
+            onPressIn={event => {
+              held.current = {
+                x: event.nativeEvent.pageX,
+                y: event.nativeEvent.pageY,
+                generation: props.gestureGeneration?.current ?? 0,
+                cancelled: false,
+                recognized: false
+              }
+            }}
+            onTouchMove={event => {
+              if (
+                Math.hypot(
+                  event.nativeEvent.pageX - held.current.x,
+                  event.nativeEvent.pageY - held.current.y
+                ) > 10
+              )
+                held.current.cancelled = true
+            }}
+            onTouchCancel={() => {
+              held.current.cancelled = true
+            }}
+            onLongPress={
+              !desktop && props.selected !== true && actions.length > 0
+                ? openActions
+                : undefined
+            }
+            delayLongPress={500}
+            style={[
+              styles.bubble,
+              message.mine ? styles.bubbleMine : styles.bubbleTheirs,
+              said != null && styles.bubbleMuted,
+              { maxWidth: props.maxWidth }
+            ]}
+          >
+            {!message.mine && <Text style={styles.sender}>{sender}</Text>}
+            {message.quote != null && (
+              <ReplyQuote
+                quote={message.quote}
+                userId={props.userId ?? -1}
+                onJump={id => props.onJump?.(id)}
+              />
+            )}
+            {said != null ? (
+              <Text style={styles.status}>{said}</Text>
+            ) : (
+              message.body !== '' && (
+                <Text
+                  style={styles.body}
+                  selectable={desktop && props.selected !== true}
+                >
+                  {message.body}
+                </Text>
+              )
+            )}
+            {props.selected === true && message.attachments.length > 0 ? (
+              <Text style={styles.body}>
+                {messagePreview({ ...message, body: '' })}
               </Text>
-              <Text style={styles.quoteText} numberOfLines={3}>
-                {message.quote.snippet}
-              </Text>
+            ) : (
+              message.attachments.map(attachment => (
+                <AttachmentView
+                  key={attachment.id}
+                  attachment={attachment}
+                  engine={props.engine}
+                  files={props.files}
+                  maxWidth={props.maxWidth}
+                />
+              ))
+            )}
+            <View style={styles.footer}>
+              {props.pinned === true && (
+                <Text
+                  style={styles.meta}
+                  accessibilityLabel={lstrings.chat_message_pinned}
+                >
+                  ⌖ {lstrings.chat_pinned}
+                </Text>
+              )}
+              <Text style={styles.meta}>{clock(message.sentAt)}</Text>
+              {message.edited && message.status === 'ok' && (
+                <Text style={styles.meta}>{lstrings.chat_edited}</Text>
+              )}
+              {read != null && (
+                <Text style={styles.meta}>
+                  {read.kind === 'sent'
+                    ? `✓ ${lstrings.chat_sent}`
+                    : read.kind === 'count'
+                      ? `✓✓ ${sprintf(lstrings.chat_seen_by, read.count)}`
+                      : `✓✓ ${sprintf(lstrings.chat_read_by, read.names.join(', '))}`}
+                </Text>
+              )}
             </View>
-          )}
-          {said != null ? (
-            <Text style={styles.status}>{said}</Text>
-          ) : (
-            message.body !== '' && (
-              <Text style={styles.body} selectable>
-                {message.body}
-              </Text>
-            )
-          )}
-          {message.attachments.map(attachment => (
-            <AttachmentView
-              key={attachment.id}
-              attachment={attachment}
-              engine={props.engine}
-              files={props.files}
-              maxWidth={props.maxWidth}
-            />
-          ))}
-          <View style={styles.footer}>
-            <Text style={styles.meta}>{clock(message.sentAt)}</Text>
-            {message.edited && message.status === 'ok' && (
-              <Text style={styles.meta}>{lstrings.chat_edited}</Text>
-            )}
-            {read != null && (
+            {message.sentBeforeSafetyNumberChange && (
               <Text style={styles.meta}>
-                {read.kind === 'sent'
-                  ? `✓ ${lstrings.chat_sent}`
-                  : read.kind === 'count'
-                    ? `✓✓ ${sprintf(lstrings.chat_seen_by, read.count)}`
-                    : `✓✓ ${sprintf(lstrings.chat_read_by, read.names.join(', '))}`}
+                {sprintf(lstrings.chat_sent_before_change, sender)}
               </Text>
             )}
-          </View>
-          {message.sentBeforeSafetyNumberChange && (
-            <Text style={styles.meta}>
-              {sprintf(lstrings.chat_sent_before_change, sender)}
-            </Text>
+          </Pressable>
+          {desktop &&
+            props.selected !== true &&
+            actions.length > 0 &&
+            !message.mine && (
+              <MessageActions
+                visible={hovered}
+                reply={actions.includes('reply')}
+                react={actions.includes('react')}
+                onReply={() => {
+                  onReply(message)
+                }}
+                onReact={() => props.onReact?.(message)}
+                onMore={anchor => {
+                  onLongPress(message, anchor)
+                }}
+              />
+            )}
+          {!desktop && props.selected !== true && actions.length > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={lstrings.chat_more_message_actions}
+              onPress={() => {
+                onLongPress(message)
+              }}
+              style={{ padding: theme.rem(0.375) }}
+            >
+              <Text style={styles.meta}>•••</Text>
+            </Pressable>
           )}
-        </Pressable>
+        </View>
         {message.reactions.length > 0 && (
           <View style={[styles.reactions, message.mine && styles.rowMine]}>
             {message.reactions.map(reaction => (
@@ -167,6 +316,13 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  bubbleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(0.25),
+    maxWidth: '100%'
+  },
+  bubbleRowMine: { justifyContent: 'flex-end' },
   row: {
     alignItems: 'flex-start',
     gap: theme.rem(0.25)
@@ -175,7 +331,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'flex-end'
   },
   bubble: {
-    maxWidth: '85%',
+    flexShrink: 1,
     borderRadius: theme.rem(1),
     paddingHorizontal: theme.rem(0.75),
     paddingVertical: theme.rem(0.5),

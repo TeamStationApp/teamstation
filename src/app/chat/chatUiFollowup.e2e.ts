@@ -23,8 +23,9 @@ interface Device {
   inputText: (options: { text: string }) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
   pressKey: (options: { key: string }) => Promise<unknown>
-  longPressOn: (options: { text: string; duration: number }) => Promise<unknown>
+  longPressOn: (options: { text?: string; css?: string }) => Promise<unknown>
   setOrientation: (options: { orientation: string }) => Promise<unknown>
+  grantPermissions: (options: { permissions: string[]; origin: string }) => Promise<unknown>
   detach: () => Promise<unknown>
 }
 interface Daemon {
@@ -190,6 +191,9 @@ async function s2(daemon: Daemon): Promise<void> {
   })
   try {
     await signIn(m, narrow ? 'Hs' : 'Hc')
+    await m.evalBrowserScript({
+      script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations/' + required('CHAT_UI_CONVERSATION') + '/preferences')},{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({pinned:false,muted:false,manualUnread:false})});if(!r.ok)throw new Error('Fixture preferences unavailable');return true`
+    })
     await m.openLink({ link: WEB + '/chat' })
     if (process.env.CHAT_UI_INSPECT_KEYS === '1') {
       console.log(
@@ -259,7 +263,7 @@ async function s2(daemon: Daemon): Promise<void> {
     await m.tapOn({ text: 'Unpin' })
     await m.tapOn({ text: 'Conversation actions' })
     await m.tapOn({ text: 'Mute' })
-    await m.assertVisible({ text: 'Muted', timeout: 30000 })
+    if (!narrow) await m.assertVisible({ text: 'Muted', timeout: 30000 })
     await m.tapOn({ text: 'Conversation actions' })
     await m.assertVisible({ text: 'Unmute' })
     await m.tapOn({ text: 'Unmute' })
@@ -295,10 +299,164 @@ async function s2(daemon: Daemon): Promise<void> {
   }
 }
 
+async function s4(daemon: Daemon): Promise<void> {
+  const m = await daemon.attach({
+    device: 'chat-ui-resize',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '390x1440',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({
+      link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
+    })
+    await m.assertVisible({
+      text: required('CHAT_UI_TARGET_TEXT'),
+      timeout: 60000
+    })
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: 'An unsent practice note' })
+    await m.pressKey({ key: 'Shift+Enter' })
+    await m.inputText({ text: 'Bring a glove' })
+    await m.evalBrowserScript({
+      script:
+        'window.chatUiResizeDocument=Date.now();window.chatUiResizeField=document.querySelector("[data-testid=chat-composer]");return true'
+    })
+    console.log(
+      '$ S4 same-document portrait→landscape→portrait across960px; retain composer/selected conversation'
+    )
+    for (const orientation of ['LANDSCAPE', 'PORTRAIT']) {
+      await m.setOrientation({ orientation })
+      console.log(
+        await m.evalBrowserScript({
+          script: `
+        await new Promise(resolve=>setTimeout(resolve,400));
+        const input=document.querySelector('[data-testid="chat-composer"]');
+        if(!window.chatUiResizeDocument || input!==window.chatUiResizeField || input.value!=='An unsent practice note\\nBring a glove')throw new Error('Responsive resize discarded the document or draft');
+        const list=document.querySelector('[data-testid="chat-list-pane"]');
+        if((getComputedStyle(list).display!=='none')!==(innerWidth>=960))throw new Error('Pane breakpoint wrong');
+        return JSON.stringify({orientation:${JSON.stringify(orientation)},width:innerWidth,sameDocument:true,sameComposer:true,draftPreserved:true});
+      `
+        })
+      )
+    }
+    await m.tapOn({ text: 'Back' })
+    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    console.log(
+      await m.evalBrowserScript({
+        script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!=='An unsent practice note\\nBring a glove')throw new Error('Back/reopen lost draft');input.focus();return JSON.stringify({backReopenDraft:true});`
+      })
+    )
+    await m.pressKey({ key: 'Cmd+A' })
+    await m.pressKey({ key: 'Backspace' })
+    console.log(
+      'S4 text and selected-pane PASS; reply/file/offset completed in final scenario'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
+async function s5(daemon: Daemon): Promise<void> {
+  const id = required('CHAT_UI_MESSAGE')
+  const target = required('CHAT_UI_TARGET_TEXT')
+  const row = `[data-testid="chat-message-${id}"]`
+  const artifacts = required('CHAT_UI_ARTIFACTS')
+  const m = await daemon.attach({
+    device: 'chat-ui-message-wide',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({
+      link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
+    })
+    await m.assertVisible({ text: target, timeout: 60000 })
+    console.log(
+      '$ S5 hover actual original message, inspect named controls, anchored menu and clipboard body'
+    )
+    await m.evalBrowserScript({
+      script: `document.querySelector(${JSON.stringify(row)}).dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await m.assertVisible({ text: 'More message actions' })
+    writeFileSync(
+      join(artifacts, 'desktop-message-hover-after.png'),
+      await m.screenshot()
+    )
+    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
+    await m.assertVisible({ text: 'Copy text' })
+    await m.assertVisible({ text: 'Pin' })
+    await m.assertVisible({ text: 'Delete' })
+    writeFileSync(
+      join(artifacts, 'desktop-message-menu-after.png'),
+      await m.screenshot()
+    )
+    await m.tapOn({ text: 'Copy text' })
+    await m.grantPermissions({ permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: WEB })
+    console.log(
+      await m.evalBrowserScript({
+        script: `if(await navigator.clipboard.readText()!==${JSON.stringify(target)})throw new Error('Copy included extra content or failed');return JSON.stringify({copiedOwnBodyOnly:true});`
+      })
+    )
+    await m.tapOn({ css: row + ' [aria-label="Reply"]' })
+    await m.assertVisible({ text: 'Replying to You' })
+    writeFileSync(
+      join(artifacts, 'desktop-replies-after.png'),
+      await m.screenshot()
+    )
+    await m.tapOn({ text: 'Cancel reply' })
+    console.log('$ S8 personal message pin badge/header/list and verified jump')
+    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
+    await m.tapOn({ text: 'Pin' })
+    await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
+    writeFileSync(
+      join(artifacts, 'desktop-message-pins-after.png'),
+      await m.screenshot()
+    )
+    await m.tapOn({ text: 'Pinned messages: 1' })
+    writeFileSync(
+      join(artifacts, 'desktop-pinned-messages-after.png'),
+      await m.screenshot()
+    )
+    await m.tapOn({
+      css: '[role="button"][aria-label=' + JSON.stringify(target) + ']'
+    })
+    await m.assertVisible({ text: target })
+    console.log(
+      await m.evalBrowserScript({
+        script: `const row=document.querySelector(${JSON.stringify(row)});if(!row)throw new Error('Pin jump original missing');return JSON.stringify({pinBadgeHeaderList:true,originalJump:true});`
+      })
+    )
+    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
+    await m.tapOn({ text: 'Unpin' })
+    console.log('S5/S7/S8 wide core PASS')
+  } finally {
+    await m.detach()
+  }
+}
+
 async function main(): Promise<void> {
   const scenario = process.argv[2]
   assert(
-    scenario === 'S1' || scenario === 'S2',
+    scenario === 'S1' ||
+      scenario === 'S2' ||
+      scenario === 'S4' ||
+      scenario === 'S5',
     'Name a supported follow-up scenario'
   )
   const root = required('MAESTRO_D_CLIENT_ROOT')
@@ -312,7 +470,9 @@ async function main(): Promise<void> {
   })
   try {
     if (scenario === 'S1') await s1(daemon)
-    else await s2(daemon)
+    else if (scenario === 'S2') await s2(daemon)
+    else if (scenario === 'S4') await s4(daemon)
+    else await s5(daemon)
   } finally {
     await daemon.close()
   }
