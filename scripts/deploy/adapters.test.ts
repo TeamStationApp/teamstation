@@ -4,10 +4,12 @@ import { createHash, X509Certificate } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import path from 'node:path'
@@ -27,6 +29,7 @@ import {
   bundleEnvironment,
   ios,
   type Profile,
+  profileDirectories,
   readInfo,
   ruby,
   type Signing,
@@ -386,6 +389,11 @@ describe('Native build and signing adapters', () => {
     assert.equal(result.buildNumber, '26093004')
     assert(calls.some(c => c.args.includes('--no-daemon')))
     assert(
+      calls.some(
+        c => c.args.includes('--print-certs') && c.captureStderr === true
+      )
+    )
+    assert(
       androidOverride.includes(
         "'TS_BUILD_INFO', 'TS_API_BASE_URL', 'TS_PRIMARY_HOST'"
       )
@@ -416,6 +424,32 @@ describe('Native build and signing adapters', () => {
     chmodSync(context.settings.apps[app].android!.android!.keystore, 0o600)
     context.settings.tools.aapt = undefined
     await assert.rejects(android(context), /tools/)
+  })
+  it('parses formatted and repeated signer reports while rejecting additional signers', () => {
+    context.target = target(app, 'android')
+    const badging = `package: name='${app}' versionCode='26093004' versionName='1.2.3'`
+    const digest = 'a'.repeat(64)
+    const report = `\u001b[32m  Signer #1 certificate SHA-256 digest: ${digest}  \u001b[0m\r\n`
+    verifyAndroidMetadata(badging, report + report, context)
+    const scoped = `Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ${digest}\nSigner (minSdkVersion=33 (dev release=true), maxSdkVersion=2147483647) certificate SHA-256 digest: ${digest}`
+    verifyAndroidMetadata(badging, scoped, context)
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        badging,
+        scoped.replace(digest, 'b'.repeat(64)),
+        context
+      )
+    })
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        badging,
+        report + `Signer #2 certificate SHA-256 digest: ${digest}`,
+        context
+      )
+    })
+    assert.throws(() => {
+      verifyAndroidMetadata(badging, report + 'Number of signers: 2', context)
+    })
   })
   it('rejects missing projects, ambiguous APKs, absent JS and failed compilers while removing overrides', async () => {
     context.target = target(app, 'android')
@@ -507,6 +541,56 @@ describe('Native build and signing adapters', () => {
     await assert.rejects(
       withSigning(context, async () => 0, home),
       /Separate/
+    )
+  })
+  it('supports the Xcode profile-store alias without following arbitrary aliases', async () => {
+    const home = path.join(root, 'alias-home')
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    const modern = path.join(
+      home,
+      'Library/Developer/Xcode/UserData/Provisioning Profiles'
+    )
+    mkdirSync(modern, { recursive: true })
+    mkdirSync(path.dirname(legacy), { recursive: true })
+    symlinkSync(modern, legacy)
+    assert.deepEqual(profileDirectories(home), [modern])
+    await withSigning(
+      context,
+      async () => {
+        assert(existsSync(path.join(modern, profile.uuid + '.mobileprovision')))
+        return 0
+      },
+      home
+    )
+    assert(lstatSync(legacy).isSymbolicLink())
+    assert.equal(readdirSync(modern).length, 0)
+    rmSync(modern, { recursive: true })
+    assert.deepEqual(profileDirectories(home), [modern])
+    await withSigning(context, async () => 0, home)
+    assert(lstatSync(legacy).isSymbolicLink())
+    rmSync(legacy)
+    symlinkSync(root, legacy)
+    assert.throws(() => profileDirectories(home), /Unexpected/)
+  })
+  it('resolves a configured private signing checkout alias and still rejects loose permissions', async () => {
+    const actual = path.join(root, 'private-signing-checkout')
+    const alias = path.join(root, 'configured-signing-checkout')
+    mkdirSync(actual, { mode: 0o700 })
+    symlinkSync(actual, alias)
+    context.settings.match!.checkout = alias
+    const directory = path.join(root, 'ruby-input')
+    mkdirSync(directory)
+    let observed: string | undefined
+    dispatch = async command => {
+      observed = JSON.parse(readFileSync(command.args.at(-1)!, 'utf8')).checkout
+      return ''
+    }
+    await ruby(context, 'match', {}, directory)
+    assert.equal(observed, actual)
+    chmodSync(actual, 0o755)
+    await assert.rejects(
+      ruby(context, 'match', {}, directory),
+      /private and owned/
     )
   })
   it('archives and exports the actual target contract, verifies final IPA metadata, certificate, entitlements and JS', async () => {

@@ -2,10 +2,13 @@ import { createHash, X509Certificate } from 'node:crypto'
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync
@@ -116,8 +119,10 @@ export async function ruby(
   processes = context.processes
 ): Promise<string> {
   const file = path.join(directory, `${operation}.json`)
-  const checkout = context.settings.match?.checkout
+  let checkout = context.settings.match?.checkout
   if ((operation === 'match' || operation === 'import') && checkout != null) {
+    context.reportStage?.('apple.signing-checkout')
+    checkout = realpathSync(checkout)
     noSymlinks(checkout)
     const stat = statSync(checkout)
     if (
@@ -135,9 +140,9 @@ export async function ruby(
     loginFile != null
   ) {
     login = privateJson(loginFile, asAppleLogin)
-    login.cookieDirectory = path.resolve(
-      path.dirname(loginFile),
-      login.cookieDirectory
+    context.reportStage?.('apple.session-store')
+    login.cookieDirectory = realpathSync(
+      path.resolve(path.dirname(loginFile), login.cookieDirectory)
     )
     noSymlinks(login.cookieDirectory)
     const stat = statSync(login.cookieDirectory)
@@ -192,6 +197,39 @@ export interface Signing {
   keychain: string
   directory: string
   profiles: Map<string, Profile>
+}
+/** Only aliases between Xcode's two known profile stores are accepted. */
+export function profileDirectories(home: string): string[] {
+  const base = existsSync(home) ? realpathSync(home) : path.resolve(home)
+  noSymlinks(base)
+  const known = [
+    path.join(base, 'Library/MobileDevice/Provisioning Profiles'),
+    path.join(base, 'Library/Developer/Xcode/UserData/Provisioning Profiles')
+  ]
+  return [
+    ...new Set(
+      known.map(directory => {
+        let canonical = directory
+        try {
+          if (lstatSync(directory).isSymbolicLink()) {
+            const target = path.resolve(
+              path.dirname(directory),
+              readlinkSync(directory)
+            )
+            if (!known.includes(target))
+              throw new Error('Unexpected provisioning profile directory alias')
+            canonical = existsSync(directory) ? realpathSync(directory) : target
+          } else canonical = realpathSync(directory)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+        if (!known.includes(canonical))
+          throw new Error('Unexpected provisioning profile directory alias')
+        noSymlinks(canonical)
+        return canonical
+      })
+    )
+  ]
 }
 export async function withSigning<T>(
   context: BuildContext,
@@ -270,6 +308,7 @@ export async function withSigning<T>(
     if (context.target.platform === 'ios') {
       for (const name of readdirSync(profilesDirectory)) {
         if (!name.endsWith('.mobileprovision')) continue
+        context.reportStage?.('apple.profiles')
         const file = path.join(profilesDirectory, name)
         noSymlinks(file)
         const xml = path.join(directory, 'profile.plist')
@@ -285,13 +324,9 @@ export async function withSigning<T>(
         const profile = validateProfile(raw, id, context)
         profiles.set(id, profile)
         const bytes = readFileSync(file)
-        for (const relative of [
-          'Library/MobileDevice/Provisioning Profiles',
-          'Library/Developer/Xcode/UserData/Provisioning Profiles'
-        ]) {
+        for (const directory of profileDirectories(profileHome)) {
           const destination = path.join(
-            profileHome,
-            relative,
+            directory,
             `${profile.uuid}.mobileprovision`
           )
           noSymlinks(destination)

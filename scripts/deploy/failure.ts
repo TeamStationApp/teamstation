@@ -1,6 +1,9 @@
 export const buildStages = [
   'builder',
   'apple.signing',
+  'apple.signing-checkout',
+  'apple.session-store',
+  'apple.profiles',
   'apple.prepare',
   'apple.archive',
   'apple.export',
@@ -48,6 +51,7 @@ const publicMessages = new Set([
   'Apple session directory must be private and owned',
   'Separate Match signing branch and Apple settings are required',
   'Existing provisioning profile differs; preserving it',
+  'Unexpected provisioning profile directory alias',
   'Match did not supply all requested profiles',
   'Unsupported property list value',
   'Invalid app executable',
