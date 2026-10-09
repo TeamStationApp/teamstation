@@ -202,6 +202,16 @@ export type ChatDmPerson = ReturnType<typeof asChatDmPerson>
  * for a DM, which the app names from its members. `locked`: the caller holds
  * no key for the latest epoch; `noHolder`: no current member does.
  */
+export const asChatPreferences = asObject({
+  pinned: asOptional(asBoolean, false),
+  muted: asOptional(asBoolean, false),
+  manualUnread: asOptional(asBoolean, false),
+  manualUnreadRevision: asOptional(asNumber, 0)
+})
+export type ChatPreferences = ReturnType<typeof asChatPreferences>
+export const asChatPin = asObject({ messageId: asString, pinnedAt: asString })
+export type ChatPin = ReturnType<typeof asChatPin>
+
 export const asChatConversation = asObject({
   id: asString,
   kind: asChatKind,
@@ -217,6 +227,15 @@ export const asChatConversation = asObject({
   lastSeq: asNumber,
   /** When the newest message was posted, ISO; null before the first. */
   lastMessageAt: asNullable(asString),
+  lastPostAt: asOptional(asNullable(asString), null),
+  lastPostId: asOptional(asNullable(asString), null),
+  lastPostSeq: asOptional(asNumber, 0),
+  preferences: asOptional(asChatPreferences, {
+    pinned: false,
+    muted: false,
+    manualUnread: false,
+    manualUnreadRevision: 0
+  }),
   unread: asNumber,
   canPost: asBoolean,
   canModerate: asBoolean,
@@ -3158,6 +3177,38 @@ export class TeamStationClient {
     )
   }
 
+  async updateChatPreferences(
+    conversationId: string,
+    patch: Partial<Pick<ChatPreferences, 'pinned' | 'muted' | 'manualUnread'>>
+  ): Promise<ChatPreferences> {
+    return await this.request(
+      'PATCH',
+      `${chatPath(conversationId)}/preferences`,
+      asChatPreferences,
+      patch
+    )
+  }
+
+  async chatPins(conversationId: string): Promise<ChatPin[]> {
+    return await this.request(
+      'GET',
+      `${chatPath(conversationId)}/pins`,
+      asArray(asChatPin)
+    )
+  }
+
+  async pinChatMessage(
+    conversationId: string,
+    messageId: string,
+    pinned: boolean
+  ): Promise<ChatPin[]> {
+    return await this.request(
+      pinned ? 'PUT' : 'DELETE',
+      `${chatPath(conversationId)}/pins/${encodeURIComponent(messageId)}`,
+      asArray(asChatPin)
+    )
+  }
+
   /** A chat's current members. */
   async chatMembers(conversationId: string): Promise<ChatMember[]> {
     return await this.request(
@@ -3456,13 +3507,19 @@ export class TeamStationClient {
   /** Moves the caller's read cursor on to `seq`; it never moves back. */
   async markChatRead(
     conversationId: string,
-    seq: number
+    seq: number,
+    clearManualUnreadRevision?: number
   ): Promise<{ seq: number }> {
     return await this.request(
       'PUT',
       `${chatPath(conversationId)}/read`,
       asObject({ seq: asNumber }),
-      { seq }
+      {
+        seq,
+        ...(clearManualUnreadRevision == null
+          ? {}
+          : { clearManualUnreadRevision })
+      }
     )
   }
 

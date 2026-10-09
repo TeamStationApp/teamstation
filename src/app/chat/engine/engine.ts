@@ -3,7 +3,9 @@ import type {
   ChatDmPerson,
   ChatKindName,
   ChatMember,
-  ChatMessage
+  ChatMessage,
+  ChatPin,
+  ChatPreferences
 } from '../../../common/api'
 import type { AttachmentRef, ChatContent } from '../../../common/chatContent'
 import { fromUtf8 } from '../../../common/chatCrypto/bytes'
@@ -100,6 +102,10 @@ export interface ConversationListItem {
   lastSeq: number
   /** When the newest message was posted, as last read; null before any. */
   lastMessageAt: string | null
+  lastPostAt?: string | null
+  lastPostId?: string | null
+  lastPostSeq?: number
+  preferences?: ChatPreferences
   unread: number
   canPost: boolean
   canModerate: boolean
@@ -120,6 +126,7 @@ export interface MemberView extends ChatMember {
 
 /** What the conversation screen draws. */
 export interface ConversationView {
+  pins?: ChatPin[]
   conversation: ConversationListItem
   messages: MessageView[]
   members: MemberView[]
@@ -209,6 +216,7 @@ export class ChatEngine {
   private readonly active = new Set<string>()
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private readonly safety = new Map<string, string>()
+  private readonly personalPins = new Map<string, ChatPin[]>()
   private unlisten: (() => void) | undefined
   private stopped = false
 
@@ -337,6 +345,20 @@ export class ChatEngine {
 
   private item(state: ConversationState): ConversationListItem {
     const summary = state.summary
+    let lastPost = {
+      id: summary.lastPostId,
+      seq: summary.lastPostSeq ?? 0,
+      at: summary.lastPostAt
+    }
+    for (const envelope of state.envelopes.values()) {
+      if (envelope.kind === 'post' && envelope.seq > lastPost.seq) {
+        lastPost = {
+          id: envelope.id,
+          seq: envelope.seq,
+          at: envelope.createdAt
+        }
+      }
+    }
     const keyed =
       this.context != null &&
       state.epochsSynced &&
@@ -354,6 +376,10 @@ export class ChatEngine {
       scopeName: summary.scopeName,
       lastSeq: Math.max(summary.lastSeq, state.newestSeq),
       lastMessageAt: newest(summary.lastMessageAt, state),
+      lastPostAt: lastPost.at,
+      lastPostId: lastPost.id,
+      lastPostSeq: lastPost.seq,
+      preferences: summary.preferences,
       unread: summary.unread,
       canPost: summary.canPost,
       canModerate: summary.canModerate,
@@ -381,6 +407,10 @@ export class ChatEngine {
         await syncEpochs(ctx, conversationId)
         await syncMessages(ctx, conversationId)
         await syncReads(ctx, conversationId)
+        this.personalPins.set(
+          conversationId,
+          await ctx.client.chatPins(conversationId)
+        )
       })
     } catch (error) {
       if (isGone(error)) this.active.delete(conversationId)
@@ -448,6 +478,13 @@ export class ChatEngine {
     const historyLocked = conversation.locked && !conversation.noHolder
     return {
       conversation,
+      pins: (this.personalPins.get(conversationId) ?? []).filter(
+        pin =>
+          !messages.some(
+            message =>
+              message.id === pin.messageId && message.status === 'removed'
+          )
+      ),
       messages,
       members: members.map(member => ({
         ...member,
@@ -693,19 +730,45 @@ export class ChatEngine {
   }
 
   /** Moves the person's read cursor to the newest message read. */
-  async markRead(conversationId: string): Promise<void> {
+  async markRead(
+    conversationId: string,
+    clearManualUnreadRevision?: number
+  ): Promise<void> {
     const ctx = this.ctx
     const moved = await this.serial(conversationId, async () => {
       const state = await stateOf(ctx, conversationId)
       const seq = state.newestSeq
       const mine = state.reads.find(read => read.userId === ctx.userId)
-      if (seq <= (mine?.seq ?? 0)) return false
-      const answer = await ctx.client.markChatRead(conversationId, seq)
+      const preferences = state.summary.preferences
+      const clearing =
+        preferences?.manualUnread &&
+        preferences.manualUnreadRevision === clearManualUnreadRevision
+      if (seq <= (mine?.seq ?? 0) && !clearing) return false
+      const answer = await ctx.client.markChatRead(
+        conversationId,
+        seq,
+        clearManualUnreadRevision
+      )
       state.reads = [
         ...state.reads.filter(read => read.userId !== ctx.userId),
         { userId: ctx.userId, seq: answer.seq }
       ]
-      state.summary = { ...state.summary, unread: 0 }
+      const stillClearing =
+        clearing &&
+        state.summary.preferences?.manualUnreadRevision ===
+          clearManualUnreadRevision
+      state.summary = {
+        ...state.summary,
+        unread: 0,
+        ...(stillClearing
+          ? {
+              preferences: {
+                ...state.summary.preferences,
+                manualUnread: false
+              }
+            }
+          : {})
+      }
       return true
     })
     if (!moved) return
@@ -716,6 +779,43 @@ export class ChatEngine {
   /** Tells the others the person is typing; false when it was not sent. */
   typing(conversationId: string): boolean {
     return this.options.socket?.sendTyping(conversationId) ?? false
+  }
+
+  async setPreferences(
+    conversationId: string,
+    patch: Partial<Pick<ChatPreferences, 'pinned' | 'muted' | 'manualUnread'>>
+  ): Promise<void> {
+    await this.serial(conversationId, async () => {
+      const preferences = await this.options.client.updateChatPreferences(
+        conversationId,
+        patch
+      )
+      const state = this.memory.state(conversationId)
+      if (state != null) state.summary = { ...state.summary, preferences }
+    })
+    this.memory.emit({ type: 'conversations' })
+    this.memory.emit({ type: 'conversation', conversationId })
+  }
+
+  async pinMessage(
+    conversationId: string,
+    messageId: string,
+    pinned: boolean
+  ): Promise<void> {
+    if (pinned && this.target(conversationId, messageId).status !== 'ok') {
+      throw new ChatEngineError('target', 'Only a readable post can be pinned')
+    }
+    await this.serial(conversationId, async () => {
+      this.personalPins.set(
+        conversationId,
+        await this.options.client.pinChatMessage(
+          conversationId,
+          messageId,
+          pinned
+        )
+      )
+    })
+    this.memory.emit({ type: 'conversation', conversationId })
   }
 
   /** Fetches, checks and opens an attachment. */
@@ -812,6 +912,15 @@ export class ChatEngine {
     if (this.stopped) return
     switch (event.type) {
       case 'chatUser':
+        if (event.kind === 'preferences') {
+          this.relist()
+          for (const id of this.active)
+            this.later(`pins:${id}`, async () => {
+              this.personalPins.set(id, await this.options.client.chatPins(id))
+              this.memory.emit({ type: 'conversation', conversationId: id })
+            })
+          return
+        }
         this.memory.emit({ type: 'devices' })
         return
       case 'chatTyping':

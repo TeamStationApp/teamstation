@@ -980,6 +980,22 @@ export interface ChatDirtyTable {
   marked_at: Generated<Date>
 }
 
+export interface ChatConversationPreferencesTable {
+  user_id: number
+  conversation_id: string
+  pinned: Generated<boolean>
+  muted: Generated<boolean>
+  manual_unread: Generated<boolean>
+  manual_unread_revision: Generated<number>
+}
+
+export interface ChatMessagePinsTable {
+  user_id: number
+  conversation_id: string
+  message_id: string
+  pinned_at: Generated<Date>
+}
+
 export interface Database {
   event_tag_catalog: { tag: string }
   event_tags: EventTagsTable
@@ -996,6 +1012,7 @@ export interface Database {
   auth_sessions: AuthSessionsTable
   chat_attachments: ChatAttachmentsTable
   chat_conversations: ChatConversationsTable
+  chat_conversation_preferences: ChatConversationPreferencesTable
   chat_devices: ChatDevicesTable
   chat_dirty: ChatDirtyTable
   chat_epoch_boxes: ChatEpochBoxesTable
@@ -1007,6 +1024,7 @@ export interface Database {
   chat_membership_log: ChatMembershipLogTable
   chat_message_attachments: ChatMessageAttachmentsTable
   chat_messages: ChatMessagesTable
+  chat_message_pins: ChatMessagePinsTable
   chat_read_cursors: ChatReadCursorsTable
   chat_reports: ChatReportsTable
   chat_resume_challenges: ChatResumeChallengesTable
