@@ -26,6 +26,14 @@ android {
         val primaryHost = (System.getenv("TS_PRIMARY_HOST") ?: "").trim().ifEmpty { "app.teamstation.app" }
         buildConfigField("String", "TS_PRIMARY_HOST", "\"${primaryHost.replace("\"", "")}\"")
 
+        // Where crashes are reported; empty, the usual local build, reports nothing.
+        val sentryDsn = (System.getenv("TS_SENTRY_DSN") ?: "").trim()
+        buildConfigField("String", "TS_SENTRY_DSN", "\"${sentryDsn.replace("\"", "")}\"")
+        // The `sentryTest` launch extra works only in a build made for testing it
+        // (TS_SENTRY_TESTS=1): the launcher activity is exported, and a shipped build must not
+        // let another app crash it.
+        buildConfigField("boolean", "TS_SENTRY_TESTS", (System.getenv("TS_SENTRY_TESTS") == "1").toString())
+
         // Only for the Pixel this ships to. The one native call is `SocketQueue`'s.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -106,6 +114,8 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Java and native (NDK) crash reporting.
+    implementation("io.sentry:sentry-android:8.60.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

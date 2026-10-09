@@ -1,6 +1,7 @@
 import CameramanTestHarness
 import CameramanUI
 import SwiftUI
+import TeamStationSentry
 import UIKit
 
 /// The camera stays landscape, including when the phone was launched from portrait lock.
@@ -41,6 +42,7 @@ struct CameramanApp: App {
   @Environment(\.scenePhase) private var scenePhase
 
   init() {
+    SentrySetup.start(appId: "app.teamstation.cameraman")
     let launch = LaunchConfiguration(
       arguments: Array(ProcessInfo.processInfo.arguments.dropFirst()),
       environment: ProcessInfo.processInfo.environment

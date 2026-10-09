@@ -23,6 +23,9 @@ settings:
     ENABLE_MODULE_VERIFIER: NO
 
 packages:
+  # Crash reporting, shared by the iOS apps.
+  TeamStationSentry:
+    path: ../common/TeamStationSentry
   # Shared with TS Director and TS Preview, which draw the same operating screen for a remote phone.
   CameramanCore:
     path: ../common/CameramanCore
@@ -66,6 +69,8 @@ targets:
         SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
         LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
     dependencies:
+      - package: TeamStationSentry
+        product: TeamStationSentry
       - package: CameramanCore
         product: CameramanCore
       - package: CameramanControlUI

@@ -42,6 +42,7 @@ import androidx.lifecycle.Lifecycle
 import app.teamstation.cameraman.core.ActivityPresence
 import app.teamstation.cameraman.engine.AppEnvironment
 import app.teamstation.cameraman.harness.ControlChannel
+import app.teamstation.cameraman.sentry.SentrySetup
 import app.teamstation.cameraman.service.CameramanService
 import app.teamstation.cameraman.ui.RootScreen
 import app.teamstation.cameraman.ui.theme.CameramanTheme
@@ -128,6 +129,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SentrySetup.handleTest(intent, savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         requestBatteryOptimisationExemption()
         // The iOS build sets `isIdleTimerDisabled` for the same reason: a screen lock is what makes
