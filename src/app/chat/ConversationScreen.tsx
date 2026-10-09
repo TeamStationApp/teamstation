@@ -9,7 +9,7 @@ import {
   View
 } from 'react-native'
 
-import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
+import { MAX_ATTACHMENTS } from '../../common/chatContent'
 import {
   Button,
   FLOATING_BOTTOM_REM,
@@ -23,6 +23,8 @@ import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ChatFileOps } from './AttachmentView'
 import { copyChatText } from './chatClipboard'
+import { attachmentProblem, sendAllowed } from './chatComposeModel'
+import { ChatDropTarget } from './ChatDropTarget'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
 import {
@@ -54,7 +56,7 @@ import type { ChatScreenEngine } from './screenEngine'
 /** What the screen needs of the platform's file twin. */
 export interface ConversationFiles extends ChatFileOps {
   PICK_SOURCES: PickSource[]
-  pickFiles: (source: PickSource) => Promise<PickedFile[]>
+  pickFiles: (source: PickSource, remaining?: number) => Promise<PickedFile[]>
 }
 
 export interface ConversationScreenProps {
@@ -150,14 +152,34 @@ export function ConversationScreen(
   latestView.current = view
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState(props.draft?.text ?? '')
+  const textNow = useRef(text)
+  textNow.current = text
   const [replyTo, setReplyTo] = useState<MessageView | undefined>(
     props.draft?.replyTo
   )
+  const replyNow = useRef(replyTo)
+  replyNow.current = replyTo
   const [editing, setEditing] = useState<MessageView | undefined>(
     props.draft?.editing
   )
   const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
   const [sending, setSending] = useState(false)
+  const sendingNow = useRef(false)
+  const preparingNow = useRef(0)
+  const [preparing, setPreparing] = useState(0)
+  const preparationGeneration = useRef(0)
+  const preparationQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const pickedNow = useRef(picked)
+  pickedNow.current = picked
+  useEffect(() => {
+    preparationGeneration.current += 1
+    preparingNow.current = 0
+    setPreparing(0)
+    preparationQueue.current = Promise.resolve()
+    return () => {
+      preparationGeneration.current += 1
+    }
+  }, [conversationId, props.active])
   const [error, setError] = useState<string | undefined>(undefined)
   const [reported, setReported] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
@@ -176,7 +198,6 @@ export function ConversationScreen(
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
   const [conversationMenu, setConversationMenu] = useState(false)
   const readRevision = useRef<number | undefined>(undefined)
-  const restored = useRef(false)
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null)
   // Where the list is, to keep it on the newest message while the person
@@ -184,10 +205,77 @@ export function ConversationScreen(
   // up to older messages stays put.
   const scrolled = useRef({
     offset: props.draft?.scrollOffset ?? 0,
+    hasPosition:
+      props.draft?.hasScrollPosition === true ||
+      (props.draft?.scrollOffset ?? 0) > 0,
+    followNewest: props.draft?.followNewest === true,
     height: 0,
     content: 0
   })
-  const atBottom = useRef((props.draft?.scrollOffset ?? 0) === 0)
+  const restoreTarget = useRef<number | undefined>(
+    scrolled.current.hasPosition && !scrolled.current.followNewest
+      ? scrolled.current.offset
+      : undefined
+  )
+  const atBottom = useRef(
+    !scrolled.current.hasPosition || scrolled.current.followNewest
+  )
+  const prepareFiles = (
+    work: (remaining: number) => Promise<PickedFile[]>
+  ): void => {
+    const current = latestView.current
+    if (
+      current?.composer !== 'enabled' ||
+      editing != null ||
+      sendingNow.current ||
+      props.active === false
+    ) {
+      setError(lstrings.chat_attachment_blocked)
+      return
+    }
+    const generation = preparationGeneration.current
+    preparingNow.current += 1
+    setPreparing(preparingNow.current)
+    setError(undefined)
+    preparationQueue.current = preparationQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (generation !== preparationGeneration.current) return
+        const chosen = await work(MAX_ATTACHMENTS - pickedNow.current.length)
+        if (
+          generation !== preparationGeneration.current ||
+          latestView.current?.composer !== 'enabled'
+        )
+          return
+        const problem = attachmentProblem(
+          chosen.map(file => ({
+            fileName: file.fileName,
+            size: file.bytes.length
+          })),
+          MAX_ATTACHMENTS - pickedNow.current.length
+        )
+        if (problem != null) throw new Error(problem)
+        const next = [...pickedNow.current, ...chosen]
+        pickedNow.current = next
+        setPicked(next)
+      })
+      .catch((error: unknown) => {
+        if (generation === preparationGeneration.current)
+          setError(
+            error instanceof Error &&
+              (error.message === lstrings.chat_attachment_limit ||
+                error.message.includes('too large'))
+              ? error.message
+              : lstrings.chat_attachment_failed
+          )
+      })
+      .finally(() => {
+        if (generation === preparationGeneration.current) {
+          preparingNow.current -= 1
+          setPreparing(preparingNow.current)
+        }
+      })
+  }
   const explicitRead = useCallback(() => {
     const current = latestView.current
     if (
@@ -213,9 +301,25 @@ export function ConversationScreen(
     pinsOpen
   ])
   const hasView = view != null
+  const userScrolled = useCallback(() => {
+    if (props.active === false) return
+    atBottom.current = false
+    restoreTarget.current = undefined
+    scrolled.current.hasPosition = true
+    onDraftChange?.({
+      text: textNow.current,
+      replyTo: replyNow.current,
+      editing,
+      picked: pickedNow.current,
+      scrollOffset: scrolled.current.offset,
+      hasScrollPosition: true,
+      followNewest: scrolled.current.followNewest
+    })
+    explicitRead()
+  }, [props.active, onDraftChange, editing, explicitRead])
   useEffect(
-    () => bindUserScroll(scroller.current, explicitRead),
-    [explicitRead, hasView]
+    () => bindUserScroll(scroller.current, userScrolled),
+    [userScrolled, hasView]
   )
   useEffect(
     () => () => {
@@ -246,6 +350,7 @@ export function ConversationScreen(
     }
   }
   const jumpTo = (id: string): void => {
+    restoreTarget.current = undefined
     const generation = ++jumpGeneration.current
     setPinsOpen(false)
     setError(undefined)
@@ -292,7 +397,9 @@ export function ConversationScreen(
       replyTo,
       editing,
       picked,
-      scrollOffset: scrolled.current.offset
+      scrollOffset: scrolled.current.offset,
+      hasScrollPosition: scrolled.current.hasPosition,
+      followNewest: scrolled.current.followNewest
     })
   }, [text, replyTo, editing, picked, onDraftChange])
 
@@ -302,6 +409,11 @@ export function ConversationScreen(
   // every few seconds until then.
   useEffect(() => {
     if (props.active === false) return
+    restoreTarget.current =
+      scrolled.current.hasPosition && !scrolled.current.followNewest
+        ? scrolled.current.offset
+        : undefined
+    atBottom.current = restoreTarget.current == null
     readRevision.current = undefined
     let live = true
     let opened = false
@@ -444,14 +556,21 @@ export function ConversationScreen(
   }
 
   const send = (): void => {
-    const body = text.trim()
-    const tooLarge = picked.find(
-      file => file.bytes.length > MAX_ATTACHMENT_SIZE
+    if (
+      !sendAllowed({
+        enabled: view.composer === 'enabled' && props.active !== false,
+        sending: sendingNow.current,
+        preparing: preparingNow.current > 0,
+        text: textNow.current,
+        attachments: pickedNow.current
+      })
     )
-    if (tooLarge != null) {
-      setError(sprintf(lstrings.chat_too_large, tooLarge.fileName))
       return
-    }
+    const body = textNow.current.trim()
+    const submittedText = textNow.current
+    const submittedReply = replyNow.current
+    const submittedFiles = pickedNow.current
+    sendingNow.current = true
     setSending(true)
     setError(undefined)
     const work = async (): Promise<unknown> => {
@@ -459,29 +578,52 @@ export function ConversationScreen(
         await engine.edit(conversationId, editing.id, body)
         return
       }
-      const quote = replyTo == null ? {} : { quoteId: replyTo.id }
-      if (picked.length > 0) {
-        return await engine.attach(conversationId, picked, body, quote)
+      const quote = submittedReply == null ? {} : { quoteId: submittedReply.id }
+      if (submittedFiles.length > 0) {
+        return await engine.attach(conversationId, submittedFiles, body, quote)
       }
       return await engine.sendText(conversationId, body, quote)
     }
     work()
       .then(() => {
-        setText('')
-        setReplyTo(undefined)
+        const nextText =
+          textNow.current === submittedText ? '' : textNow.current
+        const nextReply =
+          replyNow.current?.id === submittedReply?.id
+            ? undefined
+            : replyNow.current
+        const nextPicked = pickedNow.current.filter(
+          file => !submittedFiles.includes(file)
+        )
+        textNow.current = nextText
+        replyNow.current = nextReply
+        setText(nextText)
+        setReplyTo(nextReply)
         setEditing(undefined)
-        setPicked([])
+        setPicked(nextPicked)
+        pickedNow.current = nextPicked
+        props.onDraftChange?.({
+          text: nextText,
+          replyTo: nextReply,
+          picked: nextPicked,
+          scrollOffset: scrolled.current.offset,
+          hasScrollPosition: scrolled.current.hasPosition,
+          followNewest: scrolled.current.followNewest
+        })
         atBottom.current = true
+        restoreTarget.current = undefined
       })
       .catch(() => {
         setError(lstrings.chat_send_failed)
       })
       .finally(() => {
         setSending(false)
+        sendingNow.current = false
       })
   }
 
   const onText = (next: string): void => {
+    textNow.current = next
     setText(next)
     readRevision.current =
       view.conversation.preferences?.manualUnreadRevision ?? 0
@@ -665,26 +807,41 @@ export function ConversationScreen(
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
             gestureGeneration.current += 1
+            if (props.active === false) return
             const { contentOffset, layoutMeasurement } = event.nativeEvent
-            scrolled.current.offset = contentOffset.y
+            if (restoreTarget.current != null) return
+            scrolled.current.offset = Math.max(0, contentOffset.y)
+            scrolled.current.hasPosition = true
             scrolled.current.height = layoutMeasurement.height
+            scrolled.current.followNewest =
+              scrolled.current.offset + layoutMeasurement.height >=
+              scrolled.current.content - 48
             props.onDraftChange?.({
               text,
               replyTo,
               editing,
               picked,
-              scrollOffset: contentOffset.y
+              scrollOffset: scrolled.current.offset,
+              hasScrollPosition: true,
+              followNewest: scrolled.current.followNewest
             })
           }}
           onScrollBeginDrag={() => {
             gestureGeneration.current += 1
-            if (Platform.OS !== 'web') explicitRead()
+            if (Platform.OS !== 'web') userScrolled()
           }}
           onLayout={event => {
+            if (props.active === false) return
             scrolled.current.height = event.nativeEvent.layout.height
+            if (restoreTarget.current != null)
+              scroller.current?.scrollTo({
+                y: restoreTarget.current,
+                animated: false
+              })
           }}
           scrollEventThrottle={100}
           onContentSizeChange={(_width, height) => {
+            if (props.active === false) return
             if (prepend.current != null) {
               const previous = prepend.current
               prepend.current = undefined
@@ -695,16 +852,14 @@ export function ConversationScreen(
               })
               return
             }
-            if (!restored.current && (props.draft?.scrollOffset ?? 0) > 0) {
-              restored.current = true
+            if (restoreTarget.current != null) {
               scrolled.current.content = height
               scroller.current?.scrollTo({
-                y: props.draft!.scrollOffset,
+                y: restoreTarget.current,
                 animated: false
               })
               return
             }
-            restored.current = true
             const { offset, content } = scrolled.current
             // At the bottom of what was there before it grew (or asked to
             // go there by a send): follow it down.
@@ -780,6 +935,7 @@ export function ConversationScreen(
                   )
                     return
                   setEditing(undefined)
+                  replyNow.current = original
                   setReplyTo(original)
                 }}
                 onToggleReaction={(pressed, emoji, mine) => {
@@ -825,6 +981,7 @@ export function ConversationScreen(
             onText={onText}
             enabled={view.composer === 'enabled'}
             sending={sending}
+            preparing={preparing > 0}
             context={
               editing != null
                 ? { kind: 'edit' }
@@ -845,20 +1002,20 @@ export function ConversationScreen(
             onCancelContext={() => {
               if (editing != null) setText('')
               setEditing(undefined)
+              replyNow.current = undefined
               setReplyTo(undefined)
             }}
             attachments={picked}
             onRemoveAttachment={index => {
-              setPicked(current => current.filter((_, at) => at !== index))
+              const next = pickedNow.current.filter((_, at) => at !== index)
+              pickedNow.current = next
+              setPicked(next)
             }}
             sources={editing == null ? files.PICK_SOURCES : []}
             onAttach={source => {
-              run(async () => {
-                const chosen = await files.pickFiles(source)
-                if (chosen.length > 0) {
-                  setPicked(current => [...current, ...chosen])
-                }
-              }, lstrings.chat_attachment_failed)
+              prepareFiles(
+                async remaining => await files.pickFiles(source, remaining)
+              )
             }}
             onSend={send}
           />
@@ -904,6 +1061,7 @@ export function ConversationScreen(
             const selected = selectedFor('reply')
             if (selected == null) return
             setEditing(undefined)
+            replyNow.current = selected
             setReplyTo(selected)
             setMenu(undefined)
           }}
@@ -981,14 +1139,28 @@ export function ConversationScreen(
       )}
     </>
   )
-  return props.embedded === true ? (
-    <View style={[styles.column, { padding: theme.rem(1), flex: 1 }]}>
-      {content}
-    </View>
-  ) : (
-    <Screen scroll={false} contentStyle={styles.column}>
-      {content}
-    </Screen>
+  const pane =
+    props.embedded === true ? (
+      <View style={[styles.column, { padding: theme.rem(1), flex: 1 }]}>
+        {content}
+      </View>
+    ) : (
+      <Screen scroll={false} contentStyle={styles.column}>
+        {content}
+      </Screen>
+    )
+  return (
+    <ChatDropTarget
+      disabledReason={
+        view.composer !== 'enabled' || editing != null || sending
+          ? lstrings.chat_attachment_blocked
+          : undefined
+      }
+      onPrepare={prepareFiles}
+      onReject={setError}
+    >
+      {pane}
+    </ChatDropTarget>
   )
 }
 

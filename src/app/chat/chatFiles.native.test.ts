@@ -14,6 +14,7 @@ import type * as NativeFiles from './chatFiles.native'
  */
 
 const files = new Map<string, string>()
+const sizes = new Map<string, number>()
 const log: string[] = []
 let library: Record<string, unknown> = {}
 let documents: unknown = []
@@ -57,6 +58,11 @@ const standIns: Record<string, unknown> = {
     default: {
       fs: {
         dirs: { CacheDir: '/cache' },
+        stat: async (path: string) => ({
+          size:
+            sizes.get(path) ??
+            Buffer.from(files.get(path) ?? '', 'base64').length
+        }),
         readFile: async (path: string, encoding: string) => {
           log.push(`read ${path} ${encoding}`)
           const found = files.get(path)
@@ -215,6 +221,75 @@ describe('attachments on a phone', function () {
       refused = error
     })
     expect(String(refused)).contains('broken picker')
+  })
+
+  it('rejects excess native selections and known large files before copies or byte reads', async function () {
+    const refused = async (
+      source: 'photos' | 'files',
+      remaining = 10
+    ): Promise<void> => {
+      log.length = 0
+      let error: unknown
+      await twin.pickFiles(source, remaining).catch((caught: unknown) => {
+        error = caught
+      })
+      expect(error).instanceOf(Error)
+      expect(
+        log.some(line => line.startsWith('read ') || line.startsWith('copy '))
+      ).equals(false)
+    }
+    library = {
+      assets: [
+        {
+          uri: 'file:///tmp/large.png',
+          fileName: 'large.png',
+          fileSize: 104857601
+        }
+      ]
+    }
+    await refused('photos')
+    documents = [{ uri: 'content://large', name: 'large.pdf', size: 104857601 }]
+    await refused('files')
+    documents = Array.from({ length: 11 }, (_value, index) => ({
+      uri: `content://file/${index}`,
+      name: 'notes.txt',
+      size: 1
+    }))
+    await refused('files')
+    library = {
+      assets: [
+        { uri: 'file:///tmp/notes.txt', fileName: 'notes.txt', fileSize: 1 }
+      ]
+    }
+    await refused('photos', 0)
+  })
+
+  it('checks native filesystem metadata before reading unknown-size content and cleans rejected local copies', async function () {
+    for (const size of [Number.NaN, -1, 104857601]) {
+      log.length = 0
+      sizes.set('/tmp/unknown.txt', size)
+      library = {
+        assets: [{ uri: 'file:///tmp/unknown.txt', fileName: 'unknown.txt' }]
+      }
+      let error: unknown
+      await twin.pickFiles('photos').catch((caught: unknown) => {
+        error = caught
+      })
+      expect(error).instanceOf(Error)
+      expect(log.some(line => line.startsWith('read '))).equals(false)
+    }
+    sizes.clear()
+    sizes.set('/cache/unknown.txt', 104857601)
+    documents = [{ uri: 'content://unknown', name: 'unknown.txt', size: null }]
+    log.length = 0
+    let error: unknown
+    await twin.pickFiles('files').catch((caught: unknown) => {
+      error = caught
+    })
+    expect(String(error)).contains('too large')
+    expect(log).includes('unlink /cache/unknown.txt')
+    expect(log.some(line => line.startsWith('read '))).equals(false)
+    sizes.clear()
   })
 
   it('writes opened bytes to the cache, and deletes them when let go', async function () {

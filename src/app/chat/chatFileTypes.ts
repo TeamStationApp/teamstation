@@ -1,3 +1,5 @@
+import type React from 'react'
+
 import type { OutgoingFile } from './engine/send'
 
 /**
@@ -11,6 +13,13 @@ export type PickSource = 'photos' | 'files'
 
 /** A picked file, its bytes read, ready for `engine.attach`. */
 export type PickedFile = OutgoingFile
+
+export interface ChatDropTargetProps {
+  children: React.ReactNode
+  disabledReason?: string
+  onPrepare: (work: (remaining: number) => Promise<PickedFile[]>) => void
+  onReject: (message: string) => void
+}
 
 /** A file's name with nothing in it a file system would refuse. */
 export function safeFileName(name: string): string {

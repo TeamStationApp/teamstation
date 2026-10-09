@@ -85,6 +85,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps): React.ReactElement {
             engine={props.engine}
             embedded
             selectedId={selected}
+            selectedVisible={messagesVisible}
             initialOffset={props.state.listOffset}
             onOffset={offset => {
               props.state.listOffset = offset
