@@ -196,9 +196,10 @@ export function ConversationScreen(
   const messagePositions = useRef(new Map<string, number>())
   const messageRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
   const measuringJump = useRef<number | undefined>(undefined)
-  const prepend = useRef<{ offset: number; content: number } | undefined>(
-    undefined
-  )
+  const prepend = useRef<
+    | { offset: number; content: number; firstSeq: number | undefined }
+    | undefined
+  >(undefined)
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
   const [conversationMenu, setConversationMenu] = useState(false)
   const readRevision = useRef<number | undefined>(undefined)
@@ -315,8 +316,14 @@ export function ConversationScreen(
     if (measuringJump.current != null) {
       jumpGeneration.current += 1
       measuringJump.current = undefined
-      prepend.current = undefined
     }
+    // Cancel the jump, not the older page's position compensation. The
+    // response still adds rows above the position the person now chose.
+    if (
+      prepend.current != null &&
+      latestView.current?.messages[0]?.seq === prepend.current.firstSeq
+    )
+      prepend.current.offset = scrolled.current.offset
     atBottom.current = false
     restoreTarget.current = undefined
     scrolled.current.hasPosition = true
@@ -349,14 +356,16 @@ export function ConversationScreen(
     messagePositions.current.clear()
     prepend.current = {
       offset: scrolled.current.offset,
-      content: scrolled.current.content
+      content: scrolled.current.content,
+      firstSeq: before?.messages[0]?.seq
     }
     atBottom.current = false
     try {
       const next = await engine.loadEarlier(conversationId)
+      const firstSeq = next.messages[0]?.seq
       if (
-        next.messages.length === before?.messages.length &&
-        next.messages[0]?.seq === before.messages[0]?.seq
+        firstSeq == null ||
+        (before?.messages[0] != null && firstSeq >= before.messages[0].seq)
       )
         prepend.current = undefined
       return next
@@ -895,9 +904,17 @@ export function ConversationScreen(
           onScroll={event => {
             gestureGeneration.current += 1
             if (props.active === false) return
-            const { contentOffset, layoutMeasurement } = event.nativeEvent
+            const { contentOffset, layoutMeasurement, contentSize } =
+              event.nativeEvent
             if (restoreTarget.current != null) return
             scrolled.current.offset = Math.max(0, contentOffset.y)
+            const pending = prepend.current
+            if (
+              pending != null &&
+              latestView.current?.messages[0]?.seq === pending.firstSeq &&
+              Math.abs(contentSize.height - pending.content) < 1
+            )
+              pending.offset = scrolled.current.offset
             scrolled.current.hasPosition = true
             scrolled.current.height = layoutMeasurement.height
             scrolled.current.followNewest =
@@ -931,13 +948,36 @@ export function ConversationScreen(
             if (props.active === false) return
             if (prepend.current != null) {
               const previous = prepend.current
-              prepend.current = undefined
-              scrolled.current.content = height
-              scroller.current?.scrollTo({
-                y: Math.max(0, previous.offset + height - previous.content),
-                animated: false
-              })
-              return
+              const firstSeq = view.messages[0]?.seq
+              if (
+                firstSeq != null &&
+                (previous.firstSeq == null || firstSeq < previous.firstSeq)
+              ) {
+                prepend.current = undefined
+                const target = Math.max(
+                  0,
+                  previous.offset + height - previous.content
+                )
+                scrolled.current.content = height
+                scrolled.current.offset = target
+                scrolled.current.hasPosition = true
+                scrolled.current.followNewest = false
+                restoreTarget.current = target
+                props.onDraftChange?.({
+                  text: textNow.current,
+                  replyTo: replyNow.current,
+                  editing,
+                  picked: pickedNow.current,
+                  scrollOffset: target,
+                  hasScrollPosition: true,
+                  followNewest: false
+                })
+                scroller.current?.scrollTo({ y: target, animated: false })
+                return
+              }
+              // An appended post or a layout pass is not an older page.
+              // Exclude its height from the eventual prepend compensation.
+              previous.content = height
             }
             if (restoreTarget.current != null) {
               scrolled.current.content = height
