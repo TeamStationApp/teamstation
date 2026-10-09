@@ -9,8 +9,16 @@ import {
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { pickFiles, readPicked } from './chatFiles'
 import type { PickedFile } from './chatFileTypes'
-import { bindComposerKeys } from './chatWebInteractions'
-import { bindComposerKeys as bindNativeComposerKeys } from './chatWebInteractions.native'
+import {
+  bindComposerKeys,
+  readDocumentActive,
+  watchReadDocumentActive
+} from './chatWebInteractions'
+import {
+  bindComposerKeys as bindNativeComposerKeys,
+  readDocumentActive as nativeReadDocumentActive,
+  watchReadDocumentActive as nativeWatchReadDocumentActive
+} from './chatWebInteractions.native'
 
 const originalPointer = Object.getOwnPropertyDescriptor(
   globalThis,
@@ -40,6 +48,77 @@ function file(
   chosen.arrayBuffer = read
   return chosen
 }
+
+describe('chat document visibility read adapter', function () {
+  it('reports current visibility changes and stops reporting after cleanup', function () {
+    const original = Object.getOwnPropertyDescriptor(
+      document,
+      'visibilityState'
+    )
+    let visibility: 'visible' | 'hidden' = 'visible'
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility
+    })
+    const updates: boolean[] = []
+    stop = watchReadDocumentActive(active => updates.push(active))
+    try {
+      expect(readDocumentActive()).equals(true)
+      visibility = 'hidden'
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      expect(readDocumentActive()).equals(false)
+      visibility = 'visible'
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      expect(updates).deep.equals([false, true])
+      stop()
+      stop = undefined
+      visibility = 'hidden'
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      expect(updates).deep.equals([false, true])
+    } finally {
+      if (original == null) Reflect.deleteProperty(document, 'visibilityState')
+      else Object.defineProperty(document, 'visibilityState', original)
+    }
+  })
+
+  it('leaves native read visibility independent of a browser document and attaches no browser listener', function () {
+    const original = Object.getOwnPropertyDescriptor(
+      document,
+      'visibilityState'
+    )
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden'
+    })
+    const updates: boolean[] = []
+    const nativeStop = nativeWatchReadDocumentActive(active =>
+      updates.push(active)
+    )
+    try {
+      expect(nativeReadDocumentActive()).equals(true)
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      nativeStop()
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      expect(updates).deep.equals([])
+    } finally {
+      if (original == null) Reflect.deleteProperty(document, 'visibilityState')
+      else Object.defineProperty(document, 'visibilityState', original)
+    }
+  })
+
+  it('does not treat a missing browser document as readable', function () {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'document')!
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: undefined
+    })
+    try {
+      expect(readDocumentActive()).equals(false)
+    } finally {
+      Object.defineProperty(globalThis, 'document', original)
+    }
+  })
+})
 
 describe('chat desktop send eligibility', function () {
   const state = {

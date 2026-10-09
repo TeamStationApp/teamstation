@@ -1,6 +1,22 @@
 /** DOM interactions belong to the browser twin; phones import no DOM code. */
 import type { ChatBounds } from './chatInteractionModel'
 let restoringFocus = false
+export function readDocumentActive(): boolean {
+  return (
+    typeof document !== 'undefined' && document.visibilityState === 'visible'
+  )
+}
+export function watchReadDocumentActive(
+  update: (active: boolean) => void
+): () => void {
+  const changed = (): void => {
+    update(readDocumentActive())
+  }
+  document.addEventListener('visibilitychange', changed)
+  return () => {
+    document.removeEventListener('visibilitychange', changed)
+  }
+}
 export const immediatePressProps = { delayPressIn: 0 }
 export const messageTooltipProps = (label: string): { title: string } => ({
   title: label

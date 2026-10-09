@@ -1,5 +1,13 @@
 /** Native focus/back are handled by accessible views and BackHandler. */
 import type { ChatBounds } from './chatInteractionModel'
+export function readDocumentActive(): boolean {
+  return true
+}
+export function watchReadDocumentActive(
+  _update: (active: boolean) => void
+): () => void {
+  return () => {}
+}
 export const immediatePressProps = {}
 export const messageTooltipProps = (_label: string): object => ({})
 export function bindMessageTooltips(_view: unknown): () => void {
