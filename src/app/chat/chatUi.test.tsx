@@ -51,12 +51,20 @@ import { swipeHandlers, SwipeToReply } from './SwipeToReply'
  * attachment twin — each against a stand-in engine and client.
  */
 let root: Root | undefined
+let oldMatchMedia: PropertyDescriptor | undefined
+let touchFixture = false
 
 afterEach(async function () {
   await act(async () => {
     root?.unmount()
   })
   root = undefined
+  if (touchFixture) {
+    if (oldMatchMedia == null)
+      delete (globalThis as { matchMedia?: unknown }).matchMedia
+    else Object.defineProperty(globalThis, 'matchMedia', oldMatchMedia)
+    touchFixture = false
+  }
 })
 
 const delay = async (ms: number): Promise<void> => {
@@ -66,6 +74,18 @@ const delay = async (ms: number): Promise<void> => {
 const text = (): string => document.body.textContent ?? ''
 
 async function render(element: React.ReactElement): Promise<void> {
+  if (!touchFixture) {
+    oldMatchMedia = Object.getOwnPropertyDescriptor(globalThis, 'matchMedia')
+    Object.defineProperty(globalThis, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: false,
+        addListener: () => {},
+        removeListener: () => {}
+      })
+    })
+    touchFixture = true
+  }
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -643,7 +663,7 @@ describe('a conversation', function () {
     )
   })
 
-  it('reads a closed chat with no composer, offering only Report', async function () {
+  it('reads a closed chat with personal copy and pin but no posting actions', async function () {
     await open(
       view({
         conversation: chat({ closed: true }),
@@ -656,46 +676,43 @@ describe('a conversation', function () {
     await longPress('old words')
     expect(button('React with 👍')).equals(undefined)
     expect(button('Reply')).equals(undefined)
-    expect(button('Report')).not.equals(undefined)
+    expect(button('Report')).equals(undefined)
+    expect(button('Copy')).not.equals(undefined)
+    expect(button('Pin')).not.equals(undefined)
     await press('Cancel')
   })
 
-  it('reports someone else’s message after asking, and never one’s own', async function () {
-    const { engine } = await open(
+  it('offers the restricted mobile message actions without edit or report', async function () {
+    await open(
       view({
         messages: [
-          message({ id: 'msg_mine', mine: true, body: 'my words' }),
-          message({ id: 'msg_c', senderName: 'Casey C', body: 'second from C' })
+          message({ mine: true, body: 'my words' }),
+          message({
+            id: 'received',
+            senderName: 'Casey C',
+            body: 'received words'
+          })
         ]
       })
     )
     await longPress('my words')
-    expect(button('Report')).equals(undefined)
+    for (const label of ['Reply', 'Copy', 'Pin', 'Delete'])
+      expect(button(label), label).not.equals(undefined)
+    for (const label of [
+      'Edit',
+      'Report',
+      'Forward',
+      'Select',
+      'Speak',
+      'Info'
+    ])
+      expect(button(label), label).equals(undefined)
     await press('Cancel')
-
-    await longPress('second from C')
-    await press('Report')
-    await until('the question', () => text().includes('Report this message?'))
-    expect(text()).contains('this one message from Casey C')
-    expect(engine.calls.some(call => call.startsWith('report'))).equals(false)
+    await longPress('received words')
+    for (const label of ['Reply', 'Copy', 'Pin'])
+      expect(button(label), label).not.equals(undefined)
+    expect(button('Delete')).equals(undefined)
     await press('Cancel')
-    await until('the menu to close', () => button('Report message') == null)
-    expect(engine.calls.some(call => call.startsWith('report'))).equals(false)
-
-    await longPress('second from C')
-    await press('Report')
-    await press('Report message')
-    await until('the report', () => engine.calls.includes('report cnv_1 msg_c'))
-    await until('the word that it went', () => text().includes('Reported.'))
-
-    engine.failSend = true
-    await longPress('second from C')
-    await press('Report')
-    await press('Report message')
-    await until('the failure', () =>
-      text().includes('That message could not be reported')
-    )
-    expect(text()).not.contains('Reported.')
   })
 
   it('writes with emoji, replies, attaches, and sends', async function () {
@@ -761,12 +778,12 @@ describe('a conversation', function () {
     )
   })
 
-  it('edits and deletes one’s own, and a moderator deletes anyone’s for everyone', async function () {
+  it('confirms deletion for everyone for authors and moderators and retains reactions', async function () {
     const { engine } = await open(
       view({
         conversation: chat({ canModerate: true }),
         messages: [
-          message({ id: 'msg_mine', mine: true, body: 'Snack shedule' }),
+          message({ id: 'msg_mine', mine: true, body: 'Snack schedule' }),
           message({ id: 'msg_c', senderName: 'Casey C', body: 'first from C' }),
           message({
             id: 'msg_gone',
@@ -785,39 +802,22 @@ describe('a conversation', function () {
     )
     expect(text()).contains('Removed by a moderator')
     expect(text()).contains('Message deleted')
-
-    await longPress('Snack shedule')
-    for (const offered of ['Reply', 'Edit', 'Delete']) {
-      expect(button(offered), offered).not.equals(undefined)
-    }
-    expect(button('Delete for everyone')).equals(undefined)
-    await press('Edit')
-    expect(text()).contains('Editing your message')
-    expect((labelled('Message') as HTMLTextAreaElement).value).equals(
-      'Snack shedule'
-    )
-    expect(button('Attach'), 'no files on an edit').equals(undefined)
-    await typeInto('Message', 'Snack schedule')
-    await press('Send')
-    await until('the edit', () =>
-      engine.calls.includes('edit cnv_1 msg_mine Snack schedule')
-    )
-    expect(button('Cancel edit'), 'the edit is done').equals(undefined)
-
-    await longPress('Snack shedule')
+    await longPress('Snack schedule')
+    expect(button('Edit')).equals(undefined)
     await press('Delete')
-    await until('the delete', () =>
+    expect(text()).contains('This message will be removed for everyone.')
+    expect(engine.calls.some(call => call.startsWith('delete'))).equals(false)
+    await press('Delete')
+    await until('the author delete', () =>
       engine.calls.includes('delete cnv_1 msg_mine')
     )
-
     await longPress('first from C')
-    expect(button('Edit')).equals(undefined)
-    await press('Delete for everyone')
+    expect(button('Delete for everyone')).equals(undefined)
+    await press('Delete')
+    await press('Delete')
     await until('the moderator delete', () =>
       engine.calls.includes('moderatorDelete cnv_1 msg_c')
     )
-
-    // The menu's Cancel, and the full picker for a reaction.
     await longPress('first from C')
     await press('Cancel')
     await longPress('first from C')
