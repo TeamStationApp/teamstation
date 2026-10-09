@@ -5,6 +5,7 @@ import type { AttachmentRef } from '../../common/chatContent'
 import { Icon } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import type { MessagePressGesture } from './chatInteractionModel'
 import { placeholderSize, sizeLabel } from './chatModel'
 import { ChatVideo } from './ChatVideo'
 import type { ChatScreenEngine } from './screenEngine'
@@ -30,6 +31,7 @@ export interface AttachmentViewProps {
   files: ChatFileOps
   /** The widest the picture may draw, in pixels. */
   maxWidth: number
+  messageGesture?: MessagePressGesture
 }
 
 /** Opened bytes as a URL, released when the view goes. */
@@ -80,7 +82,13 @@ function useOpened(
  */
 export function AttachmentView(props: AttachmentViewProps): React.ReactElement {
   const { attachment, engine, files, maxWidth } = props
-  const shown = { attachment, engine, files, maxWidth }
+  const shown = {
+    attachment,
+    engine,
+    files,
+    maxWidth,
+    messageGesture: props.messageGesture
+  }
   if (attachment.contentType.startsWith('image/')) {
     return <PictureAttachment {...shown} />
   }
@@ -88,11 +96,18 @@ export function AttachmentView(props: AttachmentViewProps): React.ReactElement {
     return <VideoAttachment {...shown} />
   }
   return (
-    <FileAttachment attachment={attachment} engine={engine} files={files} />
+    <FileAttachment
+      attachment={attachment}
+      engine={engine}
+      files={files}
+      messageGesture={props.messageGesture}
+    />
   )
 }
 
-function PictureAttachment(props: AttachmentViewProps): React.ReactElement {
+function PictureAttachment(
+  props: Omit<AttachmentViewProps, 'messageGesture'>
+): React.ReactElement {
   const { attachment, engine, files, maxWidth } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -150,12 +165,14 @@ function VideoAttachment(props: AttachmentViewProps): React.ReactElement {
   }
   return (
     <Pressable
+      {...props.messageGesture?.pressProps}
       accessibilityRole="button"
       accessibilityLabel={sprintf(
         lstrings.chat_open_attachment,
         attachment.fileName
       )}
       onPress={() => {
+        if (props.messageGesture?.canOpen() === false) return
         setWanted(true)
       }}
       style={[styles.picture, styles.video, size]}
@@ -185,9 +202,11 @@ function FileAttachment(
   const [failed, setFailed] = useState(false)
   return (
     <Pressable
+      {...props.messageGesture?.pressProps}
       accessibilityRole="button"
       accessibilityLabel={sprintf(lstrings.chat_save_file, attachment.fileName)}
       onPress={() => {
+        if (props.messageGesture?.canOpen() === false) return
         setBusy(true)
         setFailed(false)
         engine
