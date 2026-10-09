@@ -1269,6 +1269,171 @@ function positionWrapper(messageId: string): HTMLElement {
 }
 
 describe('chat follow-up conversation message integration', function () {
+  it('preserves the current reading anchor when a cancelled history request later prepends, including append growth and late scroll/layout events', async function () {
+    for (const browserAnchors of [false, true]) {
+      if (root != null) {
+        await act(async () => {
+          root!.unmount()
+        })
+        root = undefined
+      }
+      const engine = new FakeEngine()
+      const original = safeMessage({
+        id: 'msg_cancelled_page_original',
+        seq: 1,
+        body: 'Older original'
+      })
+      const reading = safeMessage({
+        id: 'msg_current_reading_anchor',
+        seq: 19,
+        body: 'Current reading anchor'
+      })
+      const reply = safeMessage({
+        id: 'msg_cancelled_page_reply',
+        seq: 20,
+        quote: {
+          id: original.id,
+          authorId: 2,
+          authorName: undefined,
+          snippet: 'Message unavailable',
+          status: 'unavailable'
+        }
+      })
+      engine.current = {
+        ...engine.current,
+        messages: [reading, reply],
+        historyBefore: 19,
+        hasEarlier: true
+      }
+      let finish: ((next: ConversationView) => void) | undefined
+      let loads = 0
+      engine.loadEarlier = async () => {
+        loads += 1
+        return await new Promise(resolve => {
+          finish = resolve
+        })
+      }
+      await screen(engine, {
+        text: 'Current draft',
+        picked: [],
+        scrollOffset: 80
+      })
+      const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
+        node => getComputedStyle(node).overflowY === 'auto'
+      )!
+      const body = scroller.firstElementChild as HTMLElement
+      let contentHeight = 1000
+      Object.defineProperties(scroller, {
+        offsetHeight: { value: 400, configurable: true },
+        scrollHeight: { get: () => contentHeight, configurable: true }
+      })
+      const moves: Array<[number, string | undefined]> = []
+      scroller.scroll = options => {
+        const value = options as ScrollToOptions
+        scroller.scrollTop = value.top ?? 0
+        moves.push([scroller.scrollTop, value.behavior])
+        scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      }
+      await measured(scroller, 640, 400)
+      await measured(body, 640, contentHeight)
+      expect(scroller.scrollTop).equals(80)
+      await press('Jump to message from Former member: Message unavailable')
+      expect(loads).equals(1)
+      expect(finish).not.equals(undefined)
+
+      await act(async () => {
+        scroller.dispatchEvent(
+          new window.WheelEvent('wheel', { bubbles: true, deltaY: 160 })
+        )
+        scroller.scrollTop = 240
+        scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        await wait(120)
+      })
+      const anchor = positionWrapper(reading.id)
+      let anchorContentY = 400
+      anchor.getBoundingClientRect = () =>
+        new window.DOMRect(0, anchorContentY - scroller.scrollTop, 640, 100)
+      const currentAnchor = anchor.getBoundingClientRect().top
+      expect(currentAnchor).equals(160)
+
+      const appended = safeMessage({
+        id: 'msg_appended_during_paging',
+        seq: 21
+      })
+      await act(async () => {
+        engine.update({
+          ...engine.current,
+          messages: [reading, reply, appended]
+        })
+        await wait()
+      })
+      contentHeight = 1150
+      await measured(body, 640, contentHeight)
+      expect(scroller.scrollTop).equals(240)
+      expect(anchor.getBoundingClientRect().top).equals(currentAnchor)
+
+      const next = {
+        ...engine.current,
+        messages: [
+          original,
+          reading,
+          {
+            ...reply,
+            quote: {
+              id: original.id,
+              authorId: original.senderUserId,
+              authorName: original.senderName,
+              snippet: original.body,
+              status: 'ok' as const
+            }
+          },
+          appended
+        ],
+        historyBefore: 1,
+        hasEarlier: false
+      }
+      await act(async () => {
+        engine.update(next)
+        await wait()
+      })
+      await measured(positionWrapper(original.id), 640, 100, 100)
+      anchorContentY += 600
+      contentHeight += 600
+      if (browserAnchors) {
+        await act(async () => {
+          scroller.scrollTop = 840
+          scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+          await wait(120)
+        })
+      }
+      await act(async () => {
+        finish!(next)
+        await wait(80)
+      })
+      await measured(body, 640, contentHeight)
+      expect(scroller.scrollTop, `browser anchoring: ${browserAnchors}`).equals(
+        840
+      )
+      expect(anchor.getBoundingClientRect().top).equals(currentAnchor)
+
+      await act(async () => {
+        scroller.scrollTop = 920
+        scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        await wait(120)
+      })
+      await measured(scroller, 640, 400)
+      await measured(body, 640, contentHeight)
+      await measured(body, 640, contentHeight)
+      expect(scroller.scrollTop).equals(840)
+      expect(anchor.getBoundingClientRect().top).equals(currentAnchor)
+      expect(moves.some(([, behavior]) => behavior === 'smooth')).equals(false)
+      expect(document.body.textContent).not.contains('Message unavailable')
+      expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+        'Current draft'
+      )
+    }
+  })
+
   it('waits for a delayed nonzero mounted-row measurement instead of failing at a fixed delay', async function () {
     const engine = new FakeEngine()
     const original = safeMessage({
