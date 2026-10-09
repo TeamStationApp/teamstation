@@ -21,10 +21,11 @@ import { chatCoreLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
 import { ChatGate } from './chat/ChatGate'
 import type { ChatLink } from './chat/ChatLinks'
-import { ChatListScreen } from './chat/ChatListScreen'
 import { ChatMembersScreen } from './chat/ChatMembersScreen'
 import { hasUnread } from './chat/chatModel'
-import { ConversationScreen } from './chat/ConversationScreen'
+import { ChatOverlayHost } from './chat/ChatOverlayHost'
+import { ChatWorkspace } from './chat/ChatWorkspace'
+import { newChatWorkspaceState } from './chat/chatWorkspaceModel'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { leaveChat } from './chat/engine/links'
 import { keyStore } from './chat/keyStore'
@@ -536,6 +537,7 @@ function Shell(props: AppProps): React.ReactElement {
           }),
     [client, gameSocket, signedInAs]
   )
+  const chatWorkspaceState = useMemo(newChatWorkspaceState, [chatEngine])
   /**
    * The chat list as last read, for the Chat tab's unread dot and the links
    * to a team's, season's or league's chats. Read once at sign-in (no keys
@@ -1454,6 +1456,43 @@ function Shell(props: AppProps): React.ReactElement {
           selectTab('home')
         }}
       />
+    ) : top?.name === 'conversation' || (top == null && tab === 'chat') ? (
+      gated(
+        <ChatWorkspace
+          engine={chatEngine!}
+          userId={session?.user.id ?? 0}
+          state={chatWorkspaceState}
+          conversationId={
+            top?.name === 'conversation' ? top.conversationId : undefined
+          }
+          onOpen={openChat}
+          onNewMessage={() => {
+            push({ name: 'chatNew' })
+          }}
+          onFollowTeam={() => {
+            push({ name: 'followTeam' })
+          }}
+          onMembers={conversationId => {
+            push({ name: 'chatMembers', conversationId })
+          }}
+          onTitle={(conversationId, title) => {
+            setStacks(current => {
+              const held = current[tab]
+              const last = held[held.length - 1]
+              if (
+                last?.name !== 'conversation' ||
+                last.conversationId !== conversationId ||
+                last.title === title
+              )
+                return current
+              return {
+                ...current,
+                [tab]: [...held.slice(0, -1), { ...last, title }]
+              }
+            })
+          }}
+        />
+      )
     ) : top == null ? (
       tab === 'home' ? (
         <HomeScreen
@@ -1486,19 +1525,6 @@ function Shell(props: AppProps): React.ReactElement {
           onOpen={openGroup}
           follow={session != null}
         />
-      ) : tab === 'chat' ? (
-        gated(
-          <ChatListScreen
-            engine={chatEngine!}
-            onOpen={openChat}
-            onNewMessage={() => {
-              push({ name: 'chatNew' })
-            }}
-            onFollowTeam={() => {
-              push({ name: 'followTeam' })
-            }}
-          />
-        )
       ) : tab === 'videos' ? (
         <GamesFeedScreen
           key="videos"
@@ -1756,31 +1782,6 @@ function Shell(props: AppProps): React.ReactElement {
         }}
       />
 
-    ) : top.name === 'conversation' ? (
-      gated(
-        <ConversationScreen
-          key={top.conversationId}
-          engine={chatEngine!}
-          conversationId={top.conversationId}
-          userId={session?.user.id ?? 0}
-          onMembers={() => {
-            push({ name: 'chatMembers', conversationId: top.conversationId })
-          }}
-          onTitle={title => {
-            setStacks(current => {
-              const held = current[tab]
-              const last = held[held.length - 1]
-              if (last?.name !== 'conversation' || last.title === title) {
-                return current
-              }
-              return {
-                ...current,
-                [tab]: [...held.slice(0, -1), { ...last, title }]
-              }
-            })
-          }}
-        />
-      )
     ) : top.name === 'chatMembers' ? (
       gated(
         <ChatMembersScreen
@@ -2283,6 +2284,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   return (
     <GestureHandlerRootView style={styles.root}>
+      <ChatOverlayHost>
       <View style={styles.app}>
         <View key="pane" style={styles.pane}>
           <HeaderSlotProvider
@@ -2312,6 +2314,7 @@ function Shell(props: AppProps): React.ReactElement {
         )}
         <SuccessToast notice={successNotice} />
       </View>
+      </ChatOverlayHost>
     </GestureHandlerRootView>
   )
 }
