@@ -145,6 +145,22 @@ const options = {
 
 await mkdir('dist', { recursive: true })
 const template = await readFile('src/app/web/index.html', 'utf8')
+const mark = await readFile('src/app/assets/teamStationMark.svg', 'utf8')
+const viewBox = /viewBox="([^"]+)"/.exec(mark)
+if (viewBox == null) throw new Error('TeamStation mark has no viewBox')
+const artwork = /<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/.exec(mark)
+if (artwork == null) throw new Error('TeamStation mark has no SVG artwork')
+// An inset mark on the light app canvas, with an iOS-style rounded outline.
+await writeFile(
+  'dist/favicon.svg',
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>TeamStation</title>
+  <rect width="256" height="256" rx="56" fill="#F5F7F1"/>
+  <svg x="24" y="24" width="208" height="208" viewBox="${viewBox[1]}">${artwork[1]}</svg>
+</svg>\n`
+)
+await copyFile('src/app/web/favicon.ico', 'dist/favicon.ico')
+await copyFile('src/app/web/favicon.png', 'dist/favicon.png')
 
 /**
  * The two files Apple and Google fetch to decide whether a link may open the
