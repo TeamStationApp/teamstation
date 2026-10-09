@@ -197,7 +197,13 @@ export function ConversationScreen(
   const messageRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
   const measuringJump = useRef<number | undefined>(undefined)
   const prepend = useRef<
-    | { offset: number; content: number; firstSeq: number | undefined }
+    | {
+        offset: number
+        content: number
+        firstSeq: number | undefined
+        positions: Map<string, number>
+        anchor: { id: string; relativeY: number } | undefined
+      }
     | undefined
   >(undefined)
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
@@ -228,6 +234,22 @@ export function ConversationScreen(
   )
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
+  )
+  const readingAnchor = useCallback(
+    (
+      positions: Map<string, number>
+    ): { id: string; relativeY: number } | undefined => {
+      const offset = scrolled.current.offset
+      const ordered = [...positions].sort((a, b) => a[1] - b[1])
+      const visible = ordered.find(
+        ([, y]) => y >= offset && y < offset + scrolled.current.height
+      )
+      const chosen = visible ?? ordered.filter(([, y]) => y <= offset).at(-1)
+      return chosen == null
+        ? undefined
+        : { id: chosen[0], relativeY: chosen[1] - offset }
+    },
+    []
   )
   const prepareFiles = (
     work: (remaining: number) => Promise<PickedFile[]>
@@ -313,17 +335,17 @@ export function ConversationScreen(
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (props.active === false) return
-    if (measuringJump.current != null) {
-      jumpGeneration.current += 1
-      measuringJump.current = undefined
-    }
+    jumpGeneration.current += 1
+    measuringJump.current = undefined
     // Cancel the jump, not the older page's position compensation. The
     // response still adds rows above the position the person now chose.
     if (
       prepend.current != null &&
       latestView.current?.messages[0]?.seq === prepend.current.firstSeq
-    )
+    ) {
       prepend.current.offset = scrolled.current.offset
+      prepend.current.anchor = readingAnchor(prepend.current.positions)
+    }
     atBottom.current = false
     restoreTarget.current = undefined
     scrolled.current.hasPosition = true
@@ -337,7 +359,7 @@ export function ConversationScreen(
       followNewest: scrolled.current.followNewest
     })
     explicitRead()
-  }, [props.active, onDraftChange, editing, explicitRead])
+  }, [props.active, onDraftChange, editing, explicitRead, readingAnchor])
   useEffect(
     () => bindUserScroll(scroller.current, userScrolled),
     [userScrolled, hasView]
@@ -353,12 +375,14 @@ export function ConversationScreen(
 
   const loadOlder = async (): Promise<ConversationView> => {
     const before = engine.view(conversationId)
-    messagePositions.current.clear()
     prepend.current = {
       offset: scrolled.current.offset,
       content: scrolled.current.content,
-      firstSeq: before?.messages[0]?.seq
+      firstSeq: before?.messages[0]?.seq,
+      positions: new Map(messagePositions.current),
+      anchor: readingAnchor(messagePositions.current)
     }
+    messagePositions.current.clear()
     atBottom.current = false
     try {
       const next = await engine.loadEarlier(conversationId)
@@ -366,13 +390,72 @@ export function ConversationScreen(
       if (
         firstSeq == null ||
         (before?.messages[0] != null && firstSeq >= before.messages[0].seq)
-      )
+      ) {
+        // Edit/reaction-only pages can advance the raw cursor without new
+        // rows. Keep known geometry for a following page's reading anchor.
+        const present = new Set(next.messages.map(message => message.id))
+        for (const [id, y] of prepend.current?.positions ?? [])
+          if (present.has(id) && !messagePositions.current.has(id))
+            messagePositions.current.set(id, y)
         prepend.current = undefined
+      }
       return next
     } catch (error) {
       prepend.current = undefined
       throw error
     }
+  }
+  const measurePosition = async (
+    id: string,
+    cancelled: () => boolean
+  ): Promise<number | undefined> => {
+    const deadline = Date.now() + 2000
+    while (!cancelled() && Date.now() < deadline) {
+      const row = messageRefs.current.get(id)
+      const content = scroller.current?.getInnerViewRef()
+      const y = await new Promise<number | undefined>(resolve => {
+        const timer = setTimeout(() => {
+          resolve(undefined)
+        }, 100)
+        if (row == null || content == null) {
+          clearTimeout(timer)
+          resolve(undefined)
+          return
+        }
+        row.measureLayout(
+          content,
+          (_x, top, width, height) => {
+            clearTimeout(timer)
+            resolve(
+              Number.isFinite(top) && width > 0 && height > 0 ? top : undefined
+            )
+          },
+          () => {
+            clearTimeout(timer)
+            resolve(messagePositions.current.get(id))
+          }
+        )
+      })
+      if (cancelled()) return undefined
+      if (y != null) return y
+      await new Promise<void>(resolve => setTimeout(resolve, 25))
+    }
+    return undefined
+  }
+  const rememberPosition = (target: number): void => {
+    restoreTarget.current = target
+    scrolled.current.offset = target
+    scrolled.current.hasPosition = true
+    scrolled.current.followNewest = false
+    onDraftChange?.({
+      text: textNow.current,
+      replyTo: replyNow.current,
+      editing,
+      picked: pickedNow.current,
+      scrollOffset: target,
+      hasScrollPosition: true,
+      followNewest: false
+    })
   }
   const jumpTo = (id: string): void => {
     restoreTarget.current = undefined
@@ -401,44 +484,7 @@ export function ConversationScreen(
           generation !== jumpGeneration.current ||
           !paneActive.current ||
           engine.view(conversationId) == null
-        let y: number | undefined
-        const deadline = Date.now() + 2000
-        while (!cancelled() && Date.now() < deadline) {
-          const row = messageRefs.current.get(id)
-          const content = scroller.current?.getInnerViewRef()
-          y = await new Promise<number | undefined>(resolve => {
-            const timer = setTimeout(() => {
-              resolve(undefined)
-            }, 100)
-            if (row == null || content == null) {
-              clearTimeout(timer)
-              resolve(undefined)
-              return
-            }
-            row.measureLayout(
-              content,
-              (_x, top, width, height) => {
-                clearTimeout(timer)
-                resolve(
-                  Number.isFinite(top) && width > 0 && height > 0
-                    ? top
-                    : undefined
-                )
-              },
-              () => {
-                clearTimeout(timer)
-                resolve(messagePositions.current.get(id))
-              }
-            )
-          })
-          if (cancelled()) {
-            if (measuringJump.current === generation)
-              measuringJump.current = undefined
-            return
-          }
-          if (y != null) break
-          await new Promise<void>(resolve => setTimeout(resolve, 25))
-        }
+        const y = await measurePosition(id, cancelled)
         if (cancelled()) {
           if (measuringJump.current === generation)
             measuringJump.current = undefined
@@ -913,8 +959,10 @@ export function ConversationScreen(
               pending != null &&
               latestView.current?.messages[0]?.seq === pending.firstSeq &&
               Math.abs(contentSize.height - pending.content) < 1
-            )
+            ) {
               pending.offset = scrolled.current.offset
+              pending.anchor = readingAnchor(pending.positions)
+            }
             scrolled.current.hasPosition = true
             scrolled.current.height = layoutMeasurement.height
             scrolled.current.followNewest =
@@ -959,20 +1007,29 @@ export function ConversationScreen(
                   previous.offset + height - previous.content
                 )
                 scrolled.current.content = height
-                scrolled.current.offset = target
-                scrolled.current.hasPosition = true
-                scrolled.current.followNewest = false
-                restoreTarget.current = target
-                props.onDraftChange?.({
-                  text: textNow.current,
-                  replyTo: replyNow.current,
-                  editing,
-                  picked: pickedNow.current,
-                  scrollOffset: target,
-                  hasScrollPosition: true,
-                  followNewest: false
-                })
+                rememberPosition(target)
                 scroller.current?.scrollTo({ y: target, animated: false })
+                if (previous.anchor != null && measuringJump.current == null) {
+                  const anchor = previous.anchor
+                  const generation = jumpGeneration.current
+                  const cancelled = (): boolean =>
+                    generation !== jumpGeneration.current ||
+                    !paneActive.current ||
+                    engine.view(conversationId) == null
+                  // Total height also includes quote/image changes below the
+                  // reader. Preserve the same existing row's viewport position.
+                  measurePosition(anchor.id, cancelled)
+                    .then(y => {
+                      if (y == null || cancelled()) return
+                      const measured = Math.max(0, y - anchor.relativeY)
+                      rememberPosition(measured)
+                      scroller.current?.scrollTo({
+                        y: measured,
+                        animated: false
+                      })
+                    })
+                    .catch(() => undefined)
+                }
                 return
               }
               // An appended post or a layout pass is not an older page.
@@ -1029,10 +1086,10 @@ export function ConversationScreen(
               }}
               collapsable={false}
               onLayout={event => {
-                messagePositions.current.set(
-                  message.id,
-                  event.nativeEvent.layout.y
-                )
+                const y = event.nativeEvent.layout.y
+                messagePositions.current.set(message.id, y)
+                if (view.messages[0]?.seq === prepend.current?.firstSeq)
+                  prepend.current?.positions.set(message.id, y)
               }}
             >
               {notices.get(index)?.map(renderNotice)}
