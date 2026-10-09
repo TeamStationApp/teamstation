@@ -56,21 +56,35 @@ export function verifyAndroidMetadata(
     /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/m.exec(
       badging
     )
-  const signers = [
-    ...certificate.matchAll(
-      /^(?:Signer #\d+|V2 Signer:) certificate SHA-256 digest: ([a-fA-F0-9]+)$/gm
+  // Some verifier versions decorate output or repeat the same signer across
+  // signature schemes. Count unique signer/certificate pairs, not print lines.
+  // Terminal decoration is not part of the verifier's certificate metadata.
+  // eslint-disable-next-line no-control-regex
+  const clean = certificate.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+  const reports = [
+    ...clean.matchAll(
+      /^[ \t]*Signer[ \t]+(?:#(\d+)|\(minSdkVersion=\d+(?: \(dev release=true\))?,[ \t]*maxSdkVersion=\d+\))[ \t]+certificate[ \t]+SHA-256[ \t]+digest:[ \t]*([a-fA-F0-9]{64})[ \t]*$/gim
     )
   ]
-  const signerCount = /^Number of signers: (\d+)$/m.exec(certificate)
+  const signers = [...new Set(reports.map(report => report[2].toLowerCase()))]
+  const numbered = new Set(
+    reports.filter(report => report[1] != null).map(report => report[1])
+  )
+  const declared = /^[ \t]*Number of signers:[ \t]*(\d+)[ \t]*$/gim.exec(clean)
   const checks: ValidationCheck[] = []
   if (match?.[1] !== context.target.app) checks.push('bundle-id')
   if (match?.[2] !== String(context.buildNumber)) checks.push('build-number')
   if (match?.[3] !== context.version) checks.push('version')
   if (badging.includes('application-debuggable')) checks.push('debuggable')
-  if (signers.length !== 1 || (signerCount != null && Number(signerCount[1]) !== 1)) checks.push('signer-count')
+  if (
+    signers.length !== 1 ||
+    numbered.size > 1 ||
+    (declared != null && Number(declared[1]) !== 1)
+  )
+    checks.push('signer-count')
   if (
     config?.certificateSha256 == null ||
-    signers[0]?.[1].toLowerCase() !== config.certificateSha256
+    signers[0] !== config.certificateSha256
   )
     checks.push('certificate')
   if (checks.length > 0)
@@ -146,7 +160,8 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
     const signature = await context.processes.run({
       file: tools.apksigner,
       args: ['verify', '--verbose', '--print-certs', file],
-      cwd: project
+      cwd: project,
+      captureStderr: true
     })
     verifyAndroidMetadata(badging, signature, context)
     if (context.target.kind === 'react-native') {
