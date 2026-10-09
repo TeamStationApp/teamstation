@@ -397,6 +397,50 @@ describe('Pinned multi-app deployment orchestration', () => {
     )
     assert(!lines.join('\n').includes('could not start'))
   })
+  it('reports fixed signing preconditions while withholding unknown exception messages', async () => {
+    for (const message of [
+      'Existing provisioning profile differs; preserving it',
+      'synthetic-sensitive-value'
+    ]) {
+      const lines: string[] = []
+      const status = await run(
+        parse('ios'),
+        {
+          ios: async () => {
+            throw new Error(message)
+          }
+        },
+        new AbortController().signal,
+        line => lines.push(line)
+      )
+      assert.equal(status, 1)
+      if (message.startsWith('Existing'))
+        assert(lines.some(line => line.includes(message)))
+      else assert(!lines.join('\n').includes(message))
+    }
+    assert.equal(service.requests.length, 0)
+  })
+  it('withholds sensitive syntax errors from structured tool output', async () => {
+    const lines: string[] = []
+    const status = await run(
+      parse('ios'),
+      {
+        ios: async () => {
+          throw new SyntaxError('synthetic-sensitive-input')
+        }
+      },
+      new AbortController().signal,
+      line => lines.push(line)
+    )
+    assert.equal(status, 1)
+    assert(
+      lines.includes(
+        'ios build failed (invalid structured tool output); no package was published'
+      )
+    )
+    assert(!lines.join('\n').includes('synthetic-sensitive-input'))
+    assert.equal(service.requests.length, 0)
+  })
   it('retries a failed publication without rebuilding or reallocating its number', async () => {
     service.statuses.push(401)
     assert.equal(

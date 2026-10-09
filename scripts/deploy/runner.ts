@@ -32,6 +32,19 @@ import {
   platform
 } from './validation'
 
+// Only these fixed preflight messages are safe to show; arbitrary tool output
+// and unknown exception messages can contain credentials.
+const safeBuildFailures = new Set([
+  'Separate Match signing branch and Apple settings are required',
+  'Invalid keychain list',
+  'Signing checkout must be private and owned',
+  'Apple session directory must be private and owned',
+  'Signing profile identity, expiry or registered devices did not match',
+  'Existing provisioning profile differs; preserving it',
+  'Match did not supply all requested profiles',
+  'A locked CocoaPods graph is required'
+])
+
 export interface Options {
   config: string
   app: string
@@ -263,7 +276,11 @@ export async function run(
                         ? 'could not start'
                         : 'failed without an exit status'
                 })`
-              : ''
+              : error instanceof SyntaxError
+                ? ' (invalid structured tool output)'
+                : error instanceof Error && safeBuildFailures.has(error.message)
+                  ? ` (${error.message})`
+                  : ''
           output(`${os} build failed${tool}; no package was published`)
         }
         state.save(record)
