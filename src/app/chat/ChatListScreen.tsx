@@ -331,7 +331,7 @@ function ConversationRow(props: {
           )}
         </View>
         <View style={styles.text}>
-          <View style={styles.line}>
+          <View style={[styles.line, styles.titleLine]}>
             <Text
               style={[styles.title, unread && styles.titleUnread]}
               numberOfLines={1}
@@ -453,9 +453,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   text: { flex: 1, minWidth: 0, gap: theme.rem(0.25) },
   line: { flexDirection: 'row', alignItems: 'center', gap: theme.rem(0.375) },
+  titleLine: { flexWrap: 'wrap' },
   title: {
-    flex: 1,
-    minWidth: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: theme.rem(6),
+    minWidth: theme.rem(6),
     color: theme.primaryTextColor,
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375)
