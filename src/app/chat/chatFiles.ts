@@ -106,9 +106,9 @@ export async function readPicked(
 }
 
 /**
- * Opens the browser's file picker and answers what was picked (nothing on
- * Cancel, which a browser reports only by never firing `change`, so the
- * answer then simply never comes — the composer does not wait on it).
+ * Opens the browser's file picker and answers on change or the browser's
+ * cancel event. Cancellation returns no files and releases the composer's
+ * queued preparation guard; the temporary input is removed either way.
  */
 export async function pickFiles(
   _source: PickSource,
