@@ -12,6 +12,7 @@ import { Badge, Button, Icon, Screen } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { pressPoint } from './chatInteractionModel'
 import {
   canStartDm,
   conversationPill,
@@ -254,7 +255,8 @@ function ConversationRow(props: {
     y: 0,
     generation: 0,
     cancelled: false,
-    recognized: false
+    recognized: false,
+    pointer: false
   })
   const title = conversationTitle(chat)
   const pill = conversationPill(chat)
@@ -262,6 +264,7 @@ function ConversationRow(props: {
   const openMenu = (): void => {
     if (
       held.current.cancelled ||
+      !held.current.pointer ||
       held.current.generation !== props.gestureGeneration.current
     )
       return
@@ -288,27 +291,37 @@ function ConversationRow(props: {
           if (event.nativeEvent.actionName === 'longpress') props.onMenu()
         }}
         onPressIn={event => {
+          const point = pressPoint(event.nativeEvent)
           held.current = {
-            x: event.nativeEvent.pageX,
-            y: event.nativeEvent.pageY,
+            x: point?.x ?? 0,
+            y: point?.y ?? 0,
             generation: props.gestureGeneration.current,
             cancelled: false,
-            recognized: false
+            recognized: false,
+            pointer: point != null
           }
         }}
         onTouchMove={event => {
+          const point = pressPoint(event.nativeEvent)
           if (
-            Math.hypot(
-              event.nativeEvent.pageX - held.current.x,
-              event.nativeEvent.pageY - held.current.y
-            ) > 10
+            point == null ||
+            Math.hypot(point.x - held.current.x, point.y - held.current.y) > 10
           )
             held.current.cancelled = true
+        }}
+        onTouchCancel={() => {
+          held.current.cancelled = true
         }}
         onLongPress={props.narrow ? openMenu : undefined}
         delayLongPress={500}
         onPress={() => {
-          if (!held.current.recognized) props.onOpen()
+          if (
+            !held.current.recognized &&
+            !held.current.cancelled &&
+            (!held.current.pointer ||
+              held.current.generation === props.gestureGeneration.current)
+          )
+            props.onOpen()
         }}
       >
         <View style={styles.avatar}>

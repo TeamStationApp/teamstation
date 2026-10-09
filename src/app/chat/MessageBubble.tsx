@@ -5,6 +5,7 @@ import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AttachmentView, type ChatFileOps } from './AttachmentView'
+import { type MessagePressGesture, pressPoint } from './chatInteractionModel'
 import { type MessageAction, messagePreview, readLine } from './chatModel'
 import {
   bindMessageHover,
@@ -81,7 +82,8 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
     y: 0,
     generation: 0,
     cancelled: false,
-    recognized: false
+    recognized: false,
+    pointer: false
   })
   useEffect(
     () =>
@@ -93,6 +95,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
   const openActions = (): void => {
     if (
       held.current.cancelled ||
+      !held.current.pointer ||
       held.current.recognized ||
       held.current.generation !== (props.gestureGeneration?.current ?? 0)
     )
@@ -104,6 +107,45 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
   const actions =
     props.actions ??
     (message.status === 'ok' ? ['reply', 'react', 'copy', 'pin'] : [])
+  const messageGesture: MessagePressGesture | undefined =
+    !desktop && props.selected !== true
+      ? {
+          pressProps: {
+            ...immediatePressProps,
+            onPressIn: event => {
+              const point = pressPoint(event.nativeEvent)
+              held.current = {
+                x: point?.x ?? 0,
+                y: point?.y ?? 0,
+                generation: props.gestureGeneration?.current ?? 0,
+                cancelled: false,
+                recognized: false,
+                pointer: point != null
+              }
+            },
+            onTouchMove: event => {
+              const point = pressPoint(event.nativeEvent)
+              if (
+                point == null ||
+                Math.hypot(point.x - held.current.x, point.y - held.current.y) >
+                  10
+              )
+                held.current.cancelled = true
+            },
+            onTouchCancel: () => {
+              held.current.cancelled = true
+            },
+            onLongPress: actions.length > 0 ? openActions : undefined,
+            delayLongPress: 500
+          },
+          canOpen: () =>
+            !held.current.cancelled &&
+            !held.current.recognized &&
+            (!held.current.pointer ||
+              held.current.generation ===
+                (props.gestureGeneration?.current ?? 0))
+        }
+      : undefined
   const sender = message.mine
     ? lstrings.chat_you
     : (message.senderName ?? lstrings.chat_former_member)
@@ -155,36 +197,10 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             )}
           <Pressable
             {...immediatePressProps}
+            {...messageGesture?.pressProps}
             // The words inside stay their own elements to a screen reader and
             // to the UI tests: no label of its own.
             accessible={false}
-            onPressIn={event => {
-              held.current = {
-                x: event.nativeEvent.pageX,
-                y: event.nativeEvent.pageY,
-                generation: props.gestureGeneration?.current ?? 0,
-                cancelled: false,
-                recognized: false
-              }
-            }}
-            onTouchMove={event => {
-              if (
-                Math.hypot(
-                  event.nativeEvent.pageX - held.current.x,
-                  event.nativeEvent.pageY - held.current.y
-                ) > 10
-              )
-                held.current.cancelled = true
-            }}
-            onTouchCancel={() => {
-              held.current.cancelled = true
-            }}
-            onLongPress={
-              !desktop && props.selected !== true && actions.length > 0
-                ? openActions
-                : undefined
-            }
-            delayLongPress={500}
             style={[
               styles.bubble,
               message.mine ? styles.bubbleMine : styles.bubbleTheirs,
@@ -198,6 +214,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 quote={message.quote}
                 userId={props.userId ?? -1}
                 onJump={id => props.onJump?.(id)}
+                messageGesture={messageGesture}
               />
             )}
             {said != null ? (
@@ -224,6 +241,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                   engine={props.engine}
                   files={props.files}
                   maxWidth={props.maxWidth}
+                  messageGesture={messageGesture}
                 />
               ))
             )}
@@ -291,6 +309,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             {message.reactions.map(reaction => (
               <Pressable
                 key={reaction.emoji}
+                {...messageGesture?.pressProps}
                 accessibilityRole="button"
                 accessibilityLabel={sprintf(
                   lstrings.chat_reaction_label,
@@ -299,6 +318,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 )}
                 accessibilityState={{ selected: reaction.mine }}
                 onPress={() => {
+                  if (messageGesture?.canOpen() === false) return
                   props.onToggleReaction(message, reaction.emoji, reaction.mine)
                 }}
                 style={[styles.reaction, reaction.mine && styles.reactionMine]}
