@@ -50,7 +50,7 @@ which takes each weight from 340 KB to 81 KB. Their licences are beside them.
 
 `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf` is 10.6 MB and holds every
 icon Google has drawn. It is pinned to the same instance the web app asks for —
-`opsz 24, wght 400, FILL 0, GRAD 0` — and then subset to the twenty-seven icons
+`opsz 24, wght 400, FILL 0, GRAD 0` — and then subset to the icons
 in `app/components/Icon.tsx`, keeping the `rlig` feature that turns the text
 `chevron_right` into the glyph. 8 KB.
 

@@ -49,5 +49,10 @@ export const iconCodepoints: Record<IconName, number> = {
   auto_awesome: 0xe65f,
   add: 0xe145,
   send: 0xe163,
-  attach_file: 0xe226
+  attach_file: 0xe226,
+  chat: 0xe0b7,
+  add_reaction: 0xe1d3,
+  mood: 0xe24e,
+  lock: 0xe88d,
+  group: 0xe7ef
 }

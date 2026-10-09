@@ -57,6 +57,11 @@ export type IconName =
   | 'add'
   | 'send'
   | 'attach_file'
+  | 'chat'
+  | 'add_reaction'
+  | 'mood'
+  | 'lock'
+  | 'group'
 
 export interface IconProps {
   name: IconName
