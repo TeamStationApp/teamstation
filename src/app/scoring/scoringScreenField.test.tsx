@@ -173,6 +173,106 @@ async function mount(source?: ScoringSource): Promise<void> {
 }
 
 describe('scoring screen field wiring', function () {
+  it('keeps a two-ball appearance gated after a resting defender move', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+      requireCurrentSetup: true
+    })
+    live.apply({ type: 'pitch', call: 'B' })
+    live.apply({ type: 'pitch', call: 'B' })
+    await mount({ open: async () => live })
+    await step(() =>
+      field().onPlayerTap?.(
+        field().players.find(player => player.label === 'P')!.id
+      )
+    )
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+        .click()
+    })
+    expect(props().canPitch).equals(false)
+    expect(props().summary).includes('2 balls')
+    await step(() => {
+      props().onPitch('ball')
+    })
+    expect(props().summary).includes('2 balls')
+    expect(live.state.liveData.boxscore.teams.home.defense.C).equals(null)
+  })
+  for (const problem of ['partial', 'defense'] as const)
+    it(`resolves reopened pending play with ${problem} setup, then blocks the next action`, async function () {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      if (problem === 'partial')
+        initial.liveData.boxscore.teams.away.battingOrder.pop()
+      else initial.liveData.boxscore.teams.home.defense.C = null
+      const store = memoryStore()
+      const context = {
+        gamePk: 'g1',
+        teams: initial.gameData.teams,
+        setup: setupOf(initial)
+      }
+      const legacy = ScoringSession.start(
+        store,
+        'g1',
+        freshGame('g1', initial.gameData.teams, setupOf(initial))
+      )
+      for (const action of [
+        { type: 'gameFlow', kind: 'placeRunner', runner: 2, base: '1B' },
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: initial.liveData.boxscore.teams.home.defense.SS!,
+          location: { x: 0, z: -30 }
+        },
+        { type: 'result', eventType: 'fielders_choice' }
+      ] as ScoringAction[])
+        expect(legacy.apply(action).problems).deep.equals([])
+      await legacy.flush()
+      const live = await ScoringSession.open(store, 'g1', context, {
+        requireCurrentSetup: true
+      })
+      await mount({ persistent: true, open: async () => live })
+      const batter = players().find(
+        player =>
+          player.playerId ===
+            live.state.liveData.plays.currentPlay!.matchup.batter.id &&
+          player.team === 'runner'
+      )!
+      expect(field().interaction?.runnerIds).includes(batter.id)
+      expect(field().tapIds ?? []).deep.equals([])
+      await step(() =>
+        field().onRunnerDrop?.(
+          batter.id,
+          1,
+          'out',
+          field().interaction!.generation
+        )
+      )
+      await settle()
+      // The shortstop has the ball; credit the receiver at first and confirm.
+      const fielder = players().find(
+        player =>
+          player.playerId ===
+            initial.liveData.boxscore.teams.home.defense['1B'] &&
+          player.team === 'defense'
+      )!
+      await step(() =>
+        field().onFieldPlacement?.({
+          ...placement(fielder.id),
+          generation: field().interaction!.generation
+        })
+      )
+      await step(() => props().onFinish?.())
+      await settle()
+      await step(() => props().onFinish?.())
+      await live.flush()
+      expect(live.state.pending).equals(null)
+      expect(live.state.liveData.plays.allPlays).has.length(1)
+      expect(props().canPitch).equals(false)
+      expect(field().interaction?.runnerIds).deep.equals([])
+      const reopened = await ScoringSession.open(store, 'g1', context)
+      expect(reopened.state.liveData.plays.allPlays).has.length(1)
+    })
   it('saves only the completed prior-half dictated prefix before newly current lineup acceptance', async function () {
     const initial = createDevelopmentSession(gameFixture, [], [])
     initial.liveData.boxscore.teams.home.battingOrder.pop()

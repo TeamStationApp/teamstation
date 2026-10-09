@@ -493,8 +493,11 @@ function ScoringPanel(props: {
   const lineupKey = battingWarningKey(session)
   const lineupAccepted =
     battingCount >= 9 || (battingCount > 0 && acceptedLineup === lineupKey)
-  const setupReady =
-    awaitingResult(session) || (missing.length === 0 && lineupAccepted)
+  const hasActivePlay =
+    session.pending != null ||
+    state.pendingPlay != null ||
+    awaitingResult(session)
+  const setupReady = hasActivePlay || (missing.length === 0 && lineupAccepted)
   const actionsAllowed =
     bottomActionsAllowed(state) &&
     !status.readOnly &&
@@ -635,7 +638,7 @@ function ScoringPanel(props: {
     question: state.dictationQuestion,
     played,
     onAnswer: answer => {
-      if (rosterLoading || (!lineupAccepted && !awaitingResult(session))) return
+      if (rosterLoading || (!lineupAccepted && !hasActivePlay)) return
       dispatch({
         type: 'DICTATION_ANSWER',
         ...answer,
@@ -650,7 +653,7 @@ function ScoringPanel(props: {
       (atRest(state) || state.reel != null) &&
       !gestureActive &&
       !rosterLoading &&
-      (lineupAccepted || awaitingResult(session)),
+      (lineupAccepted || hasActivePlay),
     undone,
     onActions: (transcript, actions, undo) => {
       if (rosterLoading) return
@@ -668,7 +671,7 @@ function ScoringPanel(props: {
       if (
         actions.length > 0 &&
         !rosterLoading &&
-        (lineupAccepted || awaitingResult(session))
+        (lineupAccepted || hasActivePlay)
       )
         dispatch({
           type: 'DICTATED',
