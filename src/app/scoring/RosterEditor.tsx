@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react'
+import React, { useContext, useEffect, useMemo, useState } from 'react'
 import {
   Platform,
   Pressable,
@@ -8,10 +8,12 @@ import {
   View
 } from 'react-native'
 
+import type { RosterEntry } from '../../common/api'
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
+import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { addPlayerDraft } from './playerDraft'
@@ -66,6 +68,7 @@ export function defenseRosterMinimum(
 export function RosterEditor({
   state,
   initialDraft,
+  rosters,
   onDraftChange,
   onCancel,
   onSave
@@ -73,6 +76,8 @@ export function RosterEditor({
   state: ScoringState
   onCancel?: () => void
   initialDraft?: RosterEditorDraft
+  /** Current labels only; roster edits retain the game's saved player details. */
+  rosters?: Readonly<Record<string, readonly RosterEntry[]>>
   onDraftChange?: (draft: RosterEditorDraft) => void
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
 }): React.ReactElement {
@@ -108,7 +113,13 @@ export function RosterEditor({
     })
   }
   const team = draft.liveData.boxscore.teams[side]
-  const names = draft.gameData.players
+  const names = useMemo(
+    () =>
+      rosters == null
+        ? draft.gameData.players
+        : withRosterDetails(draft, rosters).gameData.players,
+    [draft, rosters]
+  )
   const display = (id: number): string =>
     `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
   const assigned = defense ? Object.values(team.defense) : team.battingOrder
@@ -212,7 +223,7 @@ export function RosterEditor({
         </View>
         <Text numberOfLines={defense ? 1 : undefined} style={text}>
           {defense
-            ? 'Drag player into defensive position'
+            ? 'Drag player into position. On touch, hold briefly first.'
             : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
         </Text>
         {state.phase === 'awaitingBatter' && (
@@ -299,6 +310,7 @@ export function RosterEditor({
                         <RosterDrag
                           key={id}
                           playerId={id}
+                          immediateMouseDrag={defense}
                           label={
                             defense
                               ? names[id].fullName

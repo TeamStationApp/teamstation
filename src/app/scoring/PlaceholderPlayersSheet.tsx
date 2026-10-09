@@ -4,17 +4,36 @@ import { View } from 'react-native'
 import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
 import { PlayerCountPicker } from './PlayerCountPicker'
-import { ScoringSheet } from './ScoringSheet'
+import { ScoringError, ScoringSheet } from './ScoringSheet'
 export function PlaceholderPlayersSheet({
   onClose,
   onAdd
 }: {
   onClose: () => void
-  onAdd: (count: number) => void
+  onAdd: (count: number) => void | Promise<void>
 }): React.ReactElement {
   const theme = useTheme()
   const [count, setCount] = useState(1)
   const saving = useRef(false)
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string>()
+  const add = async (): Promise<void> => {
+    if (saving.current) return
+    saving.current = true
+    setBusy(true)
+    setProblem(undefined)
+    let added = false
+    try {
+      await onAdd(count)
+      added = true
+      onClose()
+    } catch {
+      setProblem('Unable to add players. Please try again.')
+    } finally {
+      if (!added) saving.current = false
+      setBusy(false)
+    }
+  }
   return (
     <ScoringSheet
       title="Select number of players to add."
@@ -22,6 +41,7 @@ export function PlaceholderPlayersSheet({
       onClose={onClose}
     >
       <PlayerCountPicker value={count} onChange={setCount} />
+      <ScoringError message={problem} />
       <View style={{ alignSelf: 'center', minWidth: 100, marginVertical: 12 }}>
         <Button
           color={theme.scoringMenuActiveBackground}
@@ -29,11 +49,9 @@ export function PlaceholderPlayersSheet({
           compact
           accessibilityLabel="Add"
           label="Add"
+          disabled={busy}
           onPress={() => {
-            if (saving.current) return
-            saving.current = true
-            onAdd(count)
-            onClose()
+            add().catch(() => undefined)
           }}
         />
       </View>

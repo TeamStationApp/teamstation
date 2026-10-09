@@ -87,6 +87,32 @@ const order = (session: ScoringSession, side: 'away' | 'home'): unknown[] =>
   )
 
 describe('the server scoring source with default lineups (U12)', function () {
+  it('keeps actual rosters without manufactured players on ordinary scoring entry', async function () {
+    const { client: fake } = client(async () => none)
+    for (const count of [0, 8]) {
+      const session = await new ServerScoringSource(fake).open(
+        game,
+        away,
+        home.slice(0, count)
+      )
+      expect(session.state.liveData.boxscore.teams.home.players).has.length(
+        count
+      )
+      expect(
+        Object.values(session.state.gameData.players).some(
+          player => player.local
+        )
+      ).equals(false)
+      expect(
+        session.apply({ type: 'pitch', call: 'B' }).problems[0].message
+      ).includes('Missing defensive positions')
+    }
+    const session = await new ServerScoringSource(fake).open(game, [], home)
+    expect(session.state.liveData.linescore.offense.batter).equals(null)
+    expect(
+      session.apply({ type: 'pitch', call: 'B' }).problems[0].message
+    ).equals('No players in lineup')
+  })
   it('opens a new game from each team’s default', async function () {
     const { client: fake, asked } = client(async teamId =>
       teamId === 'away' ? reversed : none

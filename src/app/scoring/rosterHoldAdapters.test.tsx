@@ -9,6 +9,7 @@ import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import { RosterDrag } from './RosterDrag'
 import { RosterContext } from './RosterDragContext'
+import type { RosterDragProps } from './rosterDragProps'
 import { RosterGesture } from './rosterGesture'
 import { RosterRemoveButton } from './RosterRemoveButton'
 
@@ -25,7 +26,7 @@ afterEach(async () => {
   })
   document.body.innerHTML = ''
 })
-async function setup(): Promise<{
+async function setup(extra: Partial<RosterDragProps> = {}): Promise<{
   engine: RosterGesture
   row: HTMLElement
   taps: number[]
@@ -45,7 +46,12 @@ async function setup(): Promise<{
     root!.render(
       <ThemeProvider>
         <RosterContext.Provider value={engine}>
-          <RosterDrag playerId={1} label="One" onTap={() => taps.push(1)}>
+          <RosterDrag
+            playerId={1}
+            label="One"
+            onTap={() => taps.push(1)}
+            {...extra}
+          >
             <span>One</span>
             <button>Child</button>
           </RosterDrag>
@@ -80,6 +86,37 @@ async function touch(
   return e
 }
 describe('roster hold platform adapters', function () {
+  it('drags a defensive roster card immediately with a mouse and drops once', async () => {
+    const { engine, row, taps, drops } = await setup({
+      immediateMouseDrag: true,
+      onTap: undefined
+    })
+    const pointer = async (type: string, x: number): Promise<void> => {
+      const event = new window.MouseEvent(type, {
+        bubbles: true,
+        clientX: x,
+        clientY: 10,
+        button: 0,
+        relatedTarget: type === 'pointerout' ? document.body : null
+      })
+      Object.defineProperties(event, {
+        pointerType: { value: 'mouse' },
+        pointerId: { value: 1 }
+      })
+      await act(async () => {
+        row.dispatchEvent(event)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+    }
+    await pointer('pointerdown', 10)
+    expect(engine.active?.id).equals(1)
+    await pointer('pointerout', 20)
+    await pointer('pointermove', 150)
+    await pointer('pointerup', 150)
+    expect(drops).deep.equals([1])
+    expect(taps).deep.equals([])
+    expect(engine.active).equals(null)
+  })
   it('lets a short tap append and lets pre-hold movement scroll without adding or dropping', async () => {
     const { engine, row, taps, drops } = await setup()
     await touch(row, 'touchstart', 10)

@@ -25,6 +25,7 @@ import {
   type GameSetup,
   type GameState,
   type Movement,
+  POSITIONS,
   type ResolutionOutcome
 } from './state'
 
@@ -53,6 +54,31 @@ export {
   validateRoster
 }
 export type { HomeRunKind, Override, RosterPlayer }
+
+/** Exact current order identity for transient lineup acceptance. */
+export function battingLineupKey(state: GameState): string {
+  const side = battingSide(state)
+  return `${state.liveData.linescore.currentInning}:${side}:${state.liveData.boxscore.teams[side].battingOrder.join(',')}`
+}
+/** Readiness now; a supplied acceptance key also guards partial orders. */
+export function currentSetupError(
+  state: GameState,
+  acceptedLineup?: string | null
+): string | undefined {
+  const defense = state.liveData.boxscore.teams[fieldingSide(state)].defense
+  const missing = POSITIONS.filter(position => defense[position] == null)
+  if (missing.length > 0)
+    return `Missing defensive positions: ${missing.join(', ')}`
+  const count =
+    state.liveData.boxscore.teams[battingSide(state)].battingOrder.length
+  if (count === 0) return 'No players in lineup'
+  if (
+    count < 9 &&
+    acceptedLineup !== undefined &&
+    acceptedLineup !== battingLineupKey(state)
+  )
+    return 'Accept the current batting lineup before scoring.'
+}
 
 /** Why this roster could not be taken now, or undefined when it could. */
 export function rosterError(

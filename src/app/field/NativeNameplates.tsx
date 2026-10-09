@@ -17,6 +17,8 @@ import {
   sameSpots
 } from './nameplateOverlay'
 import {
+  EMPTY_POSITION_FONT,
+  EMPTY_POSITION_SIZE,
   NAMEPLATE_FONT,
   NAMEPLATE_LINE_GAP,
   NAMEPLATE_NUMBER_FONT,
@@ -105,19 +107,48 @@ function Nameplate({
     >
       <View style={{ position: 'absolute', ...frame }}>
         <View
+          accessibilityLabel={
+            face.emptyPosition === true ? `Assign ${face.name}` : undefined
+          }
           style={{
             padding: NAMEPLATE_PAD,
             gap: face.number === '' ? 0 : NAMEPLATE_LINE_GAP,
-            borderRadius: 8,
-            backgroundColor: face.color,
+            borderRadius: face.emptyPosition === true ? 2 : 8,
+            backgroundColor:
+              face.emptyPosition === true
+                ? 'rgba(255, 190, 190, 0.22)'
+                : face.color,
+            borderWidth: face.emptyPosition === true ? 2 : 0,
+            borderStyle: face.emptyPosition === true ? 'dashed' : 'solid',
+            borderColor: '#d65454',
+            width:
+              face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
+            height:
+              face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
+            justifyContent: 'center',
             alignItems: 'center'
           }}
         >
           <Text
             numberOfLines={1}
+            allowFontScaling={face.emptyPosition === true ? false : undefined}
+            adjustsFontSizeToFit={face.emptyPosition === true}
+            minimumFontScale={face.emptyPosition === true ? 0.75 : undefined}
             style={[
               styles.line,
-              { fontSize: NAMEPLATE_FONT, lineHeight: NAMEPLATE_FONT }
+              {
+                width: face.emptyPosition === true ? '100%' : undefined,
+                fontSize:
+                  face.emptyPosition === true
+                    ? EMPTY_POSITION_FONT
+                    : NAMEPLATE_FONT,
+                lineHeight:
+                  face.emptyPosition === true
+                    ? EMPTY_POSITION_FONT
+                    : NAMEPLATE_FONT,
+                fontWeight: face.emptyPosition === true ? '700' : '400',
+                color: '#ffffff'
+              }
             ]}
           >
             {face.name}
