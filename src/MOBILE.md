@@ -81,6 +81,10 @@ sibling is for. What exists twice:
 | `screens/GameWatchLayout` | the one forked **region**, below |
 | `field/FieldCanvas` | a `<canvas>` and WebGL2 there; expo-gl's `GLView` here, below |
 | `scoring/OutcomePicker`, `scoring/MoreMenu` | the web's drop menus; here `DropMenuView` over `dropMenu.ts`: tap opens above the button, drag up and release chooses, with hover and submenus |
+| `chat/keyStore` | the chat key record in IndexedDB `ts-chat`, sealed under a non-extractable AES-GCM `CryptoKey`, there; one Keychain / Keystore item through `react-native-keychain` (`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`) here. Both keep `chat/keyRecord.ts`'s JSON |
+| `chat/thisDevice` | the user agent's browser and system there; "iPhone", "iPad" or the Android maker and model here |
+| `chat/chatFiles` | attachments: an `<input type="file">`, and opened bytes shown, played and saved through a `Blob` URL there; `react-native-image-picker` (photo library), `@react-native-documents/picker` (any file) and `react-native-blob-util` (reading, the cache file a picture or video is shown from, the share sheet) here. They share `chatFileTypes.ts` |
+| `chat/ChatVideo` | an opened video in a `<video>` on its Blob URL there; `react-native-video` on its cache file here (`chatVideoProps.ts`) |
 
 **A native sibling may not import from its own web twin.** Metro resolves
 `./foo` inside `foo.native.tsx` back to `foo.native.tsx`, and the binding is
@@ -238,6 +242,68 @@ On iOS the same check is
 WDA on the iPhone can report the phone as landscape while it is upright; a
 point tap then lands at the transposed position. Tap by text wherever you
 can.
+
+## The chat crypto core
+
+Chat's crypto is one Rust crate, `crates/chat-crypto` (RustCrypto and dalek
+primitives plus chat's own constructions), with one entry point,
+`chat_crypto_call(op, input)`, over the byte layout in
+`src/common/chatCrypto/coreCall.ts`. The phones link it as a static library
+and reach it through `NativeChatCrypto`, a pure C++ TurboModule
+(`native/chatCrypto/`, spec `src/app/chat/NativeChatCrypto.ts`, generated
+into the app's `TeamStationWalkUpMusicSpec` codegen library). The web loads
+the same crate as WebAssembly, and Node as a Node-API addon.
+
+- **Toolchain**: `rustup` (https://rustup.rs). The crate's
+  `rust-toolchain.toml` pins the version and brings the iOS, Android and
+  WebAssembly targets on first use. Android also needs
+  `cargo install cargo-ndk`.
+- **iOS**: the TeamStation target's "Build chat crypto" phase runs
+  `scripts/chatCryptoNative.sh ios`. It builds every architecture in `ARCHS`
+  and joins them into `ios/build/chatCrypto/<platform>/libchat_crypto.a`,
+  which the target links (`-lchat_crypto`). `ChatCryptoProvider.mm` hands the
+  module to React Native through `codegenConfig.ios.modulesProvider`, so a
+  change to the spec needs `pod install`.
+- **Android**: `buildChatCryptoRust` (`android/app/build.gradle`) runs
+  `scripts/chatCryptoNative.sh android <abis>` for `reactNativeArchitectures`
+  before CMake. The app's own `src/main/jni/CMakeLists.txt` and `OnLoad.cpp`
+  (React Native's defaults plus the module) link the library into
+  `libappmodules.so`. After a change to the spec, `rm -rf android/app/.cxx`.
+
+No JavaScript implementation stands behind it: when the module is missing,
+`core.native.ts` throws `ChatCryptoUnavailable('noNativeModule')` and every
+chat screen shows "Chat is not available in this build" (`ChatCoreGate`).
+Randomness comes from the core too, so the app has no
+`react-native-get-random-values`, and no `@noble` or
+`react-native-quick-crypto` either.
+
+### The bench build
+
+`/dev/chat-bench` (`src/app/dev/ChatBenchScreen.tsx`) first runs every frozen
+vector (`chatCrypto/frozenVectors.json`, through `vectors.ts`) through
+the phone's core and shows `vectors ok`. Then it times the core: 20 MiB
+sealed and opened, and 1,000 HPKE wraps. The route
+exists only in a build made with `TS_CHAT_BENCH=1`
+(`src/app/dev/chatBench.native.ts`; the web twin is always off). It is drawn
+before the session check and needs no server, so build it with no
+`TS_API_BASE_URL`:
+
+```sh
+cd ios
+TS_CHAT_BENCH=1 xcodebuild -workspace TeamStation.xcworkspace -scheme TeamStation \
+  -configuration Release -sdk iphonesimulator -destination 'id=<udid>' -derivedDataPath build-sim
+xcrun simctl install <udid> build-sim/Build/Products/Release-iphonesimulator/TeamStation.app
+(cd ../android && TS_CHAT_BENCH=1 ./gradlew assembleRelease)
+```
+
+then run `src/app/dev/chatBenchPhones.e2e.ts` (its header names the
+variables it needs; maestro-d, whose daemon starts
+from `$HOME` with `MAESTRO_RUNNER_HOME=$HOME/.maestro-d`, or it looks for
+WebDriverAgent under the working directory). It fails under 100 MB/s.
+Compare with `node scripts/chatCryptoBench.mjs`. Like `TS_API_BASE_URL`, the
+variable is an input of Gradle's bundle task, and `metro.config.js` keys
+Metro's cache on both, so a transform made for the bench is never reused by
+another build.
 
 ## Walk-up music: the app's own TurboModule
 
