@@ -380,14 +380,15 @@ const pathParam = (name: string): Record<string, unknown> => ({
 
 /** A JSON body whose fields are all base64url strings unless typed. */
 const keyBody = (
-  properties: Record<string, unknown>
+  properties: Record<string, unknown>,
+  required: string[] = Object.keys(properties)
 ): Record<string, unknown> => ({
   required: true,
   content: {
     'application/json': {
       schema: {
         type: 'object',
-        required: Object.keys(properties),
+        required,
         properties
       }
     }
@@ -3627,11 +3628,101 @@ export function openApiDocument(version: string): OpenApiDocument {
             'members, and those who left after the caller joined), and is ' +
             'empty for a scope chat. `lastMessageAt` is null before the ' +
             'first message. Somebody who is not an account, or is under ' +
-            '13 by birth month, is in none.',
+            '13 by birth month, is in none. Additive `preferences` describes ' +
+            'only the caller: `{pinned, muted, manualUnread, manualUnreadRevision}`. ' +
+            '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
+            'including a deleted post; edits, reactions and preferences do not change post recency.',
           security: [{ bearer: [] }],
           responses: {
             200: { description: 'The chats' },
             401: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/preferences': {
+        patch: {
+          summary: 'Update personal conversation preferences',
+          description:
+            'Current members only. Accepts one or more boolean fields: pinned, muted, manualUnread. Never changes membership, message timestamps or public read receipts. Setting manualUnread increments its revision. Only the caller and their signed-in clients see these preferences.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  minProperties: 1,
+                  properties: {
+                    pinned: { type: 'boolean' },
+                    muted: { type: 'boolean' },
+                    manualUnread: { type: 'boolean' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Personal preferences and unread revision' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/pins': {
+        get: {
+          summary: 'List personal message pins',
+          description:
+            'Current members only. Returns only the caller’s [{messageId, pinnedAt}], newest pin first. Contains no decrypted message content.',
+          security: [{ bearer: [] }],
+          parameters: [conversationIdParam],
+          responses: {
+            200: { description: 'Personal pin references' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/conversations/{conversationId}/pins/{messageId}': {
+        put: {
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'messageId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          summary: 'Pin a message personally',
+          description:
+            'Current members only; the target is an uncleared post in this conversation. Idempotent. Returns the caller’s complete personal pin list; not a shared conversation pin.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Personal pin references' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          parameters: [
+            conversationIdParam,
+            {
+              name: 'messageId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          summary: 'Unpin a message personally',
+          description:
+            'Current members only. Idempotent. Returns the caller’s complete personal pin list.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Personal pin references' },
+            401: errorResponse,
+            404: errorResponse
           }
         }
       },
@@ -4333,10 +4424,18 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'For members only: `{seq}`, at most the chat’s last `seq` (400 ' +
             '`seq`). The cursor never moves back; a move notifies `read`. ' +
-            'Answers `{seq}` as the cursor stands. Not audited.',
+            'Optional `clearManualUnreadRevision` clears personal manual unread only ' +
+            'when it matches the current revision, so an older in-flight read cannot ' +
+            'clear a later Mark unread. Answers `{seq}` as the cursor stands. Not audited.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
-          requestBody: keyBody({ seq: { type: 'integer', minimum: 0 } }),
+          requestBody: keyBody(
+            {
+              seq: { type: 'integer', minimum: 0 },
+              clearManualUnreadRevision: { type: 'integer', minimum: 0 }
+            },
+            ['seq']
+          ),
           responses: {
             200: { description: 'The cursor' },
             400: errorResponse,

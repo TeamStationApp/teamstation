@@ -13,7 +13,8 @@ import type { MediaContext } from '../media/mediaContext'
 import { latestEpoch, lockConversation } from './epochs'
 import { type ChatCaller, requireHolder } from './keys'
 import { chatPeople, moderatorsOf } from './listing'
-import { notifyChat } from './membershipLog'
+import { notifyChat, notifyChatUser } from './membershipLog'
+import { clearManualUnread } from './preferences'
 import { memberNow } from './reconciler'
 import { titlesOf } from './titles'
 import { b64 } from './wire'
@@ -481,6 +482,15 @@ async function clearTargets(
     .where('id', 'in', targetIds)
     .where('cleared_at', 'is', null)
     .execute()
+  const unpinned = await trx
+    .deleteFrom('chat_message_pins')
+    .where('conversation_id', '=', conversationId)
+    .where('message_id', 'in', targetIds)
+    .returning('user_id')
+    .execute()
+  for (const userId of new Set(unpinned.map(row => row.user_id))) {
+    await notifyChatUser(trx, userId, 'preferences')
+  }
   if (objects == null) return
   const { rows } = await sql<{ id: string; objectKey: string }>`
     select a.id, a.object_key as "objectKey"
@@ -541,9 +551,16 @@ export async function markRead(
   conversationId: string,
   userId: number,
   seq: number,
-  now: Date
+  now: Date,
+  clearManualUnreadRevision?: number
 ): Promise<{ seq: number }> {
   return await db.transaction().execute(async trx => {
+    await clearManualUnread(
+      trx,
+      userId,
+      conversationId,
+      clearManualUnreadRevision
+    )
     const conversation = await trx
       .selectFrom('chat_conversations')
       .select(['last_seq'])

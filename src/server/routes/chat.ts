@@ -1,4 +1,4 @@
-import { asArray, asObject } from 'cleaners'
+import { asArray, asBoolean, asObject, asOptional } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
@@ -20,6 +20,7 @@ import {
   nameMatches,
   readsOf
 } from '../chat/listing'
+import { pinsFor, setMessagePin, updatePreferences } from '../chat/preferences'
 import { memberNow } from '../chat/reconciler'
 import type { Database } from '../db/database'
 import { cleanBody } from '../jsonBody'
@@ -74,6 +75,58 @@ export function chatRoutes(
       res.json(await conversationsFor(db, actor.userId, actor.isAdmin, clock()))
     })
   )
+
+  router.patch(
+    '/chat/conversations/:conversationId/preferences',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const id = pathParam(req.params.conversationId)
+      await mustBeMember(id, actor.userId)
+      const patch = cleanBody(
+        asObject({
+          pinned: asOptional(asBoolean),
+          muted: asOptional(asBoolean),
+          manualUnread: asOptional(asBoolean)
+        }),
+        req.body
+      )
+      res.json(await updatePreferences(db, actor.userId, id, patch))
+    })
+  )
+  router.get(
+    '/chat/conversations/:conversationId/pins',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const id = pathParam(req.params.conversationId)
+      await mustBeMember(id, actor.userId)
+      res.json(await pinsFor(db, actor.userId, id))
+    })
+  )
+  for (const method of ['put', 'delete'] as const) {
+    router[method](
+      '/chat/conversations/:conversationId/pins/:messageId',
+      requireActor,
+      withAsync(async (req, res) => {
+        const actor = req.actor
+        if (actor == null) throw unauthorized()
+        const id = pathParam(req.params.conversationId)
+        await mustBeMember(id, actor.userId)
+        res.json(
+          await setMessagePin(
+            db,
+            actor.userId,
+            id,
+            pathParam(req.params.messageId),
+            method === 'put'
+          )
+        )
+      })
+    )
+  }
 
   router.get(
     '/chat/conversations/:conversationId/members',
