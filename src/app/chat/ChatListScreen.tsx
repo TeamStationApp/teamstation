@@ -459,7 +459,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   titleUnread: { fontFamily: theme.boldTextFont, fontWeight: '700' },
   pill: {
     flexShrink: 0,
-    borderRadius: theme.rem(0.375),
+    borderRadius: theme.rem(2),
     backgroundColor: theme.pillBackground,
     paddingHorizontal: theme.rem(0.375),
     paddingVertical: theme.rem(0.125)

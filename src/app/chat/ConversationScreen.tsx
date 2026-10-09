@@ -22,6 +22,7 @@ import { lstrings, plural, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ChatFileOps } from './AttachmentView'
+import { copyChatText } from './chatClipboard'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
 import {
@@ -29,18 +30,25 @@ import {
   approvalsIn,
   conversationPill,
   conversationTitle,
+  type MessageAction,
   typingNames
 } from './chatModel'
 import { getChatStyles } from './chatStyles'
-import { isRestoringPopupFocus } from './chatWebInteractions'
+import {
+  bindUserScroll,
+  isFinePointer,
+  isRestoringPopupFocus
+} from './chatWebInteractions'
 import type { ChatDraft } from './chatWorkspaceModel'
 import { Composer } from './Composer'
 import { ConversationMenu } from './ConversationMenu'
 import { EmojiPicker } from './EmojiPicker'
 import type { MessageView } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
+import { findOriginal, replyExcerpt } from './engine/reply'
 import { MessageBubble } from './MessageBubble'
 import { MessageMenu } from './MessageMenu'
+import { PinnedMessages } from './PinnedMessages'
 import type { ChatScreenEngine } from './screenEngine'
 
 /** What the screen needs of the platform's file twin. */
@@ -153,6 +161,18 @@ export function ConversationScreen(
   const [error, setError] = useState<string | undefined>(undefined)
   const [reported, setReported] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
+  const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
+  const [pinsOpen, setPinsOpen] = useState(false)
+  const [highlight, setHighlight] = useState<string | undefined>(undefined)
+  const jumpGeneration = useRef(0)
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+  const gestureGeneration = useRef(0)
+  const messagePositions = useRef(new Map<string, number>())
+  const prepend = useRef<{ offset: number; content: number } | undefined>(
+    undefined
+  )
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
   const [conversationMenu, setConversationMenu] = useState(false)
   const readRevision = useRef<number | undefined>(undefined)
@@ -168,6 +188,103 @@ export function ConversationScreen(
     content: 0
   })
   const atBottom = useRef((props.draft?.scrollOffset ?? 0) === 0)
+  const explicitRead = useCallback(() => {
+    const current = latestView.current
+    if (
+      current == null ||
+      props.active === false ||
+      menu != null ||
+      conversationMenu ||
+      reacting != null ||
+      pinsOpen ||
+      isRestoringPopupFocus()
+    )
+      return
+    readRevision.current =
+      current.conversation.preferences?.manualUnreadRevision ?? 0
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+  }, [
+    engine,
+    conversationId,
+    props.active,
+    menu,
+    conversationMenu,
+    reacting,
+    pinsOpen
+  ])
+  const hasView = view != null
+  useEffect(
+    () => bindUserScroll(scroller.current, explicitRead),
+    [explicitRead, hasView]
+  )
+  useEffect(
+    () => () => {
+      jumpGeneration.current += 1
+      clearTimeout(highlightTimer.current)
+    },
+    [conversationId, props.active]
+  )
+
+  const loadOlder = async (): Promise<ConversationView> => {
+    const before = engine.view(conversationId)
+    prepend.current = {
+      offset: scrolled.current.offset,
+      content: scrolled.current.content
+    }
+    atBottom.current = false
+    try {
+      const next = await engine.loadEarlier(conversationId)
+      if (
+        next.messages.length === before?.messages.length &&
+        next.messages[0]?.seq === before.messages[0]?.seq
+      )
+        prepend.current = undefined
+      return next
+    } catch (error) {
+      prepend.current = undefined
+      throw error
+    }
+  }
+  const jumpTo = (id: string): void => {
+    const generation = ++jumpGeneration.current
+    setPinsOpen(false)
+    setError(undefined)
+    atBottom.current = false
+    findOriginal(
+      { view: engine.view.bind(engine), loadEarlier: loadOlder },
+      conversationId,
+      id,
+      () => generation !== jumpGeneration.current || props.active === false
+    )
+      .then(async original => {
+        if (generation !== jumpGeneration.current) return
+        if (original == null) {
+          setError(lstrings.chat_message_unavailable)
+          return
+        }
+        // Layout follows the verified view update; never scroll using stale rows.
+        await new Promise<void>(resolve => setTimeout(resolve, 50))
+        if (generation !== jumpGeneration.current) return
+        const y = messagePositions.current.get(id)
+        if (y == null) {
+          setError(lstrings.chat_message_unavailable)
+          return
+        }
+        scroller.current?.scrollTo({
+          y: Math.max(0, y - theme.rem(0.5)),
+          animated: true
+        })
+        setHighlight(id)
+        clearTimeout(highlightTimer.current)
+        highlightTimer.current = setTimeout(() => {
+          setHighlight(undefined)
+        }, 1500)
+      })
+      .catch(() => {
+        if (generation === jumpGeneration.current)
+          setError(lstrings.chat_message_unavailable)
+      })
+  }
 
   useEffect(() => {
     onDraftChange?.({
@@ -270,7 +387,14 @@ export function ConversationScreen(
   const unread = view?.conversation.unread ?? 0
   const manualUnread = view?.conversation.preferences?.manualUnread === true
   useEffect(() => {
-    if (props.active === false || menu != null || conversationMenu) return
+    if (
+      props.active === false ||
+      menu != null ||
+      conversationMenu ||
+      pinsOpen ||
+      reacting != null
+    )
+      return
     if (newest === 0 && unread === 0 && !manualUnread) return
     engine.markRead(conversationId, readRevision.current).catch(() => undefined)
   }, [
@@ -281,7 +405,9 @@ export function ConversationScreen(
     manualUnread,
     props.active,
     menu,
-    conversationMenu
+    conversationMenu,
+    pinsOpen,
+    reacting
   ])
   useEffect(() => {
     const current = latestView.current
@@ -366,8 +492,16 @@ export function ConversationScreen(
   }
 
   const react = (message: MessageView, emoji: string, remove = false): void => {
+    const current = engine.view(conversationId)
+    const target = current?.messages.find(item => item.id === message.id)
+    if (
+      target == null ||
+      current == null ||
+      !actionsFor(target, current).includes('react')
+    )
+      return
     run(async () => {
-      await engine.react(conversationId, message.id, emoji, remove)
+      await engine.react(conversationId, target.id, emoji, remove)
     })
   }
 
@@ -415,6 +549,24 @@ export function ConversationScreen(
   )
 
   const typing = typingNames(view.typing, lstrings.chat_someone)
+  const currentMenu =
+    menu == null
+      ? undefined
+      : view.messages.find(message => message.id === menu.id)
+  const selectedFor = (action: MessageAction): MessageView | undefined => {
+    const current = engine.view(conversationId)
+    const selected = current?.messages.find(message => message.id === menu?.id)
+    if (
+      current == null ||
+      selected == null ||
+      !actionsFor(selected, current).includes(action)
+    ) {
+      setError(lstrings.chat_message_unavailable)
+      setMenu(undefined)
+      return undefined
+    }
+    return selected
+  }
 
   const content = (
     <>
@@ -463,6 +615,20 @@ export function ConversationScreen(
             </Text>
           </Pressable>
         </View>
+        {(view.pins?.length ?? 0) > 0 && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${lstrings.chat_pinned_messages}: ${view.pins!.length}`}
+            onPress={() => {
+              setPinsOpen(true)
+            }}
+            style={{ paddingVertical: theme.rem(0.25) }}
+          >
+            <Text style={shared.small}>
+              ⌖ {lstrings.chat_pinned_messages} ({view.pins!.length})
+            </Text>
+          </Pressable>
+        )}
         {view.historyLocked && (
           <View style={[shared.banner, shared.bannerWarning]}>
             <Icon name="lock" color={theme.warningColor} />
@@ -498,6 +664,7 @@ export function ConversationScreen(
           contentContainerStyle={styles.messages}
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
+            gestureGeneration.current += 1
             const { contentOffset, layoutMeasurement } = event.nativeEvent
             scrolled.current.offset = contentOffset.y
             scrolled.current.height = layoutMeasurement.height
@@ -510,17 +677,24 @@ export function ConversationScreen(
             })
           }}
           onScrollBeginDrag={() => {
-            readRevision.current =
-              view.conversation.preferences?.manualUnreadRevision ?? 0
-            engine
-              .markRead(conversationId, readRevision.current)
-              .catch(() => undefined)
+            gestureGeneration.current += 1
+            if (Platform.OS !== 'web') explicitRead()
           }}
           onLayout={event => {
             scrolled.current.height = event.nativeEvent.layout.height
           }}
           scrollEventThrottle={100}
           onContentSizeChange={(_width, height) => {
+            if (prepend.current != null) {
+              const previous = prepend.current
+              prepend.current = undefined
+              scrolled.current.content = height
+              scroller.current?.scrollTo({
+                y: Math.max(0, previous.offset + height - previous.content),
+                animated: false
+              })
+              return
+            }
             if (!restored.current && (props.draft?.scrollOffset ?? 0) > 0) {
               restored.current = true
               scrolled.current.content = height
@@ -550,7 +724,7 @@ export function ConversationScreen(
               onPress={() => {
                 atBottom.current = false
                 run(async () => {
-                  await engine.loadEarlier(conversationId)
+                  await loadOlder()
                 })
               }}
             />
@@ -561,7 +735,15 @@ export function ConversationScreen(
             </Text>
           )}
           {view.messages.map((message, index) => (
-            <React.Fragment key={message.id}>
+            <View
+              key={message.id}
+              onLayout={event => {
+                messagePositions.current.set(
+                  message.id,
+                  event.nativeEvent.layout.y
+                )
+              }}
+            >
               {notices.get(index)?.map(renderNotice)}
               <MessageBubble
                 message={message}
@@ -571,19 +753,40 @@ export function ConversationScreen(
                 files={files}
                 maxWidth={bubbleWidth}
                 swipe={swipe && view.composer === 'enabled'}
-                onLongPress={pressed => {
-                  if (actionsFor(pressed, view).length > 0) setMenu(pressed)
+                actions={actionsFor(message, view)}
+                pinned={view.pins?.some(pin => pin.messageId === message.id)}
+                userId={userId}
+                onJump={jumpTo}
+                highlighted={highlight === message.id}
+                gestureGeneration={gestureGeneration}
+                onLongPress={(pressed, anchor) => {
+                  if (actionsFor(pressed, view).length > 0) {
+                    setMenu(pressed)
+                    setMenuAnchor(anchor)
+                  }
+                }}
+                onReact={pressed => {
+                  setReacting(pressed)
                 }}
                 onReply={pressed => {
+                  const current = engine.view(conversationId)
+                  const original = current?.messages.find(
+                    message => message.id === pressed.id
+                  )
+                  if (
+                    current == null ||
+                    original == null ||
+                    !actionsFor(original, current).includes('reply')
+                  )
+                    return
                   setEditing(undefined)
-                  setReplyTo(pressed)
+                  setReplyTo(original)
                 }}
                 onToggleReaction={(pressed, emoji, mine) => {
-                  if (view.composer === 'closed') return
                   react(pressed, emoji, mine)
                 }}
               />
-            </React.Fragment>
+            </View>
           ))}
           {notices.get(view.messages.length)?.map(renderNotice)}
         </ScrollView>
@@ -628,8 +831,14 @@ export function ConversationScreen(
                 : replyTo != null
                   ? {
                       kind: 'reply',
-                      name: nameOf(replyTo),
-                      snippet: replyTo.body
+                      name: nameOf(
+                        view.messages.find(
+                          message => message.id === replyTo.id
+                        ) ?? { ...replyTo, senderName: undefined }
+                      ),
+                      snippet: replyExcerpt(
+                        view.messages.find(message => message.id === replyTo.id)
+                      )
                     }
                   : undefined
             }
@@ -664,57 +873,96 @@ export function ConversationScreen(
           }}
         />
       )}
-      {menu != null && (
+      {currentMenu != null && (
         <MessageMenu
-          message={menu}
-          actions={actionsFor(menu, view)}
+          message={currentMenu}
+          actions={actionsFor(currentMenu, view)}
+          desktop={isFinePointer() && menuAnchor != null}
+          anchor={menuAnchor}
+          selected={
+            <MessageBubble
+              message={currentMenu}
+              conversation={view.conversation}
+              members={view.members}
+              engine={engine}
+              files={files}
+              maxWidth={bubbleWidth}
+              swipe={false}
+              selected
+              actions={[]}
+              userId={userId}
+              pinned={view.pins?.some(pin => pin.messageId === currentMenu.id)}
+              onLongPress={() => {}}
+              onReply={() => {}}
+              onToggleReaction={() => {}}
+            />
+          }
           onClose={() => {
             setMenu(undefined)
           }}
           onReply={() => {
+            const selected = selectedFor('reply')
+            if (selected == null) return
             setEditing(undefined)
-            setReplyTo(menu)
+            setReplyTo(selected)
             setMenu(undefined)
           }}
           onReact={emoji => {
-            const already = menu.reactions.find(
-              reaction => reaction.emoji === emoji
-            )?.mine
-            react(menu, emoji, already === true)
+            const selected = selectedFor('react')
+            if (selected == null) return
+            react(
+              selected,
+              emoji,
+              selected.reactions.some(
+                reaction => reaction.emoji === emoji && reaction.mine
+              )
+            )
             setMenu(undefined)
           }}
           onMoreEmoji={() => {
-            setReacting(menu)
+            const selected = selectedFor('react')
+            if (selected != null) setReacting(selected)
             setMenu(undefined)
           }}
-          onEdit={() => {
-            setReplyTo(undefined)
-            setEditing(menu)
-            setPicked([])
-            setText(menu.body)
-            setMenu(undefined)
+          onCopy={async () => {
+            const selected = selectedFor('copy')
+            if (selected == null) throw new Error('Message unavailable')
+            await copyChatText(selected.body)
+          }}
+          onPin={pinned => {
+            const selected = selectedFor(pinned ? 'pin' : 'unpin')
+            if (selected == null) return
+            run(async () => {
+              if (engine.pinMessage == null) throw new Error('Pins unavailable')
+              await engine.pinMessage(conversationId, selected.id, pinned)
+              setMenu(undefined)
+            })
           }}
           onDelete={() => {
-            const target = menu
+            const selected = selectedFor('delete')
+            if (selected == null) return
             setMenu(undefined)
             run(async () => {
-              await engine.deleteMessage(conversationId, target.id)
+              await engine.deleteMessage(conversationId, selected.id)
             })
           }}
           onDeleteForEveryone={() => {
-            const target = menu
+            const selected = selectedFor('deleteForEveryone')
+            if (selected == null) return
             setMenu(undefined)
             run(async () => {
-              await engine.moderatorDelete(conversationId, target.id)
+              await engine.moderatorDelete(conversationId, selected.id)
             })
           }}
-          onReport={() => {
-            const target = menu
-            setMenu(undefined)
-            run(async () => {
-              await engine.report(conversationId, target.id)
-              setReported(true)
-            }, lstrings.chat_report_failed)
+        />
+      )}
+      {pinsOpen && (
+        <PinnedMessages
+          pins={view.pins ?? []}
+          messages={view.messages}
+          onJump={jumpTo}
+          onClose={() => {
+            setPinsOpen(false)
           }}
         />
       )}
@@ -750,7 +998,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   column: {
     flex: 1,
     // Centred in a wide window, as every other chat screen is.
-    alignSelf: 'center',
+    alignSelf: 'stretch',
     gap: theme.rem(theme.spaceSmRem)
   },
   fill: {
