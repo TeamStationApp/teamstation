@@ -18,6 +18,7 @@ import {
   messageTooltipProps,
   watchMessageAnchor
 } from './chatWebInteractions'
+import type { ChatDraft } from './chatWorkspaceModel'
 import {
   type ConversationFiles,
   ConversationScreen
@@ -1268,7 +1269,373 @@ function positionWrapper(messageId: string): HTMLElement {
   return node!
 }
 
+interface ReadingGeometry {
+  scroller: HTMLElement
+  body: HTMLElement
+  row: HTMLElement
+  geometry: { y: number; height: number }
+  moves: number[]
+  layout: () => Promise<void>
+  userScroll: (offset: number) => Promise<void>
+}
+
+function readingGeometry(
+  messageId: string,
+  y = 400,
+  height = 2200
+): ReadingGeometry {
+  const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
+    node => getComputedStyle(node).overflowY === 'auto'
+  )!
+  const body = scroller.firstElementChild as HTMLElement
+  const row = positionWrapper(messageId)
+  const geometry = { y, height }
+  const moves: number[] = []
+  scroller.getBoundingClientRect = () => new window.DOMRect(0, 0, 640, 400)
+  body.getBoundingClientRect = () =>
+    new window.DOMRect(0, -scroller.scrollTop, 640, geometry.height)
+  row.getBoundingClientRect = () =>
+    new window.DOMRect(0, geometry.y - scroller.scrollTop, 640, 800)
+  Object.defineProperties(scroller, {
+    offsetHeight: { value: 400, configurable: true },
+    offsetWidth: { value: 640, configurable: true },
+    scrollHeight: { get: () => geometry.height, configurable: true }
+  })
+  Object.defineProperties(body, {
+    offsetParent: { value: scroller, configurable: true },
+    offsetHeight: { get: () => geometry.height, configurable: true },
+    offsetWidth: { value: 640, configurable: true }
+  })
+  Object.defineProperties(row, {
+    offsetParent: { value: body, configurable: true },
+    offsetTop: { get: () => geometry.y, configurable: true },
+    offsetHeight: { value: 800, configurable: true },
+    offsetWidth: { value: 640, configurable: true }
+  })
+  scroller.scroll = options => {
+    scroller.scrollTop = (options as ScrollToOptions).top ?? 0
+    moves.push(scroller.scrollTop)
+    scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+  }
+  const nativeRow = row as HTMLElement & {
+    measureLayout: (
+      relative: unknown,
+      success: (x: number, y: number, width: number, height: number) => void
+    ) => void
+  }
+  const measureCurrentRow = nativeRow.measureLayout
+  return {
+    scroller,
+    body,
+    row,
+    geometry,
+    moves,
+    async layout(): Promise<void> {
+      await measured(scroller, 640, 400)
+      await measured(body, 640, geometry.height)
+      await measured(row, 640, 800, geometry.y)
+      nativeRow.measureLayout = measureCurrentRow
+      await act(async () => {
+        await wait(80)
+      })
+    },
+    async userScroll(offset: number): Promise<void> {
+      await act(async () => {
+        scroller.dispatchEvent(
+          new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+        )
+        scroller.scrollTop = offset
+        scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        await wait(120)
+      })
+    }
+  }
+}
+
 describe('chat follow-up conversation message integration', function () {
+  it('discards a pending saved-anchor measurement after newer layout moves the row and restores from fresh geometry', async function () {
+    const engine = new FakeEngine()
+    const reading = safeMessage({
+      id: 'msg_saved_overlapping_measurement',
+      body: 'Current reading row'
+    })
+    engine.current.messages = [reading]
+    let saved: ChatDraft = {
+      text: 'Current draft',
+      picked: [],
+      scrollOffset: 647,
+      hasScrollPosition: true,
+      scrollAnchor: { id: reading.id, relativeY: -247 }
+    }
+    await render(
+      <ChatOverlayHost>
+        <ConversationScreen
+          engine={engine}
+          conversationId="cnv_fixture"
+          userId={1}
+          onMembers={() => {}}
+          files={files}
+          swipe={false}
+          embedded
+          draft={saved}
+          onDraftChange={next => {
+            saved = next
+          }}
+        />
+      </ChatOverlayHost>
+    )
+    const visible = readingGeometry(reading.id)
+    type Measurement = (
+      x: number,
+      y: number,
+      width: number,
+      height: number
+    ) => void
+    const nativeRow = visible.row as HTMLElement & {
+      measureLayout: (relative: unknown, success: Measurement) => void
+    }
+    const measureLiveRow = nativeRow.measureLayout
+    const pending: Measurement[] = []
+    nativeRow.measureLayout = (_relative, success) => {
+      pending.push(success)
+    }
+    const layout = (node: HTMLElement, y: number, height: number): void => {
+      const handler = (
+        node as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler
+      handler({ nativeEvent: { layout: { x: 0, y, width: 640, height } } })
+    }
+    await act(async () => {
+      layout(visible.scroller, 0, 400)
+      await wait()
+    })
+    expect(pending).lengthOf(1)
+    visible.geometry.y += 157
+    visible.geometry.height += 157
+    await act(async () => {
+      layout(visible.row, visible.geometry.y, 800)
+      layout(visible.body, 0, visible.geometry.height)
+    })
+    expect(pending, 'the original measurement is still pending').lengthOf(1)
+    visible.moves.length = 0
+    await act(async () => {
+      pending.shift()!(0, 400, 640, 800)
+      await wait()
+    })
+    expect(
+      visible.moves,
+      'do not apply the obsolete row measurement'
+    ).deep.equals([])
+    expect(pending, 'measure the row again after the newer layout').lengthOf(1)
+    nativeRow.measureLayout = measureLiveRow
+    await act(async () => {
+      pending.shift()!(0, visible.geometry.y, 640, 800)
+      await wait()
+    })
+    expect(visible.scroller.scrollTop).equals(804)
+    expect(visible.row.getBoundingClientRect().top).equals(-247)
+    expect(saved.scrollOffset).equals(804)
+    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -247 })
+    await visible.layout()
+    expect(visible.scroller.scrollTop).equals(804)
+    expect(visible.row.getBoundingClientRect().top).equals(-247)
+    expect(visible.moves.every(offset => offset === 804)).equals(true)
+  })
+
+  it('restores the same partially visible saved row after switching conversations and changed prefix or layout geometry', async function () {
+    pointer(true)
+    const engine = new FakeEngine()
+    const reading = safeMessage({
+      id: 'msg_saved_partial_row',
+      seq: 2,
+      body: Array.from(
+        { length: 24 },
+        (_, index) => `Practice ${index + 1}`
+      ).join('\n')
+    })
+    engine.current.messages = [
+      safeMessage({ id: 'msg_saved_prefix', seq: 1 }),
+      reading,
+      safeMessage({ id: 'msg_saved_following', seq: 3 })
+    ]
+    let saved: ChatDraft = {
+      text: 'First draft line\nSecond draft line',
+      picked: [],
+      scrollOffset: 647,
+      hasScrollPosition: true
+    }
+    const remember = (next: ChatDraft): void => {
+      saved = next
+    }
+    const show = async (active = true): Promise<void> => {
+      await render(
+        <ChatOverlayHost>
+          <ConversationScreen
+            key="cnv_fixture"
+            engine={engine}
+            conversationId="cnv_fixture"
+            userId={1}
+            onMembers={() => {}}
+            files={files}
+            swipe={false}
+            embedded
+            active={active}
+            draft={saved}
+            onDraftChange={remember}
+          />
+        </ChatOverlayHost>
+      )
+    }
+    await show()
+    let visible = readingGeometry(reading.id)
+    await visible.layout()
+    await measured(positionWrapper('msg_saved_prefix'), 640, 400)
+    await measured(positionWrapper('msg_saved_following'), 640, 100, 1200)
+    await visible.userScroll(647)
+    expect(visible.row.getBoundingClientRect().top).equals(-247)
+    expect(saved.scrollAnchor).deep.equals({
+      id: reading.id,
+      relativeY: -247
+    })
+
+    await show(false)
+    const other = new FakeEngine()
+    other.current = {
+      ...other.current,
+      conversation: chat({ id: 'cnv_other', scopeName: 'Solstice' }),
+      messages: [safeMessage({ id: 'msg_other_conversation' })]
+    }
+    await render(
+      <ChatOverlayHost>
+        <ConversationScreen
+          key="cnv_other"
+          engine={other}
+          conversationId="cnv_other"
+          userId={1}
+          onMembers={() => {}}
+          files={files}
+          swipe={false}
+          embedded
+        />
+      </ChatOverlayHost>
+    )
+    await show()
+    visible = readingGeometry(reading.id, 557, 2357)
+    await visible.layout()
+    expect(visible.scroller.scrollTop).equals(804)
+    expect(visible.row.getBoundingClientRect().top).equals(-247)
+    expect(saved.scrollOffset).equals(804)
+    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -247 })
+
+    visible.geometry.y += 63
+    visible.geometry.height += 63
+    await visible.layout()
+    expect(visible.scroller.scrollTop).equals(867)
+    expect(visible.row.getBoundingClientRect().top).equals(-247)
+    visible.geometry.height += 34
+    await visible.layout()
+    await visible.layout()
+    expect(visible.scroller.scrollTop).equals(867)
+    expect(visible.row.getBoundingClientRect().top).equals(-247)
+    expect(saved.scrollOffset).equals(867)
+    expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+      'First draft line\nSecond draft line'
+    )
+  })
+
+  it('ignores queued scroll and layout resets from a hidden or unmounted pane without replacing its saved row anchor', async function () {
+    pointer(true)
+    const engine = new FakeEngine()
+    const reading = safeMessage({
+      id: 'msg_saved_late_event_row',
+      seq: 2,
+      body: 'A long current reading row'
+    })
+    engine.current.messages = [reading]
+    let saved: ChatDraft = {
+      text: 'Current draft',
+      picked: [],
+      scrollOffset: 647,
+      hasScrollPosition: true,
+      scrollAnchor: { id: reading.id, relativeY: -247 }
+    }
+    const changes: ChatDraft[] = []
+    const remember = (next: ChatDraft): void => {
+      saved = next
+      changes.push(next)
+    }
+    const show = async (active: boolean): Promise<void> => {
+      await render(
+        <ChatOverlayHost>
+          <ConversationScreen
+            engine={engine}
+            conversationId="cnv_fixture"
+            userId={1}
+            onMembers={() => {}}
+            files={files}
+            swipe={false}
+            embedded
+            active={active}
+            draft={saved}
+            onDraftChange={remember}
+          />
+        </ChatOverlayHost>
+      )
+    }
+    for (const transition of ['hidden', 'unmounted'] as const) {
+      await show(true)
+      const visible = readingGeometry(reading.id)
+      await visible.layout()
+      await visible.userScroll(647)
+      const before = { ...saved, scrollAnchor: { ...saved.scrollAnchor! } }
+      const oldLayout = (
+        visible.scroller as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler
+      const oldContentLayout = (
+        visible.body as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler
+      await act(async () => {
+        visible.scroller.dispatchEvent(
+          new window.Event('scroll', { bubbles: true })
+        )
+      })
+      if (transition === 'hidden') await show(false)
+      else await render(<div>Conversation list</div>)
+      const beforeLateEvents = changes.length
+      visible.moves.length = 0
+      await act(async () => {
+        visible.scroller.scrollTop = 0
+        visible.geometry.height = 0
+        const event = {
+          nativeEvent: { layout: { x: 0, y: 0, width: 0, height: 0 } }
+        }
+        oldLayout(event)
+        oldContentLayout(event)
+        // RNW delivers its queued scroll-end callback after the pane changes.
+        await wait(120)
+      })
+      expect(changes.length, `${transition} late draft writes`).equals(
+        beforeLateEvents
+      )
+      expect(saved).deep.equals(before)
+      expect(visible.moves, `${transition} late scroll commands`).deep.equals(
+        []
+      )
+    }
+    await show(true)
+    const reopened = readingGeometry(reading.id, 557, 2357)
+    await reopened.layout()
+    expect(reopened.scroller.scrollTop).equals(804)
+    expect(reopened.row.getBoundingClientRect().top).equals(-247)
+    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -247 })
+  })
+
   it('preserves the current reading anchor when a cancelled history request later prepends, including append growth and late scroll/layout events', async function () {
     for (const [browserAnchors, downstreamGrowth] of [
       [false, 0],
