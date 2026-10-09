@@ -26,7 +26,14 @@ module.exports = {
     // and bench flag.
     [
       'transform-inline-environment-variables',
-      { include: ['TS_API_BASE_URL', 'TS_BUILD_INFO', 'TS_SENTRY_DSN', 'TS_CHAT_BENCH'] }
+      {
+        include: [
+          'TS_API_BASE_URL',
+          'TS_BUILD_INFO',
+          'TS_SENTRY_DSN',
+          'TS_CHAT_BENCH'
+        ]
+      }
     ],
     // three.js, which the scoring field draws with, declares static blocks
     // inside its classes, and neither React Native's preset nor Hermes
