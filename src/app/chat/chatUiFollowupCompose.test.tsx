@@ -675,6 +675,198 @@ async function scrollEvent(
   })
 }
 
+function unreadSessionEngine(): {
+  engine: FakeEngine
+  reads: Array<[string, number | undefined]>
+} {
+  const engine = new FakeEngine()
+  const screenEngine: ChatScreenEngine = engine
+  const reads: Array<[string, number | undefined]> = []
+  for (const [id, current] of engine.views)
+    engine.views.set(id, {
+      ...current,
+      conversation: {
+        ...current.conversation,
+        title: `${current.conversation.scopeName} Members`,
+        preferences: {
+          pinned: false,
+          muted: false,
+          manualUnread: false,
+          manualUnreadRevision: 0
+        }
+      }
+    })
+  screenEngine.markRead = async (id, revision) => {
+    reads.push([id, revision])
+    const current = engine.views.get(id)!
+    const previous = current.conversation.preferences!
+    const manualUnread =
+      previous.manualUnread && revision !== previous.manualUnreadRevision
+    if (
+      current.conversation.unread === 0 &&
+      manualUnread === previous.manualUnread
+    )
+      return
+    engine.update(id, {
+      conversation: {
+        ...current.conversation,
+        unread: 0,
+        preferences: { ...previous, manualUnread }
+      }
+    })
+  }
+  screenEngine.setPreferences = async (id, patch) => {
+    const current = engine.views.get(id)!
+    const previous = current.conversation.preferences!
+    engine.update(id, {
+      conversation: {
+        ...current.conversation,
+        preferences: {
+          ...previous,
+          ...patch,
+          manualUnreadRevision:
+            previous.manualUnreadRevision +
+            (patch.manualUnread === true ? 1 : 0)
+        }
+      }
+    })
+    for (const listener of engine.listeners) listener({ type: 'conversations' })
+  }
+  return { engine, reads }
+}
+
+describe('chat read sessions preserve personal unread', function () {
+  it('does not read a background document on opening or incoming messages and acknowledges the current revision on visible deliberate typing', async function () {
+    const { engine, reads } = unreadSessionEngine()
+    const current = engine.views.get('cnv_aurora')!
+    engine.update('cnv_aurora', {
+      conversation: {
+        ...current.conversation,
+        unread: 2,
+        preferences: {
+          ...current.conversation.preferences!,
+          manualUnread: true,
+          manualUnreadRevision: 7
+        }
+      }
+    })
+    const originalVisibility = Object.getOwnPropertyDescriptor(
+      document,
+      'visibilityState'
+    )
+    const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden')
+    let visibility: 'visible' | 'hidden' = 'hidden'
+    Object.defineProperties(document, {
+      visibilityState: { configurable: true, get: () => visibility },
+      hidden: { configurable: true, get: () => visibility === 'hidden' }
+    })
+    try {
+      await screen(engine)
+      expect(reads, 'a mounted background document must not read').deep.equals(
+        []
+      )
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(2)
+      expect(
+        engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread
+      ).equals(true)
+      await act(async () => {
+        const opened = engine.views.get('cnv_aurora')!
+        engine.update('cnv_aurora', {
+          messages: [
+            ...opened.messages,
+            message({
+              id: 'msg_background',
+              seq: 2,
+              senderName: 'Shohei Ohtani',
+              body: 'Later update'
+            })
+          ],
+          conversation: { ...opened.conversation, unread: 3 }
+        })
+        await wait()
+      })
+      expect(reads, 'background delivery must not advance reading').deep.equals(
+        []
+      )
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(3)
+      expect(
+        engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread
+      ).equals(true)
+      await act(async () => {
+        visibility = 'visible'
+        document.dispatchEvent(new window.Event('visibilitychange'))
+        await wait()
+      })
+      await type('Reviewed while visible')
+      expect(
+        reads.some(([id, revision]) => id === 'cnv_aurora' && revision === 7)
+      ).equals(true)
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(0)
+      expect(
+        engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread
+      ).equals(false)
+    } finally {
+      if (originalVisibility == null)
+        Reflect.deleteProperty(document, 'visibilityState')
+      else
+        Object.defineProperty(document, 'visibilityState', originalVisibility)
+      if (originalHidden == null) Reflect.deleteProperty(document, 'hidden')
+      else Object.defineProperty(document, 'hidden', originalHidden)
+    }
+  })
+
+  it('keeps Mark unread through hiding the remembered narrow pane and width-only reveal, then clears it on explicit row selection', async function () {
+    const { engine, reads } = unreadSessionEngine()
+    const state = newChatWorkspaceState()
+    await showWorkspace(engine, state, 'cnv_aurora')
+    await press('Conversation actions')
+    await press('Mark unread')
+    expect(
+      engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread
+    ).equals(true)
+    const revision =
+      engine.views.get('cnv_aurora')!.conversation.preferences!
+        .manualUnreadRevision
+    await showWorkspace(engine, state)
+    expect(
+      document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
+        .style.display
+    ).equals('none')
+    const beforeReveal = reads.length
+    await measure(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      1200,
+      700
+    )
+    expect(
+      document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
+        .style.display
+    ).equals('flex')
+    expect(
+      engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread,
+      'width changes do not explicitly reselect a conversation'
+    ).equals(true)
+    expect(
+      reads
+        .slice(beforeReveal)
+        .every(([, acknowledged]) => acknowledged !== revision)
+    ).equals(true)
+    const beforeSelect = reads.length
+    await press('Aurora Members')
+    expect(
+      reads
+        .slice(beforeSelect)
+        .some(
+          ([id, acknowledged]) =>
+            id === 'cnv_aurora' && acknowledged === revision
+        )
+    ).equals(true)
+    expect(
+      engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread
+    ).equals(false)
+  })
+})
+
 describe('chat workspace saved scroll position', function () {
   it('holds an explicitly saved zero through layout growth, Back, reopening and switching conversations', async function () {
     const engine = new FakeEngine()
