@@ -1,5 +1,25 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { constants } from 'node:os'
+import path from 'node:path'
+
+/** Safe diagnostics retain tool identity and status, never arguments or output. */
+export class DeploymentToolError extends Error {
+  readonly tool: string
+  readonly signal?: NodeJS.Signals
+  constructor(
+    message: string,
+    file: string,
+    readonly exitCode?: number,
+    signal?: NodeJS.Signals
+  ) {
+    super(message)
+    const name = path.basename(file)
+    this.tool = /^[a-zA-Z0-9._-]+$/.test(name) ? name : 'tool'
+    if (signal != null && Object.hasOwn(constants.signals, signal))
+      this.signal = signal
+  }
+}
 
 /** Only explicit nonsecret environment values reach compilers; signing adapters add their own. */
 export function childEnvironment(
@@ -79,14 +99,27 @@ export class Processes {
       child.stdin.on('error', () => {})
       child.stdin.end(command.input)
       child.once('error', () => {
-        reject(new Error('Could not start deployment tool'))
+        reject(
+          new DeploymentToolError(
+            'Could not start deployment tool',
+            command.file
+          )
+        )
       })
-      child.once('close', code => {
+      child.once('close', (code, signal) => {
         this.children.delete(child)
         this.signal.removeEventListener('abort', abort)
         if (killTimer != null) clearTimeout(killTimer)
         if (this.signal.aborted) reject(new Error('Deployment cancelled'))
-        else if (code !== 0) reject(new Error('Deployment tool failed'))
+        else if (code !== 0)
+          reject(
+            new DeploymentToolError(
+              'Deployment tool failed',
+              command.file,
+              code ?? undefined,
+              signal ?? undefined
+            )
+          )
         else if (overflow)
           reject(new Error('Deployment tool output exceeded limit'))
         else resolve(stdout.trim())

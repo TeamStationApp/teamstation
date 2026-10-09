@@ -7,7 +7,9 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import path from 'node:path'
@@ -397,6 +399,23 @@ describe('Native build and signing adapters', () => {
     context.target = target(id, 'android')
     file(path.join(context.source, context.target.path, 'gradlew'))
     await android(context)
+    const validBadging = `package: name='${id}' versionCode='26093004' versionName='1.2.3'`
+    const v2Certificate = `Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${'a'.repeat(64)}`
+    verifyAndroidMetadata(validBadging, v2Certificate, context)
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        validBadging,
+        v2Certificate.replace('Number of signers: 1', 'Number of signers: 2'),
+        context
+      )
+    })
+    assert.throws(() => {
+      verifyAndroidMetadata(
+        validBadging,
+        v2Certificate.replace('certificate SHA-256', 'public key SHA-256'),
+        context
+      )
+    })
     for (const [badging, cert] of [
       [
         `package: name='${id}' versionCode='41' versionName='1.2.3'`,
@@ -508,6 +527,112 @@ describe('Native build and signing adapters', () => {
       withSigning(context, async () => 0, home),
       /Separate/
     )
+  })
+  it('preserves the legacy Xcode alias while installing and cleaning only the modern profile', async () => {
+    const home = path.join(root, 'home')
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    const modern = path.join(
+      home,
+      'Library/Developer/Xcode/UserData/Provisioning Profiles'
+    )
+    mkdirSync(path.dirname(legacy), { recursive: true })
+    mkdirSync(modern, { recursive: true })
+    const alias = path.relative(path.dirname(legacy), modern)
+    symlinkSync(alias, legacy)
+    const destination = path.join(modern, profile.uuid + '.mobileprovision')
+    await withSigning(
+      context,
+      async () => {
+        assert.equal(readFileSync(destination, 'utf8'), 'fixture')
+        assert.equal(readlinkSync(legacy), alias)
+      },
+      home
+    )
+    assert(!existsSync(destination))
+    assert.equal(readlinkSync(legacy), alias)
+    rmSync(legacy)
+    symlinkSync(modern, legacy)
+    file(destination, 'fixture')
+    await withSigning(context, async () => 0, home)
+    assert.equal(readFileSync(destination, 'utf8'), 'fixture')
+    writeFileSync(destination, 'different')
+    await assert.rejects(
+      withSigning(context, async () => 0, home),
+      /preserving/
+    )
+    assert.equal(readFileSync(destination, 'utf8'), 'different')
+    assert.equal(readlinkSync(legacy), modern)
+  })
+  it('rejects profile aliases outside the canonical location and symlinked modern directories', async () => {
+    const home = path.join(root, 'home')
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    const modern = path.join(
+      home,
+      'Library/Developer/Xcode/UserData/Provisioning Profiles'
+    )
+    const other = path.join(root, 'other-profiles')
+    mkdirSync(path.dirname(legacy), { recursive: true })
+    mkdirSync(path.dirname(modern), { recursive: true })
+    mkdirSync(other)
+    const preserved = file(
+      path.join(other, profile.uuid + '.mobileprovision'),
+      'different'
+    )
+    symlinkSync(other, legacy)
+    await assert.rejects(
+      withSigning(
+        context,
+        async () => assert.fail('unsafe alias accepted'),
+        home
+      ),
+      /symlinks/
+    )
+    assert.equal(readFileSync(preserved, 'utf8'), 'different')
+    rmSync(legacy)
+    symlinkSync(modern, legacy)
+    symlinkSync(other, modern)
+    await assert.rejects(
+      withSigning(
+        context,
+        async () => assert.fail('unsafe modern directory accepted'),
+        home
+      ),
+      /symlinks/
+    )
+    assert.equal(readFileSync(preserved, 'utf8'), 'different')
+    assert.equal(readlinkSync(legacy), modern)
+    assert.equal(readlinkSync(modern), other)
+    assert.equal(readdirSync(context.output).length, 0)
+  })
+  it('rejects an alias whose normalized path hides a redirected component', async () => {
+    const home = path.join(root, 'home')
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    const modern = path.join(
+      home,
+      'Library/Developer/Xcode/UserData/Provisioning Profiles'
+    )
+    mkdirSync(path.dirname(legacy), { recursive: true })
+    mkdirSync(modern, { recursive: true })
+    const other = path.join(root, 'external/nested')
+    mkdirSync(other, { recursive: true })
+    const redirect = path.join(home, 'Library/redirect')
+    symlinkSync(other, redirect)
+    const alias =
+      '../redirect/../Developer/Xcode/UserData/Provisioning Profiles'
+    assert.equal(path.resolve(path.dirname(legacy), alias), modern)
+    symlinkSync(alias, legacy)
+    await assert.rejects(
+      withSigning(
+        context,
+        async () => assert.fail('hidden redirect accepted'),
+        home
+      ),
+      /symlinks/
+    )
+    assert.equal(readlinkSync(legacy), alias)
+    assert.equal(readlinkSync(redirect), other)
+    assert.deepEqual(readdirSync(modern), [])
+    assert.equal(readdirSync(context.output).length, 0)
   })
   it('archives and exports the actual target contract, verifies final IPA metadata, certificate, entitlements and JS', async () => {
     const result = await ios(context, path.join(root, 'home'))

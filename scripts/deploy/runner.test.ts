@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { main as deployMain } from '../deploy'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { buildEnvironment } from './prepare'
+import { DeploymentToolError } from './process'
 import {
   type Builder,
   nativeNumber,
@@ -345,6 +346,56 @@ describe('Pinned multi-app deployment orchestration', () => {
     )
     assert.equal(service.requests.length, 1)
     assert(existsSync(path.join(root, 'output', id, 'ios.ipa')))
+  })
+  it('reports a failing tool status without private paths or compiler output', async () => {
+    const lines: string[] = []
+    const status = await run(
+      parse('ios'),
+      {
+        ios: async () => {
+          throw new DeploymentToolError(
+            'Deployment tool failed',
+            '/var/app/private/example-tool',
+            17
+          )
+        }
+      },
+      new AbortController().signal,
+      line => lines.push(line)
+    )
+    assert.equal(status, 1)
+    assert(
+      lines.includes(
+        'ios build failed (example-tool exited 17); no package was published'
+      )
+    )
+    assert(!lines.join('\n').includes('/var/app/private'))
+    assert.equal(service.requests.length, 0)
+  })
+  it('distinguishes tool signal termination from a startup failure', async () => {
+    const lines: string[] = []
+    const status = await run(
+      parse('ios'),
+      {
+        ios: async () => {
+          throw new DeploymentToolError(
+            'Deployment tool failed',
+            '/var/app/private/example-tool',
+            undefined,
+            'SIGTERM'
+          )
+        }
+      },
+      new AbortController().signal,
+      line => lines.push(line)
+    )
+    assert.equal(status, 1)
+    assert(
+      lines.includes(
+        'ios build failed (example-tool terminated by SIGTERM); no package was published'
+      )
+    )
+    assert(!lines.join('\n').includes('could not start'))
   })
   it('retries a failed publication without rebuilding or reallocating its number', async () => {
     service.statuses.push(401)
