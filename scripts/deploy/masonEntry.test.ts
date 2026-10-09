@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
+import { buildEnvironment } from './prepare'
 import { type Builder, nativeNumber } from './runner'
 import { gitFixture } from './source.test'
 import { type Endpoint, endpoint } from './upload.test'
@@ -125,6 +126,33 @@ describe('TeamStation Mason entrypoint', () => {
           readFileSync(environment().BUILD_NUMBER_FILE!, 'utf8')
         ) as unknown[]
       ).length,
+      1
+    )
+  })
+  it('passes APP_SERVER_URL from the job environment into deployment', async () => {
+    const verify: Builder = async context => {
+      assert.equal(
+        buildEnvironment(context).TS_API_BASE_URL,
+        'https://preview.example.test/api/v1'
+      )
+      return await builder(context)
+    }
+    assert.equal(
+      await masonDeploy(
+        { ...environment(), APP_SERVER_URL: 'preview.example.test' },
+        source,
+        { ios: verify, android: verify },
+        false
+      ),
+      0
+    )
+    assert.equal(
+      await masonDeploy(
+        { ...environment(), APP_SERVER_URL: 'http://preview.example.test' },
+        source,
+        { ios: verify },
+        false
+      ),
       1
     )
   })

@@ -26,6 +26,7 @@ import { fingerprint, upload } from './upload'
 import {
   appId,
   branchName,
+  httpsOrigin,
   object,
   type Platform,
   platform
@@ -116,7 +117,8 @@ export async function run(
   builders: Builders,
   signal: AbortSignal,
   output: (line: string) => void = console.log,
-  workingDirectory = process.cwd()
+  workingDirectory = process.cwd(),
+  environment: NodeJS.ProcessEnv = process.env
 ): Promise<number> {
   const settings = loadSettings(options.config, options.branch)
   const configured = settings.apps[options.app]
@@ -125,6 +127,16 @@ export async function run(
     options.platforms.some(os => configured[os] == null)
   )
     throw new Error('App/platform is missing deployment settings')
+  if (options.publishOnly == null && environment.APP_SERVER_URL != null) {
+    const value = environment.APP_SERVER_URL
+    const origin = httpsOrigin(
+      value.includes('://') ? value : `https://${value}`
+    )
+    // Match the native configuration's startup guard before packaging an app.
+    if (/\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(origin))
+      throw new Error('Application server cannot be a loopback target')
+    configured.apiOrigin = origin
+  }
   const processes = new Processes(signal)
   if (options.dryRun) {
     const { commit } = await currentSource(

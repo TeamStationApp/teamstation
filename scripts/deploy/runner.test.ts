@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { main as deployMain } from '../deploy'
 import { app, fixtureSettings, testRoot } from './config.test'
+import { buildEnvironment } from './prepare'
 import {
   type Builder,
   nativeNumber,
@@ -157,6 +158,126 @@ describe('Pinned multi-app deployment orchestration', () => {
       ]),
       1
     )
+  })
+  it('targets APP_SERVER_URL in emitted native config without changing stored defaults', async () => {
+    const settings = JSON.parse(readFileSync(config, 'utf8')) as {
+      branches: {
+        master: { settings: { apps: Record<string, { apiOrigin?: string }> } }
+      }
+    }
+    const apps = settings.branches.master.settings.apps
+    apps[app].apiOrigin = 'https://default.example.test'
+    apps['app.teamstation.cameraman'] = {
+      ...apps[app],
+      apiOrigin: 'https://other.example.test'
+    }
+    writeFileSync(config, JSON.stringify(settings), { mode: 0o600 })
+    const before = readFileSync(config, 'utf8')
+    for (const [input, origin] of [
+      ['preview.example.test', 'https://preview.example.test'],
+      [
+        'https://preview.example.test:8443/',
+        'https://preview.example.test:8443'
+      ],
+      [undefined, 'https://default.example.test']
+    ]) {
+      const verify: Builder = async context => {
+        const env = buildEnvironment(context)
+        assert.equal(env.TS_API_BASE_URL, origin + '/api/v1')
+        assert.equal(env.TS_PRIMARY_HOST, new URL(origin!).host)
+        assert.equal(
+          context.settings.apps['app.teamstation.cameraman'].apiOrigin,
+          'https://other.example.test'
+        )
+        const compiled = execFileSync(
+          process.execPath,
+          [
+            '-e',
+            `
+          const {transformFileSync}=require('@babel/core');
+          const vm=require('node:vm');
+          const code=transformFileSync('src/app/native/config.ts').code;
+          const module={exports:{}};
+          vm.runInNewContext(code,{module,exports:module.exports,require:()=>({PRIMARY_HOST:'default.example.test',httpOrigin:h=>'https://'+h})});
+          if(code.includes('process.env.TS_API_BASE_URL')) throw new Error('URL not inlined');
+          console.log(module.exports.apiBaseUrl);
+        `
+          ],
+          {
+            cwd: path.resolve('.'),
+            env: { ...process.env, ...env },
+            encoding: 'utf8'
+          }
+        ).trim()
+        assert.equal(compiled, origin + '/api/v1')
+        console.log('Native Babel config target:', compiled)
+        return await builder(context)
+      }
+      assert.equal(
+        await runCheckout(
+          parse('ios'),
+          { ios: verify },
+          new AbortController().signal,
+          () => {},
+          source,
+          { APP_SERVER_URL: input }
+        ),
+        0
+      )
+      assert.equal(readFileSync(config, 'utf8'), before)
+    }
+  })
+  it('rejects invalid APP_SERVER_URL before allocating counters or output', async () => {
+    for (const input of [
+      '',
+      'http://preview.example.test',
+      'https://user:password@preview.example.test',
+      'https://preview.example.test/path',
+      'https://preview.example.test?query=x',
+      'https://preview.example.test#fragment',
+      'localhost',
+      'https://LOCALHOST',
+      'https://127.0.0.1',
+      'https://127.1',
+      'https://[::1]',
+      'https://localhost.example.test'
+    ]) {
+      await assert.rejects(
+        runCheckout(
+          parse('ios'),
+          { ios: builder },
+          new AbortController().signal,
+          () => {},
+          source,
+          { APP_SERVER_URL: input }
+        )
+      )
+      assert(!existsSync(path.join(source, '.git/buildNum.json')))
+      assert(!existsSync(path.join(root, 'output')))
+    }
+    const invalid = spawnSync(
+      process.execPath,
+      [
+        '-r',
+        register,
+        deployFile,
+        '--config',
+        config,
+        '--app',
+        app,
+        '--branch',
+        'master',
+        '--platform',
+        'ios',
+        '--dry-run'
+      ],
+      {
+        cwd: source,
+        env: { ...process.env, APP_SERVER_URL: 'http://preview.example.test' },
+        encoding: 'utf8'
+      }
+    )
+    assert.equal(invalid.status, 1)
   })
   it('pins all platforms, retains verified retry files and publishes successes after partial failure', async () => {
     writeFileSync(path.join(source, 'package.json'), '{"version":"9.8.7"}')

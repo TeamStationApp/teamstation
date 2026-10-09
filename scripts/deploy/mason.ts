@@ -77,7 +77,8 @@ export async function masonDeploy(
           console.log(message)
           if (/^(ios|android|macos) /.test(message)) messages.push(message)
         },
-        cwd
+        cwd,
+        env
       )
     }
   } catch {
