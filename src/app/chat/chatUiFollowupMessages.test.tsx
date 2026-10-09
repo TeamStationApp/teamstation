@@ -1270,7 +1270,11 @@ function positionWrapper(messageId: string): HTMLElement {
 
 describe('chat follow-up conversation message integration', function () {
   it('preserves the current reading anchor when a cancelled history request later prepends, including append growth and late scroll/layout events', async function () {
-    for (const browserAnchors of [false, true]) {
+    for (const [browserAnchors, downstreamGrowth] of [
+      [false, 0],
+      [true, 0],
+      [false, 34]
+    ] as const) {
       if (root != null) {
         await act(async () => {
           root!.unmount()
@@ -1281,7 +1285,10 @@ describe('chat follow-up conversation message integration', function () {
       const original = safeMessage({
         id: 'msg_cancelled_page_original',
         seq: 1,
-        body: 'Older original'
+        body:
+          downstreamGrowth === 0
+            ? 'Older original'
+            : 'Practice notes '.repeat(15)
       })
       const reading = safeMessage({
         id: 'msg_current_reading_anchor',
@@ -1309,6 +1316,10 @@ describe('chat follow-up conversation message integration', function () {
       let loads = 0
       engine.loadEarlier = async () => {
         loads += 1
+        if (loads === 1) {
+          engine.update({ ...engine.current, historyBefore: 10 })
+          return engine.current
+        }
         return await new Promise(resolve => {
           finish = resolve
         })
@@ -1323,9 +1334,35 @@ describe('chat follow-up conversation message integration', function () {
       )!
       const body = scroller.firstElementChild as HTMLElement
       let contentHeight = 1000
+      const anchor = positionWrapper(reading.id)
+      let anchorContentY = 400
+      scroller.getBoundingClientRect = () => new window.DOMRect(0, 0, 640, 400)
+      body.getBoundingClientRect = () =>
+        new window.DOMRect(0, -scroller.scrollTop, 640, contentHeight)
+      anchor.getBoundingClientRect = () =>
+        new window.DOMRect(0, anchorContentY - scroller.scrollTop, 640, 100)
+      positionWrapper(reply.id).getBoundingClientRect = () =>
+        new window.DOMRect(
+          0,
+          anchorContentY + 100 - scroller.scrollTop,
+          640,
+          100 + (engine.current.hasEarlier ? 0 : downstreamGrowth)
+        )
       Object.defineProperties(scroller, {
         offsetHeight: { value: 400, configurable: true },
+        offsetWidth: { value: 640, configurable: true },
         scrollHeight: { get: () => contentHeight, configurable: true }
+      })
+      Object.defineProperties(body, {
+        offsetParent: { value: scroller, configurable: true },
+        offsetHeight: { get: () => contentHeight, configurable: true },
+        offsetWidth: { value: 640, configurable: true }
+      })
+      Object.defineProperties(anchor, {
+        offsetParent: { value: body, configurable: true },
+        offsetTop: { get: () => anchorContentY, configurable: true },
+        offsetHeight: { value: 100, configurable: true },
+        offsetWidth: { value: 640, configurable: true }
       })
       const moves: Array<[number, string | undefined]> = []
       scroller.scroll = options => {
@@ -1336,9 +1373,27 @@ describe('chat follow-up conversation message integration', function () {
       }
       await measured(scroller, 640, 400)
       await measured(body, 640, contentHeight)
+      const nativeAnchor = anchor as HTMLElement & {
+        measureLayout: (
+          relative: unknown,
+          success: (x: number, y: number, width: number, height: number) => void
+        ) => void
+      }
+      const measureCurrentAnchor = nativeAnchor.measureLayout
+      await measured(anchor, 640, 100, anchorContentY)
+      nativeAnchor.measureLayout = measureCurrentAnchor
+      expect(scroller.scrollTop).equals(80)
+      await press('Load earlier messages')
+      expect(loads).equals(1)
+      expect(engine.current.historyBefore).equals(10)
+      expect(engine.current.messages.map(value => value.id)).deep.equals([
+        reading.id,
+        reply.id
+      ])
+      expect(anchor.getBoundingClientRect().top).equals(320)
       expect(scroller.scrollTop).equals(80)
       await press('Jump to message from Former member: Message unavailable')
-      expect(loads).equals(1)
+      expect(loads).equals(2)
       expect(finish).not.equals(undefined)
 
       await act(async () => {
@@ -1349,10 +1404,6 @@ describe('chat follow-up conversation message integration', function () {
         scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
         await wait(120)
       })
-      const anchor = positionWrapper(reading.id)
-      let anchorContentY = 400
-      anchor.getBoundingClientRect = () =>
-        new window.DOMRect(0, anchorContentY - scroller.scrollTop, 640, 100)
       const currentAnchor = anchor.getBoundingClientRect().top
       expect(currentAnchor).equals(160)
 
@@ -1383,7 +1434,10 @@ describe('chat follow-up conversation message integration', function () {
               id: original.id,
               authorId: original.senderUserId,
               authorName: original.senderName,
-              snippet: original.body,
+              snippet:
+                downstreamGrowth === 0
+                  ? original.body
+                  : `${original.body.slice(0, 200)}…`,
               status: 'ok' as const
             }
           },
@@ -1398,7 +1452,7 @@ describe('chat follow-up conversation message integration', function () {
       })
       await measured(positionWrapper(original.id), 640, 100, 100)
       anchorContentY += 600
-      contentHeight += 600
+      contentHeight += 600 + downstreamGrowth
       if (browserAnchors) {
         await act(async () => {
           scroller.scrollTop = 840
@@ -1411,9 +1465,10 @@ describe('chat follow-up conversation message integration', function () {
         await wait(80)
       })
       await measured(body, 640, contentHeight)
-      expect(scroller.scrollTop, `browser anchoring: ${browserAnchors}`).equals(
-        840
-      )
+      expect(
+        scroller.scrollTop,
+        `browser anchoring: ${browserAnchors}, growth below anchor: ${downstreamGrowth}`
+      ).equals(840)
       expect(anchor.getBoundingClientRect().top).equals(currentAnchor)
 
       await act(async () => {
