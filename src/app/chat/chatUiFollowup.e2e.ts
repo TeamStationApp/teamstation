@@ -1,6 +1,6 @@
 /** Functional follow-up scenarios run only on explicitly supplied fixture surfaces. */
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
@@ -30,6 +30,12 @@ interface Device {
     origin: string
   }) => Promise<unknown>
   uploadFile: (options: { css: string; path: string }) => Promise<unknown>
+  scrollUntilVisible: (options: {
+    element: { css: string }
+    direction: string
+    centerElement?: boolean
+    timeout?: number
+  }) => Promise<unknown>
   detach: () => Promise<unknown>
 }
 interface Daemon {
@@ -65,7 +71,12 @@ async function signIn(device: Device, key: string): Promise<void> {
   const authorized = (await device.evalBrowserScript({
     script: `const response=await fetch(${JSON.stringify(API + '/auth/me')},{credentials:'include'});if(response.ok){const user=await response.json();if(Number(user.id)!==${credentials.userId})throw new Error('Fixture profile belongs to another user');return true}return false`
   })) as { data?: unknown }
-  if (authorized.data === 'true' || authorized.data === true) return
+  if (authorized.data === 'true' || authorized.data === true) {
+    const ready = (await device.evalBrowserScript({
+      script: `for(let n=0;n<30;n++){if(document.querySelector('[aria-label^="Account,"]'))return true;await new Promise(r=>setTimeout(r,50))}return false`
+    })) as { data?: unknown }
+    if (ready.data === 'true' || ready.data === true) return
+  }
   await device.tapOn({ text: 'Sign in', optional: true, timeout: 3000 })
   await device.tapOn({
     text: 'Use a password instead',
@@ -73,12 +84,13 @@ async function signIn(device: Device, key: string): Promise<void> {
     timeout: 3000
   })
   const available = (await device.evalBrowserScript({
-    script: 'return document.body.innerText.includes("E-mail address")'
+    script:
+      'return document.querySelector("input[aria-label=\\"E-mail address\\"]")!=null'
   })) as { data?: unknown }
   if (available.data === 'false' || available.data === false) return
-  await device.tapOn({ text: 'E-mail address' })
+  await device.tapOn({ css: 'input[aria-label="E-mail address"]' })
   await device.inputText({ text: credentials.email })
-  await device.tapOn({ text: 'Password' })
+  await device.tapOn({ css: 'input[aria-label="Password"]' })
   await device.inputText({ text: credentials.password })
   await device.tapOn({ text: 'Sign in' })
   await device.assertVisible({ text: 'Follow a team', timeout: 60000 })
@@ -1202,6 +1214,371 @@ async function reader(daemon: Daemon): Promise<void> {
   }
 }
 
+async function lockedCurrentReply(daemon: Daemon): Promise<void> {
+  const conversation = required('CHAT_UI_LOCKED_CONVERSATION')
+  const originalId = required('CHAT_UI_LOCKED_ORIGINAL')
+  assert.notEqual(conversation, required('CHAT_UI_CONVERSATION'))
+  const m = await daemon.attach({
+    device: 'chat-ui-locked-current-reply',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const body = 'Current reply probe ' + Date.now().toString(36)
+  try {
+    await signIn(m, 'L')
+    await m.openLink({ link: WEB + '/chat/' + conversation })
+    await m.assertVisible({
+      text: required('CHAT_UI_LOCKED_ORIGINAL_BODY'),
+      timeout: 60000
+    })
+    await m.evalBrowserScript({
+      script: `const rows=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();const original=rows.find(x=>x.id===${JSON.stringify(originalId)});if(!original||original.clearedAt!=null)throw new Error('Pre-reset original envelope unavailable');window.chatUiLockedOriginalEpoch=original.epoch;const row=document.querySelector(${JSON.stringify('[data-testid="chat-message-' + originalId + '"]')});if(!row||!row.innerText.includes(${JSON.stringify(required('CHAT_UI_LOCKED_ORIGINAL_BODY'))}))throw new Error('L cannot read the original normally');row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));await new Promise(r=>setTimeout(r,250));return JSON.stringify({oldEpoch:original.epoch,retainedAuthorReadsOriginal:true})`
+    })
+    await m.tapOn({
+      css: `[data-testid="chat-message-${originalId}"] [aria-label="Reply"]`
+    })
+    await m.assertVisible({ text: 'Cancel reply' })
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: body })
+    await m.pressKey({ key: 'Enter' })
+    const result = (await m.evalBrowserScript({
+      script: `for(let n=0;n<200;n++){const row=[...document.querySelectorAll('[data-testid^="chat-message-"]')].find(x=>x.getAttribute('data-testid')!=='chat-message-pane'&&x.innerText.includes(${JSON.stringify(body)}));if(row&&document.querySelector('[data-testid="chat-composer"]').value===''){const id=row.getAttribute('data-testid').slice('chat-message-'.length);const raw=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();const posted=raw.find(x=>x.id===id);if(!posted||posted.epoch<=window.chatUiLockedOriginalEpoch)throw new Error('Current reply did not rotate beyond old epoch');return JSON.stringify({conversationId:${JSON.stringify(conversation)},originalId:${JSON.stringify(originalId)},originalEpoch:window.chatUiLockedOriginalEpoch,replyId:id,replyBody:${JSON.stringify(body)},replyEpoch:posted.epoch,normalReply:true,historyApprovalClicked:false})}await new Promise(r=>setTimeout(r,50))}throw new Error('L current reply not acknowledged')`
+    })) as { data: unknown }
+    const metadata =
+      typeof result.data === 'string' ? JSON.parse(result.data) : result.data
+    writeFileSync(
+      required('CHAT_UI_LOCKED_REPLY_RESULT'),
+      JSON.stringify(metadata, null, 2),
+      { mode: 0o600 }
+    )
+    console.log(
+      'Normal L current reply in newer epoch prepared; reset-S decoded-outer/locked-original assertions remain native helper-owned'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
+async function lockedProvider(daemon: Daemon, phase: string): Promise<void> {
+  const conversation = required('CHAT_UI_LOCKED_CONVERSATION')
+  const originalId = required('CHAT_UI_LOCKED_ORIGINAL')
+  const m = await daemon.attach({
+    device: 'chat-ui-locked-provider-' + phase,
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'S')
+    if (phase === 'prepare') {
+      await m.openLink({ link: WEB + '/chat/' + conversation })
+      await m.assertVisible({
+        text: required('CHAT_UI_LOCKED_ORIGINAL_BODY'),
+        timeout: 60000
+      })
+      const selector = `[data-testid="chat-message-${originalId}"]`
+      await m.evalBrowserScript({
+        script: `const row=document.querySelector(${JSON.stringify(selector)});if(!row)throw new Error('Pre-reset S original missing');row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));await new Promise(r=>setTimeout(r,250));return true`
+      })
+      await m.tapOn({ css: selector + ' [aria-label="Reply"]' })
+      await m.assertVisible({ text: 'Replying to You' })
+      const body = 'Locked history self quote ' + Date.now().toString(36)
+      await m.tapOn({ css: '[data-testid="chat-composer"]' })
+      await m.inputText({ text: body })
+      await m.pressKey({ key: 'Enter' })
+      await m.evalBrowserScript({
+        script: `for(let n=0;n<100;n++){const row=[...document.querySelectorAll('[data-testid^="chat-message-"]')].find(x=>x.getAttribute('data-testid')!=='chat-message-pane'&&x.innerText.includes(${JSON.stringify(body)}));if(row&&document.querySelector('[data-testid="chat-composer"]').value===''){window.chatUiLockedSelfReply=row.getAttribute('data-testid').slice('chat-message-'.length);return true}await new Promise(r=>setTimeout(r,50))}throw new Error('Pre-reset self quote not delivered')`
+      })
+      await m.evalBrowserScript({
+        script: `document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'});return true`
+      })
+      await m.tapOn({ css: selector + ' [aria-label="More message actions"]' })
+      await m.tapOn({ text: 'Pin' })
+      await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
+      const result = (await m.evalBrowserScript({
+        script: `const raw=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();const pins=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/pins')},{credentials:'include'})).json();const original=raw.find(x=>x.id===${JSON.stringify(originalId)});if(!original||!pins.some(x=>x.messageId===original.id))throw new Error('Pre-reset pin/envelope not saved');return JSON.stringify({conversationId:${JSON.stringify(conversation)},originalId:original.id,originalBody:${JSON.stringify(required('CHAT_UI_LOCKED_ORIGINAL_BODY'))},originalEpoch:original.epoch,selfReplyId:window.chatUiLockedSelfReply,selfReplyBody:${JSON.stringify(body)},pinnedBeforeReset:true,normalUi:true})`
+      })) as { data: unknown }
+      writeFileSync(
+        required('CHAT_UI_LOCKED_PROVIDER_RESULT'),
+        typeof result.data === 'string'
+          ? result.data
+          : JSON.stringify(result.data),
+        { mode: 0o600 }
+      )
+      console.log(
+        'Task-owned S normal self quote and personal pin prepared before reset'
+      )
+    } else if (phase === 'reset') {
+      await m.openLink({ link: WEB + '/chat/' + conversation })
+      await m.assertVisible({ text: 'Link this device', timeout: 60000 })
+      await m.tapOn({ text: 'I can’t reach my other devices' })
+      await m.assertVisible({ text: 'Reset chat on this device' })
+      await m.tapOn({ text: 'Reset chat on this device' })
+      await m.evalBrowserScript({
+        script: `for(let n=0;n<100;n++){const r=await fetch(${JSON.stringify(API + '/chat/devices')},{credentials:'include'});if(r.ok&&(await r.json()).some(x=>x.current&&x.linked&&x.revokedAt==null)){await new Promise(r=>setTimeout(r,250));return true}await new Promise(r=>setTimeout(r,100))}throw new Error('Normal reset did not link its current device')`
+      })
+      await m.openLink({ link: WEB + '/chat/devices' })
+      await m.assertVisible({ text: 'Your devices', timeout: 60000 })
+      await m.evalBrowserScript({
+        script: `const pins=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/pins')},{credentials:'include'})).json();if(!pins.some(x=>x.messageId===${JSON.stringify(originalId)}))throw new Error('Normal reset removed personal pin');return true`
+      })
+      writeFileSync(
+        required('CHAT_UI_LOCKED_PROVIDER_RESULT'),
+        JSON.stringify(
+          {
+            resetUiCompleted: true,
+            originalPinRetained: true,
+            historyApprovalClicked: false,
+            providerProfile: required('CHAT_UI_PROFILE_DIR')
+          },
+          null,
+          2
+        ),
+        { mode: 0o600 }
+      )
+      console.log(
+        'Fresh S provider normally reset; old personal pin retained; old history not approved'
+      )
+    } else {
+      assert.equal(phase, 'approve')
+      const request: { code: string; deviceId?: string } = JSON.parse(
+        readFileSync(required('CHAT_UI_LOCKED_LINK_REQUEST'), 'utf8')
+      )
+      assert(
+        /^\d{6}$/.test(request.code),
+        'A private six-digit native request is required'
+      )
+      await m.openLink({ link: WEB + '/chat/devices' })
+      await m.assertVisible({ text: 'Waiting for approval', timeout: 60000 })
+      await m.evalBrowserScript({
+        script: `const code=document.querySelector('[aria-label='+JSON.stringify(${JSON.stringify('Code ' + request.code)})+']');if(!code)throw new Error('Native/provider six-digit codes do not match');let card=code.parentElement;while(card&&!card.querySelector('[aria-label^="Approve "]'))card=card.parentElement;const button=card?.querySelector('[aria-label^="Approve "]');if(!button)throw new Error('Matching normal link approval unavailable');button.setAttribute('data-chat-link-approve','true');return true`
+      })
+      await m.tapOn({ css: '[data-chat-link-approve="true"]' })
+      if (request.deviceId != null)
+        await m.evalBrowserScript({
+          script: `for(let n=0;n<100;n++){const r=await fetch(${JSON.stringify(API + '/chat/devices')},{credentials:'include'});const device=(await r.json()).find(x=>x.id===${JSON.stringify(request.deviceId)});if(device?.linked&&device.revokedAt==null)return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Matching native device did not become linked')`
+        })
+      console.log(
+        'Matching six-digit native request approved through normal Chat devices UI; no history approval'
+      )
+    }
+  } finally {
+    await m.detach()
+  }
+  if (phase === 'prepare') {
+    const destination = required('CHAT_UI_LOCKED_PROVIDER_BACKUP')
+    mkdirSync(destination, { recursive: true })
+    cpSync(required('CHAT_UI_PROFILE_DIR'), destination, {
+      recursive: true,
+      filter: source =>
+        !/^Singleton|^DevToolsActivePort$/.test(
+          source.slice(source.lastIndexOf('/') + 1)
+        )
+    })
+    console.log(
+      'Closed encrypted provider profile preserved privately before normal reset'
+    )
+  }
+}
+
+async function maappToggle(daemon: Daemon, desired: boolean): Promise<void> {
+  const league = required('CHAT_UI_TEST_LEAGUE')
+  const m = await daemon.attach({
+    device: 'chat-ui-owned-maapp',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'L')
+    await m.openLink({ link: WEB + '/leagues/' + league + '/manage' })
+    await m.scrollUntilVisible({
+      element: {
+        css: '[aria-label="SafeSport Local Affiliated Organization"]'
+      },
+      direction: 'DOWN',
+      centerElement: true,
+      timeout: 30000
+    })
+    const before = (await m.evalBrowserScript({
+      script: `const r=await fetch(${JSON.stringify(API + '/manage/league/' + league)},{credentials:'include'});if(!r.ok)throw new Error('Owned league unavailable');return JSON.stringify((await r.json()).scope.safesportLao)`
+    })) as { data: unknown }
+    const value =
+      typeof before.data === 'string' ? JSON.parse(before.data) : before.data
+    assert.equal(typeof value, 'boolean')
+    if (value !== desired)
+      await m.tapOn({
+        css: '[aria-label="SafeSport Local Affiliated Organization"]'
+      })
+    await m.evalBrowserScript({
+      script: `for(let n=0;n<100;n++){const r=await fetch(${JSON.stringify(API + '/manage/league/' + league)},{credentials:'include'});if(r.ok&&(await r.json()).scope.safesportLao===${desired})return true;await new Promise(r=>setTimeout(r,50))}throw new Error('Normal league switch not saved')`
+    })
+    writeFileSync(
+      required('CHAT_UI_MAAPP_RESULT'),
+      JSON.stringify(
+        { normalUi: true, before: value, after: desired, leagueId: league },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    )
+    console.log(
+      desired
+        ? 'Owned synthetic league normal SafeSport switch ON'
+        : 'Owned synthetic league normal SafeSport switch OFF restored; closed rooms stay closed'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
+async function disposablePrepare(daemon: Daemon): Promise<void> {
+  const m = await daemon.attach({
+    device: 'chat-ui-disposable-s-room',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const originalBody = 'Disposable original notes ' + Date.now().toString(36)
+  const selfReplyBody = 'Disposable self reply notes ' + Date.now().toString(36)
+  const decode = (value: unknown): any => {
+    const data = (value as { data: unknown }).data
+    return typeof data === 'string' ? JSON.parse(data) : data
+  }
+  try {
+    await signIn(m, 'S')
+    await m.openLink({ link: WEB + '/chat/new' })
+    await m.tapOn({ css: 'input[aria-label="Name"]' })
+    await m.inputText({
+      text: required('CHAT_UI_DISPOSABLE_PLAYER_NAME').split(' ')[0]
+    })
+    await m.tapOn({
+      text: 'Pick ' + required('CHAT_UI_DISPOSABLE_PLAYER_NAME'),
+      timeout: 30000
+    })
+    await m.tapOn({ text: 'Start conversation' })
+    await m.assertVisible({ text: 'Include another adult', timeout: 30000 })
+    await m.tapOn({
+      text: 'Include ' + required('CHAT_UI_DISPOSABLE_GUARDIAN_NAME'),
+      timeout: 30000
+    })
+    await m.tapOn({ text: 'Start with them' })
+    await m.tapOn({ css: '[data-testid="chat-composer"]', timeout: 60000 })
+    await m.inputText({ text: originalBody })
+    await m.pressKey({ key: 'Enter' })
+    const originalId = decode(
+      await m.evalBrowserScript({
+        script: `for(let n=0;n<100;n++){const row=[...document.querySelectorAll('[data-testid^="chat-message-"]')].find(x=>x.getAttribute('data-testid')!=='chat-message-pane'&&x.innerText.includes(${JSON.stringify(originalBody)}));if(row&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify(row.getAttribute('data-testid').slice('chat-message-'.length));await new Promise(r=>setTimeout(r,50))}throw new Error('Disposable original not delivered')`
+      })
+    ) as string
+    const row = `[data-testid="chat-message-${originalId}"]`
+    await m.evalBrowserScript({
+      script: `document.querySelector(${JSON.stringify(row)}).dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await m.tapOn({ css: row + ' [aria-label="Reply"]' })
+    await m.assertVisible({ text: 'Replying to You' })
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: selfReplyBody })
+    await m.pressKey({ key: 'Enter' })
+    const result = decode(
+      await m.evalBrowserScript({
+        script: `for(let n=0;n<100;n++){const row=[...document.querySelectorAll('[data-testid^="chat-message-"]')].find(x=>x.getAttribute('data-testid')!=='chat-message-pane'&&x.innerText.includes(${JSON.stringify(selfReplyBody)}));if(row&&document.querySelector('[data-testid="chat-composer"]').value===''){const reply=row.getAttribute('data-testid').slice('chat-message-'.length);const chats=await(await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'})).json();const chat=chats.find(x=>x.kind==='dm'&&x.lastPostId===reply);if(!chat||chat.memberCount!==3)throw new Error('Exact three-person room not identified');return JSON.stringify({conversationId:chat.id,originalId:${JSON.stringify(originalId)},originalBody:${JSON.stringify(originalBody)},selfReplyId:reply,selfReplyBody:${JSON.stringify(selfReplyBody)},messageId:reply,bodyStub:${JSON.stringify(selfReplyBody)},pinnedBeforeDelete:false,normalUi:true})}await new Promise(r=>setTimeout(r,50))}throw new Error('Disposable self reply not delivered')`
+      })
+    )
+    assert.notEqual(result.conversationId, required('CHAT_UI_CONVERSATION'))
+    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
+    await m.tapOn({ text: 'Pin' })
+    await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
+    result.pinnedBeforeDelete = true
+    writeFileSync(
+      required('CHAT_UI_DISPOSABLE_FIXTURE_FILE'),
+      JSON.stringify(result, null, 2),
+      { mode: 0o600 }
+    )
+    console.log(
+      'Normal S/player/guardian room prepared via MAAPP picker: original,selfreply andpersonalpin; wait BOTH native delete-ready ACKs'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
+async function disposableDelete(daemon: Daemon): Promise<void> {
+  const fixture = JSON.parse(
+    readFileSync(required('CHAT_UI_DISPOSABLE_FIXTURE_FILE'), 'utf8')
+  ) as { conversationId: string; originalId: string; originalBody: string }
+  const readyFiles = JSON.parse(
+    required('CHAT_UI_DISPOSABLE_READY_FILES')
+  ) as string[]
+  assert.equal(readyFiles.length, 2)
+  for (const file of readyFiles) {
+    const ready = JSON.parse(readFileSync(file, 'utf8'))
+    assert.equal(ready.conversationId, fixture.conversationId)
+    assert.equal(ready.originalId, fixture.originalId)
+    assert.equal(ready.ready, true)
+  }
+  const m = await daemon.attach({
+    device: 'chat-ui-disposable-s-delete',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, 'S')
+    await m.openLink({ link: WEB + '/chat/' + fixture.conversationId })
+    await m.assertVisible({ text: fixture.originalBody, timeout: 60000 })
+    const row = `[data-testid="chat-message-${fixture.originalId}"]`
+    await m.evalBrowserScript({
+      script: `const row=document.querySelector(${JSON.stringify(row)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
+    await m.tapOn({ text: 'Delete' })
+    await m.assertVisible({
+      text: 'This message will be removed for everyone.'
+    })
+    await m.tapOn({ text: 'Delete' })
+    await m.evalBrowserScript({
+      script: `for(let n=0;n<100;n++){const pins=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + fixture.conversationId + '/pins')},{credentials:'include'})).json();const raw=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + fixture.conversationId + '/messages')},{credentials:'include'})).json();if(!pins.some(x=>x.messageId===${JSON.stringify(fixture.originalId)})&&raw.find(x=>x.id===${JSON.stringify(fixture.originalId)})?.clearedAt!=null)return true;await new Promise(r=>setTimeout(r,50))}throw new Error('Normal authored deletion/pinpurge not observed')`
+    })
+    console.log(
+      'Normal S authored deletion andpinpurge complete; native live quoted-snapshot suppression remains helper-owned'
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
 async function main(): Promise<void> {
   const scenario = process.argv[2]
   assert(
@@ -1214,6 +1591,14 @@ async function main(): Promise<void> {
       scenario === 'composeFull' ||
       scenario === 'picker' ||
       scenario === 'reader' ||
+      scenario === 'lockedCurrentReply' ||
+      scenario === 'lockedPrepare' ||
+      scenario === 'lockedReset' ||
+      scenario === 'lockedApprove' ||
+      scenario === 'maappOn' ||
+      scenario === 'maappOff' ||
+      scenario === 'disposablePrepare' ||
+      scenario === 'disposableDelete' ||
       scenario === 'S5' ||
       scenario === 'S6' ||
       scenario === 'S9' ||
@@ -1239,6 +1624,16 @@ async function main(): Promise<void> {
     else if (scenario === 'composeFull') await composeFull(daemon)
     else if (scenario === 'picker') await picker(daemon)
     else if (scenario === 'reader') await reader(daemon)
+    else if (scenario === 'lockedCurrentReply') await lockedCurrentReply(daemon)
+    else if (scenario === 'lockedPrepare')
+      await lockedProvider(daemon, 'prepare')
+    else if (scenario === 'lockedReset') await lockedProvider(daemon, 'reset')
+    else if (scenario === 'lockedApprove')
+      await lockedProvider(daemon, 'approve')
+    else if (scenario === 'maappOn') await maappToggle(daemon, true)
+    else if (scenario === 'maappOff') await maappToggle(daemon, false)
+    else if (scenario === 'disposablePrepare') await disposablePrepare(daemon)
+    else if (scenario === 'disposableDelete') await disposableDelete(daemon)
     else if (scenario === 'S5') await s5(daemon)
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
