@@ -17,6 +17,8 @@ import {
   sameSpots
 } from './nameplateOverlay'
 import {
+  EMPTY_POSITION_FONT,
+  EMPTY_POSITION_SIZE,
   NAMEPLATE_FONT,
   NAMEPLATE_LINE_GAP,
   NAMEPLATE_NUMBER_FONT,
@@ -119,8 +121,10 @@ function Nameplate({
             borderWidth: face.emptyPosition === true ? 2 : 0,
             borderStyle: face.emptyPosition === true ? 'dashed' : 'solid',
             borderColor: '#d65454',
-            width: face.emptyPosition === true ? 40 : undefined,
-            height: face.emptyPosition === true ? 40 : undefined,
+            width:
+              face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
+            height:
+              face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
             justifyContent: 'center',
             alignItems: 'center'
           }}
@@ -130,9 +134,16 @@ function Nameplate({
             style={[
               styles.line,
               {
-                fontSize: NAMEPLATE_FONT,
-                lineHeight: NAMEPLATE_FONT,
-                color: face.emptyPosition === true ? '#ffb6b6' : '#ffffff'
+                fontSize:
+                  face.emptyPosition === true
+                    ? EMPTY_POSITION_FONT
+                    : NAMEPLATE_FONT,
+                lineHeight:
+                  face.emptyPosition === true
+                    ? EMPTY_POSITION_FONT
+                    : NAMEPLATE_FONT,
+                fontWeight: face.emptyPosition === true ? '700' : '400',
+                color: '#ffffff'
               }
             ]}
           >

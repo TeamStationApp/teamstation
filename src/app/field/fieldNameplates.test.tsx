@@ -31,16 +31,16 @@ describe('the browser’s nameplates', function () {
         name: 'P',
         number: '',
         emptyPosition: true,
-        width: 40,
-        height: 40,
+        width: 48,
+        height: 48,
         anchorY: 0.5
       })
     ])
     const node = host.firstElementChild as HTMLElement
     expect(node.getAttribute('aria-label')).equals('Assign P')
     expect(node.style.borderStyle).equals('dashed')
-    expect(node.style.width).equals('40px')
-    expect(node.style.height).equals('40px')
+    expect(node.style.width).equals('48px')
+    expect(node.style.height).equals('48px')
     expect(node.style.backgroundColor).equals('rgba(255, 190, 190, 0.22)')
     syncFieldNameplates(host, [plate('empty-P')])
     expect(node.style.borderStyle).equals('')

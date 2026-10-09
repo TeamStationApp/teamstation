@@ -16,6 +16,8 @@ export const NAMEPLATE_NUMBER_FONT = 10
 export const NAMEPLATE_PAD = 4
 /** Space between the name and the number under it. */
 export const NAMEPLATE_LINE_GAP = 2
+export const EMPTY_POSITION_SIZE = 48
+export const EMPTY_POSITION_FONT = 30
 export function hasPlayerLabel(player: FieldPlayer): boolean {
   // The batter and the pitcher are named on the scoreboard, not on the field.
   return (
@@ -125,11 +127,12 @@ export function projectPlayerLabel(
   const label = nameplateLabel(player)
   const box =
     player.emptyPosition === true
-      ? { width: 40, height: 40 }
+      ? { width: EMPTY_POSITION_SIZE, height: EMPTY_POSITION_SIZE }
       : nameplateSize(label)
   // Keep edge positions fully tappable on the narrow scoring field.
   const x = (ndc.x * 0.5 + 0.5) * width
   const y = (0.5 - ndc.y * 0.5) * height
+  const edgeInset = EMPTY_POSITION_SIZE / 2 + 2
   return {
     id: player.id,
     name: label.name,
@@ -138,10 +141,12 @@ export function projectPlayerLabel(
     uniformSide: player.uniformSide,
     emptyPosition: player.emptyPosition,
     x:
-      player.emptyPosition === true ? Math.max(22, Math.min(width - 22, x)) : x,
+      player.emptyPosition === true
+        ? Math.max(edgeInset, Math.min(width - edgeInset, x))
+        : x,
     y:
       player.emptyPosition === true
-        ? Math.max(22, Math.min(height - 22, y))
+        ? Math.max(edgeInset, Math.min(height - edgeInset, y))
         : y,
     anchorX,
     anchorY,

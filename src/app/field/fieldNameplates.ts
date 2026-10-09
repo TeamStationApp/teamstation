@@ -1,6 +1,7 @@
 import { fonts } from '../theme/fonts'
 import { nameplateColor } from './nameplateOverlay'
 import {
+  EMPTY_POSITION_FONT,
   NAMEPLATE_FONT,
   NAMEPLATE_LINE_GAP,
   NAMEPLATE_NUMBER_FONT,
@@ -66,7 +67,12 @@ export function syncFieldNameplates(
       node.style.fontWeight = '400'
       host.appendChild(node)
     }
-    const name = plateLine(node, 'name', NAMEPLATE_FONT)
+    const name = plateLine(
+      node,
+      'name',
+      plate.emptyPosition === true ? EMPTY_POSITION_FONT : NAMEPLATE_FONT
+    )
+    name.style.fontWeight = plate.emptyPosition === true ? '700' : '400'
     if (name.textContent !== plate.name) name.textContent = plate.name
     const existingNumber = node.querySelector('[data-line="number"]')
     if (plate.number === '') existingNumber?.remove()
@@ -89,7 +95,7 @@ export function syncFieldNameplates(
       plate.emptyPosition === true
         ? 'rgba(255, 190, 190, 0.22)'
         : nameplateColor(plate)
-    node.style.color = plate.emptyPosition === true ? '#ffb6b6' : '#ffffff'
+    node.style.color = '#ffffff'
     node.setAttribute(
       'aria-label',
       plate.emptyPosition === true ? `Assign ${plate.name}` : plate.name

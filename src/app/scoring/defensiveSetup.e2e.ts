@@ -418,8 +418,8 @@ describe('current defensive scoring setup browser', function () {
       )
       expect(boxes).has.length(9)
       for (const box of boxes) {
-        expect(box.width).equals(40)
-        expect(box.height).equals(40)
+        expect(box.width).equals(48)
+        expect(box.height).equals(48)
         expect(box.x).at.least(0)
         expect(box.x + box.width).at.most(390)
         expect(box.y).at.least(0)
