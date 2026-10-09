@@ -164,6 +164,8 @@ export function ConversationScreen(
   const [editing, setEditing] = useState<MessageView | undefined>(
     props.draft?.editing
   )
+  const editingNow = useRef(editing)
+  editingNow.current = editing
   const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
   const [sending, setSending] = useState(false)
   const sendingNow = useRef(false)
@@ -371,7 +373,7 @@ export function ConversationScreen(
     onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
-      editing,
+      editing: editingNow.current,
       picked: pickedNow.current,
       scrollOffset: scrolled.current.offset,
       hasScrollPosition: true,
@@ -475,7 +477,7 @@ export function ConversationScreen(
     onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
-      editing,
+      editing: editingNow.current,
       picked: pickedNow.current,
       scrollOffset: target,
       hasScrollPosition: true,
@@ -571,7 +573,7 @@ export function ConversationScreen(
         onDraftChange?.({
           text: textNow.current,
           replyTo: replyNow.current,
-          editing,
+          editing: editingNow.current,
           picked: pickedNow.current,
           scrollOffset: target,
           hasScrollPosition: true,
@@ -1048,10 +1050,10 @@ export function ConversationScreen(
               scrolled.current.content - 48
             scrolled.current.anchor = readingAnchor(messagePositions.current)
             props.onDraftChange?.({
-              text,
-              replyTo,
-              editing,
-              picked,
+              text: textNow.current,
+              replyTo: replyNow.current,
+              editing: editingNow.current,
+              picked: pickedNow.current,
               scrollOffset: scrolled.current.offset,
               hasScrollPosition: true,
               followNewest: scrolled.current.followNewest,
