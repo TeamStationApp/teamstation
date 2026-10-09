@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync
@@ -118,8 +119,10 @@ export async function ruby(
   processes = context.processes
 ): Promise<string> {
   const file = path.join(directory, `${operation}.json`)
-  const checkout = context.settings.match?.checkout
+  let checkout = context.settings.match?.checkout
   if ((operation === 'match' || operation === 'import') && checkout != null) {
+    context.reportStage?.('apple.signing-checkout')
+    checkout = realpathSync(checkout)
     noSymlinks(checkout)
     const stat = statSync(checkout)
     if (
@@ -137,9 +140,9 @@ export async function ruby(
     loginFile != null
   ) {
     login = privateJson(loginFile, asAppleLogin)
-    login.cookieDirectory = path.resolve(
-      path.dirname(loginFile),
-      login.cookieDirectory
+    context.reportStage?.('apple.session-store')
+    login.cookieDirectory = realpathSync(
+      path.resolve(path.dirname(loginFile), login.cookieDirectory)
     )
     noSymlinks(login.cookieDirectory)
     const stat = statSync(login.cookieDirectory)
@@ -195,7 +198,7 @@ export interface Signing {
   directory: string
   profiles: Map<string, Profile>
 }
-function profileDirectories(home: string): string[] {
+export function profileDirectories(home: string): string[] {
   const legacy = path.resolve(
     home,
     'Library/MobileDevice/Provisioning Profiles'
@@ -295,6 +298,7 @@ export async function withSigning<T>(
     if (context.target.platform === 'ios') {
       for (const name of readdirSync(profilesDirectory)) {
         if (!name.endsWith('.mobileprovision')) continue
+        context.reportStage?.('apple.profiles')
         const file = path.join(profilesDirectory, name)
         noSymlinks(file)
         const xml = path.join(directory, 'profile.plist')
