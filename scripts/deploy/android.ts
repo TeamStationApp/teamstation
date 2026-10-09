@@ -63,7 +63,7 @@ export function verifyAndroidMetadata(
   const clean = certificate.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
   const reports = [
     ...clean.matchAll(
-      /^[ \t]*Signer[ \t]+(?:#(\d+)|\(minSdkVersion=\d+(?: \(dev release=true\))?,[ \t]*maxSdkVersion=\d+\))[ \t]+certificate[ \t]+SHA-256[ \t]+digest:[ \t]*([a-fA-F0-9]{64})[ \t]*$/gim
+      /^[ \t]*(?:Signer[ \t]+(?:#(\d+)|\(minSdkVersion=\d+(?: \(dev release=true\))?,[ \t]*maxSdkVersion=\d+\))|V2 Signer:)[ \t]+certificate[ \t]+SHA-256[ \t]+digest:[ \t]*([a-fA-F0-9]{64})[ \t]*$/gim
     )
   ]
   const signers = [...new Set(reports.map(report => report[2].toLowerCase()))]
