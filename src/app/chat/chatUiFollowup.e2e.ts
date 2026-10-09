@@ -11,7 +11,8 @@ interface Device {
   openLink: (options: { link: string }) => Promise<unknown>
   openTab: (options: { url: string; tabLabel: string }) => Promise<unknown>
   assertVisible: (options: {
-    text: string
+    text?: string
+    css?: string
     timeout?: number
   }) => Promise<unknown>
   tapOn: (options: {
@@ -144,11 +145,11 @@ async function s1(daemon: Daemon): Promise<void> {
       const changed = await request('PATCH',path+'/preferences',{pinned:true,muted:true,manualUnread:true});
       const next = await request('PATCH',path+'/preferences',{manualUnread:true});
       check(next.manualUnreadRevision === changed.manualUnreadRevision + 1, 'Unread revision did not advance');
+      check(JSON.stringify(await request('GET',path+'/reads'))===JSON.stringify(window.chatUiReadCursors),'Preference-only writes changed public read cursors');
       await request('PUT',path+'/read',{seq:before.lastSeq,clearManualUnreadRevision:changed.manualUnreadRevision});
       const listed=(await request('GET','/chat/conversations')).find(chat=>chat.id===id);
       check(listed.preferences.pinned && listed.preferences.muted && listed.preferences.manualUnread, 'Personal state or stale-read protection missing');
       check(listed.lastPostAt === before.lastPostAt, 'Preferences changed recency');
-      check(JSON.stringify(await request('GET',path+'/reads'))===JSON.stringify(window.chatUiReadCursors),'Mark unread changed public read cursors');
       const pins=await request('PUT',path+'/pins/'+encodeURIComponent(message));
       check(pins.some(pin=>pin.messageId===message),'Pin was not saved');
       await request('PUT',path+'/pins/'+encodeURIComponent(message));
@@ -285,10 +286,17 @@ async function s2(daemon: Daemon): Promise<void> {
       const response=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});
       const chat=(await response.json()).find(item=>item.id===${JSON.stringify(required('CHAT_UI_CONVERSATION'))});
       if(!chat.preferences.manualUnread)throw new Error('Selected pane immediately cleared Mark unread');
+      const row=document.querySelector(${JSON.stringify('[data-testid="chat-conversation-' + required('CHAT_UI_CONVERSATION') + '"]')});
+      if(!row?.querySelector('[aria-label="Marked unread"]'))throw new Error('Manual unread indicator is not visible on the selected conversation row');
       return JSON.stringify({manualUnreadOnOpenPane:true,mutingAndPinning:true});
     `
       })
     )
+    if (!narrow)
+      writeFileSync(
+        join(artifacts, 'wide-conversation-unread-after.png'),
+        await m.screenshot()
+      )
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     console.log(
       await m.evalBrowserScript({
@@ -1579,6 +1587,190 @@ async function disposableDelete(daemon: Daemon): Promise<void> {
   }
 }
 
+/** Repeatable live-purge fixture: only new normal encrypted posts are deleted. */
+async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
+  const fixtureFile = required('CHAT_UI_PURGE_FIXTURE_FILE')
+  const conversationId = required('CHAT_UI_PURGE_CONVERSATION')
+  const m = await daemon.attach({
+    device: 'chat-ui-owned-purge',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const row = (id: string): string => `[data-testid="chat-message-${id}"]`
+  const api = `const api=${JSON.stringify(API)},id=${JSON.stringify(conversationId)};async function get(path){const r=await fetch(api+path,{credentials:'include'});if(!r.ok)throw new Error('Owned metadata unavailable');return await r.json()}const path='/chat/conversations/'+encodeURIComponent(id);`
+  const data = async <T>(script: string): Promise<T> => {
+    const result = (await m.evalBrowserScript({ script })) as { data?: unknown }
+    if (typeof result.data === 'string') {
+      try {
+        return JSON.parse(result.data) as T
+      } catch {
+        return result.data as T
+      }
+    }
+    return result.data as T
+  }
+  const send = async (body: string): Promise<string> => {
+    const before = await data<number>(
+      `${api}return (await get('/chat/conversations')).find(c=>c.id===id).lastSeq`
+    )
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: body })
+    await m.tapOn({ text: 'Send' })
+    return await data<string>(
+      `${api}for(let n=0;n<120;n++){const rows=await get(path+'/messages?after='+${before});const posts=rows.filter(r=>r.kind==='post');if(posts.length){if(posts.length!==1)throw new Error('One normal Send must create exactlyone post');return posts[0].id}await new Promise(r=>setTimeout(r,100))}throw new Error('Owned post not acknowledged')`
+    )
+  }
+  const more = async (id: string): Promise<void> => {
+    await m.evalBrowserScript({
+      script: `document.querySelector(${JSON.stringify(row(id))}).scrollIntoView({block:'center'});return true`
+    })
+    await m.tapOn({ css: row(id) })
+    await m.tapOn({ css: row(id) + ' [aria-label="More message actions"]' })
+  }
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({ link: `${WEB}/chat/${conversationId}` })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    const authorUserId = await data<number>(
+      `${api}return Number((await get('/auth/me')).id)`
+    )
+    if (!deleting) {
+      console.log(
+        '$ Normal Hc UI creates new original/selfreply and personalPin for live deletion; protected originals unchanged'
+      )
+      const originalBody = `Temporary purge note ${Date.now()}`
+      const originalId = await send(originalBody)
+      await m.assertVisible({ css: row(originalId), timeout: 30000 })
+      await m.tapOn({ css: row(originalId) })
+      await m.tapOn({ css: row(originalId) + ' [aria-label="Reply"]' })
+      const selfReplyBody = `Temporary reply note ${Date.now()}`
+      const selfReplyId = await send(selfReplyBody)
+      await more(originalId)
+      await m.tapOn({ text: 'Pin' })
+      await data(
+        `${api}for(let n=0;n<100;n++){if((await get(path+'/pins')).some(p=>p.messageId===${JSON.stringify(originalId)}))return true;await new Promise(r=>setTimeout(r,100))}throw new Error('PersonalPin not acknowledged')`
+      )
+      writeFileSync(
+        fixtureFile,
+        JSON.stringify(
+          {
+            synthetic: true,
+            conversationId,
+            originalId,
+            originalBody,
+            selfReplyId,
+            selfReplyBody,
+            authorUserId,
+            preparePersonalPin: true,
+            pinnedBeforeDelete: true,
+            messageId: selfReplyId,
+            bodyStub: selfReplyBody,
+            normalUi: true
+          },
+          null,
+          2
+        )
+      )
+      console.log('Fresh owned purge fixture READY; no deletion performed')
+    } else {
+      const fixture = JSON.parse(readFileSync(fixtureFile, 'utf8')) as {
+        synthetic: boolean
+        conversationId: string
+        originalId: string
+        authorUserId: number
+        attemptedDelete?: boolean
+      }
+      assert(
+        fixture.synthetic &&
+          fixture.conversationId === conversationId &&
+          fixture.authorUserId === authorUserId,
+        'Explicit same-author synthetic fixture required'
+      )
+      assert(
+        fixture.originalId !== required('CHAT_UI_MESSAGE'),
+        'Protected original cannot be deleted'
+      )
+      const protectedMessages: unknown = JSON.parse(
+        required('CHAT_UI_PROTECTED_MESSAGE_IDS')
+      )
+      assert(
+        Array.isArray(protectedMessages) &&
+          protectedMessages.length > 0 &&
+          protectedMessages.every(id => typeof id === 'string'),
+        'Explicit protected baseline message IDs required'
+      )
+      assert(
+        !protectedMessages.includes(fixture.originalId),
+        'Protected baseline post cannot be deleted'
+      )
+      const protectedHistory = JSON.parse(
+        readFileSync(required('CHAT_UI_HISTORY_FIXTURE_FILE'), 'utf8')
+      ) as Record<string, unknown>
+      for (const key of [
+        'originalId',
+        'attachmentId',
+        'attachmentReplyId',
+        'replyId'
+      ])
+        assert.notEqual(
+          fixture.originalId,
+          protectedHistory[key],
+          'Shared protected post cannot be deleted'
+        )
+      assert(
+        fixture.attemptedDelete !== true,
+        'Never repeat an attempted author Delete'
+      )
+      const signals = required('CHAT_UI_PURGE_READY_SIGNALS').split(',')
+      assert.equal(signals.length, 2, 'Both native watchers are required')
+      for (const signal of signals) {
+        const ready = JSON.parse(readFileSync(signal, 'utf8')) as {
+          ready?: boolean
+          originalId?: string
+        }
+        assert(
+          ready.ready === true && ready.originalId === fixture.originalId,
+          'Both exact native watchers must acknowledge before Delete'
+        )
+      }
+      const before = await data<number>(
+        `${api}return (await get('/chat/conversations')).find(c=>c.id===id).lastSeq`
+      )
+      await more(fixture.originalId)
+      await m.tapOn({ text: 'Delete' })
+      await m.assertVisible({
+        text: 'This message will be removed for everyone.'
+      })
+      fixture.attemptedDelete = true
+      writeFileSync(fixtureFile, JSON.stringify(fixture, null, 2))
+      await m.tapOn({ text: 'Delete' })
+      console.log(
+        '$ Authenticated encrypted author deletion POST kind=delete; GET wire clearedAt and GET personalpins verify disappearance'
+      )
+      const proof = await data<object>(
+        `${api}for(let n=0;n<100;n++){const changes=await get(path+'/messages?after='+${before});const deletion=changes.find(p=>p.kind==='delete'&&p.senderUserId===${authorUserId}&&p.targetIds?.includes(${JSON.stringify(fixture.originalId)}));const all=await get(path+'/messages?limit=100&before='+(${before}+2));const target=all.find(p=>p.id===${JSON.stringify(fixture.originalId)});const pins=await get(path+'/pins');if(deletion&&target?.clearedAt&&!pins.some(p=>p.messageId===${JSON.stringify(fixture.originalId)}))return JSON.stringify({authorizedEncryptedDeletion:true,targetCleared:true,personalPinPurged:true,deletePostId:deletion.id});await new Promise(r=>setTimeout(r,100))}throw new Error('Author deletion/personalpin purge not observed')`
+      )
+      console.log(JSON.stringify(proof))
+      writeFileSync(
+        fixtureFile + '.deleted.json',
+        JSON.stringify(proof, null, 2)
+      )
+    }
+  } finally {
+    await m.detach()
+  }
+}
+
 async function coarseTouch(daemon: Daemon): Promise<void> {
   const m = await daemon.attach({
     device: 'chat-ui-actual-coarse-touch',
@@ -1653,6 +1845,8 @@ async function main(): Promise<void> {
       scenario === 'disposablePrepare' ||
       scenario === 'disposableDelete' ||
       scenario === 'coarseTouch' ||
+      scenario === 'purgePrepare' ||
+      scenario === 'purgeDelete' ||
       scenario === 'S5' ||
       scenario === 'S6' ||
       scenario === 'S9' ||
@@ -1689,6 +1883,8 @@ async function main(): Promise<void> {
     else if (scenario === 'disposablePrepare') await disposablePrepare(daemon)
     else if (scenario === 'disposableDelete') await disposableDelete(daemon)
     else if (scenario === 'coarseTouch') await coarseTouch(daemon)
+    else if (scenario === 'purgePrepare') await purgeFixture(daemon, false)
+    else if (scenario === 'purgeDelete') await purgeFixture(daemon, true)
     else if (scenario === 'S5') await s5(daemon)
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
