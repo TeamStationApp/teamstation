@@ -19,6 +19,17 @@ import { createHash, createHmac } from 'node:crypto'
 const ALGORITHM = 'AWS4-HMAC-SHA256'
 const UNSIGNED_PAYLOAD = 'UNSIGNED-PAYLOAD'
 
+/** Existing shared objects can be read without granting the primary writer access. */
+export interface ReadOnlySpaceSource {
+  endpoint: string
+  region: string
+  bucket: string
+  accessKeyId: string
+  secretAccessKey: string
+  pathStyle?: boolean
+  keys: readonly string[]
+}
+
 export interface PresignOptions {
   /**
    * The verb the URL is good for. A signature covers the method, so a URL
@@ -52,22 +63,37 @@ export interface PresignOptions {
    * wildcard DNS.
    */
   pathStyle?: boolean
+  readOnlySource?: ReadOnlySpaceSource
+}
+
+export function isReadOnlySourceKey(
+  options: Pick<PresignOptions, 'readOnlySource'>,
+  key: string
+): boolean {
+  return key !== '' && options.readOnlySource?.keys.includes(key) === true
 }
 
 export function presignGetUrl(options: PresignOptions): string {
   const {
     method = 'GET',
+    key,
+    expiresSec,
+    query: extra = {},
+    now = new Date()
+  } = options
+  const readSource = options.readOnlySource
+  const signingSpace =
+    method === 'GET' && readSource != null && isReadOnlySourceKey(options, key)
+      ? readSource
+      : options
+  const {
     endpoint,
     region,
     bucket,
     accessKeyId,
     secretAccessKey,
-    key,
-    expiresSec,
-    query: extra = {},
-    now = new Date(),
     pathStyle = false
-  } = options
+  } = signingSpace
 
   const url = new URL(endpoint)
   const host = pathStyle ? url.host : `${bucket}.${url.host}`

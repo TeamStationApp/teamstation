@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { putObject } from './images'
 import type { MediaContext } from './mediaContext'
 import { signQueryToken } from './mediaTokens'
-import { presignGetUrl } from './presign'
+import { isReadOnlySourceKey, presignGetUrl } from './presign'
 import { fetchSpaceFrame } from './spaceFrames'
 import { spaceConfigured, spaceKey, type SpaceSettings } from './spacesHls'
 
@@ -122,6 +122,9 @@ export async function ensureStill(options: StillOptions): Promise<string> {
 
   const work = (async () => {
     if (await stillInSpace(space, videoId, atSec)) return key
+    if (isReadOnlySourceKey(space, key)) {
+      throw new Error('Read-only source still is not available')
+    }
     await cutAndKeep(options, key)
     return key
   })().finally(() => {
