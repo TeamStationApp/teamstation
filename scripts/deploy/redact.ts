@@ -44,7 +44,7 @@ const shapes: Array<[RegExp, string]> = [
   [/(\/\/)[^/\s:@]+:[^/\s@]+@/g, '$1[redacted]@'],
   [/\b(Bearer|Basic)\s+[\w.~+/=-]{8,}/g, '$1 [redacted]'],
   [
-    /\b([\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key)[\w-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|\S+)/gi,
+    /\b([\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|dsn|authorization|private_key)[\w-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|\S+)/gi,
     '$1$2[redacted]'
   ],
   [/(\s-(?:storepass|keypass)|\s--password)(\s+)\S+/g, '$1$2[redacted]']
