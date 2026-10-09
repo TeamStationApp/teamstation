@@ -405,17 +405,16 @@ describe('the chat list', function () {
         onFollowTeam={() => (follow += 1)}
       />
     )
-    await until('the list', () => text().includes('Hawks Fans'))
+    await until('the list', () => button('Hawks Fans') != null)
     const words = text()
-    expect(words).contains('HAWKS')
-    expect(words).contains('DIRECT MESSAGES')
+    expect(words).contains('Hawks')
+    expect(words).contains('Team Fans')
+    expect(words).contains('Team Members')
+    expect(words).contains('Chats')
     expect(labelled('3 unread')).not.equals(null)
     expect(words).contains('Locked')
     expect(words).contains('Closed')
     expect(words).contains('No messages yet')
-    expect(words).contains('5 members')
-    expect(words).contains('1 member')
-    expect(words).not.contains('1 members')
     await press('Pat P')
     expect(opened).deep.equals(['c'])
     await press('New message')
@@ -488,7 +487,7 @@ describe('the chat list', function () {
         onFollowTeam={() => {}}
       />
     )
-    await until('the list', () => text().includes('Hawks Fans'))
+    await until('the list', () => button('Hawks Fans') != null)
     expect(button('New message')).equals(undefined)
     expect(button('Follow a team')).not.equals(undefined)
   })

@@ -37,77 +37,96 @@ const member = (userId: number, shortName: string): MemberView => ({
 })
 
 describe('the chat list’s grouping', function () {
-  it('puts leagues, seasons and teams first, then direct messages, newest first', function () {
-    const groups = groupChats([
-      chat({ id: 'a', kind: 'teamFans', title: 'Hawks Fans' }),
+  it('orders pinned DMs, pinned groups, other DMs and other groups by posts without unread priority', function () {
+    const preferences = {
+      pinned: true,
+      muted: false,
+      manualUnread: false,
+      manualUnreadRevision: 0
+    }
+    const items = [
       chat({
-        id: 'd1',
-        kind: 'dm',
-        scope: null,
-        scopeName: null,
-        title: 'Eddie C',
-        lastMessageAt: '2027-04-01T10:00:00Z'
-      }),
-      chat({ id: 'b', kind: 'teamMembers', title: 'Hawks Members' }),
-      chat({
-        id: 'c',
-        kind: 'seasonAllStaff',
-        title: 'QPLL Spring 2027 All Staff',
-        scope: { type: 'season', id: 'sea_1' },
-        scopeName: 'QPLL Spring 2027'
-      }),
-      chat({
-        id: 'e',
-        kind: 'leagueOrg',
-        title: 'QPLL Org',
-        scope: { type: 'league', id: 'lea_1' },
-        scopeName: 'QPLL'
-      }),
-      chat({
-        id: 'f',
-        kind: 'seasonAnnouncements',
-        title: 'QPLL Spring 2027 Announcements',
-        scope: { type: 'season', id: 'sea_1' },
-        scopeName: 'QPLL Spring 2027'
-      }),
-      chat({
-        id: 'd2',
-        kind: 'dm',
-        scope: null,
-        scopeName: null,
-        title: 'Pat P',
-        lastMessageAt: '2027-04-02T10:00:00Z'
-      }),
-      chat({
-        id: 'g',
+        id: 'p-group-old',
+        preferences,
         kind: 'teamStaff',
-        title: 'Eagles Staff',
-        scope: { type: 'team', id: 'tem_eagles' },
-        scopeName: 'Eagles'
+        lastPostAt: '2027-04-01T10:00:00Z'
       }),
       chat({
-        id: 'd3',
+        id: 'p-dm',
+        preferences,
         kind: 'dm',
         scope: null,
-        scopeName: null,
-        title: 'Nobody yet'
+        lastPostAt: '2027-03-01T10:00:00Z'
+      }),
+      chat({
+        id: 'group-new',
+        kind: 'leagueOrg',
+        scope: { type: 'league', id: 'lea_test' },
+        lastPostAt: '2027-04-05T10:00:00Z'
+      }),
+      chat({
+        id: 'dm-unread',
+        kind: 'dm',
+        scope: null,
+        unread: 8,
+        lastPostAt: '2027-04-01T10:00:00Z'
+      }),
+      chat({
+        id: 'p-group-new',
+        preferences,
+        kind: 'seasonAllStaff',
+        scope: { type: 'season', id: 'sea_test' },
+        lastPostAt: '2027-04-03T10:00:00Z'
+      }),
+      chat({
+        id: 'dm-read',
+        kind: 'dm',
+        scope: null,
+        lastPostAt: '2027-04-02T10:00:00Z'
+      }),
+      chat({
+        id: 'group-empty',
+        lastPostAt: null,
+        unread: 99,
+        lastMessageAt: '2028-01-01T00:00:00Z'
+      }),
+      chat({
+        id: 'group-tie-b',
+        kind: 'teamFans',
+        lastPostAt: '2027-04-04T10:00:00Z'
+      }),
+      chat({
+        id: 'group-tie-a',
+        kind: 'teamMembers',
+        lastPostAt: '2027-04-04T10:00:00Z'
       })
-    ])
-    expect(groups.map(group => [group.kind, group.title])).deep.equals([
-      ['league', 'QPLL'],
-      ['season', 'QPLL Spring 2027'],
-      ['team', 'Eagles'],
-      ['team', 'Hawks'],
-      ['dm', undefined]
-    ])
-    expect(groups[1].chats.map(item => item.id)).deep.equals(['f', 'c'])
-    expect(groups[3].chats.map(item => item.id)).deep.equals(['b', 'a'])
-    expect(groups[4].chats.map(item => item.id)).deep.equals(['d2', 'd1', 'd3'])
-    expect(groupChats([])).deep.equals([])
+    ]
+    const groups = groupChats(items)
+    expect(groups.map(group => group.title)).deep.equals(['Pinned', 'Chats'])
     expect(
-      groupChats([chat({ scopeName: null })])[0].title,
-      'a scope with no name'
-    ).equals(undefined)
+      groups.flatMap(group => group.chats.map(item => item.id))
+    ).deep.equals([
+      'p-dm',
+      'p-group-new',
+      'p-group-old',
+      'dm-read',
+      'dm-unread',
+      'group-new',
+      'group-tie-a',
+      'group-tie-b',
+      'group-empty'
+    ])
+    expect(items[0].id).equals('p-group-old')
+    expect(groupChats([])).deep.equals([])
+    expect(groupChats([chat()]).map(group => group.title)).deep.equals([
+      'Chats'
+    ])
+    expect(
+      groupChats([chat({ preferences })]).map(group => group.title)
+    ).deep.equals(['Pinned'])
+    expect(
+      groupChats([chat({ id: 'same' }), chat({ id: 'same' })])[0].chats
+    ).has.length(2)
   })
 
   it('offers New message only to someone who shares a staff or members chat', function () {

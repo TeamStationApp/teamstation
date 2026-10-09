@@ -14,6 +14,7 @@ import { messageKey, openWithMessageKey } from '../../../common/chatCrypto/seal'
 import { HttpError } from '../../../common/errors'
 import type { ChatSocketEvent, GameSocket } from '../../../common/gameSocket'
 import { lstrings, sprintf } from '../../locales/strings'
+import { messagePreview } from '../chatModel'
 import { b64, type ChatKeyStore, epochKeyOf, unb64 } from '../keyRecord'
 import { foldMessages, type MessageView } from './apply'
 import {
@@ -106,6 +107,8 @@ export interface ConversationListItem {
   lastPostId?: string | null
   lastPostSeq?: number
   preferences?: ChatPreferences
+  preview?: string
+  avatarUrl?: string | null
   unread: number
   canPost: boolean
   canModerate: boolean
@@ -217,6 +220,11 @@ export class ChatEngine {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private readonly safety = new Map<string, string>()
   private readonly personalPins = new Map<string, ChatPin[]>()
+  private readonly previewVersions = new Map<string, string>()
+  private readonly previewWaiting: Array<() => void> = []
+  private previewActive = 0
+  private readonly pendingAlerts = new Map<string, number>()
+  private readonly alertedSeq = new Map<string, number>()
   private unlisten: (() => void) | undefined
   private stopped = false
 
@@ -320,7 +328,26 @@ export class ChatEngine {
    */
   async refresh(): Promise<ConversationListItem[]> {
     await this.serial('list', async () => {
+      const unreadBefore = new Map(
+        [...this.memory.conversations].map(([id, state]) => [
+          id,
+          state.summary.unread
+        ])
+      )
       await syncList({ client: this.options.client, memory: this.memory })
+      for (const [id, state] of this.memory.conversations) {
+        const seq = this.pendingAlerts.get(id)
+        if (
+          seq != null &&
+          state.summary.lastPostSeq === seq &&
+          state.summary.unread > (unreadBefore.get(id) ?? state.summary.unread)
+        ) {
+          this.pendingAlerts.delete(id)
+          this.alertedSeq.set(id, seq)
+          if (!state.summary.preferences?.muted)
+            this.memory.emit({ type: 'messageAlert', conversationId: id })
+        }
+      }
       for (const state of this.memory.conversations.values()) {
         if (
           state.summary.kind === 'dm' &&
@@ -332,6 +359,23 @@ export class ChatEngine {
         }
       }
     })
+    for (const id of this.personalPins.keys()) {
+      if (!this.memory.conversations.has(id)) {
+        this.personalPins.delete(id)
+        this.previewVersions.delete(id)
+      }
+    }
+    for (const id of this.active) {
+      if (this.memory.conversations.has(id)) {
+        try {
+          this.personalPins.set(id, await this.options.client.chatPins(id))
+        } catch (error) {
+          if (!isGone(error)) throw error
+          this.personalPins.delete(id)
+          this.active.delete(id)
+        }
+      }
+    }
     this.memory.emit({ type: 'conversations' })
     return this.conversations()
   }
@@ -380,6 +424,27 @@ export class ChatEngine {
       lastPostId: lastPost.id,
       lastPostSeq: lastPost.seq,
       preferences: summary.preferences,
+      avatarUrl:
+        summary.kind === 'dm'
+          ? state.members?.find(member => member.userId !== this.options.userId)
+              ?.avatarUrl
+          : undefined,
+      preview: state.synced
+        ? messagePreview(
+            foldMessages({
+              envelopes: state.envelopes.values(),
+              opened: state.opened,
+              me: this.options.userId,
+              names: new Map(
+                (state.members ?? []).map(member => [
+                  member.userId,
+                  member.shortName
+                ])
+              ),
+              reads: state.reads
+            }).find(message => message.id === lastPost.id)
+          )
+        : undefined,
       unread: summary.unread,
       canPost: summary.canPost,
       canModerate: summary.canModerate,
@@ -392,6 +457,55 @@ export class ChatEngine {
   }
 
   // --- One chat ---------------------------------------------------------
+
+  /** Loads only visible-row previews, without activating a chat or marking read. */
+  async loadPreview(conversationId: string): Promise<void> {
+    const state = this.memory.state(conversationId)
+    if (state == null || state.summary.lastSeq === 0 || this.status !== 'ready')
+      return
+    const previewVersion = (): string =>
+      `${state.summary.lastSeq}:${this.item(state).locked}:${this.item(state).unverified}`
+    const version = previewVersion()
+    if (this.previewVersions.get(conversationId) === version) return
+    this.previewVersions.set(conversationId, version)
+    if (this.previewActive >= 3)
+      await new Promise<void>(resolve => {
+        this.previewWaiting.push(resolve)
+      })
+    else this.previewActive += 1
+    try {
+      if (this.stopped) return
+      await this.serial(conversationId, async () => {
+        await syncMembers(this.ctx, conversationId)
+        await syncLog(this.ctx, conversationId)
+        await syncEpochs(this.ctx, conversationId)
+        await syncMessages(this.ctx, conversationId)
+        while (
+          state.summary.lastPostId != null &&
+          ![...state.envelopes.values()].some(
+            message => message.id === state.summary.lastPostId
+          ) &&
+          state.hasEarlier
+        ) {
+          await loadEarlier(this.ctx, conversationId)
+        }
+      })
+      this.previewVersions.set(conversationId, previewVersion())
+      this.announcePost(conversationId)
+      this.memory.emit({ type: 'conversations' })
+    } catch (error) {
+      this.previewVersions.delete(conversationId)
+      if (!isGone(error)) throw error
+      this.memory.conversations.delete(conversationId)
+      this.personalPins.delete(conversationId)
+      this.active.delete(conversationId)
+      this.memory.emit({ type: 'conversations' })
+    } finally {
+      const next = this.previewWaiting.shift()
+      if (next != null) next()
+      else this.previewActive -= 1
+    }
+  }
 
   /**
    * Reads a chat (its members, membership record, epochs, messages and
@@ -785,7 +899,7 @@ export class ChatEngine {
     conversationId: string,
     patch: Partial<Pick<ChatPreferences, 'pinned' | 'muted' | 'manualUnread'>>
   ): Promise<void> {
-    await this.serial(conversationId, async () => {
+    await this.serial('list', async () => {
       const preferences = await this.options.client.updateChatPreferences(
         conversationId,
         patch
@@ -908,6 +1022,23 @@ export class ChatEngine {
 
   // --- Hints ------------------------------------------------------------
 
+  private announcePost(conversationId: string): void {
+    const seq = this.pendingAlerts.get(conversationId)
+    if (seq == null) return
+    const state = this.memory.state(conversationId)
+    const envelope = state?.envelopes.get(seq)
+    if (envelope == null) return
+    this.pendingAlerts.delete(conversationId)
+    this.alertedSeq.set(conversationId, seq)
+    if (
+      envelope.kind === 'post' &&
+      envelope.senderUserId !== this.options.userId &&
+      state?.summary.preferences?.muted !== true
+    ) {
+      this.memory.emit({ type: 'messageAlert', conversationId })
+    }
+  }
+
   private hint(event: ChatSocketEvent): void {
     if (this.stopped) return
     switch (event.type) {
@@ -927,6 +1058,7 @@ export class ChatEngine {
         this.typed(event.conversationId, event.userId)
         return
       case 'resync':
+        this.pendingAlerts.clear()
         this.relist()
         for (const id of this.active) {
           this.want(id, ['members', 'epochs', 'messages', 'reads'])
@@ -941,6 +1073,8 @@ export class ChatEngine {
     const id = event.conversationId
     switch (event.kind) {
       case 'message':
+        if (event.seq != null && event.seq > (this.alertedSeq.get(id) ?? 0))
+          this.pendingAlerts.set(id, event.seq)
         this.relist()
         this.want(id, ['messages'])
         return
@@ -1032,6 +1166,7 @@ export class ChatEngine {
       this.memory.conversations.delete(conversationId)
       this.memory.emit({ type: 'conversations' })
     }
+    this.announcePost(conversationId)
     this.memory.emit({ type: 'conversation', conversationId })
   }
 

@@ -1173,7 +1173,12 @@ describe('chat devices in the app', function () {
     fakeApi(fake, chats([summary({ unread: 2 })]))
     showRoute({ name: 'chat' }, true)
     await render(<App />)
-    await until('the list', () => text().includes('Hawks Members'))
+    await until(
+      'the list',
+      () =>
+        document.querySelector('[role="button"][aria-label="Hawks Members"]') !=
+        null
+    )
     expect(currentRoute()).deep.equals({ name: 'chat' })
     expect(document.querySelector('[data-testid="chat-unread"]')).not.equals(
       null
