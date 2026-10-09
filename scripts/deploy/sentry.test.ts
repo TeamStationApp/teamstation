@@ -229,6 +229,23 @@ describe('Sentry symbol uploads', () => {
     ])
   })
 
+  it('preserves unnamed sources and mapping indices in generated source maps', () => {
+    const map = {
+      version: 3,
+      sources: [null, '/example/src/App.tsx', null],
+      sourcesContent: [null, 'example source', null],
+      names: [],
+      mappings: 'AAAA;ACAA'
+    }
+    assert.deepEqual(
+      JSON.parse(relativeSources(JSON.stringify(map), '/example')),
+      {
+        ...map,
+        sources: [null, 'src/App.tsx', null]
+      }
+    )
+  })
+
   it('uploads native libraries, and names the step that failed', async () => {
     const libs = path.join(root, 'merged_native_libs')
     mkdirSync(libs)
