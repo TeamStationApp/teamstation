@@ -71,6 +71,48 @@ and every setting has a default; by default it uses the database
 
 To run the app on a phone instead, see [`src/MOBILE.md`](src/MOBILE.md).
 
+Chat's cryptography is one Rust crate, `crates/chat-crypto`, so every build
+needs Rust: install it with rustup (https://rustup.rs), and the crate's
+`rust-toolchain.toml` brings the pinned toolchain and its targets on first
+use. `npm run build`, `npm test` and the coverage scripts build the Node addon
+the server loads; `npm run build.web` builds the WebAssembly module the page
+loads and ships it beside the bundle as `chat-crypto-<hash>.wasm`, which the
+bundle fetches with its sha384 and refuses otherwise. `npm run chat-crypto`
+builds both by hand. A browser without WebAssembly gets no chat ("Chat needs
+WebAssembly") and the rest of the app as usual; there is no JavaScript
+implementation to fall back on. The phones build the same crate as a static
+library (`src/MOBILE.md`).
+
+Every web build writes a Content-Security-Policy `<meta>` into `index.html`
+(`src/buildCsp.mjs`), and a one-shot build adds Subresource Integrity to its
+script tag. Scripts come only from the page's own origin, with
+`'wasm-unsafe-eval'` so it may compile the chat crypto module (and still no
+`eval`). The policy allows the API and its socket (from an absolute
+`TS_API_BASE_URL`) and the media origins in `TS_MEDIA_ORIGINS`,
+space-separated; a deployment takes those from
+`node src/deploy/mediaOrigins.mjs <serverConfig.json>` (the deployment's own
+origin, its Space, and Apple Music's artwork). A local web app needs the
+API's and the stand-in Space's origins there, or pictures and attachments
+from them are refused:
+
+```sh
+TS_API_BASE_URL=http://127.0.0.1:9100/api/v1 \
+  TS_MEDIA_ORIGINS="$(node src/deploy/mediaOrigins.mjs serverConfig.json)" \
+  npm run start.web
+```
+
+**Run `npm run prepare` once**, per clone rather than per worktree. It installs
+the husky hook that lints before every commit. `npm install` will not do it for
+you: `.npmrc` sets `ignore-scripts`, which is what makes a fresh install safe
+and also what stops `prepare` running. Without it there is no gate, and the
+lint count drifts — it reached 98 the last time nobody was counting. The hook
+sets `core.hooksPath`, which lives in `.git/config` and so is shared by every
+worktree of this repository.
+
+The local `npm run fake-space` also holds encrypted chat attachments
+(`chat/<conversationId>/<attachmentId>`, deleted with a presigned DELETE).
+Its host and port can be set with `TS_FAKE_SPACE_HOST` and `TS_FAKE_SPACE_PORT`.
+
 ## Contributing
 
 How the code is laid out, its conventions, testing, and how the live-streaming
