@@ -14,6 +14,7 @@ import type { GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
+import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Button,
   Card,
@@ -61,6 +62,8 @@ export interface SeasonManagement {
 
 export interface SeasonPresentationProps {
   client: TeamStationClient
+  chats?: ChatLink[]
+  onOpenChat?: (chat: ChatLink) => void
   season: SeasonSummary
   onOpenGame: (
     gameId: string,
@@ -537,6 +540,9 @@ export function SeasonPresentation(
         />
       }
     >
+      {props.chats != null && props.onOpenChat != null && (
+        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
+      )}
       {error !== '' && (
         <View style={styles.section}>
           <Text accessibilityRole="alert" style={styles.error}>
