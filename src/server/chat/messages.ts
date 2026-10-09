@@ -555,6 +555,8 @@ export async function markRead(
   clearManualUnreadRevision?: number
 ): Promise<{ seq: number }> {
   return await db.transaction().execute(async trx => {
+    // Read/preference rows must not precede their conversation's lock either.
+    await lockConversation(trx, conversationId)
     await clearManualUnread(
       trx,
       userId,

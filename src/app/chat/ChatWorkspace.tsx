@@ -7,6 +7,8 @@ import { useTheme } from '../theme/ThemeContext'
 import { ChatListScreen } from './ChatListScreen'
 import {
   CHAT_WIDE_WIDTH,
+  type ChatDraftOwner,
+  chatDraftOwner,
   type ChatWorkspaceState,
   emptyChatDraft
 } from './chatWorkspaceModel'
@@ -28,6 +30,16 @@ export interface ChatWorkspaceProps {
 
 /** Selection and drafts survive both pane layouts and route transitions. */
 export function ChatWorkspace(props: ChatWorkspaceProps): React.ReactElement {
+  const draftOwner = chatDraftOwner(props.state, props.engine, props.userId)
+  return (
+    <WorkspaceContent key={draftOwner.key} {...props} draftOwner={draftOwner} />
+  )
+}
+
+function WorkspaceContent(
+  props: ChatWorkspaceProps & { draftOwner: ChatDraftOwner }
+): React.ReactElement {
+  const { draftOwner } = props
   const theme = useTheme()
   const windowWidth = useWindowDimensions().width
   const [usableWidth, setUsableWidth] = useState(windowWidth)
@@ -137,8 +149,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps): React.ReactElement {
               active={messagesVisible}
               readingSession={readingSession}
               draft={draft}
+              draftOwner={draftOwner}
               onDraftChange={next => {
-                props.state.drafts.set(selected, next)
+                draftOwner.write(selected, next)
               }}
               onMembers={() => {
                 props.onMembers(selected)
