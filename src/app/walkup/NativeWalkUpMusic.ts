@@ -23,13 +23,15 @@ export interface NativeSongCandidate {
 /**
  * `playing` every 250 ms, then `idle`, or `error`. `volume` is the system
  * volume on an iPhone, the player's own on Android; a fade reports its start,
- * lowest and restored levels.
+ * lowest and restored levels. An `error` whose `message` was rewritten for a
+ * person keeps the platform's own words in `detail`.
  */
 export interface NativeWalkUpMusicState {
   kind: string
   handle?: string
   positionMs?: CodegenTypes.Double
   message?: string
+  detail?: string
   volume?: CodegenTypes.Double
   fade?: string
   startLevel?: CodegenTypes.Double

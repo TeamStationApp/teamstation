@@ -21,7 +21,8 @@ import UIKit
 /// Reports go to `onState`: `playing` at most every 250 ms, then `idle` with
 /// the fade's levels, or `error` with Apple's own message — which is also how
 /// a phone without an Apple Music subscription, or an app without the MusicKit
-/// service, says so.
+/// service, says so. A failure Apple names only by number gets words a person
+/// can act on instead, with Apple's message kept as `detail`.
 @objc(TSWalkUpMusic)
 public final class TSWalkUpMusic: NSObject {
   @objc public var onState: (([String: Any]) -> Void)?
@@ -201,6 +202,25 @@ public final class TSWalkUpMusic: NSObject {
     return text
   }
 
+  /// What to do about a failure Apple names only by its number. Apple's own
+  /// words still go to the log, as the report's `detail`.
+  ///
+  /// `MPMusicPlayerControllerErrorDomain` 6, "Failed to prepare to play", is
+  /// Apple Music refusing one song for a while on a phone that plays others:
+  /// it is not the subscription or the song. Playing that song once in the
+  /// Music app is what usually brings it back.
+  private static func advice(_ error: Error) -> String? {
+    var current: NSError? = error as NSError
+    while let nsError = current {
+      if nsError.domain == "MPMusicPlayerControllerErrorDomain", nsError.code == 6 {
+        return "Apple Music couldn’t start this song. Open the Music app, play the song there for "
+          + "a few seconds, then come back and try again."
+      }
+      current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+    }
+    return nil
+  }
+
   // MARK: Play
 
   @objc public func play(
@@ -251,9 +271,12 @@ public final class TSWalkUpMusic: NSObject {
         done(nil)
       } catch {
         if next.fades { self.volume.end(restoreOver: max(next.outMs, riseMs)) }
-        let message = Self.message(error)
+        let detail = Self.message(error)
+        let message = Self.advice(error) ?? detail
         NSLog("WalkUpMusic play failed: %@", String(describing: error))
-        self.report(["kind": "error", "handle": handle, "message": message])
+        var state: [String: Any] = ["kind": "error", "handle": handle, "message": message]
+        if message != detail { state["detail"] = detail }
+        self.report(state)
         done(message)
       }
     }
