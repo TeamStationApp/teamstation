@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { parseRoute, type Route, routePath, safeNext } from './routes'
+import {
+  parseDevRoute,
+  parseRoute,
+  type Route,
+  routePath,
+  safeNext
+} from './routes'
 
 /** Every route survives being written down and read back. */
 const roundTrip = (route: Route): Route => {
@@ -300,6 +306,89 @@ describe('addresses', function () {
     for (const route of routes) {
       expect(roundTrip(route), routePath(route)).deep.equals(route)
     }
+  })
+
+  it('reads and writes Chat devices and linking at /chat/devices and /chat/link', function () {
+    expect(parseRoute('/chat/devices')).deep.equals({ name: 'chatDevices' })
+    expect(parseRoute('/chat/link')).deep.equals({ name: 'chatLink' })
+    expect(routePath({ name: 'chatDevices' })).equals('/chat/devices')
+    expect(routePath({ name: 'chatLink' })).equals('/chat/link')
+    expect(roundTrip({ name: 'chatDevices' })).deep.equals({
+      name: 'chatDevices'
+    })
+    expect(roundTrip({ name: 'chatLink' })).deep.equals({ name: 'chatLink' })
+    expect(parseRoute('/chat/devices/more')).deep.equals({ name: 'home' })
+  })
+
+  it('reads and writes the chat list, a chat, its members and a new DM', function () {
+    expect(parseRoute('/chat')).deep.equals({ name: 'chat' })
+    expect(parseRoute('/chat/new')).deep.equals({ name: 'chatNew' })
+    expect(parseRoute('/chat/cnv_abc')).deep.equals({
+      name: 'conversation',
+      conversationId: 'cnv_abc'
+    })
+    expect(parseRoute('/chat/cnv_abc/members')).deep.equals({
+      name: 'chatMembers',
+      conversationId: 'cnv_abc'
+    })
+    for (const route of [
+      { name: 'chat' as const },
+      { name: 'chatNew' as const },
+      { name: 'conversation' as const, conversationId: 'cnv_abc' },
+      { name: 'chatMembers' as const, conversationId: 'cnv_abc' }
+    ]) {
+      expect(roundTrip(route)).deep.equals(route)
+    }
+    expect(routePath({ name: 'chatMembers', conversationId: 'cnv_x' })).equals(
+      '/chat/cnv_x/members'
+    )
+    // Nothing else under a chat, and no members of the fixed addresses.
+    expect(parseRoute('/chat/cnv_abc/other')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/new/members')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/devices/members')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/cnv_abc/members/x')).deep.equals({ name: 'home' })
+  })
+
+  it('reads and writes the reported messages at /admin/chat/reports', function () {
+    expect(parseRoute('/admin/chat/reports')).deep.equals({
+      name: 'chatReports'
+    })
+    expect(routePath({ name: 'chatReports' })).equals('/admin/chat/reports')
+    expect(roundTrip({ name: 'chatReports' })).deep.equals({
+      name: 'chatReports'
+    })
+    for (const other of [
+      '/admin',
+      '/admin/chat',
+      '/admin/chat/other',
+      '/admin/other/reports',
+      '/admin/chat/reports/x'
+    ]) {
+      expect(parseRoute(other), other).deep.equals({ name: 'home' })
+    }
+  })
+
+  it('has no chat bench outside a phone build made for it', function () {
+    // The web and the tests read `chatBench.ts`, which has no bench.
+    expect(parseRoute('/dev/chat-bench')).deep.equals({ name: 'home' })
+    expect(parseRoute('/dev')).deep.equals({ name: 'home' })
+    expect(routePath({ name: 'chatBench' })).equals('/')
+  })
+
+  it('reads the bench’s address where the build has one', function () {
+    const path = '/dev/chat-bench'
+    expect(parseDevRoute(['dev', 'chat-bench'], path)).deep.equals({
+      name: 'chatBench'
+    })
+    expect(parseDevRoute(['dev', 'chat-bench'], undefined)).deep.equals({
+      name: 'home'
+    })
+    expect(parseDevRoute(['dev', 'chat-bench', 'x'], path)).deep.equals({
+      name: 'home'
+    })
+    expect(parseDevRoute(['dev', 'other'], path)).deep.equals({
+      name: 'home'
+    })
   })
 
   it('reads an invite link at the address PeerTube used', function () {

@@ -14,6 +14,8 @@ export { safeNext } from '../../common/signInReturn'
  * read but not written is a Back button that goes somewhere else.
  */
 
+import { chatBenchPath } from '../dev/chatBench'
+
 export type When = 'upcoming' | 'past' | 'all'
 type GroupKind = 'league' | 'season' | 'team'
 interface GroupRef {
@@ -229,6 +231,21 @@ export type Route =
    * server. Absent on the web, where the link is the server's own.
    */
   | { name: 'signInLink'; token: string; server?: string }
+  | { name: 'chatBench' }
+  /** Chat devices: this device's enrolment, the others, and link requests. */
+  | { name: 'chatDevices' }
+  /** Linking this device to the user's chat keys, or resetting them. */
+  | { name: 'chatLink' }
+  /** The Chat tab: every chat the person is in. */
+  | { name: 'chat' }
+  /** Starting a direct message. */
+  | { name: 'chatNew' }
+  /** One chat. Its id carries the `cnv_` prefix, so no chat is `new`. */
+  | { name: 'conversation'; conversationId: string }
+  /** A chat's members, safety numbers and approvals. */
+  | { name: 'chatMembers'; conversationId: string }
+  /** Reported chat messages, for site administrators. */
+  | { name: 'chatReports' }
 
 /** A sign-in link's route, with the issuing server only when the link names one. */
 function signInLinkRoute(token: string, server: string | null): Route {
@@ -567,9 +584,42 @@ export function parseRoute(path: string, search = ''): Route {
         ...(angles.length > 0 && zoom != null ? { zoom } : {})
       }
     }
+    case 'chat':
+      if (id == null) return { name: 'chat' }
+      if (parts[2] === 'members' && parts[3] == null) {
+        if (id === 'devices' || id === 'link' || id === 'new') {
+          return { name: 'home' }
+        }
+        return { name: 'chatMembers', conversationId: id }
+      }
+      if (parts[2] != null) return { name: 'home' }
+      if (id === 'devices') return { name: 'chatDevices' }
+      if (id === 'link') return { name: 'chatLink' }
+      if (id === 'new') return { name: 'chatNew' }
+      return { name: 'conversation', conversationId: id }
+    case 'admin':
+      return id === 'chat' && parts[2] === 'reports' && parts[3] == null
+        ? { name: 'chatReports' }
+        : { name: 'home' }
+    case 'dev':
+      return parseDevRoute(parts)
     default:
       return { name: 'home' }
   }
+}
+
+/**
+ * `/dev/…`: the bench where the build has one, and home otherwise. The path
+ * comes from the build's `chatBench` twin, so the web bundle does not even
+ * hold it.
+ */
+export function parseDevRoute(
+  parts: string[],
+  benchPath: string | undefined = chatBenchPath
+): Route {
+  return benchPath != null && `/${parts.join('/')}` === benchPath
+    ? { name: 'chatBench' }
+    : { name: 'home' }
 }
 
 /** The address of a route, ready for the history. */
@@ -774,6 +824,22 @@ export function routePath(route: Route): string {
     }
     case 'join':
       return `/i/${route.code}`
+    case 'chatBench':
+      return chatBenchPath ?? '/'
+    case 'chatDevices':
+      return '/chat/devices'
+    case 'chatLink':
+      return '/chat/link'
+    case 'chat':
+      return '/chat'
+    case 'chatNew':
+      return '/chat/new'
+    case 'conversation':
+      return `/chat/${encodeURIComponent(route.conversationId)}`
+    case 'chatMembers':
+      return `/chat/${encodeURIComponent(route.conversationId)}/members`
+    case 'chatReports':
+      return '/admin/chat/reports'
     case 'signIn':
       return route.next == null
         ? '/sign-in'
