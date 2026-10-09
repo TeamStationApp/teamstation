@@ -64,6 +64,15 @@ function fixture(): {
     scopeName: null,
     lastSeq: 1,
     lastMessageAt: null,
+    lastPostAt: null,
+    lastPostId: null,
+    lastPostSeq: 0,
+    preferences: {
+      pinned: false,
+      muted: false,
+      manualUnread: false,
+      manualUnreadRevision: 0
+    },
     unread: 0,
     canPost: true,
     canModerate: false,

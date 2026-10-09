@@ -90,7 +90,7 @@ export type GameSocketListener = (event: GameSocketEvent) => void
 export type ChatHintKind = 'message' | 'members' | 'epoch' | 'grant' | 'read'
 
 /** What changed about the person's own chat keys. */
-export type ChatUserHintKind = 'link' | 'devices'
+export type ChatUserHintKind = 'link' | 'devices' | 'preferences'
 
 /** A chat frame the server sends. */
 export type ChatSocketFrame =
@@ -244,7 +244,11 @@ const asChatFrame: Cleaner<ChatSocketFrame> = asEither(
   }),
   asObject({
     type: asLiteral('chatUser'),
-    kind: asLiteral('link', 'devices') as Cleaner<ChatUserHintKind>
+    kind: asLiteral(
+      'link',
+      'devices',
+      'preferences'
+    ) as Cleaner<ChatUserHintKind>
   }),
   asObject({
     type: asLiteral('chatTyping'),
