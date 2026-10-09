@@ -607,8 +607,13 @@ describe('scoring screen field wiring', function () {
       } else {
         await step(() => {
           document
+            .querySelector<HTMLElement>('[aria-label="Create Player"]')!
+            .click()
+        })
+        await step(() => {
+          document
             .querySelector<HTMLElement>(
-              '[aria-label="Create Placeholder Players"]'
+              '[aria-label="Add Placeholder Players"]'
             )!
             .click()
         })
@@ -847,6 +852,7 @@ describe('scoring screen field wiring', function () {
     expect(props().summary).to.be.a('string')
   })
   it('assigns current defense from the field, reuses placeholder quantity and dismisses complete warnings', async function () {
+    this.timeout(10000)
     const session = createDevelopmentSession(gameFixture, [], [])
     const home = session.liveData.boxscore.teams.home
     home.players = home.players.slice(0, 8)
@@ -865,28 +871,29 @@ describe('scoring screen field wiring', function () {
       field().players.filter(player => player.emptyPosition === true)
     ).has.length(9)
     await step(() => field().onPlayerTap?.('empty-P'))
-    expect(document.body.textContent).includes('Create Placeholder Players')
+    expect(document.body.textContent).includes('Create Player')
     const click = async (label: string): Promise<void> => {
       await step(() => {
         document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
       })
     }
-    await click('Create Placeholder Players')
+    await click('Create Player')
+    await click('Add Placeholder Players')
     await click('Player count 2')
     await click('Add')
     expect(document.querySelectorAll('[aria-label^="Assign P "]')).has.length(
       10
     )
-    expect(
-      document.querySelector('[aria-label="Create Placeholder Players"]')
-    ).equals(null)
+    expect(document.querySelector('[aria-label="Create Player"]')).not.equals(
+      null
+    )
     await click('Assign P #1 Player 1')
     expect(props().instruction).not.includes('P,')
     const pitcher = field().players.find(player => player.label === 'P')!
     await step(() => field().onPlayerTap?.(pitcher.id))
-    expect(
-      document.querySelector('[aria-label="Create Placeholder Players"]')
-    ).equals(null)
+    expect(document.querySelector('[aria-label="Create Player"]')).not.equals(
+      null
+    )
     await click('Cancel')
     for (const [index, slot] of POSITIONS.entries()) {
       if (slot === 'P') continue
@@ -900,6 +907,214 @@ describe('scoring screen field wiring', function () {
     expect(props().instruction).equals(undefined)
     expect(props().canPitch).equals(true)
   })
+  for (const persistent of [false, true])
+    it(`creates named and placeholder bench players through the same picker and persists them (${persistent})`, async function () {
+      this.timeout(10000)
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      initial.liveData.boxscore.teams.home.defense.P = null
+      const store = memoryStore()
+      const live = persistent
+        ? await ScoringSession.open(
+            store,
+            'g1',
+            {
+              gamePk: 'g1',
+              teams: initial.gameData.teams,
+              setup: setupOf(initial)
+            },
+            { requireCurrentSetup: true }
+          )
+        : ScoringSession.start(store, 'g1', initial, {
+            requireCurrentSetup: true
+          })
+      await mount({ persistent, open: async () => live })
+      const click = async (label: string): Promise<void> => {
+        await step(() => {
+          document
+            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .click()
+        })
+      }
+      const input = async (label: string, value: string): Promise<void> => {
+        await step(() => {
+          const node = document.querySelector(`[aria-label="${label}"]`)!
+          Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value'
+          )!.set!.call(node, value)
+          node.dispatchEvent(new window.Event('input', { bubbles: true }))
+        })
+      }
+      await step(() => field().onPlayerTap?.('empty-P'))
+      await click('Create Player')
+      await input('First Name', 'Mookie')
+      await input('Last Name', 'Betts')
+      await input('Jersey Number', '0')
+      await click('Save and Add Another Player')
+      await input('First Name', 'Mike')
+      await input('Last Name', 'Trout')
+      await click('Add Player')
+      expect(document.body.textContent).includes('Assign pitcher')
+      expect(document.body.textContent).includes('Mookie B #0')
+      expect(document.body.textContent).includes('Mike T')
+      expect(document.querySelector('[aria-label="First Name"]')).equals(null)
+      await click('Create Player')
+      await click('Add Placeholder Players')
+      await click('Player count 2')
+      await click('Add')
+      expect(document.body.textContent).includes('Hawks A')
+      expect(document.querySelector('[aria-label="First Name"]')).equals(null)
+      expect(live.state.liveData.boxscore.teams.home.players).has.length(13)
+      expect(live.state.liveData.boxscore.teams.home.battingOrder).deep.equals(
+        initial.liveData.boxscore.teams.home.battingOrder
+      )
+      expect(live.state.liveData.boxscore.teams.home.defense).deep.equals(
+        initial.liveData.boxscore.teams.home.defense
+      )
+      await live.flush()
+      const reopened = await ScoringSession.open(store, 'g1', {
+        gamePk: 'g1',
+        teams: initial.gameData.teams,
+        setup: setupOf(initial)
+      })
+      expect(reopened.state.liveData.boxscore.teams.home.players).has.length(13)
+      expect(
+        Object.values(reopened.state.gameData.players).some(
+          player => player.fullName === 'Mookie Betts' && player.jersey === '0'
+        )
+      ).equals(true)
+      await click('Assign P #0 Mookie B')
+      expect(props().canPitch).equals(true)
+      await step(() =>
+        field().onPlayerTap?.(
+          field().players.find(player => player.label === 'P')!.id
+        )
+      )
+      await click('Assign P #2 Player 2')
+      expect(live.state.liveData.boxscore.teams.home.defense.C).equals(null)
+      await step(() => {
+        props().onUndo?.()
+      })
+      expect(live.state.liveData.boxscore.teams.home.defense.C).equals(
+        initial.liveData.boxscore.teams.home.defense.C
+      )
+      await step(() => {
+        props().onUndo?.()
+      })
+      await step(() => {
+        props().onUndo?.()
+      })
+      expect(live.state.liveData.boxscore.teams.home.players).has.length(11)
+    })
+
+  it('keeps player entry recoverable after a failed refresh and retries without duplicating', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const store = memoryStore()
+    const load = store.load
+    let fail = false
+    store.load = async id => {
+      if (fail) throw new Error('Offline')
+      return await load(id)
+    }
+    const live = await ScoringSession.open(store, 'g1', {
+      gamePk: 'g1',
+      teams: initial.gameData.teams,
+      setup: setupOf(initial)
+    })
+    await mount({ persistent: true, open: async () => live })
+    await step(() =>
+      field().onPlayerTap?.(
+        field().players.find(player => player.label === 'P')!.id
+      )
+    )
+    await step(() => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Create Player"]')!
+        .click()
+    })
+    await step(() => {
+      const node = document.querySelector('[aria-label="First Name"]')!
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(node, 'Mookie')
+      node.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    fail = true
+    await step(() => {
+      document.querySelector<HTMLElement>('[aria-label="Add Player"]')!.click()
+    })
+    expect(document.body.textContent).includes(
+      'Unable to add the player. Please try again.'
+    )
+    expect(live.state.liveData.boxscore.teams.home.players).has.length(9)
+    fail = false
+    await step(() => {
+      document.querySelector<HTMLElement>('[aria-label="Add Player"]')!.click()
+    })
+    expect(live.state.liveData.boxscore.teams.home.players).has.length(10)
+    expect(document.querySelector('[aria-label="First Name"]')).equals(null)
+  })
+
+  for (const change of ['half', 'active', 'read-only'] as const)
+    it(`blocks player creation when a peer makes the game ${change}`, async function () {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      const context = {
+        gamePk: 'g1',
+        teams: initial.gameData.teams,
+        setup: setupOf(initial)
+      }
+      const store = memoryStore()
+      const live = await ScoringSession.open(store, 'g1', context)
+      const peer = await ScoringSession.open(store, 'g1', context)
+      await mount({ persistent: true, open: async () => live })
+      await step(() =>
+        field().onPlayerTap?.(
+          field().players.find(player => player.label === 'P')!.id
+        )
+      )
+      await step(() => {
+        document
+          .querySelector<HTMLElement>('[aria-label="Create Player"]')!
+          .click()
+      })
+      await step(() => {
+        const node = document.querySelector('[aria-label="First Name"]')!
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(node, 'Mookie')
+        node.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      if (change === 'read-only')
+        Object.defineProperty(live, 'readOnly', { get: () => true })
+      else {
+        expect(
+          peer.apply(
+            change === 'half'
+              ? { type: 'gameFlow', kind: 'endHalf' }
+              : {
+                  type: 'ballInPlay',
+                  contact: 'swing',
+                  fielder: initial.liveData.boxscore.teams.home.defense.SS!,
+                  location: { x: 0, z: -30 }
+                }
+          ).problems
+        ).deep.equals([])
+        await peer.flush()
+      }
+      await step(() => {
+        document
+          .querySelector<HTMLElement>('[aria-label="Add Player"]')!
+          .click()
+      })
+      expect(live.state.liveData.boxscore.teams.home.players).has.length(9)
+      expect(live.state.liveData.boxscore.teams.away.players).has.length(9)
+      expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
+        null
+      )
+    })
+
   it('shows zero and partial current batting warnings with accurate routes, acceptance and guards', async function () {
     const session = createDevelopmentSession(gameFixture, [], [])
     session.liveData.boxscore.teams.away.battingOrder = []

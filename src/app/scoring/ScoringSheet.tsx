@@ -25,6 +25,7 @@ import {
 
 import { useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
+import { SCORING_MENU } from './ScoringMenuAppearance'
 
 export function ScoringButton({
   label,
@@ -162,6 +163,8 @@ export function ScoringSheet({
   textCancel = false,
   fullScreen = false,
   tall = false,
+  height,
+  appearance,
   done = false,
   swipeToDismiss = false,
   scroll = true,
@@ -180,6 +183,9 @@ export function ScoringSheet({
   fullScreen?: boolean
   /** The whole height of the screen, still a sheet over the game. */
   tall?: boolean
+  /** Fixed sheet height; its content gets the remaining space below the header. */
+  height?: number
+  appearance?: 'scoring'
   /** Closed by a Done button at the bottom rather than Cancel at the top. */
   done?: boolean
   /** Pulled down by its handle or its title, it closes. */
@@ -193,6 +199,7 @@ export function ScoringSheet({
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
+  const scoring = appearance === 'scoring'
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
   const contentScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -286,13 +293,19 @@ export function ScoringSheet({
               />
             )}
             <Animated.View
+              testID="Scoring sheet"
               accessibilityViewIsModal
               style={{
                 transform: [{ translateY: pulled }],
                 maxHeight: fullScreen || tall ? undefined : '92%',
                 flex: fullScreen || tall ? 1 : undefined,
+                height,
                 marginTop: tall ? 8 : undefined,
-                backgroundColor: theme.backgroundColor,
+                backgroundColor: scoring
+                  ? SCORING_MENU.background
+                  : theme.backgroundColor,
+                borderWidth: scoring ? 1 : undefined,
+                borderColor: scoring ? SCORING_MENU.border : undefined,
                 borderTopLeftRadius: fullScreen
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
@@ -335,7 +348,9 @@ export function ScoringSheet({
                       style={{
                         fontFamily: theme.boldTextFont,
                         fontSize: compact ? 18 : 22,
-                        color: theme.primaryTextColor,
+                        color: scoring
+                          ? SCORING_MENU.text
+                          : theme.primaryTextColor,
                         flex: 1
                       }}
                     >
@@ -355,7 +370,7 @@ export function ScoringSheet({
                         <Text
                           style={{
                             fontFamily: theme.semiBoldTextFont,
-                            color: theme.dangerColor
+                            color: scoring ? '#f87171' : theme.dangerColor
                           }}
                         >
                           Cancel
@@ -371,7 +386,7 @@ export function ScoringSheet({
                 testID="Scoring sheet content"
                 ref={scroll ? contentScroll : undefined}
                 style={{
-                  flex: fullScreen || tall ? 1 : undefined,
+                  flex: fullScreen || tall || height != null ? 1 : undefined,
                   minHeight: 0
                 }}
                 onLayout={event => {

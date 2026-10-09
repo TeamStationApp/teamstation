@@ -66,6 +66,7 @@ import {
   describeLastPlay,
   describePlay
 } from './playDescription'
+import { addPlayerDraft, type PlayerDraft } from './playerDraft'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -429,7 +430,6 @@ function ScoringPanel(props: {
   >()
   const [defensiveSlot, setDefensiveSlot] = useState<{
     position: Position
-    openedEmpty: boolean
     side: Side
   }>()
   const [rosterLoading, setRosterLoading] = useState(false)
@@ -488,6 +488,8 @@ function ScoringPanel(props: {
   // Read-only takes no input at all, from the pointer, the keyboard or a
   // screen reader.
   const session = state.session
+  const currentSetup = useRef(session)
+  currentSetup.current = session
   const displaySession = useMemo(
     () => withRosterDetails(session, props.rosters),
     [session, props.rosters]
@@ -740,7 +742,7 @@ function ScoringPanel(props: {
     setRosterLoading(true)
     setRosterProblem(undefined)
     try {
-      if (!props.persistent) return session
+      if (!props.persistent) return currentSetup.current
       const changed = await props.game.reload()
       const oldUnresolved =
         awaitingResult(props.game.state) &&
@@ -824,20 +826,49 @@ function ScoringPanel(props: {
         setRosterProblem('Unable to refresh the game. Please try again.')
       })
   }
-  const createDefensivePlaceholders = (count: number): void => {
+  const creatingDefender = useRef(false)
+  const createDefensivePlayers = async (
+    add: (draft: GameState, side: Side) => void
+  ): Promise<void> => {
+    const slot = defensiveSlot
+    if (slot == null || creatingDefender.current || rosterLoading)
+      throw new Error('The game is refreshing.')
+    creatingDefender.current = true
+    try {
+      const fresh = await refreshSetup()
+      if (fresh == null) throw new Error('Unable to refresh the game.')
+      if (fieldingSide(fresh) !== slot.side || !editableSetup(fresh)) {
+        setDefensiveSlot(undefined)
+        throw new Error('The current defense has changed.')
+      }
+      const draft = copyState(fresh)
+      add(draft, slot.side)
+      currentSetup.current = draft
+      dispatch({ type: 'ROSTER', draft })
+    } finally {
+      creatingDefender.current = false
+    }
+  }
+  const createDefensivePlayer = async (player: PlayerDraft): Promise<void> => {
+    await createDefensivePlayers((draft, side) => {
+      addPlayerDraft(draft, side, player)
+    })
+  }
+  const createDefensivePlaceholders = async (count: number): Promise<void> => {
+    await createDefensivePlayers((draft, side) => {
+      addPlaceholderPlayers(draft, side, count)
+    })
+  }
+  const refreshDefensiveRoster = (): void => {
     const slot = defensiveSlot
     if (slot == null || rosterLoading) return
     refreshSetup()
       .then(fresh => {
-        if (fresh == null) return
-        if (fieldingSide(fresh) !== slot.side || !editableSetup(fresh)) {
+        if (
+          fresh != null &&
+          (fieldingSide(fresh) !== slot.side || !editableSetup(fresh))
+        )
           setDefensiveSlot(undefined)
-          return
-        }
-        if (fresh.liveData.boxscore.teams[slot.side].players.length >= 9) return
-        const draft = copyState(fresh)
-        addPlaceholderPlayers(draft, slot.side, count)
-        dispatch({ type: 'ROSTER', draft })
       })
       .catch(() => {
         setRosterProblem('Unable to refresh the game. Please try again.')
@@ -1103,7 +1134,6 @@ function ScoringPanel(props: {
             return
           setDefensiveSlot({
             position: player.label as Position,
-            openedEmpty: player.emptyPosition === true,
             side: fieldingSide(session)
           })
           const side = fieldingSide(session)
@@ -1473,14 +1503,15 @@ function ScoringPanel(props: {
           session={displaySession}
           side={fieldingSide(session)}
           position={defensiveSlot.position}
-          openedEmpty={defensiveSlot.openedEmpty}
           busy={rosterLoading}
           problem={rosterProblem}
           onClose={() => {
             setDefensiveSlot(undefined)
           }}
           onChoose={chooseDefender}
+          onAddPlayer={createDefensivePlayer}
           onAddPlaceholders={createDefensivePlaceholders}
+          onRefresh={refreshDefensiveRoster}
         />
       )}
       <ErrorCreditSheet state={state} dispatch={dispatch} />

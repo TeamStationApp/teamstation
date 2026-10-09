@@ -24,6 +24,7 @@ const badgeColors = {
   amber: { text: '#fcd34d', background: '#f59e0b33', border: '#f59e0b4d' },
   red: { text: '#fca5a5', background: '#450a0acc', border: '#991b1b99' }
 } as const
+export const SCORING_GREEN_BADGE = badgeColors.green
 const decorations: Record<
   string,
   { badge: string; tone: keyof typeof badgeColors } | { icon: MenuIconKind }
