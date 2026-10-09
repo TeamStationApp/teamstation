@@ -1,7 +1,9 @@
 /** Functional follow-up scenarios run only on explicitly supplied fixture surfaces. */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   statSync,
@@ -37,6 +39,17 @@ interface Device {
     origin: string
   }) => Promise<unknown>
   uploadFile: (options: { css: string; path: string }) => Promise<unknown>
+  mockNetwork: (options: {
+    url: string
+    method: string
+    response: object
+  }) => Promise<unknown>
+  clearNetworkMocks: () => Promise<unknown>
+  setNetworkConditions: (options: {
+    latency: number
+    downloadSpeed: number
+    uploadSpeed: number
+  }) => Promise<unknown>
   scrollUntilVisible: (options: {
     element: { css: string }
     direction: string
@@ -740,6 +753,308 @@ async function s4Full(daemon: Daemon): Promise<void> {
   }
 }
 
+async function reviewNavigation(daemon: Daemon): Promise<void> {
+  const narrow = process.env.CHAT_UI_VIEWPORT === 'narrow'
+  const conversation = required('CHAT_UI_CONVERSATION')
+  const message = required('CHAT_UI_MESSAGE')
+  const row = `[data-testid="chat-message-${message}"]`
+  const path = API + '/chat/conversations/' + conversation
+  const m = await daemon.attach({
+    device: narrow ? 'chat-ui-review-narrow' : 'chat-ui-review-wide',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: narrow ? '390x844' : '1440x1000',
+      userDataDir:
+        process.env.CHAT_UI_REVIEW_PROFILE ?? required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const read = async <T>(script: string): Promise<T> => {
+    const result = (await m.evalBrowserScript({ script })) as { data: unknown }
+    return (
+      typeof result.data === 'string' ? JSON.parse(result.data) : result.data
+    ) as T
+  }
+  let previousMuted: boolean | undefined
+  const preference = async (muted: boolean): Promise<void> => {
+    await read(
+      `const r=await fetch(${JSON.stringify(path + '/preferences')},{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({muted:${muted}})});if(!r.ok)throw new Error('Normal personal preference unavailable');return true`
+    )
+  }
+  try {
+    await signIn(m, process.env.CHAT_UI_REVIEW_ACTOR ?? (narrow ? 'Hs' : 'Hc'))
+    await m.openLink({ link: WEB + '/chat/' + conversation })
+    await m.assertVisible({ css: row, timeout: 60000 })
+    previousMuted = await read<boolean>(
+      `const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const chat=(await r.json()).find(x=>x.id===${JSON.stringify(conversation)});if(!chat)throw new Error('Fixture room missing');return JSON.stringify(chat.preferences.muted)`
+    )
+    if (narrow) await m.tapOn({ text: 'Back' })
+    let offset = await read<number>(
+      `const pane=document.querySelector('[data-testid="chat-list-pane"]');const scroll=[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY));if(!scroll||scroll.scrollHeight<=scroll.clientHeight+30)throw new Error('Populated list lacks reading geometry');window.chatUiReviewList=scroll;scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:120}));scroll.scrollTop=Math.min(120,scroll.scrollHeight-scroll.clientHeight);scroll.dispatchEvent(new Event('scroll',{bubbles:true}));await new Promise(r=>setTimeout(r,200));return JSON.stringify(scroll.scrollTop)`
+    )
+    if (narrow) {
+      offset = await read<number>(
+        `const row=document.querySelector('[data-testid="chat-conversation-${conversation}"]');const scroll=window.chatUiReviewList;row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,200));const r=row.getBoundingClientRect(),s=scroll.getBoundingClientRect();if(r.top<s.top||r.bottom>s.bottom)throw new Error('Selected row must be visible before navigation');return JSON.stringify(scroll.scrollTop)`
+      )
+      await m.tapOn({
+        css: `[data-testid="chat-conversation-${conversation}"]`
+      })
+    }
+    console.log({ listBeforeMembers: offset, narrow })
+    await m.tapOn({ text: 'Members' })
+    assert(
+      await read<boolean>(
+        'return JSON.stringify(location.pathname.endsWith("/members"))'
+      ),
+      'Members must navigate outside the workspace'
+    )
+    await m.setNetworkConditions({
+      latency: 1200,
+      downloadSpeed: -1,
+      uploadSpeed: -1
+    })
+    await m.tapOn({ text: 'Back' })
+    if (narrow) await m.tapOn({ text: 'Back' })
+    console.log(
+      await read(
+        `let measured;for(let n=0;n<300;n++){const pane=document.querySelector('[data-testid="chat-list-pane"]');const scroll=pane&&[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY));measured=scroll&&{top:scroll.scrollTop,height:scroll.clientHeight,content:scroll.scrollHeight};if(scroll&&Math.abs(scroll.scrollTop-${offset})<=2){await new Promise(r=>setTimeout(r,1400));if(Math.abs(scroll.scrollTop-${offset})>2)throw new Error('List restore drifted after async refresh');return JSON.stringify({membersReturnListOffset:true,offset:scroll.scrollTop,width:innerWidth})}await new Promise(r=>setTimeout(r,100))}throw new Error('Members return lost list position '+JSON.stringify({expected:${offset},measured}))`
+      )
+    )
+    await m.setNetworkConditions({
+      latency: 0,
+      downloadSpeed: -1,
+      uploadSpeed: -1
+    })
+    if (narrow)
+      await m.tapOn({
+        css: `[data-testid="chat-conversation-${conversation}"]`
+      })
+    await m.evalBrowserScript({
+      script: `const row=document.querySelector(${JSON.stringify(row)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+    })
+    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
+    const pinLabel = await read<string>(
+      'const label=[...document.querySelectorAll("[role=\\"button\\"]")].some(x=>x.textContent.trim()==="Unpin")?"Unpin":"Pin";return JSON.stringify(label)'
+    )
+    for (let n = 0; n < 8; n++) {
+      if (
+        await read<boolean>(
+          `return JSON.stringify(document.activeElement?.textContent.trim()===${JSON.stringify(pinLabel)})`
+        )
+      )
+        break
+      await m.pressKey({ key: 'Tab' })
+    }
+    assert(
+      await read<boolean>(
+        `return JSON.stringify(document.activeElement?.textContent.trim()===${JSON.stringify(pinLabel)})`
+      ),
+      'Keyboard focus must reach the personal pin action'
+    )
+    await preference(!previousMuted)
+    console.log(
+      await read(
+        `for(let n=0;n<80;n++){const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const chat=(await r.json()).find(x=>x.id===${JSON.stringify(conversation)});if(chat.preferences.muted===${!previousMuted}){await new Promise(r=>setTimeout(r,400));if(document.activeElement?.textContent.trim()!==${JSON.stringify(pinLabel)})throw new Error('Metadata update moved popup keyboard focus');return JSON.stringify({menuFocusSurvivesMetadataUpdate:true})}await new Promise(r=>setTimeout(r,100))}throw new Error('Preference update unavailable')`
+      )
+    )
+    await m.mockNetwork({
+      url: path + '/pins/' + message,
+      method: pinLabel === 'Pin' ? 'PUT' : 'DELETE',
+      response: {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Synthetic personal pin failure' })
+      }
+    })
+    await m.pressKey({ key: 'Enter' })
+    await m.assertVisible({
+      text: 'Could not update this message pin. Try again.',
+      timeout: 30000
+    })
+    console.log(
+      await read(
+        `const error=[...document.querySelectorAll('*')].find(x=>x.childElementCount===0&&x.textContent==='Could not update this message pin. Try again.');if(!error||error.closest('[aria-hidden="true"]'))throw new Error('Pin feedback hidden from accessibility');if(document.querySelector('[aria-label^="Message actions for"]'))throw new Error('Failed pin left obscuring menu');return JSON.stringify({pinFailureVisibleAndReachable:true})`
+      )
+    )
+    writeFileSync(
+      join(
+        required('CHAT_UI_ARTIFACTS'),
+        narrow
+          ? 'narrow-review-pin-failure-after.png'
+          : 'wide-review-pin-failure-after.png'
+      ),
+      await m.screenshot()
+    )
+    console.log('Review navigation, focus and pin-failure actual browser PASS')
+  } finally {
+    await m.clearNetworkMocks()
+    await m.setNetworkConditions({
+      latency: 0,
+      downloadSpeed: -1,
+      uploadSpeed: -1
+    })
+    if (previousMuted != null) await preference(previousMuted)
+    await m.detach()
+  }
+}
+
+async function pendingSend(daemon: Daemon): Promise<void> {
+  const narrow = process.env.CHAT_UI_VIEWPORT === 'narrow'
+  const conversation = required('CHAT_UI_TEST_CONVERSATION')
+  const other = required('CHAT_UI_CONVERSATION')
+  assert.notEqual(conversation, other)
+  const m = await daemon.attach({
+    device: narrow ? 'chat-ui-pending-narrow' : 'chat-ui-pending-wide',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: narrow ? '390x844' : '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const value = (reply: unknown): unknown => {
+    const data = (reply as { data: unknown }).data
+    return typeof data === 'string' ? JSON.parse(data) : data
+  }
+  const input = async (text: string): Promise<void> => {
+    await m.evalBrowserScript({
+      script: `const input=document.querySelector('[data-testid="chat-composer"]');if(!input)throw new Error('Composer missing');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(text)});input.dispatchEvent(new Event('input',{bubbles:true}));return true`
+    })
+  }
+  const select = async (id: string, back: boolean): Promise<void> => {
+    if (narrow && back) await m.tapOn({ text: 'Back' })
+    const css =
+      '[data-testid=' + JSON.stringify('chat-conversation-' + id) + ']'
+    await m.scrollUntilVisible({
+      element: { css },
+      direction: 'DOWN',
+      timeout: 20000
+    })
+    await m.tapOn({ css })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 30000
+    })
+  }
+  try {
+    await signIn(m, narrow ? 'Hs' : 'Hc')
+    await m.openLink({ link: WEB + '/chat' })
+    await select(conversation, false)
+    await select(other, true)
+    await select(conversation, true)
+    for (const outcome of ['success', 'failure'] as const) {
+      const marker = `Submitted ${outcome} ${Date.now()}`
+      const next = `New unsent ${outcome} ${Date.now()}`
+      await input(marker)
+      const before = Number(
+        value(
+          await m.evalBrowserScript({
+            script: `const response=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const rows=await response.json();return rows.find(row=>row.id===${JSON.stringify(conversation)}).lastSeq`
+          })
+        )
+      )
+      const gateId = `web-pending-${narrow ? 'narrow' : 'wide'}-${outcome}-${Date.now()}`
+      execFileSync(
+        process.execPath,
+        [
+          required('CHAT_UI_PENDING_CONTROL'),
+          narrow ? 'Hs' : 'Hc',
+          outcome,
+          gateId,
+          '15000'
+        ],
+        { stdio: 'pipe' }
+      )
+      await m.tapOn({ text: 'Send' })
+      const deadline = Date.now() + 10000
+      let consumed = false
+      while (Date.now() < deadline) {
+        if (!existsSync(required('CHAT_UI_PENDING_AUDIT'))) {
+          await new Promise(resolve => setTimeout(resolve, 20))
+          continue
+        }
+        const audit = readFileSync(required('CHAT_UI_PENDING_AUDIT'), 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map(line => JSON.parse(line) as { gateId: string; event?: string })
+        if (audit.some(hit => hit.gateId === gateId && hit.event == null)) {
+          consumed = true
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      assert(consumed, 'The normal encrypted POST must consume the scoped gate')
+      await select(other, true)
+      await select(conversation, true)
+      await m.evalBrowserScript({
+        script: `const send=document.querySelector('[aria-label="Send"]');const input=document.querySelector('[data-testid="chat-composer"]');if(send.getAttribute('aria-disabled')!=='true')throw new Error('Returning pending composer permitted another submission');input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));send.click();return true`
+      })
+      await input(next)
+      const returnedAt = Date.now()
+      await m.evalBrowserScript({
+        script: `for(let n=0;n<1000;n++){const send=document.querySelector('[aria-label="Send"]');if(send?.getAttribute('aria-disabled')!=='true'){if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(next)})throw new Error('Old completion overwrote a newer draft');return true}await new Promise(resolve=>setTimeout(resolve,25))}throw new Error('Pending request did not complete')`
+      })
+      await select(other, true)
+      await select(conversation, true)
+      const proof = value(
+        await m.evalBrowserScript({
+          script: `const response=await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages?after=' + before + '&limit=100')},{credentials:'include'});const rows=await response.json();const posts=rows.filter(row=>row.kind==='post');if(posts.length!==${outcome === 'success' ? 1 : 0})throw new Error('Wrong number of encrypted posts after remount: '+posts.length);if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(next)})throw new Error('New draft disappeared after later navigation');return JSON.stringify({outcome:${JSON.stringify(outcome)},newPosts:posts.length,pendingRemountDuplicateBlocked:true,newerDraftRetained:true})`
+        })
+      )
+      console.log(
+        '$ actual pending send remount and newer draft ' + outcome,
+        proof
+      )
+      const audit = readFileSync(required('CHAT_UI_PENDING_AUDIT'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map(
+          line =>
+            JSON.parse(line) as {
+              gateId: string
+              event?: string
+              at: string
+              remaining?: number
+            }
+        )
+        .filter(hit => hit.gateId === gateId)
+      assert.equal(audit.filter(hit => hit.event == null).length, 1)
+      const released = audit.find(hit => hit.event === 'delay-released')
+      assert(
+        released != null && returnedAt < Date.parse(released.at),
+        'Conversation return and newer typing must occur before actual gate release'
+      )
+      console.log({
+        gateId,
+        returnedBeforeRelease: true,
+        request: audit[0].at,
+        released: released.at,
+        exactlyOneConsumed: true
+      })
+      execFileSync(
+        process.execPath,
+        [required('CHAT_UI_PENDING_CONTROL'), 'clear'],
+        { stdio: 'pipe' }
+      )
+    }
+    await input('')
+    console.log(narrow ? 'Pending send narrow PASS' : 'Pending send wide PASS')
+  } finally {
+    execFileSync(
+      process.execPath,
+      [required('CHAT_UI_PENDING_CONTROL'), 'clear'],
+      { stdio: 'pipe' }
+    )
+    await m.detach()
+  }
+}
+
 async function bands(daemon: Daemon): Promise<void> {
   const narrow = process.env.CHAT_UI_VIEWPORT === 'narrow'
   const width = Number(process.env.CHAT_UI_WIDTH ?? (narrow ? 390 : 1440))
@@ -806,11 +1121,18 @@ async function bands(daemon: Daemon): Promise<void> {
     console.log(
       '$ S2 actual web four bands, post-recency order independent of unread, adjacent scope pills'
     )
-    console.log(
-      await m.evalBrowserScript({
-        script: `${listScript}const compare=(a,b)=>{const at=a.lastPostAt==null?null:Date.parse(a.lastPostAt);const bt=b.lastPostAt==null?null:Date.parse(b.lastPostAt);if(at!==bt)return at==null?1:bt==null?-1:bt-at;return a.id<b.id?-1:a.id>b.id?1:0};const expected=[true,false].flatMap(pin=>['dm','group'].flatMap(kind=>chats.filter(x=>Boolean(x.preferences.pinned)===pin&&(x.kind==='dm'?'dm':'group')===kind).sort(compare)));const labels=[...document.querySelector('[data-testid="chat-list-pane"]').querySelectorAll('[role="button"][aria-label]')].map(x=>x.getAttribute('aria-label'));const rendered=labels.filter(x=>chats.some(c=>c.title===x));const ordered=expected.filter(x=>rendered.includes(x.title)).map(x=>x.title);if(rendered.length<4||JSON.stringify(rendered)!==JSON.stringify(ordered))throw new Error('Rendered four-band order disagrees with pin/kind/post/id order');const selected=${JSON.stringify(targets.map(x => x.id))};if(!selected.every(id=>rendered.includes(chats.find(x=>x.id===id).title)))throw new Error('One required band is not rendered');return JSON.stringify({fourBands:true,visibleRows:rendered.length,postRecencyOrder:true,unreadExcluded:true,viewport:innerWidth})`
-      })
-    )
+    const orderingScript = `${listScript}
+      const compare=(a,b)=>{const at=a.lastPostAt==null?null:Date.parse(a.lastPostAt);const bt=b.lastPostAt==null?null:Date.parse(b.lastPostAt);if(at!==bt)return at==null?1:bt==null?-1:bt-at;return a.id<b.id?-1:a.id>b.id?1:0};
+      const expected=[true,false].flatMap(pin=>['dm','group'].flatMap(kind=>chats.filter(x=>Boolean(x.preferences.pinned)===pin&&(x.kind==='dm'?'dm':'group')===kind).sort(compare)));
+      const pane=document.querySelector('[data-testid="chat-list-pane"]');if(!pane)throw new Error('List pane missing');
+      const nodes=[...pane.querySelectorAll('[data-testid^="chat-conversation-"]')];
+      const ids=nodes.map(node=>node.getAttribute('data-testid').slice('chat-conversation-'.length));
+      if(new Set(ids).size!==ids.length)throw new Error('Duplicate row identity');
+      if(JSON.stringify(ids)!==JSON.stringify(expected.filter(x=>ids.includes(x.id)).map(x=>x.id)))throw new Error('Rendered exact-ID order differs from pin/kind/post/id order');
+      const bounds=pane.getBoundingClientRect();
+      const visible=nodes.filter(node=>{const r=node.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=bounds.top&&r.bottom<=bounds.bottom}).map(node=>{const id=node.getAttribute('data-testid').slice('chat-conversation-'.length);const chat=chats.find(x=>x.id===id);return{id,band:(chat.preferences.pinned?'pinned-':'regular-')+(chat.kind==='dm'?'dm':'group')}});
+      return JSON.stringify({renderedRows:ids.length,visibleRows:visible.length,visible,postRecencyOrder:true,unreadExcluded:true,viewport:innerWidth,height:innerHeight})`
+    console.log(await m.evalBrowserScript({ script: orderingScript }))
     if (width === 320)
       console.log(
         await m.evalBrowserScript({
@@ -820,11 +1142,75 @@ async function bands(daemon: Daemon): Promise<void> {
     if (!narrow) {
       await m.tapOn({
         css:
-          '[role="button"][aria-label=' + JSON.stringify(targets[1].title) + ']'
+          '[data-testid=' +
+          JSON.stringify('chat-conversation-' + targets[1].id) +
+          ']'
       })
       await m.assertVisible({
-        text: required('CHAT_UI_TARGET_TEXT'),
+        css: '[data-testid="chat-composer"]',
         timeout: 60000
+      })
+      const scrollScript = `const pane=document.querySelector('[data-testid="chat-list-pane"]');const row=pane?.querySelector('[data-testid^="chat-conversation-"]');let scroll=row?.parentElement;while(scroll&&scroll!==pane&&!(scroll.scrollHeight>scroll.clientHeight+2&&/auto|scroll/.test(getComputedStyle(scroll).overflowY)))scroll=scroll.parentElement;if(!scroll||scroll===pane)throw new Error('Actual sidebar scroll container unavailable');`
+      await m.evalBrowserScript({
+        script:
+          scrollScript +
+          'scroll.dispatchEvent(new WheelEvent("wheel",{bubbles:true,deltaY:-scroll.scrollHeight}));scroll.scrollTop=0;return true'
+      })
+      const top = getData(
+        await m.evalBrowserScript({ script: orderingScript })
+      ) as { visible: Array<{ id: string; band: string }> }
+      assert(
+        top.visible.some(row => row.band === 'pinned-dm') &&
+          top.visible.some(row => row.band === 'pinned-group'),
+        'Top image must actually show a complete pinned DM and group'
+      )
+      writeFileSync(
+        join(required('CHAT_UI_ARTIFACTS'), 'wide-four-bands-top-after.png'),
+        await m.screenshot()
+      )
+      console.log(
+        await m.evalBrowserScript({
+          script:
+            scrollScript +
+            'scroll.dispatchEvent(new WheelEvent("wheel",{bubbles:true,deltaY:scroll.scrollHeight}));scroll.scrollTop=scroll.scrollHeight;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));return JSON.stringify({scrollTop:scroll.scrollTop,scrollHeight:scroll.scrollHeight,clientHeight:scroll.clientHeight})'
+        })
+      )
+      const bottom = getData(
+        await m.evalBrowserScript({ script: orderingScript })
+      ) as { visible: Array<{ id: string; band: string }> }
+      console.log({
+        top: top.visible,
+        bottom: bottom.visible,
+        actualViewportIntersection: true
+      })
+      assert(
+        bottom.visible.some(row => row.band === 'regular-dm') &&
+          bottom.visible.some(row => row.band === 'regular-group'),
+        'Bottom image must actually show a complete unpinned DM and group'
+      )
+      writeFileSync(
+        join(required('CHAT_UI_ARTIFACTS'), 'wide-four-bands-bottom-after.png'),
+        await m.screenshot()
+      )
+      const observed = [
+        ...new Set([...top.visible, ...bottom.visible].map(row => row.band))
+      ]
+      assert(
+        observed.length === 4,
+        'All four bands require actual visible rows across normal scrolling'
+      )
+      console.log({
+        fourBands: true,
+        top: top.visible,
+        bottom: bottom.visible,
+        actualViewportIntersection: true,
+        width,
+        height: 1000
+      })
+      await m.evalBrowserScript({
+        script:
+          scrollScript +
+          'scroll.dispatchEvent(new WheelEvent("wheel",{bubbles:true,deltaY:-scroll.scrollHeight}));scroll.scrollTop=0;return true'
       })
     }
     writeFileSync(
@@ -2059,6 +2445,8 @@ async function main(): Promise<void> {
       scenario === 'S4' ||
       scenario === 'S4full' ||
       scenario === 'bands' ||
+      scenario === 'pendingSend' ||
+      scenario === 'reviewNavigation' ||
       scenario === 'historyFixture' ||
       scenario === 'composeFull' ||
       scenario === 'picker' ||
@@ -2098,6 +2486,8 @@ async function main(): Promise<void> {
     else if (scenario === 'S4') await s4(daemon)
     else if (scenario === 'S4full') await s4Full(daemon)
     else if (scenario === 'bands') await bands(daemon)
+    else if (scenario === 'pendingSend') await pendingSend(daemon)
+    else if (scenario === 'reviewNavigation') await reviewNavigation(daemon)
     else if (scenario === 'historyFixture') await historyFixture(daemon)
     else if (scenario === 'composeFull') await composeFull(daemon)
     else if (scenario === 'picker') await picker(daemon)
