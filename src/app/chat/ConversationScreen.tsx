@@ -194,6 +194,8 @@ export function ConversationScreen(
   )
   const gestureGeneration = useRef(0)
   const messagePositions = useRef(new Map<string, number>())
+  const messageRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
+  const measuringJump = useRef<number | undefined>(undefined)
   const prepend = useRef<{ offset: number; content: number } | undefined>(
     undefined
   )
@@ -310,6 +312,11 @@ export function ConversationScreen(
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (props.active === false) return
+    if (measuringJump.current != null) {
+      jumpGeneration.current += 1
+      measuringJump.current = undefined
+      prepend.current = undefined
+    }
     atBottom.current = false
     restoreTarget.current = undefined
     scrolled.current.hasPosition = true
@@ -331,6 +338,7 @@ export function ConversationScreen(
   useEffect(
     () => () => {
       jumpGeneration.current += 1
+      measuringJump.current = undefined
       clearTimeout(highlightTimer.current)
     },
     [conversationId, props.active]
@@ -338,6 +346,7 @@ export function ConversationScreen(
 
   const loadOlder = async (): Promise<ConversationView> => {
     const before = engine.view(conversationId)
+    messagePositions.current.clear()
     prepend.current = {
       offset: scrolled.current.offset,
       content: scrolled.current.content
@@ -359,6 +368,7 @@ export function ConversationScreen(
   const jumpTo = (id: string): void => {
     restoreTarget.current = undefined
     const generation = ++jumpGeneration.current
+    measuringJump.current = generation
     setPinsOpen(false)
     setError(undefined)
     atBottom.current = false
@@ -371,19 +381,81 @@ export function ConversationScreen(
       .then(async original => {
         if (generation !== jumpGeneration.current) return
         if (original == null) {
+          measuringJump.current = undefined
           setError(lstrings.chat_message_unavailable)
           return
         }
-        // Layout follows the verified view update; never scroll using stale rows.
-        await new Promise<void>(resolve => setTimeout(resolve, 50))
-        if (generation !== jumpGeneration.current) return
-        const y = messagePositions.current.get(id)
+        // Measure the mounted row relative to scroll content. Paging resolves
+        // before native/DOM layout, so wait for actual geometry, not a guessed delay.
+        prepend.current = undefined
+        const cancelled = (): boolean =>
+          generation !== jumpGeneration.current ||
+          !paneActive.current ||
+          engine.view(conversationId) == null
+        let y: number | undefined
+        const deadline = Date.now() + 2000
+        while (!cancelled() && Date.now() < deadline) {
+          const row = messageRefs.current.get(id)
+          const content = scroller.current?.getInnerViewRef()
+          y = await new Promise<number | undefined>(resolve => {
+            const timer = setTimeout(() => {
+              resolve(undefined)
+            }, 100)
+            if (row == null || content == null) {
+              clearTimeout(timer)
+              resolve(undefined)
+              return
+            }
+            row.measureLayout(
+              content,
+              (_x, top, width, height) => {
+                clearTimeout(timer)
+                resolve(
+                  Number.isFinite(top) && width > 0 && height > 0
+                    ? top
+                    : undefined
+                )
+              },
+              () => {
+                clearTimeout(timer)
+                resolve(messagePositions.current.get(id))
+              }
+            )
+          })
+          if (cancelled()) {
+            if (measuringJump.current === generation)
+              measuringJump.current = undefined
+            return
+          }
+          if (y != null) break
+          await new Promise<void>(resolve => setTimeout(resolve, 25))
+        }
+        if (cancelled()) {
+          if (measuringJump.current === generation)
+            measuringJump.current = undefined
+          return
+        }
+        measuringJump.current = undefined
         if (y == null) {
           setError(lstrings.chat_message_unavailable)
           return
         }
+        const target = Math.max(0, y - theme.rem(0.5))
+        restoreTarget.current = target
+        scrolled.current.offset = target
+        scrolled.current.hasPosition = true
+        scrolled.current.followNewest = false
+        onDraftChange?.({
+          text: textNow.current,
+          replyTo: replyNow.current,
+          editing,
+          picked: pickedNow.current,
+          scrollOffset: target,
+          hasScrollPosition: true,
+          followNewest: false
+        })
         scroller.current?.scrollTo({
-          y: Math.max(0, y - theme.rem(0.5)),
+          y: target,
           animated: true
         })
         setHighlight(id)
@@ -393,8 +465,10 @@ export function ConversationScreen(
         }, 1500)
       })
       .catch(() => {
-        if (generation === jumpGeneration.current)
+        if (generation === jumpGeneration.current) {
+          measuringJump.current = undefined
           setError(lstrings.chat_message_unavailable)
+        }
       })
   }
 
@@ -873,6 +947,10 @@ export function ConversationScreen(
               })
               return
             }
+            if (measuringJump.current != null) {
+              scrolled.current.content = height
+              return
+            }
             const { offset, content } = scrolled.current
             // At the bottom of what was there before it grew (or asked to
             // go there by a send): follow it down.
@@ -905,6 +983,11 @@ export function ConversationScreen(
           {view.messages.map((message, index) => (
             <View
               key={message.id}
+              ref={node => {
+                if (node == null) messageRefs.current.delete(message.id)
+                else messageRefs.current.set(message.id, node)
+              }}
+              collapsable={false}
               onLayout={event => {
                 messagePositions.current.set(
                   message.id,
