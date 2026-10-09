@@ -166,11 +166,11 @@ describe('046 over a database with an outside integration', function () {
         .instanceOf(Error)
         .property('message')
         .contains('More than one table carries')
-      const { rows } = await twice.query<{ count: string }>(
+      const { rows } = await twice.query<{ count: string | number }>(
         `select count(*) from schema_migrations where name = $1`,
         [migration046ExternalCleanup.name]
       )
-      expect(rows[0].count).equals('0')
+      expect(Number(rows[0].count)).equals(0)
       const tables = await twice.query<{ name: string | null }>(
         `select to_regclass('x_one')::text as name`
       )

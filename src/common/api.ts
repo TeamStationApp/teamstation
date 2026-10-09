@@ -260,9 +260,12 @@ export const asHighlight = asObject({
    * reading of it, written by the server when it answers. The list draws
    * `title`; only that panel draws this.
    */
-  description: asOptional(asNullable(asString), null)
+  description: asOptional(asNullable(asString), null),
+  tag: asOptional(asNullable(asString), null)
 })
-export type Highlight = ReturnType<typeof asHighlight>
+export type Highlight = Omit<ReturnType<typeof asHighlight>, 'tag'> & {
+  tag?: string | null
+}
 
 export const asHighlightsResponse = asObject({
   withheld: asNullable(asString),
@@ -270,7 +273,10 @@ export const asHighlightsResponse = asObject({
   droppedCount: asOptional(asNumber, 0),
   highlights: asArray(asHighlight)
 })
-export type HighlightsResponse = ReturnType<typeof asHighlightsResponse>
+export type HighlightsResponse = Omit<
+  ReturnType<typeof asHighlightsResponse>,
+  'highlights'
+> & { highlights: Highlight[] }
 
 const asRates = asObject({
   avg: asOptional(asNumber),
@@ -509,6 +515,7 @@ export type PlayerDetail = ReturnType<typeof asPlayerDetail>
  * both down one list, each play against the shirt they were wearing.
  */
 export const asPlayerHighlight = asObject({
+  tag: asOptional(asNullable(asString), null),
   eventId: asString,
   gameId: asString,
   videoId: asString,
@@ -524,7 +531,10 @@ export const asPlayerHighlight = asObject({
   playOffsetSec: asNumber,
   stillUrl: asString
 })
-export type PlayerHighlight = ReturnType<typeof asPlayerHighlight>
+export type PlayerHighlight = Omit<
+  ReturnType<typeof asPlayerHighlight>,
+  'tag'
+> & { tag?: string | null }
 
 export const asPlayerHighlights = asObject({
   highlights: asArray(asPlayerHighlight),
@@ -533,7 +543,10 @@ export const asPlayerHighlights = asObject({
   /** Plays of theirs on this page that no recording covers. */
   withoutVideo: asOptional(asNumber, 0)
 })
-export type PlayerHighlights = ReturnType<typeof asPlayerHighlights>
+export type PlayerHighlights = Omit<
+  ReturnType<typeof asPlayerHighlights>,
+  'highlights'
+> & { highlights: PlayerHighlight[] }
 
 export const asStandingsRow = asObject({
   teamId: asString,
@@ -1598,6 +1611,38 @@ export class TeamStationClient {
       'GET',
       `/games/${encodeURIComponent(gameId)}/dj`,
       asDjGame
+    )
+  }
+
+  /** The caller's recent tags and globally popular active assignments. */
+  async tagChoices(options: { includeUnused?: boolean } = {}): Promise<{
+    recent: string[]
+    popular: Array<{ tag: string; count: number }>
+  }> {
+    return await this.request(
+      'GET',
+      options.includeUnused === true ? '/tags?includeUnused=true' : '/tags',
+      asObject({
+        recent: asArray(asString),
+        popular: asArray(asObject({ tag: asString, count: asNumber }))
+      })
+    )
+  }
+
+  async saveEventTag(
+    gameId: string,
+    targetId: string,
+    tag: string | null
+  ): Promise<{ targetId: string; tag: string | null; revision: string }> {
+    return await this.request(
+      tag == null ? 'DELETE' : 'PUT',
+      `/games/${encodeURIComponent(gameId)}/tags/${encodeURIComponent(targetId)}`,
+      asObject({
+        targetId: asString,
+        tag: asNullable(asString),
+        revision: asString
+      }),
+      tag == null ? undefined : { tag }
     )
   }
 

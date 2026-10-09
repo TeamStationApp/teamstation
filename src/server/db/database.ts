@@ -621,7 +621,24 @@ export interface GamePlayerStatsTable {
   computed_at: Timestamp
 }
 
+export interface EventTagsTable {
+  game_id: string
+  target_id: string
+  at_bat_index: number
+  event_index: number | null
+  tag: string
+  assigned_by: number
+}
+export interface UserTagsTable {
+  user_id: number
+  tag: string
+  last_used: Generated<number>
+}
+
 export interface Database {
+  event_tag_catalog: { tag: string }
+  event_tags: EventTagsTable
+  user_tags: UserTagsTable
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
   auth_sessions: AuthSessionsTable
