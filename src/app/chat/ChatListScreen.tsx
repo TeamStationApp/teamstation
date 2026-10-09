@@ -36,6 +36,8 @@ export interface ChatListScreenProps {
   embedded?: boolean
   narrow?: boolean
   selectedId?: string
+  /** A remembered selection on the narrow list is still offscreen. */
+  selectedVisible?: boolean
   initialOffset?: number
   onOffset?: (offset: number) => void
 }
@@ -53,7 +55,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const [chats, setChats] = useState<ConversationListItem[]>()
   const [failed, setFailed] = useState(false)
   const [menu, setMenu] = useState<ConversationListItem>()
-  const [announcement, setAnnouncement] = useState('')
+  const [announcement, setAnnouncement] = useState({ text: '', revision: 0 })
   const list = useRef<FlatList<Row>>(null)
   const visible = useRef<string[]>([])
   const gestureGeneration = useRef(0)
@@ -82,18 +84,20 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       if (event.type === 'conversations') setChats(engine.conversations())
       if (
         event.type === 'messageAlert' &&
-        event.conversationId !== props.selectedId
+        (props.selectedVisible === false ||
+          event.conversationId !== props.selectedId)
       ) {
         const conversation = engine
           .conversations()
           .find(chat => chat.id === event.conversationId)
         if (conversation != null)
-          setAnnouncement(
-            sprintf(
+          setAnnouncement(previous => ({
+            revision: previous.revision + 1,
+            text: sprintf(
               lstrings.chat_new_message_announcement,
               conversationTitle(conversation)
             )
-          )
+          }))
       }
     })
     engine
@@ -111,7 +115,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       live = false
       unsubscribe()
     }
-  }, [engine, props.selectedId])
+  }, [engine, props.selectedId, props.selectedVisible])
   useEffect(() => {
     previews(visible.current)
   }, [chats, previews])
@@ -132,7 +136,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const content = (
     <View style={styles.fill}>
       <Text accessibilityLiveRegion="polite" style={styles.announcement}>
-        {announcement}
+        <Text key={announcement.revision}>{announcement.text}</Text>
       </Text>
       <FlatList
         ref={list}
