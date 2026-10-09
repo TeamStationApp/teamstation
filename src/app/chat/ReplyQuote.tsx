@@ -3,12 +3,14 @@ import { Pressable, Text } from 'react-native'
 
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import type { MessagePressGesture } from './chatInteractionModel'
 import type { QuoteView } from './engine/apply'
 
 export function ReplyQuote(props: {
   quote: QuoteView
   userId: number
   onJump: (id: string) => void
+  messageGesture?: MessagePressGesture
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -20,6 +22,7 @@ export function ReplyQuote(props: {
         : (props.quote.authorName ?? lstrings.chat_former_member)
   return (
     <Pressable
+      {...props.messageGesture?.pressProps}
       accessibilityRole="button"
       accessibilityLabel={sprintf(
         lstrings.chat_jump_reply,
@@ -27,6 +30,7 @@ export function ReplyQuote(props: {
         props.quote.snippet
       )}
       onPress={() => {
+        if (props.messageGesture?.canOpen() === false) return
         props.onJump(props.quote.id)
       }}
       style={styles.quote}

@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
+import { ChatListScreen } from './ChatListScreen'
 import { ChatOverlayHost } from './ChatOverlayHost'
 import { chat, member, message, view } from './chatViews.test.helpers'
 import {
@@ -613,6 +614,203 @@ describe('chat follow-up message hold', function () {
       await Promise.resolve()
     })
   }
+
+  async function nested(kind: 'file' | 'quote'): Promise<{
+    target: HTMLElement
+    opens: MessageView[]
+    fetches: string[]
+    jumps: string[]
+    generation: { current: number }
+  }> {
+    mock.timers.reset()
+    pointer(false)
+    const opens: MessageView[] = []
+    const fetches: string[] = []
+    const jumps: string[] = []
+    const generation = { current: 0 }
+    const value = safeMessage({
+      id: `msg_nested_${kind}`,
+      attachments:
+        kind === 'file'
+          ? [
+              {
+                id: 'cat_nested',
+                key: 'AA',
+                digest: 'AA',
+                contentType: 'application/pdf',
+                fileName: 'notes.pdf',
+                size: 1
+              }
+            ]
+          : [],
+      quote:
+        kind === 'quote'
+          ? {
+              id: 'msg_original',
+              authorId: 2,
+              authorName: 'Shohei Ohtani',
+              snippet: 'Original body',
+              status: 'ok'
+            }
+          : undefined
+    })
+    await render(
+      <MessageBubble
+        key={kind}
+        message={value}
+        conversation={chat()}
+        members={[member(2, 'Shohei Ohtani')]}
+        engine={{
+          openAttachment: async attachment => {
+            fetches.push(attachment.id)
+            return new Uint8Array([1])
+          }
+        }}
+        files={files}
+        maxWidth={320}
+        swipe={false}
+        gestureGeneration={generation}
+        onLongPress={pressed => opens.push(pressed)}
+        onReply={() => {}}
+        onJump={id => jumps.push(id)}
+        onToggleReaction={() => {}}
+      />
+    )
+    const target =
+      kind === 'file'
+        ? button('Save notes.pdf')
+        : button('Jump to message from Shohei Ohtani: Original body')
+    mock.timers.enable({ apis: ['setTimeout'] })
+    return { target, opens, fetches, jumps, generation }
+  }
+
+  it('keeps nested file-open and quote-jump short taps while cancelling a hold released before 500 ms', async function () {
+    for (const kind of ['file', 'quote'] as const) {
+      const value = await nested(kind)
+      await mouse(value.target, 'mousedown')
+      await tick(300)
+      await mouse(value.target, 'mouseup')
+      await act(async () => {
+        value.target.click()
+        await Promise.resolve()
+      })
+      await tick(200)
+      expect(value.opens).length(0)
+      expect(value.fetches).deep.equals(kind === 'file' ? ['cat_nested'] : [])
+      expect(value.jumps).deep.equals(kind === 'quote' ? ['msg_original'] : [])
+    }
+  })
+
+  it('recognizes a nested 500 ms file or quote hold once and suppresses the child short action', async function () {
+    for (const kind of ['file', 'quote'] as const) {
+      let pulses = 0
+      Object.defineProperty(navigator, 'vibrate', {
+        configurable: true,
+        value: () => {
+          pulses += 1
+          return true
+        }
+      })
+      const value = await nested(kind)
+      await mouse(value.target, 'mousedown')
+      await tick(499)
+      expect(value.opens).length(0)
+      await tick(1)
+      expect(value.opens.map(pressed => pressed.id)).deep.equals([
+        `msg_nested_${kind}`
+      ])
+      await tick(500)
+      await mouse(value.target, 'mouseup')
+      await act(async () => {
+        value.target.click()
+        await Promise.resolve()
+      })
+      expect(value.opens).length(1)
+      expect(pulses).equals(1)
+      expect(value.fetches).deep.equals([])
+      expect(value.jumps).deep.equals([])
+    }
+  })
+
+  it('cancels nested child holds and short actions after movement, touch cancellation or scrolling', async function () {
+    for (const kind of ['file', 'quote'] as const) {
+      for (const cancellation of ['movement', 'cancel', 'scroll'] as const) {
+        const value = await nested(kind)
+        await touch(value.target, 'touchstart')
+        if (cancellation === 'movement')
+          await touch(value.target, 'touchmove', 31, 20)
+        else if (cancellation === 'cancel')
+          await touch(value.target, 'touchcancel')
+        else value.generation.current += 1
+        await tick(500)
+        await touch(value.target, 'touchend', 31, 20)
+        await act(async () => {
+          value.target.click()
+          await Promise.resolve()
+        })
+        expect(value.opens).length(0)
+        expect(
+          value.fetches,
+          `${kind} ${cancellation} must not open a file`
+        ).deep.equals([])
+        expect(
+          value.jumps,
+          `${kind} ${cancellation} must not jump`
+        ).deep.equals([])
+      }
+    }
+  })
+
+  it('does not open a narrow conversation or its menu after a raw touch moves more than 10 pixels, while a later short tap still opens it', async function () {
+    pointer(false)
+    const engine = new FakeEngine()
+    engine.current.conversation = chat({
+      id: 'cnv_row_gesture',
+      title: 'Aurora Members',
+      scopeName: 'Aurora'
+    })
+    const opened: string[] = []
+    await render(
+      <ChatOverlayHost>
+        <ChatListScreen
+          engine={engine}
+          narrow
+          onOpen={conversation => opened.push(conversation.id)}
+          onNewMessage={() => {}}
+          onFollowTeam={() => {}}
+        />
+      </ChatOverlayHost>
+    )
+    const target = button('Aurora Members')
+    mock.timers.enable({ apis: ['setTimeout'] })
+    await touch(target, 'touchstart')
+    await touch(target, 'touchmove', 31, 20)
+    await tick(500)
+    await touch(target, 'touchend', 31, 20)
+    await act(async () => {
+      target.click()
+      await Promise.resolve()
+    })
+    expect(opened).deep.equals([])
+    expect(
+      document.querySelector('[aria-label="Conversation actions"]')
+    ).equals(null)
+
+    await touch(target, 'touchstart')
+    await tick(300)
+    await touch(target, 'touchend')
+    // Browsers finish a touch tap with compatibility mouse events before click.
+    await mouse(target, 'mouseup')
+    await act(async () => {
+      target.click()
+      await Promise.resolve()
+    })
+    await tick(200)
+    expect(opened).deep.equals(['cnv_row_gesture'])
+    expect(
+      document.querySelector('[aria-label="Conversation actions"]')
+    ).equals(null)
+  })
 
   it('recognizes exactly at 500 ms with one light pulse and also offers an accessible Actions entry', async function () {
     let pulses = 0
