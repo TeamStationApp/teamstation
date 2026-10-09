@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { HttpError } from '../errors'
+import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
@@ -87,6 +88,103 @@ async function open(
 }
 
 describe('a scoring session', function () {
+  it('coalesces the real hit-by-pitch event and retains its tag on completion', async () => {
+    const { session, store } = await open()
+    expect(
+      session.apply({ type: 'result', eventType: 'hit_by_pitch' }).problems
+    ).deep.equals([])
+    const pitch = session.eventTargets[0]
+    expect(session.setEventTag(pitch.id, 'tough batter')).equals(true)
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await session.flush()
+    const play = store.plays.get(0)!.play
+    expect(
+      (play.playEvents as Array<{ details: { code: string } }>).at(-1)?.details
+        .code
+    ).equals('H')
+    expect(historyTargets(play)).has.length(1)
+    expect(historyTargets(play)[0].id).equals(pitch.id)
+    expect(completedPlayTag(play)).equals('tough batter')
+  })
+
+  it('reads authoritative tags without replacing pending scoring or local annotations', async () => {
+    const { session, store } = await open()
+    session.apply(ball)
+    await session.flush()
+    const target = session.eventTargets[0]
+    const version = session.tagSnapshotVersion
+    session.setEventTag(target.id, 'local label')
+    expect(session.tagSnapshotVersion).equals(version + 1)
+    store.current = withTargetTags(
+      store.current!,
+      new Map([[target.id, 'peer label']])
+    )
+    session.apply(strike)
+    const pending = session.pending
+    expect(await session.readEventTag(target.id)).equals('peer label')
+    expect(await session.readEventTag('missing_target')).equals(undefined)
+    expect(session.eventTargets[0].tag).equals('local label')
+    expect(session.pending).equals(pending)
+    expect(session.actions).has.length(2)
+    session.undo()
+    expect(session.pending).equals(0)
+    expect(await session.reload()).equals(true)
+    expect(session.tagSnapshotVersion).equals(version + 2)
+    expect(session.eventTargets[0].tag).equals('peer label')
+    expect(await session.reload()).equals(false)
+    expect(session.tagSnapshotVersion).equals(version + 2)
+    session.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await session.flush()
+    const completed = session.eventTargets.find(
+      item => item.completed === true
+    )!
+    expect(await session.readEventTag(completed.id)).equals(null)
+  })
+
+  it('does not acknowledge newer scoring when a tag save completes later', async () => {
+    const { session, store } = await open()
+    session.apply(ball)
+    await session.flush()
+    const target = session.eventTargets[0]
+    session.apply(strike)
+    expect(session.pending).greaterThan(0)
+    session.setEventTag(target.id, 'great pitch')
+    expect(session.pending).greaterThan(0)
+    await session.flush()
+    expect(store.current!.playEvents).has.length(2)
+    expect(session.pending).equals(0)
+  })
+  it('preserves event tags across scoring, reload and metadata-only reload without changing Undo', async () => {
+    const { session, store, clock } = await open()
+    session.apply(ball)
+    session.apply(strike)
+    await session.flush()
+    const first = session.eventTargets[0]
+    const second = session.eventTargets[1]
+    expect(session.setEventTag(first.id, 'great pitch')).equals(true)
+    expect(session.pending).equals(0)
+    expect(session.setEventTag('missing_target', 'tag')).equals(false)
+    session.apply(ball)
+    expect(session.eventTargets[0].id).equals(first.id)
+    expect(session.eventTargets[0].tag).equals('great pitch')
+    await session.flush()
+    const reopened = (await open(store, clock)).session
+    expect(reopened.eventTargets[0]).deep.equals(session.eventTargets[0])
+    store.current = withTargetTags(
+      store.current!,
+      new Map([[first.id, 'new label']])
+    )
+    expect(await reopened.reload()).equals(true)
+    expect(reopened.eventTargets[0].tag).equals('new label')
+    reopened.undo()
+    reopened.undo()
+    reopened.apply(strike)
+    expect(reopened.eventTargets[1].id).not.equals(second.id)
+    expect(reopened.eventTargets[0].tag).equals('new label')
+    expect(reopened.actions).has.length(2)
+  })
+
   it('opens an unscored game and posts nothing until something happens', async function () {
     const { session, store } = await open()
     expect(session.pending).equals(0)
@@ -1058,7 +1156,7 @@ describe('a scoring session', function () {
       index % 3 === 0 ? walk : out
     ).flat()
     applyAll(session, [...log, ball, strike])
-    // The game and what it folds to, leaving out the times: a play an Undo
+    // Scoring state excludes opaque annotations and times: a play an Undo
     // reopens keeps the time it ended, as it always has.
     const seen = (from: ScoringSession): string => {
       const { plays, current } = from.picture()
@@ -1066,11 +1164,14 @@ describe('a scoring session', function () {
         play == null
           ? null
           : { ...play, about: { ...play.about, startTime: 0, endTime: 0 } }
-      return JSON.stringify([
-        from.state,
-        [...plays].map(([index, play]) => [index, timeless(play)]),
-        timeless(current)
-      ])
+      return JSON.stringify(
+        [
+          from.state,
+          [...plays].map(([index, play]) => [index, timeless(play)]),
+          timeless(current)
+        ],
+        (key, value) => (key === 'tagTargets' ? undefined : value)
+      )
     }
     const replayed = async (actions: ScoringAction[]): Promise<string> => {
       const fresh = (await open()).session

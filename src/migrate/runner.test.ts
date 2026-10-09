@@ -177,10 +177,10 @@ describe('the baseline', function () {
         `${name} predates ${BASELINE}: migrations before it were rewritten ` +
           'for empty databases; restore a production dump instead'
       )
-    const { rows } = await pool.query<{ count: string }>(
+    const { rows } = await pool.query<{ count: string | number }>(
       'select count(*) from schema_migrations'
     )
-    expect(rows[0].count).equals(String(early.length + 1))
+    expect(Number(rows[0].count)).equals(early.length + 1)
     const tablesAfter = await pool.query<{ count: string }>(
       "select count(*) from pg_tables where schemaname = 'public'"
     )

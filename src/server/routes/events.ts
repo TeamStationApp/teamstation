@@ -12,6 +12,11 @@ import { halfOutcomes } from '../../common/scoring/linescore'
 import { canScore, roleScopes } from '../access'
 import type { Database } from '../db/database'
 import {
+  reconcileEventTags,
+  tagChoices,
+  writeEventTag
+} from '../events/eventTags'
+import {
   documentOf,
   playJson,
   postGamePlays,
@@ -20,6 +25,7 @@ import {
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { notifyGameChange } from '../socket/gameChanges'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
@@ -72,6 +78,65 @@ export function eventRoutes(
 ): Router {
   const router = Router()
 
+  router.get(
+    '/tags',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const includeUnused = req.query.includeUnused
+      if (
+        includeUnused !== undefined &&
+        includeUnused !== 'true' &&
+        includeUnused !== 'false'
+      )
+        throw badRequest('includeUnused must be true or false')
+      res.json(await tagChoices(db, actor.userId, includeUnused === 'true'))
+    })
+  )
+
+  for (const method of ['put', 'delete'] as const) {
+    router[method](
+      '/games/:gameId/tags/:targetId',
+      requireActor,
+      withAsync(async (req, res) => {
+        const actor = req.actor
+        if (actor == null) throw unauthorized()
+        const gameId = pathParam(req.params.gameId)
+        const targetId = pathParam(req.params.targetId)
+        await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+        const result = await db.transaction().execute(async trx => {
+          const game = await trx
+            .selectFrom('games')
+            .select(['home_team_id', 'away_team_id'])
+            .where('id', '=', gameId)
+            .forUpdate()
+            .executeTakeFirst()
+          if (game == null) throw notFound()
+          const scopes = await roleScopes(trx, actor.userId, actor.isAdmin)
+          if (
+            !canScore(scopes, game.home_team_id) &&
+            !canScore(scopes, game.away_team_id)
+          )
+            throw forbidden('Only a scorekeeper may change event tags')
+          const tag = method === 'delete' ? null : req.body?.tag
+          if (method !== 'delete' && typeof tag !== 'string')
+            throw badRequest('tag must be a nonempty string')
+          const result = await writeEventTag(
+            trx,
+            gameId,
+            targetId,
+            actor.userId,
+            tag
+          )
+          await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+          return result
+        })
+        res.json(result)
+      })
+    )
+  }
+
   router.post(
     '/games/:gameId/events',
     requireActor,
@@ -117,16 +182,27 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-      const stored = await readPlays(db, gameId)
-      const game = await db
-        .selectFrom('games')
-        .select('currentPlay')
-        .where('id', '=', gameId)
-        .executeTakeFirst()
-      res.json({
-        plays: stored.map(playJson),
-        currentPlay: game?.currentPlay ?? null
+      const result = await db.transaction().execute(async trx => {
+        const locked = await trx
+          .selectFrom('games')
+          .select('id')
+          .where('id', '=', gameId)
+          .forUpdate()
+          .executeTakeFirst()
+        if (locked == null) throw notFound()
+        await reconcileEventTags(trx, gameId)
+        const stored = await readPlays(trx, gameId)
+        const game = await trx
+          .selectFrom('games')
+          .select('currentPlay')
+          .where('id', '=', gameId)
+          .executeTakeFirst()
+        return {
+          plays: stored.map(playJson),
+          currentPlay: game?.currentPlay ?? null
+        }
       })
+      res.json(result)
     })
   )
 

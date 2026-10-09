@@ -314,6 +314,7 @@ export function playerRoutes(
         teamName: string | null
         outcome: string
         title: string
+        tag: string | null
         playAt: string
         startOffsetSec: number
         playOffsetSec: number
@@ -359,6 +360,7 @@ export function playerRoutes(
             teamName: teamId == null ? null : (names.get(teamId) ?? null),
             outcome: outcomeName(outcome),
             title: highlight.title,
+            tag: highlight.tag ?? null,
             playAt: highlight.playAt.toISOString(),
             startOffsetSec: highlight.startOffsetSec,
             playOffsetSec: highlight.playOffsetSec,
