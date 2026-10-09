@@ -37,20 +37,24 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
   const theme = useTheme()
   const insets = useInsets()
   const panel = useRef<React.ComponentRef<typeof View>>(null)
+  const close = useRef(onClose)
+  close.current = onClose
   useEffect(() => {
     const subscription = BackHandler.addEventListener(
       'hardwareBackPress',
       () => {
-        onClose()
+        close.current()
         return true
       }
     )
-    const stop = bindPopupKeys(panel.current, onClose)
+    const stop = bindPopupKeys(panel.current, () => {
+      close.current()
+    })
     return () => {
       subscription.remove()
       stop()
     }
-  }, [onClose])
+  }, [])
   return (
     <>
       <View

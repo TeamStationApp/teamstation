@@ -35,6 +35,8 @@ function AnchoredFrame(props: {
   })
   const [size, setSize] = useState({ width: 224, height: 160 })
   const panel = useRef<React.ComponentRef<typeof View>>(null)
+  const close = useRef(props.onClose)
+  close.current = props.onClose
   useEffect(
     () =>
       watchMessageAnchor(
@@ -44,11 +46,19 @@ function AnchoredFrame(props: {
             JSON.stringify(previous) === JSON.stringify(next) ? previous : next
           )
         },
-        props.onClose
+        () => {
+          close.current()
+        }
       ),
-    [props.anchor, props.onClose]
+    [props.anchor]
   )
-  useEffect(() => bindPopupKeys(panel.current, props.onClose), [props.onClose])
+  useEffect(
+    () =>
+      bindPopupKeys(panel.current, () => {
+        close.current()
+      }),
+    []
+  )
   const position = menuPosition(bounds, size, viewport)
   return (
     <View

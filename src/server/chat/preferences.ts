@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import type { ChatPin, ChatPreferences } from '../../common/api'
 import { badRequest, notFound } from '../../common/errors'
 import type { Database } from '../db/database'
+import { lockConversation } from './epochs'
 import { notifyChatUser } from './membershipLog'
 
 export const defaultPreferences = (): ChatPreferences => ({
@@ -46,6 +47,8 @@ export async function updatePreferences(
   if (Object.values(patch).every(value => value == null))
     throw badRequest('Expected a preference')
   return await db.transaction().execute(async trx => {
+    // All metadata writers follow reconciliation/deletion's parent-first order.
+    await lockConversation(trx, conversationId)
     await lockMember(trx, userId, conversationId)
     await trx
       .insertInto('chat_conversation_preferences')
@@ -124,6 +127,7 @@ export async function setMessagePin(
   pinned: boolean
 ): Promise<ChatPin[]> {
   return await db.transaction().execute(async trx => {
+    await lockConversation(trx, conversationId)
     await lockMember(trx, userId, conversationId)
     if (pinned) {
       const post = await trx

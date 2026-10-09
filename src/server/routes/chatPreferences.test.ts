@@ -233,6 +233,56 @@ describe('personal chat preferences and pins', function () {
     ).equals(404)
   })
 
+  it('orders refresh and preference-hint pin reads with later successful writes', async function () {
+    const original = client.chatPins.bind(client)
+    for (const via of ['refresh', 'hint'] as const) {
+      await engine.pinMessage(conversationId, messageId, true)
+      let release!: () => void, entered!: () => void
+      const gate = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const started = new Promise<void>(resolve => {
+        entered = resolve
+      })
+      let waitOnce = true
+      client.chatPins = async id => {
+        const pins = await original(id)
+        if (id === conversationId && waitOnce) {
+          waitOnce = false
+          entered()
+          await gate
+        }
+        return pins
+      }
+      let reading: Promise<unknown>
+      if (via === 'refresh') reading = engine.refresh()
+      else {
+        listener!({ type: 'chatUser', kind: 'preferences' })
+        reading = engine.idle()
+      }
+      await started
+      const writing = engine.pinMessage(conversationId, messageId, false)
+      let finished = false
+      const completion = writing.then(() => {
+        finished = true
+      })
+      // A prior implementation allowed the write to complete while this GET
+      // was still held. The final cache must reflect the write in either order.
+      const deadline = Date.now() + 100
+      while (Date.now() < deadline) {
+        if (finished) break
+        await new Promise(resolve => setTimeout(resolve, 5))
+      }
+      release()
+      await Promise.all([reading, completion])
+      client.chatPins = original
+      expect(engine.view(conversationId)!.pins).deep.equals([])
+      expect(
+        await pinsFor(fixture.db, fixture.id('Hc'), conversationId)
+      ).deep.equals([])
+    }
+  })
+
   it('loads local previews with at most three requests and never changes read receipts', async function () {
     const ids: string[] = []
     for (const who of ['Ha', 'Hs', 'Hk', 'N']) {
@@ -320,6 +370,62 @@ describe('personal chat preferences and pins', function () {
         fresh.conversations().find(item => item.id === ids[0])!.preview
       ).equals('Preview Ha')
 
+      const conversations = client.chatConversations.bind(client)
+      let excluded: string | undefined = ids[0]
+      client.chatConversations = async () =>
+        (await conversations()).filter(row => row.id !== excluded)
+      try {
+        await fresh.refresh()
+        expect(fresh.view(ids[0])).equals(undefined)
+        excluded = undefined
+        await fresh.refresh()
+        expect(fresh.view(ids[0])!.messages).deep.equals([])
+        await fresh.loadPreview(ids[0])
+        expect(
+          fresh.conversations().find(row => row.id === ids[0])!.preview
+        ).equals('Preview Ha')
+
+        // A prior state's delayed message read cannot certify the replacement.
+        const messages = client.chatMessages.bind(client)
+        let release!: () => void
+        let began!: () => void
+        const started = new Promise<void>(resolve => {
+          began = resolve
+        })
+        const gate = new Promise<void>(resolve => {
+          release = resolve
+        })
+        let waitOnce = true
+        client.chatMessages = async (...args) => {
+          if (waitOnce && args[0] === ids[1]) {
+            waitOnce = false
+            began()
+            await gate
+          }
+          return await messages(...args)
+        }
+        const oldPreview = fresh.loadPreview(ids[1])
+        await started
+        excluded = ids[1]
+        await fresh.refresh()
+        excluded = undefined
+        await fresh.refresh()
+        release()
+        await oldPreview
+        client.chatMessages = messages
+        expect(fresh.view(ids[1])!.messages).deep.equals([])
+        await fresh.loadPreview(ids[1])
+        expect(
+          fresh.conversations().find(row => row.id === ids[1])!.preview
+        ).equals('Preview Hs')
+        // Leave this row uncached for the independent retry/error case below.
+        excluded = ids[1]
+        await fresh.refresh()
+      } finally {
+        client.chatConversations = conversations
+      }
+      await fresh.refresh()
+
       const members = client.chatMembers.bind(client)
       client.chatMembers = async id => {
         if (id === ids[1])
@@ -398,6 +504,34 @@ describe('personal chat preferences and pins', function () {
       await engine.idle()
       expect(events.filter(type => type === 'messageAlert')).has.length(
         before + 1
+      )
+
+      await engine.setPreferences(conversationId, { muted: false })
+      await engine.markRead(conversationId)
+      engine.close(conversationId)
+      const burst = (await peer.sendText(conversationId, 'Burst update.'))!
+      await peer.react(conversationId, burst.id, '👍')
+      await peer.edit(conversationId, burst.id, 'Edited burst update.')
+      for (const seq of [burst.seq, burst.seq + 1, burst.seq + 2])
+        listener!({ ...hint, seq })
+      await engine.idle()
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 2
+      )
+      for (const seq of [burst.seq, burst.seq + 1, burst.seq + 2])
+        listener!({ ...hint, seq })
+      await engine.idle()
+      await engine.loadPreview(conversationId)
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 2
+      )
+      await engine.open(conversationId)
+      await engine.markRead(conversationId)
+      const own = (await engine.sendText(conversationId, 'Own quiet update.'))!
+      listener!({ ...hint, seq: own.seq })
+      await engine.idle()
+      expect(events.filter(type => type === 'messageAlert')).has.length(
+        before + 2
       )
     } finally {
       peer.stop()

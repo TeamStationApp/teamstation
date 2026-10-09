@@ -1525,6 +1525,9 @@ describe('chat follow-up conversation message integration', function () {
     await visible.layout()
     await visible.userScroll(647)
     const olderScroll = renderedScrollHandler(visible.scroller)
+    // Hold the real RNW end timer deterministically while composing; wall-clock
+    // load must not let it fire before the assertion checkpoint is captured.
+    mock.timers.enable({ apis: ['setTimeout'] })
     await act(async () => {
       visible.scroller.dispatchEvent(
         new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
@@ -1549,7 +1552,7 @@ describe('chat follow-up conversation message integration', function () {
     expect(saved.picked).deep.equals([prepared])
     const beforeQueuedCallback = changes.length
     await act(async () => {
-      await wait(120)
+      mock.timers.tick(101)
     })
     expect(
       changes.length,
