@@ -194,7 +194,8 @@
     "expo-modules-core": {
       "expo-modules-jsi": "58.0.3",
       "react-native-worklets": "$react-native-worklets"
-    }
+    },
+    "shell-quote": "^1.12.0"
   },
   "reanimated": {
     "staticFeatureFlags": {
