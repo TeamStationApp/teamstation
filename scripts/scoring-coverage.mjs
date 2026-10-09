@@ -11,11 +11,18 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const currentSetupScope = process.argv.includes('--current-setup')
+// Collection and both validators must describe the same changed-source set.
+const base =
+  process.env.TS_COVERAGE_BASE ??
+  (currentSetupScope
+    ? 'origin/master'
+    : JSON.parse(readFileSync('src/test/scoringCoverageBase.json', 'utf8'))
+        .base)
 const { coverageSources } = createRequire(import.meta.url)(
   './coverage-source-paths.cjs'
 )
 const includes = currentSetupScope
-  ? coverageSources(process.env.TS_COVERAGE_BASE ?? 'origin/master').paths
+  ? coverageSources(base).paths
   : JSON.parse(readFileSync('src/test/scoringCoveragePaths.json', 'utf8'))
 if (currentSetupScope && includes.length === 0)
   throw new Error('Current setup coverage requires changed production paths.')
@@ -106,12 +113,7 @@ if (
   process.exitCode = 1
 }
 
-// Keep the whole changed-source aggregate honest as this plan grows.
-// The commit this branch was cut from, unless TS_COVERAGE_BASE names another.
-// Everything after it is this work.
-const base =
-  process.env.TS_COVERAGE_BASE ??
-  JSON.parse(readFileSync('src/test/scoringCoverageBase.json', 'utf8')).base
+// Validate the same base used to collect the changed-source coverage above.
 const { paths, untracked } = coverageSources(base)
 
 let covered = 0
@@ -154,7 +156,7 @@ console.log(
 )
 if (libraryPercent < 90) process.exitCode = 1
 
-const changedBase = process.env.TS_COVERAGE_BASE ?? base
+const changedBase = base
 if (changedBase != null) {
   const { changedLines, lineReport } = createRequire(import.meta.url)(
     './changed-line-coverage.cjs'
