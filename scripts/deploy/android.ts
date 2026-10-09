@@ -7,6 +7,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 
+import { BuildValidationFailure, type ValidationCheck } from './failure'
 import { appDirectory, buildEnvironment, prepare } from './prepare'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
 import { sentryCliEnvironment, sentryRelease, sentryUploader } from './sentry'
@@ -61,18 +62,21 @@ export function verifyAndroidMetadata(
     )
   ]
   const signerCount = /^Number of signers: (\d+)$/m.exec(certificate)
+  const checks: ValidationCheck[] = []
+  if (match?.[1] !== context.target.app) checks.push('bundle-id')
+  if (match?.[2] !== String(context.buildNumber)) checks.push('build-number')
+  if (match?.[3] !== context.version) checks.push('version')
+  if (badging.includes('application-debuggable')) checks.push('debuggable')
+  if (signers.length !== 1 || (signerCount != null && Number(signerCount[1]) !== 1)) checks.push('signer-count')
   if (
     config?.certificateSha256 == null ||
-    match?.[1] !== context.target.app ||
-    match[2] !== String(context.buildNumber) ||
-    match[3] !== context.version ||
-    badging.includes('application-debuggable') ||
-    (signerCount != null && Number(signerCount[1]) !== 1) ||
-    signers.length !== 1 ||
-    signers[0][1].toLowerCase() !== config.certificateSha256
+    signers[0]?.[1].toLowerCase() !== config.certificateSha256
   )
-    throw new Error(
-      'Android package identity, version or signing certificate did not match'
+    checks.push('certificate')
+  if (checks.length > 0)
+    throw new BuildValidationFailure(
+      'Android package identity, version or signing certificate did not match',
+      checks
     )
 }
 export async function android(context: BuildContext): Promise<BuiltPackage> {

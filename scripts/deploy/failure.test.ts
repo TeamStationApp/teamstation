@@ -2,9 +2,23 @@ import assert from 'node:assert/strict'
 
 import { describe, it } from 'mocha'
 
-import { buildFailureReason } from './failure'
+import {
+  buildFailureReason,
+  BuildValidationFailure,
+  type ValidationCheck
+} from './failure'
 
 describe('safe build failure reasons', () => {
+  it('reports only named validation checks without actual metadata', () => {
+    const error = new BuildValidationFailure(
+      'Apple package metadata did not match',
+      ['build-number', 'fixture-private-value' as ValidationCheck]
+    )
+    assert.equal(
+      buildFailureReason(error),
+      'Apple package metadata did not match; failed checks: build-number'
+    )
+  })
   it('reports fixed package and symbol validation failures', () => {
     for (const reason of [
       'Apple package metadata did not match',
