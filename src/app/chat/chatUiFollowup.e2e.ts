@@ -1,6 +1,6 @@
 /** Functional follow-up scenarios run only on explicitly supplied fixture surfaces. */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
@@ -15,11 +15,16 @@ interface Device {
     timeout?: number
   }) => Promise<unknown>
   tapOn: (options: {
-    text: string
+    text?: string
+    css?: string
     optional?: boolean
     timeout?: number
   }) => Promise<unknown>
   inputText: (options: { text: string }) => Promise<unknown>
+  screenshot: () => Promise<Uint8Array>
+  pressKey: (options: { key: string }) => Promise<unknown>
+  longPressOn: (options: { text: string; duration: number }) => Promise<unknown>
+  setOrientation: (options: { orientation: string }) => Promise<unknown>
   detach: () => Promise<unknown>
 }
 interface Daemon {
@@ -47,6 +52,10 @@ async function signIn(device: Device, key: string): Promise<void> {
   assert(credentials != null, 'Fixture sign-in unavailable')
   hidden.push(credentials.password)
   await device.openLink({ link: WEB })
+  const authorized = (await device.evalBrowserScript({
+    script: `return (await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'})).status === 200`
+  })) as { data?: unknown }
+  if (authorized.data === 'true' || authorized.data === true) return
   await device.tapOn({ text: 'Sign in', optional: true, timeout: 3000 })
   await device.tapOn({
     text: 'Use a password instead',
@@ -55,8 +64,8 @@ async function signIn(device: Device, key: string): Promise<void> {
   })
   const available = (await device.evalBrowserScript({
     script: 'return document.body.innerText.includes("E-mail address")'
-  })) as { data?: { result?: boolean } }
-  if (available.data?.result === false) return
+  })) as { data?: unknown }
+  if (available.data === 'false' || available.data === false) return
   await device.tapOn({ text: 'E-mail address' })
   await device.inputText({ text: credentials.email })
   await device.tapOn({ text: 'Password' })
@@ -70,11 +79,13 @@ async function s1(daemon: Daemon): Promise<void> {
   const peerProfile = required('CHAT_UI_PEER_PROFILE_DIR')
   const conversationId = required('CHAT_UI_CONVERSATION')
   const messageId = required('CHAT_UI_MESSAGE')
-  const browser = process.env.TS_CHROME_PATH ?? puppeteer.executablePath()
+  const browser =
+    process.env.TS_CHROME_PATH ?? (await puppeteer.executablePath())
   const make = async (device: string, userDataDir: string): Promise<Device> =>
     await daemon.attach({
       device,
       platform: 'web',
+      driver: 'cdp',
       url: WEB,
       artifacts: 'on-failure',
       extra: { browser, windowSize: '1440x1000', userDataDir }
@@ -163,9 +174,133 @@ async function s1(daemon: Daemon): Promise<void> {
   }
 }
 
+async function s2(daemon: Daemon): Promise<void> {
+  const narrow = process.env.CHAT_UI_VIEWPORT === 'narrow'
+  const m = await daemon.attach({
+    device: narrow ? 'chat-ui-narrow' : 'chat-ui-wide',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: process.env.TS_CHROME_PATH ?? (await puppeteer.executablePath()),
+      windowSize: narrow ? '390x844' : '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  try {
+    await signIn(m, narrow ? 'Hs' : 'Hc')
+    await m.openLink({ link: WEB + '/chat' })
+    if (process.env.CHAT_UI_INSPECT_KEYS === '1') {
+      console.log(
+        await m.evalBrowserScript({
+          script: `
+        const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('ts-chat',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
+        const read=key=>new Promise((resolve,reject)=>{const r=db.transaction('keys','readonly').objectStore('keys').get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
+        const sealed=await read('record'),wrap=await read('wrap');
+        let local={readable:false};
+        if(sealed && wrap){try{const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:sealed.iv,additionalData:new TextEncoder().encode('ts-chat/v1/key-record')},wrap,sealed.ciphertext);const r=JSON.parse(new TextDecoder().decode(bytes));local={readable:true,userId:r.userId,deviceId:r.deviceId,hasIdentity:r.identity!=null,pukCount:r.puks?.length??0}}catch{}}
+        db.close();const response=await fetch(${JSON.stringify(API + '/chat/me/keys')},{credentials:'include'});const remote=await response.json();
+        return JSON.stringify({origin:location.origin,local,remote:{userId:remote.userId,deviceId:remote.deviceId,linked:remote.linked,hasIdentity:remote.identity!=null}});
+      `
+        })
+      )
+      return
+    }
+    await m.assertVisible({ text: 'Team Members', timeout: 60000 })
+    console.log('$ S2 inspect scope pills and responsive pane visibility')
+    console.log(
+      await m.evalBrowserScript({
+        script: `
+      const list=document.querySelector('[data-testid="chat-list-pane"]');
+      const messages=document.querySelector('[data-testid="chat-message-pane"]');
+      if(!list || !messages)throw new Error('Workspace panes missing');
+      if(getComputedStyle(list).display==='none')throw new Error('Chat list hidden');
+      if(${narrow} && getComputedStyle(messages).display!=='none')throw new Error('Narrow message pane should be hidden on list route');
+      if(!${narrow} && getComputedStyle(messages).display==='none')throw new Error('Wide message pane missing');
+      if(!document.body.innerText.includes('Team Members') || !document.body.innerText.includes('Season All Staff'))throw new Error('Structured pills missing');
+      return JSON.stringify({viewport:innerWidth,paneLayout:${narrow}?'narrow':'wide',scopePills:true});
+    `
+      })
+    )
+    const artifacts = required('CHAT_UI_ARTIFACTS')
+    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.assertVisible({
+      text: 'Practice update: please bring water and arrive at 5:30.',
+      timeout: 60000
+    })
+    await m.tapOn({ text: 'Conversation actions' })
+    await m.assertVisible({ text: 'Mark unread' })
+    await m.assertVisible({ text: 'Mute' })
+    await m.assertVisible({ text: 'Pin' })
+    writeFileSync(
+      join(
+        artifacts,
+        narrow
+          ? 'narrow-conversation-menu-after.png'
+          : 'wide-conversation-menu-after.png'
+      ),
+      await m.screenshot()
+    )
+    await m.tapOn({ text: 'Pin' })
+    if (narrow) await m.tapOn({ text: 'Back' })
+    await m.assertVisible({ text: 'Pinned', timeout: 30000 })
+    writeFileSync(
+      join(
+        artifacts,
+        narrow ? 'narrow-chat-list-after.png' : 'wide-chat-list-after.png'
+      ),
+      await m.screenshot()
+    )
+    if (narrow)
+      await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ text: 'Conversation actions' })
+    await m.assertVisible({ text: 'Unpin' })
+    await m.tapOn({ text: 'Unpin' })
+    await m.tapOn({ text: 'Conversation actions' })
+    await m.tapOn({ text: 'Mute' })
+    await m.assertVisible({ text: 'Muted', timeout: 30000 })
+    await m.tapOn({ text: 'Conversation actions' })
+    await m.assertVisible({ text: 'Unmute' })
+    await m.tapOn({ text: 'Unmute' })
+    await m.tapOn({ text: 'Conversation actions' })
+    await m.tapOn({ text: 'Mark unread' })
+    console.log('$ S3 manual unread survives the mounted selected pane')
+    console.log(
+      await m.evalBrowserScript({
+        script: `
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      const response=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});
+      const chat=(await response.json()).find(item=>item.id===${JSON.stringify(required('CHAT_UI_CONVERSATION'))});
+      if(!chat.preferences.manualUnread)throw new Error('Selected pane immediately cleared Mark unread');
+      return JSON.stringify({manualUnreadOnOpenPane:true,mutingAndPinning:true});
+    `
+      })
+    )
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    console.log(
+      await m.evalBrowserScript({
+        script: `
+      await new Promise(resolve=>setTimeout(resolve,500));
+      const response=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});
+      const chat=(await response.json()).find(item=>item.id===${JSON.stringify(required('CHAT_UI_CONVERSATION'))});
+      if(chat.preferences.manualUnread)throw new Error('Explicit composer read did not clear manual unread');
+      return JSON.stringify({explicitReadCleared:true});
+    `
+      })
+    )
+    console.log(narrow ? 'S2/S3 narrow PASS' : 'S2/S3 wide PASS')
+  } finally {
+    await m.detach()
+  }
+}
+
 async function main(): Promise<void> {
   const scenario = process.argv[2]
-  assert(scenario === 'S1', 'Name a supported follow-up scenario')
+  assert(
+    scenario === 'S1' || scenario === 'S2',
+    'Name a supported follow-up scenario'
+  )
   const root = required('MAESTRO_D_CLIENT_ROOT')
   const load = createRequire(join(resolve(root), 'package.json'))
   const { MaestroD } = load('maestro-d') as {
@@ -176,7 +311,8 @@ async function main(): Promise<void> {
     bin: required('MAESTRO_D_BIN')
   })
   try {
-    await s1(daemon)
+    if (scenario === 'S1') await s1(daemon)
+    else await s2(daemon)
   } finally {
     await daemon.close()
   }
