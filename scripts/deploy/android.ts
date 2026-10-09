@@ -57,15 +57,17 @@ export function verifyAndroidMetadata(
     )
   const signers = [
     ...certificate.matchAll(
-      /^Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]+)$/gm
+      /^(?:Signer #\d+|V2 Signer:) certificate SHA-256 digest: ([a-fA-F0-9]+)$/gm
     )
   ]
+  const signerCount = /^Number of signers: (\d+)$/m.exec(certificate)
   if (
     config?.certificateSha256 == null ||
     match?.[1] !== context.target.app ||
     match[2] !== String(context.buildNumber) ||
     match[3] !== context.version ||
     badging.includes('application-debuggable') ||
+    (signerCount != null && Number(signerCount[1]) !== 1) ||
     signers.length !== 1 ||
     signers[0][1].toLowerCase() !== config.certificateSha256
   )
