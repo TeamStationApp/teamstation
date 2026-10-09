@@ -46,6 +46,9 @@ const clock = (iso: string): string =>
     minute: '2-digit'
   })
 
+const BUBBLE_PADDING_REM = 0.75
+const RECEIVED_BUBBLE_BORDER = 1
+
 /** What a message that cannot be read says instead of its words. */
 function statusText(message: MessageView): string | undefined {
   switch (message.status) {
@@ -74,6 +77,19 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
   const { message, conversation, members, onLongPress, onReply } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const [laidOutWidth, setLaidOutWidth] = useState<number>()
+  useEffect(() => {
+    setLaidOutWidth(undefined)
+  }, [props.maxWidth])
+  // maxWidth caps the complete bubble, so media uses only its inner box.
+  // Adjacent actions can shrink that box further on a narrow viewport.
+  const attachmentWidth = Math.max(
+    0,
+    Math.min(props.maxWidth, laidOutWidth ?? props.maxWidth) -
+      2 *
+        (theme.rem(BUBBLE_PADDING_REM) +
+          (message.mine ? 0 : RECEIVED_BUBBLE_BORDER))
+  )
   const desktop = isFinePointer()
   const row = useRef<React.ComponentRef<typeof View>>(null)
   const [hovered, setHovered] = useState(false)
@@ -196,6 +212,16 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
               />
             )}
           <Pressable
+            testID={'chat-bubble-' + message.id}
+            onLayout={event => {
+              const width = event.nativeEvent.layout.width
+              if (width > 0 && Number.isFinite(width))
+                setLaidOutWidth(previous =>
+                  previous != null && Math.abs(previous - width) < 0.5
+                    ? previous
+                    : width
+                )
+            }}
             {...immediatePressProps}
             {...messageGesture?.pressProps}
             // The words inside stay their own elements to a screen reader and
@@ -240,7 +266,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                   attachment={attachment}
                   engine={props.engine}
                   files={props.files}
-                  maxWidth={props.maxWidth}
+                  maxWidth={attachmentWidth}
                   messageGesture={messageGesture}
                 />
               ))
@@ -353,7 +379,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   bubble: {
     flexShrink: 1,
     borderRadius: theme.rem(1),
-    paddingHorizontal: theme.rem(0.75),
+    paddingHorizontal: theme.rem(BUBBLE_PADDING_REM),
     paddingVertical: theme.rem(0.5),
     gap: theme.rem(0.25)
   },
@@ -362,7 +388,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   bubbleTheirs: {
     backgroundColor: theme.cardBackgroundColor,
-    borderWidth: 1,
+    borderWidth: RECEIVED_BUBBLE_BORDER,
     borderColor: theme.defaultBorderColor
   },
   bubbleMuted: {
