@@ -7,6 +7,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 
+import { BuildValidationFailure, type ValidationCheck } from './failure'
 import { appDirectory, buildEnvironment, prepare } from './prepare'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
 import { sentryCliEnvironment, sentryRelease, sentryUploader } from './sentry'
@@ -55,27 +56,45 @@ export function verifyAndroidMetadata(
     /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/m.exec(
       badging
     )
-  const signers = [
-    ...certificate.matchAll(
-      /^(?:Signer #\d+|V2 Signer:) certificate SHA-256 digest: ([a-fA-F0-9]+)$/gm
+  // Some verifier versions decorate output or repeat the same signer across
+  // signature schemes. Count unique signer/certificate pairs, not print lines.
+  // Terminal decoration is not part of the verifier's certificate metadata.
+  // eslint-disable-next-line no-control-regex
+  const clean = certificate.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+  const reports = [
+    ...clean.matchAll(
+      /^[ \t]*(?:Signer[ \t]+(?:#(\d+)|\(minSdkVersion=\d+(?: \(dev release=true\))?,[ \t]*maxSdkVersion=\d+\))|V2 Signer:)[ \t]+certificate[ \t]+SHA-256[ \t]+digest:[ \t]*([a-fA-F0-9]{64})[ \t]*$/gim
     )
   ]
-  const signerCount = /^Number of signers: (\d+)$/m.exec(certificate)
+  const signers = [...new Set(reports.map(report => report[2].toLowerCase()))]
+  const numbered = new Set(
+    reports.filter(report => report[1] != null).map(report => report[1])
+  )
+  const declared = /^[ \t]*Number of signers:[ \t]*(\d+)[ \t]*$/gim.exec(clean)
+  const checks: ValidationCheck[] = []
+  if (match?.[1] !== context.target.app) checks.push('bundle-id')
+  if (match?.[2] !== String(context.buildNumber)) checks.push('build-number')
+  if (match?.[3] !== context.version) checks.push('version')
+  if (badging.includes('application-debuggable')) checks.push('debuggable')
+  if (
+    signers.length !== 1 ||
+    numbered.size > 1 ||
+    (declared != null && Number(declared[1]) !== 1)
+  )
+    checks.push('signer-count')
   if (
     config?.certificateSha256 == null ||
-    match?.[1] !== context.target.app ||
-    match[2] !== String(context.buildNumber) ||
-    match[3] !== context.version ||
-    badging.includes('application-debuggable') ||
-    (signerCount != null && Number(signerCount[1]) !== 1) ||
-    signers.length !== 1 ||
-    signers[0][1].toLowerCase() !== config.certificateSha256
+    signers[0] !== config.certificateSha256
   )
-    throw new Error(
-      'Android package identity, version or signing certificate did not match'
+    checks.push('certificate')
+  if (checks.length > 0)
+    throw new BuildValidationFailure(
+      'Android package identity, version or signing certificate did not match',
+      checks
     )
 }
 export async function android(context: BuildContext): Promise<BuiltPackage> {
+  context.reportStage?.('android.prepare')
   const config = context.settings.apps[context.target.app].android?.android
   const { tools } = context.settings
   if (config == null || tools.aapt == null || tools.apksigner == null)
@@ -121,6 +140,7 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
     DEPLOY_KEY_ALIAS: config.alias
   }
   try {
+    context.reportStage?.('android.compile')
     await context.processes.run({
       file: path.join(project, 'gradlew'),
       args: ['--no-daemon', '--init-script', init, ':app:assembleRelease'],
@@ -128,6 +148,7 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
       env,
       capture: false
     })
+    context.reportStage?.('android.verify')
     const outputs = path.join(project, 'app/build/outputs/apk/release')
     const names = readdirSync(outputs).filter(name => name.endsWith('.apk'))
     if (names.length !== 1)
@@ -142,7 +163,8 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
     const signature = await context.processes.run({
       file: tools.apksigner,
       args: ['verify', '--verbose', '--print-certs', file],
-      cwd: project
+      cwd: project,
+      captureStderr: true
     })
     verifyAndroidMetadata(badging, signature, context)
     if (context.target.kind === 'react-native') {
@@ -155,7 +177,8 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
         !/\s[1-9]\d*\s+[^\n]*assets\/index\.android\.bundle\s*$/m.test(entries)
       )
         throw new Error('Release APK has no bundled JavaScript')
-      if (upload != null)
+      if (upload != null) {
+        context.reportStage?.('sentry.source-map')
         await upload.bundle(
           path.join(project, ANDROID_BUNDLE),
           path.join(project, ANDROID_SOURCE_MAP),
@@ -167,9 +190,12 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
           ),
           directory
         )
+      }
     }
-    if (upload != null && context.target.kind === 'kotlin')
+    if (upload != null && context.target.kind === 'kotlin') {
+      context.reportStage?.('sentry.native-libraries')
       await upload.nativeLibraries(path.join(project, ANDROID_NATIVE_LIBS))
+    }
     return { file, buildNumber: nativeNumber('android', context.buildNumber) }
   } finally {
     rmSync(init, { force: true })
