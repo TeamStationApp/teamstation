@@ -1594,6 +1594,62 @@ async function disposableDelete(daemon: Daemon): Promise<void> {
 }
 
 /** Upload a new ordinary video fixture without changing existing messages. */
+async function boundedMedia(daemon: Daemon): Promise<void> {
+  const fixture = JSON.parse(
+    readFileSync(required('CHAT_UI_VIDEO_FIXTURE_FILE'), 'utf8')
+  ) as { conversationId: string; videoMessageId: string; fileName: string }
+  const narrow =
+    process.env.CHAT_UI_VIEWPORT === 'narrow' ||
+    process.env.CHAT_UI_MEDIA_WIDTH === '390'
+  const m = await daemon.attach({
+    device: 'chat-ui-media-bounds',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: narrow ? '390x844' : '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const bubble = `[data-testid="chat-bubble-${fixture.videoMessageId}"]`
+  try {
+    await signIn(m, 'Hc')
+    await m.openLink({ link: `${WEB}/chat/${fixture.conversationId}` })
+    await m.assertVisible({ css: bubble, timeout: 60000 })
+    await m.evalBrowserScript({
+      script: `const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));document.querySelector(${JSON.stringify(bubble)}).scrollIntoView({block:'center'});return true`
+    })
+    const verify = async (playing: boolean): Promise<void> => {
+      console.log(
+        await m.evalBrowserScript({
+          script: `const bubble=document.querySelector(${JSON.stringify(bubble)}),style=getComputedStyle(bubble),b=bubble.getBoundingClientRect();const media=bubble.querySelector(${JSON.stringify(playing ? 'video' : '[aria-label="Open ' + fixture.fileName + '"]')});if(!media)throw new Error('Actual media element missing');const m=media.getBoundingClientRect(),left=b.left+parseFloat(style.paddingLeft)+parseFloat(style.borderLeftWidth||0),right=b.right-parseFloat(style.paddingRight)-parseFloat(style.borderRightWidth||0),pane=document.querySelector('[data-testid="chat-message-pane"]').getBoundingClientRect();if(m.left<left-1||m.right>right+1||b.left<pane.left-1||b.right>pane.right+1)throw new Error('Rendered media exceeds bubble content or message pane');return JSON.stringify({viewport:innerWidth,playing:${playing},mediaContained:true,mediaWidth:m.width,bubbleWidth:b.width,contentWidth:right-left,roundingTolerance:1})`
+        })
+      )
+    }
+    await verify(false)
+    await m.tapOn({
+      css: bubble + ` [aria-label="Open ${fixture.fileName}"]`
+    })
+    await m.evalBrowserScript({
+      script: `for(let n=0;n<150;n++){const v=document.querySelector(${JSON.stringify(bubble + ' video')});if(v&&v.readyState>=2)return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Normal video playback did not load')`
+    })
+    await verify(true)
+    writeFileSync(
+      join(
+        required('CHAT_UI_ARTIFACTS'),
+        `web-video-bounded-${narrow ? 'narrow' : 'wide'}-after.png`
+      ),
+      await m.screenshot()
+    )
+    console.log('Actual thumbnail/player bounds within bubble content PASS')
+  } finally {
+    await m.detach()
+  }
+}
+
+/** Upload a new ordinary video fixture without changing existing messages. */
 async function videoFixture(daemon: Daemon): Promise<void> {
   const history = JSON.parse(
     readFileSync(required('CHAT_UI_HISTORY_FIXTURE_FILE'), 'utf8')
@@ -2020,6 +2076,7 @@ async function main(): Promise<void> {
       scenario === 'purgeDelete' ||
       scenario === 'currentHistoryReply' ||
       scenario === 'videoFixture' ||
+      scenario === 'boundedMedia' ||
       scenario === 'S5' ||
       scenario === 'S6' ||
       scenario === 'S9' ||
@@ -2061,6 +2118,7 @@ async function main(): Promise<void> {
     else if (scenario === 'currentHistoryReply')
       await currentHistoryReply(daemon)
     else if (scenario === 'videoFixture') await videoFixture(daemon)
+    else if (scenario === 'boundedMedia') await boundedMedia(daemon)
     else if (scenario === 'S5') await s5(daemon)
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
