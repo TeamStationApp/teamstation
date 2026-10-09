@@ -496,7 +496,9 @@ describe('chat UI follow-up workspace', function () {
 
   it('keeps text, reply, prepared files and the same conversation instance across measured pane resizing and switching', async function () {
     const engine = new FakeEngine()
-    engine.add(item('Aurora'))
+    engine.add(item('Aurora'), {
+      messages: [message({ senderName: 'Mookie Betts', body: 'Bring water' })]
+    })
     engine.add(item('Solstice'))
     const state = newChatWorkspaceState()
     state.listOffset = 35
@@ -678,7 +680,11 @@ describe('chat UI follow-up mounted reading session', function () {
   it('keeps draft text, reply context and prepared files when a send fails', async function () {
     const engine = new FakeEngine()
     engine.failSend = true
-    engine.add(item('Aurora'))
+    engine.add(item('Aurora'), {
+      messages: [
+        message({ senderName: 'Mookie Betts', body: 'Practice update' })
+      ]
+    })
     const state = newChatWorkspaceState()
     state.drafts.set('Aurora', {
       ...emptyChatDraft(),

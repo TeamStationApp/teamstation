@@ -27,6 +27,7 @@ import { fieldsOf, IdentityCache } from './decrypt'
 import { approveGrant, fillGrants } from './grants'
 import { type ChatSetup, type Enrolment, ensureEnrolled } from './links'
 import { headOf, syncLog } from './log'
+import { replyExcerpt } from './reply'
 import {
   downloadAttachment,
   type FetchBytes,
@@ -145,6 +146,8 @@ export interface ConversationView {
   composer: 'enabled' | 'locked' | 'readOnly' | 'closed'
   /** Older messages are on the server; `loadEarlier` reads them. */
   hasEarlier: boolean
+  /** Verified envelope paging cursor, including pages without visible posts. */
+  historyBefore?: number
   /** "<name>'s safety number changed", where the record says so. */
   safetyChanges: Array<{
     userId: number
@@ -191,8 +194,6 @@ const isGone = (error: unknown): boolean =>
 
 /** What a hint asks to be read again. */
 type Part = 'members' | 'epochs' | 'messages' | 'reads'
-
-const SNIPPET = 200
 
 /** The later of the list's last-message time and the newest envelope read. */
 function newest(
@@ -618,6 +619,7 @@ export class ChatEngine {
             ? 'locked'
             : 'enabled',
       hasEarlier: state.hasEarlier,
+      historyBefore: state.oldestSeq,
       safetyChanges: (head?.resets ?? []).map(reset => ({
         ...reset,
         name: names.get(reset.userId)
@@ -694,7 +696,7 @@ export class ChatEngine {
               quote: {
                 id: quoted.id,
                 authorId: quoted.senderUserId,
-                snippet: Array.from(quoted.body).slice(0, SNIPPET).join('')
+                snippet: Array.from(replyExcerpt(quoted)).slice(0, 200).join('')
               }
             }),
         attachments
