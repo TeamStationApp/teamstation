@@ -493,11 +493,13 @@ function ScoringPanel(props: {
   const lineupKey = battingWarningKey(session)
   const lineupAccepted =
     battingCount >= 9 || (battingCount > 0 && acceptedLineup === lineupKey)
+  const setupReady =
+    awaitingResult(session) || (missing.length === 0 && lineupAccepted)
   const actionsAllowed =
     bottomActionsAllowed(state) &&
     !status.readOnly &&
     !rosterLoading &&
-    (awaitingResult(session) || (missing.length === 0 && lineupAccepted))
+    setupReady
   const canEditDefense =
     setupEditable(state) &&
     !status.readOnly &&
@@ -634,7 +636,11 @@ function ScoringPanel(props: {
     played,
     onAnswer: answer => {
       if (rosterLoading || (!lineupAccepted && !awaitingResult(session))) return
-      dispatch({ type: 'DICTATION_ANSWER', ...answer })
+      dispatch({
+        type: 'DICTATION_ANSWER',
+        ...answer,
+        acceptedLineup: acceptedLineup ?? null
+      })
     },
     onDismissQuestion: () => {
       dispatch({ type: 'DICTATION_DISMISS' })
@@ -647,6 +653,7 @@ function ScoringPanel(props: {
       (lineupAccepted || awaitingResult(session)),
     undone,
     onActions: (transcript, actions, undo) => {
+      if (rosterLoading) return
       if (undo === true) {
         // Undone now, before the rest of the sentence is applied. With a
         // question open, what is taken back is the unanswered sentence.
@@ -663,7 +670,12 @@ function ScoringPanel(props: {
         !rosterLoading &&
         (lineupAccepted || awaitingResult(session))
       )
-        dispatch({ type: 'DICTATED', transcript, actions })
+        dispatch({
+          type: 'DICTATED',
+          transcript,
+          actions,
+          acceptedLineup: acceptedLineup ?? null
+        })
     }
   })
   const line = session.liveData.linescore
@@ -706,6 +718,15 @@ function ScoringPanel(props: {
       ? props.game.state.liveData.plays.currentPlay?.about.atBatIndex
       : undefined
   )
+  // A peer can replace a play without changing its appearance index. Bind
+  // safe resumption to the original record and its starting player context.
+  const resumeIdentity = (game: GameState): string =>
+    JSON.stringify({
+      players: game.gameData.players,
+      teams: game.liveData.boxscore.teams,
+      plays: game.liveData.plays
+    })
+  const [originalResume] = useState(() => resumeIdentity(props.game.state))
   shownLog.current = state.log
   const refreshSetup = async (): Promise<GameState | null> => {
     setRosterLoading(true)
@@ -716,7 +737,8 @@ function ScoringPanel(props: {
       const oldUnresolved =
         awaitingResult(props.game.state) &&
         props.game.state.liveData.plays.currentPlay?.about.atBatIndex ===
-          resumedAppearance.current
+          resumedAppearance.current &&
+        resumeIdentity(props.game.state) === originalResume
       const resumed = oldUnresolved
         ? props.game.resumable()
         : { state: props.game.state, actions: [...props.game.actions] }
@@ -735,9 +757,7 @@ function ScoringPanel(props: {
       if (
         props.game.readOnly ||
         props.game.state.pending != null ||
-        (awaitingResult(props.game.state) &&
-          props.game.state.liveData.plays.currentPlay?.about.atBatIndex !==
-            resumedAppearance.current)
+        (awaitingResult(props.game.state) && !oldUnresolved)
       ) {
         setSheet(undefined)
         setDefensiveSlot(undefined)
@@ -932,30 +952,36 @@ function ScoringPanel(props: {
   const homeWaiting =
     state.phase === 'homeDecision' &&
     !state.motions.some(motion => !motion.complete)
-  const runnerIds = relayForce
-    ? players
-        .filter(
-          player =>
-            player.team === 'runner' &&
-            player.batting !== true &&
-            player.playerId != null &&
-            forcedFrom(session, baseIds(session).indexOf(player.playerId) + 1)
-        )
-        .map(player => player.id)
-    : homeWaiting
-      ? hitOfferHomeIds
-      : runnerEnabled
+  const runnerIds =
+    !setupReady || rosterLoading
+      ? []
+      : relayForce
         ? players
             .filter(
               player =>
                 player.team === 'runner' &&
-                (state.phase === 'resolveBatter' ||
-                state.runnerAction?.returnPhase === 'resolveBatter'
-                  ? player.playerId === unresolvedRunner?.playerId
-                  : player.batting !== true)
+                player.batting !== true &&
+                player.playerId != null &&
+                forcedFrom(
+                  session,
+                  baseIds(session).indexOf(player.playerId) + 1
+                )
             )
             .map(player => player.id)
-        : []
+        : homeWaiting
+          ? hitOfferHomeIds
+          : runnerEnabled
+            ? players
+                .filter(
+                  player =>
+                    player.team === 'runner' &&
+                    (state.phase === 'resolveBatter' ||
+                    state.runnerAction?.returnPhase === 'resolveBatter'
+                      ? player.playerId === unresolvedRunner?.playerId
+                      : player.batting !== true)
+                )
+                .map(player => player.id)
+            : []
   const retreatIds =
     state.phase === 'correctionWindow' || state.phase === 'homeDecision'
       ? hitOfferRetreatIds

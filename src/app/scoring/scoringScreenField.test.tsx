@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
+import type { ScoringAction } from '../../common/scoring/actions'
 import { freshGame } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
@@ -63,7 +64,10 @@ function props(): Props {
   if (found == null) throw new Error('The screen has not rendered')
   return found.memoizedProps as Props
 }
-function dictate(transcript: string): void {
+function dictate(
+  transcript: string,
+  actions: ScoringAction[] = [{ type: 'pitch', call: 'B' }]
+): void {
   const key = Object.keys(container ?? {}).find(name =>
     name.startsWith('__reactContainer$')
   )!
@@ -78,7 +82,7 @@ function dictate(transcript: string): void {
     const ref = hook.memoizedState as
       { current?: Partial<UseDictationOptions> } | undefined
     if (ref?.current != null && typeof ref.current.onActions === 'function') {
-      ref.current.onActions(transcript, [{ type: 'pitch', call: 'B' }])
+      ref.current.onActions(transcript, actions)
       return
     }
   }
@@ -169,6 +173,110 @@ async function mount(source?: ScoringSource): Promise<void> {
 }
 
 describe('scoring screen field wiring', function () {
+  it('saves only the completed prior-half dictated prefix before newly current lineup acceptance', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    initial.liveData.boxscore.teams.home.battingOrder.pop()
+    const store = memoryStore()
+    const session = ScoringSession.start(store, 'g1', initial, {
+      requireCurrentSetup: true
+    })
+    for (let i = 0; i < 8; i++)
+      expect(session.apply({ type: 'pitch', call: 'C' }).problems).deep.equals(
+        []
+      )
+    await mount({ open: async () => session })
+    await step(() => {
+      dictate('Strike three, then Ball', [
+        { type: 'pitch', call: 'C' },
+        { type: 'pitch', call: 'B' }
+      ])
+    })
+    await settle()
+    expect(props().summary).includes('Bottom 1st')
+    expect(props().summary).includes('0 balls')
+    expect(props().canPitch).equals(false)
+    await session.flush()
+    expect(session.state.liveData.plays.allPlays).has.length(3)
+    expect(
+      session.actions.some(
+        action => action.type === 'pitch' && action.call === 'B'
+      )
+    ).equals(false)
+    const reopened = await ScoringSession.open(store, 'g1', {
+      gamePk: 'g1',
+      teams: initial.gameData.teams,
+      setup: setupOf(initial)
+    })
+    expect(reopened.state.liveData.plays.allPlays).has.length(3)
+    expect(reopened.state.liveData.linescore.balls).equals(0)
+  })
+  for (const problem of ['partial', 'defense'] as const)
+    it(`locks resting runner entry while ${problem} setup is incomplete`, async function () {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      if (problem === 'partial')
+        initial.liveData.boxscore.teams.away.battingOrder.pop()
+      else initial.liveData.boxscore.teams.home.defense.C = null
+      const game = freshGame('g1', initial.gameData.teams, setupOf(initial))
+      game.liveData.linescore.offense.first = {
+        id: 2,
+        fullName: game.gameData.players[2].fullName
+      }
+      await mount({
+        open: async () => ScoringSession.start(memoryStore(), 'g1', game)
+      })
+      expect(props().canPitch).equals(false)
+      expect(field().interaction?.runnerIds).deep.equals([])
+      expect(field().interaction?.selectableIds).not.includes('offense-2')
+      if (problem === 'partial') {
+        await step(() => props().setupToast?.onAcceptLineup?.())
+        expect(field().interaction?.runnerIds).includes('offense-2')
+      }
+    })
+  it('refuses the same-index peer replacement of the originally unresolved play without writing', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const store = memoryStore()
+    const context = {
+      gamePk: 'g1',
+      teams: initial.gameData.teams,
+      setup: setupOf(initial)
+    }
+    const legacy = ScoringSession.start(store, 'g1', initial)
+    const ball: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      fielder: initial.liveData.boxscore.teams.home.defense.RF!,
+      location: { x: 20, z: -60 },
+      launchAngle: 15
+    }
+    legacy.apply(ball)
+    await legacy.flush()
+    const live = await ScoringSession.open(store, 'g1', context, {
+      requireCurrentSetup: true
+    })
+    await mount({ persistent: true, open: async () => live })
+    const peer = await ScoringSession.open(store, 'g1', context, {
+      requireCurrentSetup: true
+    })
+    peer.undo()
+    peer.apply({ type: 'pitch', call: 'B' })
+    peer.apply({ ...ball, location: { x: -10, z: -50 } })
+    await peer.flush()
+    const saved = JSON.stringify(store.games.get('g1'))
+    await step(() =>
+      field().onPlayerTap?.(
+        field().players.find(player => player.label === 'P')!.id
+      )
+    )
+    await live.flush()
+    expect(JSON.stringify(store.games.get('g1'))).equals(saved)
+    expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
+      null
+    )
+    const reopened = await ScoringSession.open(store, 'g1', context)
+    expect(
+      reopened.actions.some(action => action.type === 'ballInPlay')
+    ).equals(true)
+  })
   it('offers safe setup for an old unresolved partial-defense play without writing when the picker opens', async function () {
     const initial = createDevelopmentSession(gameFixture, [], [])
     const setup = setupOf(initial)

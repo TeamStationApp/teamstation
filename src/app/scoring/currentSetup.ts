@@ -1,7 +1,7 @@
-import { awaitingResult } from '../../common/scoring/rules'
+import { awaitingResult, battingLineupKey } from '../../common/scoring/rules'
 import { copyState } from '../../common/scoring/state'
 import { createPlayers, type FieldPlayer } from '../field/fieldModel'
-import { battingSide, fieldingSide } from './scoringSelectors'
+import { fieldingSide } from './scoringSelectors'
 import {
   type Position,
   POSITIONS,
@@ -29,9 +29,7 @@ export function setupEditable(state: ScoringState): boolean {
   )
 }
 export function battingWarningKey(session: ScoringSessionState): string {
-  const line = session.liveData.linescore
-  const side = battingSide(session)
-  return `${line.currentInning}:${side}:${session.liveData.boxscore.teams[side].battingOrder.join(',')}`
+  return battingLineupKey(session)
 }
 export function lineupCountMessage(count: number): string {
   const words = [

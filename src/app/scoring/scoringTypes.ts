@@ -143,7 +143,11 @@ export interface ScoringSnapshot {
    */
   reel?: Beat[]
   /** Sentences that came back while a reel played, applied when it ends. */
-  queuedDictation?: Array<{ transcript: string; actions: ScoringAction[] }>
+  queuedDictation?: Array<{
+    transcript: string
+    actions: ScoringAction[]
+    acceptedLineup?: string | null
+  }>
   /**
    * What a dictated sentence left open that only the scorer can answer. The
    * sentence is not applied until it is answered.
@@ -157,6 +161,7 @@ export interface ScoringSnapshot {
  */
 export interface DictationQuestion {
   transcript: string
+  acceptedLineup?: string | null
   question: string
   options?: Array<{ label: string; actions: ScoringAction[] }>
   pick?: {
@@ -308,11 +313,18 @@ export type ScoringEvent =
     }
   | { type: 'SWITCH_SIDE'; side: BatSide }
   /** The scorer's answer to `dictationQuestion`: an option, or the runners picked. */
-  | { type: 'DICTATION_ANSWER'; option?: number; picks?: number[] }
+  | {
+      type: 'DICTATION_ANSWER'
+      option?: number
+      picks?: number[]
+      acceptedLineup?: string | null
+    }
   | { type: 'DICTATION_DISMISS' }
   /** One spoken sentence: applied whole as one undo step, or refused whole. */
   | {
       type: 'DICTATED'
       transcript: string
       actions: readonly ScoringAction[]
+      /** Exact accepted order; null enforces that no partial order was accepted. */
+      acceptedLineup?: string | null
     }

@@ -35,6 +35,76 @@ const applyAction = (
 const game = (): ReturnType<typeof createDevelopmentSession> =>
   createDevelopmentSession(gameFixture, [], [])
 describe('current scoring setup', function () {
+  it('retains lineup acceptance through queued sentences and question answers', function () {
+    const initial = game()
+    initial.liveData.boxscore.teams.home.battingOrder.pop()
+    const oldKey = battingWarningKey(initial)
+    const half = applyStoredAction(initial, {
+      type: 'gameFlow',
+      kind: 'endHalf'
+    }).state
+    const state = initialScoringState(half)
+    const actions = [{ type: 'pitch' as const, call: 'B' as const }]
+    const queued = scoringReducer(
+      {
+        ...state,
+        queuedDictation: [
+          { transcript: 'Ball', actions, acceptedLineup: oldKey }
+        ]
+      },
+      { type: 'PRESENTATION', enabled: false }
+    )
+    expect(queued.session.liveData.linescore.balls).equals(0)
+    expect(queued.dictation?.problem?.message).includes(
+      'Accept the current batting lineup'
+    )
+    const answered = scoringReducer(
+      {
+        ...state,
+        dictationQuestion: {
+          transcript: 'Ball',
+          question: 'Confirm?',
+          acceptedLineup: oldKey,
+          options: [{ label: 'Ball', actions }]
+        }
+      },
+      { type: 'DICTATION_ANSWER', option: 0 }
+    )
+    expect(answered.session.liveData.linescore.balls).equals(0)
+    expect(answered.dictation?.problem?.message).includes(
+      'Accept the current batting lineup'
+    )
+  })
+  it('closes and persists the valid dictated third-out prefix before blocking next defense', function () {
+    const initial = game()
+    initial.liveData.boxscore.teams.away.defense.C = null
+    let state = initialScoringState(initial)
+    for (let i = 0; i < 8; i++)
+      state = completeMotions(
+        scoringReducer(state, { type: 'PITCH', kind: 'called' })
+      )
+    const next = completeMotions(
+      scoringReducer(
+        { ...state, presentationEnabled: false },
+        {
+          type: 'DICTATED',
+          transcript: 'Strike then Ball',
+          acceptedLineup: null,
+          actions: [
+            { type: 'pitch', call: 'C' },
+            { type: 'pitch', call: 'B' }
+          ]
+        }
+      )
+    )
+    expect(next.session.liveData.plays.allPlays).has.length(3)
+    expect(next.session.liveData.linescore.isTopInning).equals(false)
+    expect(next.session.liveData.linescore.balls).equals(0)
+    expect(
+      next.log.some(action => action.type === 'pitch' && action.call === 'B')
+    ).equals(false)
+    expect(next.dictation?.problem?.message).includes('C')
+  })
   it('preserves an automatically closed third out before rejecting the next incomplete half pitch', async function () {
     const initial = game()
     const store = memoryStore()

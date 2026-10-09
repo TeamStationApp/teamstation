@@ -1888,8 +1888,13 @@ export function applyAction(
   raw: ScoringAction,
   {
     inPlace = false,
-    requireCurrentSetup = false
-  }: { inPlace?: boolean; requireCurrentSetup?: boolean } = {}
+    requireCurrentSetup = false,
+    acceptedLineup
+  }: {
+    inPlace?: boolean
+    requireCurrentSetup?: boolean
+    acceptedLineup?: string | null
+  } = {}
 ): Applied {
   const cleaned = cleanAction(raw)
   const unchanged = (problem: Problem): Applied => ({
@@ -1927,7 +1932,7 @@ export function applyAction(
       action.type !== 'lineup' &&
       action.type !== 'gameFlow'
     ) {
-      const problem = currentSetupError(ctx.state)
+      const problem = currentSetupError(ctx.state, acceptedLineup)
       if (problem != null) refuse('notNow', problem)
     }
     ;(HANDLERS[action.type] as (ctx: Ctx, action: ScoringAction) => void)(
