@@ -2,10 +2,12 @@ import { createHash, X509Certificate } from 'node:crypto'
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync
@@ -192,6 +194,29 @@ export interface Signing {
   directory: string
   profiles: Map<string, Profile>
 }
+function profileDirectories(home: string): string[] {
+  const legacy = path.resolve(
+    home,
+    'Library/MobileDevice/Provisioning Profiles'
+  )
+  const modern = path.resolve(
+    home,
+    'Library/Developer/Xcode/UserData/Provisioning Profiles'
+  )
+  // Xcode can retain its old location as an alias of the new one. Leave the
+  // alias untouched and install directly into its verified canonical directory.
+  if (
+    lstatSync(legacy, { throwIfNoEntry: false })?.isSymbolicLink() === true &&
+    [modern, path.relative(path.dirname(legacy), modern)].includes(
+      readlinkSync(legacy)
+    )
+  ) {
+    noSymlinks(path.dirname(legacy))
+    noSymlinks(modern)
+    return [modern]
+  }
+  return [legacy, modern]
+}
 export async function withSigning<T>(
   context: BuildContext,
   action: (signing: Signing) => Promise<T>,
@@ -283,13 +308,9 @@ export async function withSigning<T>(
         const profile = validateProfile(raw, id, context)
         profiles.set(id, profile)
         const bytes = readFileSync(file)
-        for (const relative of [
-          'Library/MobileDevice/Provisioning Profiles',
-          'Library/Developer/Xcode/UserData/Provisioning Profiles'
-        ]) {
+        for (const profileDirectory of profileDirectories(profileHome)) {
           const destination = path.join(
-            profileHome,
-            relative,
+            profileDirectory,
             `${profile.uuid}.mobileprovision`
           )
           noSymlinks(destination)
