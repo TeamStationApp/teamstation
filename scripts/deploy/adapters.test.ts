@@ -4,10 +4,12 @@ import { createHash, X509Certificate } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import path from 'node:path'
@@ -403,6 +405,60 @@ describe('Native build and signing adapters', () => {
       withSigning(context, async () => 0, home),
       /Separate/
     )
+  })
+  it('uses the current Xcode profile folder when the legacy folder aliases it', async () => {
+    const home = path.join(root, 'home')
+    const current = path.join(
+      home,
+      'Library/Developer/Xcode/UserData/Provisioning Profiles'
+    )
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    mkdirSync(current, { recursive: true })
+    mkdirSync(path.dirname(legacy), { recursive: true })
+    symlinkSync(current, legacy)
+    const installed = path.join(current, profile.uuid + '.mobileprovision')
+    await withSigning(
+      context,
+      async signing => {
+        assert(signing.profiles.has(app))
+        assert.equal(readFileSync(installed, 'utf8'), 'fixture')
+        assert.equal(readdirSync(current).length, 1)
+      },
+      home
+    )
+    assert(lstatSync(legacy).isSymbolicLink())
+    assert.equal(readdirSync(current).length, 0)
+    file(installed)
+    await withSigning(context, async () => 0, home)
+    assert.equal(readFileSync(installed, 'utf8'), 'fixture')
+    assert.equal(readdirSync(context.output).length, 0)
+  })
+  it('rejects profile folder links to other locations before installing signing assets', async () => {
+    const home = path.join(root, 'home')
+    const current = path.join(
+      home,
+      'Library/Developer/Xcode/UserData/Provisioning Profiles'
+    )
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    const external = path.join(root, 'external')
+    mkdirSync(current, { recursive: true })
+    mkdirSync(external)
+    mkdirSync(path.dirname(legacy), { recursive: true })
+    symlinkSync(external, legacy)
+    await assert.rejects(
+      withSigning(context, async () => 0, home),
+      /symlinks/
+    )
+    assert.equal(readdirSync(external).length, 0)
+    rmSync(legacy)
+    rmSync(current, { recursive: true })
+    symlinkSync(external, current)
+    await assert.rejects(
+      withSigning(context, async () => 0, home),
+      /symlinks/
+    )
+    assert.equal(readdirSync(external).length, 0)
+    assert.equal(readdirSync(context.output).length, 0)
   })
   it('archives and exports the actual target contract, verifies final IPA metadata, certificate, entitlements and JS', async () => {
     const result = await ios(context, path.join(root, 'home'))

@@ -2,10 +2,12 @@ import { createHash, X509Certificate } from 'node:crypto'
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync
@@ -186,6 +188,31 @@ export interface Signing {
   directory: string
   profiles: Map<string, Profile>
 }
+function provisioningDirectories(profileHome: string): string[] {
+  const legacy = path.join(
+    profileHome,
+    'Library/MobileDevice/Provisioning Profiles'
+  )
+  const current = path.join(
+    profileHome,
+    'Library/Developer/Xcode/UserData/Provisioning Profiles'
+  )
+  noSymlinks(current)
+  let linked = false
+  try {
+    linked = lstatSync(legacy).isSymbolicLink()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  // Xcode's legacy alias needs only one install into the verified real folder.
+  if (
+    linked &&
+    path.resolve(path.dirname(legacy), readlinkSync(legacy)) === current
+  )
+    return [current]
+  noSymlinks(legacy)
+  return [legacy, current]
+}
 export async function withSigning<T>(
   context: BuildContext,
   action: (signing: Signing) => Promise<T>,
@@ -204,6 +231,10 @@ export async function withSigning<T>(
     throw new Error(
       'Separate Match signing branch and Apple settings are required'
     )
+  const profileDirectories =
+    context.target.platform === 'ios'
+      ? provisioningDirectories(profileHome)
+      : []
   const directory = mkdtempSync(path.join(context.output, '.signing-'))
   const keychain = path.join(directory, 'build.keychain-db')
   const processes = context.processes
@@ -277,13 +308,9 @@ export async function withSigning<T>(
         const profile = validateProfile(raw, id, context)
         profiles.set(id, profile)
         const bytes = readFileSync(file)
-        for (const relative of [
-          'Library/MobileDevice/Provisioning Profiles',
-          'Library/Developer/Xcode/UserData/Provisioning Profiles'
-        ]) {
+        for (const profileDirectory of profileDirectories) {
           const destination = path.join(
-            profileHome,
-            relative,
+            profileDirectory,
             `${profile.uuid}.mobileprovision`
           )
           noSymlinks(destination)
