@@ -53,6 +53,13 @@ export type IconName =
   | 'filter_alt'
   | 'edit'
   | 'place'
+  | 'chat'
+  | 'send'
+  | 'attach_file'
+  | 'add_reaction'
+  | 'mood'
+  | 'lock'
+  | 'group'
 
 export interface IconProps {
   name: IconName
