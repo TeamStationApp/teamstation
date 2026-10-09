@@ -12,6 +12,8 @@ export interface ChatDraft {
   hasScrollPosition?: boolean
   /** Preserve automatic following only when the saved view was at its end. */
   followNewest?: boolean
+  /** Opaque row and its viewport position survive content re-folding on reopen. */
+  scrollAnchor?: { id: string; relativeY: number }
 }
 export interface ChatWorkspaceState {
   drafts: Map<string, ChatDraft>

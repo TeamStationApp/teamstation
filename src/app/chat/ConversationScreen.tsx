@@ -211,6 +211,13 @@ export function ConversationScreen(
   const readRevision = useRef<number | undefined>(undefined)
   const paneActive = useRef(props.active !== false)
   paneActive.current = props.active !== false
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const [documentActive, setDocumentActive] = useState(readDocumentActive)
   useEffect(() => watchReadDocumentActive(setDocumentActive), [])
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
@@ -224,6 +231,7 @@ export function ConversationScreen(
       props.draft?.hasScrollPosition === true ||
       (props.draft?.scrollOffset ?? 0) > 0,
     followNewest: props.draft?.followNewest === true,
+    anchor: props.draft?.scrollAnchor,
     height: 0,
     content: 0
   })
@@ -232,6 +240,13 @@ export function ConversationScreen(
       ? scrolled.current.offset
       : undefined
   )
+  const restoreAnchor = useRef(
+    scrolled.current.hasPosition && !scrolled.current.followNewest
+      ? scrolled.current.anchor
+      : undefined
+  )
+  const restoringAnchor = useRef(false)
+  const restoreAnchorDirty = useRef(false)
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
   )
@@ -334,7 +349,7 @@ export function ConversationScreen(
   ])
   const hasView = view != null
   const userScrolled = useCallback(() => {
-    if (props.active === false) return
+    if (!mounted.current || !paneActive.current) return
     jumpGeneration.current += 1
     measuringJump.current = undefined
     // Cancel the jump, not the older page's position compensation. The
@@ -348,7 +363,11 @@ export function ConversationScreen(
     }
     atBottom.current = false
     restoreTarget.current = undefined
+    restoreAnchor.current = undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
     scrolled.current.hasPosition = true
+    scrolled.current.anchor = readingAnchor(messagePositions.current)
     onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
@@ -356,10 +375,11 @@ export function ConversationScreen(
       picked: pickedNow.current,
       scrollOffset: scrolled.current.offset,
       hasScrollPosition: true,
-      followNewest: scrolled.current.followNewest
+      followNewest: scrolled.current.followNewest,
+      scrollAnchor: scrolled.current.anchor
     })
     explicitRead()
-  }, [props.active, onDraftChange, editing, explicitRead, readingAnchor])
+  }, [onDraftChange, editing, explicitRead, readingAnchor])
   useEffect(
     () => bindUserScroll(scroller.current, userScrolled),
     [userScrolled, hasView]
@@ -442,11 +462,16 @@ export function ConversationScreen(
     }
     return undefined
   }
-  const rememberPosition = (target: number): void => {
+  const rememberPosition = (
+    target: number,
+    anchor = scrolled.current.anchor
+  ): void => {
     restoreTarget.current = target
     scrolled.current.offset = target
     scrolled.current.hasPosition = true
     scrolled.current.followNewest = false
+    scrolled.current.anchor = anchor
+    restoreAnchor.current = anchor
     onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
@@ -454,11 +479,51 @@ export function ConversationScreen(
       picked: pickedNow.current,
       scrollOffset: target,
       hasScrollPosition: true,
-      followNewest: false
+      followNewest: false,
+      scrollAnchor: scrolled.current.anchor
     })
+  }
+  const restoreReadingAnchor = (): void => {
+    const anchor = restoreAnchor.current
+    if (
+      anchor == null ||
+      measuringJump.current != null ||
+      !mounted.current ||
+      !paneActive.current
+    )
+      return
+    if (restoringAnchor.current) {
+      restoreAnchorDirty.current = true
+      return
+    }
+    const generation = jumpGeneration.current
+    restoringAnchor.current = true
+    restoreAnchorDirty.current = false
+    const cancelled = (): boolean =>
+      !mounted.current ||
+      !paneActive.current ||
+      generation !== jumpGeneration.current ||
+      restoreAnchor.current !== anchor
+    measurePosition(anchor.id, cancelled)
+      .then(y => {
+        if (y == null || cancelled() || restoreAnchorDirty.current) return
+        const target = Math.max(0, y - anchor.relativeY)
+        rememberPosition(target, anchor)
+        scroller.current?.scrollTo({ y: target, animated: false })
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (generation === jumpGeneration.current) {
+          restoringAnchor.current = false
+          if (restoreAnchorDirty.current && !cancelled()) restoreReadingAnchor()
+        }
+      })
   }
   const jumpTo = (id: string): void => {
     restoreTarget.current = undefined
+    restoreAnchor.current = undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
     const generation = ++jumpGeneration.current
     measuringJump.current = generation
     setPinsOpen(false)
@@ -482,6 +547,7 @@ export function ConversationScreen(
         prepend.current = undefined
         const cancelled = (): boolean =>
           generation !== jumpGeneration.current ||
+          !mounted.current ||
           !paneActive.current ||
           engine.view(conversationId) == null
         const y = await measurePosition(id, cancelled)
@@ -500,6 +566,8 @@ export function ConversationScreen(
         scrolled.current.offset = target
         scrolled.current.hasPosition = true
         scrolled.current.followNewest = false
+        scrolled.current.anchor = { id, relativeY: y - target }
+        restoreAnchor.current = scrolled.current.anchor
         onDraftChange?.({
           text: textNow.current,
           replyTo: replyNow.current,
@@ -507,7 +575,8 @@ export function ConversationScreen(
           picked: pickedNow.current,
           scrollOffset: target,
           hasScrollPosition: true,
-          followNewest: false
+          followNewest: false,
+          scrollAnchor: scrolled.current.anchor
         })
         scroller.current?.scrollTo({
           y: target,
@@ -535,7 +604,8 @@ export function ConversationScreen(
       picked,
       scrollOffset: scrolled.current.offset,
       hasScrollPosition: scrolled.current.hasPosition,
-      followNewest: scrolled.current.followNewest
+      followNewest: scrolled.current.followNewest,
+      scrollAnchor: scrolled.current.anchor
     })
   }, [text, replyTo, editing, picked, onDraftChange])
 
@@ -544,11 +614,17 @@ export function ConversationScreen(
   // has added them) is opened again as soon as the list brings it, and
   // every few seconds until then.
   useEffect(() => {
-    if (props.active === false) return
+    if (!mounted.current || !paneActive.current) return
     restoreTarget.current =
       scrolled.current.hasPosition && !scrolled.current.followNewest
         ? scrolled.current.offset
         : undefined
+    restoreAnchor.current =
+      scrolled.current.hasPosition && !scrolled.current.followNewest
+        ? scrolled.current.anchor
+        : undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
     atBottom.current = restoreTarget.current == null
     let live = true
     let opened = false
@@ -747,10 +823,12 @@ export function ConversationScreen(
           picked: nextPicked,
           scrollOffset: scrolled.current.offset,
           hasScrollPosition: scrolled.current.hasPosition,
-          followNewest: scrolled.current.followNewest
+          followNewest: scrolled.current.followNewest,
+          scrollAnchor: scrolled.current.anchor
         })
         atBottom.current = true
         restoreTarget.current = undefined
+        restoreAnchor.current = undefined
       })
       .catch(() => {
         setError(lstrings.chat_send_failed)
@@ -949,7 +1027,7 @@ export function ConversationScreen(
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
             gestureGeneration.current += 1
-            if (props.active === false) return
+            if (!mounted.current || !paneActive.current) return
             const { contentOffset, layoutMeasurement, contentSize } =
               event.nativeEvent
             if (restoreTarget.current != null) return
@@ -968,6 +1046,7 @@ export function ConversationScreen(
             scrolled.current.followNewest =
               scrolled.current.offset + layoutMeasurement.height >=
               scrolled.current.content - 48
+            scrolled.current.anchor = readingAnchor(messagePositions.current)
             props.onDraftChange?.({
               text,
               replyTo,
@@ -975,7 +1054,8 @@ export function ConversationScreen(
               picked,
               scrollOffset: scrolled.current.offset,
               hasScrollPosition: true,
-              followNewest: scrolled.current.followNewest
+              followNewest: scrolled.current.followNewest,
+              scrollAnchor: scrolled.current.anchor
             })
           }}
           onScrollBeginDrag={() => {
@@ -983,17 +1063,18 @@ export function ConversationScreen(
             if (Platform.OS !== 'web') userScrolled()
           }}
           onLayout={event => {
-            if (props.active === false) return
+            if (!mounted.current || !paneActive.current) return
             scrolled.current.height = event.nativeEvent.layout.height
             if (restoreTarget.current != null)
               scroller.current?.scrollTo({
                 y: restoreTarget.current,
                 animated: false
               })
+            restoreReadingAnchor()
           }}
           scrollEventThrottle={100}
           onContentSizeChange={(_width, height) => {
-            if (props.active === false) return
+            if (!mounted.current || !paneActive.current) return
             if (prepend.current != null) {
               const previous = prepend.current
               const firstSeq = view.messages[0]?.seq
@@ -1014,6 +1095,7 @@ export function ConversationScreen(
                   const generation = jumpGeneration.current
                   const cancelled = (): boolean =>
                     generation !== jumpGeneration.current ||
+                    !mounted.current ||
                     !paneActive.current ||
                     engine.view(conversationId) == null
                   // Total height also includes quote/image changes below the
@@ -1022,7 +1104,7 @@ export function ConversationScreen(
                     .then(y => {
                       if (y == null || cancelled()) return
                       const measured = Math.max(0, y - anchor.relativeY)
-                      rememberPosition(measured)
+                      rememberPosition(measured, anchor)
                       scroller.current?.scrollTo({
                         y: measured,
                         animated: false
@@ -1042,6 +1124,7 @@ export function ConversationScreen(
                 y: restoreTarget.current,
                 animated: false
               })
+              restoreReadingAnchor()
               return
             }
             if (measuringJump.current != null) {
@@ -1090,6 +1173,8 @@ export function ConversationScreen(
                 messagePositions.current.set(message.id, y)
                 if (view.messages[0]?.seq === prepend.current?.firstSeq)
                   prepend.current?.positions.set(message.id, y)
+                if (message.id === restoreAnchor.current?.id)
+                  restoreReadingAnchor()
               }}
             >
               {notices.get(index)?.map(renderNotice)}
