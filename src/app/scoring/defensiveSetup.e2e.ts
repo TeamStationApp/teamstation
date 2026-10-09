@@ -633,14 +633,18 @@ describe('current defensive scoring setup browser', function () {
       await page.reload()
       await page.waitForSelector('canvas[data-field-ready="true"]')
       expect(await page.$('[data-nameplate="empty-C"]')).equals(null)
-      await page.waitForFunction(() =>
-        document.body.innerText.includes('Julio Rodriguez')
+      await page.waitForFunction(
+        name => document.body.innerText.includes(name),
+        {},
+        roster('home')[9].shortName
       )
       await tapSlot(page, 'C')
       await choose(page, 'C', 0)
       await click(page, 'Undo Set team roster')
-      await page.waitForFunction(() =>
-        document.body.innerText.includes('Julio Rodriguez')
+      await page.waitForFunction(
+        name => document.body.innerText.includes(name),
+        {},
+        roster('home')[9].shortName
       )
       expect(unexpected).deep.equals([])
     } finally {

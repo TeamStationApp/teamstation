@@ -419,7 +419,7 @@ describe('scoring screen field wiring', function () {
           catcher
         )
       } else {
-        await step(() => props().setupToast?.onSetLineup())
+        await step(() => props().setupToast?.onSetLineup?.())
         expect(
           document.querySelector(
             '[aria-label="Home Team"][aria-selected="true"]'
