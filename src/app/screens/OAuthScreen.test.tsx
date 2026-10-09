@@ -553,6 +553,72 @@ describe('OAuth consent and loaded build information', () => {
     await press('Sign in to continue')
     expect(login).equals(true)
   })
+  it('shows the active server origin on web and mobile without credentials', async () => {
+    const originalOs = Platform.OS
+    try {
+      for (const os of ['web', 'ios', 'android'] as const) {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
+        await show(
+          <AppHeader
+            showMark
+            apiBaseUrl="https://fixture:placeholder@preview.example.test:8443/api/v1"
+          />
+        )
+        await press('About TeamStation')
+        expect(document.body.textContent).includes('App server URL')
+        expect(document.body.textContent).includes(
+          'https://preview.example.test:8443'
+        )
+        expect(document.body.textContent).not.includes('placeholder')
+        expect(document.body.textContent).not.includes('/api/v1')
+        await press('Close')
+      }
+    } finally {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: originalOs
+      })
+    }
+  })
+  it('sanitizes the authority returned by React Native URL parsing', async () => {
+    const OriginalUrl = globalThis.URL
+    try {
+      for (const origin of [
+        'https://fixture:placeholder@preview.example.test:8443',
+        ''
+      ]) {
+        globalThis.URL = class extends OriginalUrl {
+          get origin(): string {
+            return origin
+          }
+        }
+        await show(
+          <BuildInfoModal
+            apiBaseUrl="https://preview.example.test/api/v1"
+            onClose={() => undefined}
+          />
+        )
+        expect(document.body.textContent).includes(
+          origin === ''
+            ? 'App server URL—'
+            : 'https://preview.example.test:8443'
+        )
+        expect(document.body.textContent).not.includes('placeholder')
+      }
+    } finally {
+      globalThis.URL = OriginalUrl
+    }
+  })
+  it('resolves relative web APIs and handles unavailable server addresses', async () => {
+    for (const base of ['/api/v1', undefined]) {
+      await show(<BuildInfoModal apiBaseUrl={base} onClose={() => undefined} />)
+      expect(document.body.textContent).includes(window.location.origin)
+    }
+    for (const base of ['https://[invalid', 'data:text/plain,fixture']) {
+      await show(<BuildInfoModal apiBaseUrl={base} onClose={() => undefined} />)
+      expect(document.body.textContent).includes('App server URL—')
+    }
+  })
   it('shows embedded metadata and hides the link when absent or unavailable', async () => {
     const info = {
       app: 'Example',

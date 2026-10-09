@@ -677,6 +677,7 @@ function Shell(props: AppProps): React.ReactElement {
     return (
       <View style={styles.app}>
         <AppHeader
+          apiBaseUrl={apiBaseUrl}
           title={lstrings.oauth_title}
           showMark
           buildsClient={session == null ? undefined : client}
@@ -758,6 +759,7 @@ function Shell(props: AppProps): React.ReactElement {
     return (
       <View style={styles.app}>
         <AppHeader
+          apiBaseUrl={apiBaseUrl}
           title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
           showMark
           nav={
@@ -800,6 +802,7 @@ function Shell(props: AppProps): React.ReactElement {
     return (
       <View style={styles.app}>
         <AppHeader
+          apiBaseUrl={apiBaseUrl}
           title={lstrings.join_header}
           showMark
           buildsClient={client}
@@ -1163,6 +1166,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   const header = (
     <AppHeader
+      apiBaseUrl={apiBaseUrl}
       buildsClient={session == null ? undefined : client}
       title={titleFor(tab, top)}
       // The mark on every screen that is a destination in its own right —

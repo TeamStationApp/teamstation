@@ -4,16 +4,19 @@ import { Modal, Pressable, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { type BuildInfo, buildInfo } from '../../common/distribution'
 import { lstrings } from '../locales/strings'
+import { browserOrigin } from '../platform/browserOrigin'
 import { openExternal } from '../platform/externalBrowser'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 
 export function BuildInfoModal({
   client,
+  apiBaseUrl = client?.baseUrl,
   onClose,
   info = buildInfo
 }: {
   client?: TeamStationClient
+  apiBaseUrl?: string
   onClose: () => void
   info?: BuildInfo
 }): React.ReactElement {
@@ -38,7 +41,8 @@ export function BuildInfoModal({
     [lstrings.about_number, info.buildNumber],
     [lstrings.about_branch, info.branch],
     [lstrings.about_commit, info.commit],
-    [lstrings.about_time, info.builtAt]
+    [lstrings.about_time, info.builtAt],
+    [lstrings.about_server, serverOrigin(apiBaseUrl)]
   ]
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onClose}>
@@ -87,6 +91,18 @@ export function BuildInfoModal({
       </View>
     </Modal>
   )
+}
+
+function serverOrigin(apiBaseUrl?: string): string {
+  try {
+    const origin = new URL(apiBaseUrl ?? '/api/v1', browserOrigin()).origin
+    // React Native's URL implementation retains credentials in origin.
+    return /^https?:\/\//.test(origin)
+      ? origin.replace(/^(https?:\/\/)[^/]*@/, '$1')
+      : '—'
+  } catch {
+    return '—'
+  }
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
