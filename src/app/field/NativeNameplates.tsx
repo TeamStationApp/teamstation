@@ -131,9 +131,13 @@ function Nameplate({
         >
           <Text
             numberOfLines={1}
+            allowFontScaling={face.emptyPosition === true ? false : undefined}
+            adjustsFontSizeToFit={face.emptyPosition === true}
+            minimumFontScale={face.emptyPosition === true ? 0.75 : undefined}
             style={[
               styles.line,
               {
+                width: face.emptyPosition === true ? '100%' : undefined,
                 fontSize:
                   face.emptyPosition === true
                     ? EMPTY_POSITION_FONT

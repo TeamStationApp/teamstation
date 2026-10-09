@@ -17,7 +17,7 @@ export const NAMEPLATE_PAD = 4
 /** Space between the name and the number under it. */
 export const NAMEPLATE_LINE_GAP = 2
 export const EMPTY_POSITION_SIZE = 48
-export const EMPTY_POSITION_FONT = 30
+export const EMPTY_POSITION_FONT = 26
 export function hasPlayerLabel(player: FieldPlayer): boolean {
   // The batter and the pitcher are named on the scoreboard, not on the field.
   return (
