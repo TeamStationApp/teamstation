@@ -31,6 +31,11 @@ public struct ScoreboardSaved: Equatable, Sendable {
   public var gameId: String
   public var gameTitle: String
   public var gameStartAt: String
+  /// The signed-in user's ID on the account server, in decimal. Empty until the server has said
+  /// who the token belongs to; a login saved by an older build fills it in through `auth/me`.
+  public var userId: String
+  /// "Allow Director Override". Off until the operator turns it on, and kept across sign-outs.
+  public var allowDirectorOverride: Bool
 
   public init(
     route: ScoreboardRoute,
@@ -42,7 +47,9 @@ public struct ScoreboardSaved: Equatable, Sendable {
     email: String,
     gameId: String,
     gameTitle: String,
-    gameStartAt: String
+    gameStartAt: String,
+    userId: String = "",
+    allowDirectorOverride: Bool = false
   ) {
     self.route = route
     self.apiServer = apiServer
@@ -54,11 +61,41 @@ public struct ScoreboardSaved: Equatable, Sendable {
     self.gameId = gameId
     self.gameTitle = gameTitle
     self.gameStartAt = gameStartAt
+    self.userId = userId
+    self.allowDirectorOverride = allowDirectorOverride
   }
 }
 
+/// Who assigned an event from the local network, as the receiver checked it: the assigning
+/// Director's instance and observed address, its revision, and the user the request was proved for.
+public struct ScoreboardAssignmentSource: Equatable, Sendable {
+  public var owner: String
+  public var host: String
+  public var revision: UInt64
+  public var userId: String
+
+  public init(owner: String, host: String, revision: UInt64, userId: String) {
+    self.owner = owner
+    self.host = host
+    self.revision = revision
+    self.userId = userId
+  }
+}
+
+/// What became of an assigned event.
+public enum ScoreboardAssignmentOutcome: Equatable, Sendable {
+  /// Stored, and the publishing connection moved when the event route is the live one.
+  case applied
+  /// "Allow Director Override" is off.
+  case disabled
+  /// Signed out, or signed in as someone other than the user the request was proved for.
+  case wrongAccount
+  /// Older than an assignment already applied from the same Director.
+  case stale
+}
+
 /**
- Where a TAG One reading goes, matching TS Watcher.
+ Where a TAG One reading goes.
 
  V1 is `<apiServer>/sockets/api/v1/autoState/<eventId>` with the server string used as typed.
  An event is `<server>/api/v1/scoreboard/<gameId>/publish` over `wss://` (`ws://` for an `http://`
@@ -209,6 +246,7 @@ public enum ScoreboardTarget {
 
   public static func load(_ store: SettingsStore) -> ScoreboardSaved {
     let token = store.string(forKey: Keys.token) ?? ""
+    let game = loadGame(store)
     let route: ScoreboardRoute =
       store.string(forKey: Keys.route) == "event" && !token.isEmpty ? .event : .v1
     return ScoreboardSaved(
@@ -219,13 +257,59 @@ public enum ScoreboardTarget {
       token: token,
       displayName: store.string(forKey: Keys.displayName) ?? "",
       email: store.string(forKey: Keys.email) ?? "",
-      gameId: store.string(forKey: Keys.gameId) ?? "",
-      gameTitle: store.string(forKey: Keys.gameTitle) ?? "",
-      gameStartAt: store.string(forKey: Keys.gameStart) ?? ""
+      gameId: game.gameId,
+      gameTitle: game.title,
+      gameStartAt: game.startAt,
+      userId: decimalUserId(store.string(forKey: Keys.userId)) ?? "",
+      allowDirectorOverride: store.string(forKey: Keys.allowOverride) == "true"
     )
   }
 
+  /// The chosen game as one value: the record written in one go when there is one, otherwise the
+  /// three keys an older build wrote one at a time.
+  private static func loadGame(_ store: SettingsStore) -> SavedGame {
+    if let text = store.string(forKey: Keys.game),
+       let game = try? JSONDecoder().decode(SavedGame.self, from: Data(text.utf8))
+    {
+      return game
+    }
+    return SavedGame(
+      gameId: store.string(forKey: Keys.gameId) ?? "",
+      title: store.string(forKey: Keys.gameTitle) ?? "",
+      startAt: store.string(forKey: Keys.gameStart) ?? ""
+    )
+  }
+
+  private struct SavedGame: Codable {
+    var gameId: String
+    var title: String
+    var startAt: String
+  }
+
+  /// A user ID as the server may send it, a string or a JSON number, in decimal. Nil for anything
+  /// that is not a positive whole number.
+  public static func decimalUserId(_ value: Any?) -> String? {
+    let text: String
+    switch value {
+    case let string as String:
+      text = string.trimmingCharacters(in: .whitespaces)
+    case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID():
+      guard number.doubleValue == number.doubleValue.rounded(), number.int64Value > 0 else { return nil }
+      text = String(number.int64Value)
+    default:
+      return nil
+    }
+    guard !text.isEmpty, text.count <= 32, text.allSatisfy({ ("0" ... "9").contains($0) }) else { return nil }
+    let digits = text.drop { $0 == "0" }
+    return digits.isEmpty ? nil : String(digits)
+  }
+
   public static func save(_ saved: ScoreboardSaved, to store: SettingsStore) {
+    // The game and its title and start time in one write, so they are never read back mixed.
+    let game = SavedGame(gameId: saved.gameId, title: saved.gameTitle, startAt: saved.gameStartAt)
+    if let data = try? JSONEncoder().encode(game) {
+      store.setString(String(decoding: data, as: UTF8.self), forKey: Keys.game)
+    }
     store.setString(saved.route == .event ? "event" : "v1", forKey: Keys.route)
     store.setString(saved.apiServer, forKey: Keys.apiServer)
     store.setString(saved.v1EventId, forKey: Keys.v1Event)
@@ -236,6 +320,23 @@ public enum ScoreboardTarget {
     store.setString(saved.gameId, forKey: Keys.gameId)
     store.setString(saved.gameTitle, forKey: Keys.gameTitle)
     store.setString(saved.gameStartAt, forKey: Keys.gameStart)
+    store.setString(saved.userId, forKey: Keys.userId)
+    store.setString(saved.allowDirectorOverride ? "true" : "false", forKey: Keys.allowOverride)
+  }
+
+  /// A Director's event, written into the event route's game and nothing else: the route, the
+  /// servers, the V1 event and the login are left as they are.
+  public static func assigning(
+    _ saved: ScoreboardSaved,
+    gameId: String,
+    title: String,
+    startAt: String
+  ) -> ScoreboardSaved {
+    var next = saved
+    next.gameId = gameId
+    next.gameTitle = title
+    next.gameStartAt = startAt
+    return next
   }
 
   /// Sign-out drops the account and the event route. The last chosen game stays for next time.
@@ -245,6 +346,7 @@ public enum ScoreboardTarget {
     next.token = ""
     next.displayName = ""
     next.email = ""
+    next.userId = ""
     return next
   }
 
@@ -274,5 +376,8 @@ public enum ScoreboardTarget {
     static let gameId = "app.teamstation.cameraman.scoreboard.gameId"
     static let gameTitle = "app.teamstation.cameraman.scoreboard.gameTitle"
     static let gameStart = "app.teamstation.cameraman.scoreboard.gameStartAt"
+    static let game = "app.teamstation.cameraman.scoreboard.game"
+    static let userId = "app.teamstation.cameraman.scoreboard.userId"
+    static let allowOverride = "app.teamstation.cameraman.scoreboard.allowDirectorOverride"
   }
 }

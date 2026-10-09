@@ -43,6 +43,9 @@ packages:
     path: Packages/CameramanUI
   CameramanTestHarness:
     path: Packages/CameramanTestHarness
+  # The device event-control protocol: a Director on the local network setting the scoreboard event.
+  EventControl:
+    path: ../common/EventControl
   # Test target only. Packetizers are round-tripped through the shared DirectorRTSP depacketizers
   # in mobile/apps/common. This compiles that package; it never builds or launches the Director app.
   DirectorRTSP:
@@ -87,6 +90,8 @@ targets:
         product: CameramanUI
       - package: CameramanTestHarness
         product: CameramanTestHarness
+      - package: EventControl
+        product: EventControl
 
   CameramanUnitTests:
     type: bundle.unit-test
@@ -113,6 +118,8 @@ targets:
         product: CameramanUI
       - package: CameramanTestHarness
         product: CameramanTestHarness
+      - package: EventControl
+        product: EventControl
       - package: DirectorRTSP
         product: DirectorRTSP
       - package: DirectorSources

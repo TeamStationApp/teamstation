@@ -314,6 +314,31 @@ struct SettingsView<Model: CameraControlling>: View {
     .accessibilityIdentifier(tag)
   }
 
+  /// Change Game: a compact green pill under the event, gray and untappable while the picker is
+  /// off (signed out, or a Director holds the event).
+  private func changeGameButton(enabled: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text("Change Game")
+        .font(.body.weight(.semibold))
+        .foregroundStyle(
+          enabled ? Color(red: 0.07, green: 0.14, blue: 0.09) : Color(uiColor: .secondaryLabel)
+        )
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(
+          enabled ? Color(red: 0.50, green: 0.85, blue: 0.61) : Color(uiColor: .systemGray4),
+          in: Capsule()
+        )
+    }
+    .buttonStyle(.plain)
+    .disabled(!enabled)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, 16)
+    .padding(.top, 8)
+    .padding(.bottom, 10)
+    .accessibilityIdentifier("scoreboard-change-game")
+  }
+
   @ViewBuilder
   private var radarSection: some View {
     if let radar = model as? any RadarControlling {
@@ -432,6 +457,8 @@ struct SettingsView<Model: CameraControlling>: View {
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal, 16)
+        // The event's start time and title read in full white even while a Director holds it;
+        // only the ways to change it switch off.
         Button {
           board.openScoreboardEvents()
         } label: {
@@ -439,16 +466,45 @@ struct SettingsView<Model: CameraControlling>: View {
             if !board.scoreboard.gameWhen.isEmpty {
               Text(board.scoreboard.gameWhen)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
             }
             Text(board.scoreboard.gameTitle.isEmpty ? "Tap to pick an event" : board.scoreboard.gameTitle)
           }
+          .foregroundStyle(Color.primary)
           .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
         }
-        .disabled(!board.scoreboard.signedIn)
+        .buttonStyle(UndimmedButtonStyle())
+        .disabled(!board.scoreboard.canPickEvent)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.top, 8)
         .accessibilityIdentifier("scoreboard-choose-event")
+        changeGameButton(enabled: board.scoreboard.canPickEvent) {
+          board.openScoreboardEvents()
+        }
+        Divider().padding(.leading, 16)
+        cardRow {
+          Toggle("Allow Director Override", isOn: Binding(
+            get: { board.scoreboard.allowDirectorOverride },
+            set: { board.setAllowDirectorOverride($0) }
+          ))
+          .accessibilityIdentifier("scoreboard-allow-director-override")
+        }
+        if board.scoreboard.eventLocked {
+          Text(board.scoreboard.overrideLine)
+            .font(.footnote)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("scoreboard-override-source")
+        } else if !board.scoreboard.eventControlStatus.isEmpty {
+          Text(board.scoreboard.eventControlStatus)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("scoreboard-event-control-status")
+        }
         if Self.isRouteStatus(board.scoreboard.status) {
           Text(board.scoreboard.status)
             .font(.footnote)
@@ -881,5 +937,12 @@ extension StreamCodec {
     case .h264: "H.264"
     case .hevc: "HEVC"
     }
+  }
+}
+
+/// Draws the label as given, enabled or not, so a locked row keeps its full-strength text.
+private struct UndimmedButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
   }
 }

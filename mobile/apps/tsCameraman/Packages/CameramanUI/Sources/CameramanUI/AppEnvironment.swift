@@ -5,6 +5,7 @@ import CameramanCore
 import CameramanEncode
 import CameramanRTSP
 import CameramanTestHarness
+import EventControl
 import Observation
 import os
 import SwiftUI
@@ -19,6 +20,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   public private(set) var radar = RadarSnapshot()
   private let scoreboardDesk: ScoreboardDesk
   public private(set) var scoreboard: ScoreboardSnapshot
+  /// Lets a Director on the local network set the scoreboard event, while the operator allows it.
+  public let eventOverride: EventOverrideController
   public let videoEncoder = VideoEncoder()
   public let audioEncoder = AudioEncoder()
   /// The external display, fed from the same frames the encoder gets.
@@ -129,15 +132,27 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     launch: LaunchConfiguration = LaunchConfiguration(),
     store: IdentityStore? = nil,
     settingsStore: StreamSettingsStore = StreamSettingsStore(),
-    broadcastStore: SettingsStore = UserDefaultsSettingsStore()
+    broadcastStore: SettingsStore = UserDefaultsSettingsStore(),
+    eventControlKeys: EventControlKeyStore = EventControlKeyStore(service: "app.teamstation.cameraman.eventcontrol"),
+    eventControlPorts: [UInt16] = EventControlProtocol.ports,
+    eventControlRebindDelay: TimeInterval = 0.5,
+    scoreboardHTTP: ScoreboardHTTP? = nil,
+    scoreboardSockets: ScoreboardSocketOpener? = nil
   ) {
     self.launch = launch
     self.settingsStore = settingsStore
     let preference = BroadcastPreference(store: broadcastStore)
     self.broadcastPreference = preference
-    let desk = ScoreboardDesk(store: broadcastStore, origin: "ios")
+    let desk = ScoreboardDesk(store: broadcastStore, origin: "ios", http: scoreboardHTTP, openSocket: scoreboardSockets)
     self.scoreboardDesk = desk
     self.scoreboard = desk.snapshot
+    self.eventOverride = EventOverrideController(
+      desk: desk,
+      keys: eventControlKeys,
+      instanceId: EventControlInstanceID.persisted(in: .standard, key: "eventControl.instanceId"),
+      ports: eventControlPorts,
+      rebindDelay: eventControlRebindDelay
+    )
     self.isBroadcasting = BroadcastPolicy.shouldListen(
       saved: preference.load(),
       isUITest: launch.isUITest,
@@ -183,9 +198,12 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     scoreboardDesk.onSnapshot = { [weak self] next in
       self?.scoreboard = next
     }
-    radarSession.onSpeeds = { [weak self] pitch, exit in
+    radarSession.onSpeeds = { [desk] pitch, exit in
+      // Stamped on arrival, so a reading still on its way when the event changes is not sent to
+      // the new one.
+      let stamp = desk.currentTargetStamp()
       Task { @MainActor in
-        self?.scoreboardDesk.publish(pitchMph: pitch, exitMph: exit)
+        desk.publish(pitchMph: pitch, exitMph: exit, stamp: stamp)
       }
     }
   }
@@ -244,6 +262,21 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     }
   }
 
+  /// The scene's phase, as the app hears it.
+  ///
+  /// Locking the phone and unlocking it is the same trip as pressing Home and coming back:
+  /// `.inactive`, `.background`, then `.inactive`, `.active`, so both go through
+  /// `handleBackground()` and `handleForeground()`. While the phone is locked iOS cancels the
+  /// listeners as it does for any background trip; the event-control listener rebinds itself when
+  /// it is cancelled while still current, and `handleForeground()` asks it to listen again at once.
+  public func handleScenePhase(_ phase: ScenePhase) {
+    switch phase {
+    case .background: handleBackground()
+    case .active: handleForeground()
+    default: break
+    }
+  }
+
   /// Called when the scene enters the background, purely to record that it happened.
   ///
   /// `.active` also arrives after a merely inactive scene — a Control Center pull, a notification
@@ -260,6 +293,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   /// back looking perfectly healthy while Director cannot find it, or finds it and gets no picture.
   public func handleForeground() {
     server?.ensureListening()
+    // The event-control listener is taken down with the RTSP one, and rebuilt the same way.
+    eventOverride.handleForeground()
     // Unconditionally, not only when the listener had to be rebuilt. iOS drops the Bonjour record
     // the moment the scene leaves the foreground but leaves the listener itself bound and
     // accepting, so the app can be serving on an open port with no advertisement at all. Director
@@ -404,11 +439,16 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     scoreboardDesk.choose(gameId: gameId)
   }
 
+  public func setAllowDirectorOverride(_ allowed: Bool) {
+    eventOverride.setConsent(allowed)
+  }
+
   public func start() async {
     radarSession.onChange = { [weak self] snapshot in
       self?.radar = snapshot
     }
     radarSession.start()
+    eventOverride.start()
     status = "requesting permissions"
     cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
     microphoneAuthorized = await AVCaptureDevice.requestAccess(for: .audio)
@@ -1112,6 +1152,13 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
 
     case .hideSettings:
       isShowingSettings = false
+      return ok()
+
+    case let .radarFeed(pitch, exit):
+      // The path a radar reading takes from `radarSession.onSpeeds`: stamped with the target it
+      // arrived for, then published.
+      let stamp = scoreboardDesk.currentTargetStamp()
+      scoreboardDesk.publish(pitchMph: pitch, exitMph: exit, stamp: stamp)
       return ok()
     }
   }

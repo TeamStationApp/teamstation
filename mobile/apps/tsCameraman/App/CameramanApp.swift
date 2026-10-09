@@ -68,11 +68,8 @@ struct CameramanApp: App {
       // switcher, or another app launching still backgrounds this one, and iOS takes the
       // advertisement and the video encoder down on the way out. Nothing restores either on the way
       // back in, so the app has to ask.
-      switch phase {
-      case .background: environment.handleBackground()
-      case .active: environment.handleForeground()
-      default: break
-      }
+      // A screen lock takes the same path: `.background` on lock, `.active` on unlock.
+      environment.handleScenePhase(phase)
     }
   }
 }

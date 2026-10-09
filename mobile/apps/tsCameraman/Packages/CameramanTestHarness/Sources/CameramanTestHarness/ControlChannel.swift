@@ -30,6 +30,10 @@ public enum ControlCommand: Sendable, Equatable {
   /// Opens or closes Settings, so its screen can be checked without a tap.
   case showSettings
   case hideSettings
+  /// A pitch and exit speed, in mph, as if the paired radar had just reported them: they go to the
+  /// scoreboard exactly as a radar reading does, so a flow can check where readings are published
+  /// without a ball in the air. Zero means "no reading" for that side, as it does from the radar.
+  case radarFeed(pitch: Int, exit: Int)
 }
 
 public enum ControlChannel {
@@ -114,6 +118,12 @@ public enum ControlChannel {
       let jitter = query["jitter"].flatMap(Double.init) ?? 0
       let burst = query["burst"].flatMap(Double.init) ?? 0
       return .setSendDelay(milliseconds: ms, jitter: jitter, burst: burst)
+
+    case "radar-feed":
+      let pitch = query["pitch"].flatMap(Int.init) ?? 0
+      let exit = query["exit"].flatMap(Int.init) ?? 0
+      guard pitch >= 0, exit >= 0, pitch > 0 || exit > 0 else { return nil }
+      return .radarFeed(pitch: pitch, exit: exit)
 
     default:
       return nil

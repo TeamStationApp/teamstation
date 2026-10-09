@@ -11,6 +11,7 @@ let package = Package(
     .package(path: "../../../common/AdaptiveBitrate"),
     .package(path: "../../common/CameramanCore"),
     .package(path: "../../common/CameramanControlUI"),
+    .package(path: "../../../common/EventControl"),
     .package(path: "../CameramanCapture"),
     .package(path: "../CameramanEncode"),
     .package(path: "../CameramanRTSP"),
@@ -26,7 +27,8 @@ let package = Package(
         "CameramanCapture",
         "CameramanEncode",
         "CameramanRTSP",
-        "CameramanTestHarness"
+        "CameramanTestHarness",
+        "EventControl"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )

@@ -72,14 +72,18 @@ if [ -n "$COVERAGE" ]; then
   log "Changed-line coverage"
   (
     cd "$TOP"
-    # LoginFlow is the sign-in and logout logic this gate measures. SettingsView is
-    # SwiftUI layout. The rest of the Cameraman diff on this branch is the scoreboard
-    # work, which this run does not hold to 90%.
+    # Every changed line of the logic this app's tests reach: the shared core, the shared
+    # control screen's logic and the app's own UI package (the scoreboard desk and the Director
+    # override receiver among them). SettingsView is SwiftUI layout; the decisions it shows are
+    # made in ScoreboardSnapshot and ScoreboardDesk, which are measured. EventControl is measured
+    # by its own package tests, never here.
     node "$TOP/scripts/swift-changed-line-coverage.cjs" \
       --xcresult "$CAMERAMAN_DERIVED_DATA/TestResults.xcresult" \
       --derived-data "$CAMERAMAN_DERIVED_DATA" \
       --exclude mobile/apps/common/CameramanControlUI/Sources/CameramanControlUI/SettingsView.swift \
-      mobile/apps/common/CameramanCore/Sources/CameramanCore/LoginFlow.swift
+      mobile/apps/common/CameramanCore \
+      mobile/apps/common/CameramanControlUI \
+      mobile/apps/tsCameraman/Packages/CameramanUI
   ) || COVERED=1
 fi
 

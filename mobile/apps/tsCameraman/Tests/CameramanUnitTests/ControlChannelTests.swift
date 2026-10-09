@@ -21,6 +21,14 @@ struct ControlChannelTests {
     #expect(command("/hide-settings") == .hideSettings)
   }
 
+  @Test func aRadarFeedNeedsASpeed() {
+    #expect(command("/radar-feed?pitch=61&exit=0") == .radarFeed(pitch: 61, exit: 0))
+    #expect(command("/radar-feed?exit=88") == .radarFeed(pitch: 0, exit: 88))
+    #expect(command("/radar-feed?pitch=0&exit=0") == nil)
+    #expect(command("/radar-feed?pitch=-3") == nil)
+    #expect(command("/radar-feed") == nil)
+  }
+
   @Test func adaptiveBitrateTakesAnOnValue() {
     #expect(command("/set-adaptive-bitrate?on=false") == .setAdaptiveBitrate(on: false))
     #expect(command("/set-adaptive-bitrate?on=yes") == .setAdaptiveBitrate(on: true))
