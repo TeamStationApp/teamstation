@@ -18,6 +18,7 @@ export function missingDefense(session: ScoringSessionState): Position[] {
 }
 export function setupEditable(state: ScoringState): boolean {
   return (
+    !state.session.final &&
     ['ready', 'awaitingBatter'].includes(state.phase) &&
     state.pendingPlay == null &&
     state.session.pending == null &&

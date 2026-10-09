@@ -345,6 +345,9 @@ describe('current scoring setup', function () {
   it('edits only at rest and keeps active-play interactions intact', function () {
     const state = initialScoringState(game())
     expect(setupEditable(state)).equals(true)
+    expect(
+      setupEditable({ ...state, session: { ...state.session, final: true } })
+    ).equals(false)
     expect(setupEditable({ ...state, phase: 'awaitingBatter' })).equals(true)
     expect(setupEditable({ ...state, phase: 'locateFielder' })).equals(false)
     const begun = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })

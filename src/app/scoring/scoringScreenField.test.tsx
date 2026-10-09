@@ -1056,7 +1056,25 @@ describe('scoring screen field wiring', function () {
     expect(document.querySelector('[aria-label="First Name"]')).equals(null)
   })
 
-  for (const change of ['half', 'active', 'read-only'] as const)
+  it('keeps a completed game out of defensive setup', async function () {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const live = ScoringSession.start(memoryStore(), 'g1', initial)
+    expect(
+      live.apply({ type: 'gameFlow', kind: 'endGame' }).problems
+    ).deep.equals([])
+    await mount({ open: async () => live })
+    const pitcher = field().players.find(player => player.label === 'P')!
+    expect(field().tapIds).not.includes(pitcher.id)
+    await step(() => field().onPlayerTap?.(pitcher.id))
+    expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
+      null
+    )
+    expect(document.body.textContent).includes('Game over')
+    expect(props().setupToast).equals(undefined)
+    expect(live.state.liveData.boxscore.teams.home.players).has.length(9)
+  })
+
+  for (const change of ['half', 'active', 'read-only', 'final'] as const)
     it(`blocks player creation when a peer makes the game ${change}`, async function () {
       const initial = createDevelopmentSession(gameFixture, [], [])
       const context = {
@@ -1093,12 +1111,14 @@ describe('scoring screen field wiring', function () {
           peer.apply(
             change === 'half'
               ? { type: 'gameFlow', kind: 'endHalf' }
-              : {
-                  type: 'ballInPlay',
-                  contact: 'swing',
-                  fielder: initial.liveData.boxscore.teams.home.defense.SS!,
-                  location: { x: 0, z: -30 }
-                }
+              : change === 'final'
+                ? { type: 'gameFlow', kind: 'endGame' }
+                : {
+                    type: 'ballInPlay',
+                    contact: 'swing',
+                    fielder: initial.liveData.boxscore.teams.home.defense.SS!,
+                    location: { x: 0, z: -30 }
+                  }
           ).problems
         ).deep.equals([])
         await peer.flush()
