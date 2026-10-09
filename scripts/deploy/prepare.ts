@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
+import { dependencyInputs } from './dependencyInputs'
 import type { BuildContext } from './runner'
 import { nativeNumber } from './runner'
 import { noSymlinks } from './state'
@@ -41,7 +42,13 @@ export async function prepare(context: BuildContext): Promise<string> {
     if (!existsSync(path.join(directory, 'package-lock.json')))
       throw new Error('A locked JavaScript dependency graph is required')
     const marker = path.join(directory, '.deploy-dependencies')
-    if (!existsSync(marker)) {
+    const fingerprint = dependencyInputs(directory)
+    noSymlinks(marker)
+    if (
+      !existsSync(path.join(directory, 'node_modules')) ||
+      !existsSync(marker) ||
+      readFileSync(marker, 'utf8') !== fingerprint
+    ) {
       await processes.run({
         file: settings.tools.socket,
         args: ['npm', 'ci'],
@@ -49,7 +56,7 @@ export async function prepare(context: BuildContext): Promise<string> {
         env,
         capture: false
       })
-      writeFileSync(marker, 'installed', { flag: 'wx', mode: 0o600 })
+      writeFileSync(marker, fingerprint, { mode: 0o600 })
     }
     if (target.harvester === true)
       await processes.run({

@@ -14,6 +14,13 @@ import { noSymlinks } from './state'
 // A Gradle init script works with both the Groovy and Kotlin application projects.
 // Configuration stays in the child environment, never in checked-in source.
 export const androidOverride = `gradle.beforeProject { project ->
+  project.tasks.configureEach { task ->
+    if (task.name.matches('createBundle.*JsAndAssets')) {
+      ['TS_BUILD_INFO', 'TS_API_BASE_URL', 'TS_PRIMARY_HOST'].each { key ->
+        task.inputs.property(key, project.providers.environmentVariable(key).orElse(''))
+      }
+    }
+  }
   project.plugins.withId('com.android.application') {
     project.extensions.getByName('androidComponents').finalizeDsl { android ->
       android.defaultConfig.versionCode = Integer.parseInt(System.getenv('DEPLOY_BUILD_NUMBER'))

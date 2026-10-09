@@ -166,16 +166,12 @@ export async function run(
       if (marker.id !== record.id) throw new Error('Output ownership changed')
     } else {
       const id = randomBytes(16).toString('hex')
-      directory = createOutput(settings.outputDirectory, id)
       const source = await currentSource(
         settings,
         target(options.app, options.platforms[0]),
         processes,
         workingDirectory
-      ).catch((error: unknown) => {
-        rmSync(directory, { recursive: true, force: true })
-        throw error
-      })
+      )
       const version = packageVersion(source.directory)
       const buildTime = new Date()
       const buildNumber = allocateBuildNumber(
@@ -196,7 +192,13 @@ export async function run(
         artifacts: [],
         failed: []
       })
-      state.save(record)
+      directory = createOutput(settings.outputDirectory, id)
+      try {
+        state.save(record)
+      } catch (error) {
+        rmSync(directory, { recursive: true, force: true })
+        throw error
+      }
       output(`Build run ${id} pinned to ${source.commit}`)
       for (const os of options.platforms) {
         if (signal.aborted) break

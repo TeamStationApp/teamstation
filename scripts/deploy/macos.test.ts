@@ -124,6 +124,14 @@ describe('Notarized macOS packaging', () => {
       recursive: true
     })
     mkdirSync(context.output)
+    file(
+      path.join(
+        context.source,
+        context.target.path,
+        context.target.scheme! + '.xcodeproj/project.pbxproj'
+      ),
+      'original project'
+    )
     execFileSync(
       'openssl',
       [
@@ -174,7 +182,11 @@ describe('Notarized macOS packaging', () => {
     )
     assert.equal(calls.filter(c => c.file === 'spctl').length, 2)
     assert.equal(keychains.length, 1)
-    assert.equal(readdirSync(context.output).length, 0)
+    assert.deepEqual(readdirSync(context.output), ['macos.dmg'])
+    const nextOutput = path.join(root, 'next-output')
+    mkdirSync(nextOutput)
+    await macos({ ...context, output: nextOutput })
+    assert.deepEqual(readdirSync(nextOutput), ['macos.dmg'])
   })
   it('fails closed on missing configuration, rejected notarization, wrong identity or tooling failure', async () => {
     const config = context.settings.apps[id].macos!.apple!
@@ -197,7 +209,6 @@ describe('Notarized macOS packaging', () => {
     config.notarizationKeychain = undefined
     details = 'TeamIdentifier=OTHER'
     await assert.rejects(packageMac(context, signing), /team/)
-    rmSync(path.join(context.source, '.deploy-macos'), { recursive: true })
     details = 'TeamIdentifier=EXAMPLETEAM\nflags=0x10000(runtime)'
     config.teamId = 'OTHER'
     details = 'TeamIdentifier=OTHER\nflags=0x10000(runtime)'
