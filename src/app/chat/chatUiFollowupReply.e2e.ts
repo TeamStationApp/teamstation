@@ -128,6 +128,10 @@ async function coldOpen(device: Device, fixture: Fixture): Promise<void> {
   await device.openLink({
     link: `${WEB}/chat/${fixture.conversationId}?replyProbe=${Date.now()}`
   })
+  await evaluate(
+    device,
+    `for(let n=0;n<120;n++){const row=document.querySelector(${JSON.stringify(row(fixture.replyId))});if(row){row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,400));return true}await new Promise(r=>setTimeout(r,250))}throw new Error('Allocated retained reply missing');`
+  )
   await device.assertVisible({ css: row(fixture.replyId), timeout: 45000 })
 }
 async function state(
@@ -249,17 +253,15 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
     pass: true,
     rawPageSize: wire.length
   })
-  await capture(device, 'reply-long-self-resolved')
-  const attachmentTop = await evaluate<number>(
+  await evaluate(
     device,
-    `return document.querySelector(${JSON.stringify(row(fixture.attachmentReplyId))}).getBoundingClientRect().top;`
+    `const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));document.querySelector(${JSON.stringify(row(fixture.replyId))}).scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,400));const quote=document.querySelector(${JSON.stringify(quote(fixture.replyId))}),box=quote.getBoundingClientRect(),view=scroll.getBoundingClientRect();if(box.top<view.top||box.bottom>view.bottom)throw new Error('Long quote evidence must actually be visible');return true;`
   )
-  await device.scrollUntilVisible({
-    element: { css: row(fixture.attachmentReplyId) },
-    direction: attachmentTop < 0 ? 'UP' : 'DOWN',
-    centerElement: true,
-    timeout: 20000
-  })
+  await capture(device, 'reply-long-self-resolved')
+  await evaluate(
+    device,
+    `const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));document.querySelector(${JSON.stringify(row(fixture.attachmentReplyId))}).scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,400));const quote=document.querySelector(${JSON.stringify(quote(fixture.attachmentReplyId))}),box=quote.getBoundingClientRect(),view=scroll.getBoundingClientRect();if(box.top<view.top||box.bottom>view.bottom)throw new Error('Attachment quote evidence must actually be visible');return true;`
+  )
   const attachment = await evaluate<{ label: string; quoteCount: number }>(
     device,
     `const row=document.querySelector(${JSON.stringify(row(fixture.attachmentReplyId))});return JSON.stringify({label:row.querySelector('[aria-label^="Jump to message from "]')?.getAttribute('aria-label')||'',quoteCount:row.querySelectorAll('[aria-label^="Jump to message from "]').length});`
