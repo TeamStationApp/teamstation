@@ -32,6 +32,9 @@ export type ChatEngineClient = ChatKeysClient &
     | 'completeChatAttachment'
     | 'chatAttachment'
     | 'reportChatMessage'
+    | 'updateChatPreferences'
+    | 'chatPins'
+    | 'pinChatMessage'
   >
 
 export type ChatEngineErrorCode =

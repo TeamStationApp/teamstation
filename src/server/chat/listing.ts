@@ -16,6 +16,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
 import { DmFacts } from './dms'
+import { defaultPreferences, preferencesFor } from './preferences'
 import { scopeNames, titlesOf } from './titles'
 
 /**
@@ -159,6 +160,17 @@ async function describe(
   isAdmin: boolean
 ): Promise<ChatConversation[]> {
   const ids = rows.map(row => row.id)
+  const preferences = await preferencesFor(db, userId, ids)
+  const posts = await db
+    .selectFrom('chat_messages')
+    .select(['conversation_id', 'id', 'seq', 'created_at'])
+    .where('conversation_id', 'in', ids)
+    .where('kind', '=', 'post')
+    .distinctOn('conversation_id')
+    .orderBy('conversation_id')
+    .orderBy('seq', 'desc')
+    .execute()
+  const lastPost = new Map(posts.map(post => [post.conversation_id, post]))
   const titles = await titlesOf(
     db,
     rows.map(row => ({
@@ -276,6 +288,13 @@ async function describe(
           : (names.get(`${row.scope_type}:${scopeId}`) ?? null),
       lastSeq: Number(row.last_seq),
       lastMessageAt: lastAt.get(row.id) ?? null,
+      lastPostAt:
+        lastPost.get(row.id) == null
+          ? null
+          : new Date(lastPost.get(row.id)!.created_at).toISOString(),
+      lastPostId: lastPost.get(row.id)?.id ?? null,
+      lastPostSeq: Number(lastPost.get(row.id)?.seq ?? 0),
+      preferences: preferences.get(row.id) ?? defaultPreferences(),
       unread: unread.get(row.id) ?? 0,
       canPost,
       canModerate,
