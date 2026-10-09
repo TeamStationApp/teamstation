@@ -7,6 +7,10 @@ import { migrations } from '../migrations'
 import { migrateDown, migrateUp } from '../runner'
 import { testDatabaseUrl } from '../testDatabase'
 
+const statsMigrations = migrations.filter(
+  migration => migration.name <= '049expandedStats'
+)
+
 describe('049 expanded statistics migration', function () {
   this.timeout(60000)
   const name = `teamstation_expandedstats_migration_${Date.now()}`
@@ -44,7 +48,7 @@ describe('049 expanded statistics migration', function () {
     }
   })
   it('preserves old counts and requeues existing and new games with events', async function () {
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([
+    expect((await migrateUp(pool, statsMigrations)).applied).deep.equals([
       '049expandedStats'
     ])
     const row = (await pool.query('select pa,extra from game_player_stats'))
@@ -62,7 +66,7 @@ describe('049 expanded statistics migration', function () {
     expect(rows[1]).includes({ status: 'pending', attempts: 0, retry_at: null })
   })
   it('rolls down and up without removing existing counts or queue generations', async function () {
-    expect(await migrateDown(pool, migrations)).deep.equals([
+    expect(await migrateDown(pool, statsMigrations)).deep.equals([
       '049expandedStats'
     ])
     expect(
@@ -72,7 +76,7 @@ describe('049 expanded statistics migration', function () {
         )
       ).rows
     ).has.length(0)
-    await migrateUp(pool, migrations)
+    await migrateUp(pool, statsMigrations)
     expect(
       Number(
         (
