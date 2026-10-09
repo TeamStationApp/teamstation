@@ -272,8 +272,10 @@ describe('personal chat preferences and pins', function () {
           await engine.loadPreview(id)
         })
       )
-      for (let attempt = 0; attempt < 200 && active < 3; attempt++)
+      for (let attempt = 0; attempt < 200; attempt++) {
+        if (active >= 3) break
         await new Promise(resolve => setTimeout(resolve, 5))
+      }
       expect(active).equals(3)
       release()
       await work
