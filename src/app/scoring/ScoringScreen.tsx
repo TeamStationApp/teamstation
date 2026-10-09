@@ -15,6 +15,7 @@ import {
 } from 'react-native'
 
 import type { DictationModel, TeamStationClient } from '../../common/api'
+import type { TagTarget } from '../../common/eventTags'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   awaitingResult,
@@ -57,11 +58,13 @@ import {
 import { DefensiveRosterSheet } from './DefensiveRosterSheet'
 import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
+import { EventTagEditor } from './EventTagEditor'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import {
+  describeCompletedPlays,
   describeEntryPlays,
   describeLastPlay,
   describePlay
@@ -215,6 +218,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       client={props.client}
       gameId={props.gameId}
       persistent={source.persistent === true}
+      source={source}
       onExit={props.onExit}
       userId={String(props.userId ?? 'local-scorer')}
       rosters={rosters}
@@ -284,6 +288,7 @@ function ScoringPanel(props: {
   client: TeamStationClient
   gameId: string
   persistent: boolean
+  source: ScoringSource
   onExit: () => void
   userId: string
   rosters: WalkUpRosters
@@ -305,6 +310,47 @@ function ScoringPanel(props: {
         resumedScoringState(resumed.state, resumed.actions, true)
       )
     }
+  )
+  const [tagRows, setTagRows] = useState<TagTarget[]>([])
+  const [historyActive, setHistoryActive] = useState(false)
+  const [tagHistoryDetail, setTagHistoryDetail] = useState<
+    { primary: string; secondary?: string } | undefined
+  >()
+  const [tagTarget, setTagTarget] = useState<TagTarget | null>(null)
+  // A scoring flush may outlive this editor or the authenticated account.
+  const tagSelection = useRef(0)
+  const tagMounted = useRef(true)
+  const tagAcknowledgments = useRef(new Map<string, string>())
+  const tagContext = useRef({
+    game: props.game,
+    source: props.source,
+    userId: props.userId,
+    gameId: props.gameId,
+    client: props.client
+  })
+  tagContext.current = {
+    game: props.game,
+    source: props.source,
+    userId: props.userId,
+    gameId: props.gameId,
+    client: props.client
+  }
+  useEffect(() => {
+    const selection = tagSelection
+    const mounted = tagMounted
+    mounted.current = true
+    return () => {
+      selection.current++
+      mounted.current = false
+    }
+  }, [])
+  const loadTags = useCallback(
+    async () =>
+      (await props.source.tagChoices?.(props.userId)) ?? {
+        recent: [],
+        popular: []
+      },
+    [props.source, props.userId]
   )
   const state = model.scoring
   const openedLog = useRef(state.log)
@@ -469,6 +515,8 @@ function ScoringPanel(props: {
   const pauseClock = useScoringClock(
     state,
     menu ||
+      historyActive ||
+      tagTarget != null ||
       sheet != null ||
       defensiveOpen ||
       outcomeMenu ||
@@ -1387,6 +1435,72 @@ function ScoringPanel(props: {
         setOutcomeMenu(false)
         setMenu(value => !value)
       }}
+      historyRows={tagRows}
+      tagHistoryDetail={tagHistoryDetail}
+      onHistoryOpen={
+        props.source.saveTag == null
+          ? undefined
+          : () => {
+              pauseClock()
+              setHistoryActive(true)
+              const rows = props.game.historyTargetsFor(session).slice(-6)
+              const previous = sessionAt(
+                { log, checkpoints },
+                lastEntry?.logLength ?? Math.max(0, log.length - 1),
+                () => game.opening
+              )
+              // Setup edits may change Gumbo context without creating an event.
+              const latestIsTarget =
+                rows.at(-1)?.id !==
+                  props.game.historyTargetsFor(previous).at(-1)?.id ||
+                (log
+                  .slice(lastEntry?.logLength ?? Math.max(0, log.length - 1))
+                  .some(
+                    action =>
+                      action.type !== 'lineup' && action.type !== 'gameFlow'
+                  ) &&
+                  JSON.stringify(previous.liveData.plays.currentPlay) !==
+                    JSON.stringify(session.liveData.plays.currentPlay))
+              const targetDetail = latestIsTarget ? lastPlay : undefined
+              setTagHistoryDetail(targetDetail)
+              const descriptions = describeCompletedPlays(
+                log,
+                new Set(
+                  rows
+                    .filter(target => target.completed === true)
+                    .map(target => target.atBatIndex)
+                ),
+                length =>
+                  sessionAt({ log, checkpoints }, length, () => game.opening)
+              )
+              setTagRows(
+                rows.map((target, index) => {
+                  const described =
+                    target.completed === true
+                      ? (descriptions.get(target.atBatIndex) ??
+                        (index === rows.length - 1 ? targetDetail : undefined))
+                      : index === rows.length - 1
+                        ? targetDetail
+                        : undefined
+                  return described == null
+                    ? target
+                    : {
+                        ...target,
+                        description: [described.primary, described.secondary]
+                          .filter(line => line != null && line !== '')
+                          .join(' ')
+                      }
+                })
+              )
+            }
+      }
+      onTagSelect={target => {
+        tagSelection.current++
+        setTagTarget(target)
+      }}
+      onHistoryClose={() => {
+        setHistoryActive(false)
+      }}
       onUndo={() => {
         scoringAudio.stop()
         if (status.readOnly || rosterLoading) return
@@ -1835,6 +1949,102 @@ function ScoringPanel(props: {
           </Text>
           <ScoringButton label="Exit Current Game" onPress={props.onExit} />
         </View>
+      )}
+      {tagTarget != null && (
+        <EventTagEditor
+          key={tagTarget.id}
+          target={tagTarget}
+          loadChoices={loadTags}
+          onClose={() => {
+            tagSelection.current++
+            setTagTarget(null)
+          }}
+          saveTag={async tag => {
+            const selected = tagSelection.current
+            const token = props.client.token
+            await props.game.flush()
+            const currentContext = (): boolean => {
+              const current = tagContext.current
+              return !(
+                !tagMounted.current ||
+                current.game !== props.game ||
+                current.source !== props.source ||
+                current.userId !== props.userId ||
+                current.gameId !== props.gameId ||
+                current.client !== props.client ||
+                props.client.token !== token
+              )
+            }
+            if (selected !== tagSelection.current || !currentContext())
+              throw new Error(
+                'The tag selection changed. Open the event again.'
+              )
+            if (props.game.pending > 0 || props.game.problem != null)
+              throw new Error(
+                'Save the scoring event before assigning a tag. Try again.'
+              )
+            if (
+              !props.game.eventTargets.some(
+                target => target.id === tagTarget.id
+              )
+            )
+              throw new Error('This scoring event no longer exists')
+            let snapshot = props.game.tagSnapshotVersion
+            const result = await props.source.saveTag!(
+              props.game,
+              tagTarget.id,
+              tag,
+              props.userId
+            )
+            if (!currentContext())
+              throw new Error(
+                'The tag selection changed. Open the event again.'
+              )
+            // Commit revisions distinguish delayed requests from delayed responses.
+            const superseded = (): boolean => {
+              const acknowledged = tagAcknowledgments.current.get(
+                result.targetId
+              )
+              return (
+                acknowledged != null &&
+                (result.revision.length < acknowledged.length ||
+                  (result.revision.length === acknowledged.length &&
+                    result.revision < acknowledged))
+              )
+            }
+            if (superseded()) return
+            let acknowledgedTag = result.tag
+            // A reload or another accepted write may have adopted a newer label.
+            // Read storage again rather than overwrite that snapshot with this reply.
+            while (snapshot !== props.game.tagSnapshotVersion) {
+              snapshot = props.game.tagSnapshotVersion
+              const storedTag = await props.game.readEventTag(result.targetId)
+              if (!currentContext())
+                throw new Error(
+                  'The tag selection changed. Open the event again.'
+                )
+              if (superseded()) return
+              if (storedTag === undefined)
+                throw new Error('This scoring event no longer exists')
+              acknowledgedTag = storedTag
+            }
+            if (!props.game.setEventTag(result.targetId, acknowledgedTag))
+              throw new Error('This scoring event no longer exists')
+            tagAcknowledgments.current.set(result.targetId, result.revision)
+            setTagRows(rows =>
+              rows.map(row =>
+                row.id === result.targetId
+                  ? { ...row, tag: acknowledgedTag }
+                  : row
+              )
+            )
+            setTagTarget(current =>
+              current?.id === result.targetId
+                ? { ...current, tag: acknowledgedTag }
+                : current
+            )
+          }}
+        />
       )}
     </BaseballScreen>
   )
