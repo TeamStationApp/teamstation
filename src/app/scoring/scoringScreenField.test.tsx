@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { TeamStationClient } from '../../common/api'
+import {
+  asRosterEntry,
+  type RosterEntry,
+  TeamStationClient
+} from '../../common/api'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { freshGame } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
@@ -148,11 +152,14 @@ function placement(entityId: string): FieldPlacement {
 let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
-async function mount(source?: ScoringSource): Promise<void> {
+async function mount(
+  source?: ScoringSource,
+  rosters: Record<string, RosterEntry[]> = {}
+): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
-  client.roster = async () => []
+  client.roster = async teamId => rosters[teamId] ?? []
   const node = document.createElement('div')
   document.body.appendChild(node)
   container = node
@@ -173,6 +180,86 @@ async function mount(source?: ScoringSource): Promise<void> {
 }
 
 describe('scoring screen field wiring', function () {
+  for (const route of ['menu', 'lineup'] as const)
+    for (const jersey of ['99', null])
+      it(`keeps saved player details when saving ${route} with current jersey ${String(jersey)}`, async function () {
+        const initial = createDevelopmentSession(gameFixture, [], [])
+        const away = initial.liveData.boxscore.teams.away
+        away.battingOrder.pop()
+        const id = away.players[0]
+        const person = initial.gameData.players[id]
+        person.local = false
+        person.userId = 101
+        person.fullName = 'Mookie B'
+        person.jersey = '7'
+        const savedPlayer = { ...person }
+        const store = memoryStore()
+        const live = ScoringSession.start(store, 'g1', initial)
+        await mount(
+          { open: async () => live },
+          {
+            away: [
+              asRosterEntry({
+                userId: 101,
+                shortName: 'Mike T',
+                jersey,
+                positions: [],
+                isPlayer: true,
+                role: 'member'
+              })
+            ]
+          }
+        )
+        const click = async (label: string): Promise<void> => {
+          const node = document.querySelector<HTMLElement>(
+            `[aria-label="${label}"]`
+          )
+          expect(node, label).not.equals(null)
+          await step(() => {
+            node!.click()
+          })
+        }
+        const openEditor = async (): Promise<void> => {
+          if (route === 'menu') {
+            await click('Open scoring menu')
+            await click('Set Team Rosters')
+          } else
+            await step(() => {
+              props().setupToast?.onSetLineup?.()
+            })
+        }
+        await openEditor()
+        expect(document.body.textContent).includes(
+          jersey == null ? '1. Mike T' : '1. #99 Mike T'
+        )
+        expect(live.state.gameData.players[id]).deep.equals(savedPlayer)
+        await click('Save Rosters')
+        await live.flush()
+        expect(live.state.gameData.players[id]).deep.equals(savedPlayer)
+        const unchanged = live.actions.find(
+          action => action.type === 'lineup' && action.kind === 'roster'
+        )
+        expect(unchanged?.type).equals('lineup')
+        if (unchanged?.type === 'lineup' && unchanged.kind === 'roster')
+          expect(unchanged.setup?.players[id]).deep.equals(savedPlayer)
+        await openEditor()
+        await click('Remove Player 2')
+        await click('Save Rosters')
+        await live.flush()
+        expect(live.state.gameData.players[id]).deep.equals(savedPlayer)
+        const roster = live.actions.findLast(
+          action => action.type === 'lineup' && action.kind === 'roster'
+        )
+        expect(roster?.type).equals('lineup')
+        if (roster?.type === 'lineup' && roster.kind === 'roster')
+          expect(roster.setup?.players[id]).deep.equals(savedPlayer)
+        const reopened = await ScoringSession.open(store, 'g1', {
+          gamePk: 'g1',
+          teams: initial.gameData.teams,
+          setup: setupOf(initial)
+        })
+        expect(reopened.state.gameData.players[id]).deep.equals(savedPlayer)
+      })
   it('keeps a two-ball appearance gated after a resting defender move', async function () {
     const initial = createDevelopmentSession(gameFixture, [], [])
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
@@ -188,7 +275,7 @@ describe('scoring screen field wiring', function () {
     )
     await step(() => {
       document
-        .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+        .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
         .click()
     })
     expect(props().canPitch).equals(false)
@@ -414,7 +501,7 @@ describe('scoring screen field wiring', function () {
     ).not.equals(null)
     await step(() => {
       document
-        .querySelector<HTMLElement>('[aria-label="Assign C #2 P2"]')!
+        .querySelector<HTMLElement>('[aria-label="Assign C #2 Player 2"]')!
         .click()
     })
     expect(props().canPitch).equals(true)
@@ -445,7 +532,7 @@ describe('scoring screen field wiring', function () {
     const saved = JSON.stringify(store.games.get('g1'))
     await step(() => {
       document
-        .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+        .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
         .click()
     })
     expect(JSON.stringify(store.games.get('g1'))).equals(saved)
@@ -514,7 +601,7 @@ describe('scoring screen field wiring', function () {
       } else if (route === 'defender') {
         await step(() => {
           document
-            .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+            .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
             .click()
         })
       } else {
@@ -565,7 +652,7 @@ describe('scoring screen field wiring', function () {
     await peer.flush()
     await step(() => {
       document
-        .querySelector<HTMLElement>('[aria-label="Assign P #2 P2"]')!
+        .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
         .click()
     })
     await first.flush()
@@ -787,13 +874,13 @@ describe('scoring screen field wiring', function () {
     await click('Create Placeholder Players')
     await click('Player count 2')
     await click('Add')
-    expect(document.querySelectorAll('[aria-label^="Assign P #"]')).has.length(
+    expect(document.querySelectorAll('[aria-label^="Assign P "]')).has.length(
       10
     )
     expect(
       document.querySelector('[aria-label="Create Placeholder Players"]')
     ).equals(null)
-    await click('Assign P #1 P1')
+    await click('Assign P #1 Player 1')
     expect(props().instruction).not.includes('P,')
     const pitcher = field().players.find(player => player.label === 'P')!
     await step(() => field().onPlayerTap?.(pitcher.id))
@@ -806,8 +893,8 @@ describe('scoring screen field wiring', function () {
       await step(() => field().onPlayerTap?.(`empty-${slot}`))
       await click(
         index < 8
-          ? `Assign ${slot} #${index + 1} P${index + 1}`
-          : `Assign ${slot} #— HA`
+          ? `Assign ${slot} #${index + 1} Player ${index + 1}`
+          : `Assign ${slot} Hawks A`
       )
     }
     expect(props().instruction).equals(undefined)

@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import { PerspectiveCamera } from 'three'
 
+import { asRosterEntry } from '../../common/api'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   applyAction as applyStoredAction,
@@ -18,7 +19,8 @@ import {
   emptyDefensePlayers,
   lineupCountMessage,
   missingDefense,
-  setupEditable
+  setupEditable,
+  withRosterDetails
 } from './currentSetup'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -235,7 +237,7 @@ describe('current scoring setup', function () {
       original.liveData.boxscore.teams.home.players
     )
   })
-  it('formats actual lineup counts, stable acceptance keys and roster initials', function () {
+  it('formats actual lineup counts, stable acceptance keys and roster names', function () {
     expect(lineupCountMessage(0)).equals('No players in lineup')
     expect(lineupCountMessage(1)).equals('Only one player in lineup')
     expect(lineupCountMessage(8)).equals('Only eight players in lineup')
@@ -248,17 +250,17 @@ describe('current scoring setup', function () {
         fullName: 'Mookie Betts',
         jersey: '00'
       })
-    ).equals('#00 MB')
+    ).equals('#00 Mookie B')
     expect(
       defensiveRosterLabel({
         ...player,
         fullName: '  Mike  Trout ',
         jersey: ''
       })
-    ).equals('#— MT')
+    ).equals('Mike T')
     expect(
       defensiveRosterLabel({ ...player, fullName: 'Shohei', jersey: '7' })
-    ).equals('#7 S')
+    ).equals('#7 Shohei')
     expect(
       defensiveRosterLabel({ ...player, fullName: '', jersey: '7' })
     ).equals('#7 ?')
@@ -267,6 +269,41 @@ describe('current scoring setup', function () {
     expect(battingWarningKey(session)).equals(key)
     session.liveData.linescore.isTopInning = false
     expect(battingWarningKey(session)).not.equals(key)
+  })
+  it('displays current team jerseys without changing saved setup or placeholders', function () {
+    const original = game()
+    const player = original.gameData.players[1]
+    player.local = false
+    player.userId = 101
+    player.fullName = 'Mookie B'
+    player.jersey = ''
+    const before = JSON.stringify(original)
+    const entry = asRosterEntry({
+      userId: 101,
+      shortName: 'Mookie B',
+      jersey: '00',
+      positions: [],
+      isPlayer: true,
+      role: 'member'
+    })
+    const otherTeam = original.gameData.teams.home.id
+    expect(withRosterDetails(original, { [otherTeam]: [entry] })).equals(
+      original
+    )
+    const shown = withRosterDetails(original, { [player.teamId]: [entry] })
+    expect(defensiveRosterLabel(shown.gameData.players[1])).equals(
+      '#00 Mookie B'
+    )
+    expect(shown.gameData.players[2]).equals(original.gameData.players[2])
+    expect(shown.liveData).equals(original.liveData)
+    expect(JSON.stringify(original)).equals(before)
+    const withoutNumber = withRosterDetails(shown, {
+      [player.teamId]: [{ ...entry, jersey: null }]
+    })
+    expect(defensiveRosterLabel(withoutNumber.gameData.players[1])).equals(
+      'Mookie B'
+    )
+    expect(withRosterDetails(original, {})).equals(original)
   })
   it('uses all nine centered square placeholders with visible edge bounds and keyboard setup taps', function () {
     const session = game()
@@ -285,9 +322,9 @@ describe('current scoring setup', function () {
         plate.height,
         plate.anchorX,
         plate.anchorY
-      ]).deep.equals([40, 40, 0.5, 0.5])
-      expect(plate.x).within(22, 368)
-      expect(plate.y).within(22, 822)
+      ]).deep.equals([48, 48, 0.5, 0.5])
+      expect(plate.x).within(26, 364)
+      expect(plate.y).within(26, 818)
       expect(plate.emptyPosition).equals(true)
     }
     const tapped: string[] = []

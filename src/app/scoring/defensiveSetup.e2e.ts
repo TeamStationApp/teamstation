@@ -365,7 +365,7 @@ async function choose(
   const parts = names[index].split(' ')
   await click(
     page,
-    `Assign ${position} #${index + 1} ${parts[0][0]}${parts.at(-1)![0]}`
+    `Assign ${position} #${index + 1} ${parts[0]} ${parts.at(-1)![0]}`
   )
   await page.waitForFunction(
     () => document.querySelector('[aria-label="Defensive roster"]') == null
@@ -451,7 +451,7 @@ describe('current defensive scoring setup browser', function () {
     try {
       await tapSlot(page, 'P')
       await picture(page, 'defensive-roster')
-      expect(await page.$$('[aria-label^="Assign P #"]')).has.length(10)
+      expect(await page.$$('[aria-label^="Assign P "]')).has.length(10)
       await choose(page, 'P', 1)
       await page.waitForSelector('[data-nameplate="empty-C"]')
       expect(await text(page)).includes('Missing defensive positions\nC')
@@ -491,7 +491,7 @@ describe('current defensive scoring setup browser', function () {
             ? 'empty-position-roster'
             : 'empty-position-roster-short'
         )
-        const layout = await page.$$eval('[aria-label^="Assign P #"]', nodes =>
+        const layout = await page.$$eval('[aria-label^="Assign P "]', nodes =>
           nodes.slice(0, 4).map(node => {
             const r = node.getBoundingClientRect()
             return { x: r.x, y: r.y, width: r.width, height: r.height }
@@ -518,8 +518,7 @@ describe('current defensive scoring setup browser', function () {
         await click(page, 'Add')
         await page.waitForFunction(
           () =>
-            document.querySelectorAll('[aria-label^="Assign P #"]').length ===
-            10
+            document.querySelectorAll('[aria-label^="Assign P "]').length === 10
         )
         expect(
           await page.$('[aria-label="Create Placeholder Players"]')
@@ -527,7 +526,7 @@ describe('current defensive scoring setup browser', function () {
         await list.evaluate(el => {
           el.scrollTop = el.scrollHeight
         })
-        await click(page, 'Assign P #— HA')
+        await click(page, 'Assign P Hawks A')
         await page.waitForFunction(
           () => document.querySelector('[data-nameplate="empty-P"]') == null
         )
@@ -652,7 +651,7 @@ describe('current defensive scoring setup browser', function () {
       try {
         await page.waitForSelector('[data-nameplate="empty-RF"]')
         await tapSlot(page, 'RF')
-        expect(await page.$$('[aria-label^="Assign RF #"]')).has.length(count)
+        expect(await page.$$('[aria-label^="Assign RF "]')).has.length(count)
         expect(
           await page.$('[aria-label="Create Placeholder Players"]')
         ).not.equals(null)
@@ -661,12 +660,12 @@ describe('current defensive scoring setup browser', function () {
         await click(page, 'Add')
         await page.waitForFunction(
           n =>
-            document.querySelectorAll('[aria-label^="Assign RF #"]').length ===
+            document.querySelectorAll('[aria-label^="Assign RF "]').length ===
             n,
           {},
           count + 2
         )
-        await click(page, 'Assign RF #— HA')
+        await click(page, 'Assign RF Hawks A')
         await page.waitForFunction(
           () => document.querySelector('[data-nameplate="empty-RF"]') == null
         )
@@ -778,7 +777,7 @@ describe('current defensive scoring setup browser', function () {
       ])
       await click(page, 'Add')
       await page.waitForSelector('[aria-label*="2 balls"]')
-      expect(await page.$$('[aria-label^="Assign RF #"]')).has.length(9)
+      expect(await page.$$('[aria-label^="Assign RF "]')).has.length(9)
       expect(await page.$('[aria-label="Create Placeholder Players"]')).equals(
         null
       )

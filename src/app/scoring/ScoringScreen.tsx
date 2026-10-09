@@ -51,7 +51,8 @@ import {
   emptyDefensePlayers,
   lineupCountMessage,
   missingDefense,
-  setupEditable
+  setupEditable,
+  withRosterDetails
 } from './currentSetup'
 import { DefensiveRosterSheet } from './DefensiveRosterSheet'
 import { useDictationControls } from './DictationButton'
@@ -487,6 +488,10 @@ function ScoringPanel(props: {
   // Read-only takes no input at all, from the pointer, the keyboard or a
   // screen reader.
   const session = state.session
+  const displaySession = useMemo(
+    () => withRosterDetails(session, props.rosters),
+    [session, props.rosters]
+  )
   const missing = missingDefense(session)
   const battingCount =
     session.liveData.boxscore.teams[battingSide(session)].battingOrder.length
@@ -852,10 +857,29 @@ function ScoringPanel(props: {
       },
       previousPlayers.current
     )
-    const complete = [...next, ...emptyDefensePlayers(session)]
+    const named = next.map(player => {
+      const person = displaySession.gameData.players[player.playerId ?? 0]
+      return person == null
+        ? player
+        : {
+            ...player,
+            name: person.fullName,
+            displayName: person.fullName,
+            jersey: person.jersey
+          }
+    })
+    const complete = [...named, ...emptyDefensePlayers(session)]
     previousPlayers.current = complete
     return complete
-  }, [session, phase, pendingPlay, motions, runnerAction, presentation])
+  }, [
+    session,
+    displaySession,
+    phase,
+    pendingPlay,
+    motions,
+    runnerAction,
+    presentation
+  ])
   useEffect(() => {
     setAngle(startingAngle(state))
     // startingAngle reads only these.
@@ -1446,7 +1470,7 @@ function ScoringPanel(props: {
     >
       {defensiveSlot != null && (
         <DefensiveRosterSheet
-          session={session}
+          session={displaySession}
           side={fieldingSide(session)}
           position={defensiveSlot.position}
           openedEmpty={defensiveSlot.openedEmpty}
@@ -1645,6 +1669,7 @@ function ScoringPanel(props: {
                 key={rosterRead}
                 initialDraft={rosterInitial}
                 state={state}
+                rosters={props.rosters}
                 onCancel={closeSheet}
                 onSave={(draft, nextBatter) => {
                   dispatch({ type: 'ROSTER', draft, nextBatter })
