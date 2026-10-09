@@ -4,6 +4,7 @@ import type {
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import { type TagChoices, tagTargets } from '../../common/eventTags'
 import {
   type EventStore,
   type SaveChange,
@@ -15,9 +16,17 @@ import {
   startingSetup,
   teamsOf
 } from './developmentSession'
+import { LocalEventTags } from './localEventTags'
 
 /** Where the scoring screen's game comes from and is kept. */
 export interface ScoringSource {
+  tagChoices?: (userId: string) => Promise<TagChoices>
+  saveTag?: (
+    game: ScoringSession,
+    targetId: string,
+    tag: string | null,
+    userId: string
+  ) => Promise<{ targetId: string; tag: string | null; revision: string }>
   /** The game outlives the screen: leaving loses only what is not saved yet. */
   persistent?: boolean
   open: (
@@ -66,6 +75,18 @@ async function defaultsOf(
 export class ServerScoringSource implements ScoringSource {
   readonly persistent = true
   constructor(private readonly client: TeamStationClient) {}
+
+  async tagChoices(): Promise<TagChoices> {
+    return await this.client.tagChoices()
+  }
+
+  async saveTag(
+    game: ScoringSession,
+    targetId: string,
+    tag: string | null
+  ): Promise<{ targetId: string; tag: string | null; revision: string }> {
+    return await this.client.saveEventTag(game.gameId, targetId, tag)
+  }
 
   async open(
     game: GameDetail,
@@ -130,6 +151,44 @@ export function memoryStore(
 export class DevelopmentScoringSource implements ScoringSource {
   readonly persistent = false
   readonly store = memoryStore()
+  readonly tags = new LocalEventTags()
+
+  async tagChoices(userId: string): Promise<TagChoices> {
+    for (const [gameId, stored] of this.store.games) {
+      this.tags.retain(
+        gameId,
+        [
+          ...stored.plays.filter(
+            play =>
+              play.about.atBatIndex !== stored.currentPlay?.about.atBatIndex
+          ),
+          ...(stored.currentPlay == null ? [] : [stored.currentPlay])
+        ]
+          .flatMap(tagTargets)
+          .map(target => target.id)
+      )
+    }
+    return this.tags.choices(userId)
+  }
+
+  async saveTag(
+    game: ScoringSession,
+    targetId: string,
+    tag: string | null,
+    userId: string
+  ): Promise<{ targetId: string; tag: string | null; revision: string }> {
+    const label = this.tags.save(userId, game.gameId, targetId, tag)
+    const stored = this.store.games.get(game.gameId)
+    if (stored != null)
+      this.store.games.set(game.gameId, {
+        plays: stored.plays.map(play => this.tags.decorate(game.gameId, play)),
+        currentPlay:
+          stored.currentPlay == null
+            ? null
+            : this.tags.decorate(game.gameId, stored.currentPlay)
+      })
+    return { targetId, tag: label, revision: this.tags.revision }
+  }
 
   async open(
     game: GameDetail,

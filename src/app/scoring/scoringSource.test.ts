@@ -13,7 +13,11 @@ import { HttpError } from '../../common/errors'
 import { ScoringSession } from '../../common/scoring/session'
 import { type Position, POSITIONS } from '../../common/scoring/state'
 import { startingSetup, teamsOf } from './developmentSession'
-import { memoryStore, ServerScoringSource } from './scoringSource'
+import {
+  DevelopmentScoringSource,
+  memoryStore,
+  ServerScoringSource
+} from './scoringSource'
 
 const game = asGameDetail({
   id: 'g1',
@@ -155,5 +159,47 @@ describe('the server scoring source with default lineups (U12)', function () {
       101, 102, 103, 104, 105, 106, 107, 108, 109
     ])
     expect(session.state.liveData.linescore.balls).equals(1)
+  })
+  it('routes server tag operations and retains development tags through reopening', async () => {
+    const serverClient = new TeamStationClient({ baseUrl: '/api/v1' })
+    serverClient.tagChoices = async () => ({
+      recent: ['great pitch'],
+      popular: []
+    })
+    serverClient.saveEventTag = async (_gameId, targetId, tag) => ({
+      targetId,
+      tag,
+      revision: '1'
+    })
+    const server = new ServerScoringSource(serverClient)
+    expect((await server.tagChoices()).recent).deep.equals(['great pitch'])
+    const source = new DevelopmentScoringSource()
+    const session = await source.open(game, away, home)
+    session.apply({ type: 'pitch', call: 'B' })
+    await session.flush()
+    const target = session.eventTargets[0]
+    expect(await server.saveTag(session, target.id, 'great pitch')).deep.equals(
+      { targetId: target.id, tag: 'great pitch', revision: '1' }
+    )
+    const saved = await source.saveTag(
+      session,
+      target.id,
+      'Great Pitch',
+      'actor'
+    )
+    session.setEventTag(saved.targetId, saved.tag)
+    expect((await source.tagChoices('actor')).recent).deep.equals([
+      'great pitch'
+    ])
+    const reopened = await source.open(game, away, home)
+    expect(reopened.eventTargets[0].tag).equals('great pitch')
+    reopened.undo()
+    await reopened.flush()
+    expect((await source.tagChoices('actor')).popular).deep.equals([])
+    expect((await source.tagChoices('actor')).recent).deep.equals([
+      'great pitch'
+    ])
+    const empty = await source.open(game, away, home)
+    await source.saveTag(empty, 'missing_target', null, 'actor')
   })
 })

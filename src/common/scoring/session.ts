@@ -1,4 +1,11 @@
 import { HttpError } from '../errors'
+import {
+  historyTargets,
+  type TagDocument,
+  TagIdentityRegistry,
+  type TagTarget,
+  tagTargets
+} from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { Problem, ScoringAction } from './actions'
 import { type Applied, applyAction } from './apply'
@@ -112,6 +119,9 @@ function written(play: GumboPlay): string {
 
 export class ScoringSession {
   private log: ScoringAction[] = []
+  private tagIdentities = new TagIdentityRegistry()
+  private tagSnapshot = 0
+  private readonly importedDocuments = new Map<number, GumboPlay>()
   /** The log as far as the server has acknowledged it. */
   private savedLog: ScoringAction[] = []
   private game: GameState
@@ -226,6 +236,17 @@ export class ScoringSession {
         end: typeof about.endTime === 'string' ? about.endTime : undefined
       })
     }
+    for (const play of [...loaded.plays, loaded.currentPlay]) {
+      if (play == null) continue
+      session.tagIdentities.restore(play)
+    }
+    for (const play of loaded.plays) {
+      if (session.derivedIndexes.has(play.about.atBatIndex))
+        session.importedDocuments.set(
+          play.about.atBatIndex,
+          session.tagIdentities.decorate(play, true)
+        )
+    }
     session.log = replayed.segments.flatMap(segment => segment.actions)
     session.rebuild()
     session.savedLog = [...session.log]
@@ -251,6 +272,107 @@ export class ScoringSession {
   /** Every action this session has applied, in order. */
   get actions(): readonly ScoringAction[] {
     return this.log
+  }
+
+  /** Specific Gumbo events available for annotation, in chronological order. */
+  get eventTargets(): TagTarget[] {
+    const picture = this.picture()
+    const documents = [
+      ...this.importedDocuments.values(),
+      ...picture.plays.values(),
+      ...(picture.current == null ? [] : [picture.current])
+    ]
+    return documents
+      .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
+      .flatMap(tagTargets)
+  }
+
+  get historyTargets(): TagTarget[] {
+    const picture = this.picture()
+    return [
+      ...this.importedDocuments.values(),
+      ...picture.plays.values(),
+      ...(picture.current == null ? [] : [picture.current])
+    ]
+      .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
+      .flatMap(historyTargets)
+  }
+
+  /** Annotate the state a screen resumed, without discarding stored actions. */
+  historyTargetsFor(state: GameState): TagTarget[] {
+    if (state === this.game) return this.historyTargets
+    const picture = this.picture()
+    const index = state.liveData.plays.allPlays.length
+    const documents: TagDocument[] = [
+      ...this.importedDocuments.values(),
+      ...picture.plays.values()
+    ].filter(play => state.final || play.about.atBatIndex < index)
+    if (!state.final) {
+      const source =
+        picture.current?.about.atBatIndex === index
+          ? picture.current
+          : (picture.plays.get(index) ?? this.importedDocuments.get(index))
+      const identities = new TagIdentityRegistry()
+      if (source != null) identities.restore(source)
+      const folder =
+        this.foldedPlays?.folder.continuing(state) ?? playFolder(state)
+      documents.push(
+        identities.decorate(
+          folder.current(state.liveData.plays.currentPlay, this.segment),
+          false
+        )
+      )
+    }
+    return documents
+      .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
+      .flatMap(historyTargets)
+  }
+
+  /** Changes when an accepted tag acknowledgment or reload replaces tag state. */
+  get tagSnapshotVersion(): number {
+    return this.tagSnapshot
+  }
+
+  /** Read one authoritative label without replacing scoring actions or Undo. */
+  async readEventTag(targetId: string): Promise<string | null | undefined> {
+    const stored = await this.store.load(this.gameId)
+    return [
+      ...stored.plays.filter(
+        play => play.about.atBatIndex !== stored.currentPlay?.about.atBatIndex
+      ),
+      ...(stored.currentPlay == null ? [] : [stored.currentPlay])
+    ]
+      .flatMap(tagTargets)
+      .find(target => target.id === targetId)?.tag
+  }
+
+  /** Acknowledged annotations change no scoring action or Undo step. */
+  setEventTag(targetId: string, tag: string | null): boolean {
+    const before = this.picture()
+    const acknowledged = new Set(
+      [...before.plays]
+        .filter(([index, play]) => this.posted.get(index) === written(play))
+        .map(([index]) => index)
+    )
+    const currentAcknowledged =
+      this.postedCurrent === JSON.stringify(before.current)
+    if (!this.tagIdentities.setTag(targetId, tag)) return false
+    this.tagSnapshot++
+    this.revision++
+    const picture = this.picture()
+    for (const [index, document] of this.importedDocuments)
+      this.importedDocuments.set(
+        index,
+        this.tagIdentities.decorate(document, true)
+      )
+    // Scoring can continue after an editor is dismissed while its request is
+    // in flight. A tag acknowledgment never acknowledges those newer actions.
+    for (const [index, play] of picture.plays)
+      if (acknowledged.has(index)) this.posted.set(index, written(play))
+    if (currentAcknowledged)
+      this.postedCurrent = JSON.stringify(picture.current)
+    this.notify()
+    return true
   }
 
   /** The game before any of its actions: `actions` played on it is `state`. */
@@ -434,19 +556,31 @@ export class ScoringSession {
       this.running == null &&
       this.pending === 0
     if (!idle()) return false
-    const fresh = await ScoringSession.open(
-      this.store,
-      this.gameId,
-      this.context!,
-      this.options
-    )
-    if (!idle()) return false
+    let fresh: ScoringSession
+    for (;;) {
+      const snapshot = this.tagSnapshot
+      fresh = await ScoringSession.open(
+        this.store,
+        this.gameId,
+        this.context!,
+        this.options
+      )
+      if (!idle()) return false
+      // An acknowledgment or competing reload can land during the read.
+      if (snapshot === this.tagSnapshot) break
+    }
     if (
       fresh.refusal === this.refusal &&
       JSON.stringify(fresh.log) === JSON.stringify(this.log) &&
-      JSON.stringify(fresh.game) === JSON.stringify(this.game)
+      JSON.stringify(fresh.game) === JSON.stringify(this.game) &&
+      JSON.stringify(fresh.eventTargets) === JSON.stringify(this.eventTargets)
     )
       return false
+    this.tagIdentities = fresh.tagIdentities
+    this.tagSnapshot++
+    this.importedDocuments.clear()
+    for (const [index, play] of fresh.importedDocuments)
+      this.importedDocuments.set(index, play)
     this.base = fresh.base
     this.log = fresh.log
     this.savedLog = fresh.savedLog
@@ -565,6 +699,8 @@ export class ScoringSession {
     this.completed = completed
     this.segment = segment
     this.revision++
+    // Reconcile now, before a redo can reuse the position of an undone pitch.
+    this.picture()
   }
 
   // ---- What the server should hold, and what it does not yet ----
@@ -579,8 +715,25 @@ export class ScoringSession {
   } {
     // Folding every play takes a phone about 25 ms 70 plate appearances in,
     // and the save, its status and the pending count all ask after a change.
-    if (this.folded?.revision !== this.revision)
-      this.folded = { revision: this.revision, picture: this.fold() }
+    if (this.folded?.revision !== this.revision) {
+      const raw = this.fold()
+      const plays = new Map(
+        [...raw.plays].map(([index, play]) => [
+          index,
+          this.tagIdentities.decorate(play, true)
+        ])
+      )
+      const current =
+        raw.current == null
+          ? null
+          : this.tagIdentities.decorate(raw.current, false)
+      this.tagIdentities.retain([
+        ...this.importedDocuments.keys(),
+        ...plays.keys(),
+        ...(current == null ? [] : [current.about.atBatIndex])
+      ])
+      this.folded = { revision: this.revision, picture: { plays, current } }
+    }
     return this.folded.picture
   }
 

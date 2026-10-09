@@ -1,6 +1,7 @@
 import type { Selectable } from 'kysely'
 
 import { describePlay } from '../common/describePlay'
+import { completedPlayTag, type TagDocument } from '../common/eventTags'
 import { eventTypeName } from '../common/gumboEventTypes'
 import type { EventsTable } from './db/database'
 import type { HighlightSettings } from './settings'
@@ -30,6 +31,7 @@ export interface CreditedOutcome {
 }
 
 export interface HighlightEvent {
+  tag?: string | null
   id: string
   atBatIndex: number
   /** The scorekeeper's tap time. The play itself happened before this. */
@@ -71,7 +73,8 @@ export const HIGHLIGHT_EVENT_COLUMNS = [
   'events.titleOverride',
   'events.timeNudgeSec',
   'events.hidden',
-  'events.isScoringPlay'
+  'events.isScoringPlay',
+  'events.gumbo'
 ] as const
 
 type HighlightEventRow = Pick<
@@ -88,7 +91,7 @@ type HighlightEventRow = Pick<
   | 'timeNudgeSec'
   | 'hidden'
   | 'isScoringPlay'
->
+> & { gumbo?: unknown }
 
 /** A row read with `HIGHLIGHT_EVENT_COLUMNS`, with its play's credits. */
 export function highlightEvent(
@@ -96,6 +99,7 @@ export function highlightEvent(
   credits: CreditedOutcome[] | undefined
 ): HighlightEvent {
   return {
+    tag: row.gumbo == null ? null : completedPlayTag(row.gumbo as TagDocument),
     id: row.id,
     atBatIndex: row.atBatIndex,
     startTime: row.startTime == null ? null : new Date(row.startTime),
@@ -127,6 +131,7 @@ export interface HighlightVideo {
 }
 
 export interface Highlight {
+  tag?: string | null
   eventId: string
   atBatIndex: number
   title: string
@@ -239,6 +244,7 @@ export function withDropped(
       (shown.length === 0 ? titleFor(event) : joinOutcomes(shown))
 
     highlights.push({
+      tag: event.tag ?? null,
       eventId: event.id,
       atBatIndex: event.atBatIndex,
       title: label,
