@@ -157,10 +157,13 @@ export function sentryUploader(
  * else absolute keeps only its last `node_modules/` part.
  */
 export function relativeSources(map: string, root: string): string {
-  const parsed = JSON.parse(map) as { sources?: string[] }
+  const parsed = JSON.parse(map) as { sources?: Array<string | null> }
   // A map names its sources absolutely, so a relative root is resolved first.
   const prefix = `${path.resolve(root)}/`
   parsed.sources = parsed.sources?.map(source => {
+    // Source-map entries may be null when the source name is unknown. Keep
+    // their indices and source-content alignment intact.
+    if (source === null) return null
     if (source.startsWith(prefix)) return source.slice(prefix.length)
     const at = source.lastIndexOf('/node_modules/')
     if (source.startsWith('/') && at >= 0) return source.slice(at + 1)
