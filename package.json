@@ -2,7 +2,7 @@
   "name": "teamstation",
   "version": "0.1.0",
   "private": true,
-  "description": "TeamStation \u2014 video server and app, serving app.teamstation.app",
+  "description": "TeamStation — video server and app, serving app.teamstation.app",
   "engines": {
     "node": ">=24.9.0"
   },
@@ -86,6 +86,7 @@
     "@react-native-clipboard/clipboard": "^1.16.3",
     "@react-native-picker/picker": "^2.11.4",
     "@react-three/fiber": "9.7.0",
+    "@sentry/core": "10.75.2",
     "@sonnetstationsolutions/expo-argon2": "0.1.1",
     "argon2": "0.45.1",
     "cleaner-config": "^0.1.10",
