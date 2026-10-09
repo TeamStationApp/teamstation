@@ -39,6 +39,55 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('reads account tag choices and writes escaped event assignments and removals', async () => {
+    const choices = stubFetch(200, {
+      recent: ['great catch'],
+      popular: [{ tag: 'great pitch', count: 2 }]
+    })
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: choices.fetch
+    })
+    expect(await client.tagChoices()).deep.equals({
+      recent: ['great catch'],
+      popular: [{ tag: 'great pitch', count: 2 }]
+    })
+    expect(choices.calls[0].url).equals('https://example.test/api/v1/tags')
+    await client.tagChoices({ includeUnused: true })
+    expect(choices.calls[1].url).equals(
+      'https://example.test/api/v1/tags?includeUnused=true'
+    )
+    const mutation = stubFetch(200, {
+      targetId: 'target/id',
+      tag: 'great catch',
+      revision: '9007199254740993'
+    })
+    const writer = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: mutation.fetch
+    })
+    expect(
+      (await writer.saveEventTag('game/id', 'target/id', 'great catch')).tag
+    ).equals('great catch')
+    expect(
+      (await writer.saveEventTag('game/id', 'target/id', 'great catch'))
+        .revision
+    ).equals('9007199254740993')
+    await writer.saveEventTag('game/id', 'target/id', null)
+    expect(mutation.calls.map(call => call.method)).deep.equals([
+      'PUT',
+      'PUT',
+      'DELETE'
+    ])
+    expect(mutation.calls[0].url).equals(
+      '/api/v1/games/game%2Fid/tags/target%2Fid'
+    )
+    expect(JSON.parse(mutation.calls[0].body!)).deep.equals({
+      tag: 'great catch'
+    })
+    expect(mutation.calls[2].body).equals(undefined)
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({

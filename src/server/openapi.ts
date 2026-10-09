@@ -2709,6 +2709,127 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/tags': {
+        get: {
+          summary: 'Read your ten recent distinct tags and global popularity',
+          parameters: [
+            {
+              name: 'includeUnused',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean', default: false },
+              description:
+                'Include the retained global catalog with zero-count labels; otherwise return up to thirty actively used popular tags'
+            }
+          ],
+          security: [{ bearer: [] }],
+          responses: {
+            '200': {
+              description:
+                'Recent labels and popular labels with active assignment counts'
+            },
+            '401': { description: 'Authentication required' },
+            '400': { description: 'Invalid includeUnused parameter' }
+          }
+        }
+      },
+      '/games/{gameId}/tags/{targetId}': {
+        put: {
+          summary: 'Assign or replace one scoring event tag',
+          description:
+            'Locks the game; repeated identical saves are idempotent. Tags normalize casing and whitespace and contain 1–64 Unicode code points. Scorekeepers of either team may edit; user history belongs to the authenticated actor.',
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'targetId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['tag'],
+                  properties: { tag: { type: 'string', maxLength: 128 } }
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Target identity, normalized label and committed-write revision',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['targetId', 'tag', 'revision'],
+                    properties: {
+                      targetId: { type: 'string' },
+                      tag: { type: 'string' },
+                      revision: {
+                        type: 'string',
+                        pattern: '^[0-9]+$',
+                        description:
+                          'Monotonic decimal write revision issued under the game lock; compare numerically without loss of precision.'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '400': { description: 'Invalid tag' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Scoring permission required' },
+            '404': { description: 'Game or target not found' }
+          }
+        },
+        delete: {
+          summary: 'Remove one scoring event tag, retaining account history',
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'targetId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            '200': {
+              description:
+                'Target identity, null tag and committed-write revision',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['targetId', 'tag', 'revision'],
+                    properties: {
+                      targetId: { type: 'string' },
+                      tag: { type: 'null' },
+                      revision: {
+                        type: 'string',
+                        pattern: '^[0-9]+$',
+                        description:
+                          'Monotonic decimal write revision, including removal.'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Scoring permission required' },
+            '404': { description: 'Game or target not found' }
+          }
+        }
+      },
       '/games/{gameId}/events': {
         post: {
           summary: "Replace a game's plays",
@@ -2752,7 +2873,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`game_player_stats` rows untouched. **Who may call:** a ' +
             'scorekeeper of either team, set on the team, its season or its ' +
             'league, which every admin of them is, and a site admin. Anybody ' +
-            'else who can see the game gets 403.',
+            'else who can see the game gets 403. Tagged activity edits that ' +
+            'cannot be disambiguated without structured event identities return ' +
+            '409 without changing the stored events or assignments.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {

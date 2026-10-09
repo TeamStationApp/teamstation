@@ -1,6 +1,7 @@
 import type { Kysely, Selectable } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
+import { withPreviousTagIdentities } from '../../common/eventTags'
 import type { GumboPlay, PostEventsBody } from '../../common/gumboPlay'
 import {
   halfOutcomes,
@@ -10,6 +11,7 @@ import {
 import type { Database, EventsTable } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import { notifyGameChange } from '../socket/gameChanges'
+import { reconcileEventTags } from './eventTags'
 import {
   type PlaySource,
   type PlayWrite,
@@ -112,9 +114,36 @@ export async function postGamePlays(
         homeTeamId: game.home_team_id,
         awayTeamId: game.away_team_id
       }
+      const priorCurrent = game.currentPlay as Partial<GumboPlay> | null
+      let currentPlay =
+        live && body.currentPlay !== undefined
+          ? body.currentPlay
+          : game.currentPlay
+      if (currentPlay != null && typeof currentPlay === 'object') {
+        const incoming = currentPlay as Partial<GumboPlay>
+        if (typeof incoming.about?.atBatIndex === 'number') {
+          const prior =
+            priorCurrent?.about?.atBatIndex === incoming.about.atBatIndex
+              ? priorCurrent
+              : ((
+                  await trx
+                    .selectFrom('events')
+                    .select('gumbo')
+                    .where('gameId', '=', gameId)
+                    .where('atBatIndex', '=', incoming.about.atBatIndex)
+                    .executeTakeFirst()
+                )?.gumbo as Partial<GumboPlay> | undefined)
+          if (prior != null)
+            currentPlay = withPreviousTagIdentities(
+              incoming as GumboPlay,
+              prior,
+              false
+            )
+        }
+      }
       const plays: PlayWrite[] = prepared.map(play => ({
         gumbo: {
-          ...play,
+          ...withPreviousTagIdentities(play, priorCurrent, true),
           credits:
             play.credits == null
               ? play.credits
@@ -143,10 +172,6 @@ export async function postGamePlays(
       } else {
         await replaceGameEvents(trx, write)
       }
-      const currentPlay =
-        live && body.currentPlay !== undefined
-          ? body.currentPlay
-          : game.currentPlay
       const stored = await readPlays(trx, gameId)
       const documents = stored.map(documentOf)
       const posted = scoresOf(stored)
@@ -198,14 +223,19 @@ export async function postGamePlays(
             : {}),
           ingest_status: decision.ingestStatus,
           ingest_message: decision.ingestMessage,
-          ...(live && body.currentPlay !== undefined
-            ? { currentPlay: body.currentPlay }
-            : {}),
+          ...(live && body.currentPlay !== undefined ? { currentPlay } : {}),
           ...lineups,
           updated_at: new Date()
         })
         .where('id', '=', gameId)
         .execute()
+      await reconcileEventTags(trx, gameId)
+      const taggedStored = await readPlays(trx, gameId)
+      const taggedGame = await trx
+        .selectFrom('games')
+        .select('currentPlay')
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
       // Told to the game socket when this commits. The lineups only when a
       // reader of them would see something new: the digest is of what they
       // show, so a pitch leaves it alone and an undone change moves it.
@@ -217,8 +247,8 @@ export async function postGamePlays(
       )
         await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
       return {
-        plays: stored.map(playJson),
-        currentPlay: currentPlay ?? null
+        plays: taggedStored.map(playJson),
+        currentPlay: taggedGame.currentPlay ?? null
       }
     })
     .catch((error: unknown) => {

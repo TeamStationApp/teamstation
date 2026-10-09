@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import {
   computeHighlights,
   type HighlightEvent,
+  highlightEvent,
   type HighlightVideo,
   leadFor,
   withDropped
@@ -42,6 +43,52 @@ const event = (over: Partial<HighlightEvent> = {}): HighlightEvent => ({
 })
 
 describe('highlights', function () {
+  it('keeps a structured completed-play tag separate from the description and timings', () => {
+    const plain = computeHighlights([event()], video, settings)[0]
+    const tagged = computeHighlights(
+      [event({ tag: 'great catch' })],
+      video,
+      settings
+    )[0]
+    expect(tagged.tag).equals('great catch')
+    expect(tagged.description).equals(plain.description)
+    expect(tagged.startOffsetSec).equals(plain.startOffsetSec)
+    const row = {
+      ...event(),
+      gumbo: {
+        about: { atBatIndex: 1 },
+        tagTargets: {
+          version: 1,
+          play: {
+            id: 'target_completed',
+            signature: 'single',
+            tag: 'great catch'
+          },
+          events: [
+            {
+              id: 'target_pitch',
+              index: 0,
+              signature: 'pitch',
+              tag: 'great pitch'
+            }
+          ]
+        }
+      }
+    }
+    expect(highlightEvent(row, undefined).tag).equals('great catch')
+    expect(
+      highlightEvent(
+        {
+          ...row,
+          gumbo: {
+            about: { atBatIndex: 1 },
+            tagTargets: { version: 1, events: row.gumbo.tagTargets.events }
+          }
+        },
+        undefined
+      ).tag
+    ).equals(null)
+  })
   it('seeks lag plus lead before the tap', function () {
     // Tap at 10:00 into the video; the play was 8 s earlier at 9:52; the
     // highlight starts 30 s before that, at 9:22.
