@@ -27,6 +27,7 @@ describe('scoring modals', function () {
     // question.
     expect(tags.map(tag => tag.file).sort()).deep.equals([
       'DropMenuView.tsx',
+      'ScoringHistory.tsx',
       'ScoringSheet.tsx',
       'dictationControls.tsx'
     ])
