@@ -4,6 +4,7 @@ import path from 'node:path'
 import { dependencyInputs } from './dependencyInputs'
 import type { BuildContext } from './runner'
 import { nativeNumber } from './runner'
+import { sentryBuildEnvironment } from './sentry'
 import { noSymlinks } from './state'
 
 export function buildEnvironment(context: BuildContext): NodeJS.ProcessEnv {
@@ -11,6 +12,7 @@ export function buildEnvironment(context: BuildContext): NodeJS.ProcessEnv {
   const origin = settings.apps[target.app].apiOrigin
   return {
     NODE_BINARY: settings.tools.node,
+    ...sentryBuildEnvironment(settings.apps[target.app].sentry),
     TS_BUILD_INFO: JSON.stringify({
       app: target.app,
       version: context.version,

@@ -9,7 +9,17 @@ import path from 'node:path'
 
 import { appDirectory, buildEnvironment, prepare } from './prepare'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
+import { sentryCliEnvironment, sentryRelease, sentryUploader } from './sentry'
 import { noSymlinks } from './state'
+
+/** Where React Native's Gradle plugin leaves the release bundle and its Hermes map. */
+export const ANDROID_BUNDLE =
+  'app/build/generated/assets/react/release/index.android.bundle'
+export const ANDROID_SOURCE_MAP =
+  'app/build/generated/sourcemaps/react/release/index.android.bundle.map'
+/** Where a Kotlin app's release build leaves its native libraries with their symbols. */
+export const ANDROID_NATIVE_LIBS =
+  'app/build/intermediates/merged_native_libs/release'
 
 // A Gradle init script works with both the Groovy and Kotlin application projects.
 // Configuration stays in the child environment, never in checked-in source.
@@ -81,6 +91,17 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
       : directory
   if (!existsSync(path.join(project, 'gradlew')))
     throw new Error('Android project is missing')
+  // The token file is read before the build, so a bad one fails in seconds.
+  const sentry = context.settings.apps[context.target.app].sentry
+  const upload =
+    sentry == null
+      ? undefined
+      : sentryUploader(
+          tools.sentryCli,
+          sentryCliEnvironment(sentry),
+          context.processes,
+          project
+        )
   await prepare(context)
   const init = path.join(directory, '.deploy', 'signing.gradle')
   writeFileSync(init, androidOverride, { mode: 0o600 })
@@ -129,7 +150,21 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
         !/\s[1-9]\d*\s+[^\n]*assets\/index\.android\.bundle\s*$/m.test(entries)
       )
         throw new Error('Release APK has no bundled JavaScript')
+      if (upload != null)
+        await upload.bundle(
+          path.join(project, ANDROID_BUNDLE),
+          path.join(project, ANDROID_SOURCE_MAP),
+          'index.android.bundle',
+          sentryRelease(
+            context.target.app,
+            context.version,
+            nativeNumber('android', context.buildNumber)
+          ),
+          directory
+        )
     }
+    if (upload != null && context.target.kind === 'kotlin')
+      await upload.nativeLibraries(path.join(project, ANDROID_NATIVE_LIBS))
     return { file, buildNumber: nativeNumber('android', context.buildNumber) }
   } finally {
     rmSync(init, { force: true })
