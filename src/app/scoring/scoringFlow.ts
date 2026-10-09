@@ -59,7 +59,10 @@ export function act(next: ScoringSnapshot, action: ScoringAction): Applied {
   const before = next.session
   // On a copy that shares the finished plays (`copyGame`): `applyAction`'s
   // own copy is of the whole game, a stall that grew with it.
-  const applied = applyAction(copyGame(before), action, { inPlace: true })
+  const applied = applyAction(copyGame(before), action, {
+    inPlace: true,
+    requireCurrentSetup: true
+  })
   if (applied.problems.length > 0) throw new Refused(applied.problems)
   next.session = applied.state
   next.log = [...next.log, action]

@@ -231,7 +231,14 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         moved.current = false
         releasing.current = false
         contact.current = { pointer: event.pointerId, kind: event.pointerType }
-        hold.start({ x: event.clientX, y: event.clientY })
+        const point = { x: event.clientX, y: event.clientY }
+        if (
+          props.immediateMouseDrag === true &&
+          event.pointerType === 'mouse'
+        ) {
+          engine.begin(props.playerId, props.label ?? '', point, source)
+          event.currentTarget.setPointerCapture(event.pointerId)
+        } else hold.start(point)
       }}
       onPointerMove={event => {
         if (event.pointerType === 'touch') return
@@ -262,6 +269,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       onPointerLeave={() => {
         if (
           !hold.active &&
+          engine.active?.id !== props.playerId &&
           contact.current != null &&
           contact.current.kind !== 'touch'
         ) {

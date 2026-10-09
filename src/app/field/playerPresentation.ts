@@ -16,13 +16,16 @@ export const NAMEPLATE_NUMBER_FONT = 10
 export const NAMEPLATE_PAD = 4
 /** Space between the name and the number under it. */
 export const NAMEPLATE_LINE_GAP = 2
+export const EMPTY_POSITION_SIZE = 48
+export const EMPTY_POSITION_FONT = 26
 export function hasPlayerLabel(player: FieldPlayer): boolean {
   // The batter and the pitcher are named on the scoreboard, not on the field.
   return (
-    player.batting !== true &&
-    player.label !== 'P' &&
-    player.label !== 'B' &&
-    player.id !== 'P'
+    player.emptyPosition === true ||
+    (player.batting !== true &&
+      player.label !== 'P' &&
+      player.label !== 'B' &&
+      player.id !== 'P')
   )
 }
 export interface NameplateLabel {
@@ -57,6 +60,7 @@ export function nameplateSize(label: NameplateLabel): {
   }
 }
 export interface NameplatePlacement {
+  emptyPosition?: boolean
   id: string
   name: string
   number: string
@@ -81,6 +85,8 @@ export function labelAnchor(
   const right = new Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
   const up = new Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
   const offset = new Vector3()
+  if (player.emptyPosition === true)
+    return { offset, anchorX: 0.5, anchorY: 0.5 }
   let anchorX = 0.5
   let anchorY = 1
   if (player.team === 'runner' || player.label === 'C') {
@@ -119,15 +125,29 @@ export function projectPlayerLabel(
   const viewZ = world.clone().applyMatrix4(camera.matrixWorldInverse).z
   const ndc = world.project(camera)
   const label = nameplateLabel(player)
-  const box = nameplateSize(label)
+  const box =
+    player.emptyPosition === true
+      ? { width: EMPTY_POSITION_SIZE, height: EMPTY_POSITION_SIZE }
+      : nameplateSize(label)
+  // Keep edge positions fully tappable on the narrow scoring field.
+  const x = (ndc.x * 0.5 + 0.5) * width
+  const y = (0.5 - ndc.y * 0.5) * height
+  const edgeInset = EMPTY_POSITION_SIZE / 2 + 2
   return {
     id: player.id,
     name: label.name,
     number: label.number,
     team: player.team,
     uniformSide: player.uniformSide,
-    x: (ndc.x * 0.5 + 0.5) * width,
-    y: (0.5 - ndc.y * 0.5) * height,
+    emptyPosition: player.emptyPosition,
+    x:
+      player.emptyPosition === true
+        ? Math.max(edgeInset, Math.min(width - edgeInset, x))
+        : x,
+    y:
+      player.emptyPosition === true
+        ? Math.max(edgeInset, Math.min(height - edgeInset, y))
+        : y,
     anchorX,
     anchorY,
     width: box.width,

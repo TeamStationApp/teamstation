@@ -51,6 +51,7 @@ import { pitchZone } from './pitchLocation'
 import {
   choiceOpen,
   completesHitOffer,
+  currentSetupError,
   forcedFrom,
   hasEligiblePitch,
   HIT_BASES,
@@ -1885,7 +1886,16 @@ const CLOSES_FIRST = new Set<ScoringAction['type']>([
 export function applyAction(
   state: GameState,
   raw: ScoringAction,
-  { inPlace = false }: { inPlace?: boolean } = {}
+  {
+    inPlace = false,
+    requireCurrentSetup = false,
+    acceptedLineup
+  }: {
+    inPlace?: boolean
+    requireCurrentSetup?: boolean
+    /** Transient UI acceptance; undefined leaves partial-order policy to the caller. */
+    acceptedLineup?: string | null
+  } = {}
 ): Applied {
   const cleaned = cleanAction(raw)
   const unchanged = (problem: Problem): Applied => ({
@@ -1916,6 +1926,16 @@ export function applyAction(
       action.type !== 'gameFlow'
     )
       refuse('notNow', 'The batter due is on base: change the lineup first')
+    if (
+      requireCurrentSetup &&
+      ctx.state.pending == null &&
+      !inPlay(ctx.state.liveData.plays.currentPlay) &&
+      action.type !== 'lineup' &&
+      action.type !== 'gameFlow'
+    ) {
+      const problem = currentSetupError(ctx.state, acceptedLineup)
+      if (problem != null) refuse('notNow', problem)
+    }
     ;(HANDLERS[action.type] as (ctx: Ctx, action: ScoringAction) => void)(
       ctx,
       action

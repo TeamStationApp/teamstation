@@ -6,7 +6,8 @@ import { PillButton } from '../components/PillTabs'
 import { lstrings, sprintf } from '../locales/strings'
 import {
   InstructionToast,
-  type ScoreboardBounds
+  type ScoreboardBounds,
+  type SetupToast
 } from '../scoring/InstructionToast'
 import {
   CONTROL_COLORS,
@@ -39,6 +40,7 @@ export const PITCH_CONTROLS = [
   { kind: 'play', label: 'Ball in Play' }
 ] as const
 export interface BaseballScreenProps {
+  setupToast?: SetupToast
   field: FieldCanvasProps
   onMenu: () => void
   /**
@@ -190,6 +192,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           </GlassView>
         </View>
         <InstructionToast
+          setup={props.setupToast}
           instruction={props.instruction}
           status={props.instructionStatus}
           detail={props.instructionDetail}

@@ -25,6 +25,7 @@ import {
 
 import { useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
+import { SCORING_MENU } from './ScoringMenuAppearance'
 
 export function ScoringButton({
   label,
@@ -155,19 +156,26 @@ export function swipeCloses(dy: number, vy: number): boolean {
 const SheetArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
 
 export function ScoringSheet({
+  compact = false,
+  placement = 'bottom',
   title,
   headerless = false,
   textCancel = false,
   fullScreen = false,
   tall = false,
+  height,
+  appearance,
   done = false,
   swipeToDismiss = false,
   scroll = true,
   scrollReset = 0,
   onShow,
+  onBackdropPress,
   onClose,
   children
 }: {
+  compact?: boolean
+  placement?: 'top' | 'bottom'
   title: string
   /** A compact full-screen editor supplies its own bottom close action. */
   headerless?: boolean
@@ -175,6 +183,9 @@ export function ScoringSheet({
   fullScreen?: boolean
   /** The whole height of the screen, still a sheet over the game. */
   tall?: boolean
+  /** Fixed sheet height; its content gets the remaining space below the header. */
+  height?: number
+  appearance?: 'scoring'
   /** Closed by a Done button at the bottom rather than Cancel at the top. */
   done?: boolean
   /** Pulled down by its handle or its title, it closes. */
@@ -183,10 +194,12 @@ export function ScoringSheet({
   /** Increment to return a repeated-entry form to its first field. */
   scrollReset?: number
   onShow?: () => void
+  onBackdropPress?: () => void
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
+  const scoring = appearance === 'scoring'
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
   const contentScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -256,20 +269,22 @@ export function ScoringSheet({
         >
           <SheetArea
             edges={
-              fullScreen || tall
+              fullScreen || tall || placement === 'top'
                 ? ['top', 'bottom', 'left', 'right']
                 : ['bottom', 'left', 'right']
             }
             style={{
               flex: 1,
-              justifyContent: 'flex-end',
+              justifyContent: placement === 'top' ? 'flex-start' : 'flex-end',
               backgroundColor: fullScreen ? theme.backgroundColor : undefined
             }}
           >
             {!fullScreen && (
               <Pressable
                 accessibilityLabel="Dismiss sheet"
-                onPress={onClose}
+                onPress={() => {
+                  ;(onBackdropPress ?? onClose)()
+                }}
                 style={{
                   position: 'absolute',
                   inset: 0,
@@ -278,28 +293,34 @@ export function ScoringSheet({
               />
             )}
             <Animated.View
+              testID="Scoring sheet"
               accessibilityViewIsModal
               style={{
                 transform: [{ translateY: pulled }],
                 maxHeight: fullScreen || tall ? undefined : '92%',
                 flex: fullScreen || tall ? 1 : undefined,
+                height,
                 marginTop: tall ? 8 : undefined,
-                backgroundColor: theme.backgroundColor,
+                backgroundColor: scoring
+                  ? SCORING_MENU.background
+                  : theme.backgroundColor,
+                borderWidth: scoring ? 1 : undefined,
+                borderColor: scoring ? SCORING_MENU.border : undefined,
                 borderTopLeftRadius: fullScreen
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
                 borderTopRightRadius: fullScreen
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
-                padding: 16,
+                padding: compact ? 12 : 16,
                 paddingBottom: headerless ? 0 : 16,
-                gap: 12
+                gap: compact ? 8 : 12
               }}
             >
               {!headerless && (
                 <View
                   {...(swipeToDismiss ? pull.panHandlers : {})}
-                  style={{ gap: 12 }}
+                  style={{ gap: compact ? 8 : 12 }}
                 >
                   {swipeToDismiss && (
                     <View
@@ -326,8 +347,10 @@ export function ScoringSheet({
                       accessibilityRole="header"
                       style={{
                         fontFamily: theme.boldTextFont,
-                        fontSize: 22,
-                        color: theme.primaryTextColor,
+                        fontSize: compact ? 18 : 22,
+                        color: scoring
+                          ? SCORING_MENU.text
+                          : theme.primaryTextColor,
                         flex: 1
                       }}
                     >
@@ -339,7 +362,7 @@ export function ScoringSheet({
                         accessibilityLabel="Cancel"
                         onPress={onClose}
                         style={{
-                          minHeight: 44,
+                          minHeight: compact ? 32 : 44,
                           paddingHorizontal: 10,
                           justifyContent: 'center'
                         }}
@@ -347,7 +370,7 @@ export function ScoringSheet({
                         <Text
                           style={{
                             fontFamily: theme.semiBoldTextFont,
-                            color: theme.dangerColor
+                            color: scoring ? '#f87171' : theme.dangerColor
                           }}
                         >
                           Cancel
@@ -363,7 +386,7 @@ export function ScoringSheet({
                 testID="Scoring sheet content"
                 ref={scroll ? contentScroll : undefined}
                 style={{
-                  flex: fullScreen || tall ? 1 : undefined,
+                  flex: fullScreen || tall || height != null ? 1 : undefined,
                   minHeight: 0
                 }}
                 onLayout={event => {
