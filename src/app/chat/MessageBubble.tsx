@@ -1,11 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
 
 import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AttachmentView, type ChatFileOps } from './AttachmentView'
-import { type MessagePressGesture, pressPoint } from './chatInteractionModel'
+import {
+  type MessagePressGesture,
+  pressPoint,
+  pressStamp
+} from './chatInteractionModel'
 import { type MessageAction, messagePreview, readLine } from './chatModel'
 import {
   bindMessageHover,
@@ -99,7 +103,8 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
     generation: 0,
     cancelled: false,
     recognized: false,
-    pointer: false
+    pointer: false,
+    nativeStart: undefined as ReturnType<typeof pressStamp>
   })
   useEffect(
     () =>
@@ -123,6 +128,29 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
   const actions =
     props.actions ??
     (message.status === 'ok' ? ['reply', 'react', 'copy', 'pin'] : [])
+  const recognizeReleasedHold = (event?: GestureResponderEvent): void => {
+    if (event == null || actions.length === 0) return
+    const started = held.current.nativeStart
+    const released = pressStamp(event.nativeEvent)
+    if (started == null || released == null) return
+    if (
+      released.identifier !== started.identifier ||
+      released.timestamp < started.timestamp
+    ) {
+      held.current.cancelled = true
+      return
+    }
+    if (released.timestamp - started.timestamp < 500) return
+    const point = pressPoint(event.nativeEvent)
+    if (
+      point == null ||
+      Math.hypot(point.x - held.current.x, point.y - held.current.y) > 10
+    ) {
+      held.current.cancelled = true
+      return
+    }
+    openActions()
+  }
   const messageGesture: MessagePressGesture | undefined =
     !desktop && props.selected !== true
       ? {
@@ -130,15 +158,28 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             ...immediatePressProps,
             onPressIn: event => {
               const point = pressPoint(event.nativeEvent)
+              const nativeStart = pressStamp(event.nativeEvent)
+              // Nested/parent starts for the same contact must not restart it.
+              if (
+                nativeStart != null &&
+                nativeStart.identifier ===
+                  held.current.nativeStart?.identifier &&
+                nativeStart.timestamp === held.current.nativeStart.timestamp
+              )
+                return
               held.current = {
                 x: point?.x ?? 0,
                 y: point?.y ?? 0,
                 generation: props.gestureGeneration?.current ?? 0,
                 cancelled: false,
                 recognized: false,
-                pointer: point != null
+                pointer: point != null,
+                nativeStart
               }
             },
+            // PressOut can be delayed by Pressability's minimum JS duration.
+            // Real release activation is therefore the final native-time gate.
+            onPress: recognizeReleasedHold,
             onTouchMove: event => {
               const point = pressPoint(event.nativeEvent)
               if (
@@ -154,12 +195,16 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             onLongPress: actions.length > 0 ? openActions : undefined,
             delayLongPress: 500
           },
-          canOpen: () =>
-            !held.current.cancelled &&
-            !held.current.recognized &&
-            (!held.current.pointer ||
-              held.current.generation ===
-                (props.gestureGeneration?.current ?? 0))
+          canOpen: event => {
+            recognizeReleasedHold(event)
+            return (
+              !held.current.cancelled &&
+              !held.current.recognized &&
+              (!held.current.pointer ||
+                held.current.generation ===
+                  (props.gestureGeneration?.current ?? 0))
+            )
+          }
         }
       : undefined
   const sender = message.mine
@@ -343,8 +388,8 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                   reaction.userIds.length
                 )}
                 accessibilityState={{ selected: reaction.mine }}
-                onPress={() => {
-                  if (messageGesture?.canOpen() === false) return
+                onPress={event => {
+                  if (messageGesture?.canOpen(event) === false) return
                   props.onToggleReaction(message, reaction.emoji, reaction.mine)
                 }}
                 style={[styles.reaction, reaction.mine && styles.reactionMine]}
