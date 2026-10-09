@@ -745,11 +745,11 @@ describe('a conversation', function () {
     await until('the chip', () => text().includes('photo.jpg'))
     await press('Attach')
     await press('File')
-    await until('the second chip', () => text().includes('huge.pdf'))
+    await until('the size rejection', () =>
+      text().includes('huge.pdf is too large')
+    )
     expect(log).deep.equals(['pick photos', 'pick files'])
-    await press('Send')
-    expect(text()).contains('huge.pdf is too large')
-    await press('Remove huge.pdf')
+    expect(labelled('Remove huge.pdf')).equals(null)
     await press('Send')
     await until('the send', () =>
       engine.calls.some(call => call.startsWith('attach'))

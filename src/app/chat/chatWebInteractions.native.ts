@@ -14,6 +14,12 @@ export function bindPopupKeys(_view: unknown, _close: () => void): () => void {
 export function isFinePointer(): boolean {
   return false
 }
+export function bindComposerKeys(
+  _view: unknown,
+  _onSend: () => void
+): () => void {
+  return () => {}
+}
 export function bindUserScroll(_view: unknown, _read: () => void): () => void {
   return () => {}
 }

@@ -8,6 +8,8 @@ import ReactNativeBlobUtil from 'react-native-blob-util'
 import { launchImageLibrary } from 'react-native-image-picker'
 import { fromByteArray, toByteArray } from 'react-native-quick-base64'
 
+import { MAX_ATTACHMENTS } from '../../common/chatContent'
+import { attachmentProblem } from './chatComposeModel'
 import {
   contentTypeOf,
   type PickedFile,
@@ -30,7 +32,12 @@ const pathOf = (uri: string): string =>
   decodeURIComponent(uri.replace(/^file:\/\//, ''))
 
 /** A local file's bytes. */
-async function readBytes(uri: string): Promise<Uint8Array> {
+async function readBytes(uri: string, fileName: string): Promise<Uint8Array> {
+  const size = Number((await ReactNativeBlobUtil.fs.stat(pathOf(uri))).size)
+  if (!Number.isFinite(size) || size < 0)
+    throw new Error('File size unavailable')
+  const problem = attachmentProblem([{ fileName, size }])
+  if (problem != null) throw new Error(problem)
   const base64 = (await ReactNativeBlobUtil.fs.readFile(
     pathOf(uri),
     'base64'
@@ -38,7 +45,7 @@ async function readBytes(uri: string): Promise<Uint8Array> {
   return toByteArray(base64)
 }
 
-async function fromLibrary(): Promise<PickedFile[]> {
+async function fromLibrary(remaining: number): Promise<PickedFile[]> {
   // One at a time: a tap on a photo picks it at once, and Attach again
   // adds another.
   const answer = await launchImageLibrary({
@@ -49,12 +56,22 @@ async function fromLibrary(): Promise<PickedFile[]> {
   if (answer.errorCode != null) {
     throw new Error(answer.errorMessage ?? answer.errorCode)
   }
+  const problem = attachmentProblem(
+    answer.assets
+      .filter(asset => asset.uri != null)
+      .map(asset => ({
+        fileName: asset.fileName ?? 'photo',
+        size: asset.fileSize ?? 0
+      })),
+    remaining
+  )
+  if (problem != null) throw new Error(problem)
   const picked: PickedFile[] = []
   for (const asset of answer.assets) {
     if (asset.uri == null) continue
     const fileName = asset.fileName ?? 'photo'
     picked.push({
-      bytes: await readBytes(asset.uri),
+      bytes: await readBytes(asset.uri, fileName),
       contentType: contentTypeOf(fileName, asset.type),
       fileName,
       ...(asset.width == null ? {} : { width: asset.width }),
@@ -67,7 +84,7 @@ async function fromLibrary(): Promise<PickedFile[]> {
   return picked
 }
 
-async function fromFiles(): Promise<PickedFile[]> {
+async function fromFiles(remaining: number): Promise<PickedFile[]> {
   let documents: DocumentPickerResponse[]
   try {
     documents = await pick({ allowMultiSelection: true })
@@ -76,6 +93,14 @@ async function fromFiles(): Promise<PickedFile[]> {
     if ((error as { code?: string }).code === 'OPERATION_CANCELED') return []
     throw error
   }
+  const problem = attachmentProblem(
+    documents.map(document => ({
+      fileName: document.name ?? 'file',
+      size: document.size ?? 0
+    })),
+    remaining
+  )
+  if (problem != null) throw new Error(problem)
   const picked: PickedFile[] = []
   for (const document of documents) {
     const fileName = document.name ?? 'file'
@@ -84,19 +109,27 @@ async function fromFiles(): Promise<PickedFile[]> {
       destination: 'cachesDirectory'
     })
     if (copy.status !== 'success') throw new Error(copy.copyError)
-    picked.push({
-      bytes: await readBytes(copy.localUri),
-      contentType: contentTypeOf(fileName, document.type),
-      fileName
-    })
-    await ReactNativeBlobUtil.fs.unlink(pathOf(copy.localUri)).catch(() => {})
+    try {
+      picked.push({
+        bytes: await readBytes(copy.localUri, fileName),
+        contentType: contentTypeOf(fileName, document.type),
+        fileName
+      })
+    } finally {
+      await ReactNativeBlobUtil.fs.unlink(pathOf(copy.localUri)).catch(() => {})
+    }
   }
   return picked
 }
 
 /** Opens the photo library or the file picker; nothing on Cancel. */
-export async function pickFiles(source: PickSource): Promise<PickedFile[]> {
-  return source === 'photos' ? await fromLibrary() : await fromFiles()
+export async function pickFiles(
+  source: PickSource,
+  remaining = MAX_ATTACHMENTS
+): Promise<PickedFile[]> {
+  return source === 'photos'
+    ? await fromLibrary(remaining)
+    : await fromFiles(remaining)
 }
 
 let written = 0

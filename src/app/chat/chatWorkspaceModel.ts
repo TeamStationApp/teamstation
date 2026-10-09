@@ -8,6 +8,10 @@ export interface ChatDraft {
   replyTo?: MessageView
   editing?: MessageView
   scrollOffset: number
+  /** Distinguishes a saved top-of-history position from a new conversation. */
+  hasScrollPosition?: boolean
+  /** Preserve automatic following only when the saved view was at its end. */
+  followNewest?: boolean
 }
 export interface ChatWorkspaceState {
   drafts: Map<string, ChatDraft>
