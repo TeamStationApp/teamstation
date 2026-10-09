@@ -116,7 +116,7 @@ describe('superviseStatsBuilder', function () {
     start(harness)
 
     expect(harness.forks).length(1)
-    expect(harness.forks[0].modulePath).equals(require.resolve('./main'))
+    expect(harness.forks[0].modulePath).equals(require.resolve('./start'))
     expect(harness.forks[0].args).deep.equals([])
     expect(harness.forks[0].options.execArgv).deep.equals(process.execArgv)
     expect(harness.forks[0].options.stdio).equals('inherit')

@@ -19,6 +19,12 @@ import { asAppleLogin, privateJson } from './config'
 import { buildEnvironment, prepare } from './prepare'
 import { Processes } from './process'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
+import {
+  builtApp,
+  sentryCliEnvironment,
+  sentryRelease,
+  sentryUploader
+} from './sentry'
 import { noSymlinks } from './state'
 import { text } from './validation'
 
@@ -380,6 +386,10 @@ export async function archive(
   context: BuildContext,
   signing: Signing
 ): Promise<string> {
+  // The token file is read before the archive, so a bad one fails in seconds.
+  const sentry = context.settings.apps[context.target.app].sentry
+  const sentryEnvironment =
+    sentry == null ? undefined : sentryCliEnvironment(sentry)
   const directory = await prepare(context)
   const apple =
     context.settings.apps[context.target.app][context.target.platform]!.apple!
@@ -427,6 +437,12 @@ export async function archive(
       '.deploy',
       `${context.target.platform}.xcarchive`
     )
+    // React Native's bundle phase writes the composed Hermes map where this
+    // names, for the upload after the archive.
+    const sourceMap =
+      sentry != null && context.target.kind === 'react-native'
+        ? path.join(directory, '.deploy', 'main.jsbundle.map')
+        : undefined
     const args = [
       'archive',
       ...(context.target.workspace == null
@@ -447,7 +463,8 @@ export async function archive(
       `CURRENT_PROJECT_VERSION=${nativeNumber(context.target.platform, context.buildNumber)}`,
       `MARKETING_VERSION=${context.version}`,
       'OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo',
-      ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES'])
+      ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES']),
+      ...(sourceMap == null ? [] : [`SOURCEMAP_FILE=${sourceMap}`])
     ]
     await context.processes.run({
       file: context.settings.tools.xcodebuild,
@@ -456,6 +473,29 @@ export async function archive(
       env,
       capture: false
     })
+    if (sentryEnvironment != null) {
+      const upload = sentryUploader(
+        context.settings.tools.sentryCli,
+        sentryEnvironment,
+        context.processes,
+        directory
+      )
+      await upload.dsyms(path.join(destination, 'dSYMs'))
+      if (sourceMap != null) {
+        const app = builtApp(path.join(destination, 'Products/Applications'))
+        await upload.bundle(
+          path.join(app, 'main.jsbundle'),
+          sourceMap,
+          'main.jsbundle',
+          sentryRelease(
+            context.target.app,
+            context.version,
+            nativeNumber(context.target.platform, context.buildNumber)
+          ),
+          directory
+        )
+      }
+    }
     return destination
   } finally {
     writeFileSync(projectFile, originalProject)

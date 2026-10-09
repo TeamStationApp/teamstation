@@ -14,7 +14,14 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { android, androidOverride, verifyAndroidMetadata } from './android'
+import {
+  android,
+  ANDROID_BUNDLE,
+  ANDROID_NATIVE_LIBS,
+  ANDROID_SOURCE_MAP,
+  androidOverride,
+  verifyAndroidMetadata
+} from './android'
 import {
   archive,
   bundleEnvironment,
@@ -22,6 +29,7 @@ import {
   type Profile,
   readInfo,
   ruby,
+  type Signing,
   validateProfile,
   verifyApp,
   withSigning,
@@ -103,6 +111,17 @@ async function fake(command: Command): Promise<string> {
         .slice('--extract-certificates='.length) + '0',
       certificate
     )
+  if (command.file === 'xcodebuild' && verb === 'archive') {
+    const archivePath = command.args[command.args.indexOf('-archivePath') + 1]
+    mkdirSync(path.join(archivePath, 'dSYMs'), { recursive: true })
+    appTree(path.join(archivePath, 'Products/Applications/TeamStation.app'))
+    const map = command.args.find(arg => arg.startsWith('SOURCEMAP_FILE='))
+    if (map != null) file(map.slice('SOURCEMAP_FILE='.length), '{}')
+  }
+  if (command.file.endsWith('gradlew')) {
+    file(path.join(command.cwd, ANDROID_BUNDLE))
+    file(path.join(command.cwd, ANDROID_SOURCE_MAP), '{}')
+  }
   if (command.file === 'xcodebuild' && verb === '-help')
     return 'method: release-testing'
   if (command.file === 'xcodebuild' && verb === '-exportArchive')
@@ -273,6 +292,92 @@ describe('Native build and signing adapters', () => {
     await assert.rejects(prepare(context), /locked/)
     context.target.path = 'missing'
     assert.throws(() => appDirectory(context))
+  })
+  it('uploads symbols to Sentry for an app with a sentry block, and only then', async () => {
+    const sentry = {
+      origin: 'https://sentry.example.test',
+      org: 'teamstation',
+      project: 'teamstation-app',
+      dsn: 'https://0123456789abcdef0123456789abcdef@sentry.example.test/2',
+      tokenFile: file(
+        path.join(root, 'sentry-token.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          origin: 'https://sentry.example.test',
+          token: 'sntrys_fixture'
+        })
+      )
+    }
+    const uploads = (): Command[] =>
+      calls.filter(c => path.basename(c.file) === 'sentry-cli')
+    const signing: Signing = {
+      keychain: 'k',
+      directory: root,
+      profiles: new Map()
+    }
+    await archive(context, signing)
+    assert.equal(uploads().length, 0)
+    assert(!calls.some(c => c.args.some(a => a.startsWith('SOURCEMAP_FILE='))))
+    assert.equal(buildEnvironment(context).TS_SENTRY_DSN, undefined)
+
+    context.settings.apps[app].sentry = sentry
+    assert.equal(buildEnvironment(context).TS_SENTRY_DSN, sentry.dsn)
+    calls = []
+    await archive(context, signing)
+    assert(calls.some(c => c.args.some(a => a.startsWith('SOURCEMAP_FILE='))))
+    const [dsyms, maps] = uploads()
+    assert.deepEqual(dsyms.args.slice(0, 3), [
+      'debug-files',
+      'upload',
+      '--include-sources'
+    ])
+    assert.equal(dsyms.env?.SENTRY_AUTH_TOKEN, 'sntrys_fixture')
+    assert.equal(dsyms.env?.SENTRY_PROJECT, 'teamstation-app')
+    assert.deepEqual(maps.args.slice(0, 6), [
+      'sourcemaps',
+      'upload',
+      '--release',
+      `${app}@1.2.3+26093004`,
+      '--dist',
+      '26093004'
+    ])
+
+    calls = []
+    context.target = target(app, 'android')
+    await android(context)
+    assert.deepEqual(uploads()[0].args.slice(2, 6), [
+      '--release',
+      `${app}@1.2.3+26093004`,
+      '--dist',
+      '26093004'
+    ])
+
+    calls = []
+    context.target = target('app.teamstation.cameraman', 'android')
+    mkdirSync(path.join(context.source, context.target.path), {
+      recursive: true
+    })
+    file(path.join(context.source, context.target.path, 'gradlew'))
+    context.settings.apps['app.teamstation.cameraman'] =
+      context.settings.apps[app]
+    mkdirSync(
+      path.join(context.source, context.target.path, ANDROID_NATIVE_LIBS),
+      { recursive: true }
+    )
+    await android(context)
+    // A Kotlin app has no JavaScript bundle; its native libraries go up instead.
+    assert.equal(uploads().length, 1)
+    assert.deepEqual(uploads()[0].args.slice(0, 2), ['debug-files', 'upload'])
+    assert(uploads()[0].args[2].endsWith(ANDROID_NATIVE_LIBS))
+
+    // A missing token file stops the deploy before anything is built.
+    rmSync(sentry.tokenFile)
+    calls = []
+    await assert.rejects(android(context))
+    assert.equal(calls.length, 0)
+    context.target = target(app, 'ios')
+    await assert.rejects(archive(context, signing))
+    assert.equal(calls.length, 0)
   })
   it('builds Groovy and Kotlin APKs using private signing and checks the finished identity', async () => {
     context.target = target(app, 'android')

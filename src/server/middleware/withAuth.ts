@@ -1,3 +1,4 @@
+import { getIsolationScope } from '@sentry/node'
 import type { RequestHandler } from 'express'
 import type { Kysely } from 'kysely'
 
@@ -31,6 +32,10 @@ export function withActor(db: Kysely<Database>): RequestHandler {
     actorForToken(db, token).then(
       actor => {
         req.actor = actor
+        // The account by id only, on this request's own scope, so an error
+        // it raises names who was signed in and nothing else about them.
+        if (actor != null)
+          getIsolationScope().setUser({ id: String(actor.userId) })
         next()
       },
       (error: unknown) => {

@@ -15,6 +15,7 @@ import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
+import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
@@ -145,6 +146,7 @@ describe('the API document', function () {
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
       ...routesOf(logRoutes()),
+      ...routesOf(adminRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
@@ -187,6 +189,7 @@ describe('the API document', function () {
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
       ...routesOf(logRoutes()),
+      ...routesOf(adminRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),

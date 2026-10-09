@@ -6,6 +6,8 @@ import { type BuildInfo, buildInfo } from '../../common/distribution'
 import { lstrings } from '../locales/strings'
 import { browserOrigin } from '../platform/browserOrigin'
 import { openExternal } from '../platform/externalBrowser'
+import { RenderErrorProbe } from '../sentry'
+import { nativeCrash } from '../sentrySdk'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 
@@ -13,16 +15,23 @@ export function BuildInfoModal({
   client,
   apiBaseUrl = client?.baseUrl,
   onClose,
-  info = buildInfo
+  info = buildInfo,
+  isAdmin = false,
+  crash = nativeCrash
 }: {
   client?: TeamStationClient
   apiBaseUrl?: string
   onClose: () => void
   info?: BuildInfo
+  /** A site administrator also gets the buttons that prove crash reporting works. */
+  isAdmin?: boolean
+  /** Crashes the native app; absent on the web, which has none. */
+  crash?: () => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [url, setUrl] = useState<string>()
   const [failed, setFailed] = useState(false)
+  const [renderError, setRenderError] = useState(false)
   useEffect(() => {
     let active = true
     setUrl(undefined)
@@ -81,6 +90,30 @@ export function BuildInfoModal({
               {lstrings.about_open_failed}
             </Text>
           )}
+          {isAdmin && (
+            <>
+              <Button
+                label={lstrings.about_test_error}
+                kind="text"
+                onPress={sendTestError}
+              />
+              <Button
+                label={lstrings.about_test_render_error}
+                kind="text"
+                onPress={() => {
+                  setRenderError(true)
+                }}
+              />
+              {crash != null && (
+                <Button
+                  label={lstrings.about_test_native_crash}
+                  kind="text"
+                  onPress={crash}
+                />
+              )}
+            </>
+          )}
+          {renderError && <RenderErrorProbe />}
           <Button
             label={lstrings.about_close}
             accessibilityLabel={lstrings.about_close_button}
@@ -103,6 +136,14 @@ function serverOrigin(apiBaseUrl?: string): string {
   } catch {
     return '—'
   }
+}
+
+/**
+ * Throws from a press, the way an unplanned bug would, so the app's global
+ * handler reports it. Named, so the reported stack says where it came from.
+ */
+export function sendTestError(): never {
+  throw new Error('Sentry test error')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

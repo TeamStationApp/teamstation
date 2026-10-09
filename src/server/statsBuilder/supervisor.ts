@@ -59,7 +59,7 @@ export function superviseStatsBuilder(
 
   const spawn = (): void => {
     if (stopping) return
-    const modulePath = require.resolve('./main')
+    const modulePath = require.resolve('./start')
     child = options.fork(modulePath, [], {
       execArgv: process.execArgv,
       stdio: 'inherit'

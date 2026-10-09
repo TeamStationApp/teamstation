@@ -3071,6 +3071,22 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/admin/test-error': {
+        post: {
+          summary: 'Fail on purpose, to prove crash reporting works',
+          description:
+            'Site administrators only. The handler throws, as an unplanned ' +
+            'bug would, so the request travels the ordinary error path: the ' +
+            'reply is `internal`, and the error is reported with the ' +
+            "administrator's account id.",
+          security: [{ bearer: [] }],
+          responses: {
+            401: { description: 'Not signed in' },
+            403: { description: 'Not a site administrator' },
+            500: { description: 'Always, by design' }
+          }
+        }
+      },
       '/games/{gameId}/box-score': {
         get: {
           summary: "A game's batting and pitching lines",

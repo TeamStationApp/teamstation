@@ -71,6 +71,21 @@ export const httpsOrigin: Cleaner<string> = value => {
     throw new Error('Expected HTTPS origin')
   return url.origin
 }
+/** A Sentry DSN: `https://<public key>@<host>/<project number>`, and nothing else. */
+export const sentryDsn: Cleaner<string> = value => {
+  const written = text(512)(value)
+  const url = new URL(written)
+  if (
+    url.protocol !== 'https:' ||
+    !/^[0-9a-f]{32}$/.test(url.username) ||
+    url.password !== '' ||
+    !/^\/\d+$/.test(url.pathname) ||
+    url.search !== '' ||
+    url.hash !== ''
+  )
+    throw new Error('Expected a Sentry DSN')
+  return written
+}
 export const platform: Cleaner<'ios' | 'android' | 'macos'> = value => {
   if (value !== 'ios' && value !== 'android' && value !== 'macos')
     throw new Error('Unsupported build platform')

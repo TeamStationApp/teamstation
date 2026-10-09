@@ -84,6 +84,8 @@ const workerOptions = {
   format: 'iife',
   target: ['es2021'],
   minify: !serve,
+  // Mapped like the app bundle, so a deploy uploads the worker's map to Sentry too.
+  sourcemap: true,
   metafile: true
 }
 const workerBuild = await build(workerOptions)
@@ -133,6 +135,10 @@ const options = {
       '/' + workerFile.replace(/^dist\//, '')
     ),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
+    // Where the app reports crashes; empty reports nothing (src/app/sentry.ts).
+    'process.env.TS_SENTRY_DSN': JSON.stringify(
+      process.env.TS_SENTRY_DSN ?? ''
+    ),
     // `global` is what a React Native runtime calls it and no browser does.
     // Worklets are compiled to code that reaches for it, and React Native Web
     // reaches for it too — stopping an `Animated` timing calls

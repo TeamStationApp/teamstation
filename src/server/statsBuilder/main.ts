@@ -1,3 +1,4 @@
+import { captureException, flush } from '@sentry/node'
 import { Client } from 'pg'
 
 import { makeDatabase } from '../db/database'
@@ -20,6 +21,17 @@ export interface RunStatsBuilderOptions {
   clearTimeout?: typeof clearTimeout
   /** Test seam: called after a game is read, before the result is written. */
   afterRead?: AfterReadHook | null
+  /**
+   * Sends a failure that stops the builder to crash reporting before the
+   * process exits; the default does nothing unless Sentry was started.
+   */
+  report?: (error: unknown) => Promise<void>
+}
+
+/** Reports a failure to Sentry and waits, briefly, for it to leave. */
+export async function reportFailure(error: unknown): Promise<void> {
+  captureException(error)
+  await flush(2000)
 }
 
 export interface StatsBuilderHandle {
@@ -38,6 +50,7 @@ export async function runStatsBuilder(
   options: RunStatsBuilderOptions
 ): Promise<StatsBuilderHandle> {
   const clock: Clock = options.clock ?? (() => new Date())
+  const report = options.report ?? reportFailure
   const setTimer = options.setTimeout ?? setTimeout
   const clearTimerFn = options.clearTimeout ?? clearTimeout
   const db = makeDatabase(options.databaseUrl)
@@ -70,8 +83,14 @@ export async function runStatsBuilder(
     process.exitCode = 1
     listen.end().catch(() => undefined)
     db.destroy().catch(() => undefined)
-    /* c8 ignore next */
-    if (options.signals == null) process.exit(1)
+    // The failure is caught here, so Sentry's own handlers never see it.
+    report(error)
+      .catch(() => undefined)
+      .then(() => {
+        /* c8 ignore next */
+        if (options.signals == null) process.exit(1)
+      })
+      .catch(() => undefined)
   }
 
   const scheduleTimer = async (): Promise<void> => {
@@ -157,9 +176,10 @@ export async function runStatsBuilder(
         /* c8 ignore next */
         if (options.signals == null) process.exit(0)
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         console.error('stats builder: stop failed', error)
         process.exitCode = 1
+        await report(error)
         /* c8 ignore next */
         if (options.signals == null) process.exit(1)
       })
@@ -187,12 +207,3 @@ export async function runMain(
 ): Promise<StatsBuilderHandle> {
   return await runStatsBuilder({ databaseUrl })
 }
-
-/* c8 ignore start */
-if (require.main === module) {
-  runMain().catch((error: unknown) => {
-    console.error('stats builder:', error)
-    process.exit(1)
-  })
-}
-/* c8 ignore stop */

@@ -23,7 +23,7 @@ module.exports = {
     // environment, which would bake whatever is in the shell into the app.
     [
       'transform-inline-environment-variables',
-      { include: ['TS_API_BASE_URL', 'TS_BUILD_INFO'] }
+      { include: ['TS_API_BASE_URL', 'TS_BUILD_INFO', 'TS_SENTRY_DSN'] }
     ],
     // three.js, which the scoring field draws with, declares static blocks
     // inside its classes, and neither React Native's preset nor Hermes

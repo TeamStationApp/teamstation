@@ -6,6 +6,7 @@ import DirectorSources
 import DirectorTestHarness
 import DirectorUI
 import SwiftUI
+import TeamStationSentry
 
 /// Wiring only. Everything else lives in the packages so it stays testable without a
 /// simulator UI session.
@@ -15,6 +16,7 @@ struct DirectorApp: App {
   @Environment(\.scenePhase) private var scenePhase
 
   init() {
+    SentrySetup.start(appId: "app.teamstation.director")
     Self.configureAudioSession()
 
     let launch = LaunchConfiguration.resolve()

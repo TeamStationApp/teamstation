@@ -144,6 +144,23 @@ export const asServerConfig = asObject({
   primaryUrlOverride: asOptional(asString, ''),
 
   /**
+   * Where this server reports crashes and unhandled errors: a Sentry DSN, and
+   * the environment its events are filed under.
+   *
+   * An empty DSN reports nothing. An empty environment is worked out from
+   * `primaryHost` — `production`, or a development seat's own name — so a
+   * checkout without `primaryUrlOverride` would call itself production; one
+   * that reports from a workstation says `development` here.
+   */
+  sentry: asOptional(
+    asObject({
+      dsn: asOptional(asString, ''),
+      environment: asOptional(asString, '')
+    }),
+    { dsn: '', environment: '' }
+  ),
+
+  /**
    * Serve `/media` from Node. **Development only**: in production a proxy serves
    * those bytes, and turning this on would put every segment of every video
    * through the API.

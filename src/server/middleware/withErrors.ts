@@ -1,3 +1,4 @@
+import { captureException } from '@sentry/node'
 import type { ErrorRequestHandler, RequestHandler, Response } from 'express'
 
 import {
@@ -56,6 +57,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
   }
   if (!(error instanceof HttpError)) {
     console.error(`${req.method} ${req.path}`, error)
+    captureException(error)
   }
   if (res.headersSent) {
     next(error)

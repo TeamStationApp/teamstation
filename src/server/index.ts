@@ -1,12 +1,14 @@
+import './sentry/instrument'
+
 import { fork } from 'node:child_process'
 import cluster from 'node:cluster'
 import { randomBytes } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import path from 'node:path'
 
 import express from 'express'
 
+import { versionOf } from './buildVersion'
 import { makeDatabase } from './db/database'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
@@ -35,6 +37,7 @@ import { createOAuthProvider } from './oauth/provider'
 import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
+import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
@@ -88,27 +91,6 @@ import { stopWorker } from './stopWorker'
  * No file — a checkout, a test, a laptop — and it is the package version,
  * which is the honest answer there.
  */
-function versionOf(): string {
-  for (const at of [
-    path.join(process.cwd(), 'build.json'),
-    path.join(__dirname, '..', '..', 'build.json')
-  ]) {
-    try {
-      const read: unknown = JSON.parse(readFileSync(at, 'utf8'))
-      if (
-        typeof read === 'object' &&
-        read !== null &&
-        typeof (read as { version?: unknown }).version === 'string'
-      ) {
-        return (read as { version: string }).version
-      }
-    } catch {
-      // The next place, then the package version.
-    }
-  }
-  return '0.1.0'
-}
-
 const VERSION = versionOf()
 
 /**
@@ -507,6 +489,7 @@ function runWorker(): void {
   app.use('/api/v1', lineupRoutes(db))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', logRoutes())
+  app.use('/api/v1', adminRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))

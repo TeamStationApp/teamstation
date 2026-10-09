@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 import { asArray, asBoolean, asOptional, type Cleaner } from 'cleaners'
@@ -11,6 +11,7 @@ import {
   integer,
   object,
   record,
+  sentryDsn,
   text
 } from './validation'
 
@@ -51,14 +52,34 @@ const asPlatform = object({
   android: asOptional(asAndroid),
   apple: asOptional(asApple)
 })
+/** Where an app's crash reports go, and the private file holding the upload token. */
+const asSentry = object({
+  origin: httpsOrigin,
+  org: text(80),
+  project: text(80),
+  dsn: sentryDsn,
+  tokenFile: text()
+})
 const asApp = object({
   repository: asOptional(text()),
   apiOrigin: asOptional(httpsOrigin),
   version: asOptional(text(80)),
   ios: asOptional(asPlatform),
   android: asOptional(asPlatform),
-  macos: asOptional(asPlatform)
+  macos: asOptional(asPlatform),
+  sentry: asOptional(asSentry)
 })
+/**
+ * The sentry-cli this repository's own dependencies install (`@sentry/cli`),
+ * so a build machine needs none of its own; `sentry-cli` on PATH otherwise.
+ */
+export function bundledSentryCli(
+  root: string = path.join(__dirname, '../..')
+): string {
+  const bundled = path.join(root, 'node_modules/.bin/sentry-cli')
+  return existsSync(bundled) ? bundled : 'sentry-cli'
+}
+
 const asTools = object({
   git: asOptional(text(), 'git'),
   gh: asOptional(text(), 'gh'),
@@ -75,7 +96,8 @@ const asTools = object({
   xcrun: asOptional(text(), 'xcrun'),
   hdiutil: asOptional(text(), 'hdiutil'),
   apksigner: asOptional(text()),
-  aapt: asOptional(text())
+  aapt: asOptional(text()),
+  sentryCli: asOptional(text(), bundledSentryCli())
 })
 const asMatch = object({
   repository: text(),
@@ -234,6 +256,7 @@ export function loadSettings(file: string, branch: string): Settings {
   }
   for (const app of Object.values(out.apps)) {
     if (app.repository != null) app.repository = resolve(app.repository)
+    if (app.sentry != null) app.sentry.tokenFile = resolve(app.sentry.tokenFile)
     for (const platform of [app.ios, app.android, app.macos]) {
       if (platform == null) continue
       platform.upload.tokenFile = resolve(platform.upload.tokenFile)

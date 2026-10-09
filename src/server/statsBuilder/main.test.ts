@@ -246,15 +246,23 @@ describe('statsBuilder main', function () {
         ).status
       ).equals('built')
 
-      // Listen client error with an injected signal bus (no process.exit).
+      // Listen client error with an injected signal bus (no process.exit):
+      // the failure is reported before the builder gives up.
+      const reported: unknown[] = []
       handle = await runStatsBuilder({
         databaseUrl: scratchUrl,
         clock: () => new Date(clockNow),
-        signals
+        signals,
+        report: async error => {
+          reported.push(error)
+        }
       })
       handle.listenClient().emit('error', new Error('listen boom'))
       await new Promise(resolve => setTimeout(resolve, 50))
       expect(process.exitCode).equals(1)
+      expect(reported.map(error => (error as Error).message)).deep.equals([
+        'listen boom'
+      ])
       process.exitCode = 0
       handle = undefined
     } finally {
