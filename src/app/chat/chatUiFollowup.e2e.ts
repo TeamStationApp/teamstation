@@ -446,6 +446,7 @@ async function s5(daemon: Daemon): Promise<void> {
 }
 
 async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
+  const marker = `Desktop keyboard probe ${Date.now().toString(36)}`
   const conversation = keyboard
     ? required('CHAT_UI_TEST_CONVERSATION')
     : required('CHAT_UI_CONVERSATION')
@@ -476,7 +477,7 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
       '$ S9 file drag across nested composer children, exact overlay, prepare without sending'
     )
     await m.evalBrowserScript({
-      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
+      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const initialMessages=await (await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();window.chatUiDropPosts=initialMessages.filter(row=>row.kind==='post').length;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
     })
     await m.assertVisible({ text: 'Attaching file to chat' })
     writeFileSync(
@@ -500,19 +501,21 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
         '$ S10 actual desktop Enter once and Shift+Enter newline in a separate synthetic conversation'
       )
       await m.tapOn({ css: '[data-testid="chat-composer"]' })
-      await m.inputText({ text: 'Desktop keyboard probe' })
+      await m.inputText({ text: marker })
       await m.pressKey({ key: 'Shift+Enter' })
       await m.inputText({ text: 'Second line' })
       console.log(
         await m.evalBrowserScript({
-          script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!=='Desktop keyboard probe\\nSecond line')throw new Error('Shift+Enter lost multiline text');return JSON.stringify({shiftEnterNewline:true});`
+          script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!==${JSON.stringify(marker + '\nSecond line')})throw new Error('Shift+Enter lost multiline text');return JSON.stringify({shiftEnterNewline:true});`
         })
       )
       await m.pressKey({ key: 'Enter' })
-      await m.assertVisible({ text: 'Desktop keyboard probe', timeout: 30000 })
+      await m.evalBrowserScript({
+        script: `const marker=${JSON.stringify(marker)};for(let attempt=0;attempt<200;attempt++){const rows=[...document.querySelectorAll('[data-testid^="chat-message-"]')].filter(row=>row.getAttribute('data-testid')!=='chat-message-pane' && row.innerText.includes(marker));if(rows.length>1)throw new Error('Duplicate unique message bubbles');if(rows.length===1){await new Promise(resolve=>setTimeout(resolve,500));return true}await new Promise(resolve=>setTimeout(resolve,50))}throw new Error('Unique posted message bubble did not arrive');`
+      })
       console.log(
         await m.evalBrowserScript({
-          script: `${listed}if(chat.lastSeq!==window.chatUiDropSeq+1)throw new Error('Enter did not send exactly once');if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Successful send did not clear draft');return JSON.stringify({enterSentExactlyOnce:true,draftCleared:true});`
+          script: `${listed}const messages=await (await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();if(messages.filter(row=>row.kind==='post').length!==window.chatUiDropPosts+1)throw new Error('Enter did not send exactly one post: '+JSON.stringify({before:window.chatUiDropPosts,after:messages.filter(row=>row.kind==='post').length,hasBaseline:typeof window.chatUiDropPosts==='number'}));if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Successful send did not clear draft');const markerRows=[...document.querySelectorAll('[data-testid^="chat-message-"]')].filter(row=>row.getAttribute('data-testid')!=='chat-message-pane' && row.innerText.includes(${JSON.stringify(marker)}));if(markerRows.length!==1)throw new Error('Unique marker did not appear in exactly one post bubble');return JSON.stringify({enterSentExactlyOnce:true,uniqueMarkerBubbleCount:markerRows.length,draftCleared:true});`
         })
       )
     }
