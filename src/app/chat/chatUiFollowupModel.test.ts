@@ -124,6 +124,27 @@ describe('chat UI follow-up model', function () {
     const replaced = chatDraftOwner(state, {}, 2)
     expect(replaced.draft('A')).deep.equals(emptyChatDraft())
   })
+
+  it('reconciles against newer externally supplied offscreen draft fields as well as owner revisions', function () {
+    const state = newChatWorkspaceState()
+    const owner = chatDraftOwner(state, {}, 1)
+    owner.write('A', {
+      ...emptyChatDraft(),
+      text: 'Submitted',
+      replyTo: message(),
+      editing: message()
+    })
+    const token = owner.begin('A')!
+    const next = {
+      ...emptyChatDraft(),
+      text: 'Current offscreen',
+      replyTo: message({ id: 'new-reply' }),
+      editing: message({ id: 'new-edit' }),
+      scrollOffset: 240
+    }
+    state.drafts.set('A', next)
+    expect(owner.finish('A', token, true)).deep.equals(next)
+  })
   it('owns each workspace and conversation draft independently', function () {
     const first = newChatWorkspaceState()
     const second = newChatWorkspaceState()

@@ -29,8 +29,8 @@ export function ReplyQuote(props: {
         name,
         props.quote.snippet
       )}
-      onPress={() => {
-        if (props.messageGesture?.canOpen() === false) return
+      onPress={event => {
+        if (props.messageGesture?.canOpen(event) === false) return
         props.onJump(props.quote.id)
       }}
       style={styles.quote}

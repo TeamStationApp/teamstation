@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Keyboard,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -977,6 +979,44 @@ export function ConversationScreen(
     return selected
   }
 
+  const rememberScroll = (
+    event: NativeSyntheticEvent<NativeScrollEvent>
+  ): void => {
+    if (!mounted.current || !paneActive.current) return
+    const { contentOffset, layoutMeasurement } = event.nativeEvent
+    if (restoreTarget.current != null) return
+    scrolled.current.offset = Math.max(0, contentOffset.y)
+    const pending = prepend.current
+    if (
+      pending != null &&
+      latestView.current?.messages[0]?.seq === pending.firstSeq &&
+      Math.abs(scrolled.current.content - pending.content) < 1
+    ) {
+      pending.offset = scrolled.current.offset
+      pending.anchor = readingAnchor(pending.positions)
+    }
+    scrolled.current.hasPosition = true
+    // Native scroll events can carry the temporary viewport geometry
+    // from a hidden pane or a keyboard transition. Keep the current
+    // onLayout height while still recording the actual scroll offset.
+    if (scrolled.current.height <= 0)
+      scrolled.current.height = layoutMeasurement.height
+    scrolled.current.followNewest =
+      scrolled.current.offset + scrolled.current.height >=
+      scrolled.current.content - 48
+    scrolled.current.anchor = readingAnchor(messagePositions.current)
+    props.onDraftChange?.({
+      text: textNow.current,
+      replyTo: replyNow.current,
+      editing: editingNow.current,
+      picked: pickedNow.current,
+      scrollOffset: scrolled.current.offset,
+      hasScrollPosition: true,
+      followNewest: scrolled.current.followNewest,
+      scrollAnchor: scrolled.current.anchor
+    })
+  }
+
   const content = (
     <>
       <View style={[styles.fill, { paddingBottom: lift }]}>
@@ -1074,40 +1114,12 @@ export function ConversationScreen(
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
             gestureGeneration.current += 1
-            if (!mounted.current || !paneActive.current) return
-            const { contentOffset, layoutMeasurement } = event.nativeEvent
-            if (restoreTarget.current != null) return
-            scrolled.current.offset = Math.max(0, contentOffset.y)
-            const pending = prepend.current
-            if (
-              pending != null &&
-              latestView.current?.messages[0]?.seq === pending.firstSeq &&
-              Math.abs(scrolled.current.content - pending.content) < 1
-            ) {
-              pending.offset = scrolled.current.offset
-              pending.anchor = readingAnchor(pending.positions)
-            }
-            scrolled.current.hasPosition = true
-            // Native scroll events can carry the temporary viewport geometry
-            // from a hidden pane or a keyboard transition. Keep the current
-            // onLayout height while still recording the actual scroll offset.
-            if (scrolled.current.height <= 0)
-              scrolled.current.height = layoutMeasurement.height
-            scrolled.current.followNewest =
-              scrolled.current.offset + scrolled.current.height >=
-              scrolled.current.content - 48
-            scrolled.current.anchor = readingAnchor(messagePositions.current)
-            props.onDraftChange?.({
-              text: textNow.current,
-              replyTo: replyNow.current,
-              editing: editingNow.current,
-              picked: pickedNow.current,
-              scrollOffset: scrolled.current.offset,
-              hasScrollPosition: true,
-              followNewest: scrolled.current.followNewest,
-              scrollAnchor: scrolled.current.anchor
-            })
+            rememberScroll(event)
           }}
+          // A throttled Android stream need not send its last edge offset.
+          // End events carry the authoritative settled position.
+          onScrollEndDrag={rememberScroll}
+          onMomentumScrollEnd={rememberScroll}
           onScrollBeginDrag={() => {
             gestureGeneration.current += 1
             if (Platform.OS !== 'web') userScrolled()
