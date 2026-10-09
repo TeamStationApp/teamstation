@@ -1,5 +1,10 @@
-import type { ScoringAction } from '../../common/scoring/actions'
-import { completesHitOffer, undoesHitOffer } from '../../common/scoring/rules'
+import type { Problem, ScoringAction } from '../../common/scoring/actions'
+import {
+  awaitingResult,
+  completesHitOffer,
+  currentSetupError,
+  undoesHitOffer
+} from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { copyGame, setupOf } from '../../common/scoring/state'
 import {
@@ -525,6 +530,10 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     return dictated(state, {
       transcript: question.transcript,
       actions,
+      acceptedLineup:
+        event.acceptedLineup === undefined
+          ? question.acceptedLineup
+          : event.acceptedLineup,
       answered: true
     })
   }
@@ -733,7 +742,8 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
             batter: event.draft.batter ?? undefined,
             pitcher: event.draft.pitcher ?? undefined
           })
-        next.phase = 'ready'
+        next.phase =
+          next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
         next.generation++
       }
     )
@@ -883,19 +893,35 @@ export function atRest(state: ScoringState): boolean {
 /**
  * A dictated sentence. It is one edit: every action applies, as one entry in
  * Undo labelled with what was said, or none does and the reason is kept for
- * the screen. The rules engine decides, through `act`, exactly as for a tap.
+ * the screen. At a setup boundary the valid prior-half prefix finishes,
+ * while rejected next-half actions are omitted from the saved log.
  */
 function dictated(
   state: ScoringState,
   event: {
     transcript: string
     actions: readonly ScoringAction[]
+    acceptedLineup?: string | null
     /** The whole sentence an answer came to: not asked about again. */
     answered?: boolean
   }
 ): ScoringState {
   const { transcript } = event
   if (event.actions.length === 0) return state
+  if (
+    state.readOnly !== true &&
+    state.session.pending == null &&
+    !awaitingResult(state.session) &&
+    !['lineup', 'gameFlow'].includes(event.actions[0].type)
+  ) {
+    const problem = currentSetupError(state.session, event.acceptedLineup)
+    if (problem != null)
+      return {
+        ...state,
+        dictationQuestion: undefined,
+        dictation: { transcript, problem: { code: 'notNow', message: problem } }
+      }
+  }
   // What was left to be assumed is filled in, a steal is the runner's on the
   // base before the one taken, and runners who move together go lead runner
   // first, however they were said.
@@ -926,7 +952,11 @@ function dictated(
       ...state,
       queuedDictation: [
         ...(state.queuedDictation ?? []),
-        { transcript, actions: [...actions] }
+        {
+          transcript,
+          actions: [...actions],
+          acceptedLineup: event.acceptedLineup
+        }
       ]
     }
   if (!atRest(state))
@@ -939,27 +969,63 @@ function dictated(
     event.answered === true
   )
   if (asked != null)
-    return { ...current, dictationQuestion: { transcript, ...asked } }
+    return {
+      ...current,
+      dictationQuestion: {
+        transcript,
+        acceptedLineup: event.acceptedLineup,
+        ...asked
+      }
+    }
   // What a first play needs answered before the rest of the sentence.
   if (between.question != null)
     return {
       ...current,
-      dictationQuestion: { transcript, ...between.question }
+      dictationQuestion: {
+        transcript,
+        acceptedLineup: event.acceptedLineup,
+        ...between.question
+      }
     }
   let game = state.session
-  for (const action of actions) {
-    const applied = applyAction(game, action)
-    if (applied.problems.length > 0)
+  let prefix = actions
+  let setupProblem: Problem | undefined
+  for (const [index, action] of actions.entries()) {
+    const applied = applyAction(game, action, {
+      requireCurrentSetup: true,
+      acceptedLineup: event.acceptedLineup
+    })
+    if (applied.problems.length > 0) {
+      const problem = applied.problems[0]
+      if (
+        index > 0 &&
+        problem.code === 'notNow' &&
+        /^(Missing defensive positions:|No players in lineup|Accept the current batting lineup)/.test(
+          problem.message
+        )
+      ) {
+        prefix = actions.slice(0, index)
+        setupProblem = problem
+        break
+      }
       return {
         ...current,
-        dictation: { transcript, problem: applied.problems[0] }
+        dictation: { transcript, problem }
       }
+    }
     game = applied.state
   }
   // Whatever the play is left waiting on is finished, or asked.
-  const done = completeSentence(state.session, actions)
+  const done = completeSentence(state.session, prefix)
   if ('question' in done)
-    return { ...current, dictationQuestion: { transcript, ...done.question } }
+    return {
+      ...current,
+      dictationQuestion: {
+        transcript,
+        acceptedLineup: event.acceptedLineup,
+        ...done.question
+      }
+    }
   const sentence = done.actions
   const reel = new ReelBuilder(state.presentationEnabled === true)
   const next = accepted(current, transcript, edit => {
@@ -981,5 +1047,11 @@ function dictated(
   })
   // The dry run and `act` consult the same rules, so this is only a guard.
   if (next === current) return refused('The game would not take that')
-  return { ...next, dictation: { transcript } }
+  return {
+    ...next,
+    dictation: {
+      transcript,
+      ...(setupProblem == null ? {} : { problem: setupProblem })
+    }
+  }
 }

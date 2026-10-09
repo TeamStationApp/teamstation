@@ -6,6 +6,8 @@ export interface RosterDragProps {
   /** Player information announced with the control action. */
   value?: string
   disabled?: boolean
+  /** Mouse dragging starts immediately; touch still holds to preserve scrolling. */
+  immediateMouseDrag?: boolean
   onTap?: () => void
   onReorder?: (delta: number) => void
   insertion?: 'row' | 'end'

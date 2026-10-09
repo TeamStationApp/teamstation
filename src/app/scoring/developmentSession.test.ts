@@ -157,19 +157,20 @@ describe('the lineups a game starts from (U12)', function () {
     expect(setup.sides.away.battingIndex).equals(0)
   })
 
-  it('keeps the roster lineup when the default leaves no batter or no pitcher', function () {
-    const plain = startingSetup(game, away, home)
+  it('keeps incomplete defaults visible for lineup and defensive setup', function () {
     const gone: Lineup = {
       batters: [person(998), person(999)],
       defense: { ...noDefense(), P: person(101) }
     }
-    expect(startingSetup(game, away, home, { away: gone })).deep.equals(plain)
+    const empty = startingSetup(game, away, home, { away: gone })
+    expect(empty.sides.away.battingOrder).deep.equals([])
+    expect(empty.sides.away.defense.P).not.equals(null)
     const noPitcher: Lineup = {
       batters: [person(101)],
       defense: { ...noDefense(), P: person(999) }
     }
-    expect(startingSetup(game, away, home, { away: noPitcher })).deep.equals(
-      plain
-    )
+    const incomplete = startingSetup(game, away, home, { away: noPitcher })
+    expect(incomplete.sides.away.battingOrder).has.length(1)
+    expect(incomplete.sides.away.defense.P).equals(null)
   })
 })

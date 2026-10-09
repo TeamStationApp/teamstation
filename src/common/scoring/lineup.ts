@@ -91,7 +91,11 @@ export function startAppearance(state: GameState): GameState['awaitingBatter'] {
   const lineup = state.liveData.boxscore.teams[side]
   const id = lineup.battingOrder[lineup.battingIndex]
   updateDefense(state)
-  if (id == null) throw new Error('A lineup needs a batter')
+  if (id == null) {
+    state.liveData.linescore.offense.batter = null
+    state.liveData.plays.currentPlay = null
+    return null
+  }
   if (baseIds(state).includes(id)) {
     state.liveData.linescore.offense.batter = null
     state.liveData.plays.currentPlay = null
@@ -103,8 +107,11 @@ export function startAppearance(state: GameState): GameState['awaitingBatter'] {
   }
   const batter = playerRef(state, id)
   const pitcher = state.liveData.linescore.defense.P
-  if (pitcher == null) throw new Error('A batter and pitcher are required')
   state.liveData.linescore.offense.batter = batter
+  if (pitcher == null) {
+    state.liveData.plays.currentPlay = null
+    return null
+  }
   state.liveData.plays.currentPlay = asGamePlay({
     about: {
       atBatIndex: state.liveData.plays.allPlays.length,
@@ -150,17 +157,21 @@ export function canSwitchBatter(state: GameState): boolean {
 const unique = (ids: number[]): boolean => new Set(ids).size === ids.length
 
 /** Why a setup cannot be played, or undefined when it can. */
-export function validateRoster(state: {
-  gameData: GameState['gameData']
-  liveData: { boxscore: GameState['liveData']['boxscore'] }
-}): string | undefined {
+export function validateRoster(
+  state: {
+    gameData: GameState['gameData']
+    liveData: { boxscore: GameState['liveData']['boxscore'] }
+  },
+  allowIncomplete = false
+): string | undefined {
   for (const side of ['away', 'home'] as const) {
     const team = state.liveData.boxscore.teams[side]
     const name = state.gameData.teams[side].name
     const member = (id: number): boolean =>
       team.players.includes(id) &&
       state.gameData.players[id]?.teamId === state.gameData.teams[side].id
-    if (team.battingOrder.length === 0) return `${name} needs a lineup.`
+    if (!allowIncomplete && team.battingOrder.length === 0)
+      return `${name} needs a lineup.`
     if (
       !unique(team.players) ||
       !unique(team.battingOrder) ||
@@ -170,7 +181,8 @@ export function validateRoster(state: {
     const defense = POSITIONS.map(position => team.defense[position]).filter(
       (id): id is number => id != null
     )
-    if (team.defense.P == null) return `${name} needs a pitcher.`
+    if (!allowIncomplete && team.defense.P == null)
+      return `${name} needs a pitcher.`
     if (!unique(defense) || !defense.every(member))
       return `${name} has an invalid or duplicate defender.`
   }
@@ -204,12 +216,27 @@ export function applyRoster(
     gameData: { teams: state.gameData.teams, players: setup.players },
     liveData: { boxscore: { teams: setup.sides } }
   }
-  const error = validateRoster(draft)
+  const error = validateRoster(draft, true)
   if (error != null) return { error }
   const next = copyState(state)
   next.gameData.players = copyState(setup.players)
   next.meta.identities = copyState(setup.identities)
   const activeSide = battingSide(next)
+  if (
+    setup.sides[activeSide].battingOrder.length === 0 &&
+    state.liveData.plays.currentPlay?.playEvents.some(
+      event => event.isSubstitution !== true
+    ) === true
+  )
+    return { error: 'Finish the at-bat before clearing the lineup.' }
+  const activeOrder = state.liveData.boxscore.teams[activeSide].battingOrder
+  const keepAwaiting =
+    state.awaitingBatter != null &&
+    nextBatter == null &&
+    activeOrder.length === setup.sides[activeSide].battingOrder.length &&
+    activeOrder.every(
+      (id, index) => id === setup.sides[activeSide].battingOrder[index]
+    )
   const bases = baseIds(next)
   const places: Partial<Record<Side, Places>> = {}
   for (const side of ['away', 'home'] as const) {
@@ -239,6 +266,16 @@ export function applyRoster(
     const after: GameSide = copyState(setup.sides[side])
     after.battingOrder = places[side]!.order
     after.pitchCounts = copyState(before.pitchCounts)
+    if (after.battingOrder.length === 0) {
+      after.battingIndex = 0
+      next.liveData.boxscore.teams[side] = after
+      continue
+    }
+    if (side === activeSide && keepAwaiting) {
+      after.battingIndex = before.battingIndex
+      next.liveData.boxscore.teams[side] = after
+      continue
+    }
     const due = before.battingOrder[before.battingIndex]
     const oldId = after.battingOrder.includes(due)
       ? due
@@ -276,7 +313,14 @@ export function applyRoster(
       offense[key] = playerRef(next, id)
   })
   updateDefense(next)
+  if (keepAwaiting) return { state: next, takers }
   const team = next.liveData.boxscore.teams[activeSide]
+  if (team.battingOrder.length === 0) {
+    next.liveData.linescore.offense.batter = null
+    next.liveData.plays.currentPlay = null
+    next.awaitingBatter = null
+    return { state: next, takers }
+  }
   const batter = playerRef(next, team.battingOrder[team.battingIndex])
   const play = next.liveData.plays.currentPlay
   if (play == null) startAppearance(next)
@@ -1082,7 +1126,8 @@ export function freshGame(
  */
 export function newSetup(
   teams: Record<Side, GameTeam>,
-  rosters: Record<Side, RosterPlayer[]>
+  rosters: Record<Side, RosterPlayer[]>,
+  fillRoster = true
 ): GameSetup {
   const players: Record<number, GamePlayer> = {}
   const draft = {
@@ -1109,13 +1154,14 @@ export function newSetup(
       }
       team.players.push(id)
     }
-    while (team.players.length < 9)
-      addPlayer(
-        draft,
-        side,
-        `Player ${team.players.length + 1}`,
-        String(team.players.length + 1)
-      )
+    if (fillRoster)
+      while (team.players.length < 9)
+        addPlayer(
+          draft,
+          side,
+          `Player ${team.players.length + 1}`,
+          String(team.players.length + 1)
+        )
     team.battingOrder = [...team.players]
     const assigned = new Set<number>()
     for (const position of POSITIONS) {

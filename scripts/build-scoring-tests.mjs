@@ -5,7 +5,10 @@ import { build } from 'esbuild'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
-const files = globSync('src/**/*.test.tsx')
+const currentSetup = process.argv.includes('--current-setup')
+const files = currentSetup
+  ? globSync(['src/app/scoring/*.test.tsx', 'src/app/field/*.test.tsx'])
+  : globSync('src/**/*.test.tsx')
 await build({
   ...webSettings,
   stdin: {
@@ -13,7 +16,9 @@ await build({
     resolveDir: process.cwd(),
     sourcefile: 'scoring-test-entry.ts'
   },
-  outfile: 'lib/scoring-tests.cjs',
+  outfile: currentSetup
+    ? 'lib/current-setup-tests.cjs'
+    : 'lib/scoring-tests.cjs',
   platform: 'node',
   format: 'cjs',
   bundle: true,

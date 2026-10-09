@@ -59,6 +59,42 @@ describe('placeholder count sheet and platform adapters', function () {
       (node('Add Placeholder Players').firstChild as HTMLElement).style.color
     ).equals('rgb(122, 152, 96)')
   })
+  it('retries a failed asynchronous add and prevents duplicate submissions while saving', async function () {
+    let attempts = 0
+    let closes = 0
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await mount(
+      <PlaceholderPlayersSheet
+        onClose={() => {
+          closes++
+        }}
+        onAdd={async () => {
+          attempts++
+          if (attempts === 1) throw new Error('Offline')
+          await pending
+        }}
+      />
+    )
+    await click('Add')
+    expect(document.body.textContent).includes(
+      'Unable to add players. Please try again.'
+    )
+    expect(closes).equals(0)
+    await act(async () => {
+      node('Add').click()
+      node('Add').click()
+    })
+    expect(attempts).equals(2)
+    expect(node('Add').getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      release()
+      await pending
+    })
+    expect(closes).equals(1)
+  })
   it('clamps rows and commits the currently scrolled selection exactly once', async function () {
     expect(
       [NaN, Infinity, -1, 0, 1, 2.7, 16, 99].map(clampPlayerCount)
@@ -70,7 +106,9 @@ describe('placeholder count sheet and platform adapters', function () {
     let closes = 0
     await mount(
       <PlaceholderPlayersSheet
-        onAdd={n => counts.push(n)}
+        onAdd={n => {
+          counts.push(n)
+        }}
         onClose={() => {
           closes++
         }}
