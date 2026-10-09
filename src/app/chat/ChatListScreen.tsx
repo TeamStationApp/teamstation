@@ -14,7 +14,7 @@ import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { announceChatArrival } from './chatAnnouncements'
-import { pressPoint } from './chatInteractionModel'
+import { pressPoint, pressStamp } from './chatInteractionModel'
 import {
   canStartDm,
   conversationPill,
@@ -63,21 +63,26 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const visible = useRef<string[]>([])
   const gestureGeneration = useRef(0)
   const restored = useRef(false)
+  // Metadata/preview refreshes produce new arrays without replacing the rows.
+  const dataKey =
+    chats == null
+      ? undefined
+      : JSON.stringify(chats.map(chat => chat.id).sort())
   const listGeometry = useRef({
     height: 0,
     content: 0,
-    data: undefined as ConversationListItem[] | undefined
+    data: undefined as string | undefined
   })
   const restoreOffset = useRef(props.initialOffset ?? 0)
-  const measuredTail = useRef<ConversationListItem[] | undefined>(undefined)
+  const measuredTail = useRef<string | undefined>(undefined)
   const restoreList = useCallback(() => {
     if (restored.current || chats == null) return
     const { height, content, data } = listGeometry.current
-    if (height <= 0 || content <= 0 || data !== chats) return
+    if (height <= 0 || content <= 0 || data !== dataKey) return
     if (
       content < height + restoreOffset.current &&
       chats.length > 0 &&
-      measuredTail.current !== chats
+      measuredTail.current !== dataKey
     )
       return
     // Refresh can legitimately remove rows; clamp only measured current data.
@@ -90,7 +95,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       animated: false
     })
     restored.current = true
-  }, [chats])
+  }, [chats, dataKey])
   useEffect(restoreList, [restoreList])
   useEffect(
     () =>
@@ -193,7 +198,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         }}
         onContentSizeChange={(_width, height) => {
           listGeometry.current.content = height
-          listGeometry.current.data = chats
+          listGeometry.current.data = dataKey
           restoreList()
         }}
         onScroll={event => {
@@ -252,7 +257,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
                   item.chat.id === rows.at(-1)?.key &&
                   event.nativeEvent.layout.height > 0
                 ) {
-                  measuredTail.current = chats
+                  measuredTail.current = dataKey
                   restoreList()
                 }
               }}
@@ -311,7 +316,8 @@ function ConversationRow(props: {
     generation: 0,
     cancelled: false,
     recognized: false,
-    pointer: false
+    pointer: false,
+    nativeStart: undefined as ReturnType<typeof pressStamp>
   })
   const title = conversationTitle(chat)
   const pill = conversationPill(chat)
@@ -319,6 +325,7 @@ function ConversationRow(props: {
   const openMenu = (): void => {
     if (
       held.current.cancelled ||
+      held.current.recognized ||
       !held.current.pointer ||
       held.current.generation !== props.gestureGeneration.current
     )
@@ -349,13 +356,21 @@ function ConversationRow(props: {
         }}
         onPressIn={event => {
           const point = pressPoint(event.nativeEvent)
+          const nativeStart = pressStamp(event.nativeEvent)
+          if (
+            nativeStart != null &&
+            nativeStart.identifier === held.current.nativeStart?.identifier &&
+            nativeStart.timestamp === held.current.nativeStart?.timestamp
+          )
+            return
           held.current = {
             x: point?.x ?? 0,
             y: point?.y ?? 0,
             generation: props.gestureGeneration.current,
             cancelled: false,
             recognized: false,
-            pointer: point != null
+            pointer: point != null,
+            nativeStart
           }
         }}
         onTouchMove={event => {
@@ -371,7 +386,21 @@ function ConversationRow(props: {
         }}
         onLongPress={props.narrow ? openMenu : undefined}
         delayLongPress={500}
-        onPress={() => {
+        onPress={event => {
+          const started = held.current.nativeStart
+          const released = pressStamp(event.nativeEvent)
+          if (props.narrow && started != null && released != null) {
+            const point = pressPoint(event.nativeEvent)
+            if (
+              released.identifier !== started.identifier ||
+              released.timestamp < started.timestamp ||
+              point == null ||
+              Math.hypot(point.x - held.current.x, point.y - held.current.y) >
+                10
+            )
+              held.current.cancelled = true
+            else if (released.timestamp - started.timestamp >= 500) openMenu()
+          }
           if (
             !held.current.recognized &&
             !held.current.cancelled &&

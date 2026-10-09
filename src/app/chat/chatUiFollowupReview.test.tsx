@@ -10,6 +10,7 @@ import { ChatOverlayHost } from './ChatOverlayHost'
 import { chat, member, message, view } from './chatViews.test.helpers'
 import { ChatWorkspace } from './ChatWorkspace'
 import {
+  type ChatDraft,
   type ChatWorkspaceState,
   emptyChatDraft,
   newChatWorkspaceState
@@ -17,6 +18,7 @@ import {
 import type { MessageView } from './engine/apply'
 import type { ConversationListItem, ConversationView } from './engine/engine'
 import type { ChatEngineEvent, ChatEngineListener } from './engine/store'
+import { MessageBubble } from './MessageBubble'
 import { MessageMenu } from './MessageMenu'
 import type { ChatScreenEngine } from './screenEngine'
 
@@ -25,22 +27,26 @@ const originalPointer = Object.getOwnPropertyDescriptor(
   globalThis,
   'matchMedia'
 )
+const originalVibration = Object.getOwnPropertyDescriptor(navigator, 'vibrate')
 
 afterEach(async function () {
   await unmount()
   if (originalPointer != null)
     Object.defineProperty(globalThis, 'matchMedia', originalPointer)
   else Reflect.deleteProperty(globalThis, 'matchMedia')
+  if (originalVibration != null)
+    Object.defineProperty(navigator, 'vibrate', originalVibration)
+  else Reflect.deleteProperty(navigator, 'vibrate')
 })
 
 const wait = async (ms = 20): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function render(element: React.ReactElement): Promise<void> {
+async function render(element: React.ReactElement, fine = true): Promise<void> {
   Object.defineProperty(globalThis, 'matchMedia', {
     configurable: true,
-    value: () => ({ matches: true })
+    value: () => ({ matches: fine })
   })
   if (root == null) {
     const host = document.createElement('div')
@@ -251,7 +257,7 @@ class ReviewEngine implements ChatScreenEngine {
 async function workspace(
   engine: ReviewEngine,
   state: ChatWorkspaceState,
-  conversationId = 'cnv_aurora',
+  conversationId: string | null = 'cnv_aurora',
   userId = 1
 ): Promise<void> {
   await render(
@@ -260,7 +266,7 @@ async function workspace(
         engine={engine}
         userId={userId}
         state={state}
-        conversationId={conversationId}
+        conversationId={conversationId ?? undefined}
         onOpen={() => {}}
         onMembers={() => {}}
         onNewMessage={() => {}}
@@ -591,14 +597,15 @@ describe('chat review popup lifetime and accessible failures', function () {
 async function layout(
   node: HTMLElement,
   width: number,
-  height: number
+  height: number,
+  y = 0
 ): Promise<void> {
   const handler = (
     node as HTMLElement & { __reactLayoutHandler?: (event: unknown) => void }
   ).__reactLayoutHandler
   expect(handler, 'Rendered native layout handler').not.equals(undefined)
   await act(async () => {
-    handler!({ nativeEvent: { layout: { x: 0, y: 0, width, height } } })
+    handler!({ nativeEvent: { layout: { x: 0, y, width, height } } })
     await wait()
   })
 }
@@ -741,13 +748,31 @@ describe('chat review list return restoration', function () {
       expect(pending.node.scrollTop).equals(80)
       expect(pending.offsets.at(-1)).equals(80)
     })
+
+  it('restores measured populated rows through a same-ID metadata refresh without another content-size event', async function () {
+    const pending = await returningList(false)
+    await pending.populate(8)
+    await pending.content(1800)
+    expect(pending.moves, 'Viewport geometry is not available yet').deep.equals(
+      []
+    )
+    await pending.refreshMetadata()
+    expect(
+      document.querySelector('[data-testid="chat-conversation-cnv_return_0"]')!
+        .textContent
+    ).contains('Updated practice preview')
+    await layout(pending.node, 320, 400)
+    expect(pending.moves).deep.equals([240])
+    expect(pending.node.scrollTop).equals(240)
+  })
 })
 
-async function returningList(): Promise<{
+async function returningList(measureViewport = true): Promise<{
   node: HTMLElement
   moves: number[]
   offsets: number[]
   populate: (count: number) => Promise<void>
+  refreshMetadata: () => Promise<void>
   setDomContent: (height: number) => void
   content: (height: number) => Promise<void>
   scroll: (top: number) => Promise<void>
@@ -756,6 +781,7 @@ async function returningList(): Promise<{
   const refreshed = deferred<ConversationListItem[]>()
   engine.refreshWork = refreshed.promise
   const offsets: number[] = []
+  let rows: ConversationListItem[] = []
   await render(
     <ChatListScreen
       engine={engine}
@@ -782,7 +808,7 @@ async function returningList(): Promise<{
     moves.push(top)
     node.scrollTop = Math.min(top, Math.max(0, contentHeight - 400))
   }
-  await layout(node, 320, 400)
+  if (measureViewport) await layout(node, 320, 400)
   await layout(node.firstElementChild as HTMLElement, 320, contentHeight)
   return {
     node,
@@ -790,15 +816,26 @@ async function returningList(): Promise<{
     offsets,
     populate: async count => {
       await act(async () => {
-        refreshed.resolve(
-          Array.from({ length: count }, (_, index) =>
-            chat({
-              id: `cnv_return_${index}`,
-              title: `Solstice ${index} Members`,
-              scopeName: `Solstice ${index}`
-            })
-          )
+        rows = Array.from({ length: count }, (_, index) =>
+          chat({
+            id: `cnv_return_${index}`,
+            title: `Solstice ${index} Members`,
+            scopeName: `Solstice ${index}`
+          })
         )
+        refreshed.resolve(rows)
+        await wait()
+      })
+    },
+    refreshMetadata: async () => {
+      await act(async () => {
+        rows = rows.map(row => ({
+          ...row,
+          preview: 'Updated practice preview',
+          unread: 1
+        }))
+        engine.conversations = () => rows
+        engine.emit({ type: 'conversations' })
         await wait()
       })
     },
@@ -818,3 +855,649 @@ async function returningList(): Promise<{
     }
   }
 }
+
+interface ReadingScrollEvent {
+  nativeEvent: {
+    contentOffset: { x: number; y: number }
+    contentSize: { width: number; height: number }
+    layoutMeasurement: { width: number; height: number }
+  }
+}
+
+type ScrollPhase = 'onScroll' | 'onScrollEndDrag' | 'onMomentumScrollEnd'
+type ScrollCallbacks = Partial<
+  Record<ScrollPhase, (event: ReadingScrollEvent) => void>
+>
+
+function renderedReadingCallbacks(node: HTMLElement): ScrollCallbacks {
+  interface RenderedFiber {
+    memoizedProps?: ScrollCallbacks & { onContentSizeChange?: unknown }
+    return?: RenderedFiber
+  }
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
+  let fiber = (node as unknown as Record<string, RenderedFiber | undefined>)[
+    key
+  ]
+  while (fiber != null) {
+    if (typeof fiber.memoizedProps?.onContentSizeChange === 'function')
+      return fiber.memoizedProps
+    fiber = fiber.return
+  }
+  throw new Error('Rendered message ScrollView not found')
+}
+
+function terminalReadingPane(): {
+  node: HTMLElement
+  moves: number[]
+  measure: () => Promise<void>
+  deliver: (
+    callbacks: ScrollCallbacks,
+    phase: ScrollPhase,
+    offset: number
+  ) => Promise<void>
+} {
+  const pane = document.querySelector('[data-testid="chat-message-pane"]')!
+  const node = [...pane.querySelectorAll<HTMLElement>('div')].find(
+    element => getComputedStyle(element).overflowY === 'auto'
+  )!
+  expect(node, 'Actual message scroll view').not.equals(undefined)
+  const body = node.firstElementChild as HTMLElement
+  const row = document.querySelector<HTMLElement>(
+    '[data-testid="chat-message-msg_original"]'
+  )!.parentElement!
+  const moves: number[] = []
+  node.getBoundingClientRect = () => new window.DOMRect(0, 0, 640, 400)
+  body.getBoundingClientRect = () =>
+    new window.DOMRect(0, -node.scrollTop, 640, 2200)
+  row.getBoundingClientRect = () =>
+    new window.DOMRect(0, -node.scrollTop, 640, 1000)
+  Object.defineProperties(node, {
+    scrollHeight: { configurable: true, value: 2200 },
+    clientHeight: { configurable: true, value: 400 },
+    offsetHeight: { configurable: true, value: 400 },
+    offsetWidth: { configurable: true, value: 640 }
+  })
+  Object.defineProperties(body, {
+    offsetParent: { configurable: true, value: node },
+    offsetHeight: { configurable: true, value: 2200 },
+    offsetWidth: { configurable: true, value: 640 }
+  })
+  Object.defineProperties(row, {
+    offsetParent: { configurable: true, value: body },
+    offsetTop: { configurable: true, value: 0 },
+    offsetHeight: { configurable: true, value: 1000 },
+    offsetWidth: { configurable: true, value: 640 }
+  })
+  node.scroll = options => {
+    const top = (options as ScrollToOptions).top ?? 0
+    moves.push(top)
+    node.scrollTop = Math.min(top, 1800)
+  }
+  return {
+    node,
+    moves,
+    measure: async () => {
+      await layout(node, 640, 400)
+      await layout(body, 640, 2200)
+      await layout(row, 640, 1000)
+      await act(async () => {
+        await wait(80)
+      })
+    },
+    deliver: async (callbacks, phase, offset) => {
+      await act(async () => {
+        node.scrollTop = offset
+        callbacks[phase]?.({
+          nativeEvent: {
+            contentOffset: { x: 0, y: offset },
+            contentSize: { width: 640, height: 2200 },
+            layoutMeasurement: { width: 640, height: 400 }
+          }
+        })
+        await wait()
+      })
+    }
+  }
+}
+
+function terminalDraft(): ChatDraft {
+  return {
+    ...emptyChatDraft(),
+    text: 'Current unsent body',
+    replyTo: original(),
+    picked: [prepared()],
+    scrollOffset: 22,
+    hasScrollPosition: true,
+    followNewest: false
+  }
+}
+
+describe('chat review final native scroll positions', function () {
+  it('saves the final drag and momentum zero offsets instead of the last throttled position and reopens at the first row', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', { messages: [original()] })
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', terminalDraft())
+    await workspace(engine, state)
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      320,
+      700
+    )
+    const reading = terminalReadingPane()
+    await reading.measure()
+    await act(async () => {
+      reading.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: -1 })
+      )
+      await wait()
+    })
+    const callbacks = renderedReadingCallbacks(reading.node)
+    for (const phase of ['onScrollEndDrag', 'onMomentumScrollEnd'] as const) {
+      await reading.deliver(callbacks, 'onScroll', 22.095)
+      expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(22.095)
+      await reading.deliver(callbacks, phase, 0)
+      const saved = state.drafts.get('cnv_aurora')!
+      expect(saved.scrollOffset, `${phase} carries the real final edge`).equals(
+        0
+      )
+      expect(saved.hasScrollPosition).equals(true)
+      expect(saved.followNewest).equals(false)
+      expect(saved.scrollAnchor).deep.equals({
+        id: 'msg_original',
+        relativeY: 0
+      })
+    }
+    await workspace(engine, state, null)
+    await workspace(engine, state, 'cnv_solstice')
+    await workspace(engine, state, null)
+    await workspace(engine, state)
+    const reopened = terminalReadingPane()
+    await reopened.measure()
+    expect(reopened.moves).contains(0)
+    expect(
+      reopened.moves.some(offset => offset > 0),
+      'No stale offset or newest-follow restoration'
+    ).equals(false)
+    expect(reopened.node.scrollTop).equals(0)
+    expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(0)
+    expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
+      id: 'msg_original',
+      relativeY: 0
+    })
+  })
+
+  it('ignores queued retained drag and momentum endings after the pane hides or unmounts without writing drafts or commanding scroll', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', { messages: [original()] })
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', terminalDraft())
+    await workspace(engine, state)
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      320,
+      700
+    )
+    const reading = terminalReadingPane()
+    await reading.measure()
+    await act(async () => {
+      reading.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+      )
+      await wait()
+    })
+    const retained = renderedReadingCallbacks(reading.node)
+    await reading.deliver(retained, 'onScroll', 22)
+    await workspace(engine, state, null)
+    expect(
+      document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
+        .style.display
+    ).equals('none')
+    const hidden = state.drafts.get('cnv_aurora')!
+    reading.moves.length = 0
+    await reading.deliver(retained, 'onScrollEndDrag', 0)
+    await reading.deliver(retained, 'onMomentumScrollEnd', 999)
+    expect(
+      state.drafts.get('cnv_aurora'),
+      'Hidden callbacks must not write'
+    ).equals(hidden)
+    expect(hidden.scrollOffset).equals(22)
+    expect(hidden.text).equals('Current unsent body')
+    expect(hidden.replyTo?.id).equals('msg_original')
+    expect(hidden.picked.map(file => file.fileName)).deep.equals(['notes.pdf'])
+    expect(reading.moves).deep.equals([])
+    await unmount()
+    const removed = state.drafts.get('cnv_aurora')
+    await reading.deliver(retained, 'onScrollEndDrag', 888)
+    await reading.deliver(retained, 'onMomentumScrollEnd', 0)
+    expect(
+      state.drafts.get('cnv_aurora'),
+      'Unmounted callbacks must not write'
+    ).equals(removed)
+    expect(reading.moves).deep.equals([])
+  })
+})
+
+interface NativeContact {
+  timestamp: number
+  identifier: number
+  pageX: number
+  pageY: number
+}
+
+interface NativePressEvent {
+  nativeEvent: Partial<NativeContact> & {
+    touches?: NativeContact[]
+    changedTouches?: NativeContact[]
+  }
+}
+
+type PressPhase =
+  'onPressIn' | 'onPress' | 'onLongPress' | 'onTouchMove' | 'onTouchCancel'
+type NativePressCallbacks = Partial<
+  Record<PressPhase, (event: NativePressEvent) => void>
+>
+type NativeTarget = 'body' | 'file' | 'video' | 'quote' | 'reaction'
+
+function contact(
+  timestamp: number,
+  identifier = 7,
+  x = 20,
+  stamp: 'direct' | 'array' = 'direct'
+): NativePressEvent {
+  const point = { timestamp, identifier, pageX: x, pageY: 20 }
+  const event: NativePressEvent = {
+    nativeEvent: { ...point, touches: [point], changedTouches: [point] }
+  }
+  if (stamp === 'array') {
+    delete event.nativeEvent.timestamp
+    delete event.nativeEvent.identifier
+  }
+  return event
+}
+
+function renderedPressCallbacks(node: HTMLElement): NativePressCallbacks {
+  interface RenderedFiber {
+    memoizedProps?: NativePressCallbacks
+    return?: RenderedFiber
+  }
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
+  let fiber = (node as unknown as Record<string, RenderedFiber | undefined>)[
+    key
+  ]
+  while (fiber != null) {
+    if (typeof fiber.memoizedProps?.onPressIn === 'function')
+      return fiber.memoizedProps
+    fiber = fiber.return
+  }
+  throw new Error('Rendered native Pressable callbacks not found')
+}
+
+async function nativePress(
+  callbacks: NativePressCallbacks,
+  phase: PressPhase,
+  event: NativePressEvent
+): Promise<void> {
+  // Deliver native-time packets immediately, without PressOut or advancing
+  // the JavaScript hold timer. Pressability may defer its JS PressOut signal.
+  await act(async () => {
+    callbacks[phase]?.(event)
+    await Promise.resolve()
+  })
+}
+
+async function compressedRelease(
+  callbacks: NativePressCallbacks,
+  start: NativePressEvent,
+  release: NativePressEvent
+): Promise<void> {
+  // Both packets run in the same JS turn, including releases delivered before
+  // Pressability's minimum JS press duration. The child must gate its action.
+  await act(async () => {
+    callbacks.onPressIn?.(start)
+    callbacks.onPress?.(release)
+    await Promise.resolve()
+  })
+}
+
+let nativeFixture = 0
+async function nativeGesture(kind: NativeTarget): Promise<{
+  target: NativePressCallbacks
+  body: NativePressCallbacks
+  opens: string[]
+  short: string[]
+  pulses: number[]
+  generation: { current: number }
+}> {
+  const opens: string[] = []
+  const short: string[] = []
+  const pulses: number[] = []
+  const generation = { current: 0 }
+  Object.defineProperty(navigator, 'vibrate', {
+    configurable: true,
+    value: (duration: number) => {
+      pulses.push(duration)
+      return true
+    }
+  })
+  const value = original(`msg_native_${kind}`)
+  value.body = 'Practice notes'
+  if (kind === 'file' || kind === 'video')
+    value.attachments = [
+      {
+        id: `cat_native_${kind}`,
+        key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        digest: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        size: 1,
+        contentType: kind === 'file' ? 'application/pdf' : 'video/mp4',
+        fileName: kind === 'file' ? 'notes.pdf' : 'practice-clip.mp4',
+        ...(kind === 'video' ? { width: 640, height: 360 } : {})
+      }
+    ]
+  if (kind === 'quote')
+    value.quote = {
+      id: 'msg_original',
+      authorId: 2,
+      authorName: 'Shohei Ohtani',
+      snippet: 'Practice notes',
+      status: 'ok'
+    }
+  if (kind === 'reaction')
+    value.reactions = [{ emoji: '👍', userIds: [2], mine: false }]
+  await render(
+    <MessageBubble
+      key={++nativeFixture}
+      message={value}
+      conversation={chat()}
+      members={[member(2, 'Shohei Ohtani')]}
+      engine={{
+        openAttachment: async attachment => {
+          short.push(`fetch:${attachment.id}`)
+          return new Uint8Array([1])
+        }
+      }}
+      files={{
+        bytesUri: async () => {
+          short.push('uri')
+          return 'blob:fixture-video'
+        },
+        releaseUri: async () => {},
+        saveFile: async () => {
+          short.push('save')
+        }
+      }}
+      maxWidth={320}
+      swipe={false}
+      gestureGeneration={generation}
+      onLongPress={selected => opens.push(selected.id)}
+      onReply={() => {}}
+      onJump={id => short.push(`jump:${id}`)}
+      onToggleReaction={(_message, emoji) => short.push(`react:${emoji}`)}
+    />,
+    false
+  )
+  const body = document.querySelector<HTMLElement>(
+    `[data-testid="chat-bubble-${value.id}"]`
+  )!
+  const target =
+    kind === 'body'
+      ? body
+      : button(
+          {
+            file: 'Save notes.pdf',
+            video: 'Open practice-clip.mp4',
+            quote: 'Jump to message from Shohei Ohtani: Practice notes',
+            reaction: '👍, 1'
+          }[kind]
+        )
+  return {
+    body: renderedPressCallbacks(body),
+    target: renderedPressCallbacks(target),
+    opens,
+    short,
+    pulses,
+    generation
+  }
+}
+
+function expectedShort(kind: NativeTarget): string[] {
+  switch (kind) {
+    case 'file':
+      return ['fetch:cat_native_file', 'save']
+    case 'video':
+      return ['fetch:cat_native_video', 'uri']
+    case 'quote':
+      return ['jump:msg_original']
+    case 'reaction':
+      return ['react:👍']
+    default:
+      return []
+  }
+}
+
+describe('chat review native-time message holds', function () {
+  for (const duration of [80, 499, 500, 568])
+    it(`uses native body duration ${duration} without waiting for the JavaScript timer or delayed PressOut`, async function () {
+      for (const stamp of ['direct', 'array'] as const) {
+        const value = await nativeGesture('body')
+        const release = contact(1000 + duration, 7, 20, stamp)
+        release.nativeEvent.touches = []
+        await compressedRelease(
+          value.target,
+          contact(1000, 7, 20, stamp),
+          release
+        )
+        expect(value.opens, stamp).deep.equals(
+          duration >= 500 ? ['msg_native_body'] : []
+        )
+        expect(value.pulses).deep.equals(duration >= 500 ? [8] : [])
+        expect(value.short).deep.equals([])
+      }
+    })
+
+  for (const kind of ['file', 'video', 'quote', 'reaction'] as const)
+    it(`preserves ${kind} short activation and suppresses it for compressed native 500/568 holds`, async function () {
+      for (const stamp of ['direct', 'array'] as const)
+        for (const duration of [80, 499, 500, 568]) {
+          const value = await nativeGesture(kind)
+          const release = contact(1000 + duration, 7, 20, stamp)
+          release.nativeEvent.touches = []
+          await compressedRelease(
+            value.target,
+            contact(1000, 7, 20, stamp),
+            release
+          )
+          await act(async () => {
+            await wait()
+          })
+          const long = duration >= 500
+          expect(
+            value.opens,
+            `${kind} ${stamp} native ${duration}`
+          ).deep.equals(long ? [`msg_native_${kind}`] : [])
+          expect(value.pulses).deep.equals(long ? [8] : [])
+          expect(value.short).deep.equals(long ? [] : expectedShort(kind))
+          if (kind === 'video')
+            expect(document.querySelector('video') != null).equals(!long)
+        }
+    })
+
+  it('keeps duplicate child/parent starts, repeated release and later long callbacks to one action and pulse per contact', async function () {
+    for (const kind of [
+      'body',
+      'file',
+      'video',
+      'quote',
+      'reaction'
+    ] as const) {
+      const value = await nativeGesture(kind)
+      const start = contact(1000)
+      await nativePress(value.target, 'onPressIn', start)
+      await nativePress(value.body, 'onPressIn', start)
+      for (let index = 0; index < 13; index += 1)
+        await nativePress(value.target, 'onTouchMove', contact(1000 + index))
+      await nativePress(value.target, 'onPress', contact(1568))
+      await nativePress(value.body, 'onPress', contact(1568))
+      await nativePress(value.target, 'onLongPress', contact(1568))
+      await nativePress(value.body, 'onPressIn', start)
+      await nativePress(value.target, 'onPress', contact(1568))
+      expect(value.opens).deep.equals([`msg_native_${kind}`])
+      expect(value.pulses).deep.equals([8])
+      expect(value.short).deep.equals([])
+      await nativePress(value.target, 'onPressIn', contact(2000, 8))
+      await nativePress(value.target, 'onPress', contact(2568, 8))
+      expect(value.opens).deep.equals([
+        `msg_native_${kind}`,
+        `msg_native_${kind}`
+      ])
+      expect(value.pulses).deep.equals([8, 8])
+      expect(value.short).deep.equals([])
+    }
+  })
+
+  it('retains scheduled long recognition without native metadata and never duplicates it on release', async function () {
+    const value = await nativeGesture('file')
+    const ordinary: NativePressEvent = { nativeEvent: { pageX: 20, pageY: 20 } }
+    await nativePress(value.target, 'onPressIn', ordinary)
+    await nativePress(value.target, 'onLongPress', ordinary)
+    await nativePress(value.target, 'onPress', contact(1568))
+    expect(value.opens).deep.equals(['msg_native_file'])
+    expect(value.pulses).deep.equals([8])
+    expect(value.short).deep.equals([])
+  })
+
+  it('keeps movement, cancellation and parent scrolling from recognizing or short-activating a native long release', async function () {
+    for (const kind of ['body', 'file', 'video', 'quote', 'reaction'] as const)
+      for (const cancellation of [
+        'movement',
+        'release-movement',
+        'cancel',
+        'scroll'
+      ] as const) {
+        const value = await nativeGesture(kind)
+        await nativePress(value.target, 'onPressIn', contact(1000))
+        if (cancellation === 'movement')
+          await nativePress(value.target, 'onTouchMove', contact(1100, 7, 31))
+        else if (cancellation === 'cancel')
+          await nativePress(value.target, 'onTouchCancel', contact(1100))
+        else if (cancellation === 'scroll') value.generation.current += 1
+        await nativePress(
+          value.target,
+          'onPress',
+          contact(1568, 7, cancellation === 'release-movement' ? 31 : 20)
+        )
+        expect(value.opens, `${kind} ${cancellation}`).deep.equals([])
+        expect(value.pulses).deep.equals([])
+        expect(value.short).deep.equals([])
+      }
+  })
+
+  it('requires the same contact and a finite forward native release timestamp', async function () {
+    for (const release of [
+      contact(1568, 8),
+      contact(999),
+      contact(Number.NaN)
+    ]) {
+      const value = await nativeGesture('body')
+      await nativePress(value.target, 'onPressIn', contact(1000))
+      await nativePress(value.target, 'onPress', release)
+      expect(value.opens).deep.equals([])
+      expect(value.pulses).deep.equals([])
+    }
+  })
+
+  it('uses the authoritative native release stamp even when a retained touch array still has an older move stamp', async function () {
+    const value = await nativeGesture('file')
+    const release = contact(1568)
+    release.nativeEvent.touches = []
+    release.nativeEvent.changedTouches =
+      contact(1100).nativeEvent.changedTouches
+    await compressedRelease(value.target, contact(1000), release)
+    expect(value.opens).deep.equals(['msg_native_file'])
+    expect(value.pulses).deep.equals([8])
+    expect(value.short).deep.equals([])
+  })
+
+  it('cancels uncertain child activation for a mismatched contact or backward stamp but preserves metadata-free keyboard and ordinary short activation', async function () {
+    for (const kind of ['file', 'video', 'quote', 'reaction'] as const) {
+      for (const release of [contact(1568, 8), contact(999)]) {
+        const value = await nativeGesture(kind)
+        await compressedRelease(value.target, contact(1000), release)
+        expect(value.opens).deep.equals([])
+        expect(value.short, kind).deep.equals([])
+        expect(value.pulses).deep.equals([])
+      }
+      for (const ordinary of [
+        { nativeEvent: {} },
+        { nativeEvent: { pageX: 20, pageY: 20 } }
+      ]) {
+        const value = await nativeGesture(kind)
+        await compressedRelease(value.target, ordinary, ordinary)
+        await act(async () => {
+          await wait()
+        })
+        expect(value.opens).deep.equals([])
+        expect(value.short, kind).deep.equals(expectedShort(kind))
+        expect(value.pulses).deep.equals([])
+      }
+    }
+  })
+})
+
+describe('chat review native-time narrow conversation row', function () {
+  it('short-opens at native499 and opens actions once at native500/568 without opening the conversation', async function () {
+    for (const stamp of ['direct', 'array'] as const)
+      for (const duration of [499, 500, 568]) {
+        const engine = new ReviewEngine()
+        const opened: string[] = []
+        const pulses: number[] = []
+        Object.defineProperty(navigator, 'vibrate', {
+          configurable: true,
+          value: (value: number) => {
+            pulses.push(value)
+            return true
+          }
+        })
+        await render(
+          <ChatOverlayHost key={++nativeFixture}>
+            <ChatListScreen
+              engine={engine}
+              embedded
+              narrow
+              onOpen={conversation => opened.push(conversation.id)}
+              onNewMessage={() => {}}
+              onFollowTeam={() => {}}
+            />
+          </ChatOverlayHost>,
+          false
+        )
+        const row = document.querySelector<HTMLElement>(
+          '[data-testid="chat-conversation-cnv_aurora"]'
+        )!
+        const callbacks = renderedPressCallbacks(row)
+        const release = contact(1000 + duration, 7, 20, stamp)
+        release.nativeEvent.touches = []
+        await compressedRelease(callbacks, contact(1000, 7, 20, stamp), release)
+        await act(async () => {
+          await wait()
+        })
+        const long = duration >= 500
+        expect(opened, `${stamp} native ${duration}`).deep.equals(
+          long ? [] : ['cnv_aurora']
+        )
+        expect(
+          document.querySelectorAll('[aria-label="Conversation actions"]')
+        ).length(long ? 1 : 0)
+        expect(pulses).deep.equals(long ? [8] : [])
+        if (long) {
+          await nativePress(callbacks, 'onPress', release)
+          await nativePress(callbacks, 'onLongPress', release)
+          expect(opened).deep.equals([])
+          expect(
+            document.querySelectorAll('[aria-label="Conversation actions"]')
+          ).length(1)
+          expect(pulses).deep.equals([8])
+        }
+      }
+  })
+})

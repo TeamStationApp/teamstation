@@ -171,8 +171,8 @@ function VideoAttachment(props: AttachmentViewProps): React.ReactElement {
         lstrings.chat_open_attachment,
         attachment.fileName
       )}
-      onPress={() => {
-        if (props.messageGesture?.canOpen() === false) return
+      onPress={event => {
+        if (props.messageGesture?.canOpen(event) === false) return
         setWanted(true)
       }}
       style={[styles.picture, styles.video, size]}
@@ -205,8 +205,8 @@ function FileAttachment(
       {...props.messageGesture?.pressProps}
       accessibilityRole="button"
       accessibilityLabel={sprintf(lstrings.chat_save_file, attachment.fileName)}
-      onPress={() => {
-        if (props.messageGesture?.canOpen() === false) return
+      onPress={event => {
+        if (props.messageGesture?.canOpen(event) === false) return
         setBusy(true)
         setFailed(false)
         engine

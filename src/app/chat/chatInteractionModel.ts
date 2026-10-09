@@ -1,4 +1,4 @@
-import type { PressableProps } from 'react-native'
+import type { GestureResponderEvent, PressableProps } from 'react-native'
 
 /** Native responders expose a point directly; browser TouchEvents carry lists. */
 export function pressPoint(event: {
@@ -11,6 +11,28 @@ export function pressPoint(event: {
   return Number.isFinite(point.pageX) && Number.isFinite(point.pageY)
     ? { x: point.pageX!, y: point.pageY! }
     : undefined
+}
+
+/** Native touch stamps share a monotonic clock; never compare them to JS time. */
+export function pressStamp(event: {
+  timestamp?: unknown
+  identifier?: unknown
+  touches?: ArrayLike<{ timestamp?: unknown; identifier?: unknown }>
+  changedTouches?: ArrayLike<{ timestamp?: unknown; identifier?: unknown }>
+}): { timestamp: number; identifier: string | number } | undefined {
+  for (const touch of [event, event.changedTouches?.[0], event.touches?.[0]]) {
+    const timestamp = touch?.timestamp
+    const identifier = touch?.identifier
+    if (
+      typeof timestamp === 'number' &&
+      Number.isFinite(timestamp) &&
+      timestamp >= 0 &&
+      (typeof identifier === 'string' ||
+        (typeof identifier === 'number' && Number.isFinite(identifier)))
+    )
+      return { timestamp, identifier }
+  }
+  return undefined
 }
 
 export interface ChatBounds {
@@ -53,10 +75,11 @@ export interface MessagePressGesture {
   pressProps: Pick<
     PressableProps,
     | 'onPressIn'
+    | 'onPress'
     | 'onTouchMove'
     | 'onTouchCancel'
     | 'onLongPress'
     | 'delayLongPress'
   >
-  canOpen: () => boolean
+  canOpen: (event?: GestureResponderEvent) => boolean
 }

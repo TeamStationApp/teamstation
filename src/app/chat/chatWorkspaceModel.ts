@@ -112,13 +112,19 @@ export class ChatDraftOwner {
     if (success) {
       this.write(id, {
         ...current,
-        text: revisions.text === token.revisions.text ? '' : current.text,
+        text:
+          revisions.text === token.revisions.text &&
+          current.text === token.draft.text
+            ? ''
+            : current.text,
         replyTo:
-          revisions.replyTo === token.revisions.replyTo
+          revisions.replyTo === token.revisions.replyTo &&
+          current.replyTo?.id === token.draft.replyTo?.id
             ? undefined
             : current.replyTo,
         editing:
-          revisions.editing === token.revisions.editing
+          revisions.editing === token.revisions.editing &&
+          current.editing?.id === token.draft.editing?.id
             ? undefined
             : current.editing,
         picked: current.picked.filter(
