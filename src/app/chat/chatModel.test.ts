@@ -254,10 +254,10 @@ describe('what a long press offers', function () {
     ])
   })
 
-  it('lets an unreadable message be removed by its author or a moderator', function () {
+  it('allows lost or invalid cleanup while hiding deletion of locked or removed content', function () {
     expect(
       actionsFor(message({ status: 'locked', mine: true }), view('enabled'))
-    ).deep.equals(['delete'])
+    ).deep.equals([])
     expect(
       actionsFor(message({ status: 'invalid' }), view('enabled', true))
     ).deep.equals(['deleteForEveryone'])
