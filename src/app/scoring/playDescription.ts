@@ -567,3 +567,36 @@ export function describeLastPlay(
   if (runs.length > 1) start += runs.at(-1)!.from
   return describePlay(gameAt(start), log.slice(start, span.end), after)
 }
+
+/** Describe requested completed appearances with the same wording as Undo. */
+export function describeCompletedPlays(
+  log: readonly ScoringAction[],
+  indexes: ReadonlySet<number>,
+  gameAt: (logLength: number) => GameState
+): Map<number, PlayDescription> {
+  const out = new Map<number, PlayDescription>()
+  if (indexes.size === 0) return out
+  for (
+    let index = log.length - 1;
+    index >= 0 && out.size < indexes.size;
+    index--
+  ) {
+    if (!closesPlay(log[index])) continue
+    const after = gameAt(index + 1)
+    const play = after.liveData.plays.allPlays.at(-1)
+    if (
+      play == null ||
+      !indexes.has(play.about.atBatIndex) ||
+      out.has(play.about.atBatIndex)
+    )
+      continue
+    const description = describeLastPlay(
+      log.slice(0, index + 1),
+      [],
+      after,
+      gameAt
+    )
+    if (description != null) out.set(play.about.atBatIndex, description)
+  }
+  return out
+}
