@@ -35,6 +35,7 @@ interface Hierarchy {
   hint?: string
   id?: string
   bounds?: Bounds
+  enabled?: boolean
   children?: Hierarchy[]
 }
 interface Device {
@@ -46,6 +47,7 @@ interface Device {
   longPressOn: (options: object) => Promise<unknown>
   dragAndDrop: (options: object) => Promise<unknown>
   inputText: (options: { text: string }) => Promise<unknown>
+  pressKey: (options: { key: string }) => Promise<unknown>
   eraseText: (options?: object) => Promise<unknown>
   hideKeyboard: (options?: object) => Promise<unknown>
   pasteText: (options?: object) => Promise<unknown>
@@ -184,6 +186,10 @@ function xmlText(value: string): string {
 
 async function composerValue(device: Device): Promise<string> {
   const raw = Buffer.from(await device.hierarchyRaw()).toString('utf8')
+  return composerValueFromRaw(raw)
+}
+
+function composerValueFromRaw(raw: string): string {
   const element =
     /<[^>]*(?:name|resource-id|identifier)="[^"]*chat-composer"[^>]*>/.exec(
       raw
@@ -199,6 +205,26 @@ async function composerValue(device: Device): Promise<string> {
     'Native composer value must be readable'
   )
   return xmlText(value ?? '')
+}
+
+async function clearNativeComposer(
+  device: Device,
+  text: string
+): Promise<void> {
+  if (platform === 'android') {
+    // Real cursor/edit keys avoid accessibility Clear silently preserving a
+    // controlled input. The known text length bounds both operations.
+    let rightKeys = text.length
+    while (rightKeys-- > 0) await device.pressKey({ key: 'DPAD_RIGHT' })
+    let deleteKeys = text.length
+    while (deleteKeys-- > 0) await device.pressKey({ key: 'BACKSPACE' })
+  } else if (text.length > 0)
+    await device.eraseText({ characters: text.length })
+  assert.equal(
+    await composerValue(device),
+    '',
+    'Normal native edit keys must clear the exact current draft'
+  )
 }
 
 async function reveal(
@@ -336,10 +362,6 @@ async function physicalMessageHold(
                 node.bounds != null
             )
       const current = body?.bounds
-      assert(
-        current != null && current.width > 0 && current.height > 0,
-        'Actual identified message body bounds required'
-      )
       viewport = nodes.find(
         node =>
           node.type?.includes('ScrollView') === true &&
@@ -350,12 +372,24 @@ async function physicalMessageHold(
         viewport != null,
         'Actual message viewport required for physical hold'
       )
+      results.physicalHoldPreparation = {
+        rowId,
+        row: parent,
+        body: current,
+        viewport,
+        observedAt: Date.now()
+      }
       if (
+        current == null ||
         current.y + current.height <= viewport.y + 8 ||
         current.y >= viewport.y + viewport.height - 8
       ) {
+        assert(
+          parent != null,
+          'Exact identified row required before body preparation'
+        )
         const x = Math.round(viewport.x + viewport.width * 0.5)
-        const down = current.y < viewport.y
+        const down = (current ?? parent).y < viewport.y + 8
         const upper = Math.round(viewport.y + viewport.height * 0.3)
         const lower = Math.round(viewport.y + viewport.height * 0.7)
         await device.dragAndDrop({
@@ -367,6 +401,10 @@ async function physicalMessageHold(
         previous = undefined
         return undefined
       }
+      assert(
+        current.width > 0 && current.height > 0,
+        'Actual identified message body bounds required'
+      )
       const stable =
         previous != null &&
         Math.abs(previous.x - current.x) < 1 &&
@@ -383,6 +421,19 @@ async function physicalMessageHold(
       Math.min(bounds.y + bounds.height, viewport.y + viewport.height - 8)) /
       2
   )
+  results.physicalHoldReceipts = [
+    ...((results.physicalHoldReceipts as object[] | undefined) ?? []),
+    {
+      rowId,
+      body: bounds,
+      row: parent,
+      viewport,
+      point: { x, y },
+      requestedDurationMs: duration,
+      stationary: true,
+      issuedAt: Date.now()
+    }
+  ]
   if (platform === 'android')
     await device.swipe({ startX: x, startY: y, endX: x, endY: y, duration })
   else {
@@ -507,6 +558,7 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({ name: daemonName, idleTimeout: 0 })
   let device: Device | undefined
   let recording = false
+  let restorePendingPreferences: (() => Promise<void>) | undefined
   try {
     if (platform === 'ios') {
       assert(
@@ -708,8 +760,12 @@ async function main(): Promise<void> {
       return
     }
     await m.assertVisible({ text: 'Chats', timeout: 60000 })
-    await reveal(m, { text: fixture.conversationLabel }, 'DOWN')
-    await m.assertVisible({ text: fixture.conversationLabel, timeout: 60000 })
+    const initialRow =
+      process.env.CHAT_UI_NATIVE_LEGACY_ROWS === '1'
+        ? { text: fixture.conversationLabel }
+        : { id: `chat-conversation-${fixture.conversationId}` }
+    await reveal(m, initialRow, 'DOWN')
+    await m.assertVisible({ ...initialRow, timeout: 60000 })
     const tree = await m.hierarchy()
     writeFileSync(
       join(resultDirectory, `${platform}-m2-initial-hierarchy.json`),
@@ -882,24 +938,138 @@ async function main(): Promise<void> {
       })
     }
     async function open(): Promise<void> {
-      await reveal(m, { text: fixture.conversationLabel }, 'DOWN')
-      await m.tapOn({ text: fixture.conversationLabel })
-      await m.scrollUntilVisible({
-        element: { id: `chat-message-${fixture.originalMessageIds[0]}` },
-        direction: 'UP',
-        timeout: 30000
-      })
+      await scopedOpen(fixture.conversationId, fixture.targetText)
+      await revealMessage(fixture.conversationId, fixture.originalMessageIds[0])
       await m.assertVisible({ text: fixture.targetText, timeout: 60000 })
       await m
         .assertVisible({ text: fixture.replyText, timeout: 1000 })
         .catch(async () => {
-          await m.scrollUntilVisible({
-            element: { id: `chat-message-${fixture.originalMessageIds[1]}` },
-            direction: 'DOWN',
-            timeout: 30000
-          })
+          await revealMessage(
+            fixture.conversationId,
+            fixture.originalMessageIds[1]
+          )
           await m.assertVisible({ text: fixture.replyText, timeout: 10000 })
         })
+    }
+    async function revealMessage(
+      conversationId: string,
+      messageId: string
+    ): Promise<void> {
+      const conversation = (await api.chatConversations()).find(
+        row => row.id === conversationId
+      )
+      assert(
+        conversation != null,
+        'Current message scope must remain accessible'
+      )
+      const pages = await Promise.all([
+        api.chatMessages(conversationId, { after: 0, limit: 100 }),
+        api.chatMessages(conversationId, {
+          before: conversation.lastSeq + 1,
+          limit: 100
+        })
+      ])
+      const sequences = new Map(pages.flat().map(row => [row.id, row.seq]))
+      const targetSeq = sequences.get(messageId)
+      assert(
+        targetSeq != null,
+        'Supplied message must be present in normal authenticated history metadata'
+      )
+      let previous = ''
+      await until(
+        'Exact identified message must reach its real visible pane',
+        async () => {
+          const nodes = flatten(await m.hierarchy())
+          const pane = nodes.find(
+            node =>
+              node.type?.includes('ScrollView') === true &&
+              node.bounds != null &&
+              flatten(node).some(
+                child => child.id?.startsWith('chat-message-') === true
+              )
+          )?.bounds
+          assert(
+            pane != null,
+            'Actual current message scroll viewport required'
+          )
+          const row = nodes.find(
+            node => node.id === `chat-message-${messageId}`
+          )?.bounds
+          if (
+            row != null &&
+            Math.min(row.y + row.height, pane.y + pane.height) -
+              Math.max(row.y, pane.y) >
+              40
+          )
+            return true
+          const visible = nodes.filter(
+            node =>
+              node.id?.startsWith('chat-message-') === true &&
+              node.bounds != null &&
+              node.bounds.y + node.bounds.height > pane.y &&
+              node.bounds.y < pane.y + pane.height
+          )
+          const seen = visible
+            .map(node => sequences.get(node.id!.slice('chat-message-'.length)))
+            .filter((seq): seq is number => seq != null)
+          assert(
+            seen.length > 0,
+            'At least one actual visible row must match history metadata'
+          )
+          const older =
+            row != null && row.height > 0
+              ? row.y < pane.y
+              : targetSeq < Math.min(...seen)
+          const key = visible
+            .map(node => `${node.id}:${Math.round(node.bounds!.y)}`)
+            .join(',')
+          if (key === previous && older) {
+            const earlier = nodes.find(
+              node =>
+                (node.text === 'Load earlier messages' ||
+                  node.label === 'Load earlier messages') &&
+                node.bounds != null
+            )
+            assert(
+              earlier != null,
+              'Older target requires a normal earlier-history control at this boundary'
+            )
+            await tapStableControl(m, 'Load earlier messages')
+            previous = ''
+            return undefined
+          }
+          previous = key
+          const x = Math.round(pane.x + pane.width * 0.5)
+          const from = {
+            x,
+            y: Math.round(pane.y + pane.height * (older ? 0.25 : 0.75))
+          }
+          const to = {
+            x,
+            y: Math.round(pane.y + pane.height * (older ? 0.75 : 0.25))
+          }
+          results.messageRevealReceipts = [
+            ...((results.messageRevealReceipts as object[] | undefined) ?? []),
+            {
+              messageId,
+              targetSeq,
+              visibleSeqs: seen,
+              pane,
+              from,
+              to,
+              at: Date.now()
+            }
+          ]
+          await m.dragAndDrop({
+            from: { point: `${from.x},${from.y}` },
+            to: { point: `${to.x},${to.y}` },
+            holdDuration: 10,
+            duration: 400
+          })
+          return undefined
+        },
+        90000
+      )
     }
     async function menu(
       label = fixture.conversationLabel,
@@ -917,6 +1087,43 @@ async function main(): Promise<void> {
           (text.includes('Pin') || text.includes('Unpin')),
         'All three personal conversation actions required'
       )
+    }
+    async function currentMessageMore(messageId: string): Promise<void> {
+      const nodes = flatten(await m.hierarchy())
+      const rowId = `chat-message-${messageId}`
+      const row = nodes.find(node => node.id === rowId)
+      const pane = nodes.find(
+        node =>
+          node.type?.includes('ScrollView') === true &&
+          node.bounds != null &&
+          flatten(node).some(child => child.id === rowId)
+      )?.bounds
+      const action = (row == null ? [] : flatten(row)).find(
+        node =>
+          (node.text === 'More message actions' ||
+            node.label === 'More message actions') &&
+          node.bounds != null
+      )?.bounds
+      assert(
+        action != null && pane != null,
+        'Exact visible message More action and pane are required'
+      )
+      const point = {
+        x: Math.round(action.x + action.width / 2),
+        y: Math.round(action.y + action.height / 2)
+      }
+      assert(
+        point.x > pane.x &&
+          point.x < pane.x + pane.width &&
+          point.y > pane.y &&
+          point.y < pane.y + pane.height,
+        'The identified message More point must be inside its actual pane'
+      )
+      results.currentMessageMoreReceipts = [
+        ...((results.currentMessageMoreReceipts as object[] | undefined) ?? []),
+        { messageId, action, pane, point, at: Date.now() }
+      ]
+      await m.tapOnPoint({ point: `${point.x},${point.y}` })
     }
     async function photo(name: string): Promise<void> {
       writeFileSync(
@@ -1013,6 +1220,12 @@ async function main(): Promise<void> {
         'The supplied conversation row must expose bounds'
       )
       assert(visible != null, 'Actual visible row hold rectangle required')
+      results.conversationHoldTarget = {
+        rowId,
+        row: row.bounds,
+        visible,
+        capturedAt: Date.now()
+      }
       return {
         x: Math.round(visible.x + visible.width / 2),
         y: Math.round(visible.y + visible.height / 2)
@@ -1023,8 +1236,18 @@ async function main(): Promise<void> {
       label = fixture.conversationLabel,
       conversationId?: string
     ): Promise<void> {
+      const point = await rowCenter(label, conversationId)
+      results.conversationHoldReceipts = [
+        ...((results.conversationHoldReceipts as object[] | undefined) ?? []),
+        {
+          target: results.conversationHoldTarget,
+          point,
+          requestedDurationMs: duration,
+          stationary: true,
+          issuedAt: Date.now()
+        }
+      ]
       if (platform === 'android') {
-        const point = await rowCenter(label, conversationId)
         await m.swipe({
           startX: point.x,
           startY: point.y,
@@ -1033,7 +1256,6 @@ async function main(): Promise<void> {
           duration
         })
       } else {
-        const point = await rowCenter(label, conversationId)
         await m.dragAndDrop({
           from: { point: `${point.x},${point.y}` },
           to: { point: `${point.x},${point.y}` },
@@ -1041,6 +1263,631 @@ async function main(): Promise<void> {
           duration: 10
         })
       }
+    }
+    if (process.argv[2] === 'hold-probe') {
+      stage = 'stationary-native-message-hold'
+      const probe = JSON.parse(
+        readFileSync(required('CHAT_UI_NATIVE_HOLD_FIXTURE'), 'utf8')
+      ) as {
+        conversationId: string
+        messageId: string
+        body: string
+        holdCount: number
+      }
+      assert(
+        Number.isInteger(probe.holdCount) &&
+          probe.holdCount >= 1 &&
+          probe.holdCount <= 6,
+        'A bounded stationary hold trial count is required'
+      )
+      await scopedOpen(probe.conversationId, probe.body)
+      const rowId = `chat-message-${probe.messageId}`
+      await revealMessage(probe.conversationId, probe.messageId)
+      await settleAndroidReplyContent(m, rowId, probe.body)
+      for (let trial = 0; trial < probe.holdCount; trial++) {
+        await photo(`hold-probe-${trial + 1}-before`)
+        await physicalMessageHold(m, rowId, probe.body, 550)
+        await until(
+          'The exact message Reply action must open after the hold',
+          async () =>
+            flatten(await m.hierarchy()).some(
+              node =>
+                (node.text === 'Reply' || node.label === 'Reply') &&
+                node.bounds != null
+            )
+              ? true
+              : undefined,
+          10000
+        )
+        await photo(`hold-probe-${trial + 1}-menu`)
+        results.stationaryHoldTrials = trial + 1
+        await m.tapOnPoint({ point: '5%,15%' })
+        await until(
+          'The exact message action menu must dismiss',
+          async () =>
+            flatten(await m.hierarchy()).some(
+              node => node.text === 'Reply' || node.label === 'Reply'
+            )
+              ? undefined
+              : true,
+          3000
+        )
+      }
+      pass(
+        'bounded stationary 550 ms holds open message actions on the exact readable body'
+      )
+      return
+    }
+    if (process.argv[2] === 'fault-pending-send') {
+      stage = 'native-pending-send-remount-and-newer-draft'
+      const pending = JSON.parse(
+        readFileSync(required('CHAT_UI_NATIVE_PENDING_FIXTURE'), 'utf8')
+      ) as {
+        conversationId: string
+        replyId: string
+        replyBody: string
+        submittedText: string
+        newerText: string
+      }
+      assert.notEqual(pending.conversationId, fixture.conversationId)
+      const pinnedBefore = (await api.chatConversations()).filter(row =>
+        [pending.conversationId, fixture.conversationId].includes(row.id)
+      )
+      assert.equal(pinnedBefore.length, 2)
+      restorePendingPreferences = async () => {
+        for (const row of pinnedBefore)
+          await api.updateChatPreferences(row.id, {
+            pinned: row.preferences.pinned
+          })
+        results.pendingPreferenceCleanup = {
+          normalAuthenticatedApi: true,
+          exactPriorPinStatesRestored: true
+        }
+      }
+      for (const row of pinnedBefore)
+        if (!row.preferences.pinned)
+          await api.updateChatPreferences(row.id, { pinned: true })
+      results.pendingPreferencePreparation = {
+        normalAuthenticatedApi: true,
+        before: pinnedBefore.map(row => ({
+          id: row.id,
+          pinned: row.preferences.pinned
+        })),
+        physicalUiClaim: false
+      }
+      const auditFor = (
+        gateId: string
+      ): Array<{
+        at: string
+        gateId: string
+        event?: string
+        remaining?: number
+      }> =>
+        readFileSync(required('CHAT_UI_NATIVE_FAULT_AUDIT'), 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map(line => JSON.parse(line))
+          .filter(hit => hit.gateId === gateId)
+      await scopedOpen(pending.conversationId, pending.replyBody)
+      const startingText = await composerValue(m)
+      const other = pinnedBefore.find(row => row.id === fixture.conversationId)!
+      const expectedBTitle =
+        other.kind === 'dm' || other.scope == null
+          ? (other.title ??
+            other.people
+              .filter(person => person.userId !== fixture.actor.userId)
+              .map(person => person.shortName)
+              .join(', '))
+          : (other.scopeName ?? other.title)
+      assert(
+        expectedBTitle != null && expectedBTitle !== '',
+        'Actual B title must be derived from normal metadata'
+      )
+      const outcomes = (
+        process.env.CHAT_UI_NATIVE_PENDING_OUTCOMES ?? 'success,failure'
+      ).split(',')
+      assert(
+        outcomes.length > 0 &&
+          outcomes.every(value => value === 'success' || value === 'failure') &&
+          new Set(outcomes).size === outcomes.length,
+        'Explicit unique pending outcomes required'
+      )
+      const pendingDelay = Number(
+        process.env.CHAT_UI_NATIVE_PENDING_DELAY_MS ?? 15000
+      )
+      assert(
+        pendingDelay === 15000 || pendingDelay === 30000,
+        'Supported externally controlled native pending test delay required'
+      )
+      results.pendingTestMethod = {
+        delayMs: pendingDelay,
+        outcomes,
+        physicalGestureAndGeometryThresholdsUnchanged: true
+      }
+      for (const outcome of outcomes) {
+        await revealMessage(pending.conversationId, pending.replyId)
+        await settleAndroidReplyContent(
+          m,
+          `chat-message-${pending.replyId}`,
+          pending.replyBody
+        )
+        await physicalMessageHold(
+          m,
+          `chat-message-${pending.replyId}`,
+          pending.replyBody,
+          550
+        )
+        await tapStableControl(m, 'Reply')
+        const submitted = `${pending.submittedText}\n${outcome} ${Date.now()}`
+        const newer = `${pending.newerText}\n${outcome} ${Date.now()}`
+        await m.tapOn({ id: 'chat-composer' })
+        await clearNativeComposer(m, await composerValue(m))
+        await m.inputText({ text: submitted })
+        const center = (bounds: Bounds): { x: number; y: number } => ({
+          x: Math.round(bounds.x + bounds.width / 2),
+          y: Math.round(bounds.y + bounds.height / 2)
+        })
+        const backPoint = async (): Promise<{ x: number; y: number }> => {
+          const node = flatten(await m.hierarchy())
+            .filter(
+              node =>
+                (node.text === 'Back' || node.label === 'Back') &&
+                node.bounds != null &&
+                node.bounds.y <
+                  (results.deviceInfo as { screenHeight: number })
+                    .screenHeight *
+                    0.25
+            )
+            .sort((a, b) => a.bounds!.y - b.bounds!.y)[0]
+          assert(
+            node?.bounds != null,
+            'Actual native Back control required before timed navigation'
+          )
+          return center(node.bounds)
+        }
+        const backA = await backPoint()
+        await list()
+        const listNodes = flatten(await m.hierarchy())
+        const listPane = listNodes.find(
+          node =>
+            node.type?.includes('ScrollView') === true &&
+            node.bounds != null &&
+            flatten(node).some(
+              child =>
+                child.id === `chat-conversation-${pending.conversationId}`
+            )
+        )?.bounds
+        assert(
+          listPane != null,
+          'Both pinned navigation rows require their actual list pane'
+        )
+        const rowPoint = (id: string): { x: number; y: number } => {
+          const row = listNodes.find(
+            node => node.id === `chat-conversation-${id}`
+          )?.bounds
+          assert(
+            row != null &&
+              row.y >= listPane.y &&
+              row.y + row.height <= listPane.y + listPane.height,
+            'Timed navigation requires fully visible prevalidated A/B rows'
+          )
+          return center(row)
+        }
+        const pointA = rowPoint(pending.conversationId)
+        const pointB = rowPoint(fixture.conversationId)
+        const stableRows = flatten(await m.hierarchy())
+        for (const [id, point] of [
+          [pending.conversationId, pointA],
+          [fixture.conversationId, pointB]
+        ] as const) {
+          const currentBounds = stableRows.find(
+            node => node.id === `chat-conversation-${id}`
+          )?.bounds
+          assert(
+            currentBounds != null,
+            'Prepared navigation row must remain visible'
+          )
+          const currentPoint = center(currentBounds)
+          assert(
+            Math.abs(currentPoint.x - point.x) < 1 &&
+              Math.abs(currentPoint.y - point.y) < 1,
+            'Both prepared navigation rows must settle before the gate is armed'
+          )
+        }
+        await m.tapOnPoint({ point: `${pointB.x},${pointB.y}` })
+        await m.assertVisible({ id: 'chat-composer', timeout: 30000 })
+        await revealMessage(
+          fixture.conversationId,
+          fixture.originalMessageIds[0]
+        )
+        const bPrepared = Buffer.from(await m.hierarchyRaw()).toString('utf8')
+        assert(
+          bPrepared.includes(expectedBTitle),
+          'Actual B preparation must show its metadata title'
+        )
+        assert(
+          bPrepared.includes(`chat-message-${fixture.originalMessageIds[0]}`),
+          'Actual B preparation must contain its own unique message target'
+        )
+        const bComposerBefore = composerValueFromRaw(bPrepared)
+        const backB = await backPoint()
+        await m.tapOnPoint({ point: `${backB.x},${backB.y}` })
+        await m.tapOnPoint({ point: `${pointA.x},${pointA.y}` })
+        await m.assertVisible({ id: 'chat-composer', timeout: 30000 })
+        const prepared = flatten(await m.hierarchy())
+        const preparedSend = prepared.find(
+          node =>
+            (node.text === 'Send' || node.label === 'Send') &&
+            node.bounds != null
+        )
+        assert(
+          preparedSend?.bounds != null,
+          'Prepared native Send control required'
+        )
+        const preparedRaw = Buffer.from(await m.hierarchyRaw()).toString('utf8')
+        assert.equal(
+          composerValueFromRaw(preparedRaw),
+          submitted,
+          'Before arming the gate, navigation must preserve the exact submitted draft'
+        )
+        const sendRaw =
+          /<[^>]*(?:name|resource-id|identifier|text|content-desc|label)="Send"[^>]*>/.exec(
+            preparedRaw
+          )?.[0]
+        assert(
+          sendRaw != null && !/\benabled="false"/.test(sendRaw),
+          'Prepared pending submission must be enabled'
+        )
+        const sendPoint = center(preparedSend.bounds)
+        const preparedComposer = prepared.find(
+          node => node.id === 'chat-composer'
+        )?.bounds
+        assert(
+          preparedComposer != null,
+          'Actual prepared composer rectangle required'
+        )
+        const composerPoint = center(preparedComposer)
+        results.pendingNavigationPreparation = {
+          pointA,
+          pointB,
+          backA,
+          backB,
+          sendPoint,
+          composerPoint,
+          composerBounds: preparedComposer,
+          listPane,
+          expectedBTitle,
+          bMessageId: fixture.originalMessageIds[0],
+          bComposerBefore,
+          fullyVisibleRows: true,
+          at: Date.now()
+        }
+        const before = (await api.chatConversations()).find(
+          row => row.id === pending.conversationId
+        )!
+        const gateId = `native-${platform}-pending-${outcome}-${Date.now()}`
+        execFileSync(
+          process.execPath,
+          [
+            required('CHAT_UI_NATIVE_FAULT_CONTROL'),
+            platform,
+            `pending-${outcome}`,
+            gateId,
+            String(pendingDelay)
+          ],
+          { stdio: 'pipe' }
+        )
+        const milestones: Array<{ action: string; at: number }> = []
+        results.pendingMilestones = milestones
+        const outcomeMilestones = (results.pendingOutcomeMilestones ??
+          {}) as Record<string, unknown>
+        outcomeMilestones[outcome] = milestones
+        results.pendingOutcomeMilestones = outcomeMilestones
+        await m.tapOnPoint({ point: `${sendPoint.x},${sendPoint.y}` })
+        milestones.push({ action: 'send returned', at: Date.now() })
+        await until(
+          'The normal encrypted post must consume the delayed gate',
+          async () =>
+            auditFor(gateId).some(hit => hit.event == null) ? true : undefined
+        )
+        assert(
+          !auditFor(gateId).some(hit => hit.event === 'delay-released'),
+          'The request must still be pending before timed navigation'
+        )
+        for (const [action, point] of [
+          ['back from A', backA],
+          ['open B', pointB],
+          ['back from B', backB],
+          ['return A', pointA]
+        ] as const) {
+          await m.tapOnPoint({ point: `${point.x},${point.y}` })
+          milestones.push({ action, at: Date.now() })
+          await new Promise(resolve => setTimeout(resolve, 150))
+          if (action === 'open B') {
+            const bRaw = Buffer.from(await m.hierarchyRaw()).toString('utf8')
+            assert(
+              bRaw.includes(expectedBTitle),
+              'Timed navigation must actually open B title'
+            )
+            assert(
+              bRaw.includes(`chat-message-${fixture.originalMessageIds[0]}`),
+              'Timed B must contain its unique room message'
+            )
+            assert.equal(
+              composerValueFromRaw(bRaw),
+              bComposerBefore,
+              'B must retain its separate composer state'
+            )
+            assert.notEqual(
+              composerValueFromRaw(bRaw),
+              submitted,
+              'B must not show the submitted A draft'
+            )
+            milestones.push({
+              action: 'actual B title/message/composer verified',
+              at: Date.now()
+            })
+            await photo(`pending-${outcome}-B-navigation`)
+            milestones.push({
+              action: 'B navigation screenshot saved',
+              at: Date.now()
+            })
+          }
+        }
+        milestones.push({
+          action: 'returned composer inspection starts',
+          at: Date.now()
+        })
+        const returnedRaw = Buffer.from(await m.hierarchyRaw()).toString('utf8')
+        milestones.push({
+          action: 'returned composer inspection completes',
+          at: Date.now()
+        })
+        const pendingSendRaw =
+          /<[^>]*(?:name|resource-id|identifier|text|content-desc|label)="Send"[^>]*>/.exec(
+            returnedRaw
+          )?.[0]
+        assert(
+          pendingSendRaw != null && /\benabled="false"/.test(pendingSendRaw),
+          'Returning pending composer must block another submission'
+        )
+        assert.equal(
+          composerValueFromRaw(returnedRaw),
+          submitted,
+          'Returned pending pane must retain the submitted draft'
+        )
+        milestones.push({ action: 'returned value verified', at: Date.now() })
+        await m.tapOnPoint({
+          point: `${sendPoint.x},${sendPoint.y}`
+        })
+        await m.tapOnPoint({ point: `${composerPoint.x},${composerPoint.y}` })
+        await clearNativeComposer(m, submitted)
+        await m.inputText({ text: newer })
+        const newerDraftAt = Date.now()
+        milestones.push({ action: 'newer draft typed', at: newerDraftAt })
+        assert.equal(
+          await composerValue(m),
+          newer,
+          'The exact newer draft must be present while the old request is still pending'
+        )
+        const newerVerifiedAt = Date.now()
+        milestones.push({
+          action: 'exact newer draft verified',
+          at: newerVerifiedAt
+        })
+        await photo(`pending-${outcome}-remounted-newer-draft`)
+        const release = await until(
+          'Delayed send release must be audited',
+          async () =>
+            auditFor(gateId).find(hit => hit.event === 'delay-released')
+        )
+        assert(
+          newerDraftAt < Date.parse(release.at) &&
+            newerVerifiedAt < Date.parse(release.at),
+          'Remount and newer draft must occur before the original request completes'
+        )
+        await until(
+          'Pending completion must release the submission guard',
+          async () => {
+            const raw = Buffer.from(await m.hierarchyRaw()).toString('utf8')
+            const node =
+              /<[^>]*(?:name|resource-id|identifier|text|content-desc|label)="Send"[^>]*>/.exec(
+                raw
+              )?.[0]
+            return node != null && !/\benabled="false"/.test(node)
+              ? true
+              : undefined
+          }
+        )
+        assert.equal(
+          await composerValue(m),
+          newer,
+          'Old completion must preserve the newer draft'
+        )
+        await list()
+        await scopedOpen(fixture.conversationId, fixture.targetText)
+        await list()
+        await scopedOpen(pending.conversationId, pending.replyBody)
+        assert.equal(
+          await composerValue(m),
+          newer,
+          'Later navigation must preserve the newer draft'
+        )
+        const posts = (
+          await api.chatMessages(pending.conversationId, {
+            after: before.lastSeq,
+            limit: 100
+          })
+        ).filter(row => row.kind === 'post')
+        assert.equal(
+          posts.length,
+          outcome === 'success' ? 1 : 0,
+          'A pending remount must not submit a duplicate encrypted post'
+        )
+        if (outcome === 'success')
+          assert.equal(posts[0].senderUserId, fixture.actor.userId)
+        const audit = auditFor(gateId)
+        const consumption = audit.filter(hit => hit.event == null)
+        assert.equal(consumption.length, 1)
+        assert.equal(consumption[0].remaining, 0)
+        results.pendingSendCases = [
+          ...((results.pendingSendCases as object[] | undefined) ?? []),
+          {
+            outcome,
+            delayMs: pendingDelay,
+            gateId,
+            consumedAt: consumption[0].at,
+            releasedAt: release.at,
+            newerDraftAt,
+            newerVerifiedAt,
+            newPosts: posts.length,
+            duplicateBlockedOnRemount: true,
+            newerDraftPreserved: true
+          }
+        ]
+        writeFileSync(
+          join(resultDirectory, `${platform}-pending-progress.json`),
+          JSON.stringify(
+            {
+              cases: results.pendingSendCases,
+              milestones: results.pendingMilestones
+            },
+            null,
+            2
+          ) + '\n'
+        )
+        writeFileSync(
+          join(resultDirectory, `${platform}-pending-${outcome}-receipt.json`),
+          JSON.stringify(
+            {
+              case: (results.pendingSendCases as object[]).at(-1),
+              milestones,
+              navigationPreparation: results.pendingNavigationPreparation
+            },
+            null,
+            2
+          ) + '\n'
+        )
+        pass(
+          `native pending ${outcome} blocks a remount duplicate and preserves a newer draft`
+        )
+        execFileSync(
+          process.execPath,
+          [required('CHAT_UI_NATIVE_FAULT_CONTROL'), 'clear'],
+          { stdio: 'pipe' }
+        )
+        if (strings(flatten(await m.hierarchy())).includes('Cancel reply'))
+          await tapStableControl(m, 'Cancel reply')
+      }
+      await m.tapOn({ id: 'chat-composer' })
+      await clearNativeComposer(m, await composerValue(m))
+      if (startingText !== '') await m.inputText({ text: startingText })
+      pass(
+        `selected native delayed ${outcomes.join('/')} outcomes block remount duplicates and preserve a newer draft`
+      )
+      return
+    }
+    if (process.argv[2] === 'attachment-quote') {
+      stage = 'current-native-attachment-quote-and-system-open'
+      const deep = JSON.parse(
+        readFileSync(required('CHAT_UI_NATIVE_DEEP_FIXTURE'), 'utf8')
+      ) as {
+        conversationId: string
+        attachmentReplyId: string
+        attachmentReplyBody: string
+        attachmentId: string
+        fileName: string
+      }
+      await scopedOpen(deep.conversationId, deep.attachmentReplyBody)
+      await revealMessage(deep.conversationId, deep.attachmentReplyId)
+      const existing = (await api.chatPins(deep.conversationId)).some(
+        pin => pin.messageId === deep.attachmentReplyId
+      )
+      if (!existing) {
+        await currentMessageMore(deep.attachmentReplyId)
+        await tapStableControl(m, 'Pin')
+        await until(
+          'Current attachment reply preparation pin must persist',
+          async () =>
+            (await api.chatPins(deep.conversationId)).some(
+              pin => pin.messageId === deep.attachmentReplyId
+            )
+              ? true
+              : undefined
+        )
+      }
+      const quoteFor = async (): Promise<string> => {
+        const row = flatten(await m.hierarchy()).find(
+          node => node.id === `chat-message-${deep.attachmentReplyId}`
+        )
+        const quote = strings(row == null ? [] : flatten(row)).find(label =>
+          label.startsWith('Jump to message from ')
+        )
+        assert(
+          quote != null,
+          'The identified current attachment reply must expose its own short-jump control'
+        )
+        return quote
+      }
+      await m.tapOn({ text: await quoteFor() })
+      await m.assertVisible({
+        id: `chat-message-${deep.attachmentId}`,
+        timeout: 60000
+      })
+      await m.assertVisible({ text: `Save ${deep.fileName}`, timeout: 30000 })
+      await photo('current-attachment-original-after-short-jump')
+      const count = (await api.chatPins(deep.conversationId)).length
+      await tapStableControl(m, `Pinned messages: ${count}`)
+      await tapStableControl(m, deep.attachmentReplyBody)
+      await m.assertVisible({
+        id: `chat-message-${deep.attachmentReplyId}`,
+        timeout: 30000
+      })
+      const currentQuote = await quoteFor()
+      assert(
+        currentQuote.includes(`File: ${deep.fileName}`),
+        'Decoded current attachment quote must show its safe attachment label'
+      )
+      await photo('current-attachment-quote-label')
+      await currentMessageMore(deep.attachmentReplyId)
+      await tapStableControl(m, 'Unpin')
+      await until(
+        'Only the temporary current attachment reply pin must be removed',
+        async () =>
+          !(await api.chatPins(deep.conversationId)).some(
+            pin => pin.messageId === deep.attachmentReplyId
+          )
+            ? true
+            : undefined
+      )
+      await m.tapOn({ text: currentQuote })
+      await m.assertVisible({ text: `Save ${deep.fileName}`, timeout: 30000 })
+      await tapStableControl(m, `Save ${deep.fileName}`)
+      const opened = await until(
+        'Ordinary short file activation must open the native system viewer',
+        async () => {
+          const labels = strings(flatten(await m.hierarchy()))
+          return labels.includes('Done') ||
+            labels.includes('Copy') ||
+            labels.includes('Share')
+            ? labels
+            : undefined
+        },
+        30000
+      )
+      await photo('current-attachment-system-open')
+      results.currentAttachmentQuote = {
+        normalCurrentReplyPinPreparation: true,
+        existingTemporaryPin: existing,
+        temporaryPinRemoved: true,
+        exactCurrentQuoteLabel: currentQuote,
+        attachmentJumpTarget: deep.attachmentId,
+        systemViewerLabels: opened
+      }
+      pass(
+        'current attachment quote uses its safe file label, short-jumps to its original and opens the native system viewer'
+      )
+      return
     }
     if (
       [
@@ -2100,8 +2947,7 @@ async function main(): Promise<void> {
       await scopedOpen(video.conversationId, video.videoCaption)
       const rowId = `chat-message-${video.videoMessageId}`
       const openLabel = `Open ${video.fileName}`
-      await reveal(m, { id: rowId })
-      await reveal(m, { text: openLabel })
+      await revealMessage(video.conversationId, video.videoMessageId)
       if (platform === 'android') {
         await m.startRecording({
           path: required('CHAT_UI_NATIVE_ANDROID_RECORD_REMOTE')
@@ -2152,9 +2998,26 @@ async function main(): Promise<void> {
           holdDuration: 550,
           duration: 10
         })
-      await m.assertVisible({ text: 'Reply', timeout: 10000 })
+      const videoHoldMenu = await until(
+        'The exact video message Reply action must open after a stationary hold',
+        async () => {
+          const tree = await m.hierarchy()
+          return flatten(tree).some(
+            node =>
+              (node.text === 'Reply' || node.label === 'Reply') &&
+              node.bounds != null
+          )
+            ? tree
+            : undefined
+        },
+        10000
+      )
+      writeFileSync(
+        join(resultDirectory, `${platform}-video-hold-menu-hierarchy.json`),
+        JSON.stringify(videoHoldMenu, null, 2)
+      )
       assert(
-        !flatten(await m.hierarchy()).some(
+        !flatten(videoHoldMenu).some(
           node =>
             (node.text === video.fileName || node.label === video.fileName) &&
             node.bounds != null &&
@@ -2224,6 +3087,20 @@ async function main(): Promise<void> {
               pane == null ||
               thumbnail == null
             ) {
+              if (row?.bounds != null && pane != null && thumbnail == null) {
+                const down = row.bounds.y <= pane.y + 8
+                const x = Math.round(pane.x + pane.width * 0.5)
+                await m.dragAndDrop({
+                  from: {
+                    point: `${x},${Math.round(pane.y + pane.height * (down ? 0.35 : 0.65))}`
+                  },
+                  to: {
+                    point: `${x},${Math.round(pane.y + pane.height * (down ? 0.55 : 0.45))}`
+                  },
+                  holdDuration: 10,
+                  duration: 400
+                })
+              }
               previousThumbnail = undefined
               return undefined
             }
@@ -2310,6 +3187,7 @@ async function main(): Promise<void> {
         `${platform}-video-playing-second.png`
       )
       const timing: Record<string, number> = {}
+      results.videoTiming = timing
       const decodedFraction = (pixels: Buffer): number => {
         let decoded = 0
         for (let index = 0; index < pixels.length; index += 3) {
@@ -2399,15 +3277,18 @@ async function main(): Promise<void> {
         async () => {
           writeFileSync(firstFrame, await m.screenshot())
           timing.firstFrameAt = Date.now()
-          return currentDecodedFraction(firstFrame) > 0.05 ? true : undefined
+          const fraction = currentDecodedFraction(firstFrame)
+          results.videoFirstDecodedFraction = fraction
+          return fraction > 0.05 ? true : undefined
         },
         5000
       )
       await new Promise(resolve => setTimeout(resolve, 1000))
       writeFileSync(secondFrame, await m.screenshot())
       timing.secondFrameAt = Date.now()
+      results.videoSecondDecodedFraction = currentDecodedFraction(secondFrame)
       assert(
-        currentDecodedFraction(secondFrame) > 0.05,
+        (results.videoSecondDecodedFraction as number) > 0.05,
         'Second playback sample must contain decoded test-pattern pixels'
       )
       if (platform === 'android') {
@@ -2927,6 +3808,9 @@ async function main(): Promise<void> {
       const initiallyPinned = (await api.chatPins(deep.conversationId)).some(
         row => row.messageId === deep.replyId
       )
+      const attachmentReplyInitiallyPinned = (
+        await api.chatPins(deep.conversationId)
+      ).some(row => row.messageId === deep.attachmentReplyId)
       await physicalMessageHold(m, replyId, quote, 550)
       await until(
         'Physical quote hold must expose the current reply actions',
@@ -2954,6 +3838,39 @@ async function main(): Promise<void> {
             ? true
             : undefined
         )
+      }
+      // Keep a normal jump back to both current replies before paging far away.
+      if (process.argv[2] === 'deep') {
+        await revealMessage(deep.conversationId, deep.attachmentReplyId)
+        if (!attachmentReplyInitiallyPinned) {
+          await physicalMessageHold(
+            m,
+            `chat-message-${deep.attachmentReplyId}`,
+            deep.attachmentReplyBody,
+            550
+          )
+          await tapStableControl(m, 'Pin')
+          await until(
+            'Temporary current attachment reply pin must persist',
+            async () =>
+              (await api.chatPins(deep.conversationId)).some(
+                row => row.messageId === deep.attachmentReplyId
+              )
+                ? true
+                : undefined
+          )
+        }
+        const currentCount = (await api.chatPins(deep.conversationId)).length
+        await tapStableControl(m, `Pinned messages: ${currentCount}`)
+        await tapStableControl(m, deep.replyBody)
+        await m.assertVisible({ id: replyId, timeout: 30000 })
+        results.deepCurrentReplyPinSetup = {
+          normalUiOnly: true,
+          olderOriginalPinned: false,
+          longReplyInitiallyPinned: initiallyPinned,
+          attachmentReplyInitiallyPinned,
+          currentReplyIds: [deep.replyId, deep.attachmentReplyId]
+        }
       }
       await photo('deep-quote-before-jump')
       await m.tapOn({ text: quote })
@@ -3021,22 +3938,11 @@ async function main(): Promise<void> {
         await physicalMessageHold(m, replyId, deep.replyBody, 550)
         await tapVisibleControl(m, 'Unpin')
       }
-      // Return near the attachment reply through the original's normal quote jump.
-      const currentQuote = strings(flatten(currentReply)).find(label =>
-        label.startsWith('Jump to message from ')
-      )
-      assert(
-        currentQuote != null,
-        'Loaded current quote must retain its jump action'
-      )
-      await m.tapOn({ text: currentQuote })
+      const attachmentCount = (await api.chatPins(deep.conversationId)).length
+      await tapStableControl(m, `Pinned messages: ${attachmentCount}`)
+      await tapStableControl(m, deep.attachmentReplyBody)
       await m.assertVisible({
-        id: `chat-message-${deep.originalId}`,
-        timeout: 30000
-      })
-      await m.scrollUntilVisible({
-        element: { id: `chat-message-${deep.attachmentReplyId}` },
-        direction: 'DOWN',
+        id: `chat-message-${deep.attachmentReplyId}`,
         timeout: 30000
       })
       const attachmentReply = flatten(await m.hierarchy()).find(
@@ -3060,6 +3966,45 @@ async function main(): Promise<void> {
         timeout: 30000
       })
       await photo('deep-attachment-original')
+      if (!attachmentReplyInitiallyPinned) {
+        const remainingCount = (await api.chatPins(deep.conversationId)).length
+        await tapStableControl(m, `Pinned messages: ${remainingCount}`)
+        await tapStableControl(m, deep.attachmentReplyBody)
+        await physicalMessageHold(
+          m,
+          `chat-message-${deep.attachmentReplyId}`,
+          deep.attachmentReplyBody,
+          550
+        )
+        await tapStableControl(m, 'Unpin')
+        await until(
+          'Temporary attachment reply pin must be restored',
+          async () =>
+            !(await api.chatPins(deep.conversationId)).some(
+              row => row.messageId === deep.attachmentReplyId
+            )
+              ? true
+              : undefined
+        )
+      }
+      const restoredPins = await api.chatPins(deep.conversationId)
+      assert.equal(
+        restoredPins.some(pin => pin.messageId === deep.replyId),
+        initiallyPinned,
+        'Temporary current long reply pin must match its initial state'
+      )
+      assert.equal(
+        restoredPins.some(pin => pin.messageId === deep.attachmentReplyId),
+        attachmentReplyInitiallyPinned,
+        'Temporary current attachment reply pin must match its initial state'
+      )
+      results.deepCurrentReplyPinCleanup = {
+        normalUiOnly: true,
+        longReplyRestored: true,
+        attachmentReplyRestored: true,
+        attachmentQuoteLabel: attachmentQuote,
+        attachmentJumpTargetId: deep.attachmentId
+      }
       results.deep = {
         conversationId: deep.conversationId,
         originalId: deep.originalId,
@@ -3657,9 +4602,16 @@ async function main(): Promise<void> {
       assert(fixture.photoPath != null, 'Private owned photo required')
       await m.addMedia({ files: [fixture.photoPath] })
       await open()
-      const initialPosts = (await api.chatMessages(fixture.conversationId))
-        .filter(row => row.kind === 'post')
-        .map(row => row.id)
+      const initialSeq = (await current()).lastSeq
+      const newPosts = async (): Promise<string[]> =>
+        (
+          await api.chatMessages(fixture.conversationId, {
+            after: initialSeq,
+            limit: 100
+          })
+        )
+          .filter(row => row.kind === 'post')
+          .map(row => row.id)
       await m.tapOn({ id: 'chat-composer' })
       await m.eraseText({ characters: 2048 })
       await m.inputText({ text: fixture.draft })
@@ -3668,13 +4620,7 @@ async function main(): Promise<void> {
         fixture.draft,
         'Native Enter must retain the multiline draft'
       )
-      assert.deepEqual(
-        (await api.chatMessages(fixture.conversationId))
-          .filter(row => row.kind === 'post')
-          .map(row => row.id),
-        initialPosts,
-        'Native newline must not send'
-      )
+      assert.deepEqual(await newPosts(), [], 'Native newline must not send')
       await m.tapOn({ text: 'Attach' })
       await m.tapOn({ text: 'File' })
       if (platform === 'android') await m.back()
@@ -3744,10 +4690,8 @@ async function main(): Promise<void> {
         'Removing a picked attachment preserves the native draft'
       )
       assert.deepEqual(
-        (await api.chatMessages(fixture.conversationId))
-          .filter(row => row.kind === 'post')
-          .map(row => row.id),
-        initialPosts,
+        await newPosts(),
+        [],
         'Picker and native newline must not send automatically'
       )
       await photo('native-picker-cancel-and-multiline')
@@ -3783,10 +4727,8 @@ async function main(): Promise<void> {
           'Oversize selection must not produce an attachment chip'
         )
         assert.deepEqual(
-          (await api.chatMessages(fixture.conversationId))
-            .filter(row => row.kind === 'post')
-            .map(row => row.id),
-          initialPosts,
+          await newPosts(),
+          [],
           'Native size rejection must not send'
         )
         await photo('native-oversize-photo-error')
@@ -3873,6 +4815,141 @@ async function main(): Promise<void> {
       )
       return
     }
+    if (process.argv[2] === 'return-key') {
+      stage = 'native-explicit-return-key'
+      await scopedOpen(fixture.conversationId, fixture.targetText)
+      const prior = await composerValue(m)
+      const before = await current()
+      assert(
+        before.canPost && !before.locked && !before.closed,
+        'Explicit Return test requires a normal writable retained conversation'
+      )
+      const marker = `Native key ${Date.now()}`
+      await m.tapOn({ id: 'chat-composer' })
+      if (prior.length > 0) await clearNativeComposer(m, prior)
+      await m.inputText({ text: marker })
+      const keyPressedAt = Date.now()
+      await m.pressKey({ key: 'ENTER' })
+      await m.inputText({ text: 'Next line' })
+      const expected = marker + '\nNext line'
+      assert.equal(
+        await composerValue(m),
+        expected,
+        'A documented native Enter key must insert a newline without sending'
+      )
+      const posts = (
+        await api.chatMessages(fixture.conversationId, {
+          after: before.lastSeq,
+          limit: 100
+        })
+      ).filter(row => row.kind === 'post')
+      assert.equal(
+        posts.length,
+        0,
+        'The native Enter key must create no encrypted post'
+      )
+      await photo('explicit-native-return-newline')
+      if (platform === 'android') {
+        // The optimized accessibility Clear command can leave a controlled
+        // native input unchanged; real Delete keys retain normal edit events.
+        let deleteKeys = expected.length
+        while (deleteKeys-- > 0) await m.pressKey({ key: 'BACKSPACE' })
+      } else await m.eraseText({ characters: expected.length })
+      if (prior !== '') await m.inputText({ text: prior })
+      assert.equal(
+        await composerValue(m),
+        prior,
+        'Explicit Return test must restore its prior unsent draft'
+      )
+      results.explicitReturn = {
+        documentedMaestroKey: 'ENTER',
+        keyPressedAt,
+        newlineInserted: true,
+        newPostCount: 0,
+        priorDraftRestored: true,
+        conversationId: fixture.conversationId,
+        actorUserId: fixture.actor.userId
+      }
+      pass(
+        'documented native Enter inserts a newline, creates no encrypted post and restores the prior draft'
+      )
+      return
+    }
+    if (process.argv[2] === 'reply-send') {
+      stage = 'native-current-reply-send-and-own-permissions'
+      assert(fixture.nativeReplyText != null, 'Private reply text is required')
+      await open()
+      const originalId = fixture.originalMessageIds[0]
+      await physicalMessageHold(
+        m,
+        `chat-message-${originalId}`,
+        fixture.targetText,
+        550
+      )
+      await tapStableControl(m, 'Reply')
+      await m.assertVisible({ text: 'Cancel reply', timeout: 10000 })
+      const body = `${fixture.nativeReplyText} ${Date.now()}`
+      await m.tapOn({ id: 'chat-composer' })
+      await m.eraseText({ characters: 8192 })
+      await m.inputText({ text: body })
+      const before = await current()
+      await tapStableControl(m, 'Send')
+      await m.assertVisible({ text: body, timeout: 60000 })
+      const acknowledged = await until(
+        'The unique own native reply must be acknowledged',
+        async () => {
+          const next = await current()
+          return next.lastPostId !== before.lastPostId &&
+            next.lastSeq > before.lastSeq
+            ? next
+            : undefined
+        }
+      )
+      const added = await api.chatMessages(fixture.conversationId, {
+        after: before.lastSeq,
+        limit: 100
+      })
+      const posts = added.filter(row => row.kind === 'post')
+      assert.equal(
+        posts.length,
+        1,
+        'One native reply press must create exactly one new encrypted post'
+      )
+      assert.equal(posts[0].senderUserId, fixture.actor.userId)
+      assert.equal(posts[0].id, acknowledged.lastPostId)
+      assert.equal(
+        await composerValue(m),
+        '',
+        'Successful native reply must clear only its submitted text'
+      )
+      await m.assertNotVisible({ text: 'Cancel reply', timeout: 1000 })
+      assert(
+        !JSON.stringify(added).includes(body),
+        'Native reply plaintext must be absent from authenticated envelopes'
+      )
+      await revealMessage(fixture.conversationId, posts[0].id)
+      await physicalMessageHold(m, `chat-message-${posts[0].id}`, body, 550)
+      for (const action of ['Reply', 'Copy', 'Delete'])
+        await m.assertVisible({ text: action, timeout: 10000 })
+      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
+      await photo('own-message-actions-after')
+      await m.tapOnPoint({ point: '5%,15%' })
+      results.replySend = {
+        beforeSeq: before.lastSeq,
+        afterSeq: acknowledged.lastSeq,
+        newPostId: posts[0].id,
+        newPostCount: posts.length,
+        senderMatches: true,
+        submittedTextAndContextCleared: true,
+        ownDeleteAvailable: true,
+        editUnavailable: true,
+        protectedPostsNotDeleted: true
+      }
+      pass(
+        'one unique encrypted native reply clears its submitted draft and exposes the allowed own-message actions'
+      )
+      return
+    }
     if (process.argv[2] === 'messages') {
       stage = 'S6-message-actions'
       console.log(
@@ -3895,113 +4972,13 @@ async function main(): Promise<void> {
       const pinsBefore = await api.chatPins(fixture.conversationId)
       const wasPinned = pinsBefore.some(row => row.messageId === original.id)
       async function messageHold(duration: number): Promise<void> {
-        const rowId = `chat-message-${originalId}`
-        await m.scrollUntilVisible({
-          element: { id: rowId },
-          direction: 'UP',
-          timeout: 10000
-        })
-        for (let adjustment = 0; adjustment < 5; adjustment++) {
-          const tree = await m.hierarchy()
-          let viewport: Bounds | undefined
-          const walk = (node: Hierarchy): void => {
-            if (
-              node.type?.includes('ScrollView') === true &&
-              node.bounds != null &&
-              node.bounds.height > 0 &&
-              flatten(node).some(child => child.id === rowId)
-            )
-              viewport = node.bounds
-            for (const child of node.children ?? []) walk(child)
-          }
-          walk(tree)
-          const row = flatten(tree).find(node => node.id === rowId)
-          const body =
-            row == null
-              ? undefined
-              : flatten(row).find(
-                  node =>
-                    (node.text === fixture.targetText ||
-                      node.label === fixture.targetText) &&
-                    node.bounds != null
-                )?.bounds
-          if (viewport == null || body == null) break
-          const center = body.y + body.height / 2
-          if (
-            center > viewport.y + 12 &&
-            center < viewport.y + viewport.height - 12
-          )
-            break
-          const x = Math.round(viewport.x + viewport.width * 0.8)
-          const y = Math.round(viewport.y + viewport.height * 0.5)
-          const delta = Math.min(
-            viewport.height * 0.3,
-            Math.abs(center - (viewport.y + viewport.height * 0.5))
-          )
-          await m.swipe({
-            startX: x,
-            startY: y,
-            endX: x,
-            endY: Math.round(y + (center < viewport.y ? delta : -delta)),
-            duration: 100
-          })
-        }
-        let previous: Bounds | undefined
-        let rowBounds: Bounds | undefined
-        const bounds = await until(
-          'Selected native message must settle before recognition',
-          async () => {
-            const row = flatten(await m.hierarchy()).find(
-              node => node.id === rowId
-            )
-            rowBounds = row?.bounds
-            const body =
-              row == null
-                ? undefined
-                : flatten(row).find(
-                    node =>
-                      (node.text === fixture.targetText ||
-                        node.label === fixture.targetText) &&
-                      node.bounds != null
-                  )
-            const current = body?.bounds
-            assert(
-              current != null && current.width > 0 && current.height > 0,
-              'Selected readable native message must have visible body bounds'
-            )
-            const stable =
-              previous != null &&
-              Math.abs(current.x - previous.x) < 1 &&
-              Math.abs(current.y - previous.y) < 1
-            previous = current
-            return stable ? current : undefined
-          },
-          10000
+        await revealMessage(fixture.conversationId, originalId)
+        await physicalMessageHold(
+          m,
+          `chat-message-${originalId}`,
+          fixture.targetText,
+          duration
         )
-        const x = Math.round(bounds.x + bounds.width / 2)
-        const y = Math.round(bounds.y + bounds.height / 2)
-        if (platform === 'android')
-          await m.swipe({ startX: x, startY: y, endX: x, endY: y, duration })
-        else {
-          assert(
-            rowBounds != null && rowBounds.width > 0 && rowBounds.height > 0,
-            'Exact native row bounds required'
-          )
-          const relativeX = ((x - rowBounds.x) / rowBounds.width) * 100
-          const relativeY = ((y - rowBounds.y) / rowBounds.height) * 100
-          assert(
-            relativeX >= 0 &&
-              relativeX <= 100 &&
-              relativeY >= 0 &&
-              relativeY <= 100,
-            'Body point must lie in actual selected row'
-          )
-          await m.longPressOn({
-            id: rowId,
-            point: `${relativeX}%,${relativeY}%`,
-            duration
-          })
-        }
       }
       async function messageMenu(): Promise<void> {
         await messageHold(550)
@@ -4121,6 +5098,7 @@ async function main(): Promise<void> {
         await m.assertNotVisible({ text: label, timeout: 1000 })
       if (!target.canModerate)
         await m.assertNotVisible({ text: 'Delete', timeout: 1000 })
+      else await m.assertVisible({ text: 'Delete', timeout: 10000 })
       await photo('message-actions-after')
       await m.tapOnPoint({ point: '5%,15%' })
       await m.assertNotVisible({ text: 'Copy', timeout: 1000 })
@@ -4254,6 +5232,33 @@ async function main(): Promise<void> {
         await messageMenu()
         await m.tapOn({ text: `React with ${emoji}` })
         await m.assertVisible({ text: `${emoji}, 1`, timeout: 10000 })
+        if (emoji === '❤️') {
+          await physicalMessageHold(
+            m,
+            `chat-message-${originalId}`,
+            `${emoji}, 1`,
+            550
+          )
+          await until(
+            'Nested reaction hold must select its message',
+            async () => {
+              const labels = strings(flatten(await m.hierarchy()))
+              return labels.includes('Copy') && labels.includes('Reply')
+                ? true
+                : undefined
+            },
+            10000
+          )
+          await photo('reaction-chip-hold-actions')
+          await m.tapOnPoint({ point: '5%,15%' })
+          assert(
+            strings(flatten(await m.hierarchy())).includes(`${emoji}, 1`),
+            'Holding the reaction chip must not perform its short toggle'
+          )
+          pass(
+            'physical nested reaction hold selects the message without toggling its reaction'
+          )
+        }
         await m.tapOn({ text: `${emoji}, 1` })
         await until(
           'Native reaction toggle did not restore the visible state',
@@ -4312,7 +5317,8 @@ async function main(): Promise<void> {
       await tapVisibleControl(m, 'Reply')
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: fixture.nativeReplyText })
-      const previous = (await current()).lastPostId
+      const beforeReply = await current()
+      const previous = beforeReply.lastPostId
       const previousOwnPosts = new Set(
         (await api.chatMessages(fixture.conversationId))
           .filter(
@@ -4332,7 +5338,10 @@ async function main(): Promise<void> {
         '',
         'Successful reply send clears the submitted text'
       )
-      const envelopes = await api.chatMessages(fixture.conversationId)
+      const envelopes = await api.chatMessages(fixture.conversationId, {
+        after: beforeReply.lastSeq,
+        limit: 100
+      })
       assert.equal(
         envelopes.filter(
           row =>
@@ -4345,7 +5354,7 @@ async function main(): Promise<void> {
       )
       assert(
         fixture.originalMessageIds.every(id =>
-          envelopes.some(row => row.id === id)
+          originalMessages.some(row => row.id === id)
         ),
         'Original post and reply IDs preserved by native actions'
       )
@@ -4354,6 +5363,25 @@ async function main(): Promise<void> {
         'Reply plaintext must be absent from authenticated API envelopes'
       )
       results.nativeReplyPostId = (await current()).lastPostId
+      const ownReplyId = results.nativeReplyPostId as string
+      await revealMessage(fixture.conversationId, ownReplyId)
+      await physicalMessageHold(
+        m,
+        `chat-message-${ownReplyId}`,
+        fixture.nativeReplyText,
+        550
+      )
+      for (const action of ['Reply', 'Copy', 'Delete'])
+        await m.assertVisible({ text: action, timeout: 10000 })
+      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
+      results.messagePermissionMatrix = {
+        receivedDeleteAvailable: target.canModerate,
+        ownDeleteAvailable: true,
+        editUnavailable: true,
+        protectedMessagesNotDeleted: true
+      }
+      await photo('own-message-actions-after')
+      await m.tapOnPoint({ point: '5%,15%' })
       pass(
         'native reply Cancel keeps draft; successful encrypted reply send clears context exactly once'
       )
@@ -4375,6 +5403,18 @@ async function main(): Promise<void> {
     }
     if (['retention', 'top-retention'].includes(process.argv[2])) {
       stage = 'S4-scroll-fixture'
+      const readingPath = process.env.CHAT_UI_NATIVE_READING_FIXTURE
+      const reading =
+        readingPath == null
+          ? undefined
+          : (JSON.parse(readFileSync(readingPath, 'utf8')) as {
+              conversationId: string
+              firstMessageId: string
+              firstBody: string
+              followingMessageId: string
+              followingBody: string
+              expectedFirstRowHeight?: number
+            })
       console.log(
         '$ S4 retain native message position and independent drafts across Back and conversation switch'
       )
@@ -4407,6 +5447,7 @@ async function main(): Promise<void> {
       let dm: ChatConversation | undefined
       for (const row of await api.chatConversations()) {
         if (
+          (reading == null || row.id === reading.conversationId) &&
           row.kind === 'dm' &&
           row.memberCount === 2 &&
           (await api.chatMembers(row.id)).some(
@@ -4475,25 +5516,36 @@ async function main(): Promise<void> {
           'Existing readable first post required for explicit-zero proof'
         )
         anchorId = first.id
+        if (reading != null)
+          assert.equal(
+            anchorId,
+            reading.firstMessageId,
+            'Exact existing first post required for zero-position reproduction'
+          )
         await dismissKeyboard()
         const previousId = (await api.chatConversations()).find(
           item => item.id === dm.id
         )?.lastPostId
-        const padding = `Zero reading padding ${Date.now()}\n${Array.from({ length: 36 }, (_, index) => `Owned padding line ${index + 1}`).join('\n')}`
-        await m.tapOn({ id: 'chat-composer' })
-        await m.inputText({ text: padding })
-        await tapVisibleControl(m, 'Send')
-        await until(
-          'Normal zero fixture must have enough content to distinguish top from newest',
-          async () => {
-            const row = (await api.chatConversations()).find(
-              item => item.id === dm.id
-            )
-            return row?.lastPostId != null && row.lastPostId !== previousId
-              ? row
-              : undefined
-          }
-        )
+        if (
+          reading == null ||
+          process.env.CHAT_UI_NATIVE_READING_APPEND === '1'
+        ) {
+          const padding = `Zero reading padding ${Date.now()}\n${Array.from({ length: 36 }, (_, index) => `Owned padding line ${index + 1}`).join('\n')}`
+          await m.tapOn({ id: 'chat-composer' })
+          await m.inputText({ text: padding })
+          await tapVisibleControl(m, 'Send')
+          await until(
+            'Normal zero fixture must have enough content to distinguish top from newest',
+            async () => {
+              const row = (await api.chatConversations()).find(
+                item => item.id === dm.id
+              )
+              return row?.lastPostId != null && row.lastPostId !== previousId
+                ? row
+                : undefined
+            }
+          )
+        }
       }
       await dismissKeyboard()
       if (!top && platform === 'android') {
@@ -4524,9 +5576,63 @@ async function main(): Promise<void> {
       await m.inputText({ text: fixture.draft })
       await dismissKeyboard()
       if (top) {
-        await reveal(m, { id: `chat-message-${anchorId}` })
-        for (let index = 0; index < 3; index += 1)
-          await m.swipe({ direction: 'DOWN', duration: 600 })
+        if (reading != null) {
+          await until(
+            'Exact first body must reach explicit zero through the message pane',
+            async () => {
+              const nodes = flatten(await m.hierarchy())
+              const pane = nodes.find(
+                node =>
+                  node.type?.includes('ScrollView') === true &&
+                  node.bounds != null &&
+                  flatten(node).some(
+                    child => child.id?.startsWith('chat-message-') === true
+                  )
+              )?.bounds
+              assert(
+                pane != null,
+                'Actual message pane required for explicit-zero preparation'
+              )
+              const row = nodes.find(
+                node => node.id === `chat-message-${anchorId}`
+              )
+              const body =
+                row == null
+                  ? undefined
+                  : flatten(row).find(
+                      node =>
+                        node.text === reading.firstBody ||
+                        node.label === reading.firstBody
+                    )?.bounds
+              if (
+                body != null &&
+                body.height > 0 &&
+                body.y >= pane.y &&
+                row?.bounds != null &&
+                row.bounds.y >= pane.y &&
+                (reading.expectedFirstRowHeight == null ||
+                  row.bounds.height >= reading.expectedFirstRowHeight - 2) &&
+                row.bounds.y - pane.y < 40
+              )
+                return true
+              const x = Math.round(pane.x + pane.width * 0.5)
+              await m.dragAndDrop({
+                from: {
+                  point: `${x},${Math.round(pane.y + pane.height * 0.25)}`
+                },
+                to: { point: `${x},${Math.round(pane.y + pane.height * 0.8)}` },
+                holdDuration: 10,
+                duration: 400
+              })
+              return undefined
+            },
+            90000
+          )
+        } else {
+          await reveal(m, { id: `chat-message-${anchorId}` })
+          for (let index = 0; index < 3; index += 1)
+            await m.swipe({ direction: 'DOWN', duration: 600 })
+        }
       } else if (spacerId != null) {
         await reveal(m, { id: `chat-message-${spacerId}` }, 'DOWN')
         const nodes = flatten(await m.hierarchy())
@@ -4552,6 +5658,66 @@ async function main(): Promise<void> {
           duration: 400
         })
       } else await m.swipe({ direction: 'DOWN', duration: 600 })
+      if (top && reading != null) {
+        const paneNow = async (): Promise<Bounds> =>
+          await until(
+            'Same actual message pane required',
+            async () =>
+              flatten(await m.hierarchy()).find(
+                node =>
+                  node.type?.includes('ScrollView') === true &&
+                  node.bounds != null &&
+                  flatten(node).some(
+                    child => child.id?.startsWith('chat-message-') === true
+                  )
+              )?.bounds
+          )
+        const pullToBoundary = async (): Promise<void> => {
+          const pane = await paneNow()
+          const x = Math.round(pane.x + pane.width * 0.5)
+          await m.dragAndDrop({
+            from: { point: `${x},${Math.round(pane.y + pane.height * 0.25)}` },
+            to: { point: `${x},${Math.round(pane.y + pane.height * 0.8)}` },
+            holdDuration: 10,
+            duration: 400
+          })
+        }
+        await pullToBoundary()
+        await pullToBoundary()
+        if (process.env.CHAT_UI_NATIVE_READING_WARM === '1') {
+          const pane = await paneNow()
+          const x = Math.round(pane.x + pane.width * 0.5)
+          const from = { x, y: Math.round(pane.y + pane.height * 0.65) }
+          const to = { x, y: Math.round(pane.y + pane.height * 0.54) }
+          await m.dragAndDrop({
+            from: { point: `${from.x},${from.y}` },
+            to: { point: `${to.x},${to.y}` },
+            holdDuration: 10,
+            duration: 400
+          })
+          await new Promise(resolve => setTimeout(resolve, 800))
+          results.zeroWarmPreparation = {
+            pane,
+            from,
+            to,
+            at: Date.now(),
+            rows: flatten(await m.hierarchy())
+              .filter(
+                node =>
+                  node.id === `chat-message-${reading.firstMessageId}` ||
+                  node.id === `chat-message-${reading.followingMessageId}`
+              )
+              .map(node => ({ id: node.id, bounds: node.bounds }))
+          }
+          await tapVisibleControl(m, 'Back')
+          await scopedOpen(fixture.conversationId, fixture.targetText)
+          await tapVisibleControl(m, 'Back')
+          await scopedOpen(dm.id, candidate.shortName)
+          await dismissKeyboard()
+          for (let index = 0; index < 3; index++)
+            await m.swipe({ direction: 'DOWN', duration: 600 })
+        }
+      }
       await new Promise(resolve => setTimeout(resolve, 800))
       const beforeNodes = flatten(await m.hierarchy())
       const anchorRow = beforeNodes.find(
@@ -4569,6 +5735,20 @@ async function main(): Promise<void> {
         'Scroll fixture message must expose native bounds'
       )
       const beforeY = anchor.bounds.y
+      const firstBodyBefore =
+        reading == null || anchorRow == null
+          ? undefined
+          : flatten(anchorRow).find(
+              node =>
+                node.text === reading.firstBody ||
+                node.label === reading.firstBody
+            )?.bounds
+      const followingBefore =
+        reading == null
+          ? undefined
+          : beforeNodes.find(
+              node => node.id === `chat-message-${reading.followingMessageId}`
+            )?.bounds
       const messageViewport = beforeNodes.find(
         node =>
           node.type?.includes('ScrollView') === true &&
@@ -4576,6 +5756,19 @@ async function main(): Promise<void> {
           flatten(node).some(child => child.id === `chat-message-${anchorId}`)
       )?.bounds
       assert(messageViewport != null, 'Actual native message viewport required')
+      if (reading != null) {
+        assert(
+          firstBodyBefore != null && followingBefore != null,
+          'Exact first body and following row must be visible before zero-position switch'
+        )
+        assert(
+          firstBodyBefore.y >= messageViewport.y &&
+            firstBodyBefore.y + firstBodyBefore.height <=
+              messageViewport.y + messageViewport.height,
+          'Zero-position proof requires the complete first body inside the pane'
+        )
+        results.zeroReadingGeometry = { firstBodyBefore, followingBefore }
+      }
       const spacer =
         spacerId == null
           ? undefined
@@ -4685,6 +5878,40 @@ async function main(): Promise<void> {
         afterComposer: afterNodes.find(node => node.id === 'chat-composer')
           ?.bounds,
         delta: afterAnchor.bounds.y - beforeY
+      }
+      if (reading != null) {
+        const firstBodyAfter =
+          afterRow == null
+            ? undefined
+            : flatten(afterRow).find(
+                node =>
+                  node.text === reading.firstBody ||
+                  node.label === reading.firstBody
+              )?.bounds
+        const followingAfter = afterNodes.find(
+          node => node.id === `chat-message-${reading.followingMessageId}`
+        )?.bounds
+        results.zeroReadingGeometry = {
+          ...(results.zeroReadingGeometry as object),
+          firstBodyAfter,
+          followingAfter
+        }
+        assert(
+          firstBodyAfter != null &&
+            followingAfter != null &&
+            firstBodyBefore != null &&
+            followingBefore != null,
+          'The complete first body and same following row must remain after reopening zero position'
+        )
+        assert(
+          Math.abs(firstBodyAfter.y - firstBodyBefore.y) <= 10 &&
+            Math.abs(firstBodyAfter.height - firstBodyBefore.height) <= 2,
+          'Zero restoration must preserve full first-body bounds rather than a clipped row anchor'
+        )
+        assert(
+          Math.abs(followingAfter.y - followingBefore.y) <= 10,
+          'Zero restoration must preserve the same following-bubble boundary'
+        )
       }
       assert(
         Math.abs(afterAnchor.bounds.y - beforeY) <= 10,
@@ -4918,14 +6145,27 @@ async function main(): Promise<void> {
         '$ S2 send unique encrypted probe in new DM; react only to that probe; observe post-only recency'
       )
       await scopedOpen(probe.id, probe.label)
+      const previousProbe = (await api.chatConversations()).find(
+        row => row.id === probe.id
+      )!
       const probeBody = `${fixture.probePost} ${Date.now()}`
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: probeBody })
       await m.tapOn({ text: 'Send' })
       await m.assertVisible({ text: probeBody, timeout: 60000 })
-      const posted = (await api.chatConversations()).find(
-        row => row.id === probe.id
-      )!
+      const posted = await until(
+        'The new encrypted probe must be acknowledged as the latest post',
+        async () => {
+          const row = (await api.chatConversations()).find(
+            row => row.id === probe.id
+          )
+          return row != null &&
+            row.lastPostId !== previousProbe.lastPostId &&
+            row.lastSeq > previousProbe.lastSeq
+            ? row
+            : undefined
+        }
+      )
       const postId = posted.lastPostId
       assert(
         postId != null && posted.lastPostAt != null,
@@ -5075,9 +6315,37 @@ async function main(): Promise<void> {
     await list()
     stage = 'S3-movement-cancel'
     const moving = await rowCenter()
+    const listViewport = flatten(await m.hierarchy()).find(
+      node =>
+        node.type?.includes('ScrollView') === true &&
+        node.bounds != null &&
+        flatten(node).some(
+          child => child.id === `chat-conversation-${fixture.conversationId}`
+        )
+    )?.bounds
+    assert(
+      listViewport != null,
+      'Actual list viewport required for movement cancellation'
+    )
+    const endY =
+      moving.y - 150 >= listViewport.y + 8 ? moving.y - 150 : moving.y + 150
+    assert(
+      endY > listViewport.y + 8 &&
+        endY < listViewport.y + listViewport.height - 8,
+      'The full physical cancellation movement must remain inside the list pane'
+    )
+    results.conversationMovementGesture = {
+      from: moving,
+      to: { x: moving.x, y: endY },
+      viewport: listViewport,
+      requestedHoldMs: 200,
+      requestedMovementMs: 500,
+      physicalDistance: Math.abs(endY - moving.y),
+      issuedAt: Date.now()
+    }
     await m.dragAndDrop({
       from: { point: `${moving.x},${moving.y}` },
-      to: { point: `${moving.x},${Math.max(100, moving.y - 150)}` },
+      to: { point: `${moving.x},${endY}` },
       holdDuration: 200,
       duration: 500
     })
@@ -5222,21 +6490,39 @@ async function main(): Promise<void> {
     ).map(row => row.id)
   } catch (error) {
     const failurePrefix = `${platform}-${sourceStage.toLowerCase()}-${process.argv[2] ?? 'core'}-failure`
-    if (device != null) {
-      writeFileSync(
-        join(resultDirectory, `${failurePrefix}-hierarchy.json`),
-        JSON.stringify(await device.hierarchy(), null, 2)
-      )
-      writeFileSync(
-        join(resultDirectory, `${failurePrefix}.xml`),
-        await device.hierarchyRaw()
-      )
-      writeFileSync(
-        join(resultDirectory, `${failurePrefix}.png`),
-        await device.screenshot()
-      )
-    }
     results.failure = { stage, proofPrefix: failurePrefix }
+    if (device != null) {
+      let hierarchyAvailable = false
+      const inspectionFailures: string[] = []
+      try {
+        writeFileSync(
+          join(resultDirectory, `${failurePrefix}-hierarchy.json`),
+          JSON.stringify(await device.hierarchy(), null, 2)
+        )
+        hierarchyAvailable = true
+      } catch {
+        inspectionFailures.push('native hierarchy unavailable')
+      }
+      if (hierarchyAvailable) {
+        try {
+          writeFileSync(
+            join(resultDirectory, `${failurePrefix}.xml`),
+            await device.hierarchyRaw()
+          )
+        } catch {
+          inspectionFailures.push('raw native hierarchy unavailable')
+        }
+      }
+      try {
+        writeFileSync(
+          join(resultDirectory, `${failurePrefix}.png`),
+          await device.screenshot()
+        )
+      } catch {
+        inspectionFailures.push('native screenshot unavailable')
+      }
+      results.failureInspection = { hierarchyAvailable, inspectionFailures }
+    }
     throw error
   } finally {
     if (
@@ -5248,6 +6534,7 @@ async function main(): Promise<void> {
         [process.env.CHAT_UI_NATIVE_FAULT_CONTROL, 'clear'],
         { stdio: 'pipe' }
       )
+    if (restorePendingPreferences != null) await restorePendingPreferences()
     if (recording)
       await device
         ?.stopRecording({
