@@ -20,6 +20,7 @@ import {
   ListRow,
   ManageGear,
   PillTabs,
+  ScheduleRow,
   Screen,
   SectionHeader,
   type Stat,
@@ -48,7 +49,7 @@ import {
   type StatColumn,
   statColumnWidths
 } from './statColumns'
-import { gamesFor } from './whenFilter'
+import { chronological, gamesFor } from './whenFilter'
 
 export interface TeamScreenProps {
   client: TeamStationClient
@@ -233,6 +234,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   // sorts it to the bottom as a past game, so the screen disagreed with its
   // own header.
   const upcoming = gamesFor(games, 'upcoming')
+  // The season in the order it is played, as the nav bar's schedule draws it.
+  const schedule = chronological(games)
 
   return (
     <Screen onScroll={handoff.handleScroll}>
@@ -314,16 +317,17 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             title="Schedule"
             note={`${games.length} games, ${upcoming.length} to play`}
           />
-          {games.length === 0 ? (
+          {schedule.length === 0 ? (
             <Empty text="No games scheduled." />
           ) : (
-            games.map(game => (
-              <GameCard
-                key={game.id}
-                game={game}
-                teamId={team.id}
-                onOpen={onOpenGame}
-              />
+            schedule.map(game => (
+              <View key={game.id} testID="scheduleGame">
+                <ScheduleCard
+                  game={game}
+                  teamId={team.id}
+                  onOpen={onOpenGame}
+                />
+              </View>
             ))
           )}
         </View>
@@ -487,6 +491,39 @@ function GameCard(props: {
           The plays and the reported score disagree, so highlights are withheld.
         </Text>
       )}
+    </Card>
+  )
+}
+
+/**
+ * A game on the team's schedule: the nav bar schedule's row, with the one
+ * difference that the team's own name is not repeated on every line. The row
+ * says only who it is against, and where — `@ Owls`, `vs Hawks`.
+ */
+function ScheduleCard(props: {
+  game: GameSummary
+  teamId: string
+  onOpen: TeamScreenProps['onOpenGame']
+}): React.ReactElement {
+  const { game, teamId, onOpen } = props
+  const lines = matchupLines(game, teamId)
+  return (
+    <Card>
+      <ScheduleRow
+        first={lines.second}
+        startAt={game.startAt}
+        venue={game.venue}
+        status={game.status}
+        awayScore={game.awayScore}
+        homeScore={game.homeScore}
+        videoCount={game.videoCount}
+        result={resultFor(game, teamId)}
+        onPress={() => {
+          onOpen(game.id, `${lines.first} ${lines.second}`, {
+            autoPlay: game.videoCount > 0
+          })
+        }}
+      />
     </Card>
   )
 }
