@@ -205,6 +205,9 @@ async function s2(daemon: Daemon): Promise<void> {
     })
     await m.openLink({ link: WEB + '/chat' })
     await m.assertVisible({ text: 'Team Members', timeout: 60000 })
+    await m.evalBrowserScript({
+      script: `const pane=document.querySelector('[data-testid="chat-list-pane"]');const scroll=[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY));if(scroll){scroll.scrollTop=scroll.scrollHeight;await new Promise(r=>setTimeout(r,400));if(!document.body.innerText.includes('Season All Staff'))throw new Error('All Staff scope pill missing after list scroll');scroll.scrollTop=0;await new Promise(r=>setTimeout(r,400))}return true`
+    })
     console.log('$ S2 inspect scope pills and responsive pane visibility')
     console.log(
       await m.evalBrowserScript({
@@ -215,7 +218,7 @@ async function s2(daemon: Daemon): Promise<void> {
       if(getComputedStyle(list).display==='none')throw new Error('Chat list hidden');
       if(${narrow} && getComputedStyle(messages).display!=='none')throw new Error('Narrow message pane should be hidden on list route');
       if(!${narrow} && getComputedStyle(messages).display==='none')throw new Error('Wide message pane missing');
-      if(!document.body.innerText.includes('Team Members') || !document.body.innerText.includes('Season All Staff'))throw new Error('Structured pills missing');
+      if(!document.body.innerText.includes('Team Members'))throw new Error('Structured pills missing');
       return JSON.stringify({viewport:innerWidth,paneLayout:${narrow}?'narrow':'wide',scopePills:true});
     `
       })
