@@ -2,8 +2,74 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { constants } from 'node:os'
 import path from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
-import { redactedTail, rememberEnvironment } from './redact'
+import { redact, redactedTail, rememberEnvironment } from './redact'
+
+const diagnosticLimit = 32 * 1024
+
+/** Redact complete lines before retaining a bounded compiler failure tail. */
+class CompilerDiagnostics {
+  private tail = ''
+  private readonly lines = { stdout: '', stderr: '' }
+  private readonly dropping = { stdout: false, stderr: false }
+  private readonly decoders = {
+    stdout: new StringDecoder('utf8'),
+    stderr: new StringDecoder('utf8')
+  }
+
+  private readonly secrets: string[]
+
+  constructor(env: NodeJS.ProcessEnv) {
+    this.secrets = Object.entries(env)
+      .filter(
+        ([key, value]) =>
+          /password|token|secret|authorization|dsn|private.?key|(^|_)pin($|_)/i.test(
+            key
+          ) && value != null
+      )
+      .flatMap(([, value]) => {
+        const secret = value!
+        return [secret, encodeURIComponent(secret), ...secret.split(/\r?\n/)]
+      })
+      .filter(secret => secret.length > 2)
+      .sort((a, b) => b.length - a.length)
+  }
+
+  private retain(line: string): void {
+    line = redact(line)
+    for (const secret of this.secrets) line = line.split(secret).join('[redacted]')
+    this.tail = (this.tail + line + '\n').slice(-diagnosticLimit)
+  }
+
+  write(stream: 'stdout' | 'stderr', chunk: Buffer): void {
+    const pieces = this.decoders[stream].write(chunk).split('\n')
+    for (let i = 0; i < pieces.length; i++) {
+      if (!this.dropping[stream]) {
+        this.lines[stream] += pieces[i]
+        if (this.lines[stream].length > diagnosticLimit) {
+          this.lines[stream] = ''
+          this.dropping[stream] = true
+        }
+      }
+      if (i < pieces.length - 1) {
+        if (!this.dropping[stream]) this.retain(this.lines[stream])
+        this.lines[stream] = ''
+        this.dropping[stream] = false
+      }
+    }
+  }
+
+  finish(): string {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      this.lines[stream] += this.decoders[stream].end()
+      if (this.lines[stream] !== '' && !this.dropping[stream])
+        this.retain(this.lines[stream])
+    }
+    return this.tail.trim()
+  }
+}
+
 
 /**
  * What each failed tool wrote, kept off the error itself so that logging or
@@ -100,10 +166,7 @@ export class Processes {
       this.children.add(child)
       rememberEnvironment(command.env)
       let stdout = ''
-      let tail = ''
-      const keep = (chunk: Buffer): void => {
-        tail = (tail + chunk.toString()).slice(-tailLimit)
-      }
+      const diagnostics = new CompilerDiagnostics(command.env ?? {})
       let overflow = false
       let killTimer: NodeJS.Timeout | undefined
       function kill(signal: NodeJS.Signals): void {
@@ -124,7 +187,7 @@ export class Processes {
       }
       this.signal.addEventListener('abort', abort, { once: true })
       child.stdout.on('data', (chunk: Buffer) => {
-        keep(chunk)
+        diagnostics.write('stdout', chunk)
         if (command.capture === false) return
         if (stdout.length + chunk.length <= 1024 * 1024)
           stdout += chunk.toString()
@@ -133,7 +196,7 @@ export class Processes {
       // Compiler output may contain credentials. It is never printed as it
       // arrives; a failure prints its redacted tail.
       child.stderr.on('data', (chunk: Buffer) => {
-        keep(chunk)
+        diagnostics.write('stderr', chunk)
         if (command.captureStderr !== true) return
         if (stdout.length + chunk.length <= 1024 * 1024)
           stdout += chunk.toString()
@@ -154,7 +217,11 @@ export class Processes {
         this.signal.removeEventListener('abort', abort)
         if (killTimer != null) clearTimeout(killTimer)
         if (this.signal.aborted) reject(new Error('Deployment cancelled'))
-        else if (code !== 0)
+        else if (code !== 0) {
+          const tail = diagnostics.finish()
+          const tool = path.basename(command.file)
+          if (['gradlew', 'xcodebuild', 'cargo', 'node', 'npm'].includes(tool))
+            console.error(`${tool} failed (exit ${code})${tail === '' ? '' : `:\n${tail}`}`)
           reject(
             new DeploymentToolError(
               'Deployment tool failed',
@@ -164,7 +231,7 @@ export class Processes {
               tail
             )
           )
-        else if (overflow)
+        } else if (overflow)
           reject(new Error('Deployment tool output exceeded limit'))
         else resolve(stdout.trim())
       })
