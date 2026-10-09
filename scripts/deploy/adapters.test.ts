@@ -14,7 +14,7 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { android, verifyAndroidMetadata } from './android'
+import { android, androidOverride, verifyAndroidMetadata } from './android'
 import {
   archive,
   bundleEnvironment,
@@ -41,7 +41,7 @@ const team = 'EXAMPLETEAM'
 function info(): object {
   return {
     CFBundleIdentifier: context.target.app,
-    CFBundleVersion: '1.0.42',
+    CFBundleVersion: '26093004',
     CFBundleShortVersionString: '1.2.3',
     CFBundleExecutable: 'Example',
     UIDeviceFamily: [1, 2]
@@ -76,6 +76,11 @@ async function fake(command: Command): Promise<string> {
   }
   if (command.file === 'bundle' && command.args[1] === 'ruby') {
     const value = request(command)
+    if (command.args[3] === 'project')
+      file(
+        path.join(value.project, 'project.pbxproj'),
+        'temporary signing overrides'
+      )
     if (command.args[3] === 'match')
       file(path.join(value.profilesDirectory, 'fixture.mobileprovision'))
     if (command.args[3] === 'profile') return JSON.stringify(profile)
@@ -109,7 +114,7 @@ async function fake(command: Command): Promise<string> {
       path.join(command.cwd, 'app/build/outputs/apk/release/app-release.apk')
     )
   if (command.file === 'aapt')
-    return `package: name='${context.target.app}' versionCode='42' versionName='1.2.3'`
+    return `package: name='${context.target.app}' versionCode='26093004' versionName='1.2.3'`
   if (command.file === 'apksigner')
     return `Signer #1 certificate SHA-256 digest: ${'a'.repeat(64)}`
   if (command.file === 'unzip')
@@ -119,6 +124,10 @@ async function fake(command: Command): Promise<string> {
 function source(): void {
   file(path.join(context.source, 'package-lock.json'), '{}')
   file(path.join(context.source, 'ios/Podfile.lock'))
+  file(
+    path.join(context.source, 'ios/TeamStation.xcodeproj/project.pbxproj'),
+    'user project bytes'
+  )
   file(path.join(context.source, 'android/gradlew'))
 }
 describe('Native build and signing adapters', () => {
@@ -170,12 +179,20 @@ describe('Native build and signing adapters', () => {
       branch: 'master',
       commit: 'a'.repeat(40),
       version: '1.2.3',
-      buildNumber: 42,
+      buildNumber: 26093004,
       buildTime: '2026-01-01T00:00:00Z',
       processes: new Processes(new AbortController().signal)
     }
     mkdirSync(context.source)
     mkdirSync(context.output)
+    file(
+      path.join(
+        context.source,
+        'ios',
+        context.target.scheme! + '.xcodeproj/project.pbxproj'
+      ),
+      'user project bytes'
+    )
     source()
     profile = {
       uuid: '00000000-0000-4000-8000-000000000001',
@@ -227,8 +244,12 @@ describe('Native build and signing adapters', () => {
       'https://api.example.test:8443/api/v1'
     )
     assert.equal(await prepare(context), context.source)
+    mkdirSync(path.join(context.source, 'node_modules'))
     await prepare(context)
     assert.equal(calls.filter(c => c.file === 'socket').length, 1)
+    file(path.join(context.source, 'package-lock.json'), '{"changed":true}')
+    await prepare(context)
+    assert.equal(calls.filter(c => c.file === 'socket').length, 2)
     context.target = { ...context.target, harvester: true }
     await prepare(context)
     assert(calls.some(c => c.args.includes('build.harvester')))
@@ -257,8 +278,14 @@ describe('Native build and signing adapters', () => {
     context.target = target(app, 'android')
     const result = await android(context)
     assert(result.file.endsWith('.apk'))
-    assert.equal(result.buildNumber, '42')
+    assert.equal(result.buildNumber, '26093004')
     assert(calls.some(c => c.args.includes('--no-daemon')))
+    assert(
+      androidOverride.includes(
+        "'TS_BUILD_INFO', 'TS_API_BASE_URL', 'TS_PRIMARY_HOST'"
+      )
+    )
+    assert(androidOverride.includes('task.inputs.property'))
     assert(!existsSync(path.join(context.source, '.deploy/signing.gradle')))
     const id = 'app.teamstation.cameraman'
     context.settings.apps[id] = context.settings.apps[app]
@@ -271,7 +298,7 @@ describe('Native build and signing adapters', () => {
         `Signer #1 certificate SHA-256 digest: ${'a'.repeat(64)}`
       ],
       [
-        `package: name='${id}' versionCode='42' versionName='1.2.3'`,
+        `package: name='${id}' versionCode='26093004' versionName='1.2.3'`,
         `Signer #1 certificate SHA-256 digest: ${'b'.repeat(64)}`
       ],
       ['bad', 'bad']
@@ -380,7 +407,7 @@ describe('Native build and signing adapters', () => {
   it('archives and exports the actual target contract, verifies final IPA metadata, certificate, entitlements and JS', async () => {
     const result = await ios(context, path.join(root, 'home'))
     assert(result.file.endsWith('.ipa'))
-    assert.equal(result.buildNumber, '1.0.42')
+    assert.equal(result.buildNumber, '26093004')
     assert(
       calls.some(c => c.file === 'bundle' && c.args.includes('--deployment'))
     )
@@ -390,9 +417,34 @@ describe('Native build and signing adapters', () => {
         c.args.includes('OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo')
       )
     )
-    assert.equal(readdirSync(context.output).length, 0)
-    dispatch = async c => (c.args[0] === '-help' ? 'ad-hoc' : await fake(c))
+    assert.deepEqual(readdirSync(context.output), ['ios.ipa'])
+    const projectFile = path.join(
+      context.source,
+      'ios',
+      context.target.scheme! + '.xcodeproj/project.pbxproj'
+    )
+    assert.equal(readFileSync(projectFile, 'utf8'), 'user project bytes')
+    context.output = path.join(root, 'second-output')
+    mkdirSync(context.output)
+    dispatch = async c => {
+      if (c.args[0] === '-exportArchive') {
+        file(path.join(c.args[4], 'other-app.ipa'))
+        return ''
+      }
+      return c.args[0] === '-help' ? 'ad-hoc' : await fake(c)
+    }
     await ios(context, path.join(root, 'home'))
+    assert.equal(readFileSync(projectFile, 'utf8'), 'user project bytes')
+    dispatch = async c => {
+      if (c.file === 'xcodebuild' && c.args[0] === 'archive')
+        throw new Error('archive failed')
+      return await fake(c)
+    }
+    await assert.rejects(
+      ios(context, path.join(root, 'home')),
+      /archive failed/
+    )
+    assert.equal(readFileSync(projectFile, 'utf8'), 'user project bytes')
     const signing = {
       directory: root,
       keychain: 'fixture',
@@ -460,7 +512,7 @@ describe('Native build and signing adapters', () => {
         identity: 'Fixture Distribution',
         keychain: path.join(root, 'keychain'),
         profiles: { [app]: 'Fixture' },
-        number: '1.0.42',
+        number: '26093004',
         version: '1.2.3'
       },
       root
@@ -487,7 +539,7 @@ describe('Native build and signing adapters', () => {
     // The real system plist reader is exercised with a generated scalar-only plist.
     writeFileSync(
       path.join(appPath, 'Info.plist'),
-      `<plist version="1.0">${xml({ CFBundleIdentifier: app, CFBundleVersion: '1.0.42', CFBundleShortVersionString: '1.2.3', CFBundleExecutable: 'Example' })}</plist>`
+      `<plist version="1.0">${xml({ CFBundleIdentifier: app, CFBundleVersion: '26093004', CFBundleShortVersionString: '1.2.3', CFBundleExecutable: 'Example' })}</plist>`
     )
     assert.equal((await readInfo(context, appPath)).CFBundleIdentifier, app)
   })

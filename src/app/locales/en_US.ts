@@ -16,6 +16,7 @@ export const enUs = {
   about_branch: 'Branch',
   about_commit: 'Commit',
   about_time: 'Built',
+  about_server: 'App server URL',
   about_builds: 'Download builds',
   about_close: 'Close',
   about_close_button: 'Close build information',

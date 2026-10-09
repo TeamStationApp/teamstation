@@ -14,6 +14,7 @@ import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface AppHeaderProps {
+  apiBaseUrl?: string
   buildsClient?: TeamStationClient
   /** The name of the screen, centred. Absent on screens that say it below. */
   title?: string
@@ -176,6 +177,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
       {about && (
         <BuildInfoModal
           client={props.buildsClient}
+          apiBaseUrl={props.apiBaseUrl}
           onClose={() => {
             setAbout(false)
           }}

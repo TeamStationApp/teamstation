@@ -38,6 +38,13 @@ export default [
     }
   },
 
+  {
+    files: ['Masonfile.ts'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: './tsconfig.mason.json' }
+    }
+  },
+
   // Global ignores need to be in their own block:
   {
     ignores: [
