@@ -39,6 +39,8 @@ export interface AppHeaderProps {
   }
   /** Measured by the shell, which needs the height for everything it overlays. */
   onHeight?: (height: number) => void
+  /** Whether the signed-in person is a site administrator. */
+  isAdmin?: boolean
 }
 
 /**
@@ -178,6 +180,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         <BuildInfoModal
           client={props.buildsClient}
           apiBaseUrl={props.apiBaseUrl}
+          isAdmin={props.isAdmin}
           onClose={() => {
             setAbout(false)
           }}

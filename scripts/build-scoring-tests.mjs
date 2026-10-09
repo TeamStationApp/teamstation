@@ -32,6 +32,8 @@ await build({
   define: {
     __DEV__: 'true',
     TS_API_BASE_URL: JSON.stringify('/api/v1'),
+    // Tests never report; they hand startSentry a DSN and an SDK of their own.
+    'process.env.TS_SENTRY_DSN': JSON.stringify(''),
     'process.env.NODE_ENV': JSON.stringify('test')
   },
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }

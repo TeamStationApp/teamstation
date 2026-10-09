@@ -22,6 +22,7 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
+import { errorScreen } from './components/ErrorFallback'
 import { StandaloneField } from './field/StandaloneField'
 import { lstrings, sprintf } from './locales/strings'
 import {
@@ -59,6 +60,8 @@ import { PlayerScreen } from './screens/PlayerScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamScreen } from './screens/TeamScreen'
+import { startSentry, useSentryUser } from './sentry'
+import { ErrorBoundary } from './sentrySdk'
 import {
   cacheStyles,
   type Theme,
@@ -166,6 +169,11 @@ type Pushed =
       title?: string
     }
 
+// Reporting starts as this module loads, once the modules it imports have run,
+// so a failure from then on is reported. Both entry points, web and native,
+// import this module.
+startSentry()
+
 /**
  * Three destinations, each with its own stack.
  *
@@ -183,7 +191,9 @@ type Pushed =
 export function App(props: AppProps): React.ReactElement {
   return (
     <ThemeProvider>
-      <Shell {...props} />
+      <ErrorBoundary fallback={errorScreen}>
+        <Shell {...props} />
+      </ErrorBoundary>
     </ThemeProvider>
   )
 }
@@ -300,6 +310,8 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const [myRoles, setMyRoles] = useState<MyRoles | undefined>(undefined)
   const signedInAs = session?.user.id
+  const isAdmin = session?.user.isAdmin === true
+  useSentryUser(signedInAs)
 
   /**
    * The one socket every screen hears a game's changes on, for as long as
@@ -678,6 +690,7 @@ function Shell(props: AppProps): React.ReactElement {
       <View style={styles.app}>
         <AppHeader
           apiBaseUrl={apiBaseUrl}
+          isAdmin={isAdmin}
           title={lstrings.oauth_title}
           showMark
           buildsClient={session == null ? undefined : client}
@@ -760,6 +773,7 @@ function Shell(props: AppProps): React.ReactElement {
       <View style={styles.app}>
         <AppHeader
           apiBaseUrl={apiBaseUrl}
+          isAdmin={isAdmin}
           title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
           showMark
           nav={
@@ -803,6 +817,7 @@ function Shell(props: AppProps): React.ReactElement {
       <View style={styles.app}>
         <AppHeader
           apiBaseUrl={apiBaseUrl}
+          isAdmin={isAdmin}
           title={lstrings.join_header}
           showMark
           buildsClient={client}
@@ -1167,6 +1182,7 @@ function Shell(props: AppProps): React.ReactElement {
   const header = (
     <AppHeader
       apiBaseUrl={apiBaseUrl}
+      isAdmin={isAdmin}
       buildsClient={session == null ? undefined : client}
       title={titleFor(tab, top)}
       // The mark on every screen that is a destination in its own right —

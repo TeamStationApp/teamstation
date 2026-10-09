@@ -88,6 +88,8 @@
     "@react-three/fiber": "9.7.0",
     "@sentry/core": "10.75.2",
     "@sentry/node": "10.75.2",
+    "@sentry/react": "10.75.2",
+    "@sentry/react-native": "8.28.0",
     "@sonnetstationsolutions/expo-argon2": "0.1.1",
     "argon2": "0.45.1",
     "cleaner-config": "^0.1.10",

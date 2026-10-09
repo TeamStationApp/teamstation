@@ -21,6 +21,13 @@ export const enUs = {
   about_close: 'Close',
   about_close_button: 'Close build information',
   about_open_failed: 'Could not open the download site. Please try again.',
+  about_test_error: 'Send a test error',
+  about_test_render_error: 'Test a render error',
+  about_test_native_crash: 'Test a native crash',
+  error_fallback_title: 'Something went wrong',
+  error_fallback_body:
+    'TeamStation hit a problem it could not recover from. It has been reported.',
+  error_fallback_reload: 'Reload',
   oauth_title: 'Authorize access',
   oauth_request: '%s wants to use your TeamStation identity.',
   oauth_identity: 'Signed in as %s',
