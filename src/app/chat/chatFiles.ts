@@ -1,3 +1,5 @@
+import { MAX_ATTACHMENTS } from '../../common/chatContent'
+import { attachmentProblem } from './chatComposeModel'
 import {
   contentTypeOf,
   type PickedFile,
@@ -75,10 +77,17 @@ async function videoMeta(
 /** Reads the files an input was given, as the engine sends them. */
 export async function readPicked(
   files: Iterable<File>,
-  waitMs = VIDEO_META_MS
+  waitMs = VIDEO_META_MS,
+  remaining = MAX_ATTACHMENTS
 ): Promise<PickedFile[]> {
+  const chosen = Array.from(files)
+  const problem = attachmentProblem(
+    chosen.map(file => ({ fileName: file.name, size: file.size })),
+    remaining
+  )
+  if (problem != null) throw new Error(problem)
   const picked: PickedFile[] = []
-  for (const file of files) {
+  for (const file of chosen) {
     const contentType = contentTypeOf(file.name, file.type)
     const bytes = new Uint8Array(await file.arrayBuffer())
     const size = contentType.startsWith('image/')
@@ -103,8 +112,11 @@ export async function readPicked(
  */
 export async function pickFiles(
   _source: PickSource,
-  doc: Document = document
+  docOrRemaining: Document | number = document,
+  remaining = MAX_ATTACHMENTS
 ): Promise<PickedFile[]> {
+  const doc = typeof docOrRemaining === 'number' ? document : docOrRemaining
+  if (typeof docOrRemaining === 'number') remaining = docOrRemaining
   const input = doc.createElement('input')
   input.type = 'file'
   input.multiple = true
@@ -120,7 +132,7 @@ export async function pickFiles(
       })
       input.click()
     })
-    return await readPicked(files)
+    return await readPicked(files, undefined, remaining)
   } finally {
     input.remove()
   }
