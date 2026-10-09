@@ -320,7 +320,7 @@ export type ScoringEvent =
       acceptedLineup?: string | null
     }
   | { type: 'DICTATION_DISMISS' }
-  /** One spoken sentence: applied whole as one undo step, or refused whole. */
+  /** One undo step: the sentence, or its valid prefix at a setup boundary. */
   | {
       type: 'DICTATED'
       transcript: string

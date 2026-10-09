@@ -1893,6 +1893,7 @@ export function applyAction(
   }: {
     inPlace?: boolean
     requireCurrentSetup?: boolean
+    /** Transient UI acceptance; undefined leaves partial-order policy to the caller. */
     acceptedLineup?: string | null
   } = {}
 ): Applied {
