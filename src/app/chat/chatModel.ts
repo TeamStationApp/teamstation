@@ -173,11 +173,10 @@ export type MessageAction =
   'reply' | 'react' | 'copy' | 'pin' | 'unpin' | 'delete' | 'deleteForEveryone'
 
 /**
- * What a long press on a message offers this person: reply and react to
- * any readable message where they may post or react; edit and delete their
- * own; for a moderator, Delete for everyone on someone else's; and Report
- * on anyone else's readable message, wherever it is (a closed chat and an
- * Announcements reader included), since reporting posts nothing in it.
+ * The requested message controls: readable reply/reaction/copy and personal
+ * pin, plus author or moderator deletion where allowed. Locked placeholders
+ * retain only an existing personal Unpin action; edit/report stay outside
+ * these restricted menus.
  */
 export function actionsFor(
   message: MessageView,
@@ -185,10 +184,14 @@ export function actionsFor(
 ): MessageAction[] {
   const pinned = view.pins?.some(pin => pin.messageId === message.id) === true
   if (message.status !== 'ok') {
-    // A locked or removed message can still be removed by its author or a
-    // moderator, but nothing else.
+    // Lost/invalid envelopes may still be removed by an allowed author or
+    // moderator. Locked content exposes only an existing personal Unpin.
     const actions: MessageAction[] = pinned ? ['unpin'] : []
-    if (message.status !== 'removed' && view.composer === 'enabled') {
+    if (
+      message.status !== 'removed' &&
+      message.status !== 'locked' &&
+      view.composer === 'enabled'
+    ) {
       if (message.mine) actions.push('delete')
       else if (view.conversation.canModerate) actions.push('deleteForEveryone')
     }

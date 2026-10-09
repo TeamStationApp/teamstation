@@ -1039,6 +1039,17 @@ async function measured(
   height: number,
   y = 0
 ): Promise<void> {
+  const nativeNode = node as HTMLElement & {
+    measureLayout?: (
+      relative: unknown,
+      success: (x: number, y: number, width: number, height: number) => void,
+      failure?: () => void
+    ) => void
+  }
+  if (nativeNode.measureLayout != null)
+    nativeNode.measureLayout = (_relative, success) => {
+      success(0, y, width, height)
+    }
   const handler = (
     node as HTMLElement & { __reactLayoutHandler?: (event: unknown) => void }
   ).__reactLayoutHandler
@@ -1060,6 +1071,118 @@ function positionWrapper(messageId: string): HTMLElement {
 }
 
 describe('chat follow-up conversation message integration', function () {
+  it('waits for a delayed nonzero mounted-row measurement instead of failing at a fixed delay', async function () {
+    const engine = new FakeEngine()
+    const original = safeMessage({
+      id: 'msg_delayed',
+      body: 'Delayed original'
+    })
+    engine.current.messages = [
+      original,
+      safeMessage({
+        id: 'msg_delayed_reply',
+        seq: 2,
+        quote: {
+          id: original.id,
+          authorId: 2,
+          authorName: 'Shohei Ohtani',
+          snippet: original.body,
+          status: 'ok'
+        }
+      })
+    ]
+    await screen(engine)
+    const node = positionWrapper(original.id) as HTMLElement & {
+      measureLayout: (
+        relative: unknown,
+        success: (x: number, y: number, width: number, height: number) => void
+      ) => void
+    }
+    let measuredCalls = 0
+    let complete:
+      | ((x: number, y: number, width: number, height: number) => void)
+      | undefined
+    node.measureLayout = (_relative, success) => {
+      measuredCalls += 1
+      if (measuredCalls === 1) success(0, 0, 0, 0)
+      else complete = success
+    }
+    const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
+      element => getComputedStyle(element).overflowY === 'auto'
+    )!
+    const moves: number[] = []
+    scroller.scroll = options =>
+      moves.push((options as ScrollToOptions).top ?? 0)
+    await act(async () => {
+      button('Jump to message from Shohei Ohtani: Delayed original').click()
+      await wait(80)
+    })
+    expect(measuredCalls).greaterThan(1)
+    expect(moves).deep.equals([])
+    expect(document.body.textContent).not.contains('Message unavailable')
+    expect(complete).not.equals(undefined)
+    await act(async () => {
+      complete!(0, 300, 640, 100)
+      await wait(30)
+    })
+    expect(moves).deep.equals([292])
+  })
+
+  it('discards a delayed measurement after genuine user scrolling cancels the jump', async function () {
+    const engine = new FakeEngine()
+    const original = safeMessage({
+      id: 'msg_cancelled',
+      body: 'Cancelled original'
+    })
+    engine.current.messages = [
+      original,
+      safeMessage({
+        id: 'msg_cancelled_reply',
+        seq: 2,
+        quote: {
+          id: original.id,
+          authorId: 2,
+          authorName: 'Shohei Ohtani',
+          snippet: original.body,
+          status: 'ok'
+        }
+      })
+    ]
+    await screen(engine)
+    const node = positionWrapper(original.id) as HTMLElement & {
+      measureLayout: (
+        relative: unknown,
+        success: (x: number, y: number, width: number, height: number) => void
+      ) => void
+    }
+    let complete:
+      | ((x: number, y: number, width: number, height: number) => void)
+      | undefined
+    node.measureLayout = (_relative, success) => {
+      complete = success
+    }
+    const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
+      element => getComputedStyle(element).overflowY === 'auto'
+    )!
+    const moves: number[] = []
+    scroller.scroll = options =>
+      moves.push((options as ScrollToOptions).top ?? 0)
+    await act(async () => {
+      button('Jump to message from Shohei Ohtani: Cancelled original').click()
+      await wait(20)
+    })
+    expect(complete).not.equals(undefined)
+    await act(async () => {
+      scroller.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 10 })
+      )
+      complete!(0, 500, 640, 100)
+      await wait(50)
+    })
+    expect(moves).deep.equals([])
+    expect(document.body.textContent).not.contains('Message unavailable')
+  })
+
   it('replaces an earlier jump and discards a pending jump after unmount', async function () {
     const engine = new FakeEngine()
     const first = safeMessage({

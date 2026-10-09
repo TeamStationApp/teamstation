@@ -63,7 +63,7 @@ describe('chat follow-up message permissions', function () {
   })
 
   it('never copies or replies to unreadable content and keeps unavailable personal unpin available', function () {
-    for (const status of ['locked', 'lost', 'invalid'] as const) {
+    for (const status of ['lost', 'invalid'] as const) {
       expect(actionsFor(message({ status, mine: true }), view())).deep.equals([
         'delete'
       ])
@@ -92,6 +92,36 @@ describe('chat follow-up message permissions', function () {
       )
     ).deep.equals(['unpin'])
     expect(actionsFor(message({ status: 'removed' }), view())).deep.equals([])
+  })
+
+  it('keeps a locked older-epoch placeholder Unpin-only when a newer readable epoch enables composing', function () {
+    const older = message({
+      status: 'locked',
+      epoch: 1,
+      senderName: 'Mookie Betts',
+      mine: true
+    })
+    const current = view({
+      composer: 'enabled',
+      conversation: chat({ canModerate: true }),
+      messages: [
+        older,
+        message({
+          id: 'msg_latest',
+          seq: 2,
+          epoch: 2,
+          senderName: 'Shohei Ohtani',
+          body: 'Current epoch message'
+        })
+      ],
+      pins: [{ messageId: older.id, pinnedAt: '2027-04-01T17:00:00Z' }]
+    })
+    for (const mine of [true, false]) {
+      expect(actionsFor({ ...older, mine }, current)).deep.equals(['unpin'])
+      expect(
+        actionsFor({ ...older, mine }, { ...current, pins: [] })
+      ).deep.equals([])
+    }
   })
 })
 
