@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { main as deployMain } from '../deploy'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { buildEnvironment } from './prepare'
+import { ToolFailure } from './process'
 import {
   type Builder,
   nativeNumber,
@@ -294,7 +295,11 @@ describe('Pinned multi-app deployment orchestration', () => {
       commits.push(context.commit)
       numbers.push(context.buildNumber)
       assert.equal(context.version, '9.8.7')
-      throw new Error('synthetic-private-error')
+      throw new ToolFailure(
+        'gradlew',
+        1,
+        'FAILURE: Build failed with an exception.\nDEPLOY_STORE_PASSWORD=synthetic-private-error\n'
+      )
     }
     assert.equal(
       await run(parse(), { ios, android }, new AbortController().signal, line =>
@@ -307,6 +312,18 @@ describe('Pinned multi-app deployment orchestration', () => {
     assert.equal(numbers.length, 2)
     assert.equal(service.requests.length, 1)
     assert(!logs.join('\n').includes('synthetic-private-error'))
+    assert.deepEqual(
+      logs.slice(
+        logs.indexOf('android build failed; no package was published')
+      ),
+      [
+        'android build failed; no package was published',
+        '  gradlew exited with 1; its last lines:',
+        '  | FAILURE: Build failed with an exception.',
+        '  | DEPLOY_STORE_PASSWORD=[redacted]',
+        'ios uploaded'
+      ]
+    )
     assert.equal(
       readFileSync(path.join(source, 'package.json'), 'utf8'),
       '{"version":"9.8.7"}'

@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { allocateBuildNumber, packageVersion } from './buildNumber'
 import { loadSettings, type Settings } from './config'
-import { Processes } from './process'
+import { describeFailure, Processes } from './process'
 import { currentSource } from './source'
 import {
   type Artifact,
@@ -250,9 +250,10 @@ export async function run(
             error: undefined,
             ...checksum
           })
-        } catch {
+        } catch (error) {
           record.failed.push(os)
           output(`${os} build failed; no package was published`)
+          for (const line of describeFailure(error)) output(line)
         }
         state.save(record)
       }
@@ -291,9 +292,10 @@ export async function run(
         )
         delete artifact.error
         output(`${os} uploaded`)
-      } catch {
+      } catch (error) {
         artifact.error = 'Upload failed; retry this run with publish-only'
         output(`${os} upload failed; package retained for retry`)
+        for (const line of describeFailure(error)) output(line)
       }
       state.save(record)
     }

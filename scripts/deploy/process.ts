@@ -1,5 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { once } from 'node:events'
+import path from 'node:path'
+
+import { redactedTail, rememberEnvironment } from './redact'
 
 /** Only explicit nonsecret environment values reach compilers; signing adapters add their own. */
 export function childEnvironment(
@@ -29,6 +32,42 @@ export interface Command {
   capture?: boolean
   captureStderr?: boolean
 }
+/** How much of a tool's latest output is kept, unprinted, for its failure. */
+const tailLimit = 64 * 1024
+
+/**
+ * A tool that exited with an error. Its output is kept so the failure can say
+ * why, but only `redactedTail` (`./redact`) may print it.
+ */
+export class ToolFailure extends Error {
+  constructor(
+    readonly tool: string,
+    readonly code: number | null,
+    readonly output: string
+  ) {
+    super('Deployment tool failed')
+  }
+}
+
+/** How many of a failed tool's last lines the build log shows. */
+const reportedLines = 80
+
+/**
+ * Why a step failed, as indented log lines: a tool's name, exit code and last
+ * lines, all redacted. Any other error prints nothing, since its message can
+ * carry private configuration. Indented so Mason's one-line results skip them.
+ */
+export function describeFailure(error: unknown): string[] {
+  if (!(error instanceof ToolFailure)) return []
+  const lines = redactedTail(error.output, reportedLines)
+  return [
+    `  ${error.tool} exited with ${error.code ?? 'a signal'}${
+      lines.length > 0 ? '; its last lines:' : ' and printed nothing'
+    }`,
+    ...lines.map(line => `  | ${line}`)
+  ]
+}
+
 export class Processes {
   private readonly children = new Set<ChildProcess>()
   constructor(readonly signal: AbortSignal) {}
@@ -42,7 +81,12 @@ export class Processes {
         detached: true
       })
       this.children.add(child)
+      rememberEnvironment(command.env)
       let stdout = ''
+      let tail = ''
+      const keep = (chunk: Buffer): void => {
+        tail = (tail + chunk.toString()).slice(-tailLimit)
+      }
       let overflow = false
       let killTimer: NodeJS.Timeout | undefined
       function kill(signal: NodeJS.Signals): void {
@@ -63,19 +107,21 @@ export class Processes {
       }
       this.signal.addEventListener('abort', abort, { once: true })
       child.stdout.on('data', (chunk: Buffer) => {
+        keep(chunk)
         if (command.capture === false) return
         if (stdout.length + chunk.length <= 1024 * 1024)
           stdout += chunk.toString()
         else overflow = true
       })
-      // Compiler output may contain credentials. Consume it without printing it.
-      if (command.captureStderr === true)
-        child.stderr.on('data', (chunk: Buffer) => {
-          if (stdout.length + chunk.length <= 1024 * 1024)
-            stdout += chunk.toString()
-          else overflow = true
-        })
-      else child.stderr.resume()
+      // Compiler output may contain credentials. It is never printed as it
+      // arrives; a failure prints its redacted tail.
+      child.stderr.on('data', (chunk: Buffer) => {
+        keep(chunk)
+        if (command.captureStderr !== true) return
+        if (stdout.length + chunk.length <= 1024 * 1024)
+          stdout += chunk.toString()
+        else overflow = true
+      })
       child.stdin.on('error', () => {})
       child.stdin.end(command.input)
       child.once('error', () => {
@@ -86,7 +132,8 @@ export class Processes {
         this.signal.removeEventListener('abort', abort)
         if (killTimer != null) clearTimeout(killTimer)
         if (this.signal.aborted) reject(new Error('Deployment cancelled'))
-        else if (code !== 0) reject(new Error('Deployment tool failed'))
+        else if (code !== 0)
+          reject(new ToolFailure(path.basename(command.file), code, tail))
         else if (overflow)
           reject(new Error('Deployment tool output exceeded limit'))
         else resolve(stdout.trim())
