@@ -99,6 +99,23 @@ const source: ScoringSource = {
     )
 }
 
+/** Complete production scoring screen with an isolated, in-memory game. */
+export function DefensiveScoringScreenFixture(): React.ReactElement {
+  return (
+    <ThemeProvider>
+      <View style={{ flex: 1 }}>
+        <ScoringScreen
+          client={client}
+          gameId={game.id}
+          userId={123}
+          source={source}
+          onExit={() => undefined}
+        />
+      </View>
+    </ThemeProvider>
+  )
+}
+
 /** Real native popup/forms; the browser also exercises the actual 3D scoring screen. */
 export function DefensiveRosterSheetFixture(): React.ReactElement {
   const [session, setSession] = useState(initial)
