@@ -1,5 +1,11 @@
 import React from 'react'
-import { Platform, type StyleProp, View, type ViewStyle } from 'react-native'
+import {
+  type LayoutChangeEvent,
+  Platform,
+  type StyleProp,
+  View,
+  type ViewStyle
+} from 'react-native'
 import Animated from 'react-native-reanimated'
 
 import { edgeMarginRem } from '../layout/margins'
@@ -52,6 +58,36 @@ export interface ScreenProps {
    * thread, so a list that scrolls does not re-render React to move a label.
    */
   onScroll?: Parameters<typeof Animated.ScrollView>[0]['onScroll']
+  /**
+   * The scroll view itself, for a screen that scrolls it to a place of its
+   * own choosing — a team's schedule, opened at the next game.
+   */
+  scrollRef?: React.Ref<React.ComponentRef<typeof Animated.ScrollView>>
+  /** The scroll view's own size: how much of the page is in view. */
+  onLayout?: (event: LayoutChangeEvent) => void
+}
+
+/**
+ * The space below a screen's last row: the column's own margin, or on a phone
+ * the clearance the floating nav capsule needs.
+ *
+ * The capsule floats above the home indicator. On iOS it sits against that
+ * inset, so the clearance drops the extra margin; Android and the web keep
+ * both. A screen that scrolls its content to a place of its own choosing
+ * counts this in, because the page can always scroll this much further.
+ */
+export function useScreenBottom(): number {
+  const theme = useTheme()
+  const breakpoint = useBreakpoint()
+  const insets = useInsets()
+  if (breakpoint !== 'phone') return theme.rem(theme.spaceLgRem)
+  return (
+    navClearanceAboveInset(
+      Platform.OS,
+      theme.rem(NAV_CLEARANCE_REM),
+      theme.rem(FLOATING_BOTTOM_REM)
+    ) + insets.bottom
+  )
 }
 
 /**
@@ -74,7 +110,9 @@ export function Screen(props: ScreenProps): React.ReactElement {
     wide = false,
     centreContent = false,
     contentStyle,
-    onScroll
+    onScroll,
+    scrollRef,
+    onLayout
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -83,16 +121,8 @@ export function Screen(props: ScreenProps): React.ReactElement {
   // top of the window and is pushed down by the height the header measured.
   // Anything else and there would be nothing behind the glass to blur.
   const { headerHeight } = useHeaderSlot()
-  // The capsule floats above the home indicator. On iOS it sits against that
-  // inset, so the clearance drops the extra margin; Android and the web keep
-  // both.
   const insets = useInsets()
-  const navClearance =
-    navClearanceAboveInset(
-      Platform.OS,
-      theme.rem(NAV_CLEARANCE_REM),
-      theme.rem(FLOATING_BOTTOM_REM)
-    ) + insets.bottom
+  const bottom = useScreenBottom()
 
   // Held sideways, a phone's insets are at the sides: the camera housing on
   // one edge and a rounded corner on the other. The margin takes whichever is
@@ -111,9 +141,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
         breakpoint !== 'phone' && styles.columnWide,
         breakpoint === 'phone' && styles.clearOfNav,
         { paddingLeft: side.left, paddingRight: side.right },
-        breakpoint === 'phone' && {
-          paddingBottom: navClearance
-        },
+        { paddingBottom: bottom },
         wide && styles.columnFull,
         contentStyle
       ]}
@@ -133,8 +161,10 @@ export function Screen(props: ScreenProps): React.ReactElement {
 
   return (
     <Animated.ScrollView
+      ref={scrollRef}
       style={styles.fill}
       onScroll={onScroll}
+      onLayout={onLayout}
       scrollEventThrottle={16}
       // Without this the first tap on a button while a field has focus only
       // dismisses the keyboard and the button is never pressed — so `Sign in`,

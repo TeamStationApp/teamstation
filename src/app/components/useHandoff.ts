@@ -5,12 +5,9 @@ import {
   useSharedValue
 } from 'react-native-reanimated'
 
-import type { Handoff } from './handoff'
+import { type Handoff, HANDOFF_RAMP } from './handoff'
 
 export type { Handoff }
-
-/** How far the source travels past the header before the copy is fully in. */
-const RAMP = 48
 
 /**
  * The thing you were looking at, handed up to the header as it leaves.
@@ -55,7 +52,7 @@ export function useHandoff(
     // either side of it, so the change happens *at* the thing being handed over
     // rather than after it.
     const passed = headerHeight - (box.top + box.height * anchor)
-    const next = (passed + RAMP / 2) / RAMP
+    const next = (passed + HANDOFF_RAMP / 2) / HANDOFF_RAMP
     progress.value = next < 0 ? 0 : next > 1 ? 1 : next
   }, [anchor, headerHeight, progress])
 

@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -194,5 +194,113 @@ describe('a team’s schedule', function () {
     await mount('empty')
     expect(rows()).deep.equals([])
     expect(document.body.textContent).includes('No games scheduled.')
+  })
+})
+
+describe('a team’s tabs, each started under the pills', function () {
+  /** The page's scroll offset, as the stubbed scroller keeps it. */
+  let scrollTop = 0
+  const ROW = 100
+  const original = {
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- restored onto the prototype it came from
+    rect: HTMLElement.prototype.getBoundingClientRect,
+    scrollTop: Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop'),
+    clientHeight: Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'clientHeight'
+    )
+  }
+  const scrolls = (node: Element): boolean =>
+    ['auto', 'scroll'].includes(getComputedStyle(node).overflowY)
+
+  beforeEach(function () {
+    scrollTop = 0
+    // jsdom lays nothing out: each schedule row stands ROW below the last,
+    // and everything else sits at the top.
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const games = [
+        ...document.querySelectorAll('[data-testid="scheduleGame"]')
+      ]
+      const at = games.indexOf(this)
+      if (at < 0) return original.rect.call(this)
+      return {
+        top: at * ROW,
+        bottom: at * ROW + ROW,
+        height: ROW
+      } as unknown as DOMRect
+    }
+    Object.defineProperty(Element.prototype, 'scrollTop', {
+      configurable: true,
+      get(this: Element) {
+        return scrolls(this) ? scrollTop : 0
+      },
+      set(this: Element, y: number) {
+        if (scrolls(this)) scrollTop = y
+      }
+    })
+    Object.defineProperty(Element.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: Element) {
+        return scrolls(this) ? 800 : 0
+      }
+    })
+  })
+
+  afterEach(function () {
+    HTMLElement.prototype.getBoundingClientRect = original.rect
+    for (const key of ['scrollTop', 'clientHeight'] as const) {
+      const descriptor = original[key]
+      if (descriptor != null)
+        Object.defineProperty(Element.prototype, key, descriptor)
+    }
+  })
+
+  const tap = async (label: string): Promise<void> => {
+    const pill = [
+      ...document.querySelectorAll<HTMLElement>('[role="tab"]')
+    ].find(node => (node.textContent ?? '').startsWith(label))
+    expect(pill, label).not.equals(undefined)
+    await act(async () => {
+      pill!.click()
+      await delay(10)
+    })
+  }
+
+  it('opens the schedule at its next game, and other tabs at their top', async function () {
+    await mount('normal', 'videos')
+    expect(scrollTop).equals(0)
+    await tap('Schedule')
+    // vs Falcons is the ninth game.
+    expect(scrollTop).equals(8 * ROW)
+    await tap('Videos')
+    expect(scrollTop).equals(0)
+  })
+
+  it('opens at the next game on first load when the address says schedule', async function () {
+    await mount('normal', 'schedule')
+    expect(scrollTop).equals(8 * ROW)
+  })
+
+  it('opens a finished season at its last game', async function () {
+    await mount('over', 'schedule')
+    expect(scrollTop).equals(13 * ROW)
+  })
+
+  it('opens an empty schedule at its top', async function () {
+    await mount('empty', 'schedule')
+    expect(scrollTop).equals(0)
+  })
+
+  it('lays the card, the pills, the tab and its room out side by side', async function () {
+    await mount('normal', 'schedule')
+    const content = document.querySelector('[data-testid="teamTabContent"]')!
+    const column = content.parentElement!
+    const children = [...column.children]
+    expect(children.indexOf(content)).equals(2)
+    expect(children.length).equals(4)
+    // The room after the tab, so it can start under the pills however short.
+    expect(content.nextElementSibling).equals(children[3])
+    // The pills are in the band before the tab.
+    expect(children[1].querySelector('[role="tab"]')).not.equals(null)
   })
 })

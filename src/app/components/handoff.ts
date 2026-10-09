@@ -2,6 +2,9 @@ import type React from 'react'
 import type { View } from 'react-native'
 import type { SharedValue } from 'react-native-reanimated'
 
+/** How far the source travels past the header before the copy is fully in. */
+export const HANDOFF_RAMP = 48
+
 /**
  * What a screen gets back from `useHandoff`, shared by both implementations.
  *
