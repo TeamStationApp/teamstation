@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatRead } from '../../../common/api'
 import type { AttachmentRef } from '../../../common/chatContent'
 import type { Opened } from './decrypt'
+import { resolveQuote } from './reply'
 
 /**
  * Folding a chat's messages into what the screen shows: each post once,
@@ -30,6 +31,7 @@ export interface QuoteView {
   authorId: number
   authorName: string | undefined
   snippet: string
+  status?: MessageStatus | 'unavailable'
 }
 
 export type MessageStatus =
@@ -192,6 +194,7 @@ export function foldMessages(input: FoldInput): MessageView[] {
   const views = [...posts.values()]
   for (const post of views) {
     if (post.status === 'removed') continue
+    if (post.quote != null) post.quote = resolveQuote(post.quote, posts)
     for (const [emoji, who] of reactions.get(post.id) ?? []) {
       if (who.size === 0) continue
       post.reactions.push({

@@ -203,43 +203,55 @@ describe('what a long press offers', function () {
     conversation: chat({ canModerate })
   })
 
-  it('offers reply, react, edit and delete on one’s own message', function () {
+  it('offers reply, react, copy, personal pin and delete on one’s own message', function () {
     expect(actionsFor(message({ mine: true }), view('enabled'))).deep.equals([
       'reply',
       'react',
-      'edit',
+      'copy',
+      'pin',
       'delete'
     ])
   })
 
-  it('offers Delete for everyone to a moderator, and Report to everyone, on others’ messages', function () {
+  it('offers moderator deletion and personal actions on received messages', function () {
     expect(actionsFor(message(), view('enabled', true))).deep.equals([
       'reply',
       'react',
-      'deleteForEveryone',
-      'report'
+      'copy',
+      'pin',
+      'deleteForEveryone'
     ])
     expect(actionsFor(message(), view('enabled'))).deep.equals([
       'reply',
       'react',
-      'report'
+      'copy',
+      'pin'
     ])
   })
 
-  it('lets an Announcements reader react and report, and nothing else', function () {
+  it('lets an Announcements reader react, copy and pin', function () {
     expect(actionsFor(message(), view('readOnly'))).deep.equals([
       'react',
-      'report'
+      'copy',
+      'pin'
     ])
     expect(actionsFor(message({ mine: true }), view('readOnly'))).deep.equals([
-      'react'
+      'react',
+      'copy',
+      'pin'
     ])
   })
 
-  it('offers only Report in a closed chat, or on a locked device', function () {
-    expect(actionsFor(message(), view('closed', true))).deep.equals(['report'])
-    expect(actionsFor(message(), view('locked'))).deep.equals(['report'])
-    expect(actionsFor(message({ mine: true }), view('closed'))).deep.equals([])
+  it('retains personal actions on readable posts in closed or locked chats', function () {
+    expect(actionsFor(message(), view('closed', true))).deep.equals([
+      'copy',
+      'pin'
+    ])
+    expect(actionsFor(message(), view('locked'))).deep.equals(['copy', 'pin'])
+    expect(actionsFor(message({ mine: true }), view('closed'))).deep.equals([
+      'copy',
+      'pin'
+    ])
   })
 
   it('lets an unreadable message be removed by its author or a moderator', function () {
