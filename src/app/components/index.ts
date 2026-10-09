@@ -35,6 +35,11 @@ export {
   type GameHeroCardProps
 } from './GameHeroCard'
 export { GameRow, type GameRowProps } from './GameRow'
+export {
+  GuardiansModal,
+  type GuardiansModalProps,
+  kindLabel
+} from './GuardiansModal'
 export { ScheduleRow, type ScheduleRowProps } from './ScheduleRow'
 export { RsvpScheduleRow, type RsvpScheduleRowProps } from './RsvpScheduleRow'
 export { SideCamera } from './SideCamera'

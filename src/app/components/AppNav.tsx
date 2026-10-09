@@ -8,7 +8,7 @@ import { GlassView } from './GlassView'
 import { Icon, type IconName } from './Icon'
 import { floatingNavBottom } from './navClearance'
 
-export type NavTabId = 'home' | 'videos' | 'schedule' | 'search'
+export type NavTabId = 'home' | 'videos' | 'schedule' | 'search' | 'chat'
 
 export interface NavTab {
   id: NavTabId
@@ -38,7 +38,10 @@ export const NAV_TABS: NavTab[] = [
   { id: 'schedule', label: 'Schedule', icon: 'event' },
   // A place of its own, with its own stack like the others: what was found
   // there stays there when you switch away and come back.
-  { id: 'search', label: 'Search', icon: 'search' }
+  { id: 'search', label: 'Search', icon: 'search' },
+  // Chat, the fourth: every team, season and league chat and the person's
+  // direct messages, with a dot while anything in them is unread.
+  { id: 'chat', label: 'Chat', icon: 'chat' }
 ]
 
 export type NavMode = 'floating' | 'header'
@@ -115,6 +118,8 @@ export interface AppNavProps {
   onSelect: (id: NavTabId) => void
   /** A capsule floating over the content, or a row inside the header. */
   mode: NavMode
+  /** Tabs with something unread, which carry a dot. */
+  dots?: Partial<Record<NavTabId, boolean>>
 }
 
 /**
@@ -130,7 +135,7 @@ export interface AppNavProps {
  * naming is the screen they are on, which the header says.
  */
 export function AppNav(props: AppNavProps): React.ReactElement {
-  const { selected, onSelect, mode } = props
+  const { selected, onSelect, mode, dots } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const floating = mode === 'floating'
@@ -212,6 +217,11 @@ export function AppNav(props: AppNavProps): React.ReactElement {
                 }
               />
             </View>
+            {dots?.[tab.id] === true && (
+              // No label of its own: the tab stays plain "Chat" to a screen
+              // reader and to the UI tests, which find it by that name.
+              <View testID={`${tab.id}-unread`} style={styles.dot} />
+            )}
           </Pressable>
         )
       })}
@@ -322,5 +332,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pressed: {
     opacity: 0.6
+  },
+  // The unread dot, on the glyph's upper right.
+  dot: {
+    position: 'absolute',
+    top: theme.rem(0.375),
+    right: theme.rem(0.375),
+    width: theme.rem(0.5),
+    height: theme.rem(0.5),
+    borderRadius: theme.rem(0.25),
+    backgroundColor: theme.liveColor
   }
 }))
