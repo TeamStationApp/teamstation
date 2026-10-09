@@ -39,7 +39,7 @@ public enum ControlCommand: Sendable, Equatable {
   case unlinkSource(index: Int)
   /// Searches the network now, without waiting for the next periodic sweep.
   case searchCameras
-  /// Sweep this /24 for cameras instead of the local subnet, or stop. Saved, like the Settings switch.
+  /// Also sweep this /24, in addition to the local subnet, or stop. Saved, like the Settings switch.
   case setSubnetScan(subnet: String?, on: Bool?)
   /// The display latency cap, and so the live delay D, in milliseconds; 0 turns it off. Saved, like
   /// the Performance sheet's switch and slider, so it holds across launches.

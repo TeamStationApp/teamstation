@@ -502,6 +502,56 @@ public struct CameraControlTelemetry: Sendable, Codable, Equatable {
   public init() {}
 }
 
+/// Device event control as `/dump-state` shows it: whether it is on, the event and revision it is
+/// sending, the sweep it finds devices with, and what each peer last said. A peer is an address and
+/// a random instance ID; nothing here says what app or device it is.
+public struct EventControlTelemetry: Sendable, Codable, Equatable {
+  public var enabled = false
+  /// `off`, `signedOut`, `gettingKey`, `keyUnavailable`, `noEvent` or `running`.
+  public var phase = "off"
+  /// The line Settings shows under the toggle.
+  public var status = ""
+  public var revision: UInt64 = 0
+  public var gameId = ""
+  public var title = ""
+  /// `shared` when it rides the camera sweep, `own` when it runs its own, `none` when neither runs.
+  public var sweeper = "none"
+  /// Sweep answers it has been handed.
+  public var sweeps = 0
+  public var localNetworkDenied = false
+  public var noInterface = false
+  /// Remembered addresses forgotten this session for staying unreachable.
+  public var forgotten = 0
+  public var peers: [EventControlPeerTelemetry] = []
+
+  public init() {}
+}
+
+public struct EventControlPeerTelemetry: Sendable, Codable, Equatable {
+  /// `host:port`.
+  public var endpoint = ""
+  /// Empty until the peer has answered.
+  public var instanceId = ""
+  /// `applied(<revision>)`, `busy`, `disabled`, `otherAccount` and the rest of the peer states.
+  public var state = ""
+  public var consent: Bool?
+  public var ackedRevision: UInt64?
+
+  public init(
+    endpoint: String = "",
+    instanceId: String = "",
+    state: String = "",
+    consent: Bool? = nil,
+    ackedRevision: UInt64? = nil
+  ) {
+    self.endpoint = endpoint
+    self.instanceId = instanceId
+    self.state = state
+    self.consent = consent
+    self.ackedRevision = ackedRevision
+  }
+}
+
 /// The stream's bitrate controller as it last decided: where the rate is in the operator's range,
 /// why it last moved, and what the link was doing when it did. `dump-state` and a soak read this to
 /// tell a stream that adapted from one that shed frames.
@@ -625,6 +675,8 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var controlServer = ""
   /// The Cameraman control screen, when one is open.
   public var cameraControl = CameraControlTelemetry()
+  /// "Set event on nearby devices": what it is doing, which sweep it rides, and every peer.
+  public var eventControl = EventControlTelemetry()
   /// The message shown to the operator. Mirrored here so automation can read the same sentence
   /// the user sees rather than an approximation of it.
   public var statusMessage = ""

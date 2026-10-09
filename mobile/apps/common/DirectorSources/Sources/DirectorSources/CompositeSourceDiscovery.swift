@@ -21,9 +21,26 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
   private var handler: DiscoveryChangeHandler?
   /// One sweep for every transport. See `SourceDiscovery.sweepPorts` for why it is shared.
   private var sweeper: CameraSweeper?
+  /// Everything else the sweep serves, kept for a sweeper started after they were added.
+  private var participants = SweepParticipantList()
 
-  public init(_ children: [SourceDiscovery]) {
+  /// Makes the shared sweeper from the transports' ports and the handler for its camera answers.
+  public typealias SweeperFactory = @Sendable (
+    _ ports: [Int],
+    _ onResult: @escaping CameraSweeper.ResultHandler
+  ) -> CameraSweeper
+
+  private let makeSweeper: SweeperFactory
+
+  /// `makeSweeper` is for a test that sweeps without a network; the default sweeps the subnets and
+  /// remembers where cameras answered across launches.
+  public init(_ children: [SourceDiscovery], makeSweeper: SweeperFactory? = nil) {
     self.children = children
+    self.makeSweeper = makeSweeper ?? { ports, onResult in
+      // Remembered across launches so the next launch can ask those cameras directly instead of
+      // waiting out the startup grace and a full sweep.
+      CameraSweeper(ports: ports, persistenceKey: CompositeSourceDiscovery.rememberedHostsKey, onResult: onResult)
+    }
   }
 
   /// Representative only, and there is nothing useful it could be for a mixed list. Anything that
@@ -77,6 +94,24 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
   /// Nothing sweeps on this one's behalf; it is the thing that sweeps.
   public func setSweepIsShared(_ isShared: Bool) {}
 
+  /// The shared sweep serves the participant too, from its next pass. False when no transport
+  /// sweeps, so there is no pass to join.
+  @discardableResult
+  public func addSweepParticipant(_ participant: SweepParticipant) -> Bool {
+    guard !sweepPorts.isEmpty else { return false }
+    lock.lock()
+    participants.add(participant)
+    let sweeper = self.sweeper
+    lock.unlock()
+    sweeper?.addParticipant(participant)
+    return true
+  }
+
+  /// A participant's ports or hosts changed: sweep once soon.
+  public func requestSweep() {
+    sweepNow()
+  }
+
   public func start(onChange: @escaping DiscoveryChangeHandler) {
     lock.lock()
     handler = onChange
@@ -106,13 +141,13 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
       lock.unlock()
       return
     }
-    // Remembered across launches so the next launch can ask those cameras directly instead of
-    // waiting out the startup grace and a full sweep.
-    let sweeper = CameraSweeper(ports: ports, persistenceKey: Self.rememberedHostsKey) { [weak self] result in
+    let sweeper = makeSweeper(ports) { [weak self] result in
       self?.acceptSweep(result)
     }
     self.sweeper = sweeper
+    let joining = participants.current()
     lock.unlock()
+    for participant in joining { sweeper.addParticipant(participant) }
     sweeper.start()
   }
 

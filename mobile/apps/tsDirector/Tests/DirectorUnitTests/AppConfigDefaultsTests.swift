@@ -132,4 +132,29 @@ struct StreamDestinationTests {
     #expect(odd.streamDestination == .url)
     #expect(odd.programBitrate == 9_000_000)
   }
+
+  @Test("Setting the event on nearby devices is off by default, and for every older config")
+  func eventControlDefaultsOff() throws {
+    #expect(AppConfig().eventControlEnabled == false)
+    #expect(AppConfig.default.eventControlEnabled == false)
+    let old = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"streamURL":"rtmp://x/live/y"}"#.utf8))
+    #expect(old.eventControlEnabled == false)
+    #expect(old.streamURL == "rtmp://x/live/y")
+  }
+
+  @Test("The nearby-devices switch is saved, and a value of the wrong type loads as off")
+  func eventControlPersists() throws {
+    var config = AppConfig()
+    config.eventControlEnabled = true
+    let on = try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(config))
+    #expect(on.eventControlEnabled)
+    #expect(AppConfig(eventControlEnabled: true).eventControlEnabled)
+    let odd = try JSONDecoder().decode(
+      AppConfig.self,
+      from: Data(#"{"eventControlEnabled":"yes","cameraName":"Judge"}"#.utf8)
+    )
+    #expect(odd.eventControlEnabled == false)
+    #expect(odd.cameraName == "Judge")
+  }
 }
+

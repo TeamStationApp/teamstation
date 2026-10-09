@@ -142,13 +142,18 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// Empty means the claim does not name a camera. A config saved before the key
   /// existed decodes as empty, so an iPad already in use keeps every other setting.
   public var cameraName: String
-  /// Sweep a different /24 for cameras instead of this iPad's own, for a bench where the cameras sit
-  /// behind a traffic shaper on another subnet. Off for normal use.
+  /// Also sweep other /24s, in addition to this iPad's own subnet, for cameras and nearby devices on
+  /// another subnet — cameras behind a traffic shaper, say. Off for normal use;
+  /// the iPad's own subnet is swept either way.
   public var subnetScanOverrideEnabled: Bool
-  /// The subnets to sweep while the override is on, as the operator typed them: one, or two
-  /// separated by a comma (`192.168.6.0, 192.168.7.0`). Kept when the override is off, so turning it
-  /// back on does not mean typing them again. Always full /24s.
+  /// The additional subnets to sweep while that is on, as the operator typed them: one, or two
+  /// separated by a comma (`198.51.100.0, 203.0.113.0`). Kept when it is off, so turning it back on
+  /// does not mean typing them again. Always full /24s.
   public var subnetScanOverride: String
+  /// "Set event on nearby devices": keep the publishing event of nearby devices signed in to the
+  /// same TeamStation account, that allow it, on the event this Director has selected. Off by
+  /// default, and off for every config saved before it existed.
+  public var eventControlEnabled: Bool
   /// How long the app may have been away and still pick a take back up.
   public var resumeDowntimeLimitSeconds: Double
 
@@ -191,8 +196,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
   ///
   /// They are the values the first TS Director games should have run on, tuned on
   /// the app it replaced: cameras at 4 Mbit/s, the programme at 60 fps, the stream between 1 and
-  /// 6 Mbit/s, the display latency cap on at 1 s and the recording's on at 20 s. The subnet override
-  /// stays off: the camera search sweeps the iPad's own subnet. Those games ran on the old ones
+  /// 6 Mbit/s, the display latency cap on at 1 s and the recording's on at 20 s. No other subnet is
+  /// swept besides the iPad's own, and nearby devices' events are left alone. Those games ran on the old ones
   /// (cameras at 6 Mbit/s, programme at 30 fps, caps off), and copying the old app's settings
   /// across failed because iOS restored its cached preferences.
   public init(
@@ -226,7 +231,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     cameraName: String = "",
     subnetScanOverrideEnabled: Bool = false,
     subnetScanOverride: String = "",
-    resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds
+    resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds,
+    eventControlEnabled: Bool = false
   ) {
     self.programCodec = programCodec
     self.rawCameraCodec = rawCameraCodec
@@ -260,6 +266,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.subnetScanOverrideEnabled = subnetScanOverrideEnabled
     self.subnetScanOverride = subnetScanOverride
     self.resumeDowntimeLimitSeconds = Self.clampedResumeDowntimeLimit(resumeDowntimeLimitSeconds)
+    self.eventControlEnabled = eventControlEnabled
   }
 
   // MARK: - The encoding groups as values
@@ -323,14 +330,14 @@ public struct AppConfig: Hashable, Sendable, Codable {
     return (min(clamp(low), high), high)
   }
 
-  /// The /24s to sweep instead of the local one, as network addresses (`192.168.6.0`). Empty when the
-  /// override is off or what was typed is not one or two subnets.
+  /// The /24s to sweep in addition to the local one, as network addresses (`198.51.100.0`). Empty when
+  /// "Also scan other subnets" is off or what was typed is not one or two subnets.
   public var activeScanSubnets: [String] {
     guard subnetScanOverrideEnabled else { return [] }
     return Self.scanSubnetNetworkAddresses(subnetScanOverride) ?? []
   }
 
-  /// How many subnets the override may name: the shaped cameras' and one more, such as the NDI box's.
+  /// How many additional subnets may be named: the shaped cameras' and one more, such as the NDI box's.
   public static let maximumScanSubnets = 2
 
   /// `["192.168.6.0", "192.168.7.0"]` from `192.168.6.0, 192.168.7.0`; a repeat counts once. Nil when any part
@@ -490,7 +497,9 @@ public struct AppConfig: Hashable, Sendable, Codable {
       resumeDowntimeLimitSeconds: try container.decodeIfPresent(
         Double.self,
         forKey: .resumeDowntimeLimitSeconds
-      ) ?? fallback.resumeDowntimeLimitSeconds
+      ) ?? fallback.resumeDowntimeLimitSeconds,
+      eventControlEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .eventControlEnabled))
+        .flatMap { $0 } ?? fallback.eventControlEnabled
     )
   }
 

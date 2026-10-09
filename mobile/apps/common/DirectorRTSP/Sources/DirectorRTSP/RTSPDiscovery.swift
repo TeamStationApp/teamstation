@@ -71,12 +71,19 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   public let kind = SourceKind.rtsp
 
   private let configuration: Configuration
-  private let scanner: SubnetScanner
+  /// This transport's own sweep, used only while nothing above sweeps for it.
+  private let scan: CameraSweeper.Scan
   /// The most recent shared sweep, when something above is sweeping for us. Its own scanner then
   /// goes unused: two transports each scanning the same /24 is the duplication the shared sweep
   /// exists to remove, and the ARP cost is per address rather than per port.
   private var sharedScan: SubnetScanner.Result?
   private var isSweptExternally = false
+  /// What else this transport's own sweep serves, while it runs one.
+  private var participants = SweepParticipantList()
+  /// Recording or streaming, as `setSweepDemand` last said: a participant's ports stay out of the
+  /// sweep then.
+  private var isBusy = false
+
   private let confirmHost: HostConfirmation
   private let clock: DirectorClock
   private let resolveIdentity: IdentityResolver?
@@ -107,7 +114,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     requestRelocation: RelocationRequest? = nil,
     coordinator: PlayoutCoordinator? = nil,
     advertisementBrowser: CameraAdvertisementBrowsing = StaticAdvertisementBrowser(),
-    confirmHost: HostConfirmation? = nil
+    confirmHost: HostConfirmation? = nil,
+    scan: CameraSweeper.Scan? = nil
   ) {
     self.configuration = configuration
     self.clock = clock
@@ -115,7 +123,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     self.requestRelocation = requestRelocation
     self.coordinator = coordinator
     self.advertisementBrowser = advertisementBrowser
-    scanner = SubnetScanner(ports: configuration.sweepPorts)
+    let scanner = SubnetScanner(ports: configuration.sweepPorts)
+    self.scan = scan ?? { await scanner.scan(priority: $0, portsNow: $1) }
 
     let probe = RTSPEndpointProbe()
     self.confirmHost = confirmHost ?? { endpoint in
@@ -234,6 +243,62 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     rescan()
   }
 
+  /// Running alone, this transport's own sweep serves the participant too. Under a composite that
+  /// sweeps for it, or with scanning off, there is no sweep of its own to join, and this answers
+  /// false.
+  @discardableResult
+  public func addSweepParticipant(_ participant: SweepParticipant) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !isSweptExternally, configuration.isScanEnabled else { return false }
+    participants.add(participant)
+    return true
+  }
+
+  /// A participant wants its hosts looked for now: one sweep, as `searchNow` runs.
+  public func requestSweep() {
+    lock.lock()
+    let wanted = running && !isSweptExternally
+    lock.unlock()
+    guard wanted else { return }
+    rescan()
+  }
+
+  /// Only whether the pipeline is busy is kept: it decides whether a participant's ports go into
+  /// this transport's own sweep.
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {
+    lock.lock()
+    self.isBusy = isBusy
+    lock.unlock()
+  }
+
+  /// Separate from `ownScan` because a lock may not be taken across a suspension point.
+  private func currentParticipants() -> ([SweepParticipant], Bool) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (participants.current(), isBusy)
+  }
+
+  /// One pass of this transport's own sweep: its ports and, unless busy, its participants'. Each
+  /// participant is handed the answers on its own ports; this transport keeps those on its own.
+  private func ownScan() async -> SubnetScanner.Result {
+    let (joined, busy) = currentParticipants()
+    let wanted = joined.map { ($0, $0.extraSweepPorts) }
+    let ports = CameraSweepPolicy.sweepPorts(
+      camera: configuration.sweepPorts,
+      extra: wanted.flatMap(\.1),
+      isBusy: busy
+    )
+    let result = await scan([], { ports })
+    let asked = Set(ports)
+    for (participant, theirs) in wanted {
+      let mine = asked.intersection(theirs)
+      guard !mine.isEmpty else { continue }
+      participant.acceptSweep(result.restricted(to: mine))
+    }
+    return result.restricted(to: Set(configuration.sweepPorts))
+  }
+
   private func latestSharedScan() -> SubnetScanner.Result? {
     lock.lock()
     defer { lock.unlock() }
@@ -268,7 +333,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     if let shared = latestSharedScan() {
       scan = shared
     } else if configuration.isScanEnabled {
-      scan = await scanner.scan()
+      scan = await ownScan()
     } else {
       scan = nil
     }

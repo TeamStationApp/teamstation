@@ -14,6 +14,7 @@ import DirectorSources
 import DirectorTestHarness
 import DirectorLink
 import DistributorWire
+import EventControl
 import TeamStationKit
 import UIKit
 
@@ -150,7 +151,20 @@ public final class AppEnvironment {
     events: teamStation,
     linker: index,
     currentTake: { [weak self] in self?.activeRecordingID },
-    cameraName: { [weak self] in self?.cameraNameForClaim ?? "" }
+    cameraName: { [weak self] in self?.cameraNameForClaim ?? "" },
+    selectionChanged: { [weak self] in self?.eventControl.selectionChanged() }
+  )
+  /// "Set event on nearby devices": keeps nearby devices of the same account on the event chosen
+  /// here. Reads the account and the chosen event; nothing of Director's own recording, stream or
+  /// overlays reads it.
+  @ObservationIgnored
+  public private(set) lazy var eventControl = EventControlCoordinator(
+    account: teamStation,
+    instanceId: EventControlInstanceID.persisted(
+      in: .standard,
+      key: EventControlCoordinator.instanceIdKey
+    ),
+    keyStore: EventControlKeyStore(service: EventControlCoordinator.keyStoreService)
   )
   /// The camera name the next claim sends.
   ///
@@ -584,6 +598,9 @@ public final class AppEnvironment {
     apply(manifest)
     reloadOverlayMedia()
     watchChosenEvent()
+    eventControl.start(enabled: config.eventControlEnabled)
+    eventControl.monitorNetwork()
+    watchAccountForEventControl()
     apply(remoteStore.loadManifest())
     remoteInput.onDown = { [weak self] id, pressed in
       self?.handleRemoteDown(id, pressed: pressed)
@@ -854,6 +871,7 @@ public final class AppEnvironment {
       self.discovery = nil
       discoveryUnavailableReason = "No camera discovery is available for this profile"
       telemetry.mutate { $0.sourceAvailable = false }
+      eventControl.attach(to: nil)
       return
     }
 
@@ -866,6 +884,9 @@ public final class AppEnvironment {
     discovery.start { [weak self] discovered in
       Task { @MainActor in self?.applyDiscovery(discovered) }
     }
+    // Every discovery built here, so a profile change rejoins the new one's sweep (or, for a
+    // profile that does not sweep, has event control run its own).
+    eventControl.attach(to: discovery)
   }
 
   private func applyDiscovery(_ discovered: [DiscoveredSource]) {
@@ -1656,6 +1677,7 @@ public final class AppEnvironment {
     isInBackground = false
     syncLiveSessionPresentation()
     restartLinkServer()
+    eventControl.resumed()
   }
 
   public func handleInactive() {
@@ -2152,6 +2174,28 @@ public final class AppEnvironment {
   public func clearEvent() {
     eventCoordinator.clear()
     updateScoreboards()
+  }
+
+  /// Settings' "Set event on nearby devices". Saved at once, like the event row above it, rather
+  /// than with SAVE: it acts on devices now.
+  public func setEventControlEnabled(_ on: Bool) {
+    persistedConfig.eventControlEnabled = on
+    configStore.save(persistedConfig)
+    config.eventControlEnabled = on
+    eventControl.setEnabled(on)
+  }
+
+  /// Event control follows the account: sign-in, sign-out, another account, a rejected token.
+  private func watchAccountForEventControl() {
+    withObservationTracking {
+      _ = teamStation.scope
+      _ = teamStation.user
+    } onChange: { [weak self] in
+      Task { @MainActor in
+        self?.eventControl.accountChanged()
+        self?.watchAccountForEventControl()
+      }
+    }
   }
 
   /// Settings' destination radio. Choosing the event claims it now.
@@ -4046,7 +4090,11 @@ public final class AppEnvironment {
     applyDisplayLatencyCap()
     SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
     // A new subnet to sweep should be looked at now, not whenever the next sweep comes due.
-    if sweptSubnetChanged { discovery?.sweepNow() }
+    if sweptSubnetChanged {
+      discovery?.sweepNow()
+      eventControl.subnetsChanged()
+    }
+    eventControl.setEnabled(session.eventControlEnabled)
     if wantsSimulated != sessionIsSimulated {
       Task { await applySourceProfile(SourceProfile.forSimulatedCameras(wantsSimulated)) }
     }
@@ -4577,6 +4625,7 @@ public final class AppEnvironment {
     let missing = selections.contains {
       $0.isEnabled && (!$0.isPresent || silent.contains($0.id.rawValue))
     }
+    eventControl.setBusy(self.isRecording || self.isStreaming)
     discovery?.setSweepDemand(
       isBusy: self.isRecording || self.isStreaming,
       anyEnabledCameraMissing: missing,
@@ -4616,6 +4665,7 @@ public final class AppEnvironment {
       $0.localAddresses = LocalAddresses.ipv4()
       $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
+      $0.eventControl = self.eventControl.telemetry
       $0.displayLatencyMilliseconds = displayLatency
       let caps = FrameLatencyGate.Caps(config: config)
       $0.displayLatencyCapMilliseconds = (caps.displaySeconds ?? 0) * 1_000
@@ -4952,8 +5002,9 @@ public final class AppEnvironment {
       }
     case let .setSubnetScan(subnet, on):
       // Through `update(config:)`, like the Settings switch it stands in for, so a bench set up this
-      // way is still set up after a relaunch. Turning it on without a usable subnet is refused
-      // rather than quietly sweeping the local one.
+      // way is still set up after a relaunch. The subnets named are swept in addition to the local
+      // one. Turning it on without a usable subnet is refused rather than quietly saved as on
+      // with nothing added.
       var next = persistedConfig
       if let subnet { next.subnetScanOverride = subnet }
       if let on { next.subnetScanOverrideEnabled = on }

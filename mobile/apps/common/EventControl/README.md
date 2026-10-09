@@ -332,7 +332,10 @@ Per receiver address and port, over one connection at a time:
 3. Accept a reply only if its request ID is the outstanding request's, it echoes this session's
    challenge, and its type is `announce` or `ack`; ignore anything else (a late reply to an
    older request can never overwrite a newer desired state). Then:
-   - key ID not this Director's → the peer is `keyMismatch`: close, fetch the key again;
+   - key ID not this Director's → the peer is `keyMismatch`: close, fetch the key again, at most
+     once a minute. If TeamStation answers with the key already held (or did so in the last
+     minute), the peer's key came from another server, or is stale and the peer refetches it:
+     treat the peer as `otherAccount`, contacted again only when a sweep finds it;
    - account tag not this Director's → `otherAccount`: close and leave the peer alone;
    - MAC not valid with this Director's key, or (after `announce`) a nonce other than the one
      announced → `invalid`: close.

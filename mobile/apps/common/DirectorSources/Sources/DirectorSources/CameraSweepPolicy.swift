@@ -54,6 +54,12 @@ public struct CameraSweepPolicy: Sendable, Equatable {
   /// it. Twenty seconds is several times what mDNS takes to answer on this network.
   public static let startupGraceSeconds: Double = 20
 
+  /// The gap between sweeps that run only because device event control is looking for nearby
+  /// devices: three times the camera gap, since a device that is not found at once is found by its
+  /// remembered address long before a sweep would have found it, and the sweep costs every device
+  /// on the segment an ARP broadcast per empty address.
+  public static let eventControlGapSeconds: Double = 30
+
   /// When the owner started, on the same monotonic clock as `now`. Nil disables the grace, which
   /// is what a policy constructed without one — every existing caller and test — has always had.
   private let startedAt: Double?
@@ -70,14 +76,43 @@ public struct CameraSweepPolicy: Sendable, Equatable {
   /// - Parameters:
   ///   - isBusy: recording or streaming — the states where a sweep's broadcasts are unwelcome.
   ///   - anyEnabledCameraMissing: an enabled camera that discovery cannot currently see.
+  ///   - isBrowsing: the operator is looking at the camera list, so a sweep is what they asked for.
+  ///   - eventControlWantsDiscovery: device event control is on and looking for nearby devices.
+  ///     Adds a sweep every `eventControlGapSeconds` while nothing else would sweep and nothing is
+  ///     being recorded or streamed; it never adds one while busy, and false leaves every other
+  ///     answer exactly as it was.
   ///   - now: monotonic seconds.
   /// - Returns: the gap to leave after the sweep that follows, or nil to not sweep at all.
-  /// - Parameters:
-  ///   - isBusy: recording or streaming — the states where a sweep's broadcasts are unwelcome.
-  ///   - anyEnabledCameraMissing: an enabled camera that discovery cannot currently see.
-  ///   - isBrowsing: the operator is looking at the camera list, so a sweep is what they asked for.
-  ///   - now: monotonic seconds.
   public mutating func gapAfterNextSweep(
+    isBusy: Bool,
+    anyEnabledCameraMissing: Bool,
+    isBrowsing: Bool,
+    eventControlWantsDiscovery: Bool = false,
+    now: Double
+  ) -> Double? {
+    let cameras = cameraGap(
+      isBusy: isBusy,
+      anyEnabledCameraMissing: anyEnabledCameraMissing,
+      isBrowsing: isBrowsing,
+      now: now
+    )
+    guard cameras == nil, eventControlWantsDiscovery, !isBusy else { return cameras }
+    return Self.eventControlGapSeconds
+  }
+
+  /// Which ports a sweep asks each address about: the cameras' always, and the ports added for
+  /// device event control only while nothing is being recorded or streamed. A camera-recovery
+  /// sweep in the middle of a take therefore costs exactly what it did before event control
+  /// existed; event control reaches its devices then only at their known addresses.
+  public static func sweepPorts(camera: [Int], extra: [Int], isBusy: Bool) -> [Int] {
+    var ports: [Int] = []
+    for port in camera + (isBusy ? [] : extra) where !ports.contains(port) {
+      ports.append(port)
+    }
+    return ports
+  }
+
+  private mutating func cameraGap(
     isBusy: Bool,
     anyEnabledCameraMissing: Bool,
     isBrowsing: Bool,

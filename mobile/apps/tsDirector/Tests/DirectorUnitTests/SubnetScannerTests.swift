@@ -1,5 +1,6 @@
 import Foundation
 import DirectorSources
+import Network
 import Testing
 
 @Suite("Subnet scanning")
@@ -74,17 +75,155 @@ struct SubnetScannerTests {
     })
   }
 
-  @Test("An override sweeps every address of that /24 instead of the local subnet, until cleared")
-  func overrideSubnet() throws {
-    SubnetScanner.setOverrideSubnets(networkAddresses: ["192.168.6.0", "192.168.7.0"])
+  @Test("Additional subnets are swept as well as the local one, never instead of it")
+  func additionalSubnetsSupplementLocal() throws {
+    let local = SubnetScanner.scanSubnets().map(\.cidrDescription)
+    SubnetScanner.setOverrideSubnets(networkAddresses: ["198.51.100.0", "203.0.113.0"])
     defer { SubnetScanner.setOverrideSubnets(networkAddresses: []) }
-    let subnets = SubnetScanner.scanSubnets()
-    #expect(subnets.map(\.cidrDescription) == ["192.168.6.0/24", "192.168.7.0/24"])
-    let hosts = try #require(subnets.first?.hostAddresses())
-    #expect(hosts.count == 254)
-    #expect(hosts.first == "192.168.6.1")
-    #expect(hosts.last == "192.168.6.254")
+    let subnets = SubnetScanner.scanSubnets().map(\.cidrDescription)
+    #expect(subnets == local + ["198.51.100.0/24", "203.0.113.0/24"])
     SubnetScanner.setOverrideSubnets(networkAddresses: [])
-    #expect(!SubnetScanner.scanSubnets().map(\.cidrDescription).contains("192.168.6.0/24"))
+    #expect(SubnetScanner.scanSubnets().map(\.cidrDescription) == local)
+  }
+
+  @Test("Local first, then each additional subnet; one equal to the local one is swept once")
+  func unionOfLocalAndAdditional() throws {
+    let local = try #require(IPv4Subnet(address: "198.51.100.42", netmask: "255.255.255.0"))
+    let same = try #require(IPv4Subnet(address: "198.51.100.0", netmask: "255.255.255.0"))
+    let other = try #require(IPv4Subnet(address: "203.0.113.0", netmask: "255.255.255.0"))
+
+    let both = SubnetScanner.scanSubnets(local: local, additional: [same, other, other])
+    #expect(both.map(\.cidrDescription) == ["198.51.100.0/24", "203.0.113.0/24"])
+    // The local one is kept as it is, so this device stays out of its own sweep.
+    #expect(both.first?.address == local.address)
+
+    #expect(SubnetScanner.scanSubnets(local: local, additional: []).map(\.cidrDescription) == ["198.51.100.0/24"])
+    #expect(SubnetScanner.scanSubnets(local: nil, additional: [other]).map(\.cidrDescription) == ["203.0.113.0/24"])
+    #expect(SubnetScanner.scanSubnets(local: nil, additional: []).isEmpty)
+  }
+
+  @Test("A local /20 is skipped and said so, and the additional /24 is still swept")
+  func tooWideSubnetIsSkippedNotTheSweep() throws {
+    let venue = try #require(IPv4Subnet(address: "192.168.20.9", netmask: "255.255.240.0"))
+    let additional = try #require(IPv4Subnet(address: "203.0.113.0", netmask: "255.255.255.0"))
+    let plan = SubnetScanner.plan([venue, additional])
+    #expect(plan.swept == ["203.0.113.0/24"])
+    #expect(plan.skipped == ["192.168.16.0/20"])
+    #expect(plan.hosts.count == 254)
+    #expect(plan.diagnostic == "skipped 192.168.16.0/20: wider than /22")
+    #expect(SubnetScanner.plan([additional]).diagnostic == nil)
+  }
+
+  @Test("Overlapping subnets sweep each host once, and never this device")
+  func overlappingSubnets() throws {
+    let local = try #require(IPv4Subnet(address: "192.168.40.7", netmask: "255.255.252.0"))
+    let inside = try #require(IPv4Subnet(address: "192.168.40.0", netmask: "255.255.255.0"))
+    let plan = SubnetScanner.plan([local, inside])
+    #expect(plan.hosts.count == 1_021)
+    #expect(!plan.hosts.contains("192.168.40.7"))
+    #expect(Set(plan.hosts).count == plan.hosts.count)
+  }
+
+  @Test("Any probe refused by the Local Network permission reports it, even when routed hosts answer")
+  func localNetworkDenial() {
+    #expect(SubnetScanner.isLocalNetworkDenied(probes: 762, denied: 762))
+    // The iPad's own subnet refused while an additional, routed subnet answered.
+    #expect(SubnetScanner.isLocalNetworkDenied(probes: 762, denied: 254))
+    #expect(!SubnetScanner.isLocalNetworkDenied(probes: 762, denied: 0))
+    #expect(!SubnetScanner.isLocalNetworkDenied(probes: 0, denied: 0))
+  }
+
+  @Test("A sweep with only too-wide subnets probes nothing and says which it skipped")
+  func scanReportsSkipped() async throws {
+    let venue = try #require(IPv4Subnet(address: "192.168.20.9", netmask: "255.255.240.0"))
+    let scanner = SubnetScanner(ports: [47614], subnets: { [venue] })
+    let result = await scanner.scan()
+    #expect(result.probedCount == 0)
+    #expect(result.openHosts.isEmpty)
+    #expect(result.subnet == "192.168.16.0/20")
+    #expect(result.diagnostic == "skipped 192.168.16.0/20: wider than /22")
+    #expect(!result.localNetworkDenied)
+
+    let known = await scanner.probeKnown(["192.168.20.10"])
+    #expect(known.probedCount == 0)
+    #expect(known.diagnostic == "skipped 192.168.16.0/20: wider than /22")
+  }
+
+  @Test("No interface at all is said, rather than an empty sweep")
+  func scanWithoutInterface() async {
+    let scanner = SubnetScanner(ports: [554], subnets: { [] })
+    #expect(await scanner.scan().diagnostic == "no IPv4 interface")
+    #expect(await scanner.probeKnown(["192.0.2.1"]).diagnostic == "no IPv4 interface")
+  }
+
+  @Test("A sweep's ports can be given per sweep, and an open port is found on it")
+  func scanFindsListenerOnGivenPort() async throws {
+    let listener = try LoopbackListener()
+    defer { listener.stop() }
+    let port = try await listener.ready()
+    let loopback = try #require(IPv4Subnet(address: "127.0.0.0", netmask: "255.255.255.252"))
+    let scanner = SubnetScanner(ports: [9], timeout: 0.5, subnets: { [loopback] })
+
+    let result = await scanner.scan(priority: ["127.0.0.1"], ports: [Int(port)])
+    #expect(result.openHosts == ["127.0.0.1"])
+    #expect(result.portsByHost["127.0.0.1"] == [Int(port)])
+    #expect(result.hosts(onPort: Int(port)) == ["127.0.0.1"])
+    #expect(result.restricted(to: [554]).openHosts.isEmpty)
+
+    let known = await scanner.probeKnown(["127.0.0.1", "198.51.100.1"], ports: [Int(port)])
+    #expect(known.openHosts == ["127.0.0.1"])
+    #expect(known.probedCount == 1)
+  }
+
+  @Test("A port that cannot exist is reported closed, not probed")
+  func impossiblePortIsClosed() async throws {
+    let loopback = try #require(IPv4Subnet(address: "127.0.0.0", netmask: "255.255.255.252"))
+    let scanner = SubnetScanner(ports: [70_000], timeout: 0.3, subnets: { [loopback] })
+    let result = await scanner.probeKnown(["127.0.0.1"])
+    #expect(result.openHosts.isEmpty)
+  }
+}
+
+/// A TCP listener on the loopback interface, for a probe to find.
+private final class LoopbackListener: @unchecked Sendable {
+  private let listener: NWListener
+  private let queue = DispatchQueue(label: "test.loopback.listener")
+
+  init() throws {
+    let parameters = NWParameters.tcp
+    parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+    listener = try NWListener(using: parameters)
+    listener.newConnectionHandler = { connection in connection.cancel() }
+  }
+
+  func ready() async throws -> UInt16 {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, any Error>) in
+      let once = OnceFlag()
+      listener.stateUpdateHandler = { [listener] state in
+        switch state {
+        case .ready:
+          if once.claim() { continuation.resume(returning: listener.port?.rawValue ?? 0) }
+        case let .failed(error):
+          if once.claim() { continuation.resume(throwing: error) }
+        default:
+          break
+        }
+      }
+      listener.start(queue: queue)
+    }
+  }
+
+  func stop() { listener.cancel() }
+}
+
+private final class OnceFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var claimed = false
+
+  func claim() -> Bool {
+    lock.withLock {
+      defer { claimed = true }
+      return !claimed
+    }
   }
 }
