@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Keyboard,
   Platform,
+  Pressable,
   ScrollView,
   Text,
   useWindowDimensions,
@@ -23,9 +24,18 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ChatFileOps } from './AttachmentView'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
-import { actionsFor, approvalsIn, typingNames } from './chatModel'
+import {
+  actionsFor,
+  approvalsIn,
+  conversationPill,
+  conversationTitle,
+  typingNames
+} from './chatModel'
 import { getChatStyles } from './chatStyles'
+import { isRestoringPopupFocus } from './chatWebInteractions'
+import type { ChatDraft } from './chatWorkspaceModel'
 import { Composer } from './Composer'
+import { ConversationMenu } from './ConversationMenu'
 import { EmojiPicker } from './EmojiPicker'
 import type { MessageView } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
@@ -52,6 +62,11 @@ export interface ConversationScreenProps {
   files?: ConversationFiles
   /** Swipe a message right to reply; on phones by default. */
   swipe?: boolean
+  embedded?: boolean
+  active?: boolean
+  readingSession?: number
+  draft?: ChatDraft
+  onDraftChange?: (draft: ChatDraft) => void
 }
 
 /**
@@ -121,30 +136,56 @@ export function ConversationScreen(
     ) + insets.bottom
   const lift = Math.max(0, keyboard - clearance)
 
+  const { onDraftChange } = props
   const [view, setView] = useState<ConversationView | undefined>(undefined)
+  const latestView = useRef<ConversationView | undefined>(undefined)
+  latestView.current = view
   const [failed, setFailed] = useState(false)
-  const [text, setText] = useState('')
-  const [replyTo, setReplyTo] = useState<MessageView | undefined>(undefined)
-  const [editing, setEditing] = useState<MessageView | undefined>(undefined)
-  const [picked, setPicked] = useState<PickedFile[]>([])
+  const [text, setText] = useState(props.draft?.text ?? '')
+  const [replyTo, setReplyTo] = useState<MessageView | undefined>(
+    props.draft?.replyTo
+  )
+  const [editing, setEditing] = useState<MessageView | undefined>(
+    props.draft?.editing
+  )
+  const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [reported, setReported] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
+  const [conversationMenu, setConversationMenu] = useState(false)
+  const readRevision = useRef<number | undefined>(undefined)
+  const restored = useRef(false)
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null)
   // Where the list is, to keep it on the newest message while the person
   // is there: a list read at its bottom follows what arrives, one scrolled
   // up to older messages stays put.
-  const scrolled = useRef({ offset: 0, height: 0, content: 0 })
-  const atBottom = useRef(true)
+  const scrolled = useRef({
+    offset: props.draft?.scrollOffset ?? 0,
+    height: 0,
+    content: 0
+  })
+  const atBottom = useRef((props.draft?.scrollOffset ?? 0) === 0)
+
+  useEffect(() => {
+    onDraftChange?.({
+      text,
+      replyTo,
+      editing,
+      picked,
+      scrollOffset: scrolled.current.offset
+    })
+  }, [text, replyTo, editing, picked, onDraftChange])
 
   // Open the chat, and keep its view current from the engine's events. A
   // chat the list does not hold yet (a newcomer, a moment before the server
   // has added them) is opened again as soon as the list brings it, and
   // every few seconds until then.
   useEffect(() => {
+    if (props.active === false) return
+    readRevision.current = undefined
     let live = true
     let opened = false
     let opening = false
@@ -158,7 +199,11 @@ export function ConversationScreen(
     // and whether this device holds its key (History is locked) or not.
     const listed = (): void => {
       const known = engine.view(conversationId)
-      if (known != null && live) setView(known)
+      if (known != null && live) {
+        readRevision.current ??=
+          known.conversation.preferences?.manualUnreadRevision ?? 0
+        setView(known)
+      }
     }
     const tryOpen = (): void => {
       if (opened || opening || !live) return
@@ -171,6 +216,8 @@ export function ConversationScreen(
           opened = true
           if (live) {
             setView(next)
+            readRevision.current ??=
+              next.conversation.preferences?.manualUnreadRevision ?? 0
             setFailed(false)
           }
         })
@@ -195,6 +242,12 @@ export function ConversationScreen(
         }
         const next = engine.view(conversationId)
         if (next != null) setView(next)
+        else {
+          setView(undefined)
+          setFailed(true)
+          setMenu(undefined)
+          setConversationMenu(false)
+        }
       }
     })
     tryOpen()
@@ -205,7 +258,7 @@ export function ConversationScreen(
       unsubscribe()
       engine.close(conversationId)
     }
-  }, [engine, conversationId, userId])
+  }, [engine, conversationId, userId, props.active])
 
   const title = view?.conversation.title
   useEffect(() => {
@@ -215,10 +268,28 @@ export function ConversationScreen(
   // What is on the screen has been read.
   const newest = view?.messages.at(-1)?.seq ?? 0
   const unread = view?.conversation.unread ?? 0
+  const manualUnread = view?.conversation.preferences?.manualUnread === true
   useEffect(() => {
-    if (newest === 0 && unread === 0) return
-    engine.markRead(conversationId).catch(() => undefined)
-  }, [engine, conversationId, newest, unread])
+    if (props.active === false || menu != null || conversationMenu) return
+    if (newest === 0 && unread === 0 && !manualUnread) return
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+  }, [
+    engine,
+    conversationId,
+    newest,
+    unread,
+    manualUnread,
+    props.active,
+    menu,
+    conversationMenu
+  ])
+  useEffect(() => {
+    const current = latestView.current
+    if (props.active === false || current == null) return
+    readRevision.current =
+      current.conversation.preferences?.manualUnreadRevision ?? 0
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+  }, [props.readingSession, props.active, engine, conversationId])
 
   const run = useCallback(
     (work: () => Promise<unknown>, failure = lstrings.chat_send_failed) => {
@@ -286,6 +357,9 @@ export function ConversationScreen(
 
   const onText = (next: string): void => {
     setText(next)
+    readRevision.current =
+      view.conversation.preferences?.manualUnreadRevision ?? 0
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
     if (next !== '' && view.composer === 'enabled') {
       engine.typing(conversationId)
     }
@@ -342,17 +416,27 @@ export function ConversationScreen(
 
   const typing = typingNames(view.typing, lstrings.chat_someone)
 
-  return (
-    <Screen scroll={false} contentStyle={styles.column}>
+  const content = (
+    <>
       <View style={[styles.fill, { paddingBottom: lift }]}>
         <View style={styles.top}>
-          <Text style={styles.count}>
-            {plural(
-              view.conversation.memberCount,
-              lstrings.chat_members_count_one,
-              lstrings.chat_members_count_many
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={shared.heading} numberOfLines={1}>
+              {conversationTitle(view.conversation)}
+            </Text>
+            {conversationPill(view.conversation) != null && (
+              <Text style={shared.small}>
+                {conversationPill(view.conversation)}
+              </Text>
             )}
-          </Text>
+            <Text style={styles.count}>
+              {plural(
+                view.conversation.memberCount,
+                lstrings.chat_members_count_one,
+                lstrings.chat_members_count_many
+              )}
+            </Text>
+          </View>
           <Button
             label={lstrings.chat_members}
             kind="text"
@@ -360,6 +444,24 @@ export function ConversationScreen(
             icon="group"
             onPress={onMembers}
           />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={lstrings.chat_conversation_actions}
+            onPress={() => {
+              setConversationMenu(true)
+            }}
+            style={{ padding: theme.rem(0.75) }}
+          >
+            <Text
+              style={{
+                color: theme.primaryTextColor,
+                fontSize: theme.rem(1.125),
+                letterSpacing: 2
+              }}
+            >
+              •••
+            </Text>
+          </Pressable>
         </View>
         {view.historyLocked && (
           <View style={[shared.banner, shared.bannerWarning]}>
@@ -399,12 +501,36 @@ export function ConversationScreen(
             const { contentOffset, layoutMeasurement } = event.nativeEvent
             scrolled.current.offset = contentOffset.y
             scrolled.current.height = layoutMeasurement.height
+            props.onDraftChange?.({
+              text,
+              replyTo,
+              editing,
+              picked,
+              scrollOffset: contentOffset.y
+            })
+          }}
+          onScrollBeginDrag={() => {
+            readRevision.current =
+              view.conversation.preferences?.manualUnreadRevision ?? 0
+            engine
+              .markRead(conversationId, readRevision.current)
+              .catch(() => undefined)
           }}
           onLayout={event => {
             scrolled.current.height = event.nativeEvent.layout.height
           }}
           scrollEventThrottle={100}
           onContentSizeChange={(_width, height) => {
+            if (!restored.current && (props.draft?.scrollOffset ?? 0) > 0) {
+              restored.current = true
+              scrolled.current.content = height
+              scroller.current?.scrollTo({
+                y: props.draft!.scrollOffset,
+                animated: false
+              })
+              return
+            }
+            restored.current = true
             const { offset, content } = scrolled.current
             // At the bottom of what was there before it grew (or asked to
             // go there by a send): follow it down.
@@ -484,6 +610,14 @@ export function ConversationScreen(
           </View>
         ) : (
           <Composer
+            onRead={() => {
+              if (props.active === false || isRestoringPopupFocus()) return
+              readRevision.current =
+                view.conversation.preferences?.manualUnreadRevision ?? 0
+              engine
+                .markRead(conversationId, readRevision.current)
+                .catch(() => undefined)
+            }}
             text={text}
             onText={onText}
             enabled={view.composer === 'enabled'}
@@ -521,6 +655,15 @@ export function ConversationScreen(
           />
         )}
       </View>
+      {conversationMenu && (
+        <ConversationMenu
+          conversation={view.conversation}
+          engine={engine}
+          onClose={() => {
+            setConversationMenu(false)
+          }}
+        />
+      )}
       {menu != null && (
         <MessageMenu
           message={menu}
@@ -588,6 +731,15 @@ export function ConversationScreen(
           />
         </View>
       )}
+    </>
+  )
+  return props.embedded === true ? (
+    <View style={[styles.column, { padding: theme.rem(1), flex: 1 }]}>
+      {content}
+    </View>
+  ) : (
+    <Screen scroll={false} contentStyle={styles.column}>
+      {content}
     </Screen>
   )
 }

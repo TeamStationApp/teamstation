@@ -61,6 +61,8 @@ export interface ConversationState {
 }
 
 export type ChatEngineEvent =
+  /** A newly received post; no content is included in the alert event. */
+  | { type: 'messageAlert'; conversationId: string }
   /** The chat list changed (a chat, an unread count, a title). */
   | { type: 'conversations' }
   /** One chat's view changed. */

@@ -25,6 +25,7 @@ export interface ComposerProps {
   sources: PickSource[]
   onAttach: (source: PickSource) => void
   onSend: () => void
+  onRead?: () => void
 }
 
 /**
@@ -187,6 +188,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           />
         </Pressable>
         <TextInput
+          onFocus={props.onRead}
           testID="chat-composer"
           accessibilityLabel={lstrings.chat_composer}
           value={text}
