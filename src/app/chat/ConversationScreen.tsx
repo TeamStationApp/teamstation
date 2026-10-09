@@ -43,7 +43,12 @@ import {
   readDocumentActive,
   watchReadDocumentActive
 } from './chatWebInteractions'
-import type { ChatDraft } from './chatWorkspaceModel'
+import {
+  type ChatDraft,
+  ChatDraftOwner,
+  emptyChatDraft,
+  newChatWorkspaceState
+} from './chatWorkspaceModel'
 import { Composer } from './Composer'
 import { ConversationMenu } from './ConversationMenu'
 import { EmojiPicker } from './EmojiPicker'
@@ -78,6 +83,7 @@ export interface ConversationScreenProps {
   active?: boolean
   readingSession?: number
   draft?: ChatDraft
+  draftOwner?: ChatDraftOwner
   onDraftChange?: (draft: ChatDraft) => void
 }
 
@@ -149,6 +155,12 @@ export function ConversationScreen(
   const lift = Math.max(0, keyboard - clearance)
 
   const { onDraftChange } = props
+  const [localDraftOwner] = useState(() => {
+    const state = newChatWorkspaceState()
+    state.drafts.set(conversationId, props.draft ?? emptyChatDraft())
+    return new ChatDraftOwner(state)
+  })
+  const draftOwner = props.draftOwner ?? localDraftOwner
   const [view, setView] = useState<ConversationView | undefined>(undefined)
   const latestView = useRef<ConversationView | undefined>(undefined)
   latestView.current = view
@@ -167,8 +179,10 @@ export function ConversationScreen(
   const editingNow = useRef(editing)
   editingNow.current = editing
   const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
-  const [sending, setSending] = useState(false)
-  const sendingNow = useRef(false)
+  const [sending, setSending] = useState(() =>
+    draftOwner.isSending(conversationId)
+  )
+  const sendingNow = useRef(sending)
   const preparingNow = useRef(0)
   const [preparing, setPreparing] = useState(0)
   const preparationGeneration = useRef(0)
@@ -184,7 +198,9 @@ export function ConversationScreen(
       preparationGeneration.current += 1
     }
   }, [conversationId, props.active])
-  const [error, setError] = useState<string | undefined>(undefined)
+  const [error, setError] = useState<string | undefined>(() =>
+    draftOwner.failed(conversationId) ? lstrings.chat_send_failed : undefined
+  )
   const [reported, setReported] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
@@ -237,6 +253,42 @@ export function ConversationScreen(
     height: 0,
     content: 0
   })
+  useEffect(
+    () =>
+      draftOwner.attach(
+        conversationId,
+        () => ({
+          text: textNow.current,
+          replyTo: replyNow.current,
+          editing: editingNow.current,
+          picked: pickedNow.current,
+          scrollOffset: scrolled.current.offset,
+          hasScrollPosition: scrolled.current.hasPosition,
+          followNewest: scrolled.current.followNewest,
+          scrollAnchor: scrolled.current.anchor
+        }),
+        () => {
+          if (!mounted.current) return
+          const next = draftOwner.draft(conversationId)
+          textNow.current = next.text
+          replyNow.current = next.replyTo
+          editingNow.current = next.editing
+          pickedNow.current = next.picked
+          setText(next.text)
+          setReplyTo(next.replyTo)
+          setEditing(next.editing)
+          setPicked(next.picked)
+          sendingNow.current = draftOwner.isSending(conversationId)
+          setSending(sendingNow.current)
+          setError(
+            draftOwner.failed(conversationId)
+              ? lstrings.chat_send_failed
+              : undefined
+          )
+        }
+      ),
+    [draftOwner, conversationId]
+  )
   const restoreTarget = useRef<number | undefined>(
     scrolled.current.hasPosition && !scrolled.current.followNewest
       ? scrolled.current.offset
@@ -599,7 +651,7 @@ export function ConversationScreen(
   }
 
   useEffect(() => {
-    onDraftChange?.({
+    const next = {
       text,
       replyTo,
       editing,
@@ -608,8 +660,18 @@ export function ConversationScreen(
       hasScrollPosition: scrolled.current.hasPosition,
       followNewest: scrolled.current.followNewest,
       scrollAnchor: scrolled.current.anchor
-    })
-  }, [text, replyTo, editing, picked, onDraftChange])
+    }
+    draftOwner.write(conversationId, next)
+    onDraftChange?.(next)
+  }, [
+    text,
+    replyTo,
+    editing,
+    picked,
+    onDraftChange,
+    draftOwner,
+    conversationId
+  ])
 
   // Open the chat, and keep its view current from the engine's events. A
   // chat the list does not hold yet (a newcomer, a moment before the server
@@ -776,73 +838,56 @@ export function ConversationScreen(
     if (
       !sendAllowed({
         enabled: view.composer === 'enabled' && props.active !== false,
-        sending: sendingNow.current,
+        sending: draftOwner.isSending(conversationId),
         preparing: preparingNow.current > 0,
         text: textNow.current,
         attachments: pickedNow.current
       })
     )
       return
-    const body = textNow.current.trim()
-    const submittedText = textNow.current
-    const submittedReply = replyNow.current
-    const submittedFiles = pickedNow.current
-    sendingNow.current = true
-    setSending(true)
-    setError(undefined)
+    const submission = draftOwner.begin(conversationId)
+    if (submission == null) return
+    const submitted = submission.draft
+    const body = submitted.text.trim()
     const work = async (): Promise<unknown> => {
-      if (editing != null) {
-        await engine.edit(conversationId, editing.id, body)
+      if (submitted.editing != null) {
+        await engine.edit(conversationId, submitted.editing.id, body)
         return
       }
-      const quote = submittedReply == null ? {} : { quoteId: submittedReply.id }
-      if (submittedFiles.length > 0) {
-        return await engine.attach(conversationId, submittedFiles, body, quote)
+      const quote =
+        submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }
+      if (submitted.picked.length > 0) {
+        return await engine.attach(
+          conversationId,
+          submitted.picked,
+          body,
+          quote
+        )
       }
       return await engine.sendText(conversationId, body, quote)
     }
-    work()
-      .then(() => {
-        const nextText =
-          textNow.current === submittedText ? '' : textNow.current
-        const nextReply =
-          replyNow.current?.id === submittedReply?.id
-            ? undefined
-            : replyNow.current
-        const nextPicked = pickedNow.current.filter(
-          file => !submittedFiles.includes(file)
-        )
-        textNow.current = nextText
-        replyNow.current = nextReply
-        setText(nextText)
-        setReplyTo(nextReply)
-        setEditing(undefined)
-        setPicked(nextPicked)
-        pickedNow.current = nextPicked
-        props.onDraftChange?.({
-          text: nextText,
-          replyTo: nextReply,
-          picked: nextPicked,
-          scrollOffset: scrolled.current.offset,
-          hasScrollPosition: scrolled.current.hasPosition,
-          followNewest: scrolled.current.followNewest,
-          scrollAnchor: scrolled.current.anchor
-        })
-        atBottom.current = true
-        restoreTarget.current = undefined
-        restoreAnchor.current = undefined
-      })
-      .catch(() => {
-        setError(lstrings.chat_send_failed)
-      })
-      .finally(() => {
-        setSending(false)
-        sendingNow.current = false
-      })
+    const finish = (success: boolean): void => {
+      const next = draftOwner.finish(conversationId, submission, success)
+      // Standalone consumers retain their external draft callback; workspaces
+      // reconcile directly in their persistent owner, never the old screen.
+      if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
+    }
+    work().then(
+      () => {
+        finish(true)
+      },
+      () => {
+        finish(false)
+      }
+    )
   }
 
   const onText = (next: string): void => {
     textNow.current = next
+    draftOwner.write(conversationId, {
+      ...draftOwner.draft(conversationId),
+      text: next
+    })
     setText(next)
     readRevision.current =
       view.conversation.preferences?.manualUnreadRevision ?? 0
@@ -1378,11 +1423,11 @@ export function ConversationScreen(
           onPin={pinned => {
             const selected = selectedFor(pinned ? 'pin' : 'unpin')
             if (selected == null) return
+            setMenu(undefined)
             run(async () => {
               if (engine.pinMessage == null) throw new Error('Pins unavailable')
               await engine.pinMessage(conversationId, selected.id, pinned)
-              setMenu(undefined)
-            })
+            }, lstrings.chat_pin_failed)
           }}
           onDelete={() => {
             const selected = selectedFor('delete')

@@ -12,7 +12,11 @@ import {
   messagePreview
 } from './chatModel'
 import { chat, message } from './chatViews.test.helpers'
-import { emptyChatDraft, newChatWorkspaceState } from './chatWorkspaceModel'
+import {
+  chatDraftOwner,
+  emptyChatDraft,
+  newChatWorkspaceState
+} from './chatWorkspaceModel'
 import type { ConversationListItem } from './engine/engine'
 
 const scoped = (
@@ -44,6 +48,82 @@ function file(contentType: string, fileName: string): AttachmentRef {
 }
 
 describe('chat UI follow-up model', function () {
+  it('reconciles offscreen submitted fields while preserving current revisions and geometry', function () {
+    const state = newChatWorkspaceState()
+    const engine = {}
+    const owner = chatDraftOwner(state, engine, 1)
+    const file = {
+      bytes: new Uint8Array([1]),
+      contentType: 'text/plain',
+      fileName: 'notes.txt'
+    }
+    const submitted = {
+      ...emptyChatDraft(),
+      text: 'Submitted',
+      picked: [file],
+      replyTo: message(),
+      editing: message({ id: 'edit' }),
+      scrollOffset: 80
+    }
+    owner.write('A', submitted)
+    const token = owner.begin('A')!
+    expect(owner.begin('A')).equals(undefined)
+    owner.write('A', {
+      ...submitted,
+      text: 'Temporary',
+      replyTo: undefined,
+      editing: undefined
+    })
+    owner.write('A', {
+      ...submitted,
+      scrollOffset: 240,
+      scrollAnchor: { id: 'row', relativeY: -20 }
+    })
+    const replacement = { ...file }
+    owner.write('A', { ...owner.draft('A'), picked: [replacement] })
+    expect(owner.finish('A', token, true)).includes({
+      text: 'Submitted',
+      replyTo: submitted.replyTo,
+      editing: submitted.editing,
+      scrollOffset: 240
+    })
+    expect(owner.draft('A').picked).deep.equals([replacement])
+    expect(owner.draft('A').scrollAnchor).deep.equals({
+      id: 'row',
+      relativeY: -20
+    })
+    expect(owner.isSending('A')).equals(false)
+    const failed = owner.begin('A')!
+    owner.finish('A', failed, false)
+    expect(owner.failed('A')).equals(true)
+    const retry = owner.begin('A')!
+    expect(owner.failed('A')).equals(false)
+    owner.finish('A', retry, true)
+    expect(owner.draft('A')).includes({
+      text: '',
+      replyTo: undefined,
+      editing: undefined,
+      scrollOffset: 240
+    })
+    expect(owner.draft('A').picked).deep.equals([])
+  })
+
+  it('invalidates pending writes across user and engine ownership without affecting a new same-id draft', function () {
+    const state = newChatWorkspaceState()
+    const engine = {}
+    const first = chatDraftOwner(state, engine, 1)
+    expect(chatDraftOwner(state, engine, 1)).equals(first)
+    first.write('A', { ...emptyChatDraft(), text: 'Old user' })
+    const token = first.begin('A')!
+    const next = chatDraftOwner(state, engine, 2)
+    next.write('A', { ...emptyChatDraft(), text: 'Current user' })
+    expect(first.finish('A', token, true)).equals(undefined)
+    first.write('A', { ...emptyChatDraft(), text: 'Late old write' })
+    expect(first.begin('A')).equals(undefined)
+    expect(next.draft('A').text).equals('Current user')
+    const replaced = chatDraftOwner(state, {}, 2)
+    expect(replaced.draft('A')).deep.equals(emptyChatDraft())
+  })
   it('owns each workspace and conversation draft independently', function () {
     const first = newChatWorkspaceState()
     const second = newChatWorkspaceState()

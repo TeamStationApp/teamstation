@@ -552,6 +552,7 @@ export const enUs = {
   chat_copy: 'Copy',
   chat_copy_text: 'Copy text',
   chat_copy_failed: 'Could not copy this message.',
+  chat_pin_failed: 'Could not update this message pin. Try again.',
   chat_attachment_limit: 'A message can include up to 10 attachments.',
   chat_attaching_file: 'Attaching file to chat',
   chat_attachment_blocked: 'Attachments are unavailable in this conversation.',

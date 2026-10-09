@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   FlatList,
   Image,
+  type LayoutChangeEvent,
   Pressable,
   Text,
   useWindowDimensions,
@@ -12,6 +13,7 @@ import { Badge, Button, Icon, Screen } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { announceChatArrival } from './chatAnnouncements'
 import { pressPoint } from './chatInteractionModel'
 import {
   canStartDm,
@@ -21,7 +23,7 @@ import {
   timeLabel
 } from './chatModel'
 import { getChatStyles } from './chatStyles'
-import { immediatePressProps } from './chatWebInteractions'
+import { bindUserScroll, immediatePressProps } from './chatWebInteractions'
 import { CHAT_WIDE_WIDTH } from './chatWorkspaceModel'
 import { ConversationMenu } from './ConversationMenu'
 import type { ConversationListItem } from './engine/engine'
@@ -61,6 +63,43 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const visible = useRef<string[]>([])
   const gestureGeneration = useRef(0)
   const restored = useRef(false)
+  const listGeometry = useRef({
+    height: 0,
+    content: 0,
+    data: undefined as ConversationListItem[] | undefined
+  })
+  const restoreOffset = useRef(props.initialOffset ?? 0)
+  const measuredTail = useRef<ConversationListItem[] | undefined>(undefined)
+  const restoreList = useCallback(() => {
+    if (restored.current || chats == null) return
+    const { height, content, data } = listGeometry.current
+    if (height <= 0 || content <= 0 || data !== chats) return
+    if (
+      content < height + restoreOffset.current &&
+      chats.length > 0 &&
+      measuredTail.current !== chats
+    )
+      return
+    // Refresh can legitimately remove rows; clamp only measured current data.
+    const offset = Math.min(
+      restoreOffset.current,
+      Math.max(0, content - height)
+    )
+    list.current?.scrollToOffset({
+      offset,
+      animated: false
+    })
+    restored.current = true
+  }, [chats])
+  useEffect(restoreList, [restoreList])
+  useEffect(
+    () =>
+      bindUserScroll(list.current, () => {
+        restored.current = true
+        gestureGeneration.current += 1
+      }),
+    []
+  )
   const viewability = useRef({ itemVisiblePercentThreshold: 1 }).current
   const previews = useCallback(
     (ids: string[]): void => {
@@ -91,14 +130,17 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         const conversation = engine
           .conversations()
           .find(chat => chat.id === event.conversationId)
-        if (conversation != null)
+        if (conversation != null) {
+          const text = sprintf(
+            lstrings.chat_new_message_announcement,
+            conversationTitle(conversation)
+          )
+          announceChatArrival(text)
           setAnnouncement(previous => ({
             revision: previous.revision + 1,
-            text: sprintf(
-              lstrings.chat_new_message_announcement,
-              conversationTitle(conversation)
-            )
+            text
           }))
+        }
       }
     })
     engine
@@ -145,19 +187,22 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         keyExtractor={row => row.key}
         viewabilityConfig={viewability}
         onViewableItemsChanged={onVisible}
-        onLayout={() => {
-          if (!restored.current && (props.initialOffset ?? 0) > 0)
-            list.current?.scrollToOffset({
-              offset: props.initialOffset!,
-              animated: false
-            })
-          restored.current = true
+        onLayout={event => {
+          listGeometry.current.height = event.nativeEvent.layout.height
+          restoreList()
+        }}
+        onContentSizeChange={(_width, height) => {
+          listGeometry.current.content = height
+          listGeometry.current.data = chats
+          restoreList()
         }}
         onScroll={event => {
-          props.onOffset?.(event.nativeEvent.contentOffset.y)
+          if (restored.current)
+            props.onOffset?.(event.nativeEvent.contentOffset.y)
         }}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
+          restored.current = true
           gestureGeneration.current += 1
         }}
         keyboardShouldPersistTaps="handled"
@@ -202,6 +247,15 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           ) : (
             <ConversationRow
               chat={item.chat}
+              onLayout={event => {
+                if (
+                  item.chat.id === rows.at(-1)?.key &&
+                  event.nativeEvent.layout.height > 0
+                ) {
+                  measuredTail.current = chats
+                  restoreList()
+                }
+              }}
               now={now}
               selected={item.chat.id === props.selectedId}
               narrow={narrow}
@@ -244,6 +298,7 @@ function ConversationRow(props: {
   gestureGeneration: React.RefObject<number>
   onOpen: () => void
   onMenu: () => void
+  onLayout?: (event: LayoutChangeEvent) => void
 }): React.ReactElement {
   const { chat } = props
   const theme = useTheme()
@@ -276,6 +331,7 @@ function ConversationRow(props: {
     <View
       ref={ref}
       collapsable={false}
+      onLayout={props.onLayout}
       style={[styles.row, props.selected && styles.selected]}
     >
       <Pressable

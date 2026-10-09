@@ -480,6 +480,7 @@ describe('chat UI follow-up workspace', function () {
       messageMoves.push((options as ScrollToOptions).top ?? 0)
     }
     await layout(listScroll, 320, 400)
+    await layout(listScroll.firstElementChild as HTMLElement, 320, 900)
     await layout(messageScroll.firstElementChild as HTMLElement, 880, 900)
     expect(listMoves).contains(35)
     expect(messageMoves).contains(80)

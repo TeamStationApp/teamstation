@@ -221,10 +221,14 @@ export class ChatEngine {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private readonly safety = new Map<string, string>()
   private readonly personalPins = new Map<string, ChatPin[]>()
-  private readonly previewVersions = new Map<string, string>()
+  private readonly previewVersions = new Map<
+    string,
+    { state: ConversationState; version: string }
+  >()
+
   private readonly previewWaiting: Array<() => void> = []
   private previewActive = 0
-  private readonly pendingAlerts = new Map<string, number>()
+  private readonly pendingAlerts = new Map<string, Set<number>>()
   private readonly alertedSeq = new Map<string, number>()
   private unlisten: (() => void) | undefined
   private stopped = false
@@ -337,17 +341,24 @@ export class ChatEngine {
       )
       await syncList({ client: this.options.client, memory: this.memory })
       for (const [id, state] of this.memory.conversations) {
-        const seq = this.pendingAlerts.get(id)
+        const pending = this.pendingAlerts.get(id)
+        const seq = state.summary.lastPostSeq
+        if (pending == null) continue
         if (
           seq != null &&
-          state.summary.lastPostSeq === seq &&
+          pending.has(seq) &&
+          seq > (this.alertedSeq.get(id) ?? 0) &&
           state.summary.unread > (unreadBefore.get(id) ?? state.summary.unread)
         ) {
-          this.pendingAlerts.delete(id)
           this.alertedSeq.set(id, seq)
           if (!state.summary.preferences?.muted)
             this.memory.emit({ type: 'messageAlert', conversationId: id })
         }
+        // The authoritative list classifies the latest post independently of
+        // later edit/reaction hints, including rows that were never opened.
+        for (const hinted of pending)
+          if (hinted <= state.summary.lastSeq) pending.delete(hinted)
+        if (pending.size === 0) this.pendingAlerts.delete(id)
       }
       for (const state of this.memory.conversations.values()) {
         if (
@@ -360,16 +371,21 @@ export class ChatEngine {
         }
       }
     })
-    for (const id of this.personalPins.keys()) {
-      if (!this.memory.conversations.has(id)) {
-        this.personalPins.delete(id)
-        this.previewVersions.delete(id)
-      }
+    for (const cache of [
+      this.personalPins,
+      this.previewVersions,
+      this.pendingAlerts,
+      this.alertedSeq
+    ]) {
+      for (const id of cache.keys())
+        if (!this.memory.conversations.has(id)) cache.delete(id)
     }
     for (const id of this.active) {
       if (this.memory.conversations.has(id)) {
         try {
-          this.personalPins.set(id, await this.options.client.chatPins(id))
+          await this.serial(id, async () => {
+            await this.readPins(id)
+          })
         } catch (error) {
           if (!isGone(error)) throw error
           this.personalPins.delete(id)
@@ -467,16 +483,18 @@ export class ChatEngine {
     const previewVersion = (): string =>
       `${state.summary.lastSeq}:${this.item(state).locked}:${this.item(state).unverified}`
     const version = previewVersion()
-    if (this.previewVersions.get(conversationId) === version) return
-    this.previewVersions.set(conversationId, version)
+    const cached = this.previewVersions.get(conversationId)
+    if (cached?.state === state && cached.version === version) return
+    this.previewVersions.set(conversationId, { state, version })
     if (this.previewActive >= 3)
       await new Promise<void>(resolve => {
         this.previewWaiting.push(resolve)
       })
     else this.previewActive += 1
     try {
-      if (this.stopped) return
+      if (this.stopped || this.memory.state(conversationId) !== state) return
       await this.serial(conversationId, async () => {
+        if (this.memory.state(conversationId) !== state) return
         await syncMembers(this.ctx, conversationId)
         await syncLog(this.ctx, conversationId)
         await syncEpochs(this.ctx, conversationId)
@@ -491,10 +509,15 @@ export class ChatEngine {
           await loadEarlier(this.ctx, conversationId)
         }
       })
-      this.previewVersions.set(conversationId, previewVersion())
+      if (this.memory.state(conversationId) !== state) return
+      this.previewVersions.set(conversationId, {
+        state,
+        version: previewVersion()
+      })
       this.announcePost(conversationId)
       this.memory.emit({ type: 'conversations' })
     } catch (error) {
+      if (this.memory.state(conversationId) !== state) return
       this.previewVersions.delete(conversationId)
       if (!isGone(error)) throw error
       this.memory.conversations.delete(conversationId)
@@ -522,10 +545,7 @@ export class ChatEngine {
         await syncEpochs(ctx, conversationId)
         await syncMessages(ctx, conversationId)
         await syncReads(ctx, conversationId)
-        this.personalPins.set(
-          conversationId,
-          await ctx.client.chatPins(conversationId)
-        )
+        await this.readPins(conversationId)
       })
     } catch (error) {
       if (isGone(error)) this.active.delete(conversationId)
@@ -913,6 +933,13 @@ export class ChatEngine {
     this.memory.emit({ type: 'conversation', conversationId })
   }
 
+  private async readPins(conversationId: string): Promise<void> {
+    const state = this.memory.state(conversationId)
+    const pins = await this.options.client.chatPins(conversationId)
+    if (state != null && this.memory.state(conversationId) === state)
+      this.personalPins.set(conversationId, pins)
+  }
+
   async pinMessage(
     conversationId: string,
     messageId: string,
@@ -922,14 +949,14 @@ export class ChatEngine {
       throw new ChatEngineError('target', 'Only a readable post can be pinned')
     }
     await this.serial(conversationId, async () => {
-      this.personalPins.set(
+      const state = this.memory.state(conversationId)
+      const pins = await this.options.client.pinChatMessage(
         conversationId,
-        await this.options.client.pinChatMessage(
-          conversationId,
-          messageId,
-          pinned
-        )
+        messageId,
+        pinned
       )
+      if (state != null && this.memory.state(conversationId) === state)
+        this.personalPins.set(conversationId, pins)
     })
     this.memory.emit({ type: 'conversation', conversationId })
   }
@@ -1025,20 +1052,28 @@ export class ChatEngine {
   // --- Hints ------------------------------------------------------------
 
   private announcePost(conversationId: string): void {
-    const seq = this.pendingAlerts.get(conversationId)
-    if (seq == null) return
+    const pending = this.pendingAlerts.get(conversationId)
     const state = this.memory.state(conversationId)
-    const envelope = state?.envelopes.get(seq)
-    if (envelope == null) return
-    this.pendingAlerts.delete(conversationId)
-    this.alertedSeq.set(conversationId, seq)
-    if (
-      envelope.kind === 'post' &&
-      envelope.senderUserId !== this.options.userId &&
-      state?.summary.preferences?.muted !== true
-    ) {
-      this.memory.emit({ type: 'messageAlert', conversationId })
+    if (pending == null || state == null) return
+    let announce = false
+    for (const seq of [...pending].sort((a, b) => a - b)) {
+      const envelope = state.envelopes.get(seq)
+      if (envelope == null) continue
+      pending.delete(seq)
+      if (
+        envelope.kind !== 'post' ||
+        seq <= (this.alertedSeq.get(conversationId) ?? 0)
+      )
+        continue
+      this.alertedSeq.set(conversationId, seq)
+      if (
+        envelope.senderUserId !== this.options.userId &&
+        !state.summary.preferences?.muted
+      )
+        announce = true
     }
+    if (pending.size === 0) this.pendingAlerts.delete(conversationId)
+    if (announce) this.memory.emit({ type: 'messageAlert', conversationId })
   }
 
   private hint(event: ChatSocketEvent): void {
@@ -1049,7 +1084,9 @@ export class ChatEngine {
           this.relist()
           for (const id of this.active)
             this.later(`pins:${id}`, async () => {
-              this.personalPins.set(id, await this.options.client.chatPins(id))
+              await this.serial(id, async () => {
+                await this.readPins(id)
+              })
               this.memory.emit({ type: 'conversation', conversationId: id })
             })
           return
@@ -1075,8 +1112,11 @@ export class ChatEngine {
     const id = event.conversationId
     switch (event.kind) {
       case 'message':
-        if (event.seq != null && event.seq > (this.alertedSeq.get(id) ?? 0))
-          this.pendingAlerts.set(id, event.seq)
+        if (event.seq != null && event.seq > (this.alertedSeq.get(id) ?? 0)) {
+          const pending = this.pendingAlerts.get(id) ?? new Set<number>()
+          pending.add(event.seq)
+          this.pendingAlerts.set(id, pending)
+        }
         this.relist()
         this.want(id, ['messages'])
         return
