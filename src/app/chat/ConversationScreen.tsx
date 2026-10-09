@@ -39,7 +39,9 @@ import { getChatStyles } from './chatStyles'
 import {
   bindUserScroll,
   isFinePointer,
-  isRestoringPopupFocus
+  isRestoringPopupFocus,
+  readDocumentActive,
+  watchReadDocumentActive
 } from './chatWebInteractions'
 import type { ChatDraft } from './chatWorkspaceModel'
 import { Composer } from './Composer'
@@ -198,6 +200,10 @@ export function ConversationScreen(
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
   const [conversationMenu, setConversationMenu] = useState(false)
   const readRevision = useRef<number | undefined>(undefined)
+  const paneActive = useRef(props.active !== false)
+  paneActive.current = props.active !== false
+  const [documentActive, setDocumentActive] = useState(readDocumentActive)
+  useEffect(() => watchReadDocumentActive(setDocumentActive), [])
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null)
   // Where the list is, to keep it on the newest message while the person
@@ -281,6 +287,7 @@ export function ConversationScreen(
     if (
       current == null ||
       props.active === false ||
+      !readDocumentActive() ||
       menu != null ||
       conversationMenu ||
       reacting != null ||
@@ -414,7 +421,6 @@ export function ConversationScreen(
         ? scrolled.current.offset
         : undefined
     atBottom.current = restoreTarget.current == null
-    readRevision.current = undefined
     let live = true
     let opened = false
     let opening = false
@@ -501,6 +507,7 @@ export function ConversationScreen(
   useEffect(() => {
     if (
       props.active === false ||
+      !documentActive ||
       menu != null ||
       conversationMenu ||
       pinsOpen ||
@@ -516,18 +523,21 @@ export function ConversationScreen(
     unread,
     manualUnread,
     props.active,
+    documentActive,
     menu,
     conversationMenu,
     pinsOpen,
     reacting
   ])
   useEffect(() => {
-    const current = latestView.current
-    if (props.active === false || current == null) return
+    readRevision.current = undefined
+    const current = engine.view(conversationId)
+    if (current == null) return
     readRevision.current =
       current.conversation.preferences?.manualUnreadRevision ?? 0
+    if (!paneActive.current || !readDocumentActive()) return
     engine.markRead(conversationId, readRevision.current).catch(() => undefined)
-  }, [props.readingSession, props.active, engine, conversationId])
+  }, [props.readingSession, engine, conversationId])
 
   const run = useCallback(
     (work: () => Promise<unknown>, failure = lstrings.chat_send_failed) => {
@@ -627,7 +637,10 @@ export function ConversationScreen(
     setText(next)
     readRevision.current =
       view.conversation.preferences?.manualUnreadRevision ?? 0
-    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+    if (readDocumentActive())
+      engine
+        .markRead(conversationId, readRevision.current)
+        .catch(() => undefined)
     if (next !== '' && view.composer === 'enabled') {
       engine.typing(conversationId)
     }
@@ -970,7 +983,12 @@ export function ConversationScreen(
         ) : (
           <Composer
             onRead={() => {
-              if (props.active === false || isRestoringPopupFocus()) return
+              if (
+                props.active === false ||
+                !readDocumentActive() ||
+                isRestoringPopupFocus()
+              )
+                return
               readRevision.current =
                 view.conversation.preferences?.manualUnreadRevision ?? 0
               engine
