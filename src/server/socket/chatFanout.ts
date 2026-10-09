@@ -19,7 +19,7 @@ export type ChatChangePayload =
       seq?: number
     }
   | { c: string; k: 'typing'; u: number }
-  | { u: number; k: 'link' | 'devices' }
+  | { u: number; k: 'link' | 'devices' | 'preferences' }
 
 export const asChatChangePayload = asEither(
   asObject({
@@ -28,7 +28,7 @@ export const asChatChangePayload = asEither(
     seq: asOptional(asNumber)
   }),
   asObject({ c: asString, k: asLiteral('typing'), u: asNumber }),
-  asObject({ u: asNumber, k: asLiteral('link', 'devices') })
+  asObject({ u: asNumber, k: asLiteral('link', 'devices', 'preferences') })
 )
 
 /** Somebody signed in on one socket of this worker. */

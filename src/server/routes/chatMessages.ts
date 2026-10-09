@@ -119,7 +119,10 @@ const asMessageBody: Cleaner<MessageBody> = raw => {
 }
 
 const asReadBody = asObject({
-  seq: asWhole(0, Number.MAX_SAFE_INTEGER, 'a seq')
+  seq: asWhole(0, Number.MAX_SAFE_INTEGER, 'a seq'),
+  clearManualUnreadRevision: asOptional(
+    asWhole(0, Number.MAX_SAFE_INTEGER, 'a revision')
+  )
 })
 
 const asReportBody = asObject({
@@ -228,7 +231,16 @@ export function chatMessageRoutes(
       const id = pathParam(req.params.conversationId)
       await mustBeMember(id, caller.userId)
       const body = cleanBody(asReadBody, req.body)
-      res.json(await markRead(db, id, caller.userId, body.seq, clock()))
+      res.json(
+        await markRead(
+          db,
+          id,
+          caller.userId,
+          body.seq,
+          clock(),
+          body.clearManualUnreadRevision
+        )
+      )
     })
   )
 

@@ -650,8 +650,31 @@ describe('api client', function () {
     const list = client([chat, dm])
     // A server that names nobody (an older one) reads as nobody to name.
     expect(await list.client.chatConversations()).deep.equals([
-      { ...chat, people: [] },
-      dm
+      {
+        ...chat,
+        people: [],
+        lastPostAt: null,
+        lastPostId: null,
+        lastPostSeq: 0,
+        preferences: {
+          pinned: false,
+          muted: false,
+          manualUnread: false,
+          manualUnreadRevision: 0
+        }
+      },
+      {
+        ...dm,
+        lastPostAt: null,
+        lastPostId: null,
+        lastPostSeq: 0,
+        preferences: {
+          pinned: false,
+          muted: false,
+          manualUnread: false,
+          manualUnreadRevision: 0
+        }
+      }
     ])
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
 
