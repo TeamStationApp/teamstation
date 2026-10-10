@@ -1,6 +1,7 @@
 import React from 'react'
 
-import { ScoringButton, ScoringSheet } from './ScoringSheet'
+import { ScoringPlayerCard } from './ScoringPlayerCard'
+import { ScoringSheet } from './ScoringSheet'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 export function ErrorCreditSheet({
@@ -25,11 +26,10 @@ export function ErrorCreditSheet({
         const player = state.session.gameData.players[id]
         const label = [player.jersey, player.fullName].filter(Boolean).join(' ')
         return (
-          <ScoringButton
+          <ScoringPlayerCard
             key={id}
-            row
             label={`Error by ${label}`}
-            text={label}
+            name={label}
             onPress={() => {
               dispatch({
                 type: 'ERROR_CREDIT',

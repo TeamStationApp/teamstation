@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { View } from 'react-native'
 
+import { ScoringPlayerCard } from './ScoringPlayerCard'
 import { ScoringButton } from './ScoringSheet'
 export function ScoringChoice({
   label,
@@ -25,9 +26,11 @@ export function ScoringChoice({
       />
       {open &&
         options.map(option => (
-          <ScoringButton
+          <ScoringPlayerCard
             key={option.id ?? 'none'}
             label={`Choose ${label} ${option.name}`}
+            name={option.name}
+            selected={option.id === value}
             onPress={() => {
               onChange(option.id)
               setOpen(false)
