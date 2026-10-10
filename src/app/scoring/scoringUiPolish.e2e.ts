@@ -68,6 +68,7 @@ async function main(): Promise<void> {
     text?: string
     type?: string
     enabled?: boolean
+    checked?: boolean
     bounds?: { x: number; y: number; width: number; height: number }
     children?: Node[]
   }
@@ -549,9 +550,28 @@ async function main(): Promise<void> {
       'PASS portrait scoring appearance, all position toggles, settings toggles and modal cancellation'
     )
   }
+  const animations = async (enabled: boolean): Promise<boolean> => {
+    await menu('Settings')
+    await shown('Toggle play animations')
+    const toggle = flat(await m.hierarchy()).find(
+      node => node.text === 'Toggle play animations' && node.type === 'Switch'
+    )
+    assert(
+      typeof toggle?.checked === 'boolean',
+      'Animation switch exposes its checked state'
+    )
+    const previous = toggle.checked
+    if (previous !== enabled) await tap('Toggle play animations')
+    await tap('Done')
+    return previous
+  }
   const workflow = async (): Promise<void> => {
     setup = undefined
     const game = await open()
+    // The simulator software renderer stalls on animated half changes even on
+    // the baseline. Exercise this workflow with the supported setting off.
+    const previousAnimations =
+      native && section !== 'bases' ? await animations(false) : undefined
     await tap('More')
     await tap('Place a Runner (Tiebreaker)')
     await shown('Place runner on base')
@@ -705,6 +725,7 @@ async function main(): Promise<void> {
     assert(!recent.includes('Select runner #2 Mike Trout'))
     await tap('Cancel')
     await tap('Cancel runner placement')
+    if (previousAnimations != null) await animations(previousAnimations)
     console.log(
       'PASS persisted runners, one-action outs drag, each Undo step, first-pitch/bottom gating, next top, occupied base and cancellation'
     )
