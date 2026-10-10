@@ -311,11 +311,10 @@ function ScoringPanel(props: {
       )
     }
   )
-  const [tagRows, setTagRows] = useState<TagTarget[]>([])
+  const [tagSnapshot, setTagSnapshot] = useState(
+    () => props.game.tagSnapshotVersion
+  )
   const [historyActive, setHistoryActive] = useState(false)
-  const [tagHistoryDetail, setTagHistoryDetail] = useState<
-    { primary: string; secondary?: string } | undefined
-  >()
   const [tagTarget, setTagTarget] = useState<TagTarget | null>(null)
   // A scoring flush may outlive this editor or the authenticated account.
   const tagSelection = useRef(0)
@@ -362,7 +361,9 @@ function ScoringPanel(props: {
     // to the stall of the tap that changed it, and the save reads the same
     // fold straight after.
     let reading: ReturnType<typeof setTimeout> | null = null
+    setTagSnapshot(props.game.tagSnapshotVersion)
     const unsubscribe = props.game.subscribe(() => {
+      setTagSnapshot(props.game.tagSnapshotVersion)
       reading ??= setTimeout(() => {
         reading = null
         // The session tells of every change; the screen draws again only
@@ -593,6 +594,93 @@ function ScoringPanel(props: {
       ),
     [game, log, past, session, checkpoints]
   )
+  const historyVisible = historyActive || tagTarget != null
+  const tagHistory = useMemo(() => {
+    if (!historyVisible) return { rows: [], detail: undefined }
+    const rows = game.historyTargetsFor(session).slice(-6)
+    const previous = sessionAt(
+      { log, checkpoints },
+      lastEntry?.logLength ?? Math.max(0, log.length - 1),
+      () => game.opening
+    )
+    // Setup edits may change Gumbo context without creating an event.
+    const latestIsTarget =
+      rows.at(-1)?.id !== game.historyTargetsFor(previous).at(-1)?.id ||
+      (log
+        .slice(lastEntry?.logLength ?? Math.max(0, log.length - 1))
+        .some(
+          action => action.type !== 'lineup' && action.type !== 'gameFlow'
+        ) &&
+        JSON.stringify(previous.liveData.plays.currentPlay) !==
+          JSON.stringify(session.liveData.plays.currentPlay))
+    const targetDetail = latestIsTarget ? lastPlay : undefined
+    const descriptions = describeCompletedPlays(
+      log,
+      new Set(
+        rows
+          .filter(target => target.completed === true)
+          .map(target => target.atBatIndex)
+      ),
+      length => sessionAt({ log, checkpoints }, length, () => game.opening)
+    )
+    const describedRows = rows.map((target, index) => {
+      const described =
+        target.completed === true
+          ? (descriptions.get(target.atBatIndex) ??
+            (index === rows.length - 1 ? targetDetail : undefined))
+          : index === rows.length - 1
+            ? targetDetail
+            : undefined
+      return described == null
+        ? target
+        : {
+            ...target,
+            description: [described.primary, described.secondary]
+              .filter(line => line != null && line !== '')
+              .join(' ')
+          }
+    })
+    return { rows: describedRows, detail: targetDetail }
+    // Session tags mutate independently of the screen's scoring state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    historyVisible,
+    tagSnapshot,
+    game,
+    session,
+    log,
+    lastEntry,
+    lastPlay,
+    checkpoints
+  ])
+  useEffect(() => {
+    setTagTarget(current => {
+      if (current == null) return current
+      const raw = game.eventTargets.find(target => target.id === current.id)
+      const projected =
+        tagHistory.rows.find(row => row.id === current.id) ??
+        (current.completed === true && raw != null
+          ? tagHistory.rows.find(
+              row =>
+                row.completed === true && row.atBatIndex === current.atBatIndex
+            )
+          : undefined)
+      const next =
+        projected ?? (raw == null ? undefined : { ...current, tag: raw.tag })
+      if (
+        next == null ||
+        (current.id === next.id &&
+          current.tag === next.tag &&
+          current.atBatIndex === next.atBatIndex &&
+          current.eventIndex === next.eventIndex &&
+          current.completed === next.completed &&
+          current.title === next.title &&
+          current.description === next.description)
+      )
+        return current
+      return next
+    })
+  }, [game, tagHistory.rows])
   // The last sentence's plays — each batter's, when it scored more than
   // one — once per sentence, for the dictation log.
   const played = useMemo(
@@ -1435,63 +1523,14 @@ function ScoringPanel(props: {
         setOutcomeMenu(false)
         setMenu(value => !value)
       }}
-      historyRows={tagRows}
-      tagHistoryDetail={tagHistoryDetail}
+      historyRows={tagHistory.rows}
+      tagHistoryDetail={tagHistory.detail}
       onHistoryOpen={
         props.source.saveTag == null
           ? undefined
           : () => {
               pauseClock()
               setHistoryActive(true)
-              const rows = props.game.historyTargetsFor(session).slice(-6)
-              const previous = sessionAt(
-                { log, checkpoints },
-                lastEntry?.logLength ?? Math.max(0, log.length - 1),
-                () => game.opening
-              )
-              // Setup edits may change Gumbo context without creating an event.
-              const latestIsTarget =
-                rows.at(-1)?.id !==
-                  props.game.historyTargetsFor(previous).at(-1)?.id ||
-                (log
-                  .slice(lastEntry?.logLength ?? Math.max(0, log.length - 1))
-                  .some(
-                    action =>
-                      action.type !== 'lineup' && action.type !== 'gameFlow'
-                  ) &&
-                  JSON.stringify(previous.liveData.plays.currentPlay) !==
-                    JSON.stringify(session.liveData.plays.currentPlay))
-              const targetDetail = latestIsTarget ? lastPlay : undefined
-              setTagHistoryDetail(targetDetail)
-              const descriptions = describeCompletedPlays(
-                log,
-                new Set(
-                  rows
-                    .filter(target => target.completed === true)
-                    .map(target => target.atBatIndex)
-                ),
-                length =>
-                  sessionAt({ log, checkpoints }, length, () => game.opening)
-              )
-              setTagRows(
-                rows.map((target, index) => {
-                  const described =
-                    target.completed === true
-                      ? (descriptions.get(target.atBatIndex) ??
-                        (index === rows.length - 1 ? targetDetail : undefined))
-                      : index === rows.length - 1
-                        ? targetDetail
-                        : undefined
-                  return described == null
-                    ? target
-                    : {
-                        ...target,
-                        description: [described.primary, described.secondary]
-                          .filter(line => line != null && line !== '')
-                          .join(' ')
-                      }
-                })
-              )
             }
       }
       onTagSelect={target => {
@@ -1952,7 +1991,7 @@ function ScoringPanel(props: {
       )}
       {tagTarget != null && (
         <EventTagEditor
-          key={tagTarget.id}
+          key={tagSelection.current}
           target={tagTarget}
           loadChoices={loadTags}
           onClose={() => {
@@ -2031,18 +2070,6 @@ function ScoringPanel(props: {
             if (!props.game.setEventTag(result.targetId, acknowledgedTag))
               throw new Error('This scoring event no longer exists')
             tagAcknowledgments.current.set(result.targetId, result.revision)
-            setTagRows(rows =>
-              rows.map(row =>
-                row.id === result.targetId
-                  ? { ...row, tag: acknowledgedTag }
-                  : row
-              )
-            )
-            setTagTarget(current =>
-              current?.id === result.targetId
-                ? { ...current, tag: acknowledgedTag }
-                : current
-            )
           }}
         />
       )}

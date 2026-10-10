@@ -966,6 +966,196 @@ describe('scoring screen field wiring', function () {
       expect(document.body.textContent).includes('Remove tag')
     })
 
+  for (const selection of ['after', 'pristine', 'empty', 'draft'] as const) {
+    const input = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>('[aria-label="New tag"]')!
+    const select = async (): Promise<void> => {
+      await step(() => props().onTagSelect?.(props().historyRows!.at(-1)!))
+      if (selection === 'empty' || selection === 'draft')
+        await act(async () => {
+          if (selection === 'empty') {
+            Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              'value'
+            )!.set!.call(input(), 'discarded draft')
+            input().dispatchEvent(new window.Event('input', { bubbles: true }))
+          }
+          Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value'
+          )!.set!.call(input(), selection === 'draft' ? 'my draft' : '')
+          input().dispatchEvent(new window.Event('input', { bubbles: true }))
+        })
+    }
+    const expected = (tag: string): string =>
+      selection === 'draft' ? 'my draft' : selection === 'empty' ? '' : tag
+
+    it(`refreshes open history after roster reload with ${selection} editor selection`, async () => {
+      const development = new DevelopmentScoringSource()
+      const source: ScoringSource = {
+        persistent: true,
+        open: development.open.bind(development),
+        saveTag: development.saveTag.bind(development),
+        tagChoices: development.tagChoices.bind(development)
+      }
+      await mount(source)
+      await step(() => {
+        props().onPitch?.('ball')
+      })
+      await settle()
+      const game = componentProps<{ game: ScoringSession }>('ScoringPanel').game
+      const target = game.eventTargets[0]
+      await development.saveTag(game, target.id, 'peer roster tag', 'peer')
+      const load = development.store.load.bind(development.store)
+      let release!: () => void
+      let reads = 0
+      development.store.load = async (...args) => {
+        const snapshot = structuredClone(await load(...args))
+        if (++reads === 1)
+          await new Promise<void>(resolve => {
+            release = resolve
+          })
+        return snapshot
+      }
+      await step(() => {
+        props().onMenu()
+      })
+      await step(() => {
+        document
+          .querySelector<HTMLElement>('[aria-label="Set Team Rosters"]')!
+          .click()
+      })
+      await step(() => {
+        componentProps<{ onClose: () => void }>('ScoringSheet').onClose()
+      })
+      await step(() => props().onHistoryOpen?.())
+      expect(props().historyRows![0].tag).equals(null)
+      if (selection !== 'after') await select()
+      await act(async () => {
+        release()
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      expect(game.eventTargets[0].tag).equals('peer roster tag')
+      expect(props().historyRows![0]).deep.includes({
+        id: target.id,
+        tag: 'peer roster tag'
+      })
+      if (selection === 'after') await select()
+      expect(
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+          .target.tag
+      ).equals('peer roster tag')
+      expect(input().value).equals(expected('peer roster tag'))
+      expect(document.querySelector('[aria-label="Remove tag"]')).not.equals(
+        null
+      )
+    })
+
+    it(`refreshes completed terminal history with ${selection} editor selection`, async () => {
+      const original = { ...scoringClock }
+      let time = 0
+      let serial = 0
+      const timers = new Map<number, () => void>()
+      scoringClock.now = () => time
+      scoringClock.schedule = callback => {
+        timers.set(++serial, callback)
+        return serial
+      }
+      scoringClock.cancel = id => {
+        timers.delete(id as number)
+      }
+      try {
+        const source = new DevelopmentScoringSource()
+        await mount(source)
+        const outcome = props().ballInPlayControl as React.ReactElement<{
+          onChoose: (value: string) => void
+        }>
+        await step(() => {
+          outcome.props.onChoose('Single')
+        })
+        const fielder = players().find(
+          player => player.playerId === 10 && player.team !== 'offense'
+        )
+        await step(() =>
+          field().onFieldPlacement?.(placement(fielder?.id ?? ''))
+        )
+        await step(() =>
+          field().onTrajectoryAccepted?.(
+            25,
+            field().interaction?.generation ?? 0
+          )
+        )
+        await settle()
+        const game = componentProps<{ game: ScoringSession }>(
+          'ScoringPanel'
+        ).game
+        await act(async () => {
+          await game.flush()
+        })
+        const target = game.eventTargets.at(-1)!
+        const save = source.saveTag.bind(source)
+        let finish!: () => void
+        source.saveTag = async (...args) => {
+          await new Promise<void>(resolve => {
+            finish = resolve
+          })
+          return await save(...args)
+        }
+        await step(() => props().onTagSelect?.(target))
+        const old =
+          componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+        let saving!: Promise<void>
+        await act(async () => {
+          saving = old.saveTag('late terminal tag')
+          await new Promise(resolve => setTimeout(resolve, 0))
+        })
+        await step(() => {
+          old.onClose()
+        })
+        await act(async () => {
+          time += 10000
+          const due = [...timers.values()]
+          timers.clear()
+          for (const callback of due) callback()
+        })
+        await settle()
+        await act(async () => {
+          await game.flush()
+        })
+        await step(() => props().onHistoryOpen?.())
+        const completed = props().historyRows!.at(-1)!
+        expect(completed.completed).equals(true)
+        expect(completed.id).not.equals(target.id)
+        expect(completed.tag).equals(null)
+        if (selection !== 'after') await select()
+        await act(async () => {
+          finish()
+          await saving
+        })
+        expect(props().historyRows!.at(-1)).deep.includes({
+          id: target.id,
+          tag: 'late terminal tag',
+          completed: true
+        })
+        if (selection === 'after') await select()
+        expect(
+          componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+            .target
+        ).deep.includes({
+          id: target.id,
+          tag: 'late terminal tag',
+          completed: true
+        })
+        expect(input().value).equals(expected('late terminal tag'))
+        expect(document.querySelector('[aria-label="Remove tag"]')).not.equals(
+          null
+        )
+      } finally {
+        Object.assign(scoringClock, original)
+      }
+    })
+  }
+
   for (const editing of [false, true])
     it(`updates a reopened pending tag editor while preserving ${editing ? 'new typing' : 'pristine input'}`, async () => {
       const source = new DevelopmentScoringSource()
