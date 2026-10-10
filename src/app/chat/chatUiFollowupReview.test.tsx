@@ -201,7 +201,7 @@ class ReviewEngine implements ChatScreenEngine {
     return this.views.get(id)!
   }
 
-  async loadPreview(): Promise<void> {}
+  async loadPreview(_id: string, _retry = false): Promise<void> {}
   async sendText(
     id: string,
     body: string,
@@ -3419,5 +3419,217 @@ describe('review3 browser virtual fill scheduling', function () {
       mock.timers.reset()
       document.body.innerHTML = ''
     }
+  })
+})
+
+describe('review4 no-event clamps and reachable jumps', function () {
+  it('saves the verified zero of a complete shorter list without a synthetic scroll event or later obsolete restore', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_removed',
+      relativeY: 30
+    })
+    await pending.populate(2)
+    setListRowMeasurement('cnv_return_1', 120, 80)
+    await pending.content(200)
+    await act(async () => {
+      await wait(30)
+    })
+    expect(pending.moves).deep.equals([0])
+    expect(pending.node.scrollTop).equals(0)
+    expect(pending.offsets.at(-1)).equals(0)
+    // No scroll/drag/momentum callback is delivered for this zero-distance move.
+    await pending.content(900)
+    expect(pending.moves).deep.equals([0])
+    expect(pending.offsets.at(-1)).equals(0)
+  })
+
+  for (const route of ['quote', 'pin'] as const)
+    it(`persists the actual reachable near-end ${route} jump and keeps it after more content while unmounted`, async function () {
+      const engine = new ReviewEngine()
+      const quoted = message({
+        id: 'msg_quote',
+        seq: 2,
+        body: 'Received reply',
+        quote: {
+          id: 'msg_original',
+          authorId: 2,
+          authorName: 'Shohei Ohtani',
+          snippet: 'Practice notes',
+          status: 'ok'
+        }
+      })
+      engine.update('cnv_aurora', {
+        messages: [original(), quoted],
+        pins: [{ messageId: 'msg_original', pinnedAt: '2026-01-01T00:00:00Z' }]
+      })
+      const state = newChatWorkspaceState()
+      await workspace(engine, state, 'cnv_aurora')
+      await type('New current caption')
+      const reading = terminalReadingPane()
+      const body = reading.node.firstElementChild as HTMLElement
+      const row = document.querySelector<HTMLElement>(
+        '[data-testid="chat-message-msg_original"]'
+      )!.parentElement!
+      let content = 1200
+      Object.defineProperties(reading.node, {
+        scrollHeight: { configurable: true, get: () => content }
+      })
+      Object.defineProperties(row, {
+        offsetTop: { configurable: true, value: 1000 },
+        offsetHeight: { configurable: true, value: 100 },
+        offsetParent: { configurable: true, value: body }
+      })
+      Object.defineProperties(body, {
+        offsetHeight: { configurable: true, get: () => content }
+      })
+      reading.node.scroll = options => {
+        const target = (options as ScrollToOptions).top ?? 0
+        reading.moves.push(target)
+        reading.node.scrollTop = Math.min(target, Math.max(0, content - 400))
+      }
+      await layout(reading.node, 640, 400)
+      await layout(body, 640, content)
+      await layout(row, 640, 100, 1000)
+      reading.moves.length = 0
+      if (route === 'quote')
+        await press('Jump to message from Shohei Ohtani: Practice notes')
+      else {
+        await press('Pinned messages: 1')
+        await press('Practice notes')
+      }
+      expect(reading.moves.at(-1)).equals(800)
+      await act(async () => {
+        reading.node.scrollTop = 800
+        renderedReadingCallbacks(reading.node).onMomentumScrollEnd?.({
+          nativeEvent: {
+            contentOffset: { x: 0, y: 800 },
+            contentSize: { width: 640, height: content },
+            layoutMeasurement: { width: 640, height: 400 }
+          }
+        })
+        await wait()
+      })
+      expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(800)
+      expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
+        id: 'msg_original',
+        relativeY: 200
+      })
+      expect(state.drafts.get('cnv_aurora')!.followNewest).equals(false)
+      expect(state.drafts.get('cnv_aurora')!.text).equals('New current caption')
+      await unmount()
+      engine.update('cnv_aurora', {
+        messages: [original(), quoted, original('msg_later')]
+      })
+      await workspace(engine, state, 'cnv_aurora')
+      const returned = terminalReadingPane()
+      const returnedBody = returned.node.firstElementChild as HTMLElement
+      const returnedRow = document.querySelector<HTMLElement>(
+        '[data-testid="chat-message-msg_original"]'
+      )!.parentElement!
+      content = 2000
+      Object.defineProperties(returned.node, {
+        scrollHeight: { configurable: true, get: () => content }
+      })
+      Object.defineProperties(returnedBody, {
+        offsetHeight: { configurable: true, get: () => content }
+      })
+      Object.defineProperties(returnedRow, {
+        offsetTop: { configurable: true, value: 1000 },
+        offsetHeight: { configurable: true, value: 100 },
+        offsetParent: { configurable: true, value: returnedBody }
+      })
+      await layout(returned.node, 640, 400)
+      await layout(returnedBody, 640, content)
+      await layout(returnedRow, 640, 100, 1000)
+      await act(async () => {
+        await wait(80)
+      })
+      expect(returned.moves.at(-1)).equals(800)
+      expect(returned.moves).not.contains(992)
+      expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
+        id: 'msg_original',
+        relativeY: 200
+      })
+      expect(state.drafts.get('cnv_aurora')!.text).equals('New current caption')
+      expect(engine.sent).deep.equals([])
+    })
+})
+
+describe('review4 quiet preview recovery', function () {
+  it('shows a recoverable unavailable preview and retries only that row without opening it', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', {
+      conversation: chat({
+        id: 'cnv_aurora',
+        title: 'Aurora Members',
+        scopeName: 'Aurora',
+        lastSeq: 1,
+        previewFailed: true
+      })
+    })
+    const calls: Array<{ id: string; retry: boolean }> = []
+    const completed = deferred<undefined>()
+    engine.loadPreview = async (id, retry = false) => {
+      calls.push({ id, retry })
+      if (!retry) return
+      engine.update(id, {
+        conversation: {
+          ...engine.view(id)!.conversation,
+          previewRetrying: true
+        }
+      })
+      engine.emit({ type: 'conversations' })
+      await completed.promise
+      engine.update(id, {
+        conversation: {
+          ...engine.view(id)!.conversation,
+          previewFailed: false,
+          previewRetrying: false,
+          preview: 'Recovered latest post'
+        }
+      })
+      engine.emit({ type: 'conversations' })
+    }
+    const opened: string[] = []
+    await render(
+      <ChatListScreen
+        engine={engine}
+        onOpen={chat => opened.push(chat.id)}
+        onNewMessage={() => {}}
+        onFollowTeam={() => {}}
+      />
+    )
+    const row = document.querySelector(
+      '[data-testid="chat-conversation-cnv_aurora"]'
+    )!
+    expect(row.textContent).contains('Could not load latest message.')
+    expect(row.textContent).not.contains('Loading latest message')
+    await press('Try loading latest message again')
+    const retryButton = document.querySelector<HTMLElement>(
+      '[data-testid="chat-preview-retry-cnv_aurora"]'
+    )!
+    expect(retryButton.getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      retryButton.dispatchEvent(
+        new window.MouseEvent('click', { bubbles: true })
+      )
+      await wait()
+    })
+    expect(calls.filter(call => call.retry)).deep.equals([
+      { id: 'cnv_aurora', retry: true }
+    ])
+    await act(async () => {
+      completed.resolve(undefined)
+      await wait()
+    })
+    expect(
+      document.querySelector('[data-testid="chat-conversation-cnv_aurora"]')!
+        .textContent
+    ).contains('Recovered latest post')
+    expect(
+      document.querySelector('[data-testid="chat-preview-retry-cnv_aurora"]')
+    ).equals(null)
+    expect(opened).deep.equals([])
+    expect(engine.sent).deep.equals([])
   })
 })
