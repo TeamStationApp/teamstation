@@ -8,7 +8,7 @@ import { GlassView } from './GlassView'
 import { Icon, type IconName } from './Icon'
 import { floatingNavBottom } from './navClearance'
 
-export type NavTabId = 'home' | 'videos' | 'schedule'
+export type NavTabId = 'home' | 'videos' | 'schedule' | 'search'
 
 export interface NavTab {
   id: NavTabId
@@ -35,7 +35,10 @@ export interface NavTab {
 export const NAV_TABS: NavTab[] = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'videos', label: 'Videos', icon: 'smart_display' },
-  { id: 'schedule', label: 'Schedule', icon: 'event' }
+  { id: 'schedule', label: 'Schedule', icon: 'event' },
+  // A place of its own, with its own stack like the others: what was found
+  // there stays there when you switch away and come back.
+  { id: 'search', label: 'Search', icon: 'search' }
 ]
 
 export type NavMode = 'floating' | 'header'
@@ -115,7 +118,7 @@ export interface AppNavProps {
 }
 
 /**
- * Three icons, and no words.
+ * Four icons, and no words.
  *
  * On a narrow screen they float over the content in a capsule rather than
  * partitioning it with a bar; on a wide one the same three sit in the header
