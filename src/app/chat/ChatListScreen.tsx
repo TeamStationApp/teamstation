@@ -628,6 +628,9 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         maxToRenderPerBatch={
           Platform.OS === 'web' && fastRestore ? 50 : undefined
         }
+        // Web batches remain bounded; queue them directly for the interaction
+        // scheduler instead of adding a timer between restoration steps.
+        updateCellsBatchingPeriod={Platform.OS === 'web' ? 0 : undefined}
         onScroll={rememberOffset}
         onScrollEndDrag={rememberOffset}
         onMomentumScrollEnd={rememberOffset}

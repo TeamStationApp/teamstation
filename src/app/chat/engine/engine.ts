@@ -396,15 +396,21 @@ export class ChatEngine {
     }
     for (const id of this.active) {
       if (this.memory.conversations.has(id)) {
-        try {
-          await this.serial(id, async () => {
+        await this.serial(id, async () => {
+          const state = this.memory.state(id)
+          try {
             await this.readPins(id)
-          })
-        } catch (error) {
-          if (!isGone(error)) throw error
-          this.personalPins.delete(id)
-          this.active.delete(id)
-        }
+          } catch (error) {
+            if (!isGone(error)) throw error
+            if (this.stopped || this.memory.state(id) !== state) return
+            this.memory.conversations.delete(id)
+            this.personalPins.delete(id)
+            this.previewVersions.delete(id)
+            this.pendingAlerts.delete(id)
+            this.alertedSeq.delete(id)
+            this.active.delete(id)
+          }
+        })
       }
     }
     this.memory.emit({ type: 'conversations' })

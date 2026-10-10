@@ -1124,6 +1124,20 @@ describe('the chat engine (U12)', function () {
       ) => Promise<void>
 
       messagesError?: (id: string, error: unknown) => Promise<void>
+      beforePins?: (id: string) => Promise<void>
+      pinsError?: (id: string, error: unknown) => Promise<void>
+
+      async chatPins(
+        conversationId: string
+      ): ReturnType<TeamStationClient['chatPins']> {
+        try {
+          await this.beforePins?.(conversationId)
+          return await super.chatPins(conversationId)
+        } catch (error) {
+          await this.pinsError?.(conversationId, error)
+          throw error
+        }
+      }
 
       async chatMessages(
         conversationId: string,
@@ -1654,6 +1668,124 @@ describe('the chat engine (U12)', function () {
             // Do not leave a disposable A/C pair for later one-to-one tests.
             await a.client.leaveDm(room)
           }
+          expect(events.filter(event => event.type === 'error')).deep.equals([])
+        } finally {
+          beforeRequest.release()
+          failedResponse.release()
+          viewer.engine.stop()
+        }
+      })
+
+    for (const rejoin of [false, true])
+      it(`review3: ${rejoin ? 'preserves a rejoined active replacement after' : 'purges a revoked active view on'} real pinsGET membership loss`, async function () {
+        const a = await device('A')
+        const room = await freshRoom()
+        const other = await freshRoom()
+        const { viewer, client, events } = await observer()
+        const beforeRequest = gate()
+        const failedResponse = gate()
+        let once = true
+        try {
+          const original = (await a.engine.sendText(
+            room,
+            'Pinned before removal'
+          ))!
+          const unaffected = (await a.engine.sendText(
+            other,
+            'Unaffected room'
+          ))!
+          await viewer.engine.open(room)
+          await viewer.engine.pinMessage(room, original.id, true)
+          await viewer.engine.open(other)
+          viewer.engine.close(other)
+          expect(
+            (viewer.engine.view(room)!.pins ?? []).map(pin => pin.messageId)
+          ).deep.equals([original.id])
+          const cursorBefore = await client.observeRead(room)
+          const otherBefore = viewer.engine.view(other)
+          const readsBefore = client.readRequests
+          client.beforePins = async id => {
+            if (id !== room || !once) return
+            once = false
+            beforeRequest.entered()
+            await beforeRequest.wait
+          }
+          client.pinsError = async (id, error) => {
+            if (
+              id === room &&
+              rejoin &&
+              error instanceof HttpError &&
+              error.code === 'notFound'
+            ) {
+              failedResponse.entered()
+              await failedResponse.wait
+            }
+          }
+          const refresh = viewer.engine.refresh()
+          await reached(beforeRequest.began)
+          await client.leaveDm(room)
+          beforeRequest.release()
+          if (rejoin) {
+            await reached(failedResponse.began)
+            viewer.engine.close(room)
+            await viewer.engine.refresh()
+            expect(viewer.engine.view(room)).equals(undefined)
+            expect(await a.client.addDmMembers(room, [id('B')])).deep.equals([
+              id('B')
+            ])
+            await viewer.engine.refresh()
+            const current = (await a.engine.sendText(
+              room,
+              'Current rejoined view'
+            ))!
+            const reopened = viewer.engine.open(room)
+            failedResponse.release()
+            await refresh
+            await reopened
+            expect(
+              viewer.engine.conversations().some(row => row.id === room)
+            ).equals(true)
+            expect(
+              viewer.engine
+                .view(room)!
+                .messages.find(message => message.id === current.id)?.body
+            ).equals('Current rejoined view')
+            // Open was already queued when the obsolete denial arrived. It
+            // must retain its active subscription, not just its cached rows.
+            const afterOpen = client.readRequests
+            await hint(viewer, chat(room, 'read'))
+            expect(client.readRequests).equals(afterOpen + 1)
+            await viewer.engine.pinMessage(room, current.id, true)
+            expect(
+              viewer.engine
+                .view(room)!
+                .pins?.some(pin => pin.messageId === current.id)
+            ).equals(true)
+          } else {
+            await refresh
+            expect(
+              viewer.engine.conversations().some(row => row.id === room)
+            ).equals(false)
+            expect(viewer.engine.view(room)).equals(undefined)
+            await hint(viewer, chat(room, 'read'))
+            expect(client.readRequests).equals(readsBefore)
+            const retained =
+              (await a.client.chatReads(room)).find(
+                read => read.userId === id('B')
+              )?.seq ?? 0
+            expect(retained).equals(cursorBefore)
+            // Avoid leaving an A/C one-to-one room for legacy reuse tests.
+            await a.client.leaveDm(room)
+          }
+          expect(
+            viewer.engine
+              .view(other)!
+              .messages.find(message => message.id === unaffected.id)?.body
+          ).equals('Unaffected room')
+          expect(viewer.engine.view(other)?.conversation.id).equals(
+            otherBefore?.conversation.id
+          )
+          expect(client.marked).deep.equals([])
           expect(events.filter(event => event.type === 'error')).deep.equals([])
         } finally {
           beforeRequest.release()
