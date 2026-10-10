@@ -1600,7 +1600,7 @@ function ScoringPanel(props: {
       historyRows={tagHistory.rows}
       tagHistoryDetail={tagHistory.detail}
       onHistoryOpen={
-        props.source.saveTag == null
+        props.source.saveTag == null || tiebreaker.active
           ? undefined
           : () => {
               if (tiebreaker.active) return

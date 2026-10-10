@@ -187,6 +187,79 @@ async function mount(
 }
 
 describe('scoring screen field wiring', function () {
+  for (const stage of ['settings', 'bases', 'runner'] as const)
+    it(`does not open Undo history during tiebreaker ${stage} selection`, async () => {
+      const source = new DevelopmentScoringSource()
+      const game = await source.open(gameFixture, [], [])
+      game.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 9,
+        base: '2B'
+      })
+      await game.flush()
+      await mount(source)
+      expect(props().onHistoryOpen).to.be.a('function')
+      const press = async (label: string): Promise<void> => {
+        await step(() => {
+          document
+            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .click()
+        })
+      }
+      await press('More')
+      await press('Place a Runner (Tiebreaker)')
+      if (stage !== 'settings') {
+        await press('Place runner on base')
+        await step(() =>
+          field().onBaseProjection?.({
+            width: 390,
+            height: 844,
+            bases: [
+              { x: 195, y: 580 },
+              { x: 280, y: 450 },
+              { x: 195, y: 360 },
+              { x: 110, y: 450 }
+            ]
+          })
+        )
+      }
+      if (stage === 'runner') await press('Place runner on 1B')
+      const undo = document.querySelector<HTMLElement>(
+        '[aria-label="Undo Last play"]'
+      )!
+      expect(undo).not.equals(null)
+      // Exercise BaseballScreen's actual press responder beyond its 500ms
+      // threshold: a guarded parent callback alone would still open the popup.
+      await act(async () => {
+        undo.dispatchEvent(
+          new window.MouseEvent('mousedown', { bubbles: true, button: 0 })
+        )
+        await new Promise(resolve => setTimeout(resolve, 650))
+      })
+      expect(
+        document.querySelector('[aria-label="Dismiss scoring history"]')
+      ).equals(null)
+      expect(props().onHistoryOpen).equals(undefined)
+      expect(baseIds(game.state)).deep.equals([null, 9, null])
+      expect(props().canPitch).equals(false)
+      expect(document.body.textContent).includes(
+        stage === 'runner'
+          ? 'Select Runner for 1B'
+          : stage === 'settings'
+            ? 'Place runner on base'
+            : 'Cancel'
+      )
+      await step(() => {
+        document.dispatchEvent(
+          new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+        )
+      })
+      expect(
+        document.querySelector('[aria-label="Dismiss scoring history"]')
+      ).equals(null)
+    })
+
   for (const change of ['runner', 'outs'] as const)
     it(`keeps the ${change} setup description after persistence and reopening`, async () => {
       const initial = createDevelopmentSession(gameFixture, [], [])
