@@ -117,7 +117,7 @@ async function main(): Promise<void> {
             node =>
               node.text === text &&
               node.type === 'Button' &&
-              node.enabled === true
+              node.enabled !== false
           )
           if (ready) break
           await new Promise(resolve => setTimeout(resolve, 200))
