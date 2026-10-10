@@ -208,6 +208,7 @@ function fakeMusic(): WalkUpMusic & { played: string[]; stops: number[] } {
   const stops: number[] = []
   return {
     available: true,
+    djSupported: true,
     providerName: 'Files',
     access: async () => 'authorized',
     search: async () => [],

@@ -88,10 +88,10 @@ export interface GameScreenProps {
   /** Opens a separate scheduling settings screen for a participating team admin. */
   onSettings?: () => void
   /**
-   * The phone's music. DJ Game plays songs, so it is offered only where
-   * there is music to play them with: never on the web.
+   * The phone's music. DJ Game plays songs, and is offered only on an
+   * iPhone: never on the web or Android.
    */
-  music?: { available: boolean }
+  music?: { djSupported: boolean }
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
    * browser accepts, which is what makes an unmuted autoplay legal. */

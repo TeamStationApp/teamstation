@@ -1401,7 +1401,7 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
-    ) : top.name === 'djGame' && walkUpMusic.available ? (
+    ) : top.name === 'djGame' && walkUpMusic.djSupported ? (
       <DjGameScreen
         client={client}
         gameId={top.gameId}
@@ -1432,7 +1432,8 @@ function Shell(props: AppProps): React.ReactElement {
         }}
       />
     ) : top.name === 'djGame' ? (
-      // The web has no music to play, so its DJ Game address shows the game.
+      // DJ Game is an iPhone's: on the web and Android its address shows
+      // the game.
       <GameScreen
         client={client}
         gameId={top.gameId}

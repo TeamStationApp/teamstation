@@ -80,9 +80,9 @@ describe('DJ Game in the shell', function () {
     )
   })
 
-  it('draws DJ Game only where there is music, and the game screen otherwise', function () {
+  it('draws DJ Game only on an iPhone, and the game screen otherwise', function () {
     const phone = source.indexOf(
-      "top.name === 'djGame' && walkUpMusic.available ? ("
+      "top.name === 'djGame' && walkUpMusic.djSupported ? ("
     )
     const web = source.indexOf("top.name === 'djGame' ? (")
     expect(phone).greaterThan(0)

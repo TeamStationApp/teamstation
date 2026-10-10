@@ -352,6 +352,7 @@ describe('a player’s Walk-up tab', function () {
     // A phone's music, so the tab offers Set.
     const music: WalkUpMusic = {
       available: true,
+      djSupported: false,
       providerName: 'Files',
       access: async () => 'authorized',
       search: async () => [],

@@ -54,6 +54,7 @@ function fakeMusic(found: SongCandidate[] = []): WalkUpMusic & {
   const searches: string[] = []
   return {
     available: true,
+    djSupported: false,
     providerName: 'Files',
     access: async () => 'authorized',
     search: async term => {

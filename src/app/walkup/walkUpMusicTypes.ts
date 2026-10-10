@@ -25,6 +25,11 @@ export type PlaybackState =
 export interface WalkUpMusic {
   /** False on the web, which has no music to search or play. */
   available: boolean
+  /**
+   * Whether this phone offers DJ Game: an iPhone only. Android plays
+   * walk-up files from the scoring screen but has no DJ Game.
+   */
+  djSupported: boolean
   providerName: string
   access: () => Promise<MusicAccess>
   search: (term: string) => Promise<SongCandidate[]>

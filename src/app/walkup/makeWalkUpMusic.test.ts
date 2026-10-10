@@ -73,6 +73,15 @@ describe('makeWalkUpMusic', function () {
     ).equals('This phone')
   })
 
+  it('offers DJ Game on an iPhone only', function () {
+    expect(
+      makeWalkUpMusic(fakeModule(), { platform: 'ios' }).djSupported
+    ).equals(true)
+    expect(
+      makeWalkUpMusic(fakeModule(), { platform: 'android' }).djSupported
+    ).equals(false)
+  })
+
   it('answers access from the fixed list, and unavailable otherwise', async function () {
     for (const [answer, expected] of [
       ['authorized', 'authorized'],

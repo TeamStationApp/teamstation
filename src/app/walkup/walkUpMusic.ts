@@ -12,6 +12,7 @@ async function unavailable(): Promise<never> {
  */
 const webMusic: WalkUpMusic = {
   available: false,
+  djSupported: false,
   providerName: '',
   access: unavailable,
   search: unavailable,

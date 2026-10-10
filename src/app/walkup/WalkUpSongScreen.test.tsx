@@ -86,6 +86,7 @@ function fakeMusic(
   const stops: number[] = []
   const music = {
     available: true,
+    djSupported: false,
     providerName: 'This phone',
     asked: 0,
     access: async () => {

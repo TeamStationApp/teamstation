@@ -22,8 +22,8 @@ export interface GameTabsInput {
     | 'status'
     | 'scoringOwner'
   >
-  /** Songs need something to play them with: never on the web. */
-  music?: { available: boolean }
+  /** DJ Game is an iPhone's: never the web, and never Android. */
+  music?: { djSupported: boolean }
   /** Present where the app can open DJ Game. */
   onDjGame?: () => void
   onSettings?: () => void
@@ -52,9 +52,9 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
   ) {
     pills.push({ id: 'score', label: lstrings.game_score_game })
   }
-  // For a songkeeper of either team, on a phone, whatever the game's status:
-  // songs are set and played before, during and after.
-  if (game.canDj && music?.available === true && onDjGame != null) {
+  // For a songkeeper of either team, on an iPhone, whatever the game's
+  // status: songs are set and played before, during and after.
+  if (game.canDj && music?.djSupported === true && onDjGame != null) {
     pills.push({ id: 'dj', label: lstrings.dj_game, role: 'button' })
   }
   if (input.canManage === true && input.onSettings != null) {

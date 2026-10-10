@@ -70,6 +70,7 @@ export function makeWalkUpMusic(
 
   return {
     available: true,
+    djSupported: options.platform === 'ios',
     providerName: options.platform === 'ios' ? 'Apple Music' : 'This phone',
     async access() {
       const answer = await module.access().catch(() => 'unavailable')

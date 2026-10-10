@@ -49,6 +49,7 @@ export interface WalkUpNote {
 /** Music for a screen given none: nothing to find and nothing to play. */
 export const NO_WALK_UP_MUSIC: WalkUpMusic = {
   available: false,
+  djSupported: false,
   providerName: '',
   access: async () => 'unavailable',
   search: async () => [],
