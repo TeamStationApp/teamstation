@@ -10,6 +10,17 @@ export interface SectionHeaderProps {
   /** An optional action at the far right, e.g. "Full Schedule →". */
   actionLabel?: string
   onAction?: () => void
+  actionPill?: boolean
+  /**
+   * Small pills at the far right, e.g. `Add` and `Create`. Each names its
+   * section in its accessible label, since several headers carry the same
+   * words on one page.
+   */
+  actions?: Array<{
+    label: string
+    accessibilityLabel?: string
+    onPress: () => void
+  }>
 }
 
 /**
@@ -21,7 +32,14 @@ export interface SectionHeaderProps {
  * content, so a section title is never mistaken for a team name.
  */
 export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
-  const { title, note, actionLabel, onAction } = props
+  const {
+    title,
+    note,
+    actionLabel,
+    onAction,
+    actionPill = false,
+    actions = []
+  } = props
   const styles = getStyles(useTheme())
 
   return (
@@ -35,11 +53,31 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
           <Pressable
             accessibilityRole="button"
             onPress={onAction}
-            style={({ pressed }) => [pressed && styles.pressed]}
+            style={({ pressed }) => [
+              actionPill && styles.actionPill,
+              pressed && styles.pressed
+            ]}
           >
             <Text style={styles.action}>{actionLabel}</Text>
           </Pressable>
         )}
+        {actions.map(action => (
+          <Pressable
+            key={action.label}
+            accessibilityRole="button"
+            accessibilityLabel={action.accessibilityLabel ?? action.label}
+            onPress={() => {
+              action.onPress()
+            }}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.smallPill,
+              pressed && styles.pressed
+            ]}
+          >
+            <Text style={styles.smallPillText}>{action.label}</Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   )
@@ -78,6 +116,28 @@ const getStyles = cacheStyles((theme: Theme) => ({
   action: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.875),
+    fontWeight: '600',
+    color: theme.activeColor
+  },
+  actionPill: {
+    backgroundColor: theme.containerBackgroundColor,
+    borderRadius: theme.radiusPill,
+    paddingHorizontal: theme.rem(theme.spaceSmRem),
+    paddingVertical: theme.rem(0.375),
+    minHeight: theme.rem(2.75),
+    justifyContent: 'center' as const
+  },
+  smallPill: {
+    backgroundColor: theme.containerBackgroundColor,
+    borderRadius: theme.radiusPill,
+    paddingHorizontal: theme.rem(0.75),
+    paddingVertical: theme.rem(0.25),
+    minHeight: theme.rem(1.75),
+    justifyContent: 'center' as const
+  },
+  smallPillText: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.8125),
     fontWeight: '600',
     color: theme.activeColor
   },

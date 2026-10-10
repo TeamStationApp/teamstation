@@ -9,3 +9,5 @@
 // React Native's own name for it, so the format is not ours to pick.
 // eslint-disable-next-line @typescript-eslint/naming-convention
 declare const __DEV__: boolean
+/** React Native installs this timer primitive in its runtime. */
+declare function queueMicrotask(callback: () => void): void

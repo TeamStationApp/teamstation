@@ -16,6 +16,7 @@ export interface GameHeroCardProps {
   homeScore: number | null
   /** `FINAL`, `TOP 3RD`, `SAT 10:00 AM`. */
   status: string
+  pendingApproval?: boolean
   /**
    * The game is being played now. Its status is then the red `live` pill,
    * top right on the date's line, rather than a chip or a word between the
@@ -114,11 +115,12 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   const {
     awayName,
     homeName,
-    awayScore,
-    homeScore,
-    status,
-    live = false,
-    winner,
+    awayScore: providedAwayScore,
+    homeScore: providedHomeScore,
+    status: providedStatus,
+    pendingApproval = false,
+    live: providedLive = false,
+    winner: providedWinner,
     posterUrl,
     videoUrl,
     compact = false,
@@ -134,6 +136,11 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     onOpenAwayTeam,
     onOpenHomeTeam
   } = props
+  const awayScore = pendingApproval ? null : providedAwayScore
+  const homeScore = pendingApproval ? null : providedHomeScore
+  const status = pendingApproval ? 'Pending approval' : providedStatus
+  const live = !pendingApproval && providedLive
+  const winner = pendingApproval ? undefined : providedWinner
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
   const hasMeta =
@@ -223,9 +230,14 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
           <Text style={styles.team} numberOfLines={1}>
             {`${homeName} ${homeScore ?? ''}`.trim()}
           </Text>
-          <Text style={styles.status}>{status}</Text>
+          {!pendingApproval && <Text style={styles.status}>{status}</Text>}
         </View>
       </VideoPoster>
+      {pendingApproval && (
+        <View style={[styles.statusChip, styles.pendingOverlay]}>
+          <Text style={styles.statusChipText}>{status}</Text>
+        </View>
+      )}
       {line}
     </View>
   )
@@ -451,6 +463,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderRadius: theme.radiusPill,
     paddingHorizontal: theme.rem(theme.spaceSmRem),
     paddingVertical: theme.rem(0.125)
+  },
+  pendingOverlay: {
+    position: 'absolute',
+    top: theme.rem(theme.spaceSmRem),
+    right: theme.rem(theme.spaceSmRem),
+    zIndex: 2
   },
   statusChipText: {
     color: theme.activeColor,

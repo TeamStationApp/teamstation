@@ -11,6 +11,7 @@ export interface ManageGearProps {
   scopeType: 'league' | 'season' | 'team'
   scopeId: string
   onPress: () => void
+  accessibilityLabel?: string
 }
 
 /**
@@ -51,7 +52,7 @@ export function ManageGear(props: ManageGearProps): React.ReactElement {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={lstrings.manage_open}
+      accessibilityLabel={props.accessibilityLabel ?? lstrings.manage_open}
       onPress={onPress}
       style={({ pressed }) => [styles.gear, pressed && styles.pressed]}
     >

@@ -70,9 +70,23 @@ export interface VideoPosterProps {
  * native picture already crops with `resizeMode`.
  */
 export function applyCoverCrop(root: unknown): (() => void) | undefined {
-  const Host = globalThis.HTMLElement
+  interface CropNode {
+    style: { objectFit?: string; objectPosition?: string }
+    children: Iterable<unknown>
+  }
+  const browser = globalThis as unknown as {
+    HTMLElement?: new () => CropNode
+    MutationObserver?: new (callback: () => void) => {
+      observe: (
+        node: CropNode,
+        options: { childList: boolean; subtree: boolean }
+      ) => void
+      disconnect: () => void
+    }
+  }
+  const Host = browser.HTMLElement
   if (Host == null || !(root instanceof Host) || root.style == null) return
-  const paint = (node: HTMLElement): void => {
+  const paint = (node: CropNode): void => {
     if (node.style != null) {
       node.style.objectFit = 'cover'
       node.style.objectPosition = 'center'
@@ -82,7 +96,9 @@ export function applyCoverCrop(root: unknown): (() => void) | undefined {
     }
   }
   paint(root)
-  const observer = new MutationObserver(() => {
+  const Observer = browser.MutationObserver
+  if (Observer == null) return
+  const observer = new Observer(() => {
     paint(root)
   })
   observer.observe(root, { childList: true, subtree: true })

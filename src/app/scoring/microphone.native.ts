@@ -5,9 +5,9 @@ import { appendPcm, bytesFromBase64 } from './pcmFrames'
 export interface PcmModule {
   start: () => Promise<void>
   stop: () => void
-  onPcm: (
-    listener: (event: { pcm?: string; error?: string }) => void
-  ) => { remove: () => void }
+  onPcm: (listener: (event: { pcm?: string; error?: string }) => void) => {
+    remove: () => void
+  }
 }
 
 /**

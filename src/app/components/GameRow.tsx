@@ -116,7 +116,7 @@ export function GameRow(props: GameRowProps): React.ReactElement {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${first} ${second}, ${detail}`}
+      accessibilityLabel={`${first} ${second}, ${detail}${badgeLabel == null ? '' : `, ${badgeLabel}`}`}
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
