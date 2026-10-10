@@ -587,9 +587,11 @@ async function main(): Promise<void> {
       return
     }
     if (
-      ['extended', 'picker'].includes(process.env.SCORING_MODAL_SECTION ?? '')
+      ['extended', 'picker', 'forms'].includes(
+        process.env.SCORING_MODAL_SECTION ?? ''
+      )
     ) {
-      if (process.env.SCORING_MODAL_SECTION === 'extended') {
+      if (process.env.SCORING_MODAL_SECTION !== 'picker') {
         await placeRunner()
         await tap('Undo Place a Runner')
         await menu('Overrides')
@@ -607,6 +609,11 @@ async function main(): Promise<void> {
         await tap('Apply Override')
         await shown('Undo Override')
         await tap('Undo Override')
+      }
+      if (process.env.SCORING_MODAL_SECTION === 'forms') {
+        console.log('PASS tiebreaker placement/Undo and override validation/Undo')
+        assert.deepEqual(fixture.unexpected, [])
+        return
       }
       for (const count of [1, 16]) {
         await menu('Set Team Rosters')
