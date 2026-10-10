@@ -190,7 +190,8 @@ export function RosterSelector({
           style={{
             width: fitContent ? undefined : `${100 / count}%`,
             minWidth: fitContent ? labelWidth + 24 : undefined,
-            paddingHorizontal: theme.scoringSheet === true || fitContent ? 12 : 8,
+            paddingHorizontal:
+              theme.scoringSheet === true || fitContent ? 12 : 8,
             minHeight: fitContent ? 36 : compact ? 40 : 48,
             alignSelf: fitContent ? 'center' : undefined,
             justifyContent: 'center',
