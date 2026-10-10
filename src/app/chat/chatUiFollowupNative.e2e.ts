@@ -51,6 +51,10 @@ interface Device {
   eraseText: (options?: object) => Promise<unknown>
   hideKeyboard: (options?: object) => Promise<unknown>
   pasteText: (options?: object) => Promise<unknown>
+  copyTextFrom: (options: object) => Promise<{
+    data?: unknown
+    element?: { class?: string; visible?: boolean }
+  }>
   startRecording: (options: { path: string }) => Promise<unknown>
   stopRecording: (options: { path: string }) => Promise<unknown>
   addMedia: (options: { files: string[] }) => Promise<unknown>
@@ -184,9 +188,81 @@ function xmlText(value: string): string {
   )
 }
 
-async function composerValue(device: Device): Promise<string> {
-  const raw = Buffer.from(await device.hierarchyRaw()).toString('utf8')
+let singleComposerReadVerified = false
+const ambiguousComposerLabels = new Set([
+  'Message',
+  'Message Message',
+  'Message draft'
+])
+
+async function rawComposerValue(device: Device): Promise<string> {
+  const raw = await until(
+    'Settled native composer accessibility element required',
+    async () => {
+      const raw = Buffer.from(await device.hierarchyRaw()).toString('utf8')
+      return /<[^>]*(?:name|resource-id|identifier)="[^"]*chat-composer"[^>]*>/.test(
+        raw
+      )
+        ? raw
+        : undefined
+    },
+    15000
+  )
   return composerValueFromRaw(raw)
+}
+
+async function composerValue(device: Device): Promise<string> {
+  if (platform !== 'ios' || process.argv[2] !== 'fault-pending-send')
+    return await rawComposerValue(device)
+  const extracted = await device.copyTextFrom({
+    id: 'chat-composer',
+    timeout: 10000
+  })
+  assert.equal(
+    extracted.element?.class,
+    'XCUIElementTypeTextView',
+    'Exact named native composer field required'
+  )
+  assert.equal(
+    typeof extracted.data,
+    'string',
+    'Single native composer read must return text'
+  )
+  const text = extracted.data as string
+  // An empty UITextView can expose its label twice. Compare ambiguous text
+  // with the raw value, preserving a legitimate draft equal to that label.
+  if (!singleComposerReadVerified || ambiguousComposerLabels.has(text)) {
+    const raw = await rawComposerValue(device)
+    if (raw !== text) {
+      assert.equal(
+        raw,
+        '',
+        'Nonempty native field extraction must equal its raw value'
+      )
+      ambiguousComposerLabels.add(text)
+    }
+    singleComposerReadVerified = true
+    results.singleElementComposerReads = [
+      ...((results.singleElementComposerReads as object[] | undefined) ?? []),
+      {
+        at: Date.now(),
+        method: 'Maestro exact UITextView read compared with raw value',
+        value: raw,
+        ambiguousLabelChecked: true
+      }
+    ]
+    return raw
+  }
+  results.singleElementComposerReads = [
+    ...((results.singleElementComposerReads as object[] | undefined) ?? []),
+    {
+      at: Date.now(),
+      method: 'Maestro copyTextFrom exact chat-composer UITextView',
+      value: text,
+      initialRawComparisonPassed: true
+    }
+  ]
+  return text
 }
 
 function composerValueFromRaw(raw: string): string {
@@ -1089,41 +1165,342 @@ async function main(): Promise<void> {
       )
     }
     async function currentMessageMore(messageId: string): Promise<void> {
-      const nodes = flatten(await m.hierarchy())
       const rowId = `chat-message-${messageId}`
-      const row = nodes.find(node => node.id === rowId)
-      const pane = nodes.find(
-        node =>
-          node.type?.includes('ScrollView') === true &&
-          node.bounds != null &&
-          flatten(node).some(child => child.id === rowId)
-      )?.bounds
-      const action = (row == null ? [] : flatten(row)).find(
-        node =>
-          (node.text === 'More message actions' ||
-            node.label === 'More message actions') &&
-          node.bounds != null
-      )?.bounds
-      assert(
-        action != null && pane != null,
-        'Exact visible message More action and pane are required'
-      )
-      const point = {
-        x: Math.round(action.x + action.width / 2),
-        y: Math.round(action.y + action.height / 2)
-      }
-      assert(
-        point.x > pane.x &&
-          point.x < pane.x + pane.width &&
-          point.y > pane.y &&
-          point.y < pane.y + pane.height,
-        'The identified message More point must be inside its actual pane'
-      )
+      await m.tapOn({
+        text: 'More message actions',
+        childOf: { id: rowId },
+        timeout: 30000
+      })
       results.currentMessageMoreReceipts = [
         ...((results.currentMessageMoreReceipts as object[] | undefined) ?? []),
-        { messageId, action, pane, point, at: Date.now() }
+        { messageId, childOf: rowId, namedNativeControl: true, at: Date.now() }
       ]
-      await m.tapOnPoint({ point: `${point.x},${point.y}` })
+    }
+    if (process.argv[2] === 'list-terminal') {
+      stage = 'native-list-terminal-offsets'
+      const input = JSON.parse(
+        readFileSync(required('CHAT_UI_NATIVE_LIST_TERMINAL_FIXTURE'), 'utf8')
+      ) as {
+        synthetic: true
+        actorUserId: number
+        zeroRows: [string, string]
+        membersConversationId: string
+        membersHeading: string
+      }
+      assert.equal(
+        input.synthetic,
+        true,
+        'Private synthetic list fixture required'
+      )
+      assert.equal(
+        input.actorUserId,
+        fixture.actor.userId,
+        'List fixture must belong to the retained actor'
+      )
+      assert.equal(
+        input.zeroRows.length,
+        2,
+        'Exact first and following zero-position rows required'
+      )
+      assert.notEqual(
+        input.zeroRows[0],
+        input.zeroRows[1],
+        'Two distinct zero-position rows required'
+      )
+      assert(
+        rows.some(row => row.id === input.membersConversationId),
+        'Members route must be accessible to the retained actor'
+      )
+      for (const id of input.zeroRows)
+        assert(
+          rows.some(row => row.id === id),
+          'Each terminal anchor must be an accessible current conversation'
+        )
+      assert(
+        input.membersHeading.length > 0,
+        'Actual Members screen heading required'
+      )
+      interface ListSnapshot {
+        at: number
+        pane: Bounds
+        rows: Array<{ id: string; bounds: Bounds }>
+      }
+      const contains = (outer: Bounds, inner: Bounds): boolean =>
+        inner.width > 0 &&
+        inner.height > 0 &&
+        inner.x >= outer.x &&
+        inner.y >= outer.y &&
+        inner.x + inner.width <= outer.x + outer.width &&
+        inner.y + inner.height <= outer.y + outer.height
+      async function listSnapshot(): Promise<ListSnapshot> {
+        const nodes = flatten(await m.hierarchy())
+        const pane = nodes.find(
+          node => node.id === 'chat-conversation-list'
+        )?.bounds
+        assert(
+          pane != null && pane.width > 0 && pane.height > 0,
+          'Exact current conversation-list viewport required'
+        )
+        const held = nodes
+          .filter(
+            node =>
+              node.id?.startsWith('chat-conversation-') === true &&
+              node.id !== 'chat-conversation-list' &&
+              node.bounds != null &&
+              contains(pane, node.bounds)
+          )
+          .map(node => ({
+            id: node.id!.slice('chat-conversation-'.length),
+            bounds: node.bounds!
+          }))
+          .sort((a, b) => a.bounds.y - b.bounds.y)
+        assert.equal(
+          new Set(held.map(row => row.id)).size,
+          held.length,
+          'Full native conversation rows must have unique exact IDs'
+        )
+        assert(
+          held.length >= 2,
+          'Two complete unclipped native conversation rows required'
+        )
+        return { at: Date.now(), pane, rows: held }
+      }
+      const sameRectangle = (
+        a: Bounds,
+        b: Bounds,
+        tolerance: number
+      ): boolean =>
+        (['x', 'y', 'width', 'height'] as const).every(
+          key => Math.abs(a[key] - b[key]) <= tolerance
+        )
+      async function stableSnapshot(): Promise<ListSnapshot> {
+        let previous: ListSnapshot | undefined
+        return await until(
+          'Two complete native list rows must settle',
+          async () => {
+            const next = await listSnapshot()
+            const prior = previous
+            const stable =
+              prior != null &&
+              sameRectangle(prior.pane, next.pane, 1) &&
+              next.rows
+                .slice(0, 2)
+                .every(
+                  (row, index) =>
+                    prior.rows[index]?.id === row.id &&
+                    sameRectangle(prior.rows[index].bounds, row.bounds, 1)
+                )
+            previous = next
+            return stable ? next : undefined
+          },
+          15000
+        )
+      }
+      async function physicalListMove(towardTop: boolean): Promise<void> {
+        const before = await listSnapshot()
+        const x = Math.round(before.pane.x + before.pane.width * 0.5)
+        const upper = Math.round(before.pane.y + before.pane.height * 0.25)
+        const lower = Math.round(before.pane.y + before.pane.height * 0.75)
+        const startedAt = Date.now()
+        await m.dragAndDrop({
+          from: { point: `${x},${towardTop ? upper : lower}` },
+          to: { point: `${x},${towardTop ? lower : upper}` },
+          holdDuration: 10,
+          duration: 400
+        })
+        const completedAt = Date.now()
+        await new Promise(resolve => setTimeout(resolve, 800))
+        const after = await stableSnapshot()
+        results.listPhysicalMoves = [
+          ...((results.listPhysicalMoves as object[] | undefined) ?? []),
+          {
+            towardTop,
+            startedAt,
+            completedAt,
+            settleMs: 800,
+            requestedDurationMs: 400,
+            before,
+            after
+          }
+        ]
+      }
+      async function physicalTop(): Promise<ListSnapshot> {
+        let previous: ListSnapshot | undefined
+        for (let attempt = 0; attempt < 20; attempt++) {
+          await physicalListMove(true)
+          const next = await stableSnapshot()
+          const expected =
+            next.rows[0].id === input.zeroRows[0] &&
+            next.rows[1].id === input.zeroRows[1]
+          const prior = previous
+          const unchanged =
+            prior != null &&
+            expected &&
+            input.zeroRows.every(id => {
+              const a = prior.rows.find(row => row.id === id)?.bounds
+              const b = next.rows.find(row => row.id === id)?.bounds
+              return a != null && b != null && sameRectangle(a, b, 1)
+            })
+          previous = next
+          if (unchanged) {
+            await m.assertVisible({ text: 'New message', timeout: 3000 })
+            return next
+          }
+        }
+        assert.fail(
+          'Physical top boundary must expose the exact complete first and following rows'
+        )
+      }
+      async function physicalNonzero(top: ListSnapshot): Promise<ListSnapshot> {
+        await physicalListMove(false)
+        const moved = await stableSnapshot()
+        const displacement = top.rows.flatMap(row => {
+          const now = moved.rows.find(other => other.id === row.id)
+          return now == null ? [] : [Math.abs(now.bounds.y - row.bounds.y)]
+        })
+        assert(
+          displacement.some(value => value > 20) ||
+            moved.rows[0].id !== top.rows[0].id,
+          'Actual physical list movement away from zero is required'
+        )
+        return moved
+      }
+      const proofs: object[] = []
+      async function appBack(headerLimit: number): Promise<void> {
+        let prior: Bounds | undefined
+        const bounds = await until(
+          'Actual in-app header Back must settle',
+          async () => {
+            const matches = flatten(await m.hierarchy()).filter(
+              node =>
+                (node.text === 'Back' || node.label === 'Back') &&
+                node.bounds != null &&
+                node.bounds.width > 0 &&
+                node.bounds.height > 0 &&
+                node.bounds.y + node.bounds.height <= headerLimit
+            )
+            assert(
+              matches.length <= 1,
+              'In-app header Back must have one exact visible target'
+            )
+            const current = matches[0]?.bounds
+            if (current == null) return undefined
+            const stable = prior != null && sameRectangle(prior, current, 1)
+            prior = current
+            return stable ? current : undefined
+          },
+          15000
+        )
+        results.listAppBackTargets = [
+          ...((results.listAppBackTargets as object[] | undefined) ?? []),
+          { bounds, headerLimit, at: Date.now(), systemBackExcluded: true }
+        ]
+        await m.tapOnPoint({
+          point: `${Math.round(bounds.x + bounds.width / 2)},${Math.round(bounds.y + bounds.height / 2)}`
+        })
+      }
+      for (const position of ['zero', 'nonzero'] as const) {
+        for (const route of ['new-message', 'members'] as const) {
+          await list()
+          const top = await physicalTop()
+          await physicalNonzero(top)
+          const before =
+            position === 'zero' ? await physicalTop() : await stableSnapshot()
+          const anchors = before.rows.slice(0, 2)
+          const prefix = `${platform}-list-terminal-${position}-${route}`
+          writeFileSync(
+            join(resultDirectory, `${prefix}-before.json`),
+            JSON.stringify(before, null, 2)
+          )
+          writeFileSync(
+            join(resultDirectory, `${prefix}-before.png`),
+            await m.screenshot()
+          )
+          const entryAt = Date.now()
+          // Public route entry unmounts the workspace without scrolling to an
+          // offscreen header button; final list motion remains physical.
+          await m.openLink({
+            link:
+              route === 'new-message'
+                ? `${fixture.scheme}://chat/new`
+                : `${fixture.scheme}://chat/${encodeURIComponent(input.membersConversationId)}/members`
+          })
+          const opened = flatten(await m.hierarchy())
+          if (strings(opened).includes('Open in “TeamStation”?'))
+            await tapVisibleControl(m, 'Open')
+          if (route === 'new-message') {
+            await m.assertVisible({ text: 'Name', timeout: 30000 })
+            await m.assertVisible({
+              text: 'Start conversation',
+              timeout: 10000
+            })
+          } else
+            await m.assertVisible({
+              text: input.membersHeading,
+              timeout: 30000
+            })
+          await m.assertNotVisible({
+            id: 'chat-conversation-list',
+            timeout: 3000
+          })
+          await m.assertNotVisible({ id: 'chat-workspace', timeout: 3000 })
+          const workspaceAbsentAt = Date.now()
+          await appBack(before.pane.y)
+          if (route === 'members') {
+            await m.assertVisible({ text: 'Members', timeout: 30000 })
+            await appBack(before.pane.y)
+          }
+          await m.assertVisible({
+            id: 'chat-conversation-list',
+            timeout: 30000
+          })
+          const returnedAt = Date.now()
+          await new Promise(resolve => setTimeout(resolve, 800))
+          const after = await listSnapshot()
+          const proof = {
+            position,
+            route,
+            navigation: 'normal public deep link and in-app Back',
+            settleMs: 800,
+            tolerance: 10,
+            entryAt,
+            workspaceAbsentAt,
+            returnedAt,
+            before,
+            after,
+            anchorIds: anchors.map(row => row.id)
+          }
+          proofs.push(proof)
+          results.listTerminalProofs = proofs
+          writeFileSync(
+            join(resultDirectory, `${prefix}-after.json`),
+            JSON.stringify(after, null, 2)
+          )
+          writeFileSync(
+            join(resultDirectory, `${prefix}-after.png`),
+            await m.screenshot()
+          )
+          assert(
+            sameRectangle(before.pane, after.pane, 10),
+            'List viewport must remain unchanged after workspace return'
+          )
+          for (const anchor of anchors) {
+            const restored = after.rows.find(row => row.id === anchor.id)
+            assert(
+              restored != null,
+              'Complete identified row and following row must remain unclipped after return'
+            )
+            assert(
+              sameRectangle(anchor.bounds, restored.bounds, 10),
+              'Complete identified native row must restore within ten pixels'
+            )
+          }
+          pass(
+            `physical final ${position} list offset survives ${route} workspace unmount and return`
+          )
+        }
+      }
+      return
     }
     async function photo(name: string): Promise<void> {
       writeFileSync(

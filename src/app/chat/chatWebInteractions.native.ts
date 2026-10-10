@@ -44,3 +44,5 @@ export function watchMessageAnchor(
 ): () => void {
   return () => {}
 }
+
+export function focusPopupControl(_view: unknown): void {}

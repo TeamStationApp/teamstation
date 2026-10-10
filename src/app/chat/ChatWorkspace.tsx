@@ -4,6 +4,7 @@ import { Text, useWindowDimensions, View } from 'react-native'
 import { Screen } from '../components'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import { ChatArrivalHost } from './ChatArrivalHost'
 import { ChatListScreen } from './ChatListScreen'
 import {
   CHAT_WIDE_WIDTH,
@@ -82,6 +83,11 @@ function WorkspaceContent(
         }}
         testID="chat-workspace"
       >
+        <ChatArrivalHost
+          engine={props.engine}
+          selectedId={selected}
+          selectedVisible={messagesVisible}
+        />
         <View
           testID="chat-list-pane"
           style={{

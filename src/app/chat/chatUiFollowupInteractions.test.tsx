@@ -10,9 +10,14 @@ import { ChatActionOverlay } from './ChatActionOverlay'
 import { ChatListScreen } from './ChatListScreen'
 import { ChatOverlayHost } from './ChatOverlayHost'
 import { chat } from './chatViews.test.helpers'
-import { bindPopupKeys, isRestoringPopupFocus } from './chatWebInteractions'
+import {
+  bindPopupKeys,
+  focusPopupControl,
+  isRestoringPopupFocus
+} from './chatWebInteractions'
 import {
   bindPopupKeys as bindNativePopupKeys,
+  focusPopupControl as focusNativePopupControl,
   isRestoringPopupFocus as isRestoringNativeFocus
 } from './chatWebInteractions.native'
 import { ConversationMenu } from './ConversationMenu'
@@ -142,6 +147,13 @@ describe('chat UI follow-up popup keyboard', function () {
     expect(isRestoringPopupFocus()).equals(false)
     key('Escape')
     expect(closed).equals(1)
+    const focused = document.createElement('button')
+    document.body.append(focused)
+    focused.focus()
+    focusPopupControl(undefined)
+    focusPopupControl(document.createElement('div'))
+    focusNativePopupControl(panel)
+    expect(document.activeElement).equals(focused)
   })
 
   it('closes an empty popup and tolerates a removed focus trigger or missing native view', function () {

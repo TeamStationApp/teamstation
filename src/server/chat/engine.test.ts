@@ -20,6 +20,7 @@ import {
   startLink
 } from '../../app/chat/engine/links'
 import type { FetchBytes } from '../../app/chat/engine/send'
+import type { ChatEngineEvent } from '../../app/chat/engine/store'
 import {
   b64,
   type ChatKeyRecord,
@@ -1063,6 +1064,604 @@ describe('the chat engine (U12)', function () {
     expect(d.store.record.puks.map(puk => puk.generation)).deep.equals([1, 2])
   })
 
+  {
+    type MessagePage = NonNullable<
+      Parameters<TeamStationClient['chatMessages']>[1]
+    >
+    interface Gate {
+      began: Promise<void>
+      entered: () => void
+      wait: Promise<void>
+      release: () => void
+    }
+    const gate = (): Gate => {
+      let entered!: () => void
+      let release!: () => void
+      return {
+        began: new Promise<void>(resolve => {
+          entered = resolve
+        }),
+        get entered() {
+          return entered
+        },
+        wait: new Promise<void>(resolve => {
+          release = resolve
+        }),
+        get release() {
+          return release
+        }
+      }
+    }
+
+    async function reached(point: Promise<void>): Promise<void> {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          point,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              reject(
+                new Error('Expected controlled message request did not arrive')
+              )
+            }, 10000)
+          })
+        ])
+      } finally {
+        if (timer != null) clearTimeout(timer)
+      }
+    }
+
+    /** The wire payload remains real. Hooks delay delivery or refuse a read. */
+    class SnapshotClient extends TeamStationClient {
+      readonly queries: Array<{ id: string; page: MessagePage }> = []
+      readonly marked: Array<Parameters<TeamStationClient['markChatRead']>> = []
+      readRequests = 0
+      beforeMessages?: (id: string, page: MessagePage) => Promise<void>
+      afterMessages?: (
+        id: string,
+        page: MessagePage,
+        payload: ChatMessage[]
+      ) => Promise<void>
+
+      messagesError?: (id: string, error: unknown) => Promise<void>
+
+      async chatMessages(
+        conversationId: string,
+        page: MessagePage = {}
+      ): Promise<ChatMessage[]> {
+        this.queries.push({ id: conversationId, page: { ...page } })
+        try {
+          await this.beforeMessages?.(conversationId, page)
+          const real = await super.chatMessages(conversationId, page)
+          await this.afterMessages?.(conversationId, page, real)
+          return real
+        } catch (error) {
+          await this.messagesError?.(conversationId, error)
+          throw error
+        }
+      }
+
+      async markChatRead(
+        ...args: Parameters<TeamStationClient['markChatRead']>
+      ): ReturnType<TeamStationClient['markChatRead']> {
+        this.marked.push(args)
+        return await super.markChatRead(...args)
+      }
+
+      async chatReads(
+        ...args: Parameters<TeamStationClient['chatReads']>
+      ): ReturnType<TeamStationClient['chatReads']> {
+        this.readRequests += 1
+        return await super.chatReads(...args)
+      }
+
+      /** Test observation bypasses the app-request counter, never authorization. */
+      async observeRead(conversationId: string): Promise<number> {
+        return (
+          (await super.chatReads(conversationId)).find(
+            read => read.userId === id('B')
+          )?.seq ?? 0
+        )
+      }
+    }
+
+    /** Three members deliberately avoid one-to-one reuse by createDm. */
+    async function freshRoom(): Promise<string> {
+      for (const key of ['A', 'B', 'C']) await device(key)
+      const room = await dm('A', ['B', 'C'])
+      const summary = (
+        await (await device('A')).client.chatConversations()
+      ).find(row => row.id === room)
+      expect(summary?.lastSeq, 'new disposable room').equals(0)
+      expect(summary?.memberCount).equals(3)
+      return room
+    }
+
+    async function observer(): Promise<{
+      viewer: Device
+      client: SnapshotClient
+      events: ChatEngineEvent[]
+    }> {
+      const b = await device('B')
+      const client = new SnapshotClient({
+        baseUrl: f().api,
+        token: f().tokenOf('B')
+      })
+      const viewer = deviceOn('B', 'B', { store: b.store.copy(), client })
+      const events: ChatEngineEvent[] = []
+      expect(await viewer.engine.start()).equals('ready')
+      await viewer.engine.idle()
+      viewer.engine.subscribe(event => events.push(event))
+      return { viewer, client, events }
+    }
+
+    const messageHint = (
+      conversationId: string,
+      seq: number
+    ): ChatSocketEvent => ({
+      type: 'chat',
+      conversationId,
+      kind: 'message',
+      seq,
+      at: new Date().toISOString()
+    })
+    const alerts = (
+      events: ChatEngineEvent[],
+      conversationId: string
+    ): number =>
+      events.filter(
+        event =>
+          event.type === 'messageAlert' &&
+          event.conversationId === conversationId
+      ).length
+
+    /** A preview may populate its view; a read hint must still not activate it. */
+    async function listOnly(
+      viewer: Device,
+      client: SnapshotClient,
+      before: Map<string, number>
+    ): Promise<void> {
+      const appReads = client.readRequests
+      for (const [conversationId, seq] of before) {
+        expect(
+          await client.observeRead(conversationId),
+          'receiver read cursor'
+        ).equals(seq)
+        viewer.socket.emit(chat(conversationId, 'read'))
+      }
+      await viewer.engine.idle()
+      expect(
+        client.readRequests,
+        'list-only reads do not subscribe an active conversation'
+      ).equals(appReads)
+      expect(client.marked, 'list-only work must never mark read').deep.equals(
+        []
+      )
+    }
+
+    for (const mutation of ['post', 'edit', 'delete'] as const)
+      it(`review2: does not certify an old encrypted preview snapshot after a concurrent ${mutation}`, async function () {
+        const a = await device('A')
+        await device('B')
+        const room = await freshRoom()
+        const first = (await a.engine.sendText(room, 'Original preview'))!
+        const { viewer, client } = await observer()
+        const held = gate()
+        let waiting = true
+        try {
+          const before = new Map([[room, await client.observeRead(room)]])
+          await viewer.engine.loadPreview(room)
+          expect(
+            viewer.engine.conversations().find(row => row.id === room)?.preview
+          ).equals('Original preview')
+          await a.engine.react(room, first.id, '👍')
+          await viewer.engine.refresh()
+          client.afterMessages = async (id, _page, payload) => {
+            if (id !== room || !waiting) return
+            waiting = false
+            expect(
+              payload.some(envelope => envelope.kind === 'reaction')
+            ).equals(true)
+            held.entered()
+            await held.wait
+          }
+          const stale = viewer.engine.loadPreview(room)
+          await reached(held.began)
+          let latestId = first.id
+          if (mutation === 'post')
+            latestId = (await a.engine.sendText(room, 'Current preview'))!.id
+          if (mutation === 'edit')
+            await a.engine.edit(room, first.id, 'Current edited preview')
+          if (mutation === 'delete')
+            await a.engine.deleteMessage(room, first.id)
+          const latest = (await client.chatConversations()).find(
+            row => row.id === room
+          )!
+          await viewer.engine.refresh()
+          held.release()
+          await stale
+          client.afterMessages = undefined
+          await viewer.engine.loadPreview(room)
+          const displayed = viewer.engine
+            .view(room)!
+            .messages.find(message => message.id === latestId)!
+          expect(
+            displayed,
+            'the current target must actually be loaded'
+          ).not.equals(undefined)
+          expect(displayed.status).equals(
+            mutation === 'delete' ? 'removed' : 'ok'
+          )
+          expect(displayed.body).equals(
+            mutation === 'delete'
+              ? ''
+              : mutation === 'edit'
+                ? 'Current edited preview'
+                : 'Current preview'
+          )
+          expect(
+            viewer.engine.conversations().find(row => row.id === room)?.preview
+          ).equals(mutation === 'delete' ? 'Message deleted' : displayed.body)
+          expect(viewer.engine.view(room)!.conversation.lastSeq).equals(
+            latest.lastSeq
+          )
+          const reads = client.queries.length
+          await viewer.engine.loadPreview(room)
+          expect(client.queries).length(reads)
+          await listOnly(viewer, client, before)
+        } finally {
+          held.release()
+          viewer.engine.stop()
+        }
+      })
+
+    it('review2: releases a busy preview at a synchronized revision and retries it without extending reads to a continuing tail', async function () {
+      const a = await device('A')
+      await device('B')
+      const room = await freshRoom()
+      const first = (await a.engine.sendText(room, 'Original bounded preview'))!
+      const { viewer, client } = await observer()
+      try {
+        const before = new Map([[room, await client.observeRead(room)]])
+        await viewer.engine.loadPreview(room)
+        await a.engine.react(room, first.id, '👍')
+        await viewer.engine.refresh()
+        const start = client.queries.length
+        let updates = 0
+        let lastId = first.id
+        client.afterMessages = async id => {
+          if (id !== room || updates >= 6) return
+          updates += 1
+          lastId = (await a.engine.sendText(
+            room,
+            `New bounded preview ${updates}`
+          ))!.id
+          await viewer.engine.refresh()
+        }
+        await viewer.engine.loadPreview(room)
+        // Each pass captured one incremental envelope; continuous metadata did
+        // not extend the two snapshot reads or hold this conversation queue.
+        expect(updates).equals(2)
+        const queries = client.queries
+          .slice(start)
+          .filter(query => query.id === room)
+        expect(queries).length(2)
+        expect(queries.map(query => query.page.before)).deep.equals([3, 4])
+        expect(
+          viewer.engine
+            .view(room)!
+            .messages.some(message => message.id === lastId)
+        ).equals(false)
+        client.afterMessages = undefined
+        await viewer.engine.loadPreview(room)
+        expect(
+          viewer.engine
+            .view(room)!
+            .messages.find(message => message.id === lastId)?.body
+        ).equals('New bounded preview 2')
+
+        // The same bounded path still locates the latest post behind reaction
+        // pages. Existing U12 cases separately retain ordinary uncapped paging.
+        const older = await freshRoom()
+        const target = (await a.engine.sendText(
+          older,
+          'Post behind reactions'
+        ))!
+        for (let at = 0; at < 7; at += 1)
+          await a.engine.react(older, target.id, '👍', at % 2 === 1)
+        await viewer.engine.refresh()
+        before.set(older, await client.observeRead(older))
+        await viewer.engine.loadPreview(older)
+        expect(
+          viewer.engine.conversations().find(row => row.id === older)?.preview
+        ).equals('Post behind reactions')
+        expect(
+          viewer.engine
+            .view(older)!
+            .messages.find(message => message.id === target.id)?.status
+        ).equals('ok')
+        await listOnly(viewer, client, before)
+      } finally {
+        viewer.engine.stop()
+      }
+    })
+
+    it('review2: announces a real received post when deletion of an older unread post leaves the unread count unchanged', async function () {
+      const a = await device('A')
+      const b = await device('B')
+      const room = await freshRoom()
+      const older = (await a.engine.sendText(room, 'Older unread post'))!
+      const { viewer, client, events } = await observer()
+      try {
+        const before = new Map([[room, await client.observeRead(room)]])
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)?.unread
+        ).equals(1)
+        const arrived = (await a.engine.sendText(room, 'New received post'))!
+        await a.engine.deleteMessage(room, older.id)
+        const deletion = (
+          await a.client.chatMessages(room, { after: arrived.seq })
+        )[0]
+        expect(deletion.kind).equals('delete')
+        expect(
+          (await client.chatConversations()).find(row => row.id === room)
+            ?.unread
+        ).equals(1)
+        for (const seq of [arrived.seq, deletion.seq])
+          viewer.socket.emit(messageHint(room, seq))
+        await viewer.engine.idle()
+        expect(alerts(events, room)).equals(1)
+        expect(
+          viewer.engine.view(room)!.messages,
+          'classification does not activate or decrypt the room'
+        ).deep.equals([])
+        for (const seq of [arrived.seq, deletion.seq])
+          viewer.socket.emit(messageHint(room, seq))
+        await viewer.engine.idle()
+        expect(alerts(events, room)).equals(1)
+        await viewer.engine.setPreferences(room, { muted: true })
+        const quiet = (await a.engine.sendText(room, 'Muted received post'))!
+        await hint(viewer, messageHint(room, quiet.seq))
+        await viewer.engine.setPreferences(room, { muted: false })
+        const own = (await b.engine.sendText(room, 'Own post'))!
+        await hint(viewer, messageHint(room, own.seq))
+        expect(alerts(events, room)).equals(1)
+        await listOnly(viewer, client, before)
+      } finally {
+        viewer.engine.stop()
+      }
+    })
+
+    it('review2: keeps the valid list and another room current when one encrypted-candidate read fails, then recovers that candidate once', async function () {
+      const a = await device('A')
+      await device('B')
+      const rooms = [await freshRoom(), await freshRoom()]
+      const { viewer, client, events } = await observer()
+      let failed = false
+      try {
+        const before = new Map(
+          await Promise.all(
+            rooms.map(
+              async room => [room, await client.observeRead(room)] as const
+            )
+          )
+        )
+        const posts = await Promise.all(
+          rooms.map(
+            async room => (await a.engine.sendText(room, 'Received candidate'))!
+          )
+        )
+        client.beforeMessages = async id => {
+          if (id === rooms[0] && !failed) {
+            failed = true
+            throw new HttpError(
+              'unavailable',
+              'Controlled candidate read failure'
+            )
+          }
+        }
+        for (let at = 0; at < rooms.length; at += 1)
+          viewer.socket.emit(messageHint(rooms[at], posts[at].seq))
+        await viewer.engine.idle()
+        expect(events.filter(event => event.type === 'error')).length(1)
+        expect(
+          events.filter(event => event.type === 'conversations').length
+        ).greaterThan(0)
+        for (const room of rooms)
+          expect(
+            viewer.engine.conversations().some(row => row.id === room)
+          ).equals(true)
+        expect(alerts(events, rooms[0])).equals(0)
+        expect(alerts(events, rooms[1])).equals(1)
+        await a.engine.react(rooms[0], posts[0].id, '👍')
+        const reaction = (
+          await a.client.chatMessages(rooms[0], { after: posts[0].seq })
+        )[0]
+        await hint(viewer, messageHint(rooms[0], reaction.seq))
+        expect(events.filter(event => event.type === 'error')).length(1)
+        expect(alerts(events, rooms[0])).equals(1)
+        expect(alerts(events, rooms[1])).equals(1)
+        await listOnly(viewer, client, before)
+      } finally {
+        viewer.engine.stop()
+      }
+    })
+
+    it('review2: recovers an interrupted multi-page encrypted hint burst without repeating the already-classified post', async function () {
+      const a = await device('A')
+      await device('B')
+      const room = await freshRoom()
+      const { viewer, client, events } = await observer()
+      try {
+        const before = new Map([[room, await client.observeRead(room)]])
+        const posted = (await a.engine.sendText(room, 'Burst original'))!
+        for (let at = 0; at < 7; at += 1) {
+          if (at === 2) await a.engine.edit(room, posted.id, 'Burst edited')
+          else await a.engine.react(room, posted.id, '👍', at % 2 === 1)
+        }
+        const envelopes = await a.client.chatMessages(room, { after: 0 })
+        expect(envelopes).length(8)
+        let calls = 0
+        client.beforeMessages = async id => {
+          if (id === room && ++calls === 2)
+            throw new HttpError('unavailable', 'Controlled later-page failure')
+        }
+        for (const envelope of envelopes)
+          viewer.socket.emit(messageHint(room, envelope.seq))
+        await viewer.engine.idle()
+        expect(alerts(events, room)).equals(1)
+        expect(events.filter(event => event.type === 'error')).length(1)
+        const interrupted = client.queries.filter(query => query.id === room)
+        expect(interrupted.map(query => query.page.after)).deep.equals([0, 3])
+        await hint(viewer, messageHint(room, envelopes.at(-1)!.seq))
+        expect(
+          client.queries
+            .filter(query => query.id === room)
+            .map(query => query.page.after)
+        ).deep.equals([0, 3, 3, 6])
+        expect(alerts(events, room)).equals(1)
+        expect(events.filter(event => event.type === 'error')).length(1)
+        await listOnly(viewer, client, before)
+      } finally {
+        viewer.engine.stop()
+      }
+    })
+
+    it('review2: retains a later real post hint absent from an older captured payload until the next candidate read classifies it', async function () {
+      const a = await device('A')
+      await device('B')
+      const room = await freshRoom()
+      const { viewer, client, events } = await observer()
+      const first = gate()
+      const later = gate()
+      try {
+        const before = new Map([[room, await client.observeRead(room)]])
+        const posted = (await a.engine.sendText(
+          room,
+          'First received snapshot'
+        ))!
+        client.afterMessages = async (id, page) => {
+          if (id !== room) return
+          if (page.after === 0) {
+            first.entered()
+            await first.wait
+          } else if (page.after === posted.seq) {
+            later.entered()
+            await later.wait
+          }
+        }
+        viewer.socket.emit(messageHint(room, posted.seq))
+        await reached(first.began)
+        const next = (await a.engine.sendText(room, 'Later received snapshot'))!
+        viewer.socket.emit(messageHint(room, next.seq))
+        first.release()
+        await reached(later.began)
+        expect(alerts(events, room)).equals(1)
+        later.release()
+        await viewer.engine.idle()
+        expect(alerts(events, room)).equals(2)
+        await hint(viewer, messageHint(room, next.seq))
+        expect(alerts(events, room)).equals(2)
+        await listOnly(viewer, client, before)
+      } finally {
+        first.release()
+        later.release()
+        viewer.engine.stop()
+      }
+    })
+
+    for (const rejoin of [false, true])
+      it(`review2: ${rejoin ? 'preserves a legally rejoined replacement after' : 'removes only the revoked room on'} a real late membership404`, async function () {
+        const a = await device('A')
+        await device('B')
+        await device('C')
+        const room = await freshRoom()
+        const { viewer, client, events } = await observer()
+        const beforeRequest = gate()
+        const failedResponse = gate()
+        let once = true
+        try {
+          const cursorBefore = await client.observeRead(room)
+          const posted = (await a.engine.sendText(
+            room,
+            'Before membership removal'
+          ))!
+          client.beforeMessages = async id => {
+            if (id === room && once) {
+              once = false
+              beforeRequest.entered()
+              await beforeRequest.wait
+            }
+          }
+          client.messagesError = async (id, error) => {
+            if (
+              id === room &&
+              rejoin &&
+              error instanceof HttpError &&
+              error.code === 'notFound'
+            ) {
+              failedResponse.entered()
+              await failedResponse.wait
+            }
+          }
+          viewer.socket.emit(messageHint(room, posted.seq))
+          await reached(beforeRequest.began)
+          await client.leaveDm(room)
+          beforeRequest.release()
+          if (rejoin) {
+            await reached(failedResponse.began)
+            await viewer.engine.refresh()
+            expect(viewer.engine.view(room)).equals(undefined)
+            expect(await a.client.addDmMembers(room, [id('B')])).deep.equals([
+              id('B')
+            ])
+            await viewer.engine.refresh()
+            expect(viewer.engine.view(room)!.messages).deep.equals([])
+            const current = (await a.engine.sendText(
+              room,
+              'After legal rejoin'
+            ))!
+            viewer.socket.emit(messageHint(room, current.seq))
+            failedResponse.release()
+            await viewer.engine.idle()
+            expect(
+              viewer.engine.conversations().some(row => row.id === room)
+            ).equals(true)
+            expect(alerts(events, room)).equals(1)
+            await viewer.engine.loadPreview(room)
+            expect(
+              viewer.engine
+                .view(room)!
+                .messages.find(message => message.id === current.id)?.body
+            ).equals('After legal rejoin')
+            await listOnly(viewer, client, new Map([[room, cursorBefore]]))
+          } else {
+            await viewer.engine.idle()
+            expect(
+              viewer.engine.conversations().some(row => row.id === room)
+            ).equals(false)
+            expect(viewer.engine.view(room)).equals(undefined)
+            expect(alerts(events, room)).equals(0)
+            expect(client.marked).deep.equals([])
+            expect(client.readRequests).equals(0)
+            // Normal current members observe the retained/revoked cursor. No
+            // private SQL or permission bypass is needed by the observer.
+            const retained =
+              (await a.client.chatReads(room)).find(
+                read => read.userId === id('B')
+              )?.seq ?? 0
+            expect(retained).equals(cursorBefore)
+            // Do not leave a disposable A/C pair for later one-to-one tests.
+            await a.client.leaveDm(room)
+          }
+          expect(events.filter(event => event.type === 'error')).deep.equals([])
+        } finally {
+          beforeRequest.release()
+          failedResponse.release()
+          viewer.engine.stop()
+        }
+      })
+  }
   it('seals, uploads, sends and opens attachments', async function () {
     const a = await device('A')
     const b = await device('B')
