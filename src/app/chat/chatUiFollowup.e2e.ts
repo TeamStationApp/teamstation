@@ -760,6 +760,7 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
   const message = required('CHAT_UI_MESSAGE')
   const row = `[data-testid="chat-message-${message}"]`
   const path = API + '/chat/conversations/' + conversation
+  const artifacts = required('CHAT_UI_ARTIFACTS')
   const m = await daemon.attach({
     device: narrow ? 'chat-ui-review-narrow' : 'chat-ui-review-wide',
     platform: 'web',
@@ -779,6 +780,22 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       typeof result.data === 'string' ? JSON.parse(result.data) : result.data
     ) as T
   }
+  interface ListReadingGeometry {
+    offset: number
+    content: number
+    height: number
+    width: number
+    sampledAt: number
+    rows: Array<{
+      id: string
+      top: number
+      height: number
+      absoluteTop: number
+    }>
+  }
+  const geometryScript = `const pane=document.querySelector('[data-testid="chat-list-pane"]');const scroll=pane&&[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY));if(!scroll||scroll.clientHeight<=0)return null;const box=scroll.getBoundingClientRect();const rows=[...scroll.querySelectorAll('[data-testid^="chat-conversation-cnv_"]')].map(row=>{const r=row.getBoundingClientRect();return{id:row.getAttribute('data-testid').slice('chat-conversation-'.length),top:r.top-box.top,height:r.height,absoluteTop:r.top-box.top+scroll.scrollTop,bottom:r.bottom-box.top}}).filter(row=>row.top>=2&&row.bottom<=box.height-2);return{offset:scroll.scrollTop,content:scroll.scrollHeight,height:scroll.clientHeight,width:scroll.clientWidth,sampledAt:Date.now(),rows}`
+  const sampleReading = async (): Promise<ListReadingGeometry> =>
+    await read(`return JSON.stringify((()=>{${geometryScript}})())`)
   let previousMuted: boolean | undefined
   const preference = async (muted: boolean): Promise<void> => {
     await read(
@@ -796,15 +813,22 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
     let offset = await read<number>(
       `const pane=document.querySelector('[data-testid="chat-list-pane"]');const scroll=[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY));if(!scroll||scroll.scrollHeight<=scroll.clientHeight+30)throw new Error('Populated list lacks reading geometry');window.chatUiReviewList=scroll;scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:120}));scroll.scrollTop=Math.min(120,scroll.scrollHeight-scroll.clientHeight);scroll.dispatchEvent(new Event('scroll',{bubbles:true}));await new Promise(r=>setTimeout(r,200));return JSON.stringify(scroll.scrollTop)`
     )
+    let beforeReading: ListReadingGeometry
     if (narrow) {
       offset = await read<number>(
         `const row=document.querySelector('[data-testid="chat-conversation-${conversation}"]');const scroll=window.chatUiReviewList;row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,200));const r=row.getBoundingClientRect(),s=scroll.getBoundingClientRect();if(r.top<s.top||r.bottom>s.bottom)throw new Error('Selected row must be visible before navigation');return JSON.stringify(scroll.scrollTop)`
       )
+      beforeReading = await sampleReading()
       await m.tapOn({
         css: `[data-testid="chat-conversation-${conversation}"]`
       })
-    }
-    console.log({ listBeforeMembers: offset, narrow })
+    } else beforeReading = await sampleReading()
+    beforeReading.rows = beforeReading.rows.slice(0, 2)
+    assert(
+      beforeReading.rows.length === 2,
+      'Two full identified reading rows are required'
+    )
+    console.log({ listBeforeMembers: offset, narrow, beforeReading })
     await m.tapOn({ text: 'Members' })
     assert(
       await read<boolean>(
@@ -819,11 +843,44 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
     })
     await m.tapOn({ text: 'Back' })
     if (narrow) await m.tapOn({ text: 'Back' })
-    console.log(
-      await read(
-        `let measured;for(let n=0;n<300;n++){const pane=document.querySelector('[data-testid="chat-list-pane"]');const scroll=pane&&[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY));measured=scroll&&{top:scroll.scrollTop,height:scroll.clientHeight,content:scroll.scrollHeight};if(scroll&&Math.abs(scroll.scrollTop-${offset})<=2){await new Promise(r=>setTimeout(r,1400));if(Math.abs(scroll.scrollTop-${offset})>2)throw new Error('List restore drifted after async refresh');return JSON.stringify({membersReturnListOffset:true,offset:scroll.scrollTop,width:innerWidth})}await new Promise(r=>setTimeout(r,100))}throw new Error('Members return lost list position '+JSON.stringify({expected:${offset},measured}))`
-      )
+    const returned = await read<{
+      geometry: ListReadingGeometry | null
+      matched: boolean
+      unchangedGeometry: boolean
+    }>(
+      `const before=${JSON.stringify(beforeReading)};const sample=()=>{${geometryScript}};const matches=value=>value&&before.rows.every(row=>{const now=value.rows.find(candidate=>candidate.id===row.id);return now&&Math.abs(now.top-row.top)<=2&&Math.abs(now.height-row.height)<=2});let geometry=null;for(let n=0;n<300;n++){geometry=sample();if(matches(geometry)){await new Promise(r=>setTimeout(r,1400));geometry=sample();break}await new Promise(r=>setTimeout(r,100))}const unchangedGeometry=geometry&&geometry.height===before.height&&geometry.width===before.width&&geometry.content===before.content&&before.rows.every(row=>{const now=geometry.rows.find(candidate=>candidate.id===row.id);return now&&Math.abs(now.absoluteTop-row.absoluteTop)<=2&&Math.abs(now.height-row.height)<=2});return JSON.stringify({geometry,matched:!!matches(geometry),unchangedGeometry:!!unchangedGeometry})`
     )
+    // Keep the retained settled identities and geometry even when the assertion
+    // fails; duplicate titles and a numeric offset cannot identify the reader.
+    writeFileSync(
+      join(
+        artifacts,
+        `${narrow ? 'narrow' : 'wide'}-members-reading-return.json`
+      ),
+      JSON.stringify({ before: beforeReading, after: returned }, null, 2)
+    )
+    writeFileSync(
+      join(
+        artifacts,
+        `${narrow ? 'narrow' : 'wide'}-members-reading-return.png`
+      ),
+      await m.screenshot()
+    )
+    assert(
+      returned.matched,
+      'Members return must preserve identified rows and viewport geometry after async refresh'
+    )
+    if (returned.unchangedGeometry)
+      assert(
+        Math.abs(returned.geometry!.offset - beforeReading.offset) <= 2,
+        'Unchanged measured geometry also preserves its numeric offset'
+      )
+    console.log({
+      membersReturnIdentifiedRows: true,
+      unchangedGeometry: returned.unchangedGeometry,
+      before: beforeReading,
+      after: returned.geometry
+    })
     await m.setNetworkConditions({
       latency: 0,
       downloadSpeed: -1,

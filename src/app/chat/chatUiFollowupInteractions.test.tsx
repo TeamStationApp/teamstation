@@ -23,6 +23,32 @@ import {
 import { ConversationMenu } from './ConversationMenu'
 import type { ConversationListItem } from './engine/engine'
 
+const { InteractionManager } = require('react-native-web') as {
+  InteractionManager: { runAfterInteractions: (task: () => void) => unknown }
+}
+
+let ownsTimeouts = false
+
+async function resetTimeouts(): Promise<void> {
+  if (!ownsTimeouts) return
+  // Reset would otherwise discard RNW's queued idle callback while its shared
+  // InteractionManager retains the handle and stops future list batching.
+  await act(async () => {
+    let completed = false
+    InteractionManager.runAfterInteractions(() => {
+      completed = true
+    })
+    mock.timers.tick(1)
+    await Promise.resolve()
+    expect(
+      completed,
+      'Owned interaction work drains before timer reset'
+    ).equals(true)
+  })
+  mock.timers.reset()
+  ownsTimeouts = false
+}
+
 let root: Root | undefined
 let stopKeys: (() => void) | undefined
 const originalVibrate = Object.getOwnPropertyDescriptor(navigator, 'vibrate')
@@ -34,7 +60,7 @@ afterEach(async function () {
     root?.unmount()
   })
   root = undefined
-  mock.timers.reset()
+  await resetTimeouts()
   if (originalVibrate != null)
     Object.defineProperty(navigator, 'vibrate', originalVibrate)
   else Reflect.deleteProperty(navigator, 'vibrate')
@@ -376,6 +402,7 @@ describe('chat UI follow-up conversation hold', function () {
       />
     )
     mock.timers.enable({ apis: ['setTimeout'] })
+    ownsTimeouts = true
     return labelled('Aurora Members')
   }
   async function mouse(

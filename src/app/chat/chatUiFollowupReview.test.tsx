@@ -789,7 +789,7 @@ async function returningList(
   anchors: Array<{ id: string; relativeY: number } | undefined>
   populate: (count: number) => Promise<void>
   refreshMetadata: () => Promise<void>
-  reorder: () => Promise<void>
+  reorder: (id?: string) => Promise<void>
   setDomContent: (height: number) => void
   content: (height: number) => Promise<void>
   scroll: (top: number) => Promise<void>
@@ -851,11 +851,11 @@ async function returningList(
         await wait()
       })
     },
-    reorder: async () => {
+    reorder: async (id = 'cnv_return_3') => {
       await act(async () => {
         rows = rows.map(row => ({
           ...row,
-          lastPostAt: row.id === 'cnv_return_3' ? '2026-01-02T00:00:00Z' : null
+          lastPostAt: row.id === id ? '2026-01-02T00:00:00Z' : null
         }))
         engine.conversations = () => rows
         engine.emit({ type: 'conversations' })
@@ -2122,18 +2122,22 @@ interface ListLayoutCallbacks {
 function renderedListCallbacks(node: HTMLElement): ListLayoutCallbacks {
   interface Fiber {
     memoizedProps?: ListLayoutCallbacks & { testID?: string; data?: unknown }
+    stateNode?: {
+      props: ListLayoutCallbacks & { testID?: string; data?: unknown }
+    }
     return?: Fiber
   }
   const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
   let fiber = (node as unknown as Record<string, Fiber>)[key]
   let appProps: ListLayoutCallbacks | undefined
   while (fiber != null) {
+    const props = fiber.stateNode?.props ?? fiber.memoizedProps
     if (
-      fiber.memoizedProps?.testID === 'chat-conversation-list' &&
-      Array.isArray(fiber.memoizedProps.data) &&
-      typeof fiber.memoizedProps.onContentSizeChange === 'function'
+      props?.testID === 'chat-conversation-list' &&
+      Array.isArray(props.data) &&
+      typeof props.onContentSizeChange === 'function'
     )
-      appProps = fiber.memoizedProps
+      appProps = props
     fiber = fiber.return!
   }
   if (appProps != null) return appProps
@@ -2659,5 +2663,371 @@ describe('deep list coherent tail revisions', function () {
     expect(pending.moves.at(-1)).equals(1400)
     await pending.scroll(1400)
     expect(pending.offsets.at(-1)).equals(1400)
+  })
+})
+
+describe('b66 offscreen layout current-anchor schedule', function () {
+  it('recaptures currently visible row coordinates after a same-order prefix and final offscreen layout before navigation', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    let rowY = 270
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="chat-conversation-cnv_return_3"]'
+    )!.parentElement! as HTMLElement & {
+      measureLayout: (
+        relative: unknown,
+        success: (x: number, y: number, width: number, height: number) => void
+      ) => void
+    }
+    row.measureLayout = (_relative, success) => {
+      success(0, rowY, 320, 67)
+    }
+    setListRowMeasurement('cnv_return_7', 1720, 80)
+    await pending.content(1800)
+    await pending.scroll(0)
+    const callbacks = renderedListCallbacks(
+      pending.node
+    ) as ListLayoutCallbacks & {
+      data: Array<{ type: string; key: string; chat?: ConversationListItem }>
+      onViewableItemsChanged: (event: {
+        viewableItems: Array<{
+          item: { type: string; key: string; chat?: ConversationListItem }
+        }>
+      }) => void
+    }
+    await act(async () => {
+      callbacks.onViewableItemsChanged({
+        viewableItems: [
+          { item: callbacks.data.find(item => item.key === 'cnv_return_3')! }
+        ]
+      })
+      pending.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 240 })
+      )
+      await wait(30)
+    })
+    await pending.scroll(240)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    rowY = 334
+    setListRowMeasurement('cnv_return_7', 1784, 80)
+    await act(async () => {
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 131 } }
+      })
+      renderedRowLayout('cnv_return_7')({
+        nativeEvent: { layout: { height: 80 } }
+      })
+      await wait(30)
+    })
+    expect(
+      pending.anchors.at(-1),
+      'The visible row must be recaptured after the final offscreen invalidation'
+    ).deep.equals({ id: 'cnv_return_3', relativeY: 94 })
+    const saved = pending.anchors.at(-1)
+    await pending.hide()
+    expect(
+      pending.anchors.at(-1),
+      'Navigation keeps the actual current viewport anchor'
+    ).deep.equals(saved)
+  })
+})
+
+describe('post-deep saved anchor ownership', function () {
+  for (const intent of ['wheel', 'ArrowUp', 'gutter'])
+    it(`retains the valid boundary anchor after ${intent} intent without movement and restores it after a changed prefix`, async function () {
+      const pending = await returningList(true, 0, {
+        id: 'cnv_return_0',
+        relativeY: 105
+      })
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_0', 105)
+      await pending.content(1800)
+      await act(async () => {
+        await wait(30)
+      })
+      await pending.scroll(0)
+      const saved = pending.anchors.at(-1)
+      expect(saved).deep.equals({ id: 'cnv_return_0', relativeY: 105 })
+      pending.node.getBoundingClientRect = () =>
+        new window.DOMRect(0, 0, 320, 400)
+      Object.defineProperties(pending.node, {
+        clientWidth: { configurable: true, value: 304 },
+        offsetWidth: { configurable: true, value: 320 },
+        offsetHeight: { configurable: true, value: 400 },
+        clientLeft: { configurable: true, value: 0 },
+        clientTop: { configurable: true, value: 0 }
+      })
+      await act(async () => {
+        pending.node.dispatchEvent(
+          intent === 'wheel'
+            ? new window.WheelEvent('wheel', { bubbles: true, deltaY: -80 })
+            : intent === 'ArrowUp'
+              ? new window.KeyboardEvent('keydown', {
+                  bubbles: true,
+                  key: intent
+                })
+              : new window.MouseEvent('mousedown', {
+                  bubbles: true,
+                  button: 0,
+                  clientX: 319,
+                  clientY: 100
+                })
+        )
+        document.dispatchEvent(
+          new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+        )
+        await wait()
+      })
+      expect(pending.node.scrollTop).equals(0)
+      expect(
+        pending.anchors.at(-1),
+        'No new measured reading position replaced this anchor'
+      ).deep.equals(saved)
+      await unmount()
+      const returning = await returningList(true, 0, saved)
+      await returning.populate(8)
+      setListRowMeasurement('cnv_return_0', 169)
+      await returning.content(1800)
+      await act(async () => {
+        await wait(30)
+      })
+      expect(returning.moves.at(-1)).equals(64)
+      expect(169 - returning.node.scrollTop).equals(105)
+    })
+
+  it('continues seeking an unmounted saved row beyond its previous numeric offset', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_299',
+      relativeY: 30
+    })
+    await pending.populate(300)
+    expect(
+      document.querySelector('[data-testid="chat-conversation-cnv_return_299"]')
+    ).equals(null)
+    Object.defineProperties(pending.node, {
+      offsetHeight: { configurable: true, value: 400 },
+      offsetWidth: { configurable: true, value: 320 }
+    })
+    const callbacks = renderedListCallbacks(
+      pending.node
+    ) as ListLayoutCallbacks & {
+      data: Array<{ key: string }>
+      onScrollEndDrag: (event: {
+        nativeEvent: { contentOffset: { y: number } }
+      }) => void
+    }
+    await act(async () => {
+      for (const node of [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid^="chat-conversation-cnv_return_"]'
+        )
+      ].slice(0, 8)) {
+        const id = node
+          .getAttribute('data-testid')!
+          .slice('chat-conversation-'.length)
+        const index = callbacks.data.findIndex(row => row.key === id)
+        const cell = node.parentElement!.parentElement! as HTMLElement & {
+          __reactLayoutHandler?: (event: unknown) => void
+        }
+        expect(
+          cell.__reactLayoutHandler,
+          'Rendered RNW virtual-list cell measurement callback'
+        ).not.equals(undefined)
+        cell.__reactLayoutHandler!({
+          nativeEvent: {
+            layout: { x: 0, y: index * 67 + 105, width: 320, height: 67 }
+          }
+        })
+      }
+      await wait(30)
+    })
+    await pending.content(1200)
+    expect(
+      pending.moves,
+      'Current-index seek advances beyond the old240 window'
+    ).deep.equals([800])
+    await pending.scroll(800)
+    expect(pending.offsets).deep.equals([])
+    await pending.content(2800)
+    expect(pending.moves).deep.equals([800, 2400])
+    await pending.scroll(2400)
+    expect(pending.offsets).deep.equals([])
+    const index = callbacks.data.findIndex(row => row.key === 'cnv_return_299')
+    await pending.content(21000)
+    await pending.scroll(pending.moves.at(-1)!)
+    await act(async () => {
+      const deadline = Date.now() + 3000
+      while (
+        document.querySelector(
+          '[data-testid="chat-conversation-cnv_return_299"]'
+        ) == null &&
+        Date.now() < deadline
+      )
+        await wait(25)
+    })
+    expect(
+      document.querySelector(
+        '[data-testid="chat-conversation-cnv_return_299"]'
+      ),
+      'The seek really mounts the saved row'
+    ).not.equals(null)
+    const y = index * 67 + 105
+    const mountedRow = document.querySelector<HTMLElement>(
+      '[data-testid="chat-conversation-cnv_return_299"]'
+    )!.parentElement!
+    // RNW measures these DOM dimensions through its normal mounted methods;
+    // they remain valid while the virtualizer finishes later render batches.
+    Object.defineProperties(mountedRow, {
+      offsetTop: { configurable: true, value: y },
+      offsetHeight: { configurable: true, value: 67 },
+      offsetWidth: { configurable: true, value: 320 },
+      offsetParent: {
+        configurable: true,
+        value: pending.node.firstElementChild
+      }
+    })
+    await act(async () => {
+      renderedRowLayout('cnv_return_299')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(160)
+    })
+    expect(pending.moves.at(-1)).equals(y - 30)
+    await act(async () => {
+      pending.node.scrollTop = y - 30
+      ;(
+        renderedListCallbacks(pending.node) as typeof callbacks
+      ).onScrollEndDrag({ nativeEvent: { contentOffset: { y: y - 30 } } })
+      await wait(30)
+    })
+    expect(pending.offsets.at(-1)).equals(y - 30)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_299',
+      relativeY: 30
+    })
+  })
+
+  it('remeasures unchanged-height content after a same-ID reorder without requiring another content-size notification', async function () {
+    const pending = await returningList(true, 300, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 330)
+    await pending.content(1800)
+    await act(async () => {
+      await wait(30)
+    })
+    await pending.scroll(300)
+    const content = pending.node.firstElementChild as HTMLElement & {
+      measure: (
+        callback: (
+          x: number,
+          y: number,
+          width: number,
+          height: number,
+          pageX: number,
+          pageY: number
+        ) => void
+      ) => void
+    }
+    const completions: Array<
+      (
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        pageX: number,
+        pageY: number
+      ) => void
+    > = []
+    content.measure = callback => completions.push(callback)
+    await pending.reorder('cnv_return_7')
+    expect(
+      document
+        .querySelector('[data-testid^="chat-conversation-cnv_return_"]')!
+        .getAttribute('data-testid')
+    ).equals('chat-conversation-cnv_return_7')
+    setListRowMeasurement('cnv_return_3', 397)
+    content.measure = measured => {
+      measured(0, 0, 320, 1800, 0, 0)
+    }
+    await act(async () => {
+      renderedRowLayout('cnv_return_3')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      for (const complete of completions) complete(0, 0, 320, 1800, 0, 0)
+      await wait(100)
+    })
+    expect(
+      pending.moves.at(-1),
+      'Reordered geometry restores367 without a content-size event'
+    ).equals(367)
+    await pending.scroll(367)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+  })
+})
+
+describe('post-deep content validation lifetime', function () {
+  it('starts the latest same-height order validation after an older pending measurement without another layout or size event', async function () {
+    const pending = await returningList(true, 300, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 330)
+    await pending.content(1800)
+    await act(async () => {
+      await wait(30)
+    })
+    await pending.scroll(300)
+    const content = pending.node.firstElementChild as HTMLElement & {
+      measure: (
+        callback: (
+          x: number,
+          y: number,
+          width: number,
+          height: number,
+          pageX: number,
+          pageY: number
+        ) => void
+      ) => void
+    }
+    const completions: Array<
+      (
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        pageX: number,
+        pageY: number
+      ) => void
+    > = []
+    content.measure = callback => completions.push(callback)
+    await pending.reorder('cnv_return_7')
+    await pending.reorder('cnv_return_6')
+    setListRowMeasurement('cnv_return_3', 397)
+    content.measure = measured => {
+      measured(0, 0, 320, 1800, 0, 0)
+    }
+    await act(async () => {
+      for (const complete of completions) complete(0, 0, 320, 1800, 0, 0)
+      await wait(150)
+    })
+    expect(
+      pending.moves.at(-1),
+      'Latest order is validated without an unrelated future notification'
+    ).equals(367)
+    await pending.scroll(367)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
   })
 })
