@@ -374,8 +374,10 @@ async function main(): Promise<void> {
     const to = nodes.find(node => node.text === 'Reorder Mookie Betts')?.bounds
     assert(from != null && to != null)
     await m.dragAndDrop({
-      from: { point: `${from.x + from.width / 2},${from.y + from.height / 2}` },
-      to: { point: `${to.x + to.width / 2},${to.y + 6}` },
+      from: {
+        point: `${Math.round(from.x + from.width / 2)},${Math.round(from.y + from.height / 2)}`
+      },
+      to: { point: `${Math.round(to.x + to.width / 2)},${Math.round(to.y + 6)}` },
       holdDuration: 700,
       duration: 1000
     })
