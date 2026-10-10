@@ -16,6 +16,7 @@ import {
   httpOrigin,
   PRIMARY_HOST
 } from '../common/primaryUrl'
+import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
 export const asServerConfig = asObject({
@@ -77,13 +78,24 @@ export const asServerConfig = asObject({
 
   /** DigitalOcean Space holding finished HLS. */
   space: asOptional(
-    asObject({
+    asObject<SpaceSettings>({
       endpoint: asOptional(asString, 'https://sfo3.digitaloceanspaces.com'),
       region: asOptional(asString, 'sfo3'),
       bucket: asOptional(asString, 'media-bucket'),
       accessKeyId: asOptional(asString, ''),
       secretAccessKey: asOptional(asString, ''),
-      pathStyle: asOptional(asBoolean, false)
+      pathStyle: asOptional(asBoolean, false),
+      readOnlySource: asOptional(
+        asObject({
+          endpoint: asString,
+          region: asString,
+          bucket: asString,
+          accessKeyId: asString,
+          secretAccessKey: asString,
+          pathStyle: asOptional(asBoolean, false),
+          keys: asArray(asString)
+        })
+      )
     }),
     {
       endpoint: 'https://sfo3.digitaloceanspaces.com',

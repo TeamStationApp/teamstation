@@ -1,4 +1,4 @@
-import { presignGetUrl } from './presign'
+import { presignGetUrl, type ReadOnlySpaceSource } from './presign'
 
 /**
  * Serving a video that lives in the Space.
@@ -21,6 +21,7 @@ export interface SpaceSettings {
    * host; a stand-in running on localhost has no wildcard DNS and needs this.
    */
   pathStyle?: boolean
+  readOnlySource?: ReadOnlySpaceSource
 }
 
 /** Whether a Space is configured at all. Nothing is attempted without a key. */

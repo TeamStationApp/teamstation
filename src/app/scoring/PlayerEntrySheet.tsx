@@ -15,12 +15,14 @@ import { ScoringError, ScoringSheet } from './ScoringSheet'
 
 export function PlayerEntrySheet({
   onClose,
+  onCancel = onClose,
   onAddPlaceholders,
   onAdd
 }: {
   onClose: () => void
-  onAddPlaceholders?: (count: number) => void
-  onAdd: (draft: PlayerDraft) => void
+  onCancel?: () => void
+  onAddPlaceholders?: (count: number) => void | Promise<void>
+  onAdd: (draft: PlayerDraft) => void | Promise<void>
 }): React.ReactElement {
   const theme = useTheme()
   const [draft, setDraft] = useState(emptyPlayerDraft)
@@ -31,6 +33,8 @@ export function PlayerEntrySheet({
   const last = useRef<React.ComponentRef<typeof TextInput>>(null)
   const jersey = useRef<React.ComponentRef<typeof TextInput>>(null)
   const saving = useRef(false)
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string>()
   const text = {
     fontFamily: theme.regularTextFont,
     color: theme.primaryTextColor,
@@ -51,26 +55,36 @@ export function PlayerEntrySheet({
       first.current?.focus()
     })
   }
-  const add = (another: boolean): void => {
+  const add = async (another: boolean): Promise<void> => {
     if (saving.current) return
     setSubmitted(true)
     if (playerDraftError(draft) != null) return
     saving.current = true
-    onAdd(draft)
-    if (another) {
-      setDraft(emptyPlayerDraft())
-      setSubmitted(false)
-      setScrollReset(previous => previous + 1)
-      saving.current = false
-      focus()
-    } else onClose()
+    setBusy(true)
+    setProblem(undefined)
+    let added = false
+    try {
+      await onAdd(draft)
+      added = true
+      if (another) {
+        setDraft(emptyPlayerDraft())
+        setSubmitted(false)
+        setScrollReset(previous => previous + 1)
+        focus()
+      } else onClose()
+    } catch {
+      setProblem('Unable to add the player. Please try again.')
+    } finally {
+      if (another || !added) saving.current = false
+      setBusy(false)
+    }
   }
   return (
     <ScoringSheet
       title="Create Player"
       textCancel
       scrollReset={scrollReset}
-      onClose={onClose}
+      onClose={onCancel}
       onShow={focus}
     >
       <View style={{ gap: 16 }}>
@@ -224,22 +238,24 @@ export function PlayerEntrySheet({
           </View>
         </View>
         <ScoringError
-          message={submitted ? playerDraftError(draft) : undefined}
+          message={problem ?? (submitted ? playerDraftError(draft) : undefined)}
         />
         <Button
           color={theme.scoringMenuActiveBackground}
           textColor={theme.scoringMenuActiveText}
           accessibilityLabel="Add Player"
           label="Add Player"
+          disabled={busy}
           onPress={() => {
-            add(false)
+            add(false).catch(() => undefined)
           }}
         />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Save and Add Another Player"
+          disabled={busy}
           onPress={() => {
-            add(true)
+            add(true).catch(() => undefined)
           }}
           style={{
             minHeight: 44,
@@ -261,6 +277,7 @@ export function PlayerEntrySheet({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Add Placeholder Players"
+            disabled={busy}
             onPress={() => {
               setPlaceholders(true)
             }}

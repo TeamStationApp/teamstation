@@ -1,7 +1,11 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { presignGetUrl } from './presign'
+import {
+  isReadOnlySourceKey,
+  presignGetUrl,
+  type ReadOnlySpaceSource
+} from './presign'
 
 /**
  * The first test is AWS's own worked example for a presigned GET, from
@@ -82,5 +86,89 @@ describe('presigned Spaces URLs', function () {
     expect(
       signatureOf(presignGetUrl({ ...AWS_EXAMPLE, method: 'POST' }))
     ).does.not.equal(signatureOf(base))
+  })
+})
+
+describe('read-only object source selection', function () {
+  const key = 'videos/demo/video.mp4'
+  const source: ReadOnlySpaceSource = {
+    endpoint: 'https://source.example-ts.test',
+    region: 'source-region',
+    bucket: 'shared-library',
+    accessKeyId: 'READONLYEXAMPLE',
+    secretAccessKey: AWS_EXAMPLE.secretAccessKey,
+    keys: [key, 'images/team/demo/hash-96.png']
+  }
+  const options = { ...AWS_EXAMPLE, key, readOnlySource: source }
+
+  it('selects exact existing reads and preserves date, query and expiry', function () {
+    const query = { response: 'image/png', value: 'a b' }
+    expect(presignGetUrl({ ...options, query, expiresSec: 300 })).equals(
+      presignGetUrl({
+        ...source,
+        key,
+        query,
+        expiresSec: 300,
+        now: AWS_EXAMPLE.now
+      })
+    )
+    expect(isReadOnlySourceKey(options, key)).equals(true)
+    expect(new URL(presignGetUrl(options)).hostname).equals(
+      'shared-library.source.example-ts.test'
+    )
+  })
+
+  for (const method of ['PUT', 'POST', 'DELETE'] as const) {
+    it(`keeps ${method} on the primary writer for a source-owned key`, function () {
+      expect(presignGetUrl({ ...options, method })).equals(
+        presignGetUrl({ ...AWS_EXAMPLE, key, method })
+      )
+    })
+  }
+
+  for (const other of ['videos/demo/new-still.jpg', key + '.extra', '']) {
+    it(`keeps an unlisted or bucket-level read on the primary: ${other === '' ? 'listing' : other}`, function () {
+      expect(presignGetUrl({ ...options, key: other })).equals(
+        presignGetUrl({ ...AWS_EXAMPLE, key: other })
+      )
+    })
+  }
+
+  it('never selects a root listing even when an empty key is configured', function () {
+    const query = { 'list-type': '2', prefix: 'videos/demo/' }
+    expect(
+      presignGetUrl({
+        ...options,
+        key: '',
+        query,
+        readOnlySource: { ...source, keys: [''] }
+      })
+    ).equals(presignGetUrl({ ...AWS_EXAMPLE, key: '', query }))
+  })
+
+  it('handles an empty list and absent source without changing old signatures', function () {
+    expect(
+      presignGetUrl({ ...options, readOnlySource: { ...source, keys: [] } })
+    ).equals(presignGetUrl({ ...AWS_EXAMPLE, key }))
+    expect(isReadOnlySourceKey({}, key)).equals(false)
+  })
+
+  it('uses the source path-style setting independently of the primary', function () {
+    expect(presignGetUrl({ ...options, pathStyle: true })).equals(
+      presignGetUrl({
+        ...source,
+        key,
+        expiresSec: AWS_EXAMPLE.expiresSec,
+        now: AWS_EXAMPLE.now
+      })
+    )
+    expect(
+      new URL(
+        presignGetUrl({
+          ...options,
+          readOnlySource: { ...source, pathStyle: true }
+        })
+      ).pathname
+    ).equals('/shared-library/videos/demo/video.mp4')
   })
 })

@@ -227,7 +227,7 @@ describe('scoring slide-up sheets', function () {
     expect(footer.textContent).includes('Add PlayerSave RostersCancel')
     await click('Set Defense')
     expect(document.body.textContent).includes(
-      'Drag player into defensive position'
+      'Drag player into position. On touch, hold briefly first.'
     )
     expect(
       document.querySelector('[aria-label="Top-down baseball field"]')
@@ -405,7 +405,7 @@ describe('scoring slide-up sheets', function () {
       document
         .querySelector('[aria-label="Save Rosters"]')
         ?.getAttribute('aria-disabled')
-    ).equals('true')
+    ).not.equals('true')
     await drag(
       '[data-roster-target="roster"] [data-roster-player="1"]',
       'defense-P'

@@ -34,6 +34,7 @@ export function imageUrl(
     bucket: space.bucket,
     accessKeyId: space.accessKeyId,
     secretAccessKey: space.secretAccessKey,
+    readOnlySource: space.readOnlySource,
     key: imageKey(pathPrefix, size),
     expiresSec: IMAGE_URL_SECONDS,
     pathStyle: space.pathStyle,
