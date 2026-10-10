@@ -1,5 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
+import { unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
 import { hashToken, makeToken } from './tokens'
@@ -37,24 +38,37 @@ export async function createSession(
   userAgent: string | undefined,
   options: SessionOptions = {}
 ): Promise<NewSession> {
-  const token = makeToken()
-  const sessionId = makeId('authSession')
-  const days = options.days ?? SESSION_DAYS
-  const expiresAt = new Date(Date.now() + days * 24 * 3600 * 1000)
+  const write = async (source: Kysely<Database>): Promise<NewSession> => {
+    const user = await source
+      .selectFrom('users')
+      .select(['disabled_at', 'merged_into'])
+      .where('id', '=', userId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (user == null || user.disabled_at != null || user.merged_into != null)
+      throw unauthorized('This account cannot sign in')
+    const token = makeToken()
+    const sessionId = makeId('authSession')
+    const days = options.days ?? SESSION_DAYS
+    const expiresAt = new Date(Date.now() + days * 24 * 3600 * 1000)
 
-  await db
-    .insertInto('auth_sessions')
-    .values({
-      id: sessionId,
-      user_id: userId,
-      token_hash: hashToken(token),
-      user_agent: userAgent ?? null,
-      device_name: options.deviceName ?? null,
-      expires_at: expiresAt
-    })
-    .execute()
+    await source
+      .insertInto('auth_sessions')
+      .values({
+        id: sessionId,
+        user_id: userId,
+        token_hash: hashToken(token),
+        user_agent: userAgent ?? null,
+        device_name: options.deviceName ?? null,
+        expires_at: expiresAt
+      })
+      .execute()
 
-  return { token, sessionId, expiresAt }
+    return { token, sessionId, expiresAt }
+  }
+  return db.isTransaction
+    ? await write(db)
+    : await db.transaction().execute(write)
 }
 
 /**
@@ -68,10 +82,14 @@ export async function createSession(
  * merges revoked anything, and for one closed by hand. Every client already
  * treats a refused token as "signed out, sign in again", and signing in again
  * with either account's address lands on the account that was kept.
+ *
+ * Repeated delivery checks may omit the last-used write so validation remains
+ * read-only inside a transaction holding the current game.
  */
 export async function actorForToken(
   db: Kysely<Database>,
-  token: string
+  token: string,
+  options: { recordUse?: boolean } = {}
 ): Promise<Actor | undefined> {
   const tokenHash = hashToken(token)
   const now = new Date()
@@ -85,20 +103,23 @@ export async function actorForToken(
       'auth_sessions.expires_at as expiresAt',
       'auth_sessions.revoked_at as revokedAt',
       'users.is_admin as isAdmin',
+      'users.disabled_at as disabledAt',
       'users.merged_into as mergedInto'
     ])
     .where('auth_sessions.token_hash', '=', tokenHash)
     .executeTakeFirst()
 
   if (session != null) {
+    if (session.disabledAt != null || session.mergedInto != null)
+      return undefined
     if (session.revokedAt != null) return undefined
-    if (session.mergedInto != null) return undefined
     if (new Date(session.expiresAt).getTime() <= now.getTime()) return undefined
-    await db
-      .updateTable('auth_sessions')
-      .set({ last_used_at: now })
-      .where('id', '=', session.sessionId)
-      .execute()
+    if (options.recordUse !== false)
+      await db
+        .updateTable('auth_sessions')
+        .set({ last_used_at: now })
+        .where('id', '=', session.sessionId)
+        .execute()
     return {
       userId: session.userId,
       isAdmin: session.isAdmin,
@@ -117,14 +138,16 @@ export async function actorForToken(
       'api_tokens.expires_at as expiresAt',
       'api_tokens.revoked_at as revokedAt',
       'users.is_admin as isAdmin',
+      'users.disabled_at as disabledAt',
       'users.merged_into as mergedInto'
     ])
     .where('api_tokens.token_hash', '=', tokenHash)
     .executeTakeFirst()
 
   if (apiToken == null) return undefined
+  if (apiToken.disabledAt != null || apiToken.mergedInto != null)
+    return undefined
   if (apiToken.revokedAt != null) return undefined
-  if (apiToken.mergedInto != null) return undefined
   if (
     apiToken.expiresAt != null &&
     new Date(apiToken.expiresAt).getTime() <= now.getTime()
@@ -132,11 +155,12 @@ export async function actorForToken(
     return undefined
   }
 
-  await db
-    .updateTable('api_tokens')
-    .set({ last_used_at: now })
-    .where('id', '=', apiToken.tokenId)
-    .execute()
+  if (options.recordUse !== false)
+    await db
+      .updateTable('api_tokens')
+      .set({ last_used_at: now })
+      .where('id', '=', apiToken.tokenId)
+      .execute()
 
   return {
     userId: apiToken.userId,

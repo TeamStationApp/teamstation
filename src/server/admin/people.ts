@@ -1,8 +1,11 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
+import { conflict } from '../../common/errors'
+import type { GroupRef } from '../../common/groupCreation'
 import { signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
 
 /**
  * Every row that is one person.
@@ -148,9 +151,118 @@ export async function closeInto(
   const nothing: Merge = { closed: false, moved: 0 }
   if (closing === keeping) return nothing
   const merge = async (trx: Transaction<Database>): Promise<Merge> => {
-    await lockKeys(trx, [MERGE_LOCK])
+    await lockKeys(trx, [
+      'creation:parent-graph',
+      'node:administration',
+      MERGE_LOCK
+    ])
     if (await closedInto(trx, keeping, closing)) return nothing
-    return { closed: true, moved: await moveAndClose(trx, closing, keeping) }
+    const user = await trx
+      .selectFrom('users')
+      .select(['login_enabled', 'disabled_at', 'merged_into', 'is_admin'])
+      .where('id', '=', closing)
+      .executeTakeFirst()
+    const active =
+      user?.login_enabled === true &&
+      user.disabled_at == null &&
+      user.merged_into == null
+    const roles = active
+      ? await trx
+          .selectFrom('scope_roles')
+          .select(['scope_type', 'scope_id'])
+          .where('user_id', '=', closing)
+          .where('role', '=', 'admin')
+          .execute()
+      : []
+    const owners = active
+      ? await trx
+          .selectFrom('memberships')
+          .select('team_id')
+          .where('user_id', '=', closing)
+          .where('role', 'in', ['owner', 'manager'])
+          .execute()
+      : []
+    const refs: GroupRef[] = [
+      ...roles.map(row => ({ kind: row.scope_type, id: row.scope_id })),
+      ...owners.map(row => ({ kind: 'team' as const, id: row.team_id }))
+    ]
+    const target = await trx
+      .selectFrom('users')
+      .select(['login_enabled', 'disabled_at', 'merged_into'])
+      .where('id', '=', keeping)
+      .executeTakeFirst()
+    const targetActive =
+      target?.login_enabled === true &&
+      target.disabled_at == null &&
+      target.merged_into == null
+    // Refuse before writing so callers may safely catch a refusal inside an
+    // existing read-committed transaction without committing an orphaned group.
+    for (const ref of refs) {
+      if (
+        ref.kind === 'team' &&
+        (
+          await trx
+            .selectFrom('teams')
+            .select('kind')
+            .where('id', '=', ref.id)
+            .executeTakeFirst()
+        )?.kind === 'external'
+      )
+        continue
+      if ((await directAdminIds(trx, ref)).some(id => id !== closing)) continue
+      const retainedOwner =
+        targetActive &&
+        ref.kind === 'team' &&
+        owners.some(row => row.team_id === ref.id) &&
+        (await trx
+          .selectFrom('memberships')
+          .select('id')
+          .where('user_id', '=', keeping)
+          .where('team_id', '=', ref.id)
+          .executeTakeFirst()) == null
+      if (!retainedOwner)
+        throw conflict(
+          'Add another active direct administrator before merging the last one'
+        )
+    }
+    if (
+      active &&
+      user.is_admin &&
+      (
+        await trx
+          .selectFrom('users')
+          .select('id')
+          .where('is_admin', '=', true)
+          .where('login_enabled', '=', true)
+          .where('disabled_at', 'is', null)
+          .where('merged_into', 'is', null)
+          .where('id', '!=', closing)
+          .execute()
+      ).length === 0
+    )
+      throw conflict(
+        'Add another active node administrator before merging the last one'
+      )
+    const moved = await moveAndClose(trx, closing, keeping)
+    for (const ref of refs) await requireDirectAdmin(trx, ref)
+    if (
+      active &&
+      user.is_admin &&
+      (
+        await trx
+          .selectFrom('users')
+          .select('id')
+          .where('is_admin', '=', true)
+          .where('login_enabled', '=', true)
+          .where('disabled_at', 'is', null)
+          .where('merged_into', 'is', null)
+          .execute()
+      ).length === 0
+    )
+      throw conflict(
+        'Add another active node administrator before merging the last one'
+      )
+    return { closed: true, moved }
   }
   if (!db.isTransaction) return await db.transaction().execute(merge)
 
