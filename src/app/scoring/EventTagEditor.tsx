@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, TextInput, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import {
   normalizeTag,
@@ -8,6 +8,8 @@ import {
 } from '../../common/eventTags'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
+import { useScoringSheetTheme } from './scoringSheetTheme'
+import { ScoringTextInput } from './ScoringTextInput'
 
 export function TagPill({
   tag,
@@ -20,7 +22,7 @@ export function TagPill({
   const content = (
     <Text
       style={{
-        color: theme.primaryTextColor,
+        color: theme.pillTextColor,
         fontFamily: theme.regularTextFont,
         fontSize: 14
       }}
@@ -31,7 +33,10 @@ export function TagPill({
   const style = {
     borderWidth: 1,
     borderColor: theme.defaultBorderColor,
-    borderRadius: 6,
+    borderRadius: theme.radiusPill,
+    backgroundColor: theme.pillBackground,
+    minHeight: onPress == null ? undefined : 44,
+    justifyContent: 'center' as const,
     paddingHorizontal: 9,
     paddingVertical: 6,
     maxWidth: '100%' as const,
@@ -62,7 +67,7 @@ export function EventTagEditor({
   saveTag: (tag: string | null) => Promise<void>
   onClose: () => void
 }): React.ReactElement {
-  const theme = useTheme()
+  const theme = useScoringSheetTheme()
   const [input, setInput] = useState(target.tag ?? '')
   const [choices, setChoices] = useState<TagChoices>({
     recent: [],
@@ -153,7 +158,7 @@ export function EventTagEditor({
         >
           New tag · One or two words
         </Text>
-        <TextInput
+        <ScoringTextInput
           accessibilityLabel="New tag"
           value={input}
           onChangeText={setInput}
@@ -165,21 +170,11 @@ export function EventTagEditor({
           onSubmitEditing={() => {
             save(input).catch(() => undefined)
           }}
-          style={{
-            color: theme.primaryTextColor,
-            fontFamily: theme.regularTextFont,
-            fontSize: 16,
-            borderWidth: 1,
-            borderColor: theme.defaultBorderColor,
-            borderRadius: 8,
-            padding: 12,
-            minHeight: 44
-          }}
         />
         {error != null && (
           <Text
             accessibilityRole="alert"
-            style={{ color: theme.primaryTextColor, fontSize: 14 }}
+            style={{ color: theme.dangerColor, fontSize: 14 }}
           >
             {error}
           </Text>

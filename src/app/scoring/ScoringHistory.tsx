@@ -14,22 +14,27 @@ import { useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
 
 export function PencilBox(): React.ReactElement {
+  const { scoringSurface: surface } = useTheme()
   return (
     <View
       style={{
         width: 20,
         height: 20,
         borderRadius: 4,
-        backgroundColor: '#273a30',
+        backgroundColor: surface.input,
         borderWidth: 1,
-        borderColor: '#176448',
+        borderColor: surface.border,
         alignItems: 'center',
         justifyContent: 'center'
       }}
     >
       <Text
         allowFontScaling={false}
-        style={{ color: '#fbbf24', fontSize: 16, lineHeight: 19 }}
+        style={{
+          color: surface.badges.amber.text,
+          fontSize: 16,
+          lineHeight: 19
+        }}
       >
         ✎
       </Text>
@@ -59,6 +64,8 @@ export function HistoryPopup({
   onSelect: (target: TagTarget) => void
   onClose: () => void
 }): React.ReactElement {
+  const theme = useTheme()
+  const surface = theme.scoringSurface
   const newest = rows.at(-1)
   const overlayRef = useRef<React.ComponentRef<typeof View>>(null)
   // Fixed web modals may start at a different safe viewport origin.
@@ -117,7 +124,7 @@ export function HistoryPopup({
           style={{
             position: 'absolute',
             inset: 0,
-            backgroundColor: '#00000033'
+            backgroundColor: theme.overlayBackgroundColor
           }}
         />
         <View
@@ -150,21 +157,25 @@ export function HistoryPopup({
                 padding: 8,
                 borderRadius: 8,
                 borderWidth: 1,
-                borderColor: '#176448',
-                backgroundColor: '#172b23'
+                borderColor: surface.border,
+                backgroundColor: surface.idle
               }}
             >
               <PencilBox />
               <View pointerEvents="none" style={{ flex: 1, minWidth: 0 }}>
                 <Text
                   numberOfLines={1}
-                  style={{ color: '#ffffff', fontSize: 12, fontWeight: '900' }}
+                  style={{
+                    color: surface.text,
+                    fontSize: 12,
+                    fontWeight: '900'
+                  }}
                 >
                   {latest?.primary ?? newest.title}
                 </Text>
                 <Text
                   numberOfLines={1}
-                  style={{ color: '#cbd5e1', fontSize: 9 }}
+                  style={{ color: surface.secondaryText, fontSize: 9 }}
                 >
                   {newest.tag ?? latest?.secondary ?? ''}
                 </Text>
@@ -188,6 +199,7 @@ export function ScoringHistory({
   maxHeight?: number
 }): React.ReactElement {
   const theme = useTheme()
+  const surface = theme.scoringSurface
   const [headingHeight, setHeadingHeight] = useState(32)
   const rise = useRef(new Animated.Value(0)).current
   useEffect(() => {
@@ -207,8 +219,8 @@ export function ScoringHistory({
         right: 0,
         marginBottom: 4,
         borderRadius: 8,
-        backgroundColor: '#172b23',
-        borderColor: '#176448',
+        backgroundColor: surface.idle,
+        borderColor: surface.border,
         borderWidth: 1,
         opacity: rise,
         transform: [
@@ -227,7 +239,7 @@ export function ScoringHistory({
             setHeadingHeight(event.nativeEvent.layout.height)
         }}
         style={{
-          color: '#ffffff',
+          color: surface.text,
           fontFamily: theme.regularTextFont,
           fontSize: 12,
           padding: 8
@@ -259,7 +271,7 @@ export function ScoringHistory({
               gap: 8,
               padding: 8,
               minHeight: 44,
-              borderTopColor: '#ffffff1a',
+              borderTopColor: surface.divider,
               borderTopWidth: 1
             }}
           >
@@ -268,7 +280,7 @@ export function ScoringHistory({
               <Text
                 numberOfLines={1}
                 style={{
-                  color: '#ffffff',
+                  color: surface.text,
                   fontFamily: theme.regularTextFont,
                   fontSize: 12,
                   fontWeight: '700'
@@ -279,7 +291,7 @@ export function ScoringHistory({
               {target.tag != null && (
                 <Text
                   numberOfLines={1}
-                  style={{ color: '#fbbf24', fontSize: 11 }}
+                  style={{ color: surface.badges.amber.text, fontSize: 11 }}
                 >
                   {target.tag}
                 </Text>
