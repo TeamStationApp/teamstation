@@ -14,6 +14,7 @@ import {
   Pressable,
   SafeAreaView as WebSafeAreaView,
   ScrollView,
+  StatusBar,
   Text,
   View
 } from 'react-native'
@@ -23,9 +24,9 @@ import {
   SafeAreaView
 } from 'react-native-safe-area-context'
 
-import { useTheme } from '../theme/ThemeContext'
+import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
-import { SCORING_MENU } from './ScoringMenuAppearance'
+import { useScoringSheetTheme } from './scoringSheetTheme'
 
 export function ScoringButton({
   label,
@@ -53,6 +54,7 @@ export function ScoringButton({
   submenu?: boolean
 }): React.ReactElement {
   const theme = useTheme()
+  const pill = shape != null || theme.scoringSheet === true
   const [active, setActive] = useState(false)
   return (
     <Pressable
@@ -86,12 +88,11 @@ export function ScoringButton({
         minHeight: decision ? 66 : 44,
         padding: 10,
         justifyContent: 'center',
-        borderRadius:
-          shape != null
-            ? theme.radiusPill
-            : row
-              ? 0
-              : theme.rem(theme.radiusRem),
+        borderRadius: pill
+          ? theme.radiusPill
+          : row
+            ? 0
+            : theme.rem(theme.radiusRem),
         width: shape === 'circle' ? 44 : undefined,
         borderBottomWidth: row ? 1 : 0,
         borderBottomColor: theme.defaultBorderColor,
@@ -155,7 +156,18 @@ export function swipeCloses(dy: number, vy: number): boolean {
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- Web implementation uses CSS env() and avoids measuring a sliding portal. Native uses safe-area-context.
 const SheetArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
 
-export function ScoringSheet({
+export function ScoringSheet(
+  props: React.ComponentProps<typeof SheetContent>
+): React.ReactElement {
+  const theme = useScoringSheetTheme()
+  return (
+    <ScopedThemeProvider theme={theme}>
+      <SheetContent {...props} />
+    </ScopedThemeProvider>
+  )
+}
+
+function SheetContent({
   compact = false,
   placement = 'bottom',
   title,
@@ -164,7 +176,7 @@ export function ScoringSheet({
   fullScreen = false,
   tall = false,
   height,
-  appearance,
+  appearance = 'scoring',
   done = false,
   swipeToDismiss = false,
   scroll = true,
@@ -251,6 +263,7 @@ export function ScoringSheet({
       onShow={onShow}
       onRequestClose={onClose}
     >
+      {(fullScreen || tall) && <StatusBar barStyle="light-content" />}
       <SafeAreaProvider
         initialMetrics={
           initialWindowMetrics ?? {
@@ -302,10 +315,10 @@ export function ScoringSheet({
                 height,
                 marginTop: tall ? 8 : undefined,
                 backgroundColor: scoring
-                  ? SCORING_MENU.background
+                  ? theme.scoringSurface.background
                   : theme.backgroundColor,
                 borderWidth: scoring ? 1 : undefined,
-                borderColor: scoring ? SCORING_MENU.border : undefined,
+                borderColor: scoring ? theme.scoringSurface.border : undefined,
                 borderTopLeftRadius: fullScreen
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
@@ -349,7 +362,7 @@ export function ScoringSheet({
                         fontFamily: theme.boldTextFont,
                         fontSize: compact ? 18 : 22,
                         color: scoring
-                          ? SCORING_MENU.text
+                          ? theme.scoringSurface.text
                           : theme.primaryTextColor,
                         flex: 1
                       }}
@@ -370,7 +383,7 @@ export function ScoringSheet({
                         <Text
                           style={{
                             fontFamily: theme.semiBoldTextFont,
-                            color: scoring ? '#f87171' : theme.dangerColor
+                            color: theme.dangerColor
                           }}
                         >
                           Cancel

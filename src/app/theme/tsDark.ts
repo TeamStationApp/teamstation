@@ -1,4 +1,5 @@
 import { fonts } from './fonts'
+import { scoringSurface } from './scoringSurface'
 import type { Theme } from './types'
 
 /**
@@ -49,6 +50,7 @@ const BASE_REM = 16
 const rem = (size: number): number => Math.round(BASE_REM * size)
 
 export const tsDark: Theme = {
+  scoringSurface,
   rem,
   isDark: true,
 
