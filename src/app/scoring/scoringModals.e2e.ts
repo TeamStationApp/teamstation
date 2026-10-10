@@ -428,12 +428,22 @@ async function main(): Promise<void> {
   const placeRunner = async (): Promise<void> => {
     await tap('More')
     await tap('Place a Runner (Tiebreaker)')
-    await tap('Placed runner')
-    await tap('Choose Placed runner Mike Trout')
-    await tap('Destination base')
-    await tap('Choose Destination base First')
-    await tap('Place Runner')
-    await shown('Undo Place a Runner')
+    if (baseline) {
+      await tap('Placed runner')
+      await tap('Choose Placed runner Mike Trout')
+      await tap('Destination base')
+      await tap('Choose Destination base First')
+      await tap('Place Runner')
+    } else {
+      await tap('Place runner on base')
+      await tap('Place runner on 1B')
+      await shown('Select Runner for 1B')
+      await tap('Select runner #2 Mike Trout')
+      await tap('Cancel')
+    }
+    await shown(
+      baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
+    )
     await new Promise(resolve => setTimeout(resolve, 4000))
   }
   const advancedSheets = async (): Promise<void> => {
@@ -610,7 +620,9 @@ async function main(): Promise<void> {
     ) {
       if (process.env.SCORING_MODAL_SECTION !== 'picker') {
         await placeRunner()
-        await tap('Undo Place a Runner')
+        await tap(
+          baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
+        )
         await menu('Overrides')
         await input('inning', '0')
         await finishKeyboard()
@@ -762,7 +774,7 @@ async function main(): Promise<void> {
     ) {
       await tap('More')
       await tap('Place a Runner (Tiebreaker)')
-      await shown('^Placed runner$')
+      await shown(baseline ? '^Placed runner$' : '^Place runner on base$')
       await capture('tiebreaker')
       await tap('Cancel')
       for (const [label, state] of [

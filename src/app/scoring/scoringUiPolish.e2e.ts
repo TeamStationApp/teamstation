@@ -592,11 +592,14 @@ async function main(): Promise<void> {
     await tap('Select runner #9 Bobby Witt')
     await shown('Place runner on base')
     await saved(state => baseIds(state).filter(id => id != null).length === 1)
+    await shown('Undo Place Bobby Witt on 2B')
+    await shown('Bobby W. placed on 2B')
     const first = baseIds(snapshot()!)[1]
     assert(first != null)
     const unchanged = snapshot()!
     await tap('Set Outs 1')
     await saved(state => state.liveData.linescore.outs === 1)
+    await shown('Set outs to 1')
     const beforeActions = recordOf(fixture.stored().currentPlay)!.actions.length
     const nodes = flat(await m.hierarchy())
     const from = nodes.filter(node => node.text === 'Set Outs 1').at(-1)?.bounds
@@ -613,6 +616,7 @@ async function main(): Promise<void> {
       duration: 800
     })
     await saved(state => state.liveData.linescore.outs === 2)
+    await shown('Set outs to 2')
     assert.equal(
       recordOf(fixture.stored().currentPlay)!.actions.length,
       beforeActions + 1,
@@ -636,6 +640,7 @@ async function main(): Promise<void> {
     assert(second != null)
     const persisted = JSON.stringify(fixture.stored())
     await open(false, game)
+    await shown('Juan S. placed on 3B')
     await tap('More')
     await tap('Place a Runner (Tiebreaker)')
     await shown('Set Outs 2')
@@ -645,11 +650,11 @@ async function main(): Promise<void> {
       persisted,
       'Reopening must preserve saved setup'
     )
-    for (const [outs, expected] of [
-      [2, [null, first, null]],
-      [1, [null, first, null]],
-      [0, [null, first, null]],
-      [0, [null, null, null]]
+    for (const [outs, expected, detail] of [
+      [2, [null, first, null], 'Set outs to 2'],
+      [1, [null, first, null], 'Set outs to 1'],
+      [0, [null, first, null], 'Bobby W. placed on 2B'],
+      [0, [null, null, null], undefined]
     ] as const) {
       await undo()
       await saved(
@@ -657,6 +662,7 @@ async function main(): Promise<void> {
           state.liveData.linescore.outs === outs &&
           JSON.stringify(baseIds(state)) === JSON.stringify(expected)
       )
+      if (detail != null) await shown(detail)
     }
     await tap('Ball')
     await saved(state => state.liveData.linescore.balls === 1)

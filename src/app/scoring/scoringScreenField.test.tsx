@@ -10,7 +10,7 @@ import {
 } from '../../common/api'
 import { tagTargets } from '../../common/eventTags'
 import type { ScoringAction } from '../../common/scoring/actions'
-import { baseIds, freshGame } from '../../common/scoring/rules'
+import { baseIds, freshGame, overrideOf } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { F } from '../../test/scoringGames'
@@ -187,6 +187,44 @@ async function mount(
 }
 
 describe('scoring screen field wiring', function () {
+  for (const change of ['runner', 'outs'] as const)
+    it(`keeps the ${change} setup description after persistence and reopening`, async () => {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      const store = memoryStore()
+      const original = ScoringSession.start(store, 'g1', initial, {
+        requireCurrentSetup: true
+      })
+      original.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 9,
+        base: '2B'
+      })
+      if (change === 'outs')
+        original.apply({
+          type: 'gameFlow',
+          kind: 'override',
+          ...overrideOf(original.state),
+          batter: overrideOf(original.state).batter ?? undefined,
+          pitcher: overrideOf(original.state).pitcher ?? undefined,
+          outs: 2
+        })
+      await original.flush()
+      const live = await ScoringSession.open(
+        store,
+        'g1',
+        {
+          gamePk: 'g1',
+          teams: initial.gameData.teams,
+          setup: setupOf(initial)
+        },
+        { requireCurrentSetup: true }
+      )
+      await mount({ persistent: true, open: async () => live })
+      expect(props().historyDetail?.primary).equals(
+        change === 'runner' ? 'Player 9. placed on 2B' : 'Set outs to 2'
+      )
+    })
   it('places runners through projected bases, preserves outs setup and unwinds each change with normal Undo', async () => {
     const initial = createDevelopmentSession(gameFixture, [], [])
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
@@ -253,10 +291,14 @@ describe('scoring screen field wiring', function () {
       )
     )
     await press('Select runner #9 Player 9')
+    expect(props().historyLabel).equals('Place Player 9 on 2B')
+    expect(props().historyDetail?.primary).equals('Player 9. placed on 2B')
     expect(baseIds(live.state)).deep.equals([null, 9, null])
     expect(document.body.textContent).includes('Place runner on base')
     await press('Set Outs 1')
     await press('Set Outs 2')
+    expect(props().historyLabel).equals('Set Outs')
+    expect(props().historyDetail?.primary).equals('Set outs to 2')
     expect(live.state.liveData.linescore.outs).equals(2)
     expect(baseIds(live.state)).deep.equals([null, 9, null])
     expect(live.state.liveData.boxscore).deep.equals(initial.liveData.boxscore)
