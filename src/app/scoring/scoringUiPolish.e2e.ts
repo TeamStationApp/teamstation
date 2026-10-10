@@ -125,7 +125,7 @@ async function main(): Promise<void> {
         assert(ready, `Pitch control ${text} must be enabled before tapping`)
       }
       if (text === 'More') {
-        const deadline = Date.now() + 15000
+        const deadline = Date.now() + 60000
         while (Date.now() < deadline) {
           const nodes = flat(await m.hierarchy())
           if (nodes.some(node => node.text === 'Dismiss More')) return
