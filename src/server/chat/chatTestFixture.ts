@@ -11,7 +11,10 @@ import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
-import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  dropScratchDatabase,
+  testDatabaseUrl
+} from '../../migrate/testDatabase'
 import { addEmail } from '../auth/emails'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
@@ -246,7 +249,7 @@ export async function openChatFixture(
       server.close()
       await db.destroy()
       await rm(uploadsDir, { recursive: true, force: true })
-      await adminPool.query(`drop database if exists ${name} with (force)`)
+      await dropScratchDatabase(adminPool, name)
       await adminPool.end()
     }
   }

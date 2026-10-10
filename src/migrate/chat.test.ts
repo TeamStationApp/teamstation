@@ -6,7 +6,7 @@ import { migrations } from './migrations'
 import { migration052Chat } from './migrations/052chat'
 import { migrateDown, migrateUp } from './runner'
 import { schemaSnapshot } from './schemaSnapshot'
-import { testDatabaseUrl } from './testDatabase'
+import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
 /**
  * U4: 052 over a database that already has teams, seasons and leagues, then
@@ -139,7 +139,7 @@ describe('052: chat tables and the dirty-scope triggers', function () {
     if (listener != null) await listener.end()
     if (pool != null) await pool.end()
     if (admin != null) {
-      await admin.query(`drop database if exists ${name} with (force)`)
+      await dropScratchDatabase(admin, name)
       await admin.end()
     }
   })
@@ -643,7 +643,7 @@ describe('052: chat tables and the dirty-scope triggers', function () {
         expect(down).deep.equals(await schemaSnapshot(fresh))
       } finally {
         await fresh.end()
-        await admin!.query(`drop database if exists ${scratch} with (force)`)
+        await dropScratchDatabase(admin!, scratch)
       }
 
       await sql(`delete from teams where id = 'tem_b'`)
