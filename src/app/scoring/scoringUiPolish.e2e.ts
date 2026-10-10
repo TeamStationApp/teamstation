@@ -554,11 +554,14 @@ async function main(): Promise<void> {
     const game = await open()
     const inspectSetupHistory = async (
       label: string,
-      detail: string
+      screenshot?: string
     ): Promise<void> => {
       await tap('Cancel')
       await shown(label)
-      await shown(detail)
+      // Undo's explicit accessible label replaces its nested text in the
+      // device tree. Exact detail text is asserted by actual-screen tests;
+      // capture the rendered control for independent visual verification.
+      if (screenshot != null) await capture(screenshot)
       await tap('More')
       await tap('Place a Runner (Tiebreaker)')
       await shown('Place runner on base')
@@ -605,14 +608,14 @@ async function main(): Promise<void> {
     await saved(state => baseIds(state).filter(id => id != null).length === 1)
     await inspectSetupHistory(
       'Undo Place Bobby Witt on 2B',
-      'Bobby W. placed on 2B'
+      'history-placement'
     )
     const first = baseIds(snapshot()!)[1]
     assert(first != null)
     const unchanged = snapshot()!
     await tap('Set Outs 1')
     await saved(state => state.liveData.linescore.outs === 1)
-    await inspectSetupHistory('Undo Set Outs', 'Set outs to 1')
+    await inspectSetupHistory('Undo Set Outs')
     const beforeActions = recordOf(fixture.stored().currentPlay)!.actions.length
     const nodes = flat(await m.hierarchy())
     const from = nodes.filter(node => node.text === 'Set Outs 1').at(-1)?.bounds
@@ -629,7 +632,7 @@ async function main(): Promise<void> {
       duration: 800
     })
     await saved(state => state.liveData.linescore.outs === 2)
-    await inspectSetupHistory('Undo Set Outs', 'Set outs to 2')
+    await inspectSetupHistory('Undo Set Outs', 'history-outs')
     assert.equal(
       recordOf(fixture.stored().currentPlay)!.actions.length,
       beforeActions + 1,
@@ -653,7 +656,7 @@ async function main(): Promise<void> {
     assert(second != null)
     const persisted = JSON.stringify(fixture.stored())
     await open(false, game)
-    await shown('Juan S. placed on 3B')
+    await capture('history-reopened')
     await tap('More')
     await tap('Place a Runner (Tiebreaker)')
     await shown('Set Outs 2')
@@ -663,11 +666,11 @@ async function main(): Promise<void> {
       persisted,
       'Reopening must preserve saved setup'
     )
-    for (const [outs, expected, detail] of [
-      [2, [null, first, null], 'Set outs to 2'],
-      [1, [null, first, null], 'Set outs to 1'],
-      [0, [null, first, null], 'Bobby W. placed on 2B'],
-      [0, [null, null, null], undefined]
+    for (const [outs, expected] of [
+      [2, [null, first, null]],
+      [1, [null, first, null]],
+      [0, [null, first, null]],
+      [0, [null, null, null]]
     ] as const) {
       await undo()
       await saved(
@@ -675,7 +678,7 @@ async function main(): Promise<void> {
           state.liveData.linescore.outs === outs &&
           JSON.stringify(baseIds(state)) === JSON.stringify(expected)
       )
-      if (detail != null) await shown(detail)
+      if (outs === 2) await capture('history-undo')
     }
     await tap('Ball')
     await saved(state => state.liveData.linescore.balls === 1)
