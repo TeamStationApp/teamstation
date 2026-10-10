@@ -1,7 +1,10 @@
+import { mock } from 'node:test'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import * as ReactNative from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
@@ -2218,41 +2221,60 @@ describe('review4 incremental restoration lifecycle', function () {
 })
 
 function renderedRowLayout(id: string): ListLayoutCallbacks['onLayout'] {
-  const node = document.querySelector<HTMLElement>(
+  const row = document.querySelector<HTMLElement>(
     `[data-testid="chat-conversation-${id}"]`
-  )!
-  interface Fiber {
-    memoizedProps?: {
-      chat?: { id: string }
-      onLayout?: ListLayoutCallbacks['onLayout']
-    }
-    return?: Fiber
+  )!.parentElement! as HTMLElement & {
+    __reactLayoutHandler?: ListLayoutCallbacks['onLayout']
   }
-  const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
-  let fiber = (node as unknown as Record<string, Fiber | undefined>)[key]
-  while (fiber != null) {
-    if (
-      fiber.memoizedProps?.chat?.id === id &&
-      fiber.memoizedProps.onLayout != null
-    )
-      return fiber.memoizedProps.onLayout
-    fiber = fiber.return
-  }
-  throw Error('Rendered app row layout callback unavailable')
+  // The installed RNW adapter updates this host handler on every ref commit.
+  // A DOM node's React fiber may still point to the preceding alternate tree.
+  const callback = row.__reactLayoutHandler
+  if (typeof callback !== 'function')
+    throw Error('Rendered current row layout callback unavailable')
+  return callback
 }
+
+const listMeasurementMethods = new WeakMap<object, unknown>()
 
 function setListRowMeasurement(id: string, y: number, height = 67): void {
   const node = document.querySelector<HTMLElement>(
     `[data-testid="chat-conversation-${id}"]`
-  )!.parentElement! as HTMLElement & {
-    measureLayout: (
-      relative: unknown,
-      success: (x: number, y: number, width: number, height: number) => void
-    ) => void
+  )!.parentElement!
+  const original = listMeasurementMethods.get(node)
+  if (original != null) {
+    Object.defineProperty(node, 'measureLayout', {
+      configurable: true,
+      writable: true,
+      value: original
+    })
+    listMeasurementMethods.delete(node)
   }
-  node.measureLayout = (_relative, success) => {
-    success(0, y, 320, height)
-  }
+  const content = node.closest(
+    '[data-testid="chat-conversation-list"]'
+  )!.firstElementChild
+  // Calibrate DOM geometry read by the installed RNW method. Ref commits can
+  // reattach that method; the row geometry still belongs to this same node.
+  Object.defineProperties(node, {
+    offsetTop: { configurable: true, value: y },
+    offsetHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: 320 },
+    offsetParent: { configurable: true, value: content }
+  })
+}
+
+function holdListRowMeasurement<T>(
+  node: { measureLayout: T },
+  measure: T
+): void {
+  // Only explicit delayed/failing transport schedules use a double. Preserve
+  // that selected callback when RNW reattaches its normal ref method.
+  if (!listMeasurementMethods.has(node))
+    listMeasurementMethods.set(node, node.measureLayout)
+  Object.defineProperty(node, 'measureLayout', {
+    configurable: true,
+    get: () => measure,
+    set: () => {}
+  })
 }
 
 describe('deep list opaque reading anchors', function () {
@@ -2393,7 +2415,9 @@ describe('deep list measurement lifetime', function () {
       const completions: Array<
         (x: number, y: number, width: number, height: number) => void
       > = []
-      node.measureLayout = (_relative, success) => completions.push(success)
+      holdListRowMeasurement(node, (_relative, success) =>
+        completions.push(success)
+      )
       await pending.content(1800)
       const retained = renderedListCallbacks(pending.node)
       const oldRow = renderedRowLayout('cnv_return_3')
@@ -2467,7 +2491,9 @@ describe('deep list delayed geometry freshness', function () {
     const completions: Array<
       (x: number, y: number, width: number, height: number) => void
     > = []
-    node.measureLayout = (_relative, success) => completions.push(success)
+    holdListRowMeasurement(node, (_relative, success) =>
+      completions.push(success)
+    )
     await pending.content(1864)
     await pending.scroll(240)
     expect(
@@ -2507,12 +2533,12 @@ describe('deep list delayed geometry freshness', function () {
         ) => void
       }
       let calls = 0
-      node.measureLayout = (_relative, success, failure) => {
+      holdListRowMeasurement(node, (_relative, success, failure) => {
         calls += 1
         if (calls === 1) {
           if (first === 'failure') failure()
         } else success(0, 206, 320, 67)
-      }
+      })
       await pending.content(1800)
       await act(async () => {
         await wait(200)
@@ -2544,9 +2570,9 @@ describe('deep list anchor fallback and overlapping measurements', function () {
         failure: () => void
       ) => void
     }
-    node.measureLayout = (_relative, _success, failure) => {
+    holdListRowMeasurement(node, (_relative, _success, failure) => {
       failure()
-    }
+    })
     await pending.content(1800)
     await act(async () => {
       await wait(2100)
@@ -2581,7 +2607,9 @@ describe('deep list anchor fallback and overlapping measurements', function () {
     const completions: Array<
       (x: number, y: number, width: number, height: number) => void
     > = []
-    node.measureLayout = (_relative, success) => completions.push(success)
+    holdListRowMeasurement(node, (_relative, success) =>
+      completions.push(success)
+    )
     await pending.content(1800)
     expect(
       completions.length,
@@ -2634,7 +2662,9 @@ describe('deep list coherent tail revisions', function () {
     const completions: Array<
       (x: number, y: number, width: number, height: number) => void
     > = []
-    tail.measureLayout = (_relative, success) => completions.push(success)
+    holdListRowMeasurement(tail, (_relative, success) =>
+      completions.push(success)
+    )
     await act(async () => {
       renderedRowLayout('cnv_return_0')({
         nativeEvent: { layout: { height: 67 } }
@@ -2679,9 +2709,9 @@ describe('b66 offscreen layout current-anchor schedule', function () {
         success: (x: number, y: number, width: number, height: number) => void
       ) => void
     }
-    row.measureLayout = (_relative, success) => {
+    holdListRowMeasurement(row, (_relative, success) => {
       success(0, rowY, 320, 67)
-    }
+    })
     setListRowMeasurement('cnv_return_7', 1720, 80)
     await pending.content(1800)
     await pending.scroll(0)
@@ -3047,7 +3077,9 @@ describe('post-deep review2 current geometry persistence', function () {
         success: (x: number, y: number, width: number, height: number) => void
       ) => void
     }
-    row.measureLayout = (_relative, success) => completions.push(success)
+    holdListRowMeasurement(row, (_relative, success) =>
+      completions.push(success)
+    )
     await pending.content(500)
     expect(pending.moves).deep.equals([100])
     await act(async () => {
@@ -3068,9 +3100,9 @@ describe('post-deep review2 current geometry persistence', function () {
         'A real mounted tail measurement is pending'
       ).greaterThan(0)
       for (const complete of completions.splice(0)) complete(0, 420, 320, 80)
-      row.measureLayout = (_relative, success) => {
+      holdListRowMeasurement(row, (_relative, success) => {
         success(0, 420, 320, 80)
-      }
+      })
       await wait(80)
     })
     expect(
@@ -3257,5 +3289,135 @@ describe('post-deep review2 current geometry persistence', function () {
     })
     expect(state.drafts.get('cnv_aurora')).equals(saved)
     expect(reading.moves).deep.equals([])
+  })
+})
+
+describe('review3 browser virtual fill scheduling', function () {
+  it('fills its saved reader after the current interaction finishes without another batching delay', async function () {
+    // The installed adapter exposes this public API; the app's compatibility
+    // declaration intentionally lists only its ordinary component surface.
+    const { InteractionManager } = ReactNative as unknown as {
+      InteractionManager: {
+        createInteractionHandle: () => number
+        clearInteractionHandle: (id: number) => void
+        runAfterInteractions: (task: () => void) => unknown
+      }
+    }
+    const pending = await returningList(true, 6000, {
+      id: 'cnv_return_99',
+      relativeY: 30
+    })
+    await pending.populate(300)
+    Object.defineProperties(pending.node, {
+      offsetHeight: { configurable: true, value: 400 },
+      offsetWidth: { configurable: true, value: 320 }
+    })
+    expect(
+      document.querySelector('[data-testid="chat-conversation-cnv_return_99"]')
+    ).equals(null)
+    // Drain earlier real-clock work before taking ownership of this clock.
+    await act(async () => {
+      await new Promise<void>(resolve => {
+        InteractionManager.runAfterInteractions(resolve)
+      })
+    })
+    mock.timers.enable({ apis: ['setTimeout'] })
+    const handle = InteractionManager.createInteractionHandle()
+    try {
+      await act(async () => {
+        pending.setDomContent(9000)
+        ;(
+          pending.node.firstElementChild as HTMLElement & {
+            __reactLayoutHandler: (event: unknown) => void
+          }
+        ).__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 9000 } }
+        })
+        pending.node.dispatchEvent(
+          new window.Event('scroll', { bubbles: true })
+        )
+        mock.timers.tick(1)
+      })
+      expect(
+        document.querySelector(
+          '[data-testid="chat-conversation-cnv_return_99"]'
+        )
+      ).equals(null)
+      await act(async () => {
+        InteractionManager.clearInteractionHandle(handle)
+        mock.timers.tick(1)
+      })
+      const mounted = document.querySelector<HTMLElement>(
+        '[data-testid="chat-conversation-cnv_return_99"]'
+      )
+      expect(
+        mounted,
+        'The saved reader is mounted when its interaction releases'
+      ).not.equals(null)
+      const row = mounted!.parentElement!
+      Object.defineProperties(row, {
+        offsetTop: { configurable: true, value: 20138 },
+        offsetHeight: { configurable: true, value: 67 },
+        offsetWidth: { configurable: true, value: 320 },
+        offsetParent: {
+          configurable: true,
+          value: pending.node.firstElementChild
+        }
+      })
+      await act(async () => {
+        renderedRowLayout('cnv_return_99')({
+          nativeEvent: { layout: { height: 67 } }
+        })
+        pending.setDomContent(22000)
+        ;(
+          pending.node.firstElementChild as HTMLElement & {
+            __reactLayoutHandler: (event: unknown) => void
+          }
+        ).__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 22000 } }
+        })
+        mock.timers.tick(1)
+      })
+      // Resolve the actual mounted measurement callbacks, not a new scroll.
+      for (let turn = 0; turn < 10 && pending.moves.at(-1) !== 20108; turn++)
+        await act(async () => {
+          mock.timers.tick(1)
+        })
+      expect(pending.moves.at(-1)).equals(20108)
+      await act(async () => {
+        ;(
+          renderedListCallbacks(pending.node) as ListLayoutCallbacks & {
+            onScrollEndDrag: (event: {
+              nativeEvent: { contentOffset: { y: number } }
+            }) => void
+          }
+        ).onScrollEndDrag({ nativeEvent: { contentOffset: { y: 20108 } } })
+        mock.timers.tick(1)
+      })
+      expect(pending.offsets.at(-1)).equals(20108)
+      expect(pending.anchors.at(-1)).deep.equals({
+        id: 'cnv_return_99',
+        relativeY: 30
+      })
+    } finally {
+      InteractionManager.clearInteractionHandle(handle)
+      await act(async () => {
+        if (root != null) {
+          root.unmount()
+          root = undefined
+        }
+        mock.timers.tick(100)
+        let drained = false
+        InteractionManager.runAfterInteractions(() => {
+          drained = true
+        })
+        mock.timers.tick(1)
+        expect(drained, 'Owned virtual-list clock drains before reset').equals(
+          true
+        )
+      })
+      mock.timers.reset()
+      document.body.innerHTML = ''
+    }
   })
 })
