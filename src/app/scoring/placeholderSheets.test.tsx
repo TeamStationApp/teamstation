@@ -57,7 +57,7 @@ describe('placeholder count sheet and platform adapters', function () {
     await click('Create Player')
     expect(
       (node('Add Placeholder Players').firstChild as HTMLElement).style.color
-    ).equals('rgb(122, 152, 96)')
+    ).equals('rgb(52, 211, 153)')
   })
   it('retries a failed asynchronous add and prevents duplicate submissions while saving', async function () {
     let attempts = 0

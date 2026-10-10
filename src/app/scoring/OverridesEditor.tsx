@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
-import { Text, TextInput, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import { overrideError, overrideOf } from '../../common/scoring/rules'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringChoice } from './ScoringChoice'
 import { ScoringButton, ScoringError } from './ScoringSheet'
+import { ScoringTextInput } from './ScoringTextInput'
 import type { OverrideDraft, ScoringState } from './scoringTypes'
 export function OverridesEditor({
   state,
@@ -71,7 +72,7 @@ export function OverridesEditor({
               }[key]
             }
           </Text>
-          <TextInput
+          <ScoringTextInput
             accessibilityLabel={key}
             keyboardType="number-pad"
             value={numbers[key]}
@@ -81,13 +82,6 @@ export function OverridesEditor({
                 ...draft,
                 [key]: value.trim() === '' ? NaN : Number(value)
               })
-            }}
-            style={{
-              color: theme.primaryTextColor,
-              fontFamily: theme.regularTextFont,
-              borderWidth: 1,
-              borderColor: theme.inputBorderColor,
-              padding: 10
             }}
           />
         </View>

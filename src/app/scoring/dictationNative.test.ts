@@ -407,9 +407,6 @@ describe('dictation on the phone', function () {
         kind: ControlKind
       }) => ReturnType<typeof createElement>
     }
-    const field = require('./DefensiveFieldArt.native.tsx') as {
-      DefensiveFieldArt: () => ReturnType<typeof createElement>
-    }
     const icons: ControlKind[] = [
       'more',
       'undo',
@@ -434,7 +431,6 @@ describe('dictation on the phone', function () {
                 kind: kind as keyof typeof CONTROL_COLORS
               })
             ),
-            createElement(field.DefensiveFieldArt),
             ...icons.map(kind =>
               createElement(art.ControlIcon, { key: `icon-${kind}`, kind })
             )
@@ -442,7 +438,7 @@ describe('dictation on the phone', function () {
         )
       })
       expect(host.querySelectorAll('svg').length).equals(
-        Object.keys(CONTROL_COLORS).length + icons.length + 1
+        Object.keys(CONTROL_COLORS).length + icons.length
       )
     } finally {
       await act(async () => {

@@ -1,3 +1,4 @@
+import React, { createContext, useContext } from 'react'
 import { cacheStyles, makeThemeContext } from 'react-native-patina'
 
 import { tsBallpark } from './tsBallpark'
@@ -31,11 +32,23 @@ export interface ThemeProps {
 
 const themeContext = makeThemeContext<Theme>(tsBallpark)
 
-export const {
-  ThemeProvider,
-  useTheme,
-  withTheme,
-  changeTheme,
-  getTheme,
-  watchTheme
-} = themeContext
+export const { ThemeProvider, withTheme, changeTheme, getTheme, watchTheme } =
+  themeContext
+
+const ScopedTheme = createContext<Theme | undefined>(undefined)
+
+/** Local presentation overrides do not change the app's global theme. */
+export function ScopedThemeProvider({
+  theme,
+  children
+}: {
+  theme: Theme
+  children: React.ReactNode
+}): React.ReactElement {
+  return <ScopedTheme.Provider value={theme}>{children}</ScopedTheme.Provider>
+}
+
+export function useTheme(): Theme {
+  const globalTheme = themeContext.useTheme()
+  return useContext(ScopedTheme) ?? globalTheme
+}

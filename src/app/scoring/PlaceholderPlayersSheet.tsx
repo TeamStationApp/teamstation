@@ -2,9 +2,9 @@ import React, { useRef, useState } from 'react'
 import { View } from 'react-native'
 
 import { Button } from '../components/Button'
-import { useTheme } from '../theme/ThemeContext'
 import { PlayerCountPicker } from './PlayerCountPicker'
 import { ScoringError, ScoringSheet } from './ScoringSheet'
+import { useScoringSheetTheme } from './scoringSheetTheme'
 export function PlaceholderPlayersSheet({
   onClose,
   onAdd
@@ -12,7 +12,7 @@ export function PlaceholderPlayersSheet({
   onClose: () => void
   onAdd: (count: number) => void | Promise<void>
 }): React.ReactElement {
-  const theme = useTheme()
+  const theme = useScoringSheetTheme()
   const [count, setCount] = useState(1)
   const saving = useRef(false)
   const [busy, setBusy] = useState(false)

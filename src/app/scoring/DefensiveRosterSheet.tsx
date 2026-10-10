@@ -7,13 +7,12 @@ import {
   View
 } from 'react-native'
 
-import { useTheme } from '../theme/ThemeContext'
 import { defensiveRosterLabel, defensiveRosterName } from './currentSetup'
 import type { PlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { byJersey } from './rosterOrder'
-import { SCORING_GREEN_BADGE, SCORING_MENU } from './ScoringMenuAppearance'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
+import { useScoringSheetTheme } from './scoringSheetTheme'
 import {
   type Position,
   POSITIONS,
@@ -56,7 +55,9 @@ export function DefensiveRosterSheet({
   busy?: boolean
   problem?: string
 }): React.ReactElement {
-  const theme = useTheme()
+  const theme = useScoringSheetTheme()
+  const surface = theme.scoringSurface
+  const badge = surface.badges.green
   const { height } = useWindowDimensions()
   const [adding, setAdding] = useState(false)
   const shown = useRef(false)
@@ -87,12 +88,12 @@ export function DefensiveRosterSheet({
     >
       <View style={{ flex: 1, gap: 12 }}>
         {problem != null && (
-          <Text accessibilityRole="alert" style={{ color: '#f87171' }}>
+          <Text accessibilityRole="alert" style={{ color: surface.danger }}>
             {problem}
           </Text>
         )}
         {busy && (
-          <Text style={{ color: SCORING_MENU.text }}>Refreshing game...</Text>
+          <Text style={{ color: surface.text }}>Refreshing game...</Text>
         )}
         <ScrollView
           accessibilityLabel="Defensive roster"
@@ -109,7 +110,7 @@ export function DefensiveRosterSheet({
               <Text
                 accessibilityRole="header"
                 style={{
-                  color: SCORING_MENU.text,
+                  color: surface.text,
                   fontFamily: theme.boldTextFont,
                   fontSize: 16,
                   textAlign: 'left'
@@ -143,10 +144,10 @@ export function DefensiveRosterSheet({
                         gap: 6,
                         borderRadius: 12,
                         borderWidth: 1,
-                        borderColor: SCORING_MENU.divider,
+                        borderColor: surface.divider,
                         backgroundColor: pressed
-                          ? SCORING_MENU.active
-                          : '#172720',
+                          ? surface.active
+                          : surface.idle,
                         opacity: busy ? 0.4 : 1
                       })}
                     >
@@ -158,15 +159,15 @@ export function DefensiveRosterSheet({
                             minHeight: 28,
                             borderRadius: 6,
                             borderWidth: 1,
-                            borderColor: SCORING_GREEN_BADGE.border,
-                            backgroundColor: SCORING_GREEN_BADGE.background,
+                            borderColor: badge.border,
+                            backgroundColor: badge.background,
                             justifyContent: 'center',
                             alignItems: 'center'
                           }}
                         >
                           <Text
                             style={{
-                              color: SCORING_GREEN_BADGE.text,
+                              color: badge.text,
                               fontFamily: theme.boldTextFont,
                               fontSize: 12
                             }}
@@ -179,7 +180,7 @@ export function DefensiveRosterSheet({
                         style={{
                           flex: 1,
                           minWidth: 0,
-                          color: SCORING_MENU.text,
+                          color: surface.text,
                           fontFamily: theme.semiBoldTextFont,
                           fontSize: 13
                         }}
@@ -196,7 +197,7 @@ export function DefensiveRosterSheet({
         </ScrollView>
         <ScoringButton
           label="Create Player"
-          color={SCORING_MENU.active}
+          color={surface.active}
           shape="pill"
           disabled={busy}
           onPress={() => {

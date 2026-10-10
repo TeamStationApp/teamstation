@@ -1659,7 +1659,7 @@ function ScoringPanel(props: {
             <>
               <Text
                 style={{
-                  color: theme.primaryTextColor,
+                  color: theme.scoringSurface.text,
                   fontFamily: theme.regularTextFont
                 }}
               >
@@ -1669,7 +1669,7 @@ function ScoringPanel(props: {
               </Text>
               <ScoringButton
                 label="Discard and Exit"
-                color={theme.dangerColor}
+                color={theme.scoringSurface.dangerFill}
                 onPress={() => {
                   confirmation.current?.(true)
                   confirmation.current = null
@@ -1691,7 +1691,10 @@ function ScoringPanel(props: {
           )}
           {sheet === 'rosters' &&
             (rosterLoading ? (
-              <ActivityIndicator accessibilityLabel="Refreshing game" />
+              <ActivityIndicator
+                accessibilityLabel="Refreshing game"
+                color={theme.scoringSurface.accent}
+              />
             ) : rosterProblem != null ? (
               <>
                 <ScoringError message={rosterProblem} />
@@ -1728,7 +1731,7 @@ function ScoringPanel(props: {
             <>
               <Text
                 style={{
-                  color: theme.primaryTextColor,
+                  color: theme.scoringSurface.text,
                   fontFamily: theme.regularTextFont
                 }}
               >
@@ -1749,7 +1752,7 @@ function ScoringPanel(props: {
             <>
               <Text
                 style={{
-                  color: theme.primaryTextColor,
+                  color: theme.scoringSurface.text,
                   fontFamily: theme.regularTextFont
                 }}
               >

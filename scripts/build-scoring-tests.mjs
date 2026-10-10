@@ -11,6 +11,12 @@ const files = currentSetup
   : globSync('src/**/*.test.tsx')
 await build({
   ...webSettings,
+  // Native SVG adapter tests use the package's web renderer and web asset registry.
+  alias: {
+    ...webSettings.alias,
+    '@react-native/assets-registry/registry':
+      'react-native-web/dist/modules/AssetRegistry'
+  },
   stdin: {
     contents: files.map(file => `import './${file}'`).join('\n'),
     resolveDir: process.cwd(),
