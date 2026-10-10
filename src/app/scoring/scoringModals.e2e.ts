@@ -27,23 +27,40 @@ async function main(): Promise<void> {
   const baseline = process.env.SCORING_MODAL_BASELINE === '1'
   const phase = baseline ? 'before' : 'after'
   const artifacts = resolve(required('SCORING_ARTIFACT_DIR'))
-  await mkdir(artifacts, { recursive: true })
-  const fixture = await modalFixture(
-    required('SCORING_ASSET_URL'),
-    Number(required('SCORING_FIXTURE_PORT'))
+  const daemonName = required('MAESTRO_D')
+  const device = required('SCORING_DEVICE_UDID')
+  const assetUrl = required('SCORING_ASSET_URL')
+  const fixturePort = Number(required('SCORING_FIXTURE_PORT'))
+  assert(
+    Number.isInteger(fixturePort) && fixturePort > 0 && fixturePort < 65536
   )
+  required('SCORING_TEST_URL')
+  await mkdir(artifacts, { recursive: true })
+  const fixture = await modalFixture(assetUrl, fixturePort)
   const daemon = await MaestroD.connect({
-    name: required('MAESTRO_D'),
+    name: daemonName,
     spawn: false
+  }).catch(async (error: unknown) => {
+    await fixture.close()
+    throw error
   })
-  const m = await daemon.attach({
-    device: required('SCORING_DEVICE_UDID'),
-    platform: 'ios',
-    appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari',
-    artifacts: 'on-failure',
-    waitForIdleTimeout: 500,
-    stepDelay: 250
-  })
+  const m = await daemon
+    .attach({
+      device,
+      platform: 'ios',
+      appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari',
+      artifacts: 'on-failure',
+      waitForIdleTimeout: 500,
+      stepDelay: 250
+    })
+    .catch(async (error: unknown) => {
+      try {
+        daemon.close()
+      } finally {
+        await fixture.close()
+      }
+      throw error
+    })
   interface Node {
     text?: string
     type?: string
@@ -790,19 +807,25 @@ async function main(): Promise<void> {
     assert.deepEqual(fixture.unexpected, [])
   } finally {
     try {
-      const debug = process.env.SCORING_DEBUG_DIR
-      if (debug != null) {
-        await writeFile(join(debug, 'last-screen.png'), await m.screenshot())
-        await writeFile(
-          join(debug, 'last-hierarchy.json'),
-          JSON.stringify(await m.hierarchy(), null, 2)
-        )
+      try {
+        const debug = process.env.SCORING_DEBUG_DIR
+        if (debug != null) {
+          await writeFile(join(debug, 'last-screen.png'), await m.screenshot())
+          await writeFile(
+            join(debug, 'last-hierarchy.json'),
+            JSON.stringify(await m.hierarchy(), null, 2)
+          )
+        }
+        await m.setOrientation({ orientation: 'PORTRAIT' })
+      } finally {
+        await m.detach()
       }
-      await m.setOrientation({ orientation: 'PORTRAIT' })
-      await m.detach()
     } finally {
-      daemon.close()
-      await fixture.close()
+      try {
+        daemon.close()
+      } finally {
+        await fixture.close()
+      }
     }
   }
 }

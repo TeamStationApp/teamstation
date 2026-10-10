@@ -232,7 +232,13 @@ export async function modalFixture(
       response.end('{}')
     })
   })
-  await new Promise<void>(resolve => server.listen(port, '0.0.0.0', resolve))
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '0.0.0.0', () => {
+      server.removeListener('error', reject)
+      resolve()
+    })
+  })
   return {
     reset,
     loaded: () => loaded,
