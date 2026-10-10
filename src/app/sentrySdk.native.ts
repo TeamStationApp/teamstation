@@ -3,6 +3,7 @@
  * crashes as well as JavaScript errors. The web bundle resolves `sentrySdk.ts`.
  */
 import {
+  addBreadcrumb,
   captureException,
   ErrorBoundary,
   init,
@@ -14,7 +15,15 @@ import {
 import { hostOfUrl } from '../common/sentry/environment'
 import { apiBaseUrl } from './native/config'
 
-export { captureException, ErrorBoundary, init, nativeCrash, setTag, setUser }
+export {
+  addBreadcrumb,
+  captureException,
+  ErrorBoundary,
+  init,
+  nativeCrash,
+  setTag,
+  setUser
+}
 
 /** The host of the server this build talks to. */
 export function sentryHost(): string | undefined {

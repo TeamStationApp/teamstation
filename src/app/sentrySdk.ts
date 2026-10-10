@@ -3,6 +3,7 @@
  * resolve `sentrySdk.native.ts` instead, which has the same names.
  */
 import {
+  addBreadcrumb,
   captureException,
   ErrorBoundary,
   init,
@@ -12,7 +13,7 @@ import {
 
 import { DATA_COLLECTION } from '../common/sentry/scrub'
 
-export { captureException, ErrorBoundary, init, setTag, setUser }
+export { addBreadcrumb, captureException, ErrorBoundary, init, setTag, setUser }
 
 /** The host this page was served from, which is the server it talks to. */
 export function sentryHost(): string | undefined {

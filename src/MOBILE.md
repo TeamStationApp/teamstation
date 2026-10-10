@@ -266,8 +266,8 @@ can.
 - **On a phone under test**: Maestro's `launchApp` grants every permission,
   so a check that starts without music access launches with `adb shell
   monkey` instead (`scripts/walkup-native-android.mjs`). Every playback
-  report is logged under the `WalkUpMusic` tag and posted to `/api/v1/logs`
-  as `[client walkUpMusic-<platform>]`.
+  report is logged under the `WalkUpMusic` tag and kept in Sentry as a
+  `walkUpMusic` breadcrumb (`musicLog.ts`).
 
 ## The video
 

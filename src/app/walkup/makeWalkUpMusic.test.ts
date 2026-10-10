@@ -5,6 +5,7 @@ import {
   asCandidate,
   asPlaybackState,
   makeWalkUpMusic,
+  type WalkUpClip,
   type WalkUpMusicModule
 } from './makeWalkUpMusic'
 import { musicLog } from './musicLog'
@@ -129,9 +130,13 @@ describe('makeWalkUpMusic', function () {
     expect(await none.pickFile()).equals(null)
   })
 
-  it('forwards the clip and its fades as numbers', async function () {
+  it('forwards the clip and its fades as numbers, and reports each start', async function () {
     const module = fakeModule()
-    const music = makeWalkUpMusic(module, { platform: 'android' })
+    const started: WalkUpClip[] = []
+    const music = makeWalkUpMusic(module, {
+      platform: 'android',
+      onPlay: clip => started.push(clip)
+    })
     await music.play('content://1', 5000, 20000, { inMs: 500, outMs: 1500 })
     await music.play('catalog:1', 10000, 25000, { inMs: 0, outMs: 0 })
     await music.stop(1500)
@@ -139,6 +144,22 @@ describe('makeWalkUpMusic', function () {
       ['play', 'content://1', 5000, 20000, 500, 1500],
       ['play', 'catalog:1', 10000, 25000, 0, 0],
       ['stop', 1500]
+    ])
+    expect(started).deep.equals([
+      {
+        handle: 'content://1',
+        startMs: 5000,
+        endMs: 20000,
+        fadeInMs: 500,
+        fadeOutMs: 1500
+      },
+      {
+        handle: 'catalog:1',
+        startMs: 10000,
+        endMs: 25000,
+        fadeInMs: 0,
+        fadeOutMs: 0
+      }
     ])
   })
 
@@ -224,81 +245,147 @@ describe('makeWalkUpMusic', function () {
 })
 
 describe('musicLog', function () {
-  it('gathers playing reports, and sends at idle to /logs', async function () {
-    const posts: Array<{ url: string; body: unknown }> = []
-    const log = musicLog(
-      'http://192.168.7.40:9120/api/v1',
-      'android',
-      async (url, body) => {
-        posts.push({ url, body: JSON.parse(body) })
+  function harness(): {
+    log: ReturnType<typeof musicLog>
+    crumbs: Array<{ level?: string; message?: string; data?: unknown }>
+  } {
+    const crumbs: Array<{ level?: string; message?: string; data?: unknown }> =
+      []
+    const log = musicLog({
+      addBreadcrumb: crumb => {
+        expect(crumb.category).equals('walkUpMusic')
+        crumbs.push({
+          level: crumb.level,
+          message: crumb.message,
+          data: crumb.data
+        })
       }
-    )
-    const quiet = console.log
-    console.log = () => undefined
-    try {
-      log({ kind: 'playing', positionMs: 5000, volume: 0 })
-      log({ kind: 'playing', positionMs: 5250, volume: 0.5 })
-      expect(posts).deep.equals([])
-      log({ kind: 'idle', lowestLevel: 0 })
-    } finally {
-      console.log = quiet
-    }
-    expect(posts).length(1)
-    expect(posts[0].url).equals('http://192.168.7.40:9120/api/v1/logs')
-    const body = posts[0].body as {
-      source: string
-      run: string
-      lines: Array<{
-        level: string
-        text: string
-        data: NativeWalkUpMusicState
-      }>
-    }
-    expect(body.source).equals('walkUpMusic-android')
-    expect(body.run).a('string')
-    expect(body.lines.map(line => line.text)).deep.equals([
-      'WalkUpMusicState playing',
-      'WalkUpMusicState playing',
-      'WalkUpMusicState idle'
-    ])
-    expect(body.lines[1].data.volume).equals(0.5)
-  })
-
-  it('sends playing reports after a second on their own, and drops a failed post', async function () {
-    let sent = 0
-    const log = musicLog('http://x/api/v1', 'ios', async () => {
-      sent++
-      throw new Error('offline')
     })
+    return { log, crumbs }
+  }
+
+  function quietly(run: () => void): void {
     const quiet = console.log
     console.log = () => undefined
     try {
-      log({ kind: 'playing', positionMs: 1 })
-      await new Promise(resolve => setTimeout(resolve, 1100))
-      expect(sent).equals(1)
-      for (let i = 0; i < 50; i++) log({ kind: 'playing', positionMs: i })
-      expect(sent).equals(2)
+      run()
     } finally {
       console.log = quiet
     }
+  }
+
+  const clip = (handle: string, startMs: number): WalkUpClip => ({
+    handle,
+    startMs,
+    endMs: startMs + 15000,
+    fadeInMs: 0,
+    fadeOutMs: 1500
   })
 
-  it('posts JSON with fetch by default', async function () {
-    const saved = globalThis.fetch
-    const asked: Array<{ url: string; init: RequestInit | undefined }> = []
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      asked.push({ url, init })
-      return new Response('{}')
-    }) as typeof fetch
-    const quiet = console.log
-    console.log = () => undefined
+  it('keeps each start, its first playing report, and every other report', function () {
+    const { log, crumbs } = harness()
+    quietly(() => {
+      log.onPlay(clip('a', 5000))
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 5000 })
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 5250 })
+      log.onReport({ kind: 'volume', fade: 'released', volume: 0.5 })
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 5500 })
+      log.onReport({ kind: 'idle', handle: 'a', lowestLevel: 0 })
+      log.onPlay(clip('b', 0))
+      log.onReport({ kind: 'playing', handle: 'b', positionMs: 0 })
+      log.onReport({ kind: 'playing', handle: 'b', positionMs: 250 })
+    })
+    expect(crumbs.map(crumb => crumb.message)).deep.equals([
+      'WalkUpMusic play',
+      'WalkUpMusicState playing',
+      'WalkUpMusicState volume',
+      'WalkUpMusicState idle',
+      'WalkUpMusic play',
+      'WalkUpMusicState playing'
+    ])
+    expect(crumbs[0].data).deep.equals(clip('a', 5000))
+    expect(crumbs[1].data).deep.equals({
+      kind: 'playing',
+      handle: 'a',
+      positionMs: 5000
+    })
+    expect(crumbs.every(crumb => crumb.level === 'info')).equals(true)
+  })
+
+  it('keeps a replay of the same song, from a later start, with no idle between', function () {
+    const { log, crumbs } = harness()
+    quietly(() => {
+      log.onPlay(clip('a', 30000))
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 30000 })
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 30250 })
+      log.onPlay(clip('a', 45000))
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 45000 })
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 44990 })
+    })
+    expect(crumbs.map(crumb => crumb.data)).deep.equals([
+      clip('a', 30000),
+      { kind: 'playing', handle: 'a', positionMs: 30000 },
+      clip('a', 45000),
+      { kind: 'playing', handle: 'a', positionMs: 45000 }
+    ])
+  })
+
+  it('waits for the new clip’s own tick when the old clip’s arrive late', function () {
+    const { log, crumbs } = harness()
+    quietly(() => {
+      log.onPlay(clip('a', 0))
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 0 })
+      log.onPlay(clip('b', 10000))
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 250 })
+      log.onReport({ kind: 'playing', handle: 'b', positionMs: 10000 })
+      log.onPlay(clip('b', 40000))
+      log.onReport({ kind: 'playing', handle: 'b', positionMs: 10250 })
+      log.onReport({ kind: 'playing', handle: 'b', positionMs: 39800 })
+      log.onReport({ kind: 'playing', handle: 'b', positionMs: 40050 })
+    })
+    expect(crumbs.map(crumb => crumb.data)).deep.equals([
+      clip('a', 0),
+      { kind: 'playing', handle: 'a', positionMs: 0 },
+      clip('b', 10000),
+      { kind: 'playing', handle: 'b', positionMs: 10000 },
+      clip('b', 40000),
+      { kind: 'playing', handle: 'b', positionMs: 39800 }
+    ])
+  })
+
+  it('keeps an error at the error level, and sends no event the screen explains', function () {
+    const { log, crumbs } = harness()
+    quietly(() => {
+      log.onPlay(clip('a', 0))
+      log.onReport({ kind: 'error', handle: 'a', message: 'Media unavailable' })
+      log.onReport({ kind: 'error' })
+    })
+    expect(crumbs.map(crumb => crumb.level)).deep.equals([
+      'info',
+      'error',
+      'error'
+    ])
+    expect(crumbs[1].data).deep.equals({
+      kind: 'error',
+      handle: 'a',
+      message: 'Media unavailable'
+    })
+  })
+
+  it('writes every report to the device log', function () {
+    const { log } = harness()
+    const lines: string[] = []
+    const saved = console.log
+    console.log = (line: string) => lines.push(line)
     try {
-      musicLog('http://x/api/v1', 'ios')({ kind: 'idle' })
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 0 })
+      log.onReport({ kind: 'playing', handle: 'a', positionMs: 250 })
     } finally {
-      console.log = quiet
-      globalThis.fetch = saved
+      console.log = saved
     }
-    expect(asked).length(1)
-    expect(asked[0].init?.method).equals('POST')
+    expect(lines).deep.equals([
+      'WalkUpMusicState {"kind":"playing","handle":"a","positionMs":0}',
+      'WalkUpMusicState {"kind":"playing","handle":"a","positionMs":250}'
+    ])
   })
 })
