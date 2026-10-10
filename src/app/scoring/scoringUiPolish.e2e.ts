@@ -68,8 +68,6 @@ async function main(): Promise<void> {
     text?: string
     type?: string
     enabled?: boolean
-    label?: string
-    value?: string
     bounds?: { x: number; y: number; width: number; height: number }
     children?: Node[]
   }
@@ -551,199 +549,166 @@ async function main(): Promise<void> {
       'PASS portrait scoring appearance, all position toggles, settings toggles and modal cancellation'
     )
   }
-  const animations = async (enabled: boolean): Promise<boolean> => {
-    await menu('Settings')
-    await shown('Toggle play animations')
-    // The normalized iOS hierarchy omits switch values; read accessibility
-    // source through this session's owned driver.
-    const endpoint = await driver()
-    const reply = await m.eval(
-      `http.get(${JSON.stringify(endpoint + '/source?format=json')})`
-    )
-    assert.equal(reply.status, 200)
-    const source = JSON.parse(reply.body).value as Node
-    const toggle = flat(source).find(
-      node => node.label === 'Toggle play animations' && node.type === 'Switch'
-    )
-    assert(
-      ['0', '1'].includes(toggle?.value ?? ''),
-      'Animation switch exposes its native value'
-    )
-    const previous = toggle!.value === '1'
-    if (previous !== enabled) await tap('Toggle play animations')
-    await tap('Done')
-    return previous
-  }
   const workflow = async (): Promise<void> => {
     setup = undefined
     const game = await open()
-    // The simulator software renderer stalls on animated half changes even on
-    // the baseline. Exercise this workflow with the supported setting off.
-    const previousAnimations =
-      native && section !== 'bases' ? await animations(false) : undefined
-    try {
-      await tap('More')
-      await tap('Place a Runner (Tiebreaker)')
-      await shown('Place runner on base')
-      await capture('tiebreaker')
-      await tap('Place runner on base')
-      await shown('Place runner on 2B')
-      await capture('bases')
-      const bases = flat(await m.hierarchy()).filter(node =>
-        /^Place runner on [123]B$/.test(node.text ?? '')
-      )
-      assert.equal(new Set(bases.map(node => node.text)).size, 3)
-      if (section === 'bases') {
-        await tap('Cancel runner placement')
-        await shown('Juan Soto')
-        console.log('PASS base targets and restoration after cancel')
-        return
-      }
-      await tap('Place runner on 2B')
-      await shown('Select Runner for 2B')
-      await shown('Recently Batted Players')
-      await capture('runner')
-      const labels = flat(await m.hierarchy())
-        .filter(node => node.text?.startsWith('Select runner #') === true)
-        .map(node => node.text)
-      assert.deepEqual(
-        [...new Set(labels)],
-        [
-          'Select runner #9 Bobby Witt',
-          'Select runner #8 Juan Soto',
-          'Select runner #7 Francisco Lindor',
-          'Select runner #6 Freddie Freeman',
-          'Select runner #5 Bryce Harper',
-          'Select runner #4 Aaron Judge',
-          'Select runner #3 Shohei Ohtani',
-          'Select runner #2 Mike Trout'
-        ]
-      )
-      await tap('Select runner #9 Bobby Witt')
-      await shown('Place runner on base')
-      await saved(state => baseIds(state).filter(id => id != null).length === 1)
-      const first = baseIds(snapshot()!)[1]
-      assert(first != null)
-      const unchanged = snapshot()!
-      await tap('Set Outs 1')
-      await saved(state => state.liveData.linescore.outs === 1)
-      const beforeActions = recordOf(fixture.stored().currentPlay)!.actions
-        .length
-      const nodes = flat(await m.hierarchy())
-      const from = nodes
-        .filter(node => node.text === 'Set Outs 1')
-        .at(-1)?.bounds
-      const to = nodes.filter(node => node.text === 'Set Outs 2').at(-1)?.bounds
-      assert(from != null && to != null)
-      await m.dragAndDrop({
-        from: {
-          point: `${Math.round(from.x + from.width / 2)},${Math.round(from.y + from.height / 2)}`
-        },
-        to: {
-          point: `${Math.round(to.x + to.width / 2)},${Math.round(to.y + to.height / 2)}`
-        },
-        holdDuration: 100,
-        duration: 800
-      })
-      await saved(state => state.liveData.linescore.outs === 2)
-      assert.equal(
-        recordOf(fixture.stored().currentPlay)!.actions.length,
-        beforeActions + 1,
-        'Outs drag commits once'
-      )
-      assert.deepEqual(
-        snapshot()!.liveData.boxscore,
-        unchanged.liveData.boxscore
-      )
-      assert.deepEqual(baseIds(snapshot()!), [null, first, null])
-      await tap('Place runner on base')
-      await tap('Place runner on 2B')
-      await shown('Cancel runner placement')
-      await tap('Place runner on 3B')
-      await shown('Select Runner for 3B')
-      await tap('Cancel')
-      await shown('Place runner on 1B')
-      await tap('Place runner on 3B')
-      await tap('Select runner #8 Juan Soto')
-      await shown('Place runner on base')
-      await tap('Cancel')
-      await saved(state => baseIds(state).filter(id => id != null).length === 2)
-      const second = baseIds(snapshot()!)[2]
-      assert(second != null)
-      const persisted = JSON.stringify(fixture.stored())
-      await open(false, game)
-      await tap('More')
-      await tap('Place a Runner (Tiebreaker)')
-      await shown('Set Outs 2')
-      await tap('Cancel')
-      assert.equal(
-        JSON.stringify(fixture.stored()),
-        persisted,
-        'Reopening must preserve saved setup'
-      )
-      for (const [outs, expected] of [
-        [2, [null, first, null]],
-        [1, [null, first, null]],
-        [0, [null, first, null]],
-        [0, [null, null, null]]
-      ] as const) {
-        await undo()
-        await saved(
-          state =>
-            state.liveData.linescore.outs === outs &&
-            JSON.stringify(baseIds(state)) === JSON.stringify(expected)
-        )
-      }
-      await tap('Ball')
-      await saved(state => state.liveData.linescore.balls === 1)
-      await tap('More')
-      await disabledTiebreaker()
+    await tap('More')
+    await tap('Place a Runner (Tiebreaker)')
+    await shown('Place runner on base')
+    await capture('tiebreaker')
+    await tap('Place runner on base')
+    await shown('Place runner on 2B')
+    await capture('bases')
+    const bases = flat(await m.hierarchy()).filter(node =>
+      /^Place runner on [123]B$/.test(node.text ?? '')
+    )
+    assert.equal(new Set(bases.map(node => node.text)).size, 3)
+    if (section === 'bases') {
+      await tap('Cancel runner placement')
+      await shown('Juan Soto')
+      console.log('PASS base targets and restoration after cancel')
+      return
+    }
+    await tap('Place runner on 2B')
+    await shown('Select Runner for 2B')
+    await shown('Recently Batted Players')
+    await capture('runner')
+    const labels = flat(await m.hierarchy())
+      .filter(node => node.text?.startsWith('Select runner #') === true)
+      .map(node => node.text)
+    assert.deepEqual(
+      [...new Set(labels)],
+      [
+        'Select runner #9 Bobby Witt',
+        'Select runner #8 Juan Soto',
+        'Select runner #7 Francisco Lindor',
+        'Select runner #6 Freddie Freeman',
+        'Select runner #5 Bryce Harper',
+        'Select runner #4 Aaron Judge',
+        'Select runner #3 Shohei Ohtani',
+        'Select runner #2 Mike Trout'
+      ]
+    )
+    await tap('Select runner #9 Bobby Witt')
+    await shown('Place runner on base')
+    await saved(state => baseIds(state).filter(id => id != null).length === 1)
+    const first = baseIds(snapshot()!)[1]
+    assert(first != null)
+    const unchanged = snapshot()!
+    await tap('Set Outs 1')
+    await saved(state => state.liveData.linescore.outs === 1)
+    const beforeActions = recordOf(fixture.stored().currentPlay)!.actions.length
+    const nodes = flat(await m.hierarchy())
+    const from = nodes.filter(node => node.text === 'Set Outs 1').at(-1)?.bounds
+    const to = nodes.filter(node => node.text === 'Set Outs 2').at(-1)?.bounds
+    assert(from != null && to != null)
+    await m.dragAndDrop({
+      from: {
+        point: `${Math.round(from.x + from.width / 2)},${Math.round(from.y + from.height / 2)}`
+      },
+      to: {
+        point: `${Math.round(to.x + to.width / 2)},${Math.round(to.y + to.height / 2)}`
+      },
+      holdDuration: 100,
+      duration: 800
+    })
+    await saved(state => state.liveData.linescore.outs === 2)
+    assert.equal(
+      recordOf(fixture.stored().currentPlay)!.actions.length,
+      beforeActions + 1,
+      'Outs drag commits once'
+    )
+    assert.deepEqual(snapshot()!.liveData.boxscore, unchanged.liveData.boxscore)
+    assert.deepEqual(baseIds(snapshot()!), [null, first, null])
+    await tap('Place runner on base')
+    await tap('Place runner on 2B')
+    await shown('Cancel runner placement')
+    await tap('Place runner on 3B')
+    await shown('Select Runner for 3B')
+    await tap('Cancel')
+    await shown('Place runner on 1B')
+    await tap('Place runner on 3B')
+    await tap('Select runner #8 Juan Soto')
+    await shown('Place runner on base')
+    await tap('Cancel')
+    await saved(state => baseIds(state).filter(id => id != null).length === 2)
+    const second = baseIds(snapshot()!)[2]
+    assert(second != null)
+    const persisted = JSON.stringify(fixture.stored())
+    await open(false, game)
+    await tap('More')
+    await tap('Place a Runner (Tiebreaker)')
+    await shown('Set Outs 2')
+    await tap('Cancel')
+    assert.equal(
+      JSON.stringify(fixture.stored()),
+      persisted,
+      'Reopening must preserve saved setup'
+    )
+    for (const [outs, expected] of [
+      [2, [null, first, null]],
+      [1, [null, first, null]],
+      [0, [null, first, null]],
+      [0, [null, null, null]]
+    ] as const) {
       await undo()
-      await saved(state => state.liveData.linescore.balls === 0)
-      await tap('More')
-      await tap('Place a Runner (Tiebreaker)')
-      await shown('Place runner on base')
-      await tap('Cancel')
-      for (let strike = 1; strike <= 3; strike++) {
-        await tap('Called Strike')
-        await saved(state =>
-          strike < 3
-            ? state.liveData.linescore.strikes === strike
-            : state.liveData.plays.allPlays.some(play => play.about.isComplete)
-        )
-      }
-      await menu('End Half Inning')
-      await tap('Confirm End Half Inning')
-      await saved(state => !state.liveData.linescore.isTopInning)
-      await tap('More')
-      await disabledTiebreaker()
-      await menu('End Half Inning')
-      await tap('Confirm End Half Inning')
       await saved(
         state =>
-          state.liveData.linescore.isTopInning &&
-          state.liveData.linescore.currentInning === 2
+          state.liveData.linescore.outs === outs &&
+          JSON.stringify(baseIds(state)) === JSON.stringify(expected)
       )
-      await tap('More')
-      await tap('Place a Runner (Tiebreaker)')
-      await shown('Place runner on base')
-      await tap('Place runner on base')
-      await tap('Place runner on 1B')
-      await shown('Select Runner for 1B')
-      const recent = [
-        ...new Set(
-          flat(await m.hierarchy())
-            .filter(node => node.text?.startsWith('Select runner #') === true)
-            .map(node => node.text)
-        )
-      ]
-      assert.equal(recent[0], 'Select runner #1 Mookie Betts')
-      assert(!recent.includes('Select runner #2 Mike Trout'))
-      await tap('Cancel')
-      await tap('Cancel runner placement')
-    } finally {
-      if (previousAnimations != null) await animations(previousAnimations)
     }
+    await tap('Ball')
+    await saved(state => state.liveData.linescore.balls === 1)
+    await tap('More')
+    await disabledTiebreaker()
+    await undo()
+    await saved(state => state.liveData.linescore.balls === 0)
+    await tap('More')
+    await tap('Place a Runner (Tiebreaker)')
+    await shown('Place runner on base')
+    await tap('Cancel')
+    for (let strike = 1; strike <= 3; strike++) {
+      await tap('Called Strike')
+      await saved(state =>
+        strike < 3
+          ? state.liveData.linescore.strikes === strike
+          : state.liveData.plays.allPlays.some(play => play.about.isComplete)
+      )
+    }
+    await menu('End Half Inning')
+    await tap('Confirm End Half Inning')
+    await saved(state => !state.liveData.linescore.isTopInning)
+    // Reload saved halves on native: the baseline simulator software GL
+    // renderer stalls while draining the live half-transition draw queue.
+    if (native) await open(false, game)
+    await tap('More')
+    await disabledTiebreaker()
+    await menu('End Half Inning')
+    await tap('Confirm End Half Inning')
+    await saved(
+      state =>
+        state.liveData.linescore.isTopInning &&
+        state.liveData.linescore.currentInning === 2
+    )
+    if (native) await open(false, game)
+    await tap('More')
+    await tap('Place a Runner (Tiebreaker)')
+    await shown('Place runner on base')
+    await tap('Place runner on base')
+    await tap('Place runner on 1B')
+    await shown('Select Runner for 1B')
+    const recent = [
+      ...new Set(
+        flat(await m.hierarchy())
+          .filter(node => node.text?.startsWith('Select runner #') === true)
+          .map(node => node.text)
+      )
+    ]
+    assert.equal(recent[0], 'Select runner #1 Mookie Betts')
+    assert(!recent.includes('Select runner #2 Mike Trout'))
+    await tap('Cancel')
+    await tap('Cancel runner placement')
     console.log(
       'PASS persisted runners, one-action outs drag, each Undo step, first-pitch/bottom gating, next top, occupied base and cancellation'
     )
