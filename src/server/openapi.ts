@@ -2955,9 +2955,19 @@ export function openApiDocument(version: string): OpenApiDocument {
             'naming no player here is counted in `guardiansMissing`); and, ' +
             'for staff, the `coach` and `scorekeeper` roles on the team. ' +
             'Roles are only ever added, and `admin` never is.\n\n' +
+            '**Guardian links are refused** (counted in `guardiansRefused`) ' +
+            'to a player who had a guardian who can sign in before this ' +
+            "call began, since that player's guardians decide who else " +
+            'becomes one (a parent imported with no email cannot sign in, ' +
+            'so takes no say), and for ' +
+            "the caller's own account; every parent one call names for a " +
+            'player with no guardian is linked. A site administrator is held ' +
+            'to neither. An adult who already guards the player is neither ' +
+            'linked again nor refused.\n\n' +
             '**Answers:** `result` is `created` (a new user), `matched` (an ' +
             'existing user who gained something here), `unchanged` or ' +
-            '`error`. `counts.guardianLinks` is the links this call made, and ' +
+            '`error`. `counts.guardianLinks` is the links this call made, ' +
+            '`counts.guardiansRefused` the links it refused, and ' +
             '`counts.staff` the adults who gained a role in it; posting the ' +
             'same body again answers both as 0.',
           security: [{ bearer: [] }],
@@ -3014,6 +3024,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                             'joined',
                             'guardianLinks',
                             'guardiansMissing',
+                            'guardiansRefused',
                             'rolesAdded'
                           ],
                           properties: {
@@ -3026,6 +3037,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                             joined: { type: 'boolean' },
                             guardianLinks: { type: 'integer' },
                             guardiansMissing: { type: 'integer' },
+                            guardiansRefused: { type: 'integer' },
                             rolesAdded: {
                               type: 'array',
                               items: {
@@ -3057,6 +3069,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                           unchanged: { type: 'integer' },
                           error: { type: 'integer' },
                           guardianLinks: { type: 'integer' },
+                          guardiansRefused: { type: 'integer' },
                           staff: { type: 'integer' }
                         }
                       }

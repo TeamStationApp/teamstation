@@ -213,7 +213,7 @@ export async function pendingSchedule(
     const authorized = [
       { kind: 'team' as const, id: home.id },
       { kind: 'team' as const, id: away.id },
-      { kind: request.sender_scope_type, id: request.sender_scope_id }
+      { kind: request.sender_scope_type!, id: request.sender_scope_id! }
     ].some(administers)
     result.push({
       existingGameId: terms.gameId ?? request.game_id,

@@ -216,7 +216,8 @@ async function recordedAuthorities(
         !(await approvesSide(
           db,
           { userId: side.approved_by, isAdmin: false, scopes: [] },
-          ref
+          ref,
+          request
         ))
       )
         return false
@@ -350,8 +351,8 @@ export async function finishGameRequest(
       await replacementAnchor(trx, terms)
       if (
         !(await currentAdministrator(trx, request.sender_id, {
-          kind: request.sender_scope_type,
-          id: request.sender_scope_id
+          kind: request.sender_scope_type!,
+          id: request.sender_scope_id!
         }))
       )
         throw conflict(
@@ -775,7 +776,10 @@ export async function proposeGame(
       })
       .execute()
     for (const side of relationshipSides(terms)) {
-      const approved = await approvesSide(trx, fresh, side)
+      const approved = await approvesSide(trx, fresh, side, {
+        kind: 'game',
+        terms
+      })
       await trx
         .insertInto('group_request_sides')
         .values({
@@ -843,7 +847,7 @@ export async function decideGameRequest(
     const terms = request.terms as GameRequestTerms
     const permitted = []
     for (const side of relationshipSides(terms))
-      if (await approvesSide(trx, fresh, side)) permitted.push(side)
+      if (await approvesSide(trx, fresh, side, request)) permitted.push(side)
     if (permitted.length === 0) throw forbidden()
     const status = requestStatus(request, clock)
     if (status !== 'pending') {
@@ -979,8 +983,8 @@ export async function hideDeclinedGame(
     await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
     const request = await requestById(trx, id)
     const sender: GroupRef = {
-      kind: request.sender_scope_type,
-      id: request.sender_scope_id
+      kind: request.sender_scope_type!,
+      id: request.sender_scope_id!
     }
     const scope = projection ?? sender
     const sendingScope = scope.kind === sender.kind && scope.id === sender.id
@@ -1050,8 +1054,8 @@ export async function withdrawGameRequest(
       request.sender_id !== fresh.userId &&
       !representedConsent &&
       !(await canAdminister(trx, fresh, {
-        kind: request.sender_scope_type,
-        id: request.sender_scope_id
+        kind: request.sender_scope_type!,
+        id: request.sender_scope_id!
       }))
     )
       throw forbidden()
@@ -1090,8 +1094,8 @@ export async function resendGameRequest(
     const fresh = await currentActor(trx, actor)
     const original = await requestById(trx, id)
     await requireGroupAdmin(trx, fresh, {
-      kind: original.sender_scope_type,
-      id: original.sender_scope_id
+      kind: original.sender_scope_type!,
+      id: original.sender_scope_id!
     })
     const held = await trx
       .selectFrom('creation_idempotency')
@@ -1121,8 +1125,8 @@ export async function resendGameRequest(
     const terms = original.terms as GameRequestTerms
     const proposal: GameProposal = {
       sender: {
-        kind: original.sender_scope_type,
-        id: original.sender_scope_id
+        kind: original.sender_scope_type!,
+        id: original.sender_scope_id!
       },
       game: terms.game,
       idempotencyKey,

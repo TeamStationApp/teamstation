@@ -411,7 +411,8 @@ export async function redeemInvite(
         !(await approvesSide(
           trx,
           { userId, isAdmin: false, scopes: [] },
-          personal
+          personal,
+          request
         ))
       )
         throw forbidden('This invitation belongs to its named recipient')

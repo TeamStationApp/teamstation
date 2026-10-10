@@ -21,6 +21,7 @@ import {
   canSeeTeam,
   givenRolesOnTeam,
   guardedPlayers,
+  guardiansOf,
   guardsPerson,
   guardsPlayer,
   hasRole,
@@ -841,6 +842,23 @@ describe('guardians', function () {
     ])
     expect(await teamsPlayedOnNow(db, [idOf('member')])).deep.equals([])
     expect(await teamsPlayedOnNow(db, [])).deep.equals([])
+  })
+
+  it('reads the guardians of several players at once as it reads each alone', async function () {
+    // The child twice, by both rows; a guardian's closed row, whose only
+    // link is from the guardian themself; and a member nobody guards.
+    const players = ['childOld', 'member', 'guardianOld', 'child'].map(idOf)
+    const each = new Set<number>()
+    for (const player of players)
+      for (const guardian of await guardiansOf(db, [player])) each.add(guardian)
+    const together = await guardiansOf(db, players)
+    expect(together).deep.equals([...each].sort((a, b) => a - b))
+    // By the row each signs in as: the guardian linked from a closed row.
+    expect(together).deep.equals(
+      [idOf('guardian'), idOf('aunt')].sort((a, b) => a - b)
+    )
+    expect(await guardiansOf(db, [idOf('member')])).deep.equals([])
+    expect(await guardiansOf(db, [])).deep.equals([])
   })
 
   it('takes a team away when the child leaves it, unless the guardian belongs to it', async function () {

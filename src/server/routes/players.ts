@@ -19,6 +19,7 @@ import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
+import { guardianInviteAs } from '../groups/requests'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -120,6 +121,12 @@ export function playerRoutes(
         name: shortName({ ...user, id: userId }),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
+        /**
+         * How this person may invite a guardian of the player: as a guardian,
+         * with no sending team; from a team they coach, while the player has
+         * no guardian; or not at all.
+         */
+        guardianInviteAs: await guardianInviteAs(db, actor, userId),
         avatarUrl: imageUrl(media.space, user.avatarPath, PROFILE_SIZE),
         bats: user.bats,
         throws: user.throws,

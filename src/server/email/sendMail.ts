@@ -115,8 +115,8 @@ export async function sendInvitation(
       'to prove the address is yours. Nothing happens until you do.'
     ].join('\n'),
     html: [
-      `<p><strong>${invitedBy}</strong> has invited you to watch`,
-      `<strong>${scopeName}</strong> on TeamStation.</p>`,
+      `<p><strong>${escapeHtml(invitedBy)}</strong> has invited you to watch`,
+      `<strong>${escapeHtml(scopeName)}</strong> on TeamStation.</p>`,
       inviteButton(link),
       '<p style="color:#666">You will be asked for your name and e-mail',
       'address, and sent a code to prove the address is yours.</p>'
@@ -125,6 +125,79 @@ export async function sendInvitation(
   return {
     accepted: Array.isArray(info.accepted) ? info.accepted.length : 0,
     messageId: String(info.messageId ?? '')
+  }
+}
+
+/** What a guardian invitation says, and where it opens. */
+export interface GuardianInvitation {
+  /** The player's short name: first name and last initial. */
+  playerName: string
+  /** The team that sent it; absent when one of the player's guardians did. */
+  teamName?: string
+  invitedBy: string
+  /** The notification, which is where it is accepted. */
+  link: string
+}
+
+/**
+ * An invitation to be a player's guardian, from a team's administrator,
+ * coach or assistant, or from one of the player's guardians.
+ *
+ * The link opens the notification, which is where it is accepted, after
+ * signing in with this address. The player is named the way the app names
+ * everybody: first name and last initial.
+ */
+export async function sendGuardianInvitation(
+  smtp: SmtpSettings,
+  to: string,
+  invitation: GuardianInvitation
+): Promise<SentMail> {
+  const { playerName, teamName, invitedBy, link } = invitation
+  const info = await transporterFor(smtp).sendMail({
+    from:
+      smtp.fromName === ''
+        ? smtp.fromAddress
+        : `${smtp.fromName} <${smtp.fromAddress}>`,
+    to,
+    subject: `Be ${playerName}'s guardian on TeamStation`,
+    text: [
+      `${invitedBy}${teamName == null ? '' : ` from ${teamName}`} invited you to be ${playerName}'s guardian on TeamStation. Sign in to accept.`,
+      '',
+      link
+    ].join('\n'),
+    html: [
+      `<p><strong>${escapeHtml(invitedBy)}</strong>${teamName == null ? '' : ` from <strong>${escapeHtml(teamName)}</strong>`}`,
+      `invited you to be <strong>${escapeHtml(playerName)}</strong>'s guardian on`,
+      'TeamStation. Sign in to accept.</p>',
+      inviteButton(link)
+    ].join('\n')
+  })
+  return {
+    accepted: Array.isArray(info.accepted) ? info.accepted.length : 0,
+    messageId: String(info.messageId ?? '')
+  }
+}
+
+/**
+ * `sendGuardianInvitation` as the routes call it: only logged when no relay
+ * is set up, and thrown on failure, like every invitation, because whoever
+ * typed the address is waiting to hear whether it went.
+ */
+export function guardianInviteSender(
+  smtp: SmtpSettings,
+  logger: Pick<Console, 'log'> = console
+): (email: string, invitation: GuardianInvitation) => Promise<void> {
+  return async (email, invitation) => {
+    if (!mailConfigured(smtp)) {
+      logger.log(
+        `[no mail configured] guardian invitation for ${email}: ${invitation.link}`
+      )
+      return
+    }
+    const sent = await sendGuardianInvitation(smtp, email, invitation)
+    logger.log(
+      `guardian invitation sent to ${email}: ${sent.accepted} accepted, id ${sent.messageId}`
+    )
   }
 }
 
@@ -155,13 +228,27 @@ export async function verifyMail(smtp: SmtpSettings): Promise<boolean> {
 
 /** The same button, worded for an invitation rather than a sign-in. */
 function inviteButton(link: string): string {
+  const href = escapeHtml(link)
   return [
     '<table role="presentation" cellpadding="0" cellspacing="0" border="0">',
     '<tr><td align="center" bgcolor="#334423" style="border-radius:8px">',
-    `<a href="${link}" style="display:inline-block;padding:14px 28px;`,
+    `<a href="${href}" style="display:inline-block;padding:14px 28px;`,
     'font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;',
     'color:#ffffff;text-decoration:none">Accept the invitation</a>',
     '</td></tr></table>',
-    `<p style="color:#666;font-size:12px">Or paste this address: ${link}</p>`
+    `<p style="color:#666;font-size:12px">Or paste this address: ${href}</p>`
   ].join('')
+}
+
+/**
+ * Text as HTML. Names in an invitation are typed by whoever sent it, so
+ * they are printed as text, never read as markup or a link of their own.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }

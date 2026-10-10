@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 
 import { makeToken } from '../server/auth/tokens'
+import type { GuardianInvitation } from '../server/email/sendMail'
 import { type Clock, realClock } from '../server/groups/requests'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { eventListRoutes } from '../server/routes/eventList'
@@ -47,7 +48,18 @@ export async function creationHarness(
       app.use('/api/v1', onboardingRoutes(db, media))
       app.use('/api/v1', pictureRoutes(db, space))
       app.use('/api/v1', locationRoutes())
-      app.use('/api/v1', groupRoutes(db, media, clock, { sendInvite }))
+      const sendGuardianInvite = async (
+        email: string,
+        invitation: GuardianInvitation
+      ): Promise<void> => {
+        if (h.controls.failMail) throw new Error('Test invitation mail failure')
+        h.links.set(email, invitation.link)
+        h.invitations.set(email, invitation)
+      }
+      app.use(
+        '/api/v1',
+        groupRoutes(db, media, clock, { sendInvite, sendGuardianInvite })
+      )
       app.use('/api/v1', manageRoutes(db, { sendInvite, clock }))
       app.use('/api/v1', inviteRoutes(db, { sendCode }))
       app.use('/api/v1', nodeAdministrationRoutes(db))

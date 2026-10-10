@@ -6,7 +6,25 @@ import type { GroupRef } from './groupCreation'
 import type { ParentAction, ParentPreview } from './groupLinks'
 import type { RoleFlag } from './roles'
 
-export type RelationshipRequestInput = {
+/** Who is asked to be a guardian: an account, or an address. */
+export type GuardianInput = { userId: number } | { email: string }
+
+/**
+ * The body of `POST /relationship-requests`. A guardian invitation comes from
+ * a team its sender coaches; a guardian request, which a person sends for
+ * themselves, has no sender.
+ */
+export type RelationshipRequestInput =
+  | GroupRequestInput
+  | {
+      kind: 'guardian'
+      playerUserId: number
+      guardian: GuardianInput
+      sender?: { kind: 'team'; id: string }
+      idempotencyKey: string
+    }
+
+type GroupRequestInput = {
   sender: GroupRef
   confirmBoth?: boolean
   idempotencyKey: string
@@ -51,9 +69,22 @@ export type RequestTerms =
       admin: boolean
       flags: RoleFlag[]
     }
+  | GuardianTerms
+
+/**
+ * The guardian is an account, with the address it was invited by when it was
+ * invited by one, or an address no account has verified yet, bound to the
+ * account that accepts.
+ */
+export interface GuardianTerms {
+  kind: 'guardian'
+  playerUserId: number
+  guardian: { userId: number; email?: string } | { email: string }
+}
 
 export interface RelationshipInvitation {
-  sender: GroupRef
+  /** Absent only for a guardian request, which a person sends for themselves. */
+  sender?: GroupRef
   terms: RequestTerms
   confirmBoth?: boolean
   idempotencyKey: string

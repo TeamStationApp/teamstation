@@ -17,6 +17,7 @@ import { attachDictation } from './dictation/route'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
 import {
+  guardianInviteSender,
   mailConfigured,
   sendInvitation,
   sendSignInCode
@@ -478,7 +479,11 @@ function runWorker(): void {
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use(
     '/api/v1',
-    groupRoutes(db, mediaContext, undefined, { sendInvite, publicUrl })
+    groupRoutes(db, mediaContext, undefined, {
+      sendInvite,
+      sendGuardianInvite: guardianInviteSender(serverConfig.smtp),
+      publicUrl
+    })
   )
   app.use('/api/v1', nodeAdministrationRoutes(db))
   app.use('/api/v1', gameApprovalRoutes(db))

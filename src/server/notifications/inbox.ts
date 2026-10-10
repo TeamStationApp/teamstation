@@ -1,9 +1,9 @@
-import type { Kysely, Selectable } from 'kysely'
+import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
 
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import type { Notification } from '../../common/notifications'
-import { adminScopes } from '../access'
+import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
 import {
@@ -11,9 +11,10 @@ import {
   type Clock,
   realClock,
   requestStatus,
+  speaksForSender,
   type StoredRequest
 } from '../groups/requests'
-import { canAdminister, currentActor } from '../groups/rights'
+import { currentActor } from '../groups/rights'
 import { titleAndDescription } from './requestInformation'
 
 async function informationFor(
@@ -66,7 +67,7 @@ export async function notificationFor(
   let representedConsent = false
   for (const side of sides) {
     const sideRef = { kind: side.scope_type, id: side.scope_id }
-    if (!(await approvesSide(db, fresh, sideRef))) continue
+    if (!(await approvesSide(db, fresh, sideRef, request))) continue
     eligible = true
     if (
       side.scope_type === 'team' &&
@@ -80,16 +81,14 @@ export async function notificationFor(
         valid = await approvesSide(
           db,
           { userId: side.approved_by, isAdmin: false, scopes: [] },
-          sideRef
+          sideRef,
+          request
         )
       } catch {}
     }
     if (!valid) actionable = true
   }
-  const senderAdmin = await canAdminister(db, fresh, {
-    kind: request.sender_scope_type,
-    id: request.sender_scope_id
-  })
+  const senderAdmin = await speaksForSender(db, fresh, request)
   const event = await db
     .selectFrom('notification_events')
     .select(['id', 'recorded_recipients'])
@@ -146,9 +145,57 @@ export async function notificationFor(
     canWithdraw:
       status === 'pending' &&
       (senderAdmin || request.sender_id === fresh.userId || representedConsent),
-    canResend: status !== 'accepted' && senderAdmin,
+    canResend:
+      status !== 'accepted' && senderAdmin && request.kind !== 'guardian',
     viewed: receipt != null
   }
+}
+
+/**
+ * The teams whose players' guardian requests this person may answer, while
+ * those players have no guardian: every team they administer, coach or
+ * assist. Whether a player has one is read per request, by `approvesSide`.
+ */
+async function coachedTeams(
+  db: Kysely<Database>,
+  actor: Actor,
+  administered: GroupRef[]
+): Promise<string[]> {
+  const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+  return [
+    ...new Set([
+      ...scopes.coach.teamIds,
+      ...scopes.assistant.teamIds,
+      ...administered.filter(ref => ref.kind === 'team').map(ref => ref.id)
+    ])
+  ]
+}
+
+/**
+ * The players of these teams as a guardian request's terms name them: every
+ * row playing on one, and the open row each became, as text. A query, not a
+ * list, so a league's worth of players never leaves the database.
+ */
+function playersOf(teamIds: string[]): RawBuilder<string> {
+  return sql<string>`(
+    with recursive chain(id, first) as (
+      select memberships.user_id, true
+      from memberships
+      inner join teams on teams.id = memberships.team_id
+      where memberships.team_id in (${sql.join(teamIds)})
+        and memberships.is_player = true
+        and teams.merged_into is null
+      union
+      select users.merged_into, false
+      from chain
+      inner join users on users.id = chain.id
+      where users.merged_into is not null
+    )
+    select chain.id::text
+    from chain
+    inner join users on users.id = chain.id
+    where chain.first or users.merged_into is null
+  )`
 }
 
 /** SQL selects candidate requests; live side checks govern disclosure and the pending dot. */
@@ -190,6 +237,10 @@ export async function inbox(
       refs.push({ kind: 'team', id: team.id })
   let rows = db.selectFrom('group_requests').selectAll()
   if (!scopes.isAdmin) {
+    // A guardian request asks the player's side: so the player's guardians,
+    // and while there are none its coaching staff.
+    const teamIds = await coachedTeams(db, fresh, refs)
+    const guarded = await guardedRows(db, fresh.userId)
     const emails = await db
       .selectFrom('user_emails')
       .select('email')
@@ -239,6 +290,30 @@ export async function inbox(
         eb('id', 'in', historyIds),
         eb('id', 'in', viewedIds),
         eb('sender_id', '=', fresh.userId),
+        ...(guarded.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'guardian'),
+                eb(
+                  sql<string>`terms->>'playerUserId'`,
+                  'in',
+                  guarded.map(String)
+                )
+              ])
+            ]),
+        ...(teamIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'guardian'),
+                eb(
+                  sql<string>`terms->>'playerUserId'`,
+                  'in',
+                  playersOf(teamIds)
+                )
+              ])
+            ]),
         ...refs.map(ref =>
           eb.and([
             eb('sender_scope_type', '=', ref.kind),

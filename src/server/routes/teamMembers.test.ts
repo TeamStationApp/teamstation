@@ -1489,6 +1489,7 @@ describe('a team’s people by external id', function () {
         joined: true,
         guardianLinks: 2,
         guardiansMissing: 0,
+        guardiansRefused: 0,
         rolesAdded: []
       })
       expect(row).not.to.have.property('emailHeldElsewhere')
@@ -1498,6 +1499,7 @@ describe('a team’s people by external id', function () {
         unchanged: 0,
         error: 0,
         guardianLinks: 2,
+        guardiansRefused: 0,
         staff: 0
       })
 
@@ -1834,6 +1836,7 @@ describe('a team’s people by external id', function () {
         joined: false,
         guardianLinks: 0,
         guardiansMissing: 0,
+        guardiansRefused: 0,
         rolesAdded: []
       })
       expect(await count('users')).equals(users)
@@ -2009,6 +2012,138 @@ describe('a team’s people by external id', function () {
       expect(elsewhere.players).to.have.length(1)
     })
 
+    it('links every parent one call names for a child with no guardian, and refuses a child with one and the caller, unless a site administrator imports', async function () {
+      const { teamId, players } = await teamWithPlayers('Guarded', 'grd', 2)
+      const [first, second] = players
+      const links = (answer: Answer): number[][] =>
+        answer.body.results.map((row: any) => [
+          row.guardianLinks,
+          row.guardiansRefused
+        ])
+      // Two parents of a child with no guardian, in one call: both linked.
+      // Each has an address, so signs in, and holds the say from then on.
+      const ma = {
+        firstName: 'Ma',
+        email: 'grd.ma@example.test',
+        externalId: ext('grd-ma', 'member'),
+        guardianOf: [ext('grd-1')]
+      }
+      const both = await adults(
+        teamId,
+        [
+          ma,
+          {
+            firstName: 'Pa',
+            email: 'grd.pa@example.test',
+            externalId: ext('grd-pa', 'member'),
+            guardianOf: [ext('grd-1')]
+          }
+        ],
+        SEASON_ADMIN
+      )
+      expect(both.status).equals(200)
+      expect(links(both)).deep.equals([
+        [1, 0],
+        [1, 0]
+      ])
+      expect(both.body.counts).deep.include({
+        guardianLinks: 2,
+        guardiansRefused: 0
+      })
+
+      // Later, a third for that child is refused, and so is the caller for a
+      // child with none; a parent already linked is neither.
+      await giveEmail(seasonAdmin.userId, 'sam.season@example.test', true)
+      const uncle = {
+        firstName: 'Uncle',
+        externalId: ext('grd-uncle', 'member'),
+        guardianOf: [ext('grd-1')]
+      }
+      const sam = {
+        firstName: 'Sam',
+        email: 'sam.season@example.test',
+        externalId: ext('grd-sam', 'member'),
+        guardianOf: [ext('grd-2')]
+      }
+      const later = await adults(teamId, [uncle, sam, ma], SEASON_ADMIN)
+      expect(later.status).equals(200)
+      expect(links(later)).deep.equals([
+        [0, 1],
+        [0, 1],
+        [0, 0]
+      ])
+      expect(later.body.counts).deep.include({
+        guardianLinks: 0,
+        guardiansRefused: 2
+      })
+      expect(later.body.results[1].userId).equals(seasonAdmin.userId)
+      expect(await linksOf(seasonAdmin.userId)).deep.equals([])
+      expect(await linksOf(later.body.results[0].userId)).deep.equals([])
+
+      // A site administrator's import is held to neither.
+      const byAdmin = await adults(teamId, [uncle, sam], ADMIN)
+      expect(links(byAdmin)).deep.equals([
+        [1, 0],
+        [1, 0]
+      ])
+      expect(await linksOf(later.body.results[0].userId)).deep.equals([
+        { related_user_id: first, kind: 'guardian', can_manage: true }
+      ])
+      expect(await linksOf(seasonAdmin.userId)).deep.equals([
+        { related_user_id: second, kind: 'guardian', can_manage: true }
+      ])
+    })
+
+    it('takes no say from the staff for a parent with no address, so a later import with one still links', async function () {
+      const { teamId, players } = await teamWithPlayers('No say', 'nsy', 1)
+      const links = (answer: Answer): number[][] =>
+        answer.body.results.map((row: any) => [
+          row.guardianLinks,
+          row.guardiansRefused
+        ])
+      // A parent with no address can never sign in, but is linked.
+      const gran = {
+        firstName: 'Gran',
+        externalId: ext('nsy-gran', 'member'),
+        guardianOf: [ext('nsy-1')]
+      }
+      const first = await adults(teamId, [gran], SEASON_ADMIN)
+      expect(links(first)).deep.equals([[1, 0]])
+      const granId = first.body.results[0].userId
+      expect(await linksOf(granId)).deep.equals([
+        { related_user_id: players[0], kind: 'guardian', can_manage: true }
+      ])
+
+      // So a later import's parent with an address is linked too, and Gran
+      // is neither linked again nor refused.
+      const mom = {
+        firstName: 'Mom',
+        email: 'nsy.mom@example.test',
+        externalId: ext('nsy-mom', 'member'),
+        guardianOf: [ext('nsy-1')]
+      }
+      const later = await adults(teamId, [mom, gran], SEASON_ADMIN)
+      expect(later.status).equals(200)
+      expect(links(later)).deep.equals([
+        [1, 0],
+        [0, 0]
+      ])
+      expect(later.body.counts).deep.include({
+        guardianLinks: 1,
+        guardiansRefused: 0
+      })
+
+      // Mom signs in, so the next import's parent is hers to decide.
+      const aunt = {
+        firstName: 'Aunt',
+        email: 'nsy.aunt@example.test',
+        externalId: ext('nsy-aunt', 'member'),
+        guardianOf: [ext('nsy-1')]
+      }
+      const third = await adults(teamId, [aunt], SEASON_ADMIN)
+      expect(links(third)).deep.equals([[0, 1]])
+    })
+
     it('makes a follower a spectator with no links and no roles', async function () {
       const teamId = await newTeam('Followers')
       const answer = await adults(teamId, [
@@ -2068,6 +2203,7 @@ describe('a team’s people by external id', function () {
         unchanged: 0,
         error: 0,
         guardianLinks: 2,
+        guardiansRefused: 0,
         staff: 1
       })
       const tables = async (): Promise<number[]> => [
@@ -2091,6 +2227,7 @@ describe('a team’s people by external id', function () {
         unchanged: 3,
         error: 0,
         guardianLinks: 0,
+        guardiansRefused: 0,
         staff: 0
       })
       expect(await tables()).deep.equals(before)
@@ -2112,6 +2249,7 @@ describe('a team’s people by external id', function () {
         joined: false,
         guardianLinks: 0,
         guardiansMissing: 0,
+        guardiansRefused: 0,
         rolesAdded: []
       })
       expect(answer.body.counts).deep.include({ created: 1, error: 1 })

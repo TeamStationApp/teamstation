@@ -70,6 +70,17 @@ async function guardedPeople(
 }
 
 /**
+ * Every row of everybody this person is a guardian of, as a guardian
+ * request's terms may name them, in no particular order.
+ */
+export async function guardedRows(
+  db: Kysely<Database>,
+  userId: number
+): Promise<number[]> {
+  return (await guardedPeople(db, userId)).flatMap(child => child.userIds)
+}
+
+/**
  * The players this person is a guardian of, by the row each signs in as:
  * every person a `guardian` or `family` link relates to any of the asker's
  * rows, in user id order.
@@ -79,6 +90,133 @@ export async function guardedPlayers(
   userId: number
 ): Promise<number[]> {
   return (await guardedPeople(db, userId)).map(child => child.userId)
+}
+
+/** However deep a chain of merges can go, as `onePerson` walks it. */
+const MAX_MERGE_DEPTH = 16
+
+/**
+ * `onePerson` for several rows at once, in one query: each row asked about,
+ * keyed by itself, as the open row it is now and every row closed into that
+ * one. Walks the merges the way `onePerson` does: up to whoever is still open,
+ * stopping at a loop or after `MAX_MERGE_DEPTH` steps, then back down.
+ */
+async function peopleOf(
+  db: Kysely<Database>,
+  userIds: readonly number[]
+): Promise<Map<number, OnePerson>> {
+  const asked = [...new Set(userIds)]
+  const people = new Map<number, OnePerson>()
+  if (asked.length === 0) return people
+  const { rows } = await sql<{ start: number; survivor: number; id: number }>`
+    with recursive up(start, id, depth, path) as (
+      select asked.id, asked.id, 0, array[asked.id]
+      from unnest(${asked}::bigint[]) as asked(id)
+      union all
+      select up.start, users.merged_into, up.depth + 1,
+        up.path || users.merged_into
+      from up
+      inner join users on users.id = up.id
+      where users.merged_into is not null
+        and not users.merged_into = any(up.path)
+        and up.depth < ${MAX_MERGE_DEPTH}
+    ),
+    survivor(start, id) as (
+      select distinct on (start) start, id from up order by start, depth desc
+    ),
+    down(start, id, depth) as (
+      select start, id, 0 from survivor
+      union
+      select down.start, users.id, down.depth + 1
+      from down
+      inner join users on users.merged_into = down.id
+      where down.depth < ${MAX_MERGE_DEPTH}
+    )
+    select down.start, survivor.id as survivor, down.id
+    from down
+    inner join survivor on survivor.start = down.start
+    group by down.start, survivor.id, down.id
+    order by down.start, min(down.depth), down.id
+  `.execute(db)
+  for (const row of rows) {
+    const person = people.get(row.start)
+    if (person == null)
+      people.set(row.start, { userId: row.survivor, userIds: [row.id] })
+    else person.userIds.push(row.id)
+  }
+  return people
+}
+
+/**
+ * The guardians of these players, by the row each signs in as: everybody
+ * whose `guardian` or `family` link relates them to any row of any of the
+ * players, in user id order. The reverse of `guardedPlayers`, read the same
+ * way: a link from a row closed into the player is the player, not a parent.
+ * A disabled account is nobody's guardian here. With `signsIn`, neither is
+ * an account that cannot sign in (`login_enabled` false, as a roster import
+ * makes a parent with no address) or that is closed into another: see
+ * `guardiansWhoCanAct`.
+ *
+ * A handful of queries however many players there are: the players' merges,
+ * the links to all of their rows, and the merges of everybody linked, each
+ * read once for the whole set.
+ */
+export async function guardiansOf(
+  db: Kysely<Database>,
+  playerUserIds: readonly number[],
+  { signsIn = false }: { signsIn?: boolean } = {}
+): Promise<number[]> {
+  const players = [...(await peopleOf(db, playerUserIds)).values()]
+  if (players.length === 0) return []
+  const links = await db
+    .selectFrom('user_links')
+    .select(['user_id', 'related_user_id'])
+    .where(
+      'related_user_id',
+      'in',
+      players.flatMap(player => player.userIds)
+    )
+    .where('kind', 'in', ['guardian', 'family'])
+    .execute()
+  if (links.length === 0) return []
+  const parents = await peopleOf(
+    db,
+    links.map(link => link.user_id)
+  )
+  const guardians = new Set<number>()
+  for (const player of players)
+    for (const link of links) {
+      if (!player.userIds.includes(link.related_user_id)) continue
+      const parent = parents.get(link.user_id)!
+      if (parent.userIds.some(id => player.userIds.includes(id))) continue
+      guardians.add(parent.userId)
+    }
+  if (guardians.size === 0) return []
+  const enabled = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', 'in', [...guardians])
+    .where('disabled_at', 'is', null)
+    .$if(signsIn, query =>
+      query.where('login_enabled', '=', true).where('merged_into', 'is', null)
+    )
+    .orderBy('id')
+    .execute()
+  return enabled.map(row => row.id)
+}
+
+/**
+ * The guardians who hold the say over who else becomes one of these players'
+ * guardians: `guardiansOf` counting only accounts that can sign in to invite
+ * or approve. A parent a roster import made without an address is listed
+ * among the family but takes no say from the team's staff; nor does anybody
+ * else who cannot sign in.
+ */
+export async function guardiansWhoCanAct(
+  db: Kysely<Database>,
+  playerUserIds: readonly number[]
+): Promise<number[]> {
+  return await guardiansOf(db, playerUserIds, { signsIn: true })
 }
 
 /**

@@ -255,6 +255,43 @@ describe('the API document', function () {
     expect(JSON.stringify(settings?.requestBody)).includes('"DH"')
   })
 
+  it('documents guardian invitations and requests beside the other relationship requests', function () {
+    const post = (openApiDocument('0.0.0').paths as Record<string, any>)[
+      '/relationship-requests'
+    ].post
+    const [relationship, guardian] =
+      post.requestBody.content['application/json'].schema.oneOf
+    expect(relationship.required).deep.equals([
+      'kind',
+      'sender',
+      'idempotencyKey'
+    ])
+    expect(relationship.properties.kind.enum).not.includes('guardian')
+    expect(guardian.required).deep.equals([
+      'kind',
+      'playerUserId',
+      'guardian',
+      'idempotencyKey'
+    ])
+    expect(guardian.properties.kind.enum).deep.equals(['guardian'])
+    expect(
+      guardian.properties.guardian.oneOf.map(
+        (option: { required: string[] }) => option.required
+      )
+    ).deep.equals([['userId'], ['email']])
+    expect(guardian.properties.sender.properties.kind.enum).deep.equals([
+      'team'
+    ])
+    expect(guardian.properties.idempotencyKey).deep.equals({
+      type: 'string',
+      minLength: 8,
+      maxLength: 120
+    })
+    expect(post.summary).includes('guardian invitation')
+    expect(post.description).includes('A guardian request has no `sender`')
+    expect(post.description).includes('429 `rateLimited`')
+  })
+
   it('lists every role flag, the assistant included, wherever roles are named', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })
@@ -271,7 +308,7 @@ describe('the API document', function () {
     const personal =
       paths['/relationship-requests'].post.requestBody.content[
         'application/json'
-      ].schema
+      ].schema.oneOf[0]
     expect(personal.properties.flags.items.enum).deep.equals([...ROLE_FLAGS])
     expect(
       paths['/manage/{scopeType}/{scopeId}/people/{userId}/roles'].put

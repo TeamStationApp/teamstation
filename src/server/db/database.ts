@@ -684,10 +684,17 @@ export interface CreationIdempotencyTable {
 export interface GroupRequestsTable {
   id: string
   kind:
-    'parent' | 'participation' | 'promotion' | 'person' | 'game' | 'gameChange'
+    | 'parent'
+    | 'participation'
+    | 'promotion'
+    | 'person'
+    | 'guardian'
+    | 'game'
+    | 'gameChange'
   sender_id: number
-  sender_scope_type: 'league' | 'season' | 'team'
-  sender_scope_id: string
+  /** Null only for a guardian request, which a person sends for themselves. */
+  sender_scope_type: 'league' | 'season' | 'team' | null
+  sender_scope_id: string | null
   terms: Json
   revision: Generated<number>
   status: Generated<

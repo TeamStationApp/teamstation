@@ -102,6 +102,11 @@ export interface TeamAdultGains {
   guardianLinks: number
   /** `guardianOf` ids that named no player of this team. */
   guardiansMissing: number
+  /**
+   * `guardianOf` players this row was not made a guardian of: the player
+   * had a guardian before the call, or the adult is the caller.
+   */
+  guardiansRefused: number
   /** Roles this row added on the team. */
   rolesAdded: Role[]
 }
@@ -143,6 +148,8 @@ export interface TeamAdultsCounts {
   error: number
   /** Guardian links this call made. */
   guardianLinks: number
+  /** Guardian links this call refused, as each row's `guardiansRefused`. */
+  guardiansRefused: number
   /** Adults who gained at least one role in this call. */
   staff: number
 }

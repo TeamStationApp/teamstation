@@ -155,6 +155,7 @@ export async function accountHarness(
   }
   const mail = new Map<string, string>()
   const links = new Map<string, string>()
+  const invitations = new Map<string, object>()
   const sendCode = async (
     email: string,
     code: string,
@@ -202,6 +203,7 @@ export async function accountHarness(
     db,
     mail,
     links,
+    invitations,
     space,
     objects,
     controls,
@@ -249,6 +251,8 @@ export interface AccountHarness {
   db: Kysely<Database>
   mail: Map<string, string>
   links: Map<string, string>
+  /** Each address's last invitation mail that says more than a link. */
+  invitations: Map<string, object>
   space: SpaceSettings
   objects: Map<string, Buffer>
   controls: { failMail: boolean; failPut: boolean }

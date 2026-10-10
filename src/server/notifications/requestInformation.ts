@@ -1,8 +1,10 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { GroupRef } from '../../common/groupCreation'
+import { shortName } from '../../common/names'
 import type { RequestTerms } from '../../common/notifications'
 import type { Database } from '../db/database'
+import { isGuardianRequest } from '../groups/guardianLimits'
 import type { StoredRequest } from '../groups/requests'
 
 export async function titleAndDescription(
@@ -97,6 +99,31 @@ export async function titleAndDescription(
     return {
       title: `Invitation to ${group}`,
       description: `${sender} from ${organization} invited you to ${group}. Requested access: ${roles.length === 0 ? 'watching' : roles.join(', ')}. These grants apply only after the named recipient accepts.`
+    }
+  }
+  if (terms.kind === 'guardian') {
+    const player = await db
+      .selectFrom('users')
+      .select([
+        'id',
+        'first_name as firstName',
+        'last_name as lastName',
+        'display_name as displayName'
+      ])
+      .where('id', '=', terms.playerUserId)
+      .executeTakeFirstOrThrow()
+    const short = shortName(player)
+    if (isGuardianRequest(request))
+      return {
+        title: `${sender} asks to be ${short}'s guardian`,
+        description: `Approving lets them see ${short}'s teams and manage ${short}'s details.`
+      }
+    return {
+      title: `Be a guardian of ${short}`,
+      description:
+        request.sender_scope_type == null
+          ? `${sender} invited you to be ${short}'s guardian.`
+          : `${sender} from ${organization} invited you to be ${short}'s guardian.`
     }
   }
   if (terms.kind === 'participation') {
