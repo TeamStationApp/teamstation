@@ -245,6 +245,10 @@ export function moreEligibility(
   state: GameState,
   action: MoreAction
 ): string | undefined {
+  if (action === 'Place a Runner (Tiebreaker)') {
+    const problem = tiebreakerSetupError(state)
+    if (problem != null) return problem
+  }
   if (action === 'Put Batter on Base' && baseIds(state).some(id => id != null))
     return 'Requires empty bases'
   if (state.liveData.plays.currentPlay == null)
@@ -265,6 +269,35 @@ export function moreEligibility(
     !baseIds(state).some(id => id != null)
   )
     return 'No runners on base'
+}
+
+/** Setup actions do not start baseball play; a pitch or actual play does. */
+export function tiebreakerSetupError(state: GameState): string | undefined {
+  const line = state.liveData.linescore
+  if (state.final) return 'The game is over'
+  if (!line.isTopInning) return 'Available only at the start of a top inning'
+  if (state.pending != null) return 'Finish the current play first'
+  const { currentPlay, allPlays } = state.liveData.plays
+  if (
+    line.balls !== 0 ||
+    line.strikes !== 0 ||
+    allPlays.some(
+      play =>
+        play.about.inning === line.currentInning &&
+        play.about.halfInning === 'top'
+    ) ||
+    (currentPlay != null &&
+      (currentPlay.result.eventType !== '' ||
+        currentPlay.playEvents.some(
+          event =>
+            event.isSubstitution !== true &&
+            !['placed_runner', 'runner_placed', 'ts_batting_order'].includes(
+              event.details.code
+            )
+        )))
+  )
+    return 'Available only before the inning starts'
+  if (currentPlay == null) return 'Choose the next batter first'
 }
 
 /** Some runner on the play has no base yet: the batter's choice is open. */

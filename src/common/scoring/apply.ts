@@ -60,6 +60,7 @@ import {
   moreEligibility,
   nextDecision,
   runnerDecisionError,
+  tiebreakerSetupError,
   trajectoryLabel,
   trajectoryOf,
   undoesHitOffer
@@ -1908,6 +1909,15 @@ export function applyAction(
   const action = cleaned.action
   if (state.final)
     return unchanged({ code: 'gameOver', message: 'The game is over' })
+  // New live scoring honors setup limits; stored legacy actions still replay.
+  if (
+    requireCurrentSetup &&
+    action.type === 'gameFlow' &&
+    action.kind === 'placeRunner'
+  ) {
+    const problem = tiebreakerSetupError(state)
+    if (problem != null) return unchanged({ code: 'notNow', message: problem })
+  }
   const played = state.liveData.plays.allPlays.length
   const copy = inPlace ? state : copyState(state)
   const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy) }
