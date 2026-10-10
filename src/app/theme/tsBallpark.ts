@@ -1,4 +1,5 @@
 import { fonts } from './fonts'
+import { scoringSurface } from './scoringSurface'
 import type { Theme } from './types'
 
 /**
@@ -74,6 +75,7 @@ const palette = {
 const rem = (size: number): number => size * 16
 
 export const tsBallpark: Theme = {
+  scoringSurface,
   rem,
   isDark: false,
 

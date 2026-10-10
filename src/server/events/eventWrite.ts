@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { withPreviousTagIdentities } from '../../common/eventTags'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
@@ -70,6 +71,7 @@ export interface ReplaceGameEventsInput extends GameTeams {
  * plays would show up again.
  */
 function withKeptCredits(gumbo: GumboPlay, previous: unknown): GumboPlay {
+  gumbo = withPreviousTagIdentities(gumbo, previous, true)
   if (gumbo.credits != null) return gumbo
   // The stored document is untyped JSON.
   if (

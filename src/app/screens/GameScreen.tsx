@@ -42,6 +42,7 @@ import {
   WideTable
 } from '../components'
 import { ContentInsetContext, NO_INSET } from '../components/contentInset'
+import { EventTagText } from '../components/EventTagText'
 import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
@@ -973,7 +974,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           short ? styles.descriptionInList : { width: layout.videoWidth }
         ]}
       >
-        <Text style={styles.descriptionText}>{chosen.description}</Text>
+        <EventTagText
+          text={chosen.description}
+          tag={chosen.tag}
+          style={styles.descriptionText}
+        />
       </GlassView>
     )
 
@@ -1099,18 +1104,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 uri={highlight.stillUrl}
                 time={timecode(highlight.startOffsetSec)}
               />
-              <Text
+              <EventTagText
+                text={highlight.title}
+                fillRow
+                tag={highlight.tag}
+                numberOfLines={2}
                 style={[
                   styles.highlightTitle,
                   highlight.isScoringPlay ? styles.scoring : undefined
                 ]}
-                // Two lines in a grid cell: `Ground out: Benito W (2B) to
-                // Isaac D (1B)` needs more than twice the width a quarter of a
-                // desktop gives it, and a cut label names nobody.
-                numberOfLines={2}
-              >
-                {highlight.title}
-              </Text>
+              />
             </Pressable>
           ))}
         </View>

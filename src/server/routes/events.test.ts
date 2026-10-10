@@ -7,6 +7,11 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import {
+  type TagDocument,
+  tagMetadata,
+  tagTargets
+} from '../../common/eventTags'
+import {
   asGumboPlay,
   asPostEventsBody,
   type CurrentPlay,
@@ -43,6 +48,15 @@ import {
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_events_route_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+/** Scoring equivalence excludes opaque annotation identities, tested separately. */
+function withoutTagTargets(value: unknown): unknown {
+  return JSON.parse(
+    JSON.stringify(value, (key, item) =>
+      key === 'tagTargets' ? undefined : item
+    )
+  )
+}
 
 const TOKEN = 'tok_events_000000000000000000000000'
 const STRANGER = 'tok_stranger_00000000000000000000'
@@ -957,11 +971,17 @@ describe('posting and reading plays', function () {
           .where('id', '=', id)
           .executeTakeFirstOrThrow()
       })
-      expect(await written(viaFunction)).deep.equals(await written(viaRoute))
+      expect(withoutTagTargets(await written(viaFunction))).deep.equals(
+        withoutTagTargets(await written(viaRoute))
+      )
       const gumbos = (list: unknown): unknown =>
         (list as Array<{ gumbo: unknown }>).map(row => row.gumbo)
-      expect(gumbos(returned.plays)).deep.equals(gumbos(posted.body.plays))
-      expect(returned.currentPlay).deep.equals(posted.body.currentPlay)
+      expect(withoutTagTargets(gumbos(returned.plays))).deep.equals(
+        withoutTagTargets(gumbos(posted.body.plays))
+      )
+      expect(withoutTagTargets(returned.currentPlay)).deep.equals(
+        withoutTagTargets(posted.body.currentPlay)
+      )
     }
     // The half's outs, the credits' teams and the listed codes it writes.
     const events = await db!
@@ -1348,6 +1368,7 @@ describe('posting and reading plays', function () {
     matchup: { batter: { id: member.userId, fullName: 'Cam' } },
     playEvents: Array.from({ length: pitches }, (_, index) => ({
       index,
+      pitchNumber: index + 1,
       isPitch: true,
       details: { code: 'B' }
     }))
@@ -1502,11 +1523,18 @@ describe('posting and reading plays', function () {
     expect(players).deep.equals([])
     expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
     const read = await ask(`/games/${liveAtBatId}/events`)
-    expect(read.body).deep.equals({ plays: [], currentPlay: current(0) })
+    expect(withoutTagTargets(read.body)).deep.equals({
+      plays: [],
+      currentPlay: current(0)
+    })
     await live(liveAtBatId, { plays: [] })
-    expect((await gameRow(liveAtBatId)).currentPlay).deep.equals(current(0))
+    expect(
+      withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
+    ).deep.equals(current(0))
     await live(liveAtBatId, { currentPlay: current(0, 2) })
-    expect((await gameRow(liveAtBatId)).currentPlay).deep.equals(current(0, 2))
+    expect(
+      withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
+    ).deep.equals(current(0, 2))
     await live(liveAtBatId, { currentPlay: null })
     expect((await gameRow(liveAtBatId)).currentPlay).equals(null)
     // An at-bat in progress changes no stats, so none are asked for.
@@ -1545,6 +1573,1498 @@ describe('posting and reading plays', function () {
     })
     expect(both.status).equals(400)
     expect(both.body.message).equals('A play is both posted and removed')
+  })
+  it('retains surviving pitch tags through metadata-free Undo with or without removing the completed row', async () => {
+    for (const remove of [false, true]) {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const events = current(0, 4).playEvents as unknown[]
+      const walk = play({
+        atBatIndex: 0,
+        awayScore: 0,
+        homeScore: 0,
+        outs: 0,
+        eventType: 'walk',
+        playEvents: events
+      })
+      const posted = await live(id, { plays: [walk], currentPlay: null })
+      const targets = tagTargets(
+        (posted.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )
+      const first = targets[0]
+      const last = targets[3]
+      await ask(`/games/${id}/tags/${first.id}`, 'PUT', {
+        tag: 'surviving pitch'
+      })
+      await ask(`/games/${id}/tags/${last.id}`, 'PUT', { tag: 'removed pitch' })
+      const undone = await live(id, {
+        plays: [],
+        remove: remove ? [0] : [],
+        currentPlay: current(0, 3)
+      })
+      expect(undone.status).equals(200)
+      expect(
+        tagTargets(undone.body.currentPlay as TagDocument)[0]
+      ).deep.includes({ id: first.id, tag: 'surviving pitch' })
+      expect((await ask('/tags')).body.popular).not.deep.includes({
+        tag: 'removed pitch',
+        count: 1
+      })
+      const again = await live(id, { plays: [walk], currentPlay: null })
+      const after = tagTargets(
+        (again.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )
+      expect(after[0]).deep.includes({ id: first.id, tag: 'surviving pitch' })
+      expect(after[3].id).not.equals(last.id)
+      expect(after[3].tag).equals(null)
+      await ask(`/games/${id}/tags/${first.id}`, 'DELETE')
+    }
+  })
+
+  it('keeps a tagged current pitch when an older client completes without metadata', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const ongoing = current(0)
+    const posted = await live(id, { currentPlay: ongoing })
+    const pitch = tagTargets(posted.body.currentPlay as TagDocument)[0]
+    expect(
+      (
+        await ask(`/games/${id}/tags/${pitch.id}`, 'PUT', {
+          tag: 'great pitch'
+        })
+      ).status
+    ).equals(200)
+    const completed = play({
+      atBatIndex: 0,
+      awayScore: 0,
+      homeScore: 0,
+      playEvents: ongoing.playEvents as unknown[]
+    })
+    const answer = await live(id, { plays: [completed], currentPlay: null })
+    expect(answer.status).equals(200)
+    const saved = (answer.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+    expect(tagTargets(saved)[0]).deep.includes({
+      id: pitch.id,
+      tag: 'great pitch'
+    })
+    expect((await ask('/tags')).body.popular).deep.includes({
+      tag: 'great pitch',
+      count: 1
+    })
+    expect(
+      (await ask(`/games/${id}/tags/${pitch.id}`, 'DELETE')).status
+    ).equals(200)
+  })
+
+  for (const [beforeCalls, afterCalls] of [
+    [
+      ['B', 'C', 'B'],
+      ['C', 'C', 'B']
+    ],
+    [
+      ['B', 'F', 'B'],
+      ['F', 'F', 'B', 'F', 'B']
+    ]
+  ])
+    it(`keeps unchanged later pitch tags after metadata-free ${beforeCalls.join(',')} to ${afterCalls.join(',')}`, async () => {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const document = (calls: string[]): ReturnType<typeof play> =>
+        play({
+          atBatIndex: 0,
+          awayScore: 0,
+          homeScore: 0,
+          playEvents: calls.map((code, index) => ({
+            index,
+            pitchNumber: index + 1,
+            type: 'pitch',
+            isPitch: true,
+            details: { code }
+          }))
+        })
+      const first = await live(id, { plays: [document(beforeCalls)] })
+      const before = tagTargets(
+        (first.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )
+      for (let index = 0; index < 3; index++) {
+        expect(
+          (
+            await ask(`/games/${id}/tags/${before[index].id}`, 'PUT', {
+              tag: `corrected pitch ${index}`
+            })
+          ).status
+        ).equals(200)
+      }
+      const changed = await live(id, { plays: [document(afterCalls)] })
+      expect(changed.status).equals(200)
+      const after = tagTargets(
+        (changed.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )
+      expect(after[0].id).not.equals(before[0].id)
+      expect(after[0].tag).equals(null)
+      for (const target of after
+        .slice(3)
+        .filter(target => target.eventIndex != null)) {
+        expect(before.map(original => original.id)).not.includes(target.id)
+        expect(target.tag).equals(null)
+      }
+      expect(after[1]).deep.includes({
+        id: before[1].id,
+        tag: 'corrected pitch 1'
+      })
+      expect(after[2]).deep.includes({
+        id: before[2].id,
+        tag: 'corrected pitch 2'
+      })
+      const assignments = await db!
+        .selectFrom('event_tags')
+        .select(['target_id', 'tag'])
+        .where('game_id', '=', id)
+        .orderBy('tag')
+        .execute()
+      expect(assignments).deep.equals([
+        { target_id: before[1].id, tag: 'corrected pitch 1' },
+        { target_id: before[2].id, tag: 'corrected pitch 2' }
+      ])
+      await db!.deleteFrom('games').where('id', '=', id).execute()
+    })
+
+  for (const complete of [true, false])
+    it(`preserves numbered pitch tags through metadata-free action insertion/removal in ${complete ? 'completed' : 'current'} plays`, async () => {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const pitchEvents = [1, 2].map(pitchNumber => ({
+        index: pitchNumber - 1,
+        type: 'pitch',
+        isPitch: true,
+        pitchNumber,
+        details: { code: 'B', description: 'Ball outside.' }
+      }))
+      const original = play({
+        atBatIndex: 0,
+        awayScore: 0,
+        homeScore: 0,
+        playEvents: pitchEvents
+      })
+      original.about = {
+        ...(original.about as Record<string, unknown>),
+        isComplete: complete
+      }
+      const write = async (
+        document: ReturnType<typeof play>
+      ): Promise<{ status: number; body: Record<string, unknown> }> =>
+        await live(
+          id,
+          complete
+            ? { plays: [document] }
+            : { plays: [], currentPlay: document }
+        )
+      const read = (response: {
+        body: Record<string, unknown>
+      }): TagDocument =>
+        complete
+          ? (response.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+          : (response.body.currentPlay as TagDocument)
+      const first = await write(original)
+      expect(first.status).equals(200)
+      const pitches = tagTargets(read(first)).filter(
+        target => target.eventIndex != null
+      )
+      for (let index = 0; index < pitches.length; index++)
+        expect(
+          (
+            await ask(`/games/${id}/tags/${pitches[index].id}`, 'PUT', {
+              tag: `numbered pitch ${index}`
+            })
+          ).status
+        ).equals(200)
+      const inserted = await write({
+        ...original,
+        playEvents: [
+          {
+            index: 0,
+            type: 'action',
+            isPitch: false,
+            details: { eventType: 'pickoff', description: 'Pickoff attempt.' }
+          },
+          ...pitchEvents.map((event, index) => ({
+            ...event,
+            index: index + 1
+          }))
+        ]
+      })
+      expect(inserted.status).equals(200)
+      const after = tagTargets(read(inserted)).filter(
+        target => target.eventIndex != null
+      )
+      expect(after[0].tag).equals(null)
+      for (let index = 0; index < pitches.length; index++)
+        expect(after[index + 1]).deep.includes({
+          id: pitches[index].id,
+          tag: `numbered pitch ${index}`
+        })
+      expect(
+        (
+          await ask(`/games/${id}/tags/${after[0].id}`, 'PUT', {
+            tag: 'prefix action'
+          })
+        ).status
+      ).equals(200)
+      const removed = await write(original)
+      expect(removed.status).equals(200)
+      expect(
+        tagTargets(read(removed))
+          .filter(target => target.eventIndex != null)
+          .map(target => ({ id: target.id, tag: target.tag }))
+      ).deep.equals(
+        pitches.map((target, index) => ({
+          id: target.id,
+          tag: `numbered pitch ${index}`
+        }))
+      )
+      expect(
+        (await ask(`/games/${id}/tags/${after[0].id}`, 'DELETE')).status
+      ).equals(404)
+      expect(
+        await db!
+          .selectFrom('event_tags')
+          .select('target_id')
+          .where('game_id', '=', id)
+          .execute()
+      ).has.length(2)
+      await db!.deleteFrom('games').where('id', '=', id).execute()
+    })
+
+  it('retains substitution tags when unchanged position keys and legacy signatures reorder across JSONB', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const position = {
+      code: '1',
+      name: 'Pitcher',
+      type: 'Pitcher',
+      abbreviation: 'P'
+    }
+    const action = {
+      index: 0,
+      type: 'action',
+      isPitch: false,
+      details: {
+        eventType: 'pitching_substitution',
+        description: 'Pitching substitution.'
+      },
+      position,
+      player: { id: member.userId }
+    }
+    const original = play({
+      atBatIndex: 0,
+      awayScore: 0,
+      homeScore: 0,
+      playEvents: [action]
+    })
+    const posted = await live(id, { plays: [original] })
+    const document = (posted.body.plays as Array<{ gumbo: TagDocument }>)[0]
+      .gumbo
+    const target = tagTargets(document)[0]
+    expect(
+      (
+        await ask(`/games/${id}/tags/${target.id}`, 'PUT', {
+          tag: 'great relief'
+        })
+      ).status
+    ).equals(200)
+    const stored = await db!
+      .selectFrom('events')
+      .select(['id', 'gumbo'])
+      .where('gameId', '=', id)
+      .executeTakeFirstOrThrow()
+    const gumbo = stored.gumbo as TagDocument
+    const legacy = tagMetadata(gumbo)
+    const signature = JSON.parse(legacy.events[0].signature) as unknown[]
+    signature[6] = position
+    legacy.events[0].signature = JSON.stringify(signature)
+    await db!
+      .updateTable('events')
+      .set({ gumbo: { ...gumbo, tagTargets: legacy } })
+      .where('id', '=', stored.id)
+      .execute()
+    const reordered = {
+      ...action,
+      position: {
+        abbreviation: 'P',
+        type: 'Pitcher',
+        name: 'Pitcher',
+        code: '1'
+      }
+    }
+    const saved = await live(id, {
+      plays: [{ ...original, playEvents: [reordered] }]
+    })
+    expect(saved.status).equals(200)
+    expect(
+      tagTargets(
+        (saved.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )[0]
+    ).deep.includes({ id: target.id, tag: 'great relief' })
+    expect(
+      await db!
+        .selectFrom('event_tags')
+        .select(['target_id', 'tag'])
+        .where('game_id', '=', id)
+        .execute()
+    ).deep.equals([{ target_id: target.id, tag: 'great relief' }])
+    await db!.deleteFrom('games').where('id', '=', id).execute()
+  })
+
+  for (const complete of [true, false])
+    it(`preserves a tagged substitution through pickoff insertion/removal in ${complete ? 'completed' : 'current'} legacy saves`, async () => {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const substitution = {
+        index: 0,
+        type: 'action',
+        isPitch: false,
+        details: {
+          eventType: 'pitching_substitution',
+          description: 'Pitching substitution.'
+        },
+        player: { id: member.userId },
+        position: {
+          code: '1',
+          name: 'Pitcher',
+          type: 'Pitcher',
+          abbreviation: 'P'
+        }
+      }
+      const original = play({
+        atBatIndex: 0,
+        awayScore: 0,
+        homeScore: 0,
+        playEvents: [substitution]
+      })
+      original.about = {
+        ...(original.about as Record<string, unknown>),
+        isComplete: complete
+      }
+      const write = async (
+        document: ReturnType<typeof play>
+      ): Promise<{ status: number; body: Record<string, unknown> }> =>
+        await live(
+          id,
+          complete
+            ? { plays: [document] }
+            : { plays: [], currentPlay: document }
+        )
+      const read = (response: {
+        body: Record<string, unknown>
+      }): TagDocument =>
+        complete
+          ? (response.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+          : (response.body.currentPlay as TagDocument)
+      const first = await write(original)
+      const target = tagTargets(read(first))[0]
+      expect(
+        (
+          await ask(`/games/${id}/tags/${target.id}`, 'PUT', {
+            tag: 'great relief'
+          })
+        ).status
+      ).equals(200)
+      const changed = {
+        ...substitution,
+        index: 1,
+        position: {
+          code: '1',
+          name: 'Localized pitcher',
+          type: 'Localized role',
+          abbreviation: 'P'
+        }
+      }
+      const inserted = await write({
+        ...original,
+        playEvents: [
+          {
+            index: 0,
+            type: 'action',
+            isPitch: false,
+            details: { eventType: 'pickoff', description: 'Pickoff attempt.' }
+          },
+          changed
+        ]
+      })
+      expect(inserted.status).equals(200)
+      const after = tagTargets(read(inserted))
+      expect(after[0].id).not.equals(target.id)
+      expect(after[0].tag).equals(null)
+      expect(after[1]).deep.includes({ id: target.id, tag: 'great relief' })
+      expect(
+        (
+          await db!
+            .selectFrom('event_tags')
+            .select('event_index')
+            .where('game_id', '=', id)
+            .executeTakeFirstOrThrow()
+        ).event_index
+      ).equals(1)
+      const removed = await write(original)
+      expect(removed.status).equals(200)
+      expect(tagTargets(read(removed))[0]).deep.includes({
+        id: target.id,
+        tag: 'great relief'
+      })
+      expect(
+        (
+          await db!
+            .selectFrom('event_tags')
+            .select('event_index')
+            .where('game_id', '=', id)
+            .executeTakeFirstOrThrow()
+        ).event_index
+      ).equals(0)
+      expect(
+        await db!
+          .selectFrom('event_tags')
+          .select(['target_id', 'tag'])
+          .where('game_id', '=', id)
+          .execute()
+      ).deep.equals([{ target_id: target.id, tag: 'great relief' }])
+      await db!.deleteFrom('games').where('id', '=', id).execute()
+    })
+
+  it('rejects ambiguous tagged metadata-free activity edits without changing events or assignments', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const pickoff = {
+      type: 'action',
+      isPitch: false,
+      details: { eventType: 'pickoff' }
+    }
+    const original = play({
+      atBatIndex: 0,
+      awayScore: 0,
+      homeScore: 0,
+      playEvents: [
+        { ...pickoff, index: 0 },
+        { ...pickoff, index: 1 }
+      ]
+    })
+    const first = await live(id, { plays: [original] })
+    const document = (first.body.plays as Array<{ gumbo: TagDocument }>)[0]
+      .gumbo
+    const targets = tagTargets(document)
+    expect(
+      (
+        await ask(`/games/${id}/tags/${targets[0].id}`, 'PUT', {
+          tag: 'quick throw'
+        })
+      ).status
+    ).equals(200)
+    const before = await ask(`/games/${id}/events`)
+    const altered = {
+      ...original,
+      playEvents: [
+        {
+          type: 'action',
+          isPitch: false,
+          index: 0,
+          details: { eventType: 'stolen_base' }
+        },
+        { ...pickoff, index: 1 },
+        { ...pickoff, index: 2 }
+      ]
+    }
+    const rejected = await live(id, { plays: [altered] })
+    expect(rejected.status).equals(409)
+    expect(rejected.body.message).includes('action history changed')
+    expect((await ask(`/games/${id}/events`)).body).deep.equals(before.body)
+    expect(
+      await db!
+        .selectFrom('event_tags')
+        .select(['target_id', 'tag'])
+        .where('game_id', '=', id)
+        .execute()
+    ).deep.equals([{ target_id: targets[0].id, tag: 'quick throw' }])
+    await db!.deleteFrom('games').where('id', '=', id).execute()
+  })
+
+  it('rejects first-removal or first-insertion of same-kind timed activities but preserves proven append/tail Undo', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const activities = [1, 2].map(second => ({
+      type: 'action',
+      isPitch: false,
+      index: second - 1,
+      startTime: `2026-10-08T20:00:0${second}Z`,
+      details: { eventType: 'pickoff' }
+    }))
+    const original = play({
+      atBatIndex: 0,
+      awayScore: 0,
+      homeScore: 0,
+      playEvents: activities
+    })
+    const first = await live(id, { plays: [original] })
+    const targets = tagTargets(
+      (first.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+    )
+    for (let index = 0; index < 2; index++)
+      expect(
+        (
+          await ask(`/games/${id}/tags/${targets[index].id}`, 'PUT', {
+            tag: `timed throw ${index}`
+          })
+        ).status
+      ).equals(200)
+    const before = await ask(`/games/${id}/events`)
+    for (const changed of [
+      [activities[1]],
+      [{ ...activities[0], startTime: '2026-10-08T20:00:00Z' }, ...activities]
+    ]) {
+      expect(
+        (await live(id, { plays: [{ ...original, playEvents: changed }] }))
+          .status
+      ).equals(409)
+      expect((await ask(`/games/${id}/events`)).body).deep.equals(before.body)
+    }
+    const appended = await live(id, {
+      plays: [
+        {
+          ...original,
+          playEvents: [
+            ...activities,
+            { ...activities[0], index: 2, startTime: '2026-10-08T20:00:03Z' }
+          ]
+        }
+      ]
+    })
+    expect(appended.status).equals(200)
+    const after = tagTargets(
+      (appended.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+    )
+    expect(after.slice(0, 2).map(target => target.id)).deep.equals(
+      targets.slice(0, 2).map(target => target.id)
+    )
+    const undone = await live(id, {
+      plays: [{ ...original, playEvents: [activities[0]] }]
+    })
+    expect(undone.status).equals(200)
+    expect(
+      tagTargets(
+        (undone.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )[0]
+    ).deep.includes({ id: targets[0].id, tag: 'timed throw 0' })
+    expect(
+      await db!
+        .selectFrom('event_tags')
+        .select(['target_id', 'tag'])
+        .where('game_id', '=', id)
+        .execute()
+    ).deep.equals([{ target_id: targets[0].id, tag: 'timed throw 0' }])
+    await db!.deleteFrom('games').where('id', '=', id).execute()
+  })
+
+  it('repairs stale-index and present malformed current-play identity metadata before writing', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const pitches = [1, 2].map(pitchNumber => ({
+      type: 'pitch',
+      isPitch: true,
+      index: pitchNumber - 1,
+      pitchNumber,
+      details: { code: 'B' }
+    }))
+    const original = {
+      ...play({
+        atBatIndex: 0,
+        awayScore: 0,
+        homeScore: 0,
+        playEvents: pitches
+      }),
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top', isComplete: false }
+    }
+    const first = await live(id, { plays: [], currentPlay: original })
+    const current = first.body.currentPlay as TagDocument
+    const targets = tagTargets(current)
+    for (let index = 0; index < 2; index++)
+      expect(
+        (
+          await ask(`/games/${id}/tags/${targets[index].id}`, 'PUT', {
+            tag: `current pitch ${index}`
+          })
+        ).status
+      ).equals(200)
+    for (const tagTargetsHint of [
+      current.tagTargets,
+      { version: 1, play: null, events: [] },
+      {}
+    ]) {
+      const saved = await live(id, {
+        plays: [],
+        currentPlay: {
+          ...original,
+          tagTargets: tagTargetsHint,
+          playEvents: [
+            {
+              index: 0,
+              type: 'action',
+              details: { eventType: 'pitching_substitution' },
+              player: { id: member.userId },
+              position: { code: '1' }
+            },
+            ...pitches.map((pitch, index) => ({ ...pitch, index: index + 1 }))
+          ]
+        }
+      })
+      expect(saved.status).equals(200)
+      const after = tagTargets(saved.body.currentPlay as TagDocument)
+      expect(
+        after.slice(1).map(target => ({ id: target.id, tag: target.tag }))
+      ).deep.equals(
+        targets.map((target, index) => ({
+          id: target.id,
+          tag: `current pitch ${index}`
+        }))
+      )
+      expect(
+        await db!
+          .selectFrom('event_tags')
+          .select('target_id')
+          .where('game_id', '=', id)
+          .execute()
+      ).has.length(2)
+    }
+    await db!.deleteFrom('games').where('id', '=', id).execute()
+  })
+
+  it('rejects first-removal/insertion among tagged unnumbered identical pitches without mutating assignments', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const pitches = [1, 2].map(second => ({
+      type: 'pitch',
+      index: second - 1,
+      startTime: `2026-10-08T20:00:0${second}Z`,
+      details: { code: 'B' }
+    }))
+    const original = play({
+      atBatIndex: 0,
+      awayScore: 0,
+      homeScore: 0,
+      playEvents: pitches
+    })
+    const first = await live(id, { plays: [original] })
+    const targets = tagTargets(
+      (first.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+    )
+    for (let index = 0; index < 2; index++)
+      expect(
+        (
+          await ask(`/games/${id}/tags/${targets[index].id}`, 'PUT', {
+            tag: `unnumbered pitch ${index}`
+          })
+        ).status
+      ).equals(200)
+    const before = await ask(`/games/${id}/events`)
+    for (const altered of [
+      [pitches[1]],
+      [{ ...pitches[0], startTime: '2026-10-08T20:00:00Z' }, ...pitches]
+    ]) {
+      expect(
+        (await live(id, { plays: [{ ...original, playEvents: altered }] }))
+          .status
+      ).equals(409)
+      expect((await ask(`/games/${id}/events`)).body).deep.equals(before.body)
+      expect(
+        await db!
+          .selectFrom('event_tags')
+          .select(['target_id', 'tag'])
+          .where('game_id', '=', id)
+          .orderBy('tag')
+          .execute()
+      ).deep.equals(
+        targets.slice(0, 2).map((target, index) => ({
+          target_id: target.id,
+          tag: `unnumbered pitch ${index}`
+        }))
+      )
+    }
+    const appended = await live(id, {
+      plays: [
+        {
+          ...original,
+          playEvents: [
+            ...pitches,
+            { ...pitches[0], index: 2, startTime: '2026-10-08T20:00:03Z' }
+          ]
+        }
+      ]
+    })
+    expect(appended.status).equals(200)
+    const undone = await live(id, {
+      plays: [{ ...original, playEvents: [pitches[0]] }]
+    })
+    expect(undone.status).equals(200)
+    expect(
+      tagTargets(
+        (undone.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      )[0]
+    ).deep.includes({ id: targets[0].id, tag: 'unnumbered pitch 0' })
+    await db!.deleteFrom('games').where('id', '=', id).execute()
+  })
+
+  it('atomically rejects same-length partial-timestamp current pitch reorders and marker removal', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const pitches = [
+      { index: 0, type: 'pitch', details: { code: 'B' } },
+      {
+        index: 1,
+        type: 'pitch',
+        startTime: '2026-10-08T20:00:02Z',
+        details: { code: 'B' }
+      }
+    ]
+    const currentPlay = {
+      ...play({
+        atBatIndex: 0,
+        awayScore: 0,
+        homeScore: 0,
+        playEvents: pitches
+      }),
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top', isComplete: false }
+    }
+    const first = await live(id, { plays: [], currentPlay })
+    const targets = tagTargets(first.body.currentPlay as TagDocument)
+    for (let index = 0; index < 2; index++)
+      expect(
+        (
+          await ask(`/games/${id}/tags/${targets[index].id}`, 'PUT', {
+            tag: `partial timestamp ${index}`
+          })
+        ).status
+      ).equals(200)
+    const before = await ask(`/games/${id}/events`)
+    for (const changed of [
+      [
+        { ...pitches[1], index: 0 },
+        { ...pitches[0], index: 1 }
+      ],
+      [pitches[0], { ...pitches[0], index: 1 }]
+    ]) {
+      expect(
+        (
+          await live(id, {
+            plays: [],
+            currentPlay: { ...currentPlay, playEvents: changed }
+          })
+        ).status
+      ).equals(409)
+      expect((await ask(`/games/${id}/events`)).body).deep.equals(before.body)
+      expect(
+        await db!
+          .selectFrom('event_tags')
+          .select(['target_id', 'tag'])
+          .where('game_id', '=', id)
+          .orderBy('tag')
+          .execute()
+      ).deep.equals(
+        targets.map((target, index) => ({
+          target_id: target.id,
+          tag: `partial timestamp ${index}`
+        }))
+      )
+    }
+    await db!.deleteFrom('games').where('id', '=', id).execute()
+  })
+
+  it('rejects numbered-pitch renumbering and repeated-substitution occurrence replacement atomically', async () => {
+    for (const scenario of ['numbered', 'repeated', 'unique']) {
+      const substitutions = scenario !== 'numbered'
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const switchAt = (
+        index: number,
+        code: number
+      ): Record<string, unknown> => ({
+        index,
+        type: 'action',
+        details: { eventType: 'defensive_switch' },
+        position: { code },
+        startTime: `2026-10-08T20:00:0${index}Z`
+      })
+      const pitches = substitutions
+        ? scenario === 'unique'
+          ? [switchAt(0, 8), switchAt(1, 7)]
+          : [switchAt(0, 8), switchAt(1, 7), switchAt(2, 8)]
+        : [
+            {
+              index: 0,
+              pitchNumber: 1,
+              type: 'pitch',
+              startTime: '2026-10-08T20:00:01Z',
+              details: { code: 'B' }
+            },
+            {
+              index: 1,
+              pitchNumber: 2,
+              type: 'pitch',
+              startTime: '2026-10-08T20:00:02Z',
+              details: { code: 'B' }
+            }
+          ]
+      const currentPlay = {
+        ...play({
+          atBatIndex: 0,
+          awayScore: 0,
+          homeScore: 0,
+          playEvents: pitches
+        }),
+        about: {
+          atBatIndex: 0,
+          inning: 1,
+          halfInning: 'top',
+          isComplete: false
+        }
+      }
+      const first = await live(id, { plays: [], currentPlay })
+      const targets = tagTargets(first.body.currentPlay as TagDocument)
+      for (let index = 0; index < targets.length; index++)
+        expect(
+          (
+            await ask(`/games/${id}/tags/${targets[index].id}`, 'PUT', {
+              tag: `partial timestamp ${index}`
+            })
+          ).status
+        ).equals(200)
+      const before = await ask(`/games/${id}/events`)
+      for (const changed of [
+        substitutions
+          ? (scenario === 'unique'
+              ? [pitches[1], switchAt(2, 8)]
+              : [pitches[1], pitches[2], switchAt(3, 7), switchAt(4, 8)]
+            ).map((event, index) => ({ ...event, index }))
+          : [{ ...pitches[1], index: 0, pitchNumber: 1 }]
+      ]) {
+        expect(
+          (
+            await live(id, {
+              plays: [],
+              currentPlay: { ...currentPlay, playEvents: changed }
+            })
+          ).status
+        ).equals(409)
+        expect((await ask(`/games/${id}/events`)).body).deep.equals(before.body)
+        expect(
+          await db!
+            .selectFrom('event_tags')
+            .select(['target_id', 'tag'])
+            .where('game_id', '=', id)
+            .orderBy('tag')
+            .execute()
+        ).deep.equals(
+          targets.map((target, index) => ({
+            target_id: target.id,
+            tag: `partial timestamp ${index}`
+          }))
+        )
+      }
+      await db!.deleteFrom('games').where('id', '=', id).execute()
+    }
+  })
+
+  it('validates all legacy pitch provenance and canonicalizes redundant pitch flags', async () => {
+    for (const scenario of [
+      'count',
+      'mixed',
+      'mode',
+      'flag',
+      'mixed-numbered',
+      'correction',
+      'subappend',
+      'numbered-remove',
+      'disjoint-numbering'
+    ]) {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const pitches: Array<Record<string, unknown>> = [
+        {
+          index: 0,
+          type: 'pitch',
+          count: { balls: 1, strikes: 0, outs: 0 },
+          details: { code: 'B' }
+        },
+        {
+          index: 1,
+          type: 'pitch',
+          count: { balls: 2, strikes: 0, outs: 0 },
+          details: { code: 'B' }
+        }
+      ]
+      if (
+        [
+          'count',
+          'mixed-numbered',
+          'correction',
+          'numbered-remove',
+          'disjoint-numbering'
+        ].includes(scenario)
+      )
+        pitches.forEach((event, index) => {
+          event.pitchNumber = index + 1
+        })
+      if (
+        [
+          'mode',
+          'correction',
+          'numbered-remove',
+          'disjoint-numbering'
+        ].includes(scenario)
+      )
+        pitches.forEach((event, index) => {
+          event.startTime = `2026-10-08T20:00:0${index + 1}Z`
+        })
+      if (['mixed', 'mixed-numbered'].includes(scenario))
+        pitches.push({
+          index: 2,
+          type: 'pitch',
+          count: { balls: 2, strikes: 1, outs: 0 },
+          details: { code: 'C' }
+        })
+      if (scenario === 'mixed-numbered') {
+        pitches[1].details = { code: 'C' }
+        pitches[1].count = { balls: 1, strikes: 1, outs: 0 }
+        pitches[2].details = { code: 'B' }
+        pitches[2].count = { balls: 2, strikes: 1, outs: 0 }
+        pitches[2].pitchNumber = 3
+      }
+      if (scenario === 'correction') {
+        pitches[1].details = { code: 'C' }
+        pitches[1].count = { balls: 1, strikes: 1, outs: 0 }
+      }
+      if (scenario === 'subappend')
+        pitches.splice(0, pitches.length, {
+          index: 0,
+          type: 'action',
+          details: { eventType: 'pitching_substitution' },
+          position: { code: 1 }
+        })
+      const currentPlay = {
+        ...play({
+          atBatIndex: 0,
+          awayScore: 0,
+          homeScore: 0,
+          playEvents: pitches
+        }),
+        about: {
+          atBatIndex: 0,
+          inning: 1,
+          halfInning: 'top',
+          isComplete: false
+        }
+      }
+      const first = await live(id, { plays: [], currentPlay })
+      const targets = tagTargets(first.body.currentPlay as TagDocument)
+      for (let index = 0; index < targets.length; index++)
+        expect(
+          (
+            await ask(`/games/${id}/tags/${targets[index].id}`, 'PUT', {
+              tag: `partial timestamp ${index}`
+            })
+          ).status
+        ).equals(200)
+      const before = await ask(`/games/${id}/events`)
+      const changed =
+        scenario === 'disjoint-numbering'
+          ? pitches.map((event, index) => ({
+              ...event,
+              pitchNumber: index + 3
+            }))
+          : scenario === 'numbered-remove'
+            ? [{ ...pitches[1], index: 0 }]
+            : scenario === 'correction'
+              ? pitches.map((event, index) => ({
+                  ...event,
+                  details: { code: 'C' },
+                  count: { balls: 0, strikes: index + 1, outs: 0 }
+                }))
+              : scenario === 'subappend'
+                ? [
+                    ...pitches,
+                    { ...pitches[0], index: 1, position: { code: 4 } }
+                  ]
+                : scenario === 'mixed-numbered'
+                  ? [
+                      pitches[1],
+                      pitches[2],
+                      {
+                        ...pitches[1],
+                        count: { balls: 2, strikes: 2, outs: 0 }
+                      }
+                    ].map((event, index) => ({
+                      ...event,
+                      index,
+                      pitchNumber: index + 1
+                    }))
+                  : scenario === 'count'
+                    ? [{ ...pitches[1], index: 0, pitchNumber: 1 }]
+                    : scenario === 'mode'
+                      ? pitches.map((event, index) => ({
+                          ...event,
+                          pitchNumber: index + 2
+                        }))
+                      : scenario === 'flag'
+                        ? pitches.map(event => ({ ...event, isPitch: true }))
+                        : [
+                            pitches[1],
+                            pitches[2],
+                            {
+                              ...pitches[0],
+                              count: { balls: 3, strikes: 1, outs: 0 }
+                            }
+                          ].map((event, index) => ({ ...event, index }))
+      {
+        expect(
+          (
+            await live(id, {
+              plays: [],
+              currentPlay: { ...currentPlay, playEvents: changed }
+            })
+          ).status
+        ).equals(
+          ['flag', 'correction', 'subappend', 'numbered-remove'].includes(
+            scenario
+          )
+            ? 200
+            : 409
+        )
+        const after = await ask(`/games/${id}/events`)
+        if (
+          ['flag', 'correction', 'subappend', 'numbered-remove'].includes(
+            scenario
+          )
+        ) {
+          const surviving = ['correction', 'numbered-remove'].includes(scenario)
+            ? targets.slice(1)
+            : targets
+          for (const target of surviving)
+            expect(
+              tagTargets(after.body.currentPlay as TagDocument).find(
+                item => item.id === target.id
+              )?.tag
+            ).equals(`partial timestamp ${targets.indexOf(target)}`)
+        } else expect(after.body).deep.equals(before.body)
+        expect(
+          await db!
+            .selectFrom('event_tags')
+            .select(['target_id', 'tag'])
+            .where('game_id', '=', id)
+            .orderBy('tag')
+            .execute()
+        ).deep.equals(
+          targets.flatMap((target, index) =>
+            ['correction', 'numbered-remove'].includes(scenario) && index === 0
+              ? []
+              : [
+                  {
+                    target_id: target.id,
+                    tag: `partial timestamp ${index}`
+                  }
+                ]
+          )
+        )
+      }
+      await db!.deleteFrom('games').where('id', '=', id).execute()
+    }
+  })
+
+  it('persists independent play and pitch tags, normalizes retries and keeps original text', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const posted = await live(id, {
+      plays: [
+        play({
+          atBatIndex: 0,
+          awayScore: 0,
+          homeScore: 0,
+          playEvents: [
+            {
+              index: 0,
+              type: 'pitch',
+              isPitch: true,
+              details: { code: 'B', description: 'Ball outside.' }
+            }
+          ]
+        })
+      ]
+    })
+    expect(posted.status).equals(200)
+    const document = (posted.body.plays as Array<{ gumbo: TagDocument }>)[0]
+      .gumbo
+    const [pitchTarget, playTarget] = tagTargets(document)
+    const put = async (
+      target: string,
+      tag: unknown,
+      token = TOKEN
+    ): Promise<{ status: number; body: Record<string, unknown> }> =>
+      await ask(`/games/${id}/tags/${target}`, 'PUT', { tag }, token)
+    const firstWrite = await put(pitchTarget.id, '  GREAT   Pitch ')
+    expect(firstWrite.body.tag).equals('great pitch')
+    expect(firstWrite.body.revision).matches(/^[0-9]+$/)
+    expect((await put(playTarget.id, 'great catch')).status).equals(200)
+    const before = await db!
+      .selectFrom('user_tags')
+      .selectAll()
+      .where('user_id', '=', admin.userId)
+      .execute()
+    const retryWrites = await Promise.all([
+      put(pitchTarget.id, 'great pitch'),
+      put(pitchTarget.id, 'GREAT PITCH')
+    ])
+    const revisions = retryWrites.map(result =>
+      BigInt(String(result.body.revision))
+    )
+    expect(
+      revisions.every(
+        revision => revision > BigInt(String(firstWrite.body.revision))
+      )
+    ).equals(true)
+    expect(revisions[0]).not.equals(revisions[1])
+    const afterHistory = await db!
+      .selectFrom('user_tags')
+      .selectAll()
+      .where('user_id', '=', admin.userId)
+      .execute()
+    expect(afterHistory.map(row => row.tag).sort()).deep.equals(
+      before.map(row => row.tag).sort()
+    )
+    const reread = await ask(`/games/${id}/events`)
+    const saved = (reread.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+    expect(tagTargets(saved).map(row => row.tag)).deep.equals([
+      'great pitch',
+      'great catch'
+    ])
+    expect(saved.result?.description).equals('Single')
+    expect(
+      (saved.playEvents as Array<{ details: { description: string } }>)[0]
+        .details.description
+    ).equals('Ball outside.')
+    const replacement = await put(playTarget.id, 'new tag')
+    expect(replacement.status).equals(200)
+    for (const invalid of [null, undefined, 7])
+      expect((await put(playTarget.id, invalid)).status).equals(400)
+    expect(
+      tagTargets(
+        (
+          (await ask(`/games/${id}/events`)).body.plays as Array<{
+            gumbo: TagDocument
+          }>
+        )[0].gumbo
+      ).at(-1)?.tag
+    ).equals('new tag')
+    const removed = await ask(`/games/${id}/tags/${playTarget.id}`, 'DELETE')
+    expect(removed.status).equals(200)
+    expect(removed.body.tag).equals(null)
+    expect(
+      BigInt(String(removed.body.revision)) >
+        BigInt(String(replacement.body.revision))
+    ).equals(true)
+    expect((await ask('/tags')).body.popular).not.deep.includes({
+      tag: 'great catch',
+      count: 1
+    })
+    expect((await put(playTarget.id, '')).status).equals(400)
+    expect((await put(playTarget.id, 'x'.repeat(65))).status).equals(400)
+    expect((await put('missing_target', 'tag')).status).equals(404)
+    expect((await put(playTarget.id, 'forbidden', MEMBER)).status).equals(403)
+    expect((await put(playTarget.id, 'hidden', STRANGER)).status).equals(404)
+    expect((await ask('/tags', 'GET', undefined, null)).status).equals(401)
+    expect(
+      (await ask('/tags', 'GET', undefined, STRANGER)).body.recent
+    ).deep.equals([])
+    // A scoring retry may carry stale or forged labels; storage owns labels.
+    const spoofed = JSON.parse(JSON.stringify(saved)) as TagDocument
+    ;(spoofed.tagTargets as { play: { tag: string } }).play.tag = 'spoofed'
+    await live(id, { plays: [spoofed] })
+    const after = await ask(`/games/${id}/events`)
+    expect(
+      tagTargets(
+        (after.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+      ).at(-1)?.tag
+    ).equals(null)
+    await live(id, { remove: [0] })
+    expect(
+      await db!
+        .selectFrom('event_tags')
+        .selectAll()
+        .where('game_id', '=', id)
+        .execute()
+    ).deep.equals([])
+    expect((await put(pitchTarget.id, 'stale')).status).equals(404)
+    expect((await ask('/tags?includeUnused=true')).body.popular).deep.includes({
+      tag: 'great pitch',
+      count: 0
+    })
+    expect((await ask('/tags?includeUnused=false')).status).equals(200)
+    expect((await ask('/tags?includeUnused=invalid')).status).equals(400)
+  })
+
+  it('retains all account history with ten distinct recents and accurate concurrent popularity', async () => {
+    const ids = [makeId('game'), makeId('game')]
+    const targets: string[] = []
+    for (const id of ids) {
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const response = await live(id, {
+        plays: [play({ atBatIndex: 0, awayScore: 0, homeScore: 0 })]
+      })
+      targets.push(
+        tagTargets(
+          (response.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+        )[0].id
+      )
+    }
+    const put = async (
+      at: number,
+      tag: string,
+      token = TOKEN
+    ): Promise<{ status: number; body: Record<string, unknown> }> =>
+      await ask(`/games/${ids[at]}/tags/${targets[at]}`, 'PUT', { tag }, token)
+    for (let at = 0; at < 11; at++) await put(0, `choice ${at}`)
+    expect((await ask('/tags')).body.recent).deep.equals(
+      Array.from({ length: 10 }, (_, at) => `choice ${10 - at}`)
+    )
+    expect(
+      await db!
+        .selectFrom('user_tags')
+        .select('tag')
+        .where('user_id', '=', admin.userId)
+        .where('tag', '=', 'choice 0')
+        .execute()
+    ).has.length(1)
+    await put(1, 'retained label')
+    for (let at = 0; at < 11; at++) await put(0, `fresh ${at}`)
+    expect((await ask('/tags')).body.recent).not.includes('retained label')
+    await put(1, 'retained label')
+    expect(((await ask('/tags')).body.recent as string[])[0]).equals(
+      'retained label'
+    )
+    await put(0, 'choice 0')
+    expect(((await ask('/tags')).body.recent as string[])[0]).equals('choice 0')
+    await Promise.all([put(0, 'shared label'), put(1, 'shared label')])
+    expect((await ask('/tags')).body.popular).deep.includes({
+      tag: 'shared label',
+      count: 2
+    })
+    await Promise.all([put(0, 'winner one'), put(0, 'winner two')])
+    const rows = await db!
+      .selectFrom('event_tags')
+      .selectAll()
+      .where('game_id', 'in', ids)
+      .execute()
+    expect(rows).has.length(2)
+    expect(rows.find(row => row.game_id === ids[0])?.tag).oneOf([
+      'winner one',
+      'winner two'
+    ])
+    await put(1, 'shared label', MANAGER)
+    expect(
+      (
+        (await ask('/tags', 'GET', undefined, MANAGER)).body.recent as string[]
+      )[0]
+    ).equals('shared label')
+    expect((await ask('/tags')).body.popular).deep.includes({
+      tag: 'shared label',
+      count: 1
+    })
+  })
+  it('retains the global catalog after assignment removal and account history deletion', async () => {
+    const actor = mintUserId(id =>
+      [
+        admin.userId,
+        stranger.userId,
+        member.userId,
+        manager.userId,
+        ...[...flagged.values()].map(user => user.userId)
+      ].includes(id)
+    )
+    const token = 'tok_catalog_actor_000000000000000000'
+    await db!
+      .insertInto('users')
+      .values({
+        id: actor.userId,
+        legacyId: actor.legacyId,
+        display_name: 'Mookie Betts',
+        is_admin: true
+      })
+      .execute()
+    await db!
+      .insertInto('auth_sessions')
+      .values({
+        id: makeId('authSession'),
+        user_id: actor.userId,
+        token_hash: hashToken(token),
+        expires_at: new Date(Date.now() + 3600000)
+      })
+      .execute()
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const posted = await live(id, {
+      plays: [play({ atBatIndex: 0, awayScore: 0, homeScore: 0 })]
+    })
+    const target = tagTargets(
+      (posted.body.plays as Array<{ gumbo: TagDocument }>)[0].gumbo
+    )[0]
+    expect(
+      (
+        await ask(
+          `/games/${id}/tags/${target.id}`,
+          'PUT',
+          { tag: 'retained globally' },
+          token
+        )
+      ).status
+    ).equals(200)
+    expect(
+      (await ask(`/games/${id}/tags/${target.id}`, 'DELETE', undefined, token))
+        .status
+    ).equals(200)
+    await db!.deleteFrom('users').where('id', '=', actor.userId).execute()
+    expect(
+      await db!
+        .selectFrom('user_tags')
+        .selectAll()
+        .where('user_id', '=', actor.userId)
+        .execute()
+    ).deep.equals([])
+    expect((await ask('/tags?includeUnused=true')).body.popular).deep.includes({
+      tag: 'retained globally',
+      count: 0
+    })
   })
 })
 

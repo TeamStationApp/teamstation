@@ -12,6 +12,8 @@ export function comparablePlay<T>(play: T): T {
   if (play == null) return play
   const copy = copyState(play) as Record<string, unknown>
   delete copy.source
+  // Annotation identities and labels are not scoring state.
+  delete copy.tagTargets
   const about = copy.about as Record<string, unknown> | undefined
   if (about != null) {
     delete about.startTime

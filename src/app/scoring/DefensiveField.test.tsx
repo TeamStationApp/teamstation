@@ -3,8 +3,11 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { ThemeProvider } from '../theme/ThemeContext'
+import { changeTheme, getTheme, ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { DEFENSE_LOCATIONS, DefensiveField } from './DefensiveField'
+import { DefensiveFieldArt as NativeDefensiveFieldArt } from './DefensiveFieldArt.native'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterDragGroup } from './RosterDrag'
@@ -130,57 +133,79 @@ describe('compact defensive field', function () {
     document.body.appendChild(host)
     const root = createRoot(host)
     let cleared = ''
+    const originalTheme = getTheme()
     try {
-      await act(async () => {
-        root.render(
-          <ThemeProvider>
-            <RosterDragGroup>
-              <DefensiveField
-                compact
-                defense={{ P: 1 }}
-                display={() => '#7 Alex Demo'}
-                onPlace={() => undefined}
-                onClear={position => {
-                  cleared = position
-                }}
-              />
-            </RosterDragGroup>
-          </ThemeProvider>
+      for (const theme of [tsBallpark, tsDark]) {
+        await act(async () => {
+          changeTheme(theme)
+          root.render(
+            <ThemeProvider>
+              <RosterDragGroup>
+                <DefensiveField
+                  compact={theme === tsBallpark}
+                  defense={{ P: 1 }}
+                  display={() => '#7 Mookie Betts'}
+                  onPlace={() => undefined}
+                  onClear={position => {
+                    cleared = position
+                  }}
+                />
+                <NativeDefensiveFieldArt />
+              </RosterDragGroup>
+            </ThemeProvider>
+          )
+        })
+        expect(host.querySelector('[aria-label="Defensive positions"]')).equals(
+          null
         )
-      })
-      expect(host.querySelector('[aria-label="Defensive positions"]')).equals(
-        null
-      )
-      expect(
-        host.querySelector<HTMLElement>('[data-testid="Defensive field"]')!
-          .style.height
-      ).equals('')
-      const pitcher = host.querySelector<HTMLElement>(
-        '[data-testid="Defense P card"]'
-      )!
-      const catcher = host.querySelector<HTMLElement>(
-        '[data-testid="Defense C card"]'
-      )!
-      expect(window.getComputedStyle(pitcher).borderStyle).equals('solid')
-      expect(window.getComputedStyle(pitcher).borderColor).equals(
-        'rgb(64, 151, 84)'
-      )
-      expect(window.getComputedStyle(pitcher).backgroundColor).equals(
-        'rgb(213, 236, 217)'
-      )
-      expect(window.getComputedStyle(catcher).borderStyle).equals('dashed')
-      expect(window.getComputedStyle(catcher).borderColor).equals(
-        'rgb(183, 156, 156)'
-      )
-      expect(window.getComputedStyle(catcher).backgroundColor).equals(
-        'rgb(234, 223, 223)'
-      )
-      expect(Object.keys(DEFENSE_LOCATIONS).sort()).deep.equals(
-        [...POSITIONS].sort()
-      )
-      expect(host.querySelectorAll('[data-roster-target^="defense-"]')).length(
-        9
-      )
+        expect(
+          host.querySelector<HTMLElement>('[data-testid="Defensive field"]')!
+            .style.height
+        ).equals('')
+        const pitcher = host.querySelector<HTMLElement>(
+          '[data-testid="Defense P card"]'
+        )!
+        const catcher = host.querySelector<HTMLElement>(
+          '[data-testid="Defense C card"]'
+        )!
+        expect(window.getComputedStyle(pitcher).borderStyle).equals('solid')
+        expect(window.getComputedStyle(pitcher).borderColor).equals(
+          'rgb(52, 211, 153)'
+        )
+        expect(window.getComputedStyle(pitcher).backgroundColor).equals(
+          'rgb(29, 107, 66)'
+        )
+        expect(window.getComputedStyle(catcher).borderStyle).equals('dashed')
+        expect(window.getComputedStyle(catcher).borderColor).equals(
+          'rgba(153, 27, 27, 0.6)'
+        )
+        expect(window.getComputedStyle(catcher).backgroundColor).equals(
+          'rgba(69, 10, 10, 0.8)'
+        )
+        expect(
+          window.getComputedStyle(pitcher.firstElementChild!).color
+        ).equals('rgb(255, 255, 255)')
+        expect(
+          window.getComputedStyle(catcher.firstElementChild!).color
+        ).equals('rgb(252, 165, 165)')
+        const fields = [...host.querySelectorAll('svg')]
+        expect(fields).length(2)
+        for (const field of fields) {
+          expect(field.getAttribute('viewBox')).equals('0 0 360 240')
+          expect(field.querySelector('path')!.getAttribute('fill')).equals(
+            theme.scoringSurface.idle
+          )
+          expect(field.querySelectorAll('path')[1].getAttribute('fill')).equals(
+            theme.scoringSurface.input
+          )
+        }
+        expect(Object.keys(DEFENSE_LOCATIONS).sort()).deep.equals(
+          [...POSITIONS].sort()
+        )
+        expect(
+          host.querySelectorAll('[data-roster-target^="defense-"]')
+        ).length(9)
+      }
       await act(async () => {
         host.querySelector<HTMLElement>('[aria-label="Clear P"]')!.click()
       })
@@ -190,7 +215,7 @@ describe('compact defensive field', function () {
             <RosterDragGroup>
               <DefensiveField
                 defense={{}}
-                display={() => '#7 Alex Demo'}
+                display={() => '#7 Mookie Betts'}
                 onPlace={() => undefined}
                 onClear={() => undefined}
               />
@@ -210,6 +235,7 @@ describe('compact defensive field', function () {
     } finally {
       await act(async () => {
         root.unmount()
+        changeTheme(originalTheme)
       })
       host.remove()
     }

@@ -6,10 +6,12 @@ import type {
   ResultAction,
   ScoringAction
 } from '../../common/scoring/actions'
+import { applyAction } from '../../common/scoring/session'
 import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
+  describeCompletedPlays,
   describeEntryPlays,
   describeLastPlay,
   describePlay,
@@ -501,6 +503,32 @@ function tapHit(
 }
 
 describe('the last play, however it was tapped', function () {
+  it('keeps the full description for an older completed play after another pitch', () => {
+    const opening = game().session
+    const batter = opening.gameData.players[1]
+    batter.firstName = 'Mookie'
+    batter.lastName = 'Betts'
+    batter.fullName = 'Mookie Betts'
+    const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const log: ScoringAction[] = [
+      { type: 'pitch', call: 'S' },
+      { type: 'pitch', call: 'S' },
+      { type: 'pitch', call: 'S' },
+      close,
+      { type: 'pitch', call: 'B' }
+    ]
+    const states = [opening]
+    for (const action of log)
+      states.push(applyAction(states.at(-1)!, action).state)
+    const at = (length: number): typeof opening => states[length]
+    const description = describeCompletedPlays(log, new Set([0]), at).get(0)
+    expect(description?.primary).matches(/Mookie.*strikes out swinging/)
+    expect(describeCompletedPlays(log, new Set(), at).size).equals(0)
+    expect(describeCompletedPlays(log, new Set([99]), at).size).equals(0)
+    expect(
+      describeCompletedPlays([close], new Set([0]), () => states[4]).size
+    ).equals(0)
+  })
   it('reads a tapped ground out, over its entries, as a ground out', function () {
     const opening = game({}, undefined, true)
     let state = tapHit(opening, 'Throw Out', 14, -8)
