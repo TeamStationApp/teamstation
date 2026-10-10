@@ -1,0 +1,9 @@
+{
+  "source": "https://download.geonames.org/export/dump/cities500.zip",
+  "retrievedOn": "2026-10-07",
+  "sourceSha256": "acb18763c1a6ee385157701fd9a5a6374e8584cdd30e0ba2e28a72548edcd060",
+  "license": "CC BY 4.0",
+  "attribution": "GeoNames geographical database \u2014 https://www.geonames.org/",
+  "catalogSha256": "584337a796391d2e84e22683a954f839e14214992e7c47f3c36a542e7235cd96",
+  "count": 235989
+}
