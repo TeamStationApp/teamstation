@@ -437,7 +437,7 @@ public struct SettingsView: View {
           )
           .accessibilityIdentifier("settings-retention-floor")
 
-          LabeledContent("Free space", value: Self.gigabytes(DirectorPaths.freeDiskBytes()))
+          LabeledContent("Free space", value: Self.gigabytes(FreeDiskSpace.shared.cachedBytes))
             .accessibilityIdentifier("settings-free-space")
         } header: {
           Text("Retention")

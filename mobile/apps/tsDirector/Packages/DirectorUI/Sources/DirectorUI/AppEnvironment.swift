@@ -397,6 +397,7 @@ public final class AppEnvironment {
   private var pendingWebNative: [UUID: OverlayLayout.PendingWebNative] = [:]
   private var overlayImages: [UUID: CGImage] = [:]
   private var retentionTimer: Timer?
+  @ObservationIgnored private var retentionSweepInFlight = false
   /// The grid last written to the open take, so an unchanged one is not written again.
   private var lastGridSnapshot: Data?
   /// Writes the live session's heartbeat while anything is live. How stale this is at the next
@@ -608,6 +609,8 @@ public final class AppEnvironment {
     remoteInput.start()
 
     startDiscovery()
+    // Before the first poll reads it: telemetry and Settings show the cached figure only.
+    FreeDiskSpace.shared.startRefreshing()
     startPolling()
     startControlServer()
     startLinkServer()
@@ -2634,11 +2637,26 @@ public final class AppEnvironment {
     }
   }
 
+  /// Measures free space off the main thread, then sweeps with that reading. The sweep deletes
+  /// recordings on it, so it gets a fresh measure rather than the telemetry's cached one. One sweep
+  /// at a time: two started on the same low reading would both delete for it.
   public func sweepRetention() {
+    guard !retentionSweepInFlight else { return }
+    retentionSweepInFlight = true
+    Task { @MainActor [weak self] in
+      let free = await FreeDiskSpace.shared.measured()
+      guard let self else { return }
+      self.retentionSweepInFlight = false
+      self.sweepRetention(freeDiskBytes: free)
+    }
+  }
+
+  private func sweepRetention(freeDiskBytes: Int64) {
     guard let sweep = try? retention.sweep(
       maximumArchiveBytes: config.maximumArchiveBytes,
       freeDiskFloorBytes: config.freeDiskFloorBytes,
-      protecting: recordingID
+      protecting: recordingID,
+      freeDiskBytes: freeDiskBytes
     ) else { return }
     telemetry.mutate {
       $0.dvr.retentionSwept += UInt64(sweep.removedSegments)
@@ -3302,8 +3320,18 @@ public final class AppEnvironment {
     )
     pendingWebNative[id] = fit.pending
     guard fit.applied else { return false }
-    overlays[index] = fit.overlay
-    applyAnchoredChildren(of: id)
+    var next = overlays
+    next[index] = fit.overlay
+    Self.applyAnchoredChildren(of: id, in: &next, canvas: overlayCanvas)
+    // The page's 5 s heartbeat snapshot almost always measures what is already saved. Laid out
+    // the same, there is nothing to redraw or save; the bitmap is still accepted.
+    guard next != overlays else {
+      MainThreadLog.logger.info(
+        "overlay manifest save skipped: web overlay laid out unchanged (\(MainThreadLog.threadName, privacy: .public) thread)"
+      )
+      return true
+    }
+    overlays = next
     persistActiveTemplate()
     return true
   }
@@ -3740,7 +3768,10 @@ public final class AppEnvironment {
   private func persistWorkingTemplate() {
     let targetID = editingTemplateID ?? activeTemplateID
     if let index = templates.firstIndex(where: { $0.id == targetID }) {
-      templates[index].overlays = overlays
+      // Reassigned only when different: every assignment redraws whatever lists templates.
+      if templates[index].overlays != overlays {
+        templates[index].overlays = overlays
+      }
     } else if templates.isEmpty {
       let fallback = OverlayTemplate(
         id: activeTemplateID,
@@ -3984,7 +4015,14 @@ public final class AppEnvironment {
   }
 
   private func applyAnchoredChildren(of parentID: UUID) {
-    let canvas = overlayCanvas
+    Self.applyAnchoredChildren(of: parentID, in: &overlays, canvas: overlayCanvas)
+  }
+
+  private static func applyAnchoredChildren(
+    of parentID: UUID,
+    in overlays: inout [ProgramOverlay],
+    canvas: CGSize
+  ) {
     guard let parent = overlays.first(where: { $0.id == parentID }) else { return }
     let parentRect = OverlayLayout.pixelRect(parent, canvas: canvas)
     for i in overlays.indices {
@@ -3998,7 +4036,7 @@ public final class AppEnvironment {
       )
       overlays[i].originX = Double(origin.x / max(canvas.width, 1))
       overlays[i].originY = Double(origin.y / max(canvas.height, 1))
-      applyAnchoredChildren(of: overlays[i].id)
+      applyAnchoredChildren(of: overlays[i].id, in: &overlays, canvas: canvas)
     }
   }
 

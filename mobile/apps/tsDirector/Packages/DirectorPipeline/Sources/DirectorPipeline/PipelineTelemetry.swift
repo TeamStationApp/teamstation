@@ -820,7 +820,9 @@ public final class PipelineTelemetry: @unchecked Sendable {
     copy.clockSeconds = clock.now.seconds
     copy.thermalState = Self.thermalStateName(ProcessInfo.processInfo.thermalState)
     copy.sleptSeconds = Self.sleptSeconds()
-    copy.dvr.freeDiskBytes = DirectorPaths.freeDiskBytes()
+    // The cache, never the volume: the lookup takes ~12 ms on an iPad, and this is read on the
+    // main thread several times every poll. `FreeDiskSpace` refreshes it in the background.
+    copy.dvr.freeDiskBytes = FreeDiskSpace.shared.cachedBytes
     let now = Self.monotonicNow()
     for index in copy.tiles.indices {
       let sourceIndex = copy.tiles[index].index

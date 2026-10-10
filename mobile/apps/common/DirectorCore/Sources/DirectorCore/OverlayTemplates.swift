@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import os
 
 /// Named set of Output graphics. One is active at a time.
 public struct OverlayTemplate: Sendable, Codable, Identifiable, Hashable {
@@ -93,13 +94,21 @@ public struct OverlayStore: Sendable {
     root.appendingPathComponent("overlays.json")
   }
 
+  private var writer: OverlayManifestWriter {
+    OverlayManifestWriter.writer(for: root)
+  }
+
+  /// Reads the saved manifest, after any save still queued has landed.
   public func loadManifest() -> OverlayManifest {
+    writer.flush()
     guard let data = try? Data(contentsOf: manifestURL) else {
       return OverlayManifest.emptyDefault()
     }
     if let manifest = try? JSONDecoder().decode(OverlayManifest.self, from: data),
        !manifest.templates.isEmpty {
-      return repaired(manifest)
+      let loaded = repaired(manifest)
+      writer.noteOnDisk(loaded)
+      return loaded
     }
     if let overlays = try? JSONDecoder().decode([ProgramOverlay].self, from: data) {
       let id = UUID()
@@ -113,10 +122,15 @@ public struct OverlayStore: Sendable {
     return OverlayManifest.emptyDefault()
   }
 
+  /// Queues `manifest` to be written off the calling thread, and returns at once. A manifest equal
+  /// to the last one saved is not written again. See `OverlayManifestWriter`.
   public func save(_ manifest: OverlayManifest) {
-    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    guard let data = try? JSONEncoder().encode(repaired(manifest)) else { return }
-    try? data.write(to: manifestURL, options: .atomic)
+    writer.save(repaired(manifest))
+  }
+
+  /// Blocks until every save queued so far is on disk.
+  public func flush() {
+    writer.flush()
   }
 
   public func imageURL(filename: String) -> URL {
@@ -151,5 +165,129 @@ public struct OverlayStore: Sendable {
       manifest.activeTemplateID = manifest.templates[0].id
     }
     return manifest
+  }
+}
+
+/// Writes overlay manifests on a serial background queue, one writer per overlay directory.
+///
+/// A save used to create the directory, encode the manifest and write it atomically on the main
+/// thread, and a web overlay's 5 s heartbeat saved an unchanged manifest every time: a Time
+/// Profiler trace on an iPad caught two of those writes holding the main thread 2.2 s each.
+/// Saves now return at once. The newest manifest waiting replaces any older one that has not
+/// started writing, so a burst of edits costs one write, and a save that arrives while another is
+/// being written is written after it, never dropped. A manifest equal to the last one saved is
+/// skipped.
+final class OverlayManifestWriter: @unchecked Sendable {
+  private static let registryLock = NSLock()
+  nonisolated(unsafe) private static var writers: [String: OverlayManifestWriter] = [:]
+
+  static func writer(for root: URL) -> OverlayManifestWriter {
+    let key = root.standardizedFileURL.path
+    registryLock.lock()
+    defer { registryLock.unlock() }
+    if let existing = writers[key] { return existing }
+    let created = OverlayManifestWriter(root: root)
+    writers[key] = created
+    return created
+  }
+
+  let root: URL
+  let queue: DispatchQueue
+  private let lock = NSLock()
+  /// The newest manifest not yet written.
+  private var pending: OverlayManifest?
+  private var drainScheduled = false
+  /// The last manifest saved (written, or waiting to be) or read from disk.
+  private var latest: OverlayManifest?
+  private var coalesced = 0
+  private var writeCount = 0
+  /// Tests only: runs on the writer's queue just before each write.
+  var beforeWrite: (@Sendable () -> Void)?
+
+  private init(root: URL) {
+    self.root = root
+    queue = DispatchQueue(label: "app.teamstation.director.overlayManifest", qos: .utility)
+  }
+
+  private var manifestURL: URL {
+    root.appendingPathComponent("overlays.json")
+  }
+
+  /// Number of manifests actually written so far.
+  var writes: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return writeCount
+  }
+
+  /// Records what is already on disk, so saving it straight back is skipped.
+  func noteOnDisk(_ manifest: OverlayManifest) {
+    lock.lock()
+    defer { lock.unlock() }
+    if pending == nil { latest = manifest }
+  }
+
+  func save(_ manifest: OverlayManifest) {
+    lock.lock()
+    if manifest == latest {
+      lock.unlock()
+      MainThreadLog.logger.info(
+        "overlay manifest save skipped: unchanged (\(MainThreadLog.threadName, privacy: .public) thread)"
+      )
+      return
+    }
+    latest = manifest
+    if pending != nil { coalesced += 1 }
+    pending = manifest
+    let schedule = !drainScheduled
+    drainScheduled = true
+    lock.unlock()
+    MainThreadLog.logger.info(
+      "overlay manifest save queued: changed (\(MainThreadLog.threadName, privacy: .public) thread)"
+    )
+    if schedule {
+      queue.async { self.drain() }
+    }
+  }
+
+  func flush() {
+    queue.sync {}
+  }
+
+  private func drain() {
+    lock.lock()
+    let manifest = pending
+    let merged = coalesced
+    pending = nil
+    coalesced = 0
+    drainScheduled = false
+    let hook = beforeWrite
+    lock.unlock()
+    guard let manifest else { return }
+    hook?()
+    let started = DispatchTime.now().uptimeNanoseconds
+    var written = 0
+    do {
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let data = try JSONEncoder().encode(manifest)
+      try data.write(to: manifestURL, options: .atomic)
+      written = data.count
+    } catch {
+      // Forget it was saved, so the next save of the same manifest tries again.
+      lock.lock()
+      if latest == manifest { latest = nil }
+      lock.unlock()
+      MainThreadLog.logger.error(
+        "overlay manifest write failed: \(error.localizedDescription, privacy: .public)"
+      )
+      return
+    }
+    lock.lock()
+    writeCount += 1
+    lock.unlock()
+    let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+    MainThreadLog.logger.info(
+      "overlay manifest written: \(written, privacy: .public) bytes in \(elapsed, format: .fixed(precision: 1), privacy: .public) ms on \(MainThreadLog.threadName, privacy: .public) thread, \(merged, privacy: .public) older save(s) merged"
+    )
   }
 }
