@@ -47,7 +47,12 @@ import app.teamstation.cameraman.radar.RadarLink
 import app.teamstation.cameraman.radar.RadarPhase
 import app.teamstation.cameraman.radar.RadarSnapshot
 import app.teamstation.cameraman.radar.systemRadarRadio
+import app.teamstation.cameraman.eventcontrol.EventControlHost
+import app.teamstation.cameraman.eventcontrol.EventControlKeyStore
+import app.teamstation.cameraman.eventcontrol.EventControlListenerState
+import app.teamstation.cameraman.scoreboard.OkHttpScoreboardAccount
 import app.teamstation.cameraman.scoreboard.ScoreboardDesk
+import app.teamstation.cameraman.scoreboard.eventControlKeyFetcher
 import app.teamstation.cameraman.core.ThermalBadgeLevel
 import app.teamstation.cameraman.encode.AudioEncoder
 import app.teamstation.cameraman.encode.VideoEncoder
@@ -174,8 +179,17 @@ class AppEnvironment(
     internal lateinit var scoreboard: ScoreboardDesk
         private set
 
+    /** Device event control: a nearby Director on the same account may set the publishing event. */
+    internal lateinit var eventControl: EventControlHost
+        private set
+
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
+    )
+
+    /** The event-control listener's blocking accept loop and connections. */
+    private val ioScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
     )
     private var thermalPreviewJob: kotlinx.coroutines.Job? = null
 
@@ -319,7 +333,16 @@ class AppEnvironment(
         publishedIdentity = loaded
         publishedSettings = initial.copy()
         appliedSettings = initial.copy()
-        scoreboard = ScoreboardDesk(backing, scope)
+        val account = OkHttpScoreboardAccount()
+        eventControl = EventControlHost(
+            settings = backing,
+            keys = EventControlKeyStore(context),
+            fetcher = account.eventControlKeyFetcher(),
+            scope = scope,
+            io = ioScope,
+            main = kotlinx.coroutines.Dispatchers.Main.immediate
+        )
+        scoreboard = ScoreboardDesk(backing, scope, account = account, eventControl = eventControl)
         radarLink.onSpeeds = { pitch, exit -> scoreboard.publishSpeeds(pitch, exit) }
     }
 
@@ -469,6 +492,9 @@ class AppEnvironment(
         observeBattery()
         statusState.value = "starting"
         radarLink.start()
+        // Runs with the service, whatever the broadcast: a Director may set the event of a camera
+        // that only sends radar speeds.
+        scoreboard.start()
 
         val settings = settingsState.value.copy()
         videoEncoder.onFailure = { encodeFailureState.value = it.description }
@@ -522,6 +548,7 @@ class AppEnvironment(
 
     fun stop() {
         thermalPreviewJob?.cancel()
+        scoreboard.stop()
         silence.stop()
         batteryReceiver?.let { runCatching { context.unregisterReceiver(it) } }
         batteryReceiver = null
@@ -1188,6 +1215,19 @@ class AppEnvironment(
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             put("frameDelivery", frameDeliveryJSON())
             RadarSnapshot.putInto(this, radarLink.state.value)
+            put("eventControl", eventControlJSON())
+        }
+    }
+
+    /** Consent, the listener and the lease, never the key. */
+    fun eventControlJSON(): JSONObject {
+        val control = eventControl.state.value
+        return JSONObject().apply {
+            put("allowOverride", control.consent)
+            put("eligible", control.eligible)
+            put("port", (control.listener as? EventControlListenerState.Listening)?.port ?: JSONObject.NULL)
+            put("overrideFrom", control.override?.ownerHost ?: JSONObject.NULL)
+            put("status", control.status)
         }
     }
 

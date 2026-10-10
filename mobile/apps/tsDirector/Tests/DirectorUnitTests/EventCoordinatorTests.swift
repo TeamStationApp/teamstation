@@ -104,11 +104,14 @@ private final class Rig {
   let linker = RecordingLinker()
   var take: Int64?
   var cameraName = ""
+  /// The chosen event each time nearby devices were told the selection changed.
+  var told: [String?] = []
   lazy var coordinator = EventCoordinator(
     events: events,
     linker: linker,
     currentTake: { [unowned self] in self.take },
-    cameraName: { [unowned self] in self.cameraName }
+    cameraName: { [unowned self] in self.cameraName },
+    selectionChanged: { [unowned self] in self.told.append(self.events.chosen?.gameId) }
   )
 }
 
@@ -303,4 +306,32 @@ struct EventCoordinatorTests {
     rig.coordinator.recordingStarted(take: 3)
     #expect(rig.linker.links.isEmpty)
   }
+
+  @Test func onlyPicksThatSucceedAndClearReachNearbyDevices() async {
+    let rig = Rig()
+    #expect(await rig.coordinator.pick(event: event("g1"), destination: .url))
+    #expect(rig.told == [ "g1" ])
+    rig.events.refuse = "Not yours"
+    #expect(await rig.coordinator.pick(event: event("g2"), destination: .event) == false)
+    #expect(rig.told == [ "g1" ])
+    rig.events.refuse = nil
+    #expect(await rig.coordinator.pick(event: event("g2"), destination: .event))
+    #expect(rig.told == [ "g1", "g2" ])
+    rig.coordinator.clear()
+    #expect(rig.told == [ "g1", "g2", nil ])
+  }
+
+  @Test func aCoordinatorMadeWithoutAListenerStillPicks() async {
+    let events = StubEvents()
+    let coordinator = EventCoordinator(
+      events: events,
+      linker: RecordingLinker(),
+      currentTake: { nil },
+      cameraName: { "" }
+    )
+    #expect(await coordinator.pick(event: event("g1"), destination: .url))
+    coordinator.clear()
+    #expect(events.chosen == nil)
+  }
 }
+

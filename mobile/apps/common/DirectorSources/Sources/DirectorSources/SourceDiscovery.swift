@@ -49,6 +49,47 @@ public struct DiscoveredSource: Hashable, Sendable, Codable, Identifiable {
 
 public typealias DiscoveryChangeHandler = @Sendable ([DiscoveredSource]) -> Void
 
+/// Something other than a camera transport that wants the shared address sweep to ask each host
+/// about its own ports, and to be told who answered on them.
+///
+/// There is one sweep. A participant adds ports to it rather than running another, because the
+/// cost of a sweep is the ARP broadcast per empty address, which one more port does not repeat.
+/// Its ports are read at the start of every sweep, so a participant turns itself on and off by
+/// what it answers, without the sweeper being restarted.
+public protocol SweepParticipant: AnyObject, Sendable {
+  /// Ports to add to the next sweep. Empty means the participant is not looking for anything now.
+  /// The sweeper leaves them out while the app is recording or streaming.
+  var extraSweepPorts: [Int] { get }
+  /// The hosts that answered on this participant's ports, and on nothing else: a participant never
+  /// sees a camera port, and the cameras never see a participant's.
+  func acceptSweep(_ result: SubnetScanner.Result)
+}
+
+/// The participants a sweep serves, held weakly: one that goes away simply drops out. The one
+/// list every sweeper and discovery keeps them in; not locked itself, so each holder keeps it under
+/// its own lock.
+public struct SweepParticipantList: Sendable {
+  private struct Entry: Sendable {
+    weak var participant: SweepParticipant?
+  }
+
+  private var entries: [Entry] = []
+
+  public init() {}
+
+  /// Adds `participant` once, dropping any that have gone.
+  public mutating func add(_ participant: SweepParticipant) {
+    entries.removeAll { $0.participant == nil || $0.participant === participant }
+    entries.append(Entry(participant: participant))
+  }
+
+  /// The participants still here, dropping any that have gone.
+  public mutating func current() -> [SweepParticipant] {
+    entries.removeAll { $0.participant == nil }
+    return entries.compactMap(\.participant)
+  }
+}
+
 public protocol SourceDiscovery: AnyObject, Sendable {
   var kind: SourceKind { get }
   /// Every kind this discovery can produce. One for a transport, several for a composite of them.
@@ -91,6 +132,14 @@ public protocol SourceDiscovery: AnyObject, Sendable {
   /// Told before starting that something above is sweeping on its behalf, so it does not also
   /// sweep. A transport running on its own is not told, and keeps doing it itself.
   func setSweepIsShared(_ isShared: Bool)
+  /// Adds a participant to the sweep this discovery runs. True when this discovery sweeps and will
+  /// include the participant's ports from its next sweep on; false when it does not sweep at all,
+  /// and the participant has to find its hosts some other way.
+  @discardableResult
+  func addSweepParticipant(_ participant: SweepParticipant) -> Bool
+  /// Runs this discovery's sweep once, soon, for a participant whose ports or hosts have changed.
+  /// Does nothing when it does not sweep.
+  func requestSweep()
 }
 
 extension SourceDiscovery {
@@ -101,6 +150,9 @@ extension SourceDiscovery {
   public var sweepPorts: [Int] { [] }
   public func acceptSweep(_ result: SubnetScanner.Result) {}
   public func setSweepIsShared(_ isShared: Bool) {}
+  @discardableResult
+  public func addSweepParticipant(_ participant: SweepParticipant) -> Bool { false }
+  public func requestSweep() {}
 
   public var kinds: [SourceKind] { [kind] }
   public var children: [SourceDiscovery] { [self] }

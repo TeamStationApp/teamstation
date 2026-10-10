@@ -57,6 +57,9 @@ packages:
     path: Packages/DirectorRTMP
   TeamStationKit:
     path: ../common/TeamStationKit
+  # Device event control: the protocol "Set event on nearby devices" speaks to them.
+  EventControl:
+    path: ../common/EventControl
   DirectorUI:
     path: Packages/DirectorUI
   DirectorTestHarness:
@@ -115,6 +118,8 @@ targets:
         product: DirectorUI
       - package: TeamStationKit
         product: TeamStationKit
+      - package: EventControl
+        product: EventControl
       - package: DirectorTestHarness
         product: DirectorTestHarness
 
@@ -182,6 +187,8 @@ targets:
         product: DirectorUI
       - package: TeamStationKit
         product: TeamStationKit
+      - package: EventControl
+        product: EventControl
       - package: DirectorLink
         product: DirectorLink
       - package: DistributorWire

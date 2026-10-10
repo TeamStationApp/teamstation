@@ -66,8 +66,16 @@ public enum DirectorPaths {
     }
   }
 
-  /// Free space on the volume backing the archives, used by the disk headroom guard.
+  /// Free space on the volume backing the archives, measured now on the calling thread (about
+  /// 12 ms on an iPad), for a caller about to act on it. It also refreshes
+  /// `FreeDiskSpace.shared`. Never call it from the main thread at telemetry rate; read
+  /// `FreeDiskSpace.shared.cachedBytes` there instead.
   public static func freeDiskBytes() -> Int64 {
+    FreeDiskSpace.shared.measureNow()
+  }
+
+  /// The lookup itself, with no cache and no log.
+  public static func measureFreeDiskBytes() -> Int64 {
     let values = try? applicationSupport.resourceValues(forKeys: [ .volumeAvailableCapacityForImportantUsageKey ])
     return values?.volumeAvailableCapacityForImportantUsage ?? 0
   }

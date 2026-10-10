@@ -47,17 +47,22 @@ public final class EventCoordinator {
   /// The one link this coordinator made for a take, which a later pick during
   /// that same take may move.
   private var linked: (take: Int64, gameId: String)?
+  /// Told after a pick succeeds and after Clear, never after a pick that
+  /// failed: what nearby devices are set to follows only a choice that stuck.
+  private let selectionChanged: () -> Void
 
   public init(
     events: any TeamStationEventService,
     linker: any GameLinker,
     currentTake: @escaping () -> Int64?,
-    cameraName: @escaping () -> String
+    cameraName: @escaping () -> String,
+    selectionChanged: @escaping () -> Void = {}
   ) {
     self.events = events
     self.linker = linker
     self.currentTake = currentTake
     self.cameraName = cameraName
+    self.selectionChanged = selectionChanged
   }
 
   /// Chooses an event, claiming it only when the stream goes to it, and files
@@ -72,12 +77,14 @@ public final class EventCoordinator {
       return false
     }
     if let take = currentTake() { link(take) }
+    selectionChanged()
     return true
   }
 
   /// Forgets the event. Takes already filed under it stay filed.
   public func clear() {
     events.forgetChosenEvent()
+    selectionChanged()
   }
 
   /// The stream's destination was changed in Settings. Choosing the event

@@ -1,3 +1,4 @@
+import EventControl
 import Foundation
 
 /// What TeamStation sends back, and nothing more.
@@ -130,6 +131,11 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
   case notSignedIn
   /// The server answered, and said why.
   case server(String)
+  /// The server does not offer what was asked for, and says why: asking again will not change
+  /// that until the account or the server does.
+  case unavailable(String)
+  /// The token changed while the request was on its way, so its answer is for another session.
+  case accountChanged
 
   public var errorDescription: String? {
     switch self {
@@ -137,8 +143,10 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
       return "Cannot reach TeamStation. Check the network and try again."
     case .notSignedIn:
       return "Sign in to TeamStation first."
-    case let .server(message):
+    case let .server(message), let .unavailable(message):
       return message
+    case .accountChanged:
+      return "The TeamStation account changed. Try again."
     }
   }
 }
@@ -201,4 +209,95 @@ public struct TeamStationUploadFinished: Sendable, Codable, Equatable {
   public let state: String
   /// Which part of taking it in, when it has started.
   public let step: String?
+}
+
+// MARK: - Device event control
+
+/// This device's key for device event control: what
+/// `GET /api/v1/device-event-control/key` answers to the device's own session.
+///
+/// Devices signed in to the same account on the same server get equal keys and tags; nobody else
+/// does. It authenticates the local event-control protocol only, so it belongs in the keychain and
+/// never in a log: `description` leaves the key out.
+public struct TeamStationEventControlKey: Sendable, Codable, Equatable, CustomStringConvertible,
+  CustomDebugStringConvertible
+{
+  public let version: Int
+  /// The server's canonical public origin, as the server states it.
+  public let issuer: String
+  /// The signed-in user's ID, in decimal.
+  public let userId: String
+  /// 32 hex characters, equal on every device of the account.
+  public let accountTag: String
+  /// 16 hex characters naming the server secret the key came from.
+  public let keyId: String
+  /// 64 hex characters.
+  public let key: String
+
+  public init(
+    version: Int = 1,
+    issuer: String,
+    userId: String,
+    accountTag: String,
+    keyId: String,
+    key: String
+  ) {
+    self.version = version
+    self.issuer = issuer
+    self.userId = userId
+    self.accountTag = accountTag
+    self.keyId = keyId
+    self.key = key
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case version, issuer, userId, accountTag, keyId, key
+  }
+
+  /// `userId` arrives as a string; a number is read too, as `TeamStationUser.id` is.
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+    issuer = try container.decode(String.self, forKey: .issuer)
+    if let text = try? container.decode(String.self, forKey: .userId) {
+      userId = text
+    } else {
+      userId = String(try container.decode(Int64.self, forKey: .userId))
+    }
+    accountTag = try container.decode(String.self, forKey: .accountTag)
+    keyId = try container.decode(String.self, forKey: .keyId)
+    key = try container.decode(String.self, forKey: .key)
+  }
+
+  public var description: String {
+    "TeamStationEventControlKey(issuer: \(issuer), userId: \(userId), accountTag: \(accountTag), "
+      + "keyId: \(keyId), key: <redacted>)"
+  }
+
+  public var debugDescription: String { description }
+}
+
+/// Which account this device last proved it is signed in to, and on which server.
+///
+/// Kept beside the token, so a Director relaunched with no network still knows the validated user
+/// and server its token belongs to — `user` stays nil until the server answers, but the device is
+/// no less signed in. Cleared when the server rejects the token or the operator signs out.
+public struct TeamStationAccountScope: Sendable, Codable, Equatable {
+  /// The canonical origin of the server the token was issued by (`origin(of:)`).
+  public let server: String
+  /// The user's ID on that server, in decimal.
+  public let userId: String
+
+  public init(server: String, userId: String) {
+    self.server = server
+    self.userId = userId
+  }
+
+  /// `scheme://host[:port]` in lower case, with the scheme's default port dropped: the same
+  /// name device event control files its keys under (`EventControlCredentials.canonicalOrigin`),
+  /// so the two can never disagree about which server is meant. Empty for a URL with no scheme
+  /// or host, which matches no server.
+  public static func origin(of url: URL) -> String {
+    EventControlCredentials.canonicalOrigin(of: url) ?? ""
+  }
 }

@@ -87,6 +87,54 @@ struct CompositeDiscoveryTests {
     #expect(CompositeSourceDiscovery([ndi, rtsp]).diagnostic == "ndi[found=2] rtsp[scan=off]")
   }
 
+  @Test("A participant joins the shared sweep only when a transport sweeps")
+  func participantNeedsASweep() {
+    let quiet = CompositeSourceDiscovery([StubDiscovery(kind: .ndi), StubDiscovery(kind: .rtsp)])
+    #expect(quiet.addSweepParticipant(FakeParticipant(ports: [ 47614 ])) == false)
+    quiet.requestSweep()
+
+    let sweeping = CompositeSourceDiscovery([StubDiscovery(kind: .ndi, ports: [ 5960 ])])
+    #expect(sweeping.addSweepParticipant(FakeParticipant(ports: [ 47614 ])))
+  }
+
+  @Test("One sweep serves the transports and a participant, each with only its own answers")
+  func sharedSweepRoutesByPort() async throws {
+    let fake = FakeSweep([
+      "192.0.2.10": [ 5960 ],
+      "192.0.2.20": [ 47614 ],
+      "192.0.2.30": [ 554, 47615 ]
+    ])
+    let made = SweeperBox()
+    let ndi = StubDiscovery(kind: .ndi, ports: [ 5960 ])
+    let rtsp = StubDiscovery(kind: .rtsp, ports: [ 554, 8554 ])
+    let composite = CompositeSourceDiscovery([ndi, rtsp]) { ports, onResult in
+      let sweeper = CameraSweeper(ports: ports, scan: fake.scan, probeKnown: fake.probeKnown, onResult: onResult)
+      made.sweeper = sweeper
+      return sweeper
+    }
+    // Before start: kept, and handed to the sweeper when it is made.
+    let early = FakeParticipant(ports: [ 47614, 47615 ])
+    #expect(composite.addSweepParticipant(early))
+    composite.start { _ in }
+    defer { composite.stop() }
+    // After start: handed straight to the running sweeper.
+    let late = FakeParticipant(ports: [ 47615 ])
+    #expect(composite.addSweepParticipant(late))
+
+    let sweeper = try #require(made.sweeper)
+    await sweeper.runSweep()
+    #expect(fake.askedPorts.last == [ 5960, 554, 8554, 47614, 47615 ])
+    for child in [ndi, rtsp] {
+      let seen = child.swept.last?.portsByHost ?? [:]
+      #expect(seen == [ "192.0.2.10": [ 5960 ], "192.0.2.30": [ 554 ] ])
+    }
+    #expect(early.received.last?.portsByHost == [ "192.0.2.20": [ 47614 ], "192.0.2.30": [ 47615 ] ])
+    #expect(late.received.last?.portsByHost == [ "192.0.2.30": [ 47615 ] ])
+    #expect(composite.diagnostic.contains("extraPorts="))
+
+    composite.requestSweep()
+  }
+
   private func source(_ id: String, _ kind: SourceKind) -> DiscoveredSource {
     DiscoveredSource(id: SourceID(id), kind: kind, advertisedName: id, address: "192.168.7.1")
   }
@@ -109,9 +157,17 @@ private final class PublishedLists: @unchecked Sendable {
   }
 }
 
+private final class SweeperBox: @unchecked Sendable {
+  var sweeper: CameraSweeper?
+}
+
 private final class StubDiscovery: SourceDiscovery, @unchecked Sendable {
   let kind: SourceKind
   let diagnostic: String
+  let sweepPorts: [Int]
+  private let sweptLock = NSLock()
+  private var sweptResults: [SubnetScanner.Result] = []
+  var swept: [SubnetScanner.Result] { sweptLock.withLock { sweptResults } }
   private(set) var isRunning = false
   private(set) var built: [String] = []
   private(set) var searches = 0
@@ -120,9 +176,14 @@ private final class StubDiscovery: SourceDiscovery, @unchecked Sendable {
   private(set) var currentSources: [DiscoveredSource] = []
   private var handler: DiscoveryChangeHandler?
 
-  init(kind: SourceKind, diagnostic: String = "") {
+  init(kind: SourceKind, diagnostic: String = "", ports: [Int] = []) {
     self.kind = kind
     self.diagnostic = diagnostic
+    sweepPorts = ports
+  }
+
+  func acceptSweep(_ result: SubnetScanner.Result) {
+    sweptLock.withLock { sweptResults.append(result) }
   }
 
   func start(onChange: @escaping DiscoveryChangeHandler) {

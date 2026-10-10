@@ -35,6 +35,13 @@ public struct ScoreboardSnapshot: Equatable, Sendable {
   public var recent: [ScoreboardEventChoice]
   public var upcoming: [ScoreboardEventChoice]
   public var pickerStatus: String
+  /// "Allow Director Override", as saved.
+  public var allowDirectorOverride: Bool
+  /// The address of the Director whose event this is, while it holds one. Empty otherwise.
+  public var overrideHost: String
+  /// Why this device cannot take a Director's event yet, under the toggle. Empty when it can, or
+  /// when the toggle is off.
+  public var eventControlStatus: String
 
   public init(
     route: ScoreboardRoute = .v1,
@@ -51,7 +58,10 @@ public struct ScoreboardSnapshot: Equatable, Sendable {
     pickerOpen: Bool = false,
     recent: [ScoreboardEventChoice] = [],
     upcoming: [ScoreboardEventChoice] = [],
-    pickerStatus: String = ""
+    pickerStatus: String = "",
+    allowDirectorOverride: Bool = false,
+    overrideHost: String = "",
+    eventControlStatus: String = ""
   ) {
     self.route = route
     self.signedIn = signedIn
@@ -68,7 +78,23 @@ public struct ScoreboardSnapshot: Equatable, Sendable {
     self.recent = recent
     self.upcoming = upcoming
     self.pickerStatus = pickerStatus
+    self.allowDirectorOverride = allowDirectorOverride
+    self.overrideHost = overrideHost
+    self.eventControlStatus = eventControlStatus
   }
+
+  /// A Director holds the event: the row still shows its title and start time in full, and
+  /// nothing on this device may change it.
+  public var eventLocked: Bool { !overrideHost.isEmpty }
+
+  /// "Override from Director 192.0.2.10" while a Director holds the event; empty otherwise.
+  public var overrideLine: String {
+    eventLocked ? "Override from Director \(overrideHost)" : ""
+  }
+
+  /// Whether Change Game (and the event row) opens the picker: signed in and no Director holding
+  /// the event. Change Game shows gray and untappable otherwise.
+  public var canPickEvent: Bool { signedIn && !eventLocked }
 }
 
 /// The phone's own environment conforms. A remote model does not, and the shared screen skips the card.
@@ -84,4 +110,6 @@ public protocol ScoreboardControlling: AnyObject {
   func openScoreboardEvents()
   func dismissScoreboardEvents()
   func chooseScoreboardEvent(_ gameId: String)
+  /// "Allow Director Override". Off releases a Director's hold at once and gives the event back.
+  func setAllowDirectorOverride(_ allowed: Bool)
 }

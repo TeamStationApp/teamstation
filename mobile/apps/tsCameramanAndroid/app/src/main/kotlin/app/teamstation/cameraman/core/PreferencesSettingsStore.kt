@@ -22,4 +22,11 @@ class PreferencesSettingsStore(
         // costs one preference, where the identity's would cost the camera's name on the field.
         preferences.edit().putString(key, value).apply()
     }
+
+    /** One editor, one apply: the values land together or not at all. */
+    override fun setStrings(values: Map<String, String>) {
+        val editor = preferences.edit()
+        for ((key, value) in values) editor.putString(key, value)
+        editor.apply()
+    }
 }

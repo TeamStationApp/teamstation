@@ -141,6 +141,21 @@ export const asServerConfig = asObject({
   mediaSecret: asOptional(asString, ''),
 
   /**
+   * Derives each account's key for device event control: the protocol a
+   * Director uses to set the publishing event of nearby devices signed in to
+   * the same account (`GET /api/v1/device-event-control/key`).
+   *
+   * Its own secret, and deliberately not `sessionSecret`, which also seals
+   * live stream keys: this one can be rotated at any time, and the only cost
+   * is that every device fetches its key again. Empty switches the feature
+   * off; the route then answers 503 `deviceEventControlUnavailable`. Generate
+   * one with 32 random bytes as hex. A secret shorter than 32 bytes is refused
+   * the same way, and said at startup: its key ID, which every signed-in
+   * device receives, would give it away.
+   */
+  deviceEventControlSecret: asOptional(asString, ''),
+
+  /**
    * What this deployment is called, where that is not `PRIMARY_HOST`.
    *
    * A **host**, with no scheme: `devhost2.example-ts.test`, `127.0.0.1:9100`.

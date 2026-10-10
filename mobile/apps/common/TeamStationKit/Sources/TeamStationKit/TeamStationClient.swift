@@ -95,6 +95,17 @@ public struct TeamStationClient: Sendable {
     try await send("auth/me", method: "GET")
   }
 
+  /// This device's key for device event control, fetched with this device's own session.
+  ///
+  /// Human sign-ins only: the server answers 401 to a machine token, which arrives here as
+  /// `notSignedIn`. A server with the feature switched off answers 503, and one from before the
+  /// route existed 404; both arrive as `unavailable` with the server's own sentence, so a caller
+  /// can tell them from a failure worth asking again after (`offline`, or `server` for any other
+  /// answer, such as a 502 while the server restarts).
+  public func deviceEventControlKey() async throws -> TeamStationEventControlKey {
+    try await send("device-event-control/key", method: "GET", unavailableStatuses: [ 404, 503 ])
+  }
+
   // MARK: - Events
 
   /// The next twenty games of the teams this account runs, soonest first.
@@ -305,6 +316,7 @@ public struct TeamStationClient: Sendable {
     body: [String: any Sendable]? = nil,
     query: [URLQueryItem] = [],
     waitingIsNil: Bool = false,
+    unavailableStatuses: Set<Int> = [],
     timeout: TimeInterval = 20
   ) async throws -> Reply {
     var request = URLRequest(url: Self.url(baseURL, path, query))
@@ -340,6 +352,9 @@ public struct TeamStationClient: Sendable {
     // true statement the app can make.
     if status == 401 || status == 403, token != nil {
       throw TeamStationError.notSignedIn
+    }
+    if unavailableStatuses.contains(status) {
+      throw TeamStationError.unavailable(Self.message(from: data, status: status))
     }
     guard (200 ..< 300).contains(status) else {
       throw TeamStationError.server(Self.message(from: data, status: status))

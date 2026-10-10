@@ -182,6 +182,7 @@ public struct SettingsView: View {
 
         Section {
           teamStationEventRow
+          nearbyDevicesRow
         } header: {
           Text("TeamStation Event")
         } footer: {
@@ -436,7 +437,7 @@ public struct SettingsView: View {
           )
           .accessibilityIdentifier("settings-retention-floor")
 
-          LabeledContent("Free space", value: Self.gigabytes(DirectorPaths.freeDiskBytes()))
+          LabeledContent("Free space", value: Self.gigabytes(FreeDiskSpace.shared.cachedBytes))
             .accessibilityIdentifier("settings-free-space")
         } header: {
           Text("Retention")
@@ -449,7 +450,7 @@ public struct SettingsView: View {
         }
 
         Section {
-          Toggle("Scan a different subnet", isOn: $draft.subnetScanOverrideEnabled)
+          Toggle("Also scan other subnets", isOn: $draft.subnetScanOverrideEnabled)
             .accessibilityIdentifier("settings-subnet-scan-enabled")
           TextField("192.168.6.0, 192.168.7.0", text: $draft.subnetScanOverride)
             .keyboardType(.numbersAndPunctuation)
@@ -468,9 +469,9 @@ public struct SettingsView: View {
           Text("Camera discovery")
         } footer: {
           Text("""
-          When on, the camera search sweeps every address (.1 to .254) of up to two subnets, \
-          comma-separated, instead of this iPad's own. Turn it off for normal use; the subnets are \
-          kept for next time.
+          When on, the search for cameras and nearby devices also sweeps every address (.1 to .254) \
+          of up to two subnets, comma-separated, in addition to this iPad's own. Turn it off for \
+          normal use; the subnets are kept for next time.
           """)
         }
 
@@ -693,6 +694,38 @@ public struct SettingsView: View {
         }
         .buttonStyle(.borderless)
         .accessibilityIdentifier("settings-teamstation-event-clear")
+      }
+    }
+  }
+
+  /// "Set event on nearby devices", directly under the event it sends, with what it is doing.
+  /// Saved the moment it is switched, like the event itself, not with SAVE.
+  @ViewBuilder
+  private var nearbyDevicesRow: some View {
+    let control = environment.eventControl
+    VStack(alignment: .leading, spacing: 6) {
+      Toggle(
+        "Set event on nearby devices",
+        isOn: Binding(
+          get: { control.isEnabled },
+          set: { on in
+            draft.eventControlEnabled = on
+            environment.setEventControlEnabled(on)
+          }
+        )
+      )
+      .accessibilityIdentifier("settings-event-control-enabled")
+      Text(
+        "Devices signed in to this TeamStation account that allow Director override publish to "
+          + "this event. They keep their own login."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      if !control.status.line.isEmpty {
+        Text(control.status.line)
+          .font(.caption)
+          .foregroundStyle(control.status.isProblem ? Color.red : Color.secondary)
+          .accessibilityIdentifier("settings-event-control-status")
       }
     }
   }

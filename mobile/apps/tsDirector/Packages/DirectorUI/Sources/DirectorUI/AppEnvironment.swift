@@ -14,6 +14,7 @@ import DirectorSources
 import DirectorTestHarness
 import DirectorLink
 import DistributorWire
+import EventControl
 import TeamStationKit
 import UIKit
 
@@ -150,7 +151,20 @@ public final class AppEnvironment {
     events: teamStation,
     linker: index,
     currentTake: { [weak self] in self?.activeRecordingID },
-    cameraName: { [weak self] in self?.cameraNameForClaim ?? "" }
+    cameraName: { [weak self] in self?.cameraNameForClaim ?? "" },
+    selectionChanged: { [weak self] in self?.eventControl.selectionChanged() }
+  )
+  /// "Set event on nearby devices": keeps nearby devices of the same account on the event chosen
+  /// here. Reads the account and the chosen event; nothing of Director's own recording, stream or
+  /// overlays reads it.
+  @ObservationIgnored
+  public private(set) lazy var eventControl = EventControlCoordinator(
+    account: teamStation,
+    instanceId: EventControlInstanceID.persisted(
+      in: .standard,
+      key: EventControlCoordinator.instanceIdKey
+    ),
+    keyStore: EventControlKeyStore(service: EventControlCoordinator.keyStoreService)
   )
   /// The camera name the next claim sends.
   ///
@@ -383,6 +397,7 @@ public final class AppEnvironment {
   private var pendingWebNative: [UUID: OverlayLayout.PendingWebNative] = [:]
   private var overlayImages: [UUID: CGImage] = [:]
   private var retentionTimer: Timer?
+  @ObservationIgnored private var retentionSweepInFlight = false
   /// The grid last written to the open take, so an unchanged one is not written again.
   private var lastGridSnapshot: Data?
   /// Writes the live session's heartbeat while anything is live. How stale this is at the next
@@ -584,6 +599,9 @@ public final class AppEnvironment {
     apply(manifest)
     reloadOverlayMedia()
     watchChosenEvent()
+    eventControl.start(enabled: config.eventControlEnabled)
+    eventControl.monitorNetwork()
+    watchAccountForEventControl()
     apply(remoteStore.loadManifest())
     remoteInput.onDown = { [weak self] id, pressed in
       self?.handleRemoteDown(id, pressed: pressed)
@@ -591,6 +609,8 @@ public final class AppEnvironment {
     remoteInput.start()
 
     startDiscovery()
+    // Before the first poll reads it: telemetry and Settings show the cached figure only.
+    FreeDiskSpace.shared.startRefreshing()
     startPolling()
     startControlServer()
     startLinkServer()
@@ -854,6 +874,7 @@ public final class AppEnvironment {
       self.discovery = nil
       discoveryUnavailableReason = "No camera discovery is available for this profile"
       telemetry.mutate { $0.sourceAvailable = false }
+      eventControl.attach(to: nil)
       return
     }
 
@@ -866,6 +887,9 @@ public final class AppEnvironment {
     discovery.start { [weak self] discovered in
       Task { @MainActor in self?.applyDiscovery(discovered) }
     }
+    // Every discovery built here, so a profile change rejoins the new one's sweep (or, for a
+    // profile that does not sweep, has event control run its own).
+    eventControl.attach(to: discovery)
   }
 
   private func applyDiscovery(_ discovered: [DiscoveredSource]) {
@@ -1656,6 +1680,7 @@ public final class AppEnvironment {
     isInBackground = false
     syncLiveSessionPresentation()
     restartLinkServer()
+    eventControl.resumed()
   }
 
   public func handleInactive() {
@@ -2154,6 +2179,28 @@ public final class AppEnvironment {
     updateScoreboards()
   }
 
+  /// Settings' "Set event on nearby devices". Saved at once, like the event row above it, rather
+  /// than with SAVE: it acts on devices now.
+  public func setEventControlEnabled(_ on: Bool) {
+    persistedConfig.eventControlEnabled = on
+    configStore.save(persistedConfig)
+    config.eventControlEnabled = on
+    eventControl.setEnabled(on)
+  }
+
+  /// Event control follows the account: sign-in, sign-out, another account, a rejected token.
+  private func watchAccountForEventControl() {
+    withObservationTracking {
+      _ = teamStation.scope
+      _ = teamStation.user
+    } onChange: { [weak self] in
+      Task { @MainActor in
+        self?.eventControl.accountChanged()
+        self?.watchAccountForEventControl()
+      }
+    }
+  }
+
   /// Settings' destination radio. Choosing the event claims it now.
   public func streamDestinationChanged(to destination: StreamDestination) {
     Task { await eventCoordinator.destinationChanged(to: destination) }
@@ -2590,11 +2637,26 @@ public final class AppEnvironment {
     }
   }
 
+  /// Measures free space off the main thread, then sweeps with that reading. The sweep deletes
+  /// recordings on it, so it gets a fresh measure rather than the telemetry's cached one. One sweep
+  /// at a time: two started on the same low reading would both delete for it.
   public func sweepRetention() {
+    guard !retentionSweepInFlight else { return }
+    retentionSweepInFlight = true
+    Task { @MainActor [weak self] in
+      let free = await FreeDiskSpace.shared.measured()
+      guard let self else { return }
+      self.retentionSweepInFlight = false
+      self.sweepRetention(freeDiskBytes: free)
+    }
+  }
+
+  private func sweepRetention(freeDiskBytes: Int64) {
     guard let sweep = try? retention.sweep(
       maximumArchiveBytes: config.maximumArchiveBytes,
       freeDiskFloorBytes: config.freeDiskFloorBytes,
-      protecting: recordingID
+      protecting: recordingID,
+      freeDiskBytes: freeDiskBytes
     ) else { return }
     telemetry.mutate {
       $0.dvr.retentionSwept += UInt64(sweep.removedSegments)
@@ -3258,8 +3320,18 @@ public final class AppEnvironment {
     )
     pendingWebNative[id] = fit.pending
     guard fit.applied else { return false }
-    overlays[index] = fit.overlay
-    applyAnchoredChildren(of: id)
+    var next = overlays
+    next[index] = fit.overlay
+    Self.applyAnchoredChildren(of: id, in: &next, canvas: overlayCanvas)
+    // The page's 5 s heartbeat snapshot almost always measures what is already saved. Laid out
+    // the same, there is nothing to redraw or save; the bitmap is still accepted.
+    guard next != overlays else {
+      MainThreadLog.logger.info(
+        "overlay manifest save skipped: web overlay laid out unchanged (\(MainThreadLog.threadName, privacy: .public) thread)"
+      )
+      return true
+    }
+    overlays = next
     persistActiveTemplate()
     return true
   }
@@ -3696,7 +3768,10 @@ public final class AppEnvironment {
   private func persistWorkingTemplate() {
     let targetID = editingTemplateID ?? activeTemplateID
     if let index = templates.firstIndex(where: { $0.id == targetID }) {
-      templates[index].overlays = overlays
+      // Reassigned only when different: every assignment redraws whatever lists templates.
+      if templates[index].overlays != overlays {
+        templates[index].overlays = overlays
+      }
     } else if templates.isEmpty {
       let fallback = OverlayTemplate(
         id: activeTemplateID,
@@ -3940,7 +4015,14 @@ public final class AppEnvironment {
   }
 
   private func applyAnchoredChildren(of parentID: UUID) {
-    let canvas = overlayCanvas
+    Self.applyAnchoredChildren(of: parentID, in: &overlays, canvas: overlayCanvas)
+  }
+
+  private static func applyAnchoredChildren(
+    of parentID: UUID,
+    in overlays: inout [ProgramOverlay],
+    canvas: CGSize
+  ) {
     guard let parent = overlays.first(where: { $0.id == parentID }) else { return }
     let parentRect = OverlayLayout.pixelRect(parent, canvas: canvas)
     for i in overlays.indices {
@@ -3954,7 +4036,7 @@ public final class AppEnvironment {
       )
       overlays[i].originX = Double(origin.x / max(canvas.width, 1))
       overlays[i].originY = Double(origin.y / max(canvas.height, 1))
-      applyAnchoredChildren(of: overlays[i].id)
+      applyAnchoredChildren(of: overlays[i].id, in: &overlays, canvas: canvas)
     }
   }
 
@@ -4046,7 +4128,11 @@ public final class AppEnvironment {
     applyDisplayLatencyCap()
     SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
     // A new subnet to sweep should be looked at now, not whenever the next sweep comes due.
-    if sweptSubnetChanged { discovery?.sweepNow() }
+    if sweptSubnetChanged {
+      discovery?.sweepNow()
+      eventControl.subnetsChanged()
+    }
+    eventControl.setEnabled(session.eventControlEnabled)
     if wantsSimulated != sessionIsSimulated {
       Task { await applySourceProfile(SourceProfile.forSimulatedCameras(wantsSimulated)) }
     }
@@ -4577,6 +4663,7 @@ public final class AppEnvironment {
     let missing = selections.contains {
       $0.isEnabled && (!$0.isPresent || silent.contains($0.id.rawValue))
     }
+    eventControl.setBusy(self.isRecording || self.isStreaming)
     discovery?.setSweepDemand(
       isBusy: self.isRecording || self.isStreaming,
       anyEnabledCameraMissing: missing,
@@ -4616,6 +4703,7 @@ public final class AppEnvironment {
       $0.localAddresses = LocalAddresses.ipv4()
       $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
+      $0.eventControl = self.eventControl.telemetry
       $0.displayLatencyMilliseconds = displayLatency
       let caps = FrameLatencyGate.Caps(config: config)
       $0.displayLatencyCapMilliseconds = (caps.displaySeconds ?? 0) * 1_000
@@ -4952,8 +5040,9 @@ public final class AppEnvironment {
       }
     case let .setSubnetScan(subnet, on):
       // Through `update(config:)`, like the Settings switch it stands in for, so a bench set up this
-      // way is still set up after a relaunch. Turning it on without a usable subnet is refused
-      // rather than quietly sweeping the local one.
+      // way is still set up after a relaunch. The subnets named are swept in addition to the local
+      // one. Turning it on without a usable subnet is refused rather than quietly saved as on
+      // with nothing added.
       var next = persistedConfig
       if let subnet { next.subnetScanOverride = subnet }
       if let on { next.subnetScanOverrideEnabled = on }

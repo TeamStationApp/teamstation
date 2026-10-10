@@ -44,6 +44,8 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// Set when something above is sweeping for us, so this one does not make the same broadcasts
   /// a second time.
   private var isSweptExternally = false
+  /// What else this discovery's own sweep serves, when it runs one.
+  private var participants = SweepParticipantList()
   private let clock: DirectorClock
   /// Where an on-demand search runs. Never the caller's thread: `searchNow` reaches the finder,
   /// the finder's lock is also held by the discovery thread's wait, and the one caller that
@@ -204,6 +206,29 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
     existing?.stop()
   }
 
+  /// Its own sweep serves the participant too, unless something above sweeps for it: then that
+  /// sweep is the one to join, and this answers false.
+  @discardableResult
+  public func addSweepParticipant(_ participant: SweepParticipant) -> Bool {
+    lock.lock()
+    guard !isSweptExternally else {
+      lock.unlock()
+      return false
+    }
+    participants.add(participant)
+    let sweeper = self.sweeper
+    lock.unlock()
+    sweeper?.addParticipant(participant)
+    return true
+  }
+
+  public func requestSweep() {
+    lock.lock()
+    let sweeper = self.sweeper
+    lock.unlock()
+    sweeper?.sweepSoon()
+  }
+
   /// The finder's `p_extra_ips`, from whatever swept. Only the addresses that answered on the
   /// query port: handing it every host on the segment would have it querying printers.
   public func acceptSweep(_ result: SubnetScanner.Result) {
@@ -214,11 +239,18 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// builds this discovery on its own. Under `CompositeSourceDiscovery` the shared sweep calls
   /// `acceptSweep` instead and this stays unused, so the segment sees one pass rather than two.
   private func startSweeper() {
-    guard sweeper == nil, !isSweptExternally else { return }
+    lock.lock()
+    guard sweeper == nil, !isSweptExternally else {
+      lock.unlock()
+      return
+    }
     let sweeper = CameraSweeper(ports: [Self.queryPort]) { [weak self] result in
       self?.acceptSweep(result)
     }
     self.sweeper = sweeper
+    let joining = participants.current()
+    lock.unlock()
+    for participant in joining { sweeper.addParticipant(participant) }
     sweeper.start()
   }
 

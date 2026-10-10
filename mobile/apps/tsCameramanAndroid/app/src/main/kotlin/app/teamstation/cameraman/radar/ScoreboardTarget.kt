@@ -32,11 +32,13 @@ internal data class ScoreboardSaved(
     val email: String,
     val gameId: String,
     val gameTitle: String,
-    val gameStartAt: String
+    val gameStartAt: String,
+    /** The account's canonical ID in decimal. Empty until established, and after sign-out. */
+    val userId: String = ""
 )
 
 /**
- * Where a TAG One reading goes, matching TS Watcher.
+ * Where a TAG One reading goes.
  *
  * V1 is `<apiServer>/sockets/api/v1/autoState/<eventId>` with the server string used as typed.
  * An event is `<server>/api/v1/scoreboard/<gameId>/publish` over `wss://` (`ws://` for an `http://`
@@ -56,6 +58,7 @@ internal object ScoreboardTarget {
     private const val KEY_GAME_ID = "app.teamstation.cameraman.scoreboard.gameId"
     private const val KEY_GAME_TITLE = "app.teamstation.cameraman.scoreboard.gameTitle"
     private const val KEY_GAME_START = "app.teamstation.cameraman.scoreboard.gameStartAt"
+    private const val KEY_USER_ID = "app.teamstation.cameraman.scoreboard.userId"
 
     fun trimmed(origin: String): String = origin.trim().trimEnd('/')
 
@@ -190,21 +193,29 @@ internal object ScoreboardTarget {
             email = store.string(KEY_EMAIL).orEmpty(),
             gameId = store.string(KEY_GAME_ID).orEmpty(),
             gameTitle = store.string(KEY_GAME_TITLE).orEmpty(),
-            gameStartAt = store.string(KEY_GAME_START).orEmpty()
+            gameStartAt = store.string(KEY_GAME_START).orEmpty(),
+            // Absent before device event control, and kept only beside a token.
+            userId = if (token.isEmpty()) "" else store.string(KEY_USER_ID).orEmpty()
         )
     }
 
+    /** Every field in one write, so a game's ID, title and start time are never stored apart. */
     fun save(store: SettingsStore, saved: ScoreboardSaved) {
-        store.setString(if (saved.route == ScoreboardRoute.Event) "event" else "v1", KEY_ROUTE)
-        store.setString(saved.apiServer, KEY_API_SERVER)
-        store.setString(saved.v1EventId, KEY_V1_EVENT)
-        store.setString(saved.accountServer, KEY_ACCOUNT_SERVER)
-        store.setString(saved.token, KEY_TOKEN)
-        store.setString(saved.displayName, KEY_DISPLAY_NAME)
-        store.setString(saved.email, KEY_EMAIL)
-        store.setString(saved.gameId, KEY_GAME_ID)
-        store.setString(saved.gameTitle, KEY_GAME_TITLE)
-        store.setString(saved.gameStartAt, KEY_GAME_START)
+        store.setStrings(
+            linkedMapOf(
+                KEY_ROUTE to if (saved.route == ScoreboardRoute.Event) "event" else "v1",
+                KEY_API_SERVER to saved.apiServer,
+                KEY_V1_EVENT to saved.v1EventId,
+                KEY_ACCOUNT_SERVER to saved.accountServer,
+                KEY_TOKEN to saved.token,
+                KEY_DISPLAY_NAME to saved.displayName,
+                KEY_EMAIL to saved.email,
+                KEY_GAME_ID to saved.gameId,
+                KEY_GAME_TITLE to saved.gameTitle,
+                KEY_GAME_START to saved.gameStartAt,
+                KEY_USER_ID to saved.userId
+            )
+        )
     }
 
     /** Sign-out drops the account and the event route. The last chosen game stays for next time. */
@@ -212,7 +223,8 @@ internal object ScoreboardTarget {
         route = ScoreboardRoute.V1,
         token = "",
         displayName = "",
-        email = ""
+        email = "",
+        userId = ""
     )
 
     private fun encode(value: String): String =

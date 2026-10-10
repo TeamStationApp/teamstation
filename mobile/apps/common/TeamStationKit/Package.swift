@@ -7,9 +7,14 @@ let package = Package(
   products: [
     .library(name: "TeamStationKit", targets: [ "TeamStationKit" ])
   ],
+  dependencies: [
+    // For the one canonical server origin, shared with the keys device event control caches.
+    .package(path: "../EventControl")
+  ],
   targets: [
     .target(
       name: "TeamStationKit",
+      dependencies: [ "EventControl" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
     .testTarget(

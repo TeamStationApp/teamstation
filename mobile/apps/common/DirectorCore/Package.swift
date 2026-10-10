@@ -12,6 +12,12 @@ let package = Package(
       name: "DirectorCore",
       swiftSettings: [ .swiftLanguageMode(.v6) ],
       linkerSettings: [ .linkedLibrary("sqlite3") ]
+    ),
+    // Run on the Mac with `swift test`.
+    .testTarget(
+      name: "DirectorCoreTests",
+      dependencies: [ "DirectorCore" ],
+      swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]
 )

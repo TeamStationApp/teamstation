@@ -108,4 +108,77 @@ struct CameraSweepPolicyTests {
     _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false, now: 200)
     #expect(policy.missingForSeconds(now: 200) == nil)
   }
+
+  // MARK: - Device event control
+
+  @Test("Event control on and idle sweeps every thirty seconds")
+  func eventControlIdleSweeps() {
+    var policy = CameraSweepPolicy()
+    #expect(policy.gapAfterNextSweep(
+      isBusy: false, anyEnabledCameraMissing: false, isBrowsing: false,
+      eventControlWantsDiscovery: true, now: 0
+    ) == 30)
+    // During the startup grace too: nearby devices are not cameras that have yet to appear.
+    var starting = CameraSweepPolicy(startedAt: 1_000)
+    #expect(starting.gapAfterNextSweep(
+      isBusy: false, anyEnabledCameraMissing: true, isBrowsing: false,
+      eventControlWantsDiscovery: true, now: 1_001
+    ) == 30)
+  }
+
+  @Test("Event control on while recording or streaming adds no sweep")
+  func eventControlBusyAddsNothing() {
+    var policy = CameraSweepPolicy()
+    #expect(policy.gapAfterNextSweep(
+      isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false,
+      eventControlWantsDiscovery: true, now: 0
+    ) == nil)
+    // A camera-recovery sweep mid-take keeps its own cadence.
+    #expect(policy.gapAfterNextSweep(
+      isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false,
+      eventControlWantsDiscovery: true, now: 5
+    ) == 10)
+  }
+
+  @Test("A camera sweep already due keeps its ten seconds with event control on")
+  func eventControlDoesNotSlowCameraSweeps() {
+    var policy = CameraSweepPolicy()
+    #expect(policy.gapAfterNextSweep(
+      isBusy: false, anyEnabledCameraMissing: false, isBrowsing: true,
+      eventControlWantsDiscovery: true, now: 0
+    ) == 10)
+  }
+
+  @Test("Event control off gives exactly the existing answers")
+  func eventControlOffIsTheBase() {
+    let cases: [(busy: Bool, missing: Bool, browsing: Bool, now: Double)] = [
+      (false, false, false, 0), (true, false, false, 1), (false, false, true, 2),
+      (true, true, false, 30), (false, true, false, 40), (true, false, true, 50)
+    ]
+    var withFlag = CameraSweepPolicy(startedAt: 0)
+    var without = CameraSweepPolicy(startedAt: 0)
+    for item in cases {
+      let flagged = withFlag.gapAfterNextSweep(
+        isBusy: item.busy, anyEnabledCameraMissing: item.missing, isBrowsing: item.browsing,
+        eventControlWantsDiscovery: false, now: item.now
+      )
+      let base = without.gapAfterNextSweep(
+        isBusy: item.busy, anyEnabledCameraMissing: item.missing, isBrowsing: item.browsing,
+        now: item.now
+      )
+      #expect(flagged == base)
+      #expect(withFlag.missingForSeconds(now: item.now) == without.missingForSeconds(now: item.now))
+    }
+  }
+
+  @Test("A busy sweep's ports are exactly the cameras'; an idle one adds the event ports once")
+  func sweepPortsWhileBusy() {
+    let cameras = [ 554, 8554, 5960 ]
+    #expect(CameraSweepPolicy.sweepPorts(camera: cameras, extra: [ 47614, 47615 ], isBusy: true) == cameras)
+    #expect(CameraSweepPolicy.sweepPorts(camera: cameras, extra: [ 47614, 47615 ], isBusy: false)
+      == cameras + [ 47614, 47615 ])
+    #expect(CameraSweepPolicy.sweepPorts(camera: cameras, extra: [ 554, 47614, 47614 ], isBusy: false)
+      == cameras + [ 47614 ])
+    #expect(CameraSweepPolicy.sweepPorts(camera: [], extra: [ 47614 ], isBusy: true).isEmpty)
+  }
 }

@@ -394,15 +394,20 @@ public struct RetentionPolicy: Sendable {
   /// `protecting` is the take being written right now. It is never swept, however far over
   /// budget the archive has run: dropping the recording out from under the writer would take the
   /// operator's live game away to make room for itself.
+  ///
+  /// `freeDiskBytes` is a free-space reading the caller took just before calling, so a caller on
+  /// the main thread can take it off that thread (`FreeDiskSpace.measured()`); nil measures here.
+  /// After each recording removed, free space is measured again here either way.
   @discardableResult
   public func sweep(
     maximumArchiveBytes: Int64,
     freeDiskFloorBytes: Int64,
     protecting liveRecordingID: Int64? = nil,
+    freeDiskBytes measuredFree: Int64? = nil,
     fileManager: FileManager = .default
   ) throws -> Sweep {
     var archived = try index.totalBytes()
-    var free = DirectorPaths.freeDiskBytes()
+    var free = measuredFree ?? DirectorPaths.freeDiskBytes()
     let startedUnderPressure = free < freeDiskFloorBytes
 
     var removedRecordings = 0

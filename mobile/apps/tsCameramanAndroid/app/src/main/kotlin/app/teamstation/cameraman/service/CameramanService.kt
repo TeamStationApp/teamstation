@@ -151,6 +151,9 @@ class CameramanService : Service() {
                 }
                 .launchIn(scope)
         }
+        // Every start of the service, a restart included, binds the event-control listener again
+        // if the system took it down.
+        environment?.scoreboard?.ensureListening()
         val broadcasting = environment?.isBroadcasting == true
         // A null intent is a sticky restart: the launch configuration belonged to that test run,
         // and a soak that came back with different settings than it started with would be unreadable.

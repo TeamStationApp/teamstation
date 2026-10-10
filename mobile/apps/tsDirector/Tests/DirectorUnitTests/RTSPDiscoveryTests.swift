@@ -351,6 +351,72 @@ struct RTSPDiscoveryTests {
     #expect(RTSPDiscovery(configuration: RTSPDiscovery.Configuration(isScanEnabled: false)).sweepPorts.isEmpty)
   }
 
+  @Test("Running alone, its own sweep carries a participant's ports and keeps only its own answers")
+  func aloneSweepServesParticipant() async {
+    let fake = FakeSweep([ "192.0.2.10": [ 554 ], "192.0.2.20": [ 47614 ] ])
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(),
+      confirmHost: { endpoint in endpoint.host == "192.0.2.10" ? StreamAdvertisement() : nil },
+      scan: fake.scan
+    )
+    let participant = FakeParticipant(ports: [ 47614, 47615 ])
+    #expect(discovery.addSweepParticipant(participant))
+    #expect(discovery.addSweepParticipant(participant))
+
+    await discovery.sweepNow()
+
+    #expect(fake.askedPorts == [ [ 554, 8554, 47614, 47615 ] ])
+    #expect(participant.received.last?.portsByHost == [ "192.0.2.20": [ 47614 ] ])
+    // An event port is never a camera candidate.
+    #expect(discovery.currentEndpoints.map(\.host) == [ "192.0.2.10" ])
+    #expect(discovery.currentEndpoints.map(\.port) == [ 554 ])
+  }
+
+  @Test("Running alone and busy, its own sweep asks only its own ports")
+  func aloneBusySweepLeavesParticipantOut() async {
+    let fake = FakeSweep([ "192.0.2.20": [ 47614 ] ])
+    let discovery = RTSPDiscovery(configuration: RTSPDiscovery.Configuration(), scan: fake.scan)
+    let participant = FakeParticipant(ports: [ 47614, 47615 ])
+    discovery.addSweepParticipant(participant)
+    discovery.setSweepDemand(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false)
+    await discovery.sweepNow()
+    #expect(fake.askedPorts == [ [ 554, 8554 ] ])
+    #expect(participant.received.isEmpty)
+  }
+
+  @Test("Under a shared sweep, or with scanning off, there is no sweep of its own to join")
+  func noOwnSweepToJoin() {
+    let shared = RTSPDiscovery(configuration: RTSPDiscovery.Configuration())
+    shared.setSweepIsShared(true)
+    #expect(shared.addSweepParticipant(FakeParticipant(ports: [ 47614 ])) == false)
+    shared.requestSweep()
+    let off = RTSPDiscovery(configuration: RTSPDiscovery.Configuration(isScanEnabled: false))
+    #expect(off.addSweepParticipant(FakeParticipant(ports: [ 47614 ])) == false)
+  }
+
+  @Test("A participant's request runs one sweep while discovery runs, and none before")
+  func requestSweepRescans() async {
+    let fake = FakeSweep()
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(rescanInterval: 3_600),
+      scan: fake.scan
+    )
+    discovery.addSweepParticipant(FakeParticipant(ports: [ 47614 ]))
+    discovery.requestSweep()
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(fake.askedPorts.isEmpty)
+    discovery.start { _ in }
+    defer { discovery.stop() }
+    #expect(await waitUntil { fake.askedPorts.count == 1 })
+    discovery.requestSweep()
+    #expect(await waitUntil { fake.askedPorts.count == 2 })
+    // Shared from another thread while requests come from this one: a sweep of its own no longer.
+    await Task.detached { discovery.setSweepIsShared(true) }.value
+    discovery.requestSweep()
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(fake.askedPorts.count == 2)
+  }
+
   @Test("A Cameraman the sweep found on 8554 is probed there and identified by its CNAME")
   func sweptCameramanIsIdentifiedByCNAME() async {
     let captured = Captured()

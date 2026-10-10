@@ -113,6 +113,109 @@ struct ScoreboardTargetTests {
     #expect(out.gameId == "g1")
   }
 
+  @Test
+  func aLoginSavedBeforeUserIdsReadsBackWithNoneAndConsentOff() {
+    // Exactly the keys an earlier build wrote, one at a time.
+    let store = InMemorySettingsStore(values: [
+      "app.teamstation.cameraman.scoreboard.route": "event",
+      "app.teamstation.cameraman.scoreboard.token": "tok",
+      "app.teamstation.cameraman.scoreboard.gameId": "g1",
+      "app.teamstation.cameraman.scoreboard.gameTitle": "Away at Home",
+      "app.teamstation.cameraman.scoreboard.gameStartAt": "2026-09-28T22:05:00Z"
+    ])
+    let loaded = ScoreboardTarget.load(store)
+    #expect(loaded.route == .event)
+    #expect(loaded.gameId == "g1")
+    #expect(loaded.gameTitle == "Away at Home")
+    #expect(loaded.userId == "")
+    #expect(loaded.allowDirectorOverride == false)
+  }
+
+  @Test
+  func theUserIdConsentAndGameRoundTripAndTheGameIsOneRecord() {
+    let store = InMemorySettingsStore()
+    var saved = sample(route: .event, token: "tok", gameId: "g1")
+    saved.userId = "1001"
+    saved.allowDirectorOverride = true
+    ScoreboardTarget.save(saved, to: store)
+    #expect(ScoreboardTarget.load(store) == saved)
+    let record = store.string(forKey: "app.teamstation.cameraman.scoreboard.game") ?? ""
+    #expect(record.contains("\"gameId\":\"g1\""))
+    #expect(record.contains("\"title\":\"Away at Home\""))
+    // The one record wins over the separate keys, which an older build may still read.
+    store.setString("stale", forKey: "app.teamstation.cameraman.scoreboard.gameId")
+    #expect(ScoreboardTarget.load(store).gameId == "g1")
+    store.setString("not json", forKey: "app.teamstation.cameraman.scoreboard.game")
+    #expect(ScoreboardTarget.load(store).gameId == "stale")
+    store.setString("12x", forKey: "app.teamstation.cameraman.scoreboard.userId")
+    #expect(ScoreboardTarget.load(store).userId == "")
+
+    let out = ScoreboardTarget.signedOut(saved)
+    #expect(out.userId == "")
+    #expect(out.allowDirectorOverride)
+  }
+
+  @Test
+  func anAssignmentChangesTheGameOnly() {
+    var saved = sample(route: .v1, token: "tok", gameId: "g1")
+    saved.userId = "1001"
+    let next = ScoreboardTarget.assigning(saved, gameId: "g2", title: "Visitors at Pioneers", startAt: "2026-09-21T17:30:00Z")
+    #expect(next.gameId == "g2")
+    #expect(next.gameTitle == "Visitors at Pioneers")
+    #expect(next.gameStartAt == "2026-09-21T17:30:00Z")
+    var back = next
+    back.gameId = saved.gameId
+    back.gameTitle = saved.gameTitle
+    back.gameStartAt = saved.gameStartAt
+    #expect(back == saved)
+  }
+
+  @Test
+  func userIdsAreReadAsDecimal() {
+    #expect(ScoreboardTarget.decimalUserId("1001") == "1001")
+    #expect(ScoreboardTarget.decimalUserId(" 1001 ") == "1001")
+    #expect(ScoreboardTarget.decimalUserId("0042") == "42")
+    #expect(ScoreboardTarget.decimalUserId(1001) == "1001")
+    #expect(ScoreboardTarget.decimalUserId(NSNumber(value: 9_007_199_254_740_993 as Int64)) == "9007199254740993")
+    #expect(ScoreboardTarget.decimalUserId(NSNumber(value: 1.5)) == nil)
+    #expect(ScoreboardTarget.decimalUserId(0) == nil)
+    #expect(ScoreboardTarget.decimalUserId(-3) == nil)
+    #expect(ScoreboardTarget.decimalUserId(true) == nil)
+    #expect(ScoreboardTarget.decimalUserId("0") == nil)
+    #expect(ScoreboardTarget.decimalUserId("") == nil)
+    #expect(ScoreboardTarget.decimalUserId("12a") == nil)
+    #expect(ScoreboardTarget.decimalUserId(String(repeating: "9", count: 33)) == nil)
+    #expect(ScoreboardTarget.decimalUserId(nil) == nil)
+    #expect(ScoreboardTarget.decimalUserId([ "id": 1 ]) == nil)
+  }
+
+  @Test
+  func changeGameIsOffOnlyWhileADirectorHoldsTheEvent() {
+    var snapshot = ScoreboardSnapshot(signedIn: true, gameTitle: "Pioneers at Comets")
+    #expect(snapshot.canPickEvent)
+    snapshot.overrideHost = "192.0.2.10"
+    #expect(snapshot.canPickEvent == false)
+    #expect(snapshot.gameTitle == "Pioneers at Comets")
+    snapshot.overrideHost = ""
+    #expect(snapshot.canPickEvent)
+  }
+
+  @Test
+  func theSnapshotSaysWhenADirectorHoldsTheEvent() {
+    var snapshot = ScoreboardSnapshot(signedIn: true)
+    #expect(snapshot.eventLocked == false)
+    #expect(snapshot.overrideLine == "")
+    #expect(snapshot.canPickEvent)
+    snapshot.overrideHost = "192.0.2.10"
+    #expect(snapshot.eventLocked)
+    #expect(snapshot.overrideLine == "Override from Director 192.0.2.10")
+    #expect(snapshot.canPickEvent == false)
+    #expect(ScoreboardSnapshot(signedIn: false).canPickEvent == false)
+    let defaults = ScoreboardSnapshot()
+    #expect(defaults.allowDirectorOverride == false)
+    #expect(defaults.eventControlStatus == "")
+  }
+
   private func sample(route: ScoreboardRoute, token: String, gameId: String) -> ScoreboardSaved {
     ScoreboardSaved(
       route: route,
