@@ -1501,3 +1501,200 @@ describe('chat review native-time narrow conversation row', function () {
       }
   })
 })
+
+describe('chat review2 arrival host, confirmation focus and list terminals', function () {
+  it('keeps the one offscreen-arrival live region exposed while the narrow list is hidden and repeats its text safely', async function () {
+    const engine = new ReviewEngine()
+    const state = newChatWorkspaceState()
+    await workspace(engine, state)
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      390,
+      844
+    )
+    expect(
+      document.querySelector<HTMLElement>('[data-testid="chat-list-pane"]')!
+        .style.display
+    ).equals('none')
+    expect(
+      document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
+        .style.display
+    ).equals('flex')
+    const send = async (id: string): Promise<void> => {
+      await act(async () => {
+        engine.emit({ type: 'messageAlert', conversationId: id })
+        await wait()
+      })
+    }
+    await send('cnv_solstice')
+    const region = [
+      ...document.querySelectorAll<HTMLElement>('[aria-live="polite"]')
+    ].find(n => n.textContent === 'New message in Solstice')!
+    expect(region, 'eligible alert host').not.equals(undefined)
+    const hidden: string[] = []
+    for (let n: HTMLElement | null = region; n != null; n = n.parentElement)
+      if (
+        getComputedStyle(n).display === 'none' ||
+        n.getAttribute('aria-hidden') === 'true'
+      )
+        hidden.push(n.getAttribute('data-testid') ?? n.tagName)
+    expect(hidden, 'no hidden list ancestor').deep.equals([])
+    expect(
+      [
+        ...document.querySelectorAll<HTMLElement>('[aria-live="polite"]')
+      ].filter(node => node.textContent === 'New message in Solstice')
+    ).length(1)
+    const records: MutationRecord[] = []
+    const changes = new MutationObserver(next => records.push(...next))
+    changes.observe(region, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    })
+    const first = region.firstChild
+    await send('cnv_solstice')
+    expect(region.firstChild).not.equals(first)
+    expect(
+      records.reduce((total, record) => total + record.addedNodes.length, 0),
+      'one live host update for one eligible post'
+    ).equals(1)
+    records.length = 0
+    const latest = region.firstChild
+    await send('cnv_aurora')
+    expect(region.firstChild).equals(latest)
+    expect(records).length(0)
+    await workspace(engine, state, null)
+    await send('cnv_aurora')
+    expect(region.textContent).equals('New message in Aurora')
+    changes.disconnect()
+  })
+  for (const desktop of [true, false])
+    it(`moves only confirmation focus to Cancel in ${desktop ? 'anchored' : 'overlay'} mode and retains the original trigger on close`, async function () {
+      const anchor = document.createElement('button')
+      document.body.append(anchor)
+      anchor.focus()
+      let closed = 0
+      let deleted = 0
+      const element = (revision: number): React.ReactElement => (
+        <ChatOverlayHost>
+          <MessageMenu
+            message={original('msg_original', true)}
+            actions={['copy', 'pin', 'delete']}
+            desktop={desktop}
+            anchor={anchor}
+            onReply={() => {}}
+            onReact={() => {}}
+            onMoreEmoji={() => {}}
+            onDelete={() => {
+              deleted++
+            }}
+            onClose={() => {
+              closed = revision
+            }}
+          />
+        </ChatOverlayHost>
+      )
+      await render(element(1))
+      await act(async () => {
+        button('Delete').focus()
+        button('Delete').click()
+        await wait()
+      })
+      expect(
+        document.activeElement?.textContent,
+        'confirmation Cancel is focused'
+      ).equals('Cancel')
+      expect(document.activeElement?.getAttribute('role')).equals('button')
+      expect(deleted).equals(0)
+      await render(element(2))
+      expect(document.activeElement?.textContent).equals('Cancel')
+      await act(async () => {
+        document.activeElement!.dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+        document.activeElement!.dispatchEvent(
+          new window.KeyboardEvent('keyup', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+        /* JSDOM does not synthesize native button activation from Enter. */ if (
+          document.activeElement!.tagName === 'BUTTON'
+        )
+          (document.activeElement as HTMLElement).click()
+        await wait()
+      })
+      expect(closed, 'Enter invokes latest Cancel handler').equals(2)
+      expect(deleted).equals(0)
+      await unmount()
+      expect(document.activeElement).equals(anchor)
+      anchor.remove()
+    })
+  it('saves real terminal list zero offsets and ignores retained callbacks after the narrow list hides or unmounts', async function () {
+    const engine = new ReviewEngine()
+    const state = newChatWorkspaceState()
+    state.listOffset = 22.095
+    await workspace(engine, state, null)
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      390,
+      800
+    )
+    const listPane = document.querySelector('[data-testid="chat-list-pane"]')!
+    const node = [...listPane.querySelectorAll<HTMLElement>('div')].find(
+      n => getComputedStyle(n).overflowY === 'auto'
+    )!
+    Object.defineProperties(node, {
+      scrollHeight: { configurable: true, value: 1800 },
+      clientHeight: { configurable: true, value: 400 }
+    })
+    node.scroll = options => {
+      node.scrollTop = (options as ScrollToOptions).top ?? 0
+    }
+    await layout(node, 320, 400)
+    await layout(node.firstElementChild as HTMLElement, 320, 1800)
+    const callbacks = renderedReadingCallbacks(node)
+    const deliver = async (phase: ScrollPhase, y: number): Promise<void> => {
+      await act(async () => {
+        callbacks[phase]?.({
+          nativeEvent: {
+            contentOffset: { x: 0, y },
+            contentSize: { width: 320, height: 1800 },
+            layoutMeasurement: { width: 320, height: 400 }
+          }
+        })
+        await wait()
+      })
+    }
+    for (const phase of ['onScrollEndDrag', 'onMomentumScrollEnd'] as const) {
+      await deliver('onScroll', 22.095)
+      expect(state.listOffset).equals(22.095)
+      await deliver(phase, 0)
+      expect(state.listOffset, `${phase} persists edge`).equals(0)
+    }
+    await workspace(engine, state, 'cnv_aurora')
+    await deliver('onScrollEndDrag', 999)
+    expect(state.listOffset, 'hidden terminal ignored').equals(0)
+    await unmount()
+    await deliver('onMomentumScrollEnd', 888)
+    expect(state.listOffset, 'unmounted terminal ignored').equals(0)
+    await workspace(engine, state, null)
+    const next = [
+      ...document
+        .querySelector('[data-testid="chat-list-pane"]')!
+        .querySelectorAll<HTMLElement>('div')
+    ].find(n => getComputedStyle(n).overflowY === 'auto')!
+    const moves: number[] = []
+    next.scroll = options => {
+      moves.push((options as ScrollToOptions).top ?? 0)
+    }
+    await layout(next, 320, 400)
+    await layout(next.firstElementChild as HTMLElement, 320, 1800)
+    expect(moves).deep.equals([0])
+  })
+})

@@ -414,7 +414,7 @@ describe('chat UI follow-up list views', function () {
   it('announces another known conversation while excluding the selected conversation and unknown IDs', async function () {
     const engine = new FakeEngine()
     engine.list = [item('Aurora'), item('Solstice')]
-    await render(list(engine, { selectedId: 'Aurora' }))
+    await render(list(engine, { selectedId: 'Aurora', embedded: false }))
     await act(async () => {
       engine.emit({ type: 'messageAlert', conversationId: 'Aurora' })
       engine.emit({ type: 'messageAlert', conversationId: 'missing' })

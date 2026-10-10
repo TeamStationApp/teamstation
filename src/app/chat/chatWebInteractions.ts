@@ -209,3 +209,11 @@ export function bindPopupKeys(view: unknown, close: () => void): () => void {
     }
   }
 }
+
+/** Move focus only when a popup replaces its controls, preserving its lifetime owner. */
+export function focusPopupControl(view: unknown): void {
+  if (view instanceof HTMLElement)
+    view
+      .querySelector<HTMLElement>('[role="button"],button,[tabindex="0"]')
+      ?.focus()
+}
