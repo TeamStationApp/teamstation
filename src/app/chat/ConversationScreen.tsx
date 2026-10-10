@@ -557,6 +557,42 @@ export function ConversationScreen(
       scrollAnchor: scrolled.current.anchor
     })
   }
+  const recaptureLiveAnchor = (): void => {
+    const current = latestView.current
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      current?.conversation.id !== conversationId ||
+      !scrolled.current.hasPosition ||
+      scrolled.current.followNewest ||
+      restoreTarget.current != null ||
+      restoreAnchor.current != null ||
+      prepend.current != null ||
+      measuringJump.current != null
+    )
+      return
+    const present = new Set(current.messages.map(message => message.id))
+    const next = readingAnchor(
+      new Map([...messagePositions.current].filter(([id]) => present.has(id)))
+    )
+    const previous = scrolled.current.anchor
+    if (
+      next == null ||
+      (next.id === previous?.id && next.relativeY === previous.relativeY)
+    )
+      return
+    scrolled.current.anchor = next
+    onDraftChange?.({
+      text: textNow.current,
+      replyTo: replyNow.current,
+      editing: editingNow.current,
+      picked: pickedNow.current,
+      scrollOffset: scrolled.current.offset,
+      hasScrollPosition: true,
+      followNewest: false,
+      scrollAnchor: next
+    })
+  }
   const restoreReadingAnchor = (): void => {
     const anchor = restoreAnchor.current
     if (
@@ -1221,6 +1257,7 @@ export function ConversationScreen(
             scrolled.current.content = height
             atBottom.current = false
             if (following) scroller.current?.scrollToEnd({ animated: false })
+            else recaptureLiveAnchor()
           }}
         >
           {view.hasEarlier && (
@@ -1249,12 +1286,14 @@ export function ConversationScreen(
               }}
               collapsable={false}
               onLayout={event => {
+                if (!mounted.current || !paneActive.current) return
                 const y = event.nativeEvent.layout.y
                 messagePositions.current.set(message.id, y)
                 if (view.messages[0]?.seq === prepend.current?.firstSeq)
                   prepend.current?.positions.set(message.id, y)
                 if (message.id === restoreAnchor.current?.id)
                   restoreReadingAnchor()
+                else recaptureLiveAnchor()
               }}
             >
               {notices.get(index)?.map(renderNotice)}

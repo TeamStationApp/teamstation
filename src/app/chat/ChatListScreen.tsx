@@ -115,6 +115,16 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const anchor = useRef(props.initialAnchor)
   const anchorOwned = useRef(props.initialAnchor != null)
   const currentOffset = useRef(props.initialOffset ?? 0)
+  const acknowledgedOffset = useRef<
+    | {
+        offset: number
+        data: string | undefined
+        visibility: number
+        generation: number
+      }
+    | undefined
+  >(undefined)
+  const [fastRestore, setFastRestore] = useState(props.initialAnchor != null)
   const requested = useRef<number | undefined>(undefined)
   const requestedFinal = useRef(false)
   const requestedVisibility = useRef(visibilityVersion)
@@ -248,6 +258,20 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       // final meaning without issuing a duplicate scroll in this visible pane.
       requestedFinal.current = final
       requestedVersion.current = layoutVersion.current
+      const acknowledged = acknowledgedOffset.current
+      if (
+        final &&
+        liveData() &&
+        acknowledged != null &&
+        acknowledged.data === dataKey &&
+        acknowledged.visibility === visibilityVersion &&
+        acknowledged.generation === gestureGeneration.current &&
+        Math.abs(acknowledged.offset - offset) <= 1
+      ) {
+        restored.current = true
+        setFastRestore(false)
+        savePosition()
+      }
       return
     }
     requested.current = offset
@@ -268,6 +292,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     )
       return
     restored.current = false
+    setFastRestore(true)
     requestedFinal.current = false
     seeking.current = { data: dataKey, index, version: layoutVersion.current }
     list.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 })
@@ -453,6 +478,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const userScrolled = (): void => {
     if (!scrollOwner.current.live || !scrollOwner.current.visible) return
     restored.current = true
+    setFastRestore(false)
     anchorOwned.current = false
     anchor.current = undefined
     gestureGeneration.current += 1
@@ -463,14 +489,22 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     if (!liveData()) return
     const offset = Math.max(0, event.nativeEvent.contentOffset.y)
     currentOffset.current = offset
+    acknowledgedOffset.current = {
+      offset,
+      data: dataKey,
+      visibility: visibilityVersion,
+      generation: gestureGeneration.current
+    }
     if (
       !restored.current &&
       requestedFinal.current &&
       requestedVersion.current === layoutVersion.current &&
       requested.current != null &&
       Math.abs(offset - requested.current) <= 1
-    )
+    ) {
       restored.current = true
+      setFastRestore(false)
+    }
     if (
       !restored.current &&
       requestedFinal.current &&
@@ -589,6 +623,11 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
               : available
           requestOffset(Math.min(available, estimated))
         }}
+        // Keep the normal virtual window, but fill it in larger bounded
+        // batches while a browser return seeks its already saved reader.
+        maxToRenderPerBatch={
+          Platform.OS === 'web' && fastRestore ? 50 : undefined
+        }
         onScroll={rememberOffset}
         onScrollEndDrag={rememberOffset}
         onMomentumScrollEnd={rememberOffset}
