@@ -11,6 +11,133 @@ import {
   CLIP_MIN_MS,
   WALK_UP_PROVIDERS
 } from '../common/walkUpSong'
+import { creationPaths } from './groups/openApi'
+import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
+
+const recordSchema = {
+  type: 'object',
+  required: ['w', 'l', 't'],
+  properties: {
+    w: { type: 'integer' },
+    l: { type: 'integer' },
+    t: { type: 'integer' }
+  }
+}
+const battingCounts = [
+  'g',
+  'pa',
+  'ab',
+  'h',
+  'singles',
+  'doubles',
+  'triples',
+  'hr',
+  'bb',
+  'k',
+  'r',
+  'hbp',
+  'rbi',
+  'sb',
+  'cs',
+  'sf',
+  'sh'
+]
+const pitchingCounts = [
+  'g',
+  'outs',
+  'bf',
+  'h',
+  'hr',
+  'hbp',
+  'r',
+  'er',
+  'bb',
+  'k'
+]
+const statIdentity = {
+  userId: { type: 'integer' },
+  shortName: { type: 'string' },
+  teamId: { type: ['string', 'null'] }
+}
+const battingSchema = {
+  type: 'object',
+  required: ['userId', 'teamId', ...battingCounts, 'rates'],
+  properties: {
+    ...statIdentity,
+    ...Object.fromEntries(
+      battingCounts.map(name => [name, { type: 'number' }])
+    ),
+    rates: {
+      type: 'object',
+      properties: Object.fromEntries(
+        ['avg', 'obp', 'slg', 'ops', 'sbPct'].map(name => [
+          name,
+          { type: 'number' }
+        ])
+      )
+    }
+  }
+}
+const pitchingSchema = {
+  type: 'object',
+  required: ['userId', 'teamId', ...pitchingCounts, 'ip', 'rates'],
+  properties: {
+    ...statIdentity,
+    ...Object.fromEntries(
+      pitchingCounts.map(name => [name, { type: 'number' }])
+    ),
+    ip: { type: 'string' },
+    rates: {
+      type: 'object',
+      properties: Object.fromEntries(
+        ['era', 'whip', 'baa', 'sbPct'].map(name => [name, { type: 'number' }])
+      )
+    }
+  }
+}
+const standingsSchema = {
+  type: 'object',
+  required: [
+    'teamId',
+    'teamName',
+    'teamKind',
+    'logoUrl',
+    'w',
+    'l',
+    't',
+    'played',
+    'winningPct',
+    'gamesBehind',
+    'runsFor',
+    'runsAgainst',
+    'runDifferential',
+    'streak',
+    'home',
+    'away'
+  ],
+  properties: {
+    teamId: { type: 'string' },
+    teamName: { type: 'string' },
+    teamKind: { type: 'string', enum: ['full', 'external'] },
+    logoUrl: { type: ['string', 'null'] },
+    ...Object.fromEntries(
+      [
+        'w',
+        'l',
+        't',
+        'played',
+        'runsFor',
+        'runsAgainst',
+        'runDifferential'
+      ].map(name => [name, { type: 'integer' }])
+    ),
+    winningPct: { type: ['number', 'null'] },
+    gamesBehind: { type: ['number', 'null'] },
+    streak: { type: ['string', 'null'] },
+    home: recordSchema,
+    away: recordSchema
+  }
+}
 
 const argonParameters = {
   type: 'object',
@@ -129,6 +256,13 @@ const accountPaths = {
     }
   },
   '/me/account/photo': {
+    delete: {
+      security: [{ bearer: [] }],
+      summary: 'Use initials for your account picture',
+      description:
+        'Clear your own picture reference without deleting shared sports catalog objects.',
+      responses: { 200: accountResponse }
+    },
     put: {
       security: [{ bearer: [] }],
       summary:
@@ -994,6 +1128,24 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       schemas: {
         ...gumboSchemas,
+        BattingRow: battingSchema,
+        PitchingRow: pitchingSchema,
+        StandingsRow: standingsSchema,
+        SeasonStats: {
+          type: 'object',
+          required: ['seasonId', 'batting', 'pitching'],
+          properties: {
+            seasonId: { type: 'string' },
+            batting: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/BattingRow' }
+            },
+            pitching: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/PitchingRow' }
+            }
+          }
+        },
         ApiError: {
           type: 'object',
           required: ['code', 'message'],
@@ -1042,10 +1194,18 @@ export function openApiDocument(version: string): OpenApiDocument {
           type: 'object',
           required: ['id', 'displayName', 'isAdmin'],
           properties: {
-            id: { type: 'string' },
+            id: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
             displayName: { type: 'string' },
             email: { type: ['string', 'null'] },
-            isAdmin: { type: 'boolean' }
+            isAdmin: { type: 'boolean' },
+            onboarding: {
+              type: 'object',
+              required: ['step', 'completedAt'],
+              properties: {
+                step: { type: 'string', enum: ['name', 'photo', 'complete'] },
+                completedAt: { type: ['string', 'null'], format: 'date-time' }
+              }
+            }
           }
         },
         LiveStream: {
@@ -1466,7 +1626,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             inviteId: { type: 'string' },
             email: { type: 'string' },
             code: { type: 'string' },
-            invitedAt: { type: 'string', format: 'date-time' }
+            invitedAt: { type: 'string', format: 'date-time' },
+            requestId: {
+              type: 'string',
+              description:
+                'The shared request referenced by the email link and inbox'
+            }
           }
         },
         ManagePage: {
@@ -1520,6 +1685,8 @@ export function openApiDocument(version: string): OpenApiDocument {
       }
     },
     paths: {
+      ...creationPaths(errorResponse),
+      ...gameApprovalPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {
         get: {
@@ -1647,6 +1814,173 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             401: { description: 'An active human session is required' },
             403: { description: 'Native Bearer authorization is required' }
+          }
+        }
+      },
+      '/me/onboarding': {
+        get: {
+          summary: 'Resume your account name and photo onboarding',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Display name and saved onboarding state' },
+            401: errorResponse
+          }
+        }
+      },
+      '/me/onboarding/name': {
+        put: {
+          summary: 'Save your required name before the photo step',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['displayName'],
+                  properties: {
+                    displayName: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 120
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Name saved; photo is the next step' },
+            400: errorResponse,
+            401: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/me/onboarding/photo': {
+        put: {
+          summary: 'Save your picture or initials and complete onboarding',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    catalogId: { type: 'string' },
+                    image: {
+                      type: 'object',
+                      required: ['contentType', 'base64'],
+                      properties: {
+                        contentType: {
+                          type: 'string',
+                          enum: ['image/jpeg', 'image/png', 'image/webp']
+                        },
+                        base64: { type: 'string', contentEncoding: 'base64' }
+                      }
+                    },
+                    initials: { type: 'boolean', const: true }
+                  },
+                  oneOf: [
+                    { required: ['catalogId'] },
+                    { required: ['image'] },
+                    { required: ['initials'] }
+                  ]
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Onboarding complete' },
+            400: errorResponse,
+            401: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/pictures': {
+        get: {
+          summary: 'Reusable sports pictures and creation icon renditions',
+          responses: {
+            200: {
+              description:
+                'Versioned entries with stable ids and short-lived rendition URLs'
+            },
+            503: errorResponse
+          }
+        }
+      },
+      '/me/account/catalog-picture': {
+        put: {
+          summary: 'Select a shared picture for your own account',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['catalogId'],
+                  properties: { catalogId: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Picture reference saved' },
+            400: errorResponse,
+            401: errorResponse
+          }
+        }
+      },
+      '/locations': {
+        get: {
+          summary: 'Search public city and region reference data',
+          parameters: [
+            {
+              name: 'query',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', maxLength: 120 },
+              description:
+                'City, region and/or country; blank returns no suggestions'
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'Up to fifteen locality suggestions and GeoNames attribution'
+            },
+            400: errorResponse
+          }
+        }
+      },
+      '/location-suggestions': {
+        post: {
+          summary: 'Suggest a city from a transient location estimate',
+          description:
+            'Only the public locality is returned. Device coordinates are not retained or attached to audit records.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['latitude', 'longitude'],
+                  properties: {
+                    latitude: { type: 'number', minimum: -90, maximum: 90 },
+                    longitude: { type: 'number', minimum: -180, maximum: 180 }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'Suggested locality, or null, with attribution'
+            },
+            400: errorResponse
           }
         }
       },
@@ -1867,12 +2201,12 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'The teams this person belongs to, or a season\u2019s teams',
           description:
-            'Without `season`: full teams only, never an opponent from ' +
+            'Without `season`: regular teams only, never an opponent from ' +
             'outside a season. A site administrator gets every team; anybody ' +
             'else the teams they may see.\n\n' +
             '`season` may be repeated, and lists the teams of those seasons ' +
-            'instead, whoever the caller belongs to: its full teams, and ' +
-            'with `kind=external` or `kind=any` the external teams on either ' +
+            'instead, whoever the caller belongs to: its regular teams, and ' +
+            'with `kind=external` or `kind=any` the placeholder teams on either ' +
             'side of its games (`kind=external` lists only those). A season ' +
             'the caller can neither see nor schedule games in answers 404. A ' +
             'merged team is listed as the team it was merged into, and each ' +
@@ -1883,8 +2217,22 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`external`. `externalId` may be repeated, and narrows the list ' +
             'to teams holding any of those ids, with what the caller may see ' +
             'unchanged; an empty one is refused.',
-          security: [{ bearer: [] }],
+          security: [{}, { bearer: [] }],
           parameters: [
+            {
+              name: 'view',
+              in: 'query',
+              schema: { type: 'string', enum: ['public'] },
+              description:
+                'Public minimal summaries without private scope. Omitted keeps the authenticated private collection.'
+            },
+            {
+              name: 'query',
+              in: 'query',
+              schema: { type: 'string', maxLength: 120, default: '' },
+              description:
+                'Public discovery by group name, city or region; used with view=public'
+            },
             {
               name: 'externalId',
               in: 'query',
@@ -1912,7 +2260,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 default: 'full'
               },
               description:
-                'Which teams of the seasons: their own, the external teams ' +
+                'Which teams of the seasons: their own, the placeholder teams ' +
                 'their games were played against, or both. Needs `season` ' +
                 'unless `full`.'
             }
@@ -1953,7 +2301,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the caller administers it. An id on a ' +
             'team the caller cannot see, or on something other than a team, ' +
             'is 409, and nothing is made. Otherwise, in one transaction, a ' +
-            'full team is made, put in the season, and given the ids, and ' +
+            'regular team is made, put in the season, and given the ids, and ' +
             'the answer is 201 with the season and whether this call made ' +
             'it, or `season: null` for a standalone team.',
           security: [{ bearer: [] }],
@@ -2088,13 +2436,18 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Schedules up to 200 games for the team in one call, and answers ' +
             'each row on its own, in order. Rows are applied one at a time, ' +
             'each in its own transaction, so one refused row stops nothing.\n\n' +
-            '**Who may call:** a site admin, an admin of the team (an admin ' +
-            '`scope_roles` team row, or its owner or manager), or an admin of ' +
-            "a season the team plays in or of that season's league. A plain " +
+            '**Who may call:** a signed-in human administrator of the team, ' +
+            'directly or through a true management parent, or a node admin. A plain ' +
             'member, parent or spectator gets 403; a team the caller can ' +
             'neither see nor administer gets 404. A season or league admin ' +
-            'may only schedule into a season they administer: a row into ' +
-            'another season is `forbidden`.\n\n' +
+            'must administer both proposed participating teams ' +
+            'to publish a mutating row immediately; the hosting season is no additional consent side. Otherwise the row is ' +
+            '`forbidden`: Additional approval is required; use game proposals. ' +
+            'All identity, game, external-ID and audit changes for that row roll back. ' +
+            'Until ownership setup is complete, mutating rows are refused; ' +
+            'safe unchanged retries still succeed without publishing changes. ' +
+            'This response contains only published game IDs, never hidden pending proposals. ' +
+            'Machine tokens and supplied cached rights cannot bypass consent.\n\n' +
             '**A row:** `opponent` (`{teamId, externalId?}`, or ' +
             '`{name, externalId?}` with ' +
             'a name of 1-120 characters) and `side` (`home` or `away`, the ' +
@@ -2102,10 +2455,13 @@ export function openApiDocument(version: string): OpenApiDocument {
             'matched one, `opponent` may change the opponent and `side` may ' +
             'swap the sides (below). ' +
             '`startAt` is required, an ISO 8601 date-time with `Z` or an ' +
-            'offset. `seasonId` is optional and must be a season the team is ' +
-            "in; without it the season whose dates hold the game's UTC day " +
-            "is used (the latest to start), else the team's season of that " +
-            'year. `venue` (at most 200 characters) and `status` (`scheduled` ' +
+            'offset. On new rows an explicit `seasonId` may name an authorized ' +
+            'host even for nonmembers and dates outside its reference range. ' +
+            'Omission selects only an unambiguous eligible active season by ' +
+            'the request calendar day, then year; overlaps require an explicit ID. ' +
+            'A held legacy row retains its stored season. Use game proposals ' +
+            'for outside games (explicit null) or host changes. ' +
+            '`venue` (at most 200 characters) and `status` (`scheduled` ' +
             'or `cancelled`) are optional; omitted, a held game keeps its own. ' +
             '`fenceDistanceFt` (whole feet, 1 to 600) is optional too: ' +
             "omitted, a new game is played to its season's or league's " +
@@ -2121,18 +2477,22 @@ export function openApiDocument(version: string): OpenApiDocument {
             'distance, and ' +
             'is `updated` when any of them changed. When the row gives a ' +
             '`side` other than the one this team plays on, the other team is ' +
-            'an external one and the game has no plays (none stored and no ' +
+            'a placeholder and the game has no plays (none stored and no ' +
             'at-bat under way), its home and away teams swap, their scores ' +
             'with them, and the row is `updated`. A game with plays, or ' +
-            'between two full teams, keeps its sides, and the row is ' +
+            'between two regular teams, keeps its sides, and the row is ' +
             'answered by its other fields. The season never changes, and a ' +
             'game matched by time rather than by id keeps its sides. ' +
             'Without a match, a game in the same season ' +
             'between the same two teams at the same time takes the id. ' +
             'Otherwise the row creates a game. A row without `externalId` ' +
             'always creates one. An opponent named by `name` is a team of the ' +
-            'season with that name, else the oldest external team of that ' +
-            'name, else a new external team.\n\n' +
+            'season with that name, else the oldest placeholder team of that ' +
+            'name, else a new placeholder team with explicit host-season custody. ' +
+            'An existing placeholder team retains its custodian and requires that ' +
+            'custodian approval. A withdrawn game cannot be restored or revised. ' +
+            'Unchanged retries do not require fresh counterpart consent; new ' +
+            'aliases and identity corrections are audited mutations.\n\n' +
             '**Names:** a `name` finds a team only by the name itself: two ' +
             'names are the same when they are, once trimmed, with runs of ' +
             'spaces made one and case ignored. Any other difference (a ' +
@@ -2144,30 +2504,30 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`id` non-empty, the id another system has for the opponent. ' +
             'With `teamId`, that team is the opponent (an unknown one is ' +
             '`notFound`, this team itself and a merged team are `conflict`), ' +
-            'and it takes the id when it is an external team and nothing ' +
+            'and it takes the id when it is a placeholder team and nothing ' +
             "holds the id. On a matched game, the game's opponent takes it " +
             'the same way when `teamId` names that opponent, before anything ' +
             'else, so a game scored in TeamStation records it too. With ' +
             '`name`, a ' +
-            'team already holding it (an external or a full one, followed ' +
+            'team already holding it (a placeholder or a regular team, followed ' +
             'through merges) is the opponent, whatever the name says, except ' +
-            "an external team whose name is not the row's and which is " +
+            "a placeholder team whose name is not the row's and which is " +
             "named as a placeholder (below), is shared by other teams' " +
             'games, or would by that name be a second team of one name (the ' +
             '`name` already finds a team). For those the opponent is found ' +
             'by `name` ' +
-            'alone. Otherwise the opponent is found by name, and an external ' +
+            'alone. Otherwise the opponent is found by name, and a placeholder ' +
             'team found or made that way takes the id when nothing holds it ' +
             'and the `name` is not a placeholder. On a matched game, the ' +
-            "game's opponent takes the id when it is an external team, the " +
+            "game's opponent takes the id when it is a placeholder team, the " +
             "row's `name` finds it by that same rule, and nothing holds the " +
-            'id. A full team never takes an id here, and an id something ' +
+            'id. A regular team never takes an id here, and an id something ' +
             'already holds never moves, except one left on a team that no ' +
             'longer exists, which the team found takes over. Recording an ' +
             'opponent id alone leaves the row `unchanged`: the answer ' +
             'describes the game.\n\n' +
-            "**A matched game's opponent:** only an external opponent " +
-            'changes; a game against a full team keeps it. A placeholder ' +
+            "**A matched game's opponent:** only a placeholder opponent " +
+            'changes; a game against a regular team keeps it. An undecided opponent ' +
             '`name`, saying the opponent is not known yet (one starting ' +
             '`TBD`, `TBA`, `To be decided`, `To be announced` or `To be ' +
             'determined`, in any case), leaves the opponent as it is, and ' +
@@ -2175,7 +2535,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             "`name` that is the opponent's changes nothing, whatever team " +
             "holds the row's id. Otherwise the row's opponent is found by " +
             'its id, as above, then by its `name`: a team of the season or ' +
-            'an external team of that name, else a new external team. A ' +
+            'a placeholder team of that name, else a new placeholder team. A ' +
             '`{teamId}` naming the opponent changes nothing; naming another ' +
             "team moves the game to it. When the row's id is held by the game's " +
             "opponent and stands for the row's `name` by the rule above, " +
@@ -2192,7 +2552,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'by its scorer, a play carrying its `teamStation` record, or an ' +
             'at-bat under way) keeps its opponent, and the row is answered by ' +
             'its other fields; `GET /events` marks such a game, and one ' +
-            'between two full teams, `opponentFixed`. A move onto a full ' +
+            'between two regular teams, `opponentFixed`. A move onto a regular ' +
             'team already playing this team in the same season at the ' +
             "game's time or the row's is a `conflict`: `<team> already has " +
             'this game`.\n\n' +
@@ -2218,6 +2578,17 @@ export function openApiDocument(version: string): OpenApiDocument {
                         type: 'object',
                         required: ['startAt'],
                         properties: {
+                          exhibition: {
+                            type: 'boolean',
+                            default: false,
+                            description:
+                              'Game classification independent of placeholder identity. Omitted updates retain the stored value.'
+                          },
+                          timezone: {
+                            type: 'string',
+                            description:
+                              'Valid IANA timezone, retained on update when omitted; defaults to the hosting season timezone or UTC on creation.'
+                          },
                           opponent: {
                             oneOf: [
                               {
@@ -3369,17 +3740,32 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/seasons': {
+        ...(creationPaths(errorResponse)['/seasons'] as object),
         get: {
           summary: 'The seasons you may watch',
           description:
             'Each season carries `startsOn` and `endsOn` (`YYYY-MM-DD`, or ' +
-            'null), the days a game with no `seasonId` is placed by. ' +
+            'null), reference dates for sorting, independent of game dates. ' +
             '`team` may be repeated, and narrows the list to the seasons ' +
             'those teams play in. Asked that way, a season the caller may ' +
             'schedule games in counts as one they may see. Leaving it out ' +
             'lists every season the caller may watch.',
-          security: [{ bearer: [] }],
+          security: [{}, { bearer: [] }],
           parameters: [
+            {
+              name: 'view',
+              in: 'query',
+              schema: { type: 'string', enum: ['public'] },
+              description:
+                'Public minimal summaries. Omitted keeps the authenticated private collection.'
+            },
+            {
+              name: 'query',
+              in: 'query',
+              schema: { type: 'string', maxLength: 120, default: '' },
+              description:
+                'Public discovery by name or parent league locality; used with view=public'
+            },
             {
               name: 'team',
               in: 'query',
@@ -3392,8 +3778,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'Being in a season grants every team in it; being on a team ' +
-                'is separate and stronger'
+                'Explicit season viewing grants are bounded to its games. Competition membership creates no private team or season scope.'
             },
             400: errorResponse,
             401: errorResponse
@@ -3413,8 +3798,52 @@ export function openApiDocument(version: string): OpenApiDocument {
             }
           ],
           responses: {
-            200: { description: 'Every team playing in it' },
+            200: {
+              description:
+                'Season-owned child teams, active competition members and canonical committed game participants, including placeholders and canceled historical participants. TeamSummary adds seasonCategory inSeason/exhibition/unscheduled and canViewPrivate matching private team endpoint visibility; parent-only teams without games and canceled-only participants are unscheduled. Membership/management links are never created by this read.'
+            },
             404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/administration': {
+        patch: {
+          summary:
+            'A human node administrator changes node role or reversible account suspension',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'path',
+              required: true,
+              schema: { type: 'integer' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    isNodeAdmin: { type: 'boolean' },
+                    suspended: { type: 'boolean' }
+                  },
+                  minProperties: 1
+                }
+              }
+            }
+          },
+          description:
+            'Requires node authority, preserves identity/history, protects the final active node and every last active direct group administrator. Suspension revokes sessions and machine tokens; reactivation requires a new sign-in. Audited without credentials.',
+          responses: {
+            200: { description: 'Account state changed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
@@ -3428,13 +3857,30 @@ export function openApiDocument(version: string): OpenApiDocument {
             'are theirs. A merged row answers as the person it was merged ' +
             'into. Only people you could see the page of are answered. ' +
             '`externalId` is required and may be given more than once; an ' +
-            'empty one is refused.',
+            'empty one is refused. With view=administration, a signed-in node ' +
+            'administrator instead receives account identity and node/suspension ' +
+            'state, filtered by query (name or verified email, at most 120 ' +
+            'characters). This view requires no externalId and does not alter ' +
+            'the default identity-lookup response.',
           security: [{ bearer: [] }],
           parameters: [
             {
+              name: 'view',
+              in: 'query',
+              schema: { type: 'string', enum: ['administration'] },
+              description:
+                'Omitted: existing external-ID lookup. administration: human node administrator account view.'
+            },
+            {
+              name: 'query',
+              in: 'query',
+              schema: { type: 'string', maxLength: 120 },
+              description: 'Optional account filter for administration view.'
+            },
+            {
               name: 'externalId',
               in: 'query',
-              required: true,
+              required: false,
               schema: { type: 'array', items: { type: 'string' } },
               style: 'form',
               explode: true,
@@ -3967,9 +4413,11 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'Add one person by address',
           description:
-            'An address that already has an account is given the access at ' +
-            'once. Any other is sent an invitation made out to it, good for ' +
-            'one use; the account is still made by the sign-in that follows.',
+            'Both existing and new accounts accept a seven-day invitation ' +
+            'before membership or requested roles begin. The email link and ' +
+            'bell inbox refer to one shared request. Inviting creates no ' +
+            'account; sign-in still requires email verification. A pending ' +
+            'replacement does not count as an active direct administrator.',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam],
           requestBody: {
@@ -3979,14 +4427,38 @@ export function openApiDocument(version: string): OpenApiDocument {
                 schema: {
                   type: 'object',
                   required: ['email'],
-                  properties: { email: { type: 'string' } }
+                  properties: {
+                    email: { type: 'string', format: 'email' },
+                    admin: { type: 'boolean', default: false },
+                    flags: {
+                      type: 'array',
+                      items: {
+                        type: 'string',
+                        enum: [
+                          'coach',
+                          'scorekeeper',
+                          'songkeeper',
+                          'videographer'
+                        ]
+                      },
+                      default: []
+                    },
+                    idempotencyKey: {
+                      type: 'string',
+                      minLength: 8,
+                      maxLength: 120,
+                      description:
+                        'Stable retry key; omitted by legacy clients.'
+                    }
+                  }
                 }
               }
             }
           },
           responses: {
             201: {
-              description: 'Added, or invited',
+              description:
+                'Pending personal invitation; no new group grants yet',
               content: {
                 'application/json': {
                   schema: {
@@ -4364,12 +4836,13 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`externalId` may be repeated. `played=1` keeps games that have ' +
             'a score. `scoreboard=open` keeps games whose scoreboard is ' +
             'still open, and answers 503 while that store is away.\n\n' +
+            'Pending schedules carry exhibition/timezone and pendingApproval, with pendingRequestId only for an actor authorized to read the request. Existing revisions retain approved fields, canceled originals remain canceled, and new proposals have a reserved event ID with no scoring access. Scope run/film and scoreboard=open omit unpublished proposals. No private request terms are returned. ' +
             'Each row is a schedule game plus `gameId`, both teams\u2019 logo ' +
             'URLs, `liveState`, and `opponentFixed`: true when a schedule ' +
             "can never change the game's opponent, because it was scored in " +
             'TeamStation (scored by its scorer, a play carrying its ' +
             '`teamStation` record, or an at-bat under way) or neither team ' +
-            'is an external one.',
+            'is a placeholder.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -4618,9 +5091,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
-      '/seasons/{seasonId}/standings': {
+      '/seasons/{seasonId}/stats': {
         get: {
-          summary: "A season's table",
+          summary: 'Authorized season batting and pitching aggregates',
+          description:
+            'Requires private season access. Adds only stored stat rows from visible games assigned to this season. Names are shortened. Public discovery never receives this resource.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -4633,8 +5108,50 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'Best record first, run differential as the tie-break'
+                'Season aggregates using the same rate calculations as team stats.',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/SeasonStats' }
+                }
+              }
             },
+            404: errorResponse
+          }
+        }
+      },
+      '/seasons/{seasonId}/standings': {
+        get: {
+          summary: "A season's table",
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'seasonId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            },
+            {
+              name: 'includeExhibitions',
+              in: 'query',
+              schema: { type: 'boolean', default: true },
+              description:
+                'False excludes exhibitions. Omission preserves inclusion of every season game.'
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'StandingsRow array: teamId/teamName/teamKind/logoUrl, w/l/t, played, winningPct (ties count half), gamesBehind, runsFor/runsAgainst/runDifferential, streak, home/away {w,l,t}. Zero results have null percentage, GB and streak. Sort by percentage, differential, name and ID.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'array',
+                    items: { $ref: '#/components/schemas/StandingsRow' }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
             404: errorResponse
           }
         }
