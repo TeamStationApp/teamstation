@@ -160,7 +160,9 @@ function RelayedScene({
   // most of a pitch's wait between the tap and the ball leaving the hand.
   const advance = useThree(state => state.advance)
   const invalidate = useThree(state => state.invalidate)
-  useEffect(() => invalidate(), [relayed.players, invalidate])
+  useEffect(() => {
+    invalidate()
+  }, [relayed.players, invalidate])
   const starting = relayed.presentation?.id
   useLayoutEffect(() => {
     // React Native has `performance.now()`, but its types leave it out.
