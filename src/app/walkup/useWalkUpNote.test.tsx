@@ -68,6 +68,7 @@ function fakeMusic(found: SongCandidate[] = []): WalkUpMusic & {
     stop: async fadeMs => {
       stops.push(fadeMs)
     },
+    prepareOffline: async () => null,
     onState: listener => {
       listeners.add(listener)
       return () => {

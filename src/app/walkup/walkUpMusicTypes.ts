@@ -12,6 +12,27 @@ export interface SongCandidate extends Omit<WalkUpSong, 'startMs' | 'endMs'> {
 
 export type MusicAccess = 'authorized' | 'denied' | 'restricted' | 'unavailable'
 
+/**
+ * Where one walk-up song is on this phone: on it (`downloaded`), in the
+ * library but not on it (`pending`), put in the library just now (`added`),
+ * or not something the library can hold (`unavailable`).
+ */
+export type OfflineState = 'downloaded' | 'pending' | 'added' | 'unavailable'
+
+/** What getting a game's songs onto the phone found. */
+export interface OfflineReport {
+  /** MusicKit and media-library access, both. */
+  authorized: boolean
+  /**
+   * An Apple Music subscription that can play the catalog. False when there
+   * is none, or the phone could not say (offline): the settings cannot help.
+   */
+  subscribed: boolean
+  /** Apple Music's Sync Library, without which nothing can be added. */
+  syncLibrary: boolean
+  songs: Array<{ providerId: string; state: OfflineState }>
+}
+
 export type PlaybackState =
   | { kind: 'idle' }
   | { kind: 'playing'; handle: string; positionMs: number }
@@ -44,6 +65,12 @@ export interface WalkUpMusic {
   ) => Promise<void>
   stop: (fadeMs: number) => Promise<void>
   onState: (listener: (state: PlaybackState) => void) => () => void
+  /**
+   * iPhone: adds these Apple Music songs to the library and to the
+   * TeamStation walkup songs playlist, and says where each one is. Null
+   * where there is nothing to do: the web, Android, no songs, or a failure.
+   */
+  prepareOffline: (providerIds: string[]) => Promise<OfflineReport | null>
 }
 
 /**

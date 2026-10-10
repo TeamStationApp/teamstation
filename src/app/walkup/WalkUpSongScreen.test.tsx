@@ -108,6 +108,7 @@ function fakeMusic(
       stops.push(fadeMs)
     },
     onState: (_listener: (state: PlaybackState) => void) => () => undefined,
+    prepareOffline: async () => null,
     played,
     stops
   }

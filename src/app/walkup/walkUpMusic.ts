@@ -19,6 +19,7 @@ const webMusic: WalkUpMusic = {
   pickFile: unavailable,
   play: unavailable,
   stop: unavailable,
-  onState: () => () => undefined
+  onState: () => () => undefined,
+  prepareOffline: async () => null
 }
 export default webMusic

@@ -19,6 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
     fadeOutMs:(double)fadeOutMs
          done:(void (^)(NSString *_Nullable message))done;
 - (void)stop:(double)fadeMs done:(void (^)(void))done;
+- (void)prepareOffline:(NSArray<NSString *> *)providerIds
+                  done:(void (^)(NSDictionary<NSString *, id> *report))done;
 @end
 
 NS_ASSUME_NONNULL_END
@@ -128,6 +130,16 @@ RCT_EXPORT_MODULE(WalkUpMusic)
           done:^{
             resolve(nil);
           }];
+}
+
+- (void)prepareOffline:(NSArray *)providerIds
+               resolve:(RCTPromiseResolveBlock)resolve
+                reject:(RCTPromiseRejectBlock)reject
+{
+  [[self music] prepareOffline:providerIds
+                          done:^(NSDictionary<NSString *, id> *report) {
+                            resolve(report);
+                          }];
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

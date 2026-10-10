@@ -27,6 +27,7 @@ import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
@@ -226,6 +227,23 @@ class WalkUpMusicModule(reactContext: ReactApplicationContext) :
   /** MediaStore writes `<unknown>` for a missing tag. */
   private fun known(text: String?): String? =
       text?.trim()?.takeUnless { it.isEmpty() || it == "<unknown>" }
+
+  // Keep songs on the phone
+
+  /**
+   * Apple Music's library is an iPhone's. An Android phone's walk-up songs
+   * are files already on it, so there is nothing to add and nothing to
+   * download.
+   */
+  override fun prepareOffline(providerIds: ReadableArray, promise: Promise) {
+    Log.i(TAG, "prepareOffline: no Apple Music library on Android (${providerIds.size()} ids)")
+    val report = Arguments.createMap()
+    report.putBoolean("authorized", false)
+    report.putBoolean("subscribed", false)
+    report.putBoolean("syncLibrary", false)
+    report.putArray("songs", Arguments.createArray())
+    promise.resolve(report)
+  }
 
   // Choose a file
 

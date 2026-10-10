@@ -44,6 +44,7 @@ function music(
     play: async () => undefined,
     stop: async () => undefined,
     onState: () => () => undefined,
+    prepareOffline: async () => null,
     terms
   }
 }

@@ -56,7 +56,8 @@ export const NO_WALK_UP_MUSIC: WalkUpMusic = {
   pickFile: async () => null,
   play: async () => undefined,
   stop: async () => undefined,
-  onState: () => () => undefined
+  onState: () => () => undefined,
+  prepareOffline: async () => null
 }
 
 const TOAST_MS = 2500

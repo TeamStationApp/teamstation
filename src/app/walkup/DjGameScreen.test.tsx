@@ -219,6 +219,7 @@ function fakeMusic(): WalkUpMusic & { played: string[]; stops: number[] } {
     stop: async fadeMs => {
       stops.push(fadeMs)
     },
+    prepareOffline: async () => null,
     onState: listener => {
       listeners.add(listener)
       return () => {

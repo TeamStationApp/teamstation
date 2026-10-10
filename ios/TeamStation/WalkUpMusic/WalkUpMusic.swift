@@ -31,6 +31,9 @@ public final class TSWalkUpMusic: NSObject {
   private var clip: Clip?
   private var poll: Timer?
   private var generation = 0
+  /// The `prepareOffline` call in flight. The next waits for it, so two
+  /// visits in quick succession cannot both create the playlist.
+  @MainActor private var preparing: Task<Void, Never>?
 
   private final class Clip {
     let handle: String
@@ -221,6 +224,299 @@ public final class TSWalkUpMusic: NSObject {
     return nil
   }
 
+  // MARK: Offline
+
+  /// The playlist TeamStation keeps its walk-up songs in, by name, so a
+  /// person can find them in Music.
+  static let playlistName = "TeamStation walkup songs"
+  static let playlistDescription =
+    "Walk-up songs TeamStation plays at games. TeamStation adds songs here so Apple Music "
+    + "keeps them on this phone."
+  private static let playlistIdKey = "walkUpPlaylistId"
+
+  /// Puts these catalog songs in the library and on TeamStation's playlist,
+  /// so Apple Music's Automatic Downloads keeps them on the phone, and says
+  /// where each one is.
+  ///
+  /// Automatic Downloads fetches a song when it is added to the library; a
+  /// song already in the library but not on the phone stays `pending` until
+  /// someone downloads it in Music. Without MusicKit and media-library access
+  /// nothing is touched — MediaPlayer crashes rather than throwing without
+  /// it — and without Sync Library nothing is added. Calls run one at a time.
+  @objc public func prepareOffline(
+    _ providerIds: [String], done: @escaping ([String: Any]) -> Void
+  ) {
+    Task { @MainActor in
+      let previous = self.preparing
+      self.preparing = Task { @MainActor in
+        await previous?.value
+        done(await self.prepare(providerIds))
+      }
+    }
+  }
+
+  @MainActor private func prepare(_ ids: [String]) async -> [String: Any] {
+    var authorized = false
+    if await Self.musicAuthorized(), await Self.mediaLibraryAuthorized() {
+      authorized = true
+    }
+    var states: [String: String] = [:]
+    var syncLibrary = false
+    // A phone that cannot say (offline at a field) or has no Apple Music
+    // subscription is not one the settings can help: `subscribed` says so,
+    // and the notice stays off.
+    var subscribed = false
+    if authorized {
+      if let subscription = try? await MusicSubscription.current {
+        subscribed = subscription.canPlayCatalogContent
+        syncLibrary = subscription.hasCloudLibraryEnabled
+      }
+      let index = await Self.libraryIndex(fresh: true)
+      for id in ids {
+        if let item = index[id] {
+          states[id] = item.isCloudItem ? "pending" : "downloaded"
+        }
+      }
+      if syncLibrary {
+        let missing = ids.filter { states[$0] == nil }
+        let catalog = await Self.catalogSongs(missing)
+        for id in missing {
+          guard let song = catalog[id] else { continue }
+          do {
+            try await MusicLibrary.shared.add(song)
+            states[id] = "added"
+          } catch {
+            NSLog("WalkUpMusic could not add %@ to the library: %@", id, String(describing: error))
+          }
+        }
+        await addToPlaylist(ids, catalog: catalog, index: index)
+        // The adds changed the library: read it again, off the play path.
+        if states.values.contains("added") { Self.refreshIndexInBackground() }
+      }
+    }
+    let songs: [[String: Any]] = ids.map {
+      ["providerId": $0, "state": states[$0] ?? "unavailable"]
+    }
+    let count = { (state: String) in songs.filter { $0["state"] as? String == state }.count }
+    report([
+      "kind": "offline",
+      "authorized": authorized,
+      "subscribed": subscribed,
+      "syncLibrary": syncLibrary,
+      "count": ids.count,
+      "added": count("added"),
+      "pending": count("pending"),
+      "downloaded": count("downloaded"),
+      "unavailable": count("unavailable"),
+    ])
+    for song in songs {
+      report(["kind": "offlineSong", "providerId": song["providerId"]!, "state": song["state"]!])
+    }
+    return [
+      "authorized": authorized, "subscribed": subscribed, "syncLibrary": syncLibrary,
+      "songs": songs,
+    ]
+  }
+
+  private static func musicAuthorized() async -> Bool {
+    var status = MusicAuthorization.currentStatus
+    if status == .notDetermined { status = await MusicAuthorization.request() }
+    return status == .authorized
+  }
+
+  private static func mediaLibraryAuthorized() async -> Bool {
+    var status = MPMediaLibrary.authorizationStatus()
+    if status == .notDetermined {
+      status = await withCheckedContinuation { continuation in
+        MPMediaLibrary.requestAuthorization { continuation.resume(returning: $0) }
+      }
+    }
+    return status == .authorized
+  }
+
+  /// The library's songs by catalog id, read off the main thread. `prepare`
+  /// reads it fresh on the way into a game, and again in the background once
+  /// it has added songs.
+  private static func libraryIndex(fresh: Bool = false) async -> [String: MPMediaItem] {
+    if !fresh, let held = indexCache.held { return held }
+    let modified = MPMediaLibrary.default().lastModifiedDate
+    let items = await Task.detached(priority: .userInitiated) { Self.librarySongs() }.value
+    indexCache.set(items, modified: modified)
+    return items
+  }
+
+  /// The index a walk-up plays from: the one held, so the plate never waits
+  /// on a read of the whole library. When the library has changed since
+  /// (an add, a download landing), the held one still serves this play and
+  /// a fresh one is read in the background for the next.
+  private static func playIndex() async -> [String: MPMediaItem] {
+    guard let held = indexCache.held else { return await libraryIndex(fresh: true) }
+    if indexCache.isStale(MPMediaLibrary.default().lastModifiedDate) { refreshIndexInBackground() }
+    return held
+  }
+
+  private static func refreshIndexInBackground() {
+    guard indexCache.beginRefresh() else { return }
+    Task.detached(priority: .utility) {
+      let modified = MPMediaLibrary.default().lastModifiedDate
+      indexCache.set(Self.librarySongs(), modified: modified)
+    }
+  }
+
+  private final class IndexCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var modified: Date?
+    private var items: [String: MPMediaItem]?
+    private var refreshing = false
+
+    var held: [String: MPMediaItem]? {
+      lock.lock()
+      defer { lock.unlock() }
+      return items
+    }
+
+    func isStale(_ now: Date) -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return modified != now
+    }
+
+    /// Whether this caller should start a refresh: one at a time.
+    func beginRefresh() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      if refreshing { return false }
+      refreshing = true
+      return true
+    }
+
+    func set(_ new: [String: MPMediaItem], modified: Date) {
+      lock.lock()
+      self.modified = modified
+      items = new
+      refreshing = false
+      lock.unlock()
+    }
+  }
+
+  private static let indexCache = IndexCache()
+
+  /// The library's songs by catalog id. `playbackStoreID` cannot be filtered
+  /// on, so the songs are read once and indexed.
+  private static func librarySongs() -> [String: MPMediaItem] {
+    var index: [String: MPMediaItem] = [:]
+    for item in MPMediaQuery.songs().items ?? [] {
+      let id = item.playbackStoreID
+      guard !id.isEmpty, id != "0" else { continue }
+      // A copy on the phone wins over a cloud-only duplicate.
+      if let held = index[id], !held.isCloudItem { continue }
+      index[id] = item
+    }
+    return index
+  }
+
+  private static func catalogSongs(_ ids: [String]) async -> [String: Song] {
+    guard !ids.isEmpty else { return [:] }
+    do {
+      let request = MusicCatalogResourceRequest<Song>(
+        matching: \.id, memberOf: ids.map { MusicItemID($0) })
+      let response = try await request.response()
+      var found: [String: Song] = [:]
+      for song in response.items { found[song.id.rawValue] = song }
+      return found
+    } catch {
+      NSLog("WalkUpMusic catalog lookup failed: %@", String(describing: error))
+      return [:]
+    }
+  }
+
+  private static func nameKey(_ title: String?, _ artist: String?) -> String {
+    "\(title ?? "")\u{1F}\(artist ?? "")"
+  }
+
+  /// TeamStation's playlist: the one whose id was saved, then one by its
+  /// name, and otherwise a new one.
+  @MainActor private func playlist() async throws -> Playlist {
+    let defaults = UserDefaults.standard
+    if let saved = defaults.string(forKey: Self.playlistIdKey) {
+      var request = MusicLibraryRequest<Playlist>()
+      request.filter(matching: \.id, equalTo: MusicItemID(saved))
+      if let found = try await request.response().items.first { return found }
+    }
+    let all = try await MusicLibraryRequest<Playlist>().response().items
+    if let named = all.first(where: { $0.name == Self.playlistName }) {
+      defaults.set(named.id.rawValue, forKey: Self.playlistIdKey)
+      return named
+    }
+    let created = try await MusicLibrary.shared.createPlaylist(
+      name: Self.playlistName, description: Self.playlistDescription)
+    defaults.set(created.id.rawValue, forKey: Self.playlistIdKey)
+    return created
+  }
+
+  /// Adds each song not already on the playlist. A failure here is logged:
+  /// the songs are in the library either way, which is what downloads them.
+  /// A playlist whose tracks cannot be read is left alone this time, rather
+  /// than filled with second copies.
+  @MainActor private func addToPlaylist(
+    _ ids: [String], catalog known: [String: Song], index: [String: MPMediaItem]
+  ) async {
+    do {
+      var list = try await playlist()
+      // Every batch: a season's playlist outgrows the first. A read that
+      // fails throws, and leaves the playlist alone this time.
+      var all: [Track] = []
+      var batch = try await list.with([.tracks]).tracks
+      while let current = batch {
+        all.append(contentsOf: current)
+        batch = current.hasNextBatch ? try await current.nextBatch() : nil
+      }
+      // A track is known by its catalog id, or, when its play parameters
+      // carry none, by its title and artist. A wanted song with that title
+      // and artist — in the library, or as the catalog has it — is on the
+      // playlist already: a second version of it is not worth a duplicate.
+      var presentIds = Set<String>()
+      var presentNames = Set<String>()
+      for track in all {
+        guard case .song(let song) = track else { continue }
+        if let id = Self.catalogId(of: song) {
+          presentIds.insert(id)
+        } else {
+          presentNames.insert(Self.nameKey(song.title, song.artistName))
+        }
+      }
+      var catalog = known
+      let unnamed = ids.filter { !presentIds.contains($0) && catalog[$0] == nil }
+      if !presentNames.isEmpty {
+        for (id, song) in await Self.catalogSongs(unnamed) { catalog[id] = song }
+      }
+      let wanted = ids.filter { id in
+        if presentIds.contains(id) { return false }
+        if let item = index[id], presentNames.contains(Self.nameKey(item.title, item.artist)) {
+          return false
+        }
+        if let song = catalog[id], presentNames.contains(Self.nameKey(song.title, song.artistName)) {
+          return false
+        }
+        return true
+      }
+      guard !wanted.isEmpty else { return }
+      let fetch = wanted.filter { catalog[$0] == nil }
+      for (id, song) in await Self.catalogSongs(fetch) { catalog[id] = song }
+      // One song that will not go on does not keep the rest off.
+      for id in wanted {
+        guard let song = catalog[id] else { continue }
+        do {
+          list = try await MusicLibrary.shared.add(song, to: list)
+        } catch {
+          NSLog("WalkUpMusic could not add %@ to the playlist: %@", id, String(describing: error))
+        }
+      }
+    } catch {
+      NSLog("WalkUpMusic playlist failed: %@", String(describing: error))
+    }
+  }
+
   // MARK: Play
 
   @objc public func play(
@@ -308,10 +604,62 @@ public final class TSWalkUpMusic: NSObject {
       request.filter(matching: \.id, equalTo: id)
       if let song = try await request.response().items.first { return song }
     } else {
+      // Best effort: a library lookup that fails falls back to the catalog,
+      // which plays it online as before.
+      do {
+        if let stored = try await storedCopy(of: parts[1]) { return stored }
+      } catch {
+        NSLog("WalkUpMusic stored copy of %@ failed: %@", parts[1], String(describing: error))
+      }
       let request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: id)
       if let song = try await request.response().items.first { return song }
     }
     throw WalkUpMusicError.notFound
+  }
+
+  /// The library copy of a catalog song when it is stored on the phone, so
+  /// it plays with no network: a catalog lookup needs one. A walk-up song
+  /// resolves to its catalog id when the library search does not match it,
+  /// even though the library holds it, downloaded, under that id.
+  private static func storedCopy(of catalogId: String) async throws -> Song? {
+    guard MPMediaLibrary.authorizationStatus() == .authorized else { return nil }
+    guard let item = await playIndex()[catalogId], !item.isCloudItem, let title = item.title
+    else {
+      NSLog("WalkUpMusic has no copy of catalog:%@ on this phone", catalogId)
+      return nil
+    }
+    // An equality filter finds nothing for some titles (an apostrophe, a
+    // "feat." in parentheses), so the filter is the title's longest word —
+    // the narrowest — and the match is made here.
+    let words = title.split { (character: Character) -> Bool in
+      !character.isLetter && !character.isNumber
+    }
+    let word = words.max { $0.count < $1.count }.map(String.init) ?? title
+    var request = MusicLibraryRequest<Song>()
+    request.filter(matching: \.title, contains: word)
+    let songs = try await request.response().items
+    // A library song does not always carry its catalog id in its play
+    // parameters (which is why the search missed it). Then the one song with
+    // the same title, by the same artist, of the same length to the second,
+    // and as explicit, is the same song. A song that names another catalog
+    // id is another version — the clean and explicit cuts of a track share
+    // the rest — and two that fit, or none, are left to the catalog.
+    let length = item.playbackDuration
+    let alike = songs.filter {
+      Self.catalogId(of: $0) == nil && $0.title == title
+        && $0.artistName == item.artist
+        && abs(($0.duration ?? -10) - length) < 1
+        && ($0.contentRating == .explicit) == item.isExplicitItem
+    }
+    let found =
+      songs.first { Self.catalogId(of: $0) == catalogId }
+      ?? (alike.count == 1 ? alike.first : nil)
+    if found != nil {
+      NSLog("WalkUpMusic plays catalog:%@ from its copy on this phone", catalogId)
+    } else {
+      NSLog("WalkUpMusic found no library song for stored catalog:%@ (%d by title)", catalogId, songs.count)
+    }
+    return found
   }
 
   private func startPoll() {
