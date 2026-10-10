@@ -526,20 +526,23 @@ async function main(): Promise<void> {
       report.push(
         'FAIL: acceptance stopped; see the runner diagnostic. Passed cases above are retained.'
       )
-    const uiProofPath = process.env.EVENT_TAGS_UI_PROOF_LOG
-    const uiProof =
-      uiProofPath == null ? '' : await readFile(uiProofPath, 'utf8')
-    await writeFile(
-      join(output, 'tags-ui.log'),
-      report.join('\n') + '\n' + uiProof
-    )
-    const proofPath = process.env.EVENT_TAGS_API_PROOF_LOG
-    const proof = proofPath == null ? '' : await readFile(proofPath, 'utf8')
-    await writeFile(
-      join(output, 'tags-api.log'),
-      apiReport.join('\n') + '\n' + proof
-    )
-    daemon.close()
+    try {
+      const uiProofPath = process.env.EVENT_TAGS_UI_PROOF_LOG
+      const uiProof =
+        uiProofPath == null ? '' : await readFile(uiProofPath, 'utf8')
+      await writeFile(
+        join(output, 'tags-ui.log'),
+        report.join('\n') + '\n' + uiProof
+      )
+      const proofPath = process.env.EVENT_TAGS_API_PROOF_LOG
+      const proof = proofPath == null ? '' : await readFile(proofPath, 'utf8')
+      await writeFile(
+        join(output, 'tags-api.log'),
+        apiReport.join('\n') + '\n' + proof
+      )
+    } finally {
+      daemon.close()
+    }
   }
 }
 main().catch((error: unknown) => {

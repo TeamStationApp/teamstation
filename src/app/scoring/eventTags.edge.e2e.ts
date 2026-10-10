@@ -70,13 +70,13 @@ async function main(): Promise<void> {
       }>
     }
   }
-  const daemon = await MaestroD.connect({
-    name: required('MAESTRO_D'),
-    spawn: false
-  })
   const client = new TeamStationClient({
     baseUrl: required('EVENT_TAGS_API_URL'),
     token: await readFile(required('EVENT_TAGS_SESSION_FILE'), 'utf8')
+  })
+  const daemon = await MaestroD.connect({
+    name: required('MAESTRO_D'),
+    spawn: false
   })
   const report = [
     '$ SCORING_DEVICE_UDID="$SCORING_DEVICE_UDID" MAESTRO_D="$MAESTRO_D" node -r sucrase/register src/app/scoring/eventTags.edge.e2e.ts'
@@ -260,6 +260,10 @@ async function main(): Promise<void> {
         if (target.tag != null)
           await client.saveEventTag(cfg.gameId, target.id, null)
     }
+    let scenarioFailed = false
+    let scenarioError: unknown
+    let cleanupFailed = false
+    let cleanupError: unknown
     try {
       await m.openLink({
         link: route(cfg.primaryGameId, false),
@@ -392,15 +396,38 @@ async function main(): Promise<void> {
       )
       await switchUser(primary)
       await clearTags()
+    } catch (error) {
+      scenarioFailed = true
+      scenarioError = error
     } finally {
-      await control('release')
-      await control('restore')
-      try {
-        await clearTags()
-      } finally {
-        await m.detach()
+      const steps: Array<[string, () => Promise<unknown>]> = [
+        ['detach', async () => await m.detach()],
+        [
+          'release',
+          async () => {
+            await control('release')
+          }
+        ],
+        [
+          'restore',
+          async () => {
+            await control('restore')
+          }
+        ],
+        ['clear tags', clearTags]
+      ]
+      for (const [label, clean] of steps) {
+        try {
+          await clean()
+        } catch (error) {
+          cleanupFailed = true
+          cleanupError ??= error
+          console.error(`Edge acceptance cleanup failed: ${label}.`)
+        }
       }
     }
+    if (scenarioFailed) throw scenarioError
+    if (cleanupFailed) throw cleanupError
   }
   let complete = false
   try {
@@ -432,8 +459,11 @@ async function main(): Promise<void> {
       report.push(
         'FAIL: edge acceptance stopped; passed cases above are retained.'
       )
-    await writeFile(join(output, 'tags-edge.log'), report.join('\n') + '\n')
-    daemon.close()
+    try {
+      await writeFile(join(output, 'tags-edge.log'), report.join('\n') + '\n')
+    } finally {
+      daemon.close()
+    }
   }
 }
 main().catch(() => {
