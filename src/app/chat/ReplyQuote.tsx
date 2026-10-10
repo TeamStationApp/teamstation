@@ -1,5 +1,5 @@
 import React from 'react'
-import { Pressable, Text } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -9,7 +9,7 @@ import type { QuoteView } from './engine/apply'
 export function ReplyQuote(props: {
   quote: QuoteView
   userId: number
-  onJump: (id: string) => void
+  onJump?: (id: string) => void
   messageGesture?: MessagePressGesture
 }): React.ReactElement {
   const theme = useTheme()
@@ -20,6 +20,15 @@ export function ReplyQuote(props: {
       : props.quote.authorId === props.userId
         ? lstrings.chat_you
         : (props.quote.authorName ?? lstrings.chat_former_member)
+  const contents = (
+    <>
+      <Text style={styles.name}>{name}</Text>
+      <Text style={styles.text} numberOfLines={3}>
+        {props.quote.snippet}
+      </Text>
+    </>
+  )
+  if (props.onJump == null) return <View style={styles.quote}>{contents}</View>
   return (
     <Pressable
       {...props.messageGesture?.pressProps}
@@ -31,14 +40,11 @@ export function ReplyQuote(props: {
       )}
       onPress={event => {
         if (props.messageGesture?.canOpen(event) === false) return
-        props.onJump(props.quote.id)
+        props.onJump?.(props.quote.id)
       }}
       style={styles.quote}
     >
-      <Text style={styles.name}>{name}</Text>
-      <Text style={styles.text} numberOfLines={3}>
-        {props.quote.snippet}
-      </Text>
+      {contents}
     </Pressable>
   )
 }
