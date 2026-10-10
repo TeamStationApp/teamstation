@@ -386,7 +386,20 @@ async function main(): Promise<void> {
       if (state != null && check(state)) return
       await new Promise(resolve => setTimeout(resolve, 100))
     }
-    assert.fail('Expected persisted scoring state')
+    const state = snapshot()
+    assert.fail(
+      'Expected persisted scoring state: ' +
+        JSON.stringify({
+          inning: state?.liveData.linescore.currentInning,
+          top: state?.liveData.linescore.isTopInning,
+          balls: state?.liveData.linescore.balls,
+          strikes: state?.liveData.linescore.strikes,
+          outs: state?.liveData.linescore.outs,
+          completedPlays: state?.liveData.plays.allPlays.filter(
+            play => play.about.isComplete
+          ).length
+        })
+    )
   }
   const undo = async (): Promise<void> => {
     const label = flat(await m.hierarchy()).find(
