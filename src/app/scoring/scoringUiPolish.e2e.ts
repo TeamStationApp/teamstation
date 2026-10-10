@@ -107,6 +107,23 @@ async function main(): Promise<void> {
     console.log('Tap', text)
     if (native) {
       await m.waitForAnimationToEnd({ timeout: 3000 })
+      if (
+        ['Ball', 'Called Strike', 'Swing & Miss', 'Foul Ball'].includes(text)
+      ) {
+        const deadline = Date.now() + 15000
+        let ready = false
+        while (Date.now() < deadline) {
+          ready = flat(await m.hierarchy()).some(
+            node =>
+              node.text === text &&
+              node.type === 'Button' &&
+              node.enabled === true
+          )
+          if (ready) break
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+        assert(ready, `Pitch control ${text} must be enabled before tapping`)
+      }
       if (text === 'More') {
         const deadline = Date.now() + 15000
         while (Date.now() < deadline) {
