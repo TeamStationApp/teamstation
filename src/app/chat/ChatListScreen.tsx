@@ -245,6 +245,34 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       .catch(() => undefined)
   }
   measureRows.current = measureRow
+  const verifyZeroDistance = (offset: number, final: boolean): boolean => {
+    const geometry = listGeometry.current
+    const tail = measuredTail.current
+    const complete =
+      chats?.length === 0 ||
+      (tail != null &&
+        tail.data === dataKey &&
+        tail.version === layoutVersion.current &&
+        Math.abs(tail.end - geometry.content) <= 1)
+    // Complete current content shorter than the actual viewport has only one
+    // reachable normalized offset. A widget already at zero emits no event.
+    return (
+      final &&
+      offset === 0 &&
+      liveData() &&
+      geometry.data === dataKey &&
+      geometry.height > 0 &&
+      geometry.content > 0 &&
+      geometry.content <= geometry.height &&
+      complete
+    )
+  }
+  const finishRestoration = (offset: number): void => {
+    currentOffset.current = offset
+    restored.current = true
+    setFastRestore(false)
+    savePosition()
+  }
   const requestOffset = (offset: number, final = false): void => {
     if (
       requested.current === offset &&
@@ -262,16 +290,14 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       if (
         final &&
         liveData() &&
-        acknowledged != null &&
-        acknowledged.data === dataKey &&
-        acknowledged.visibility === visibilityVersion &&
-        acknowledged.generation === gestureGeneration.current &&
-        Math.abs(acknowledged.offset - offset) <= 1
-      ) {
-        restored.current = true
-        setFastRestore(false)
-        savePosition()
-      }
+        ((acknowledged != null &&
+          acknowledged.data === dataKey &&
+          acknowledged.visibility === visibilityVersion &&
+          acknowledged.generation === gestureGeneration.current &&
+          Math.abs(acknowledged.offset - offset) <= 1) ||
+          verifyZeroDistance(offset, final))
+      )
+        finishRestoration(offset)
       return
     }
     requested.current = offset
@@ -281,6 +307,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     rejectedRequest.current = false
     if (final) restored.current = false
     list.current?.scrollToOffset({ offset, animated: false })
+    if (verifyZeroDistance(offset, final)) finishRestoration(offset)
   }
   const seekAnchor = (index: number): void => {
     const previous = seeking.current
@@ -523,8 +550,9 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   useEffect(() => bindUserScroll(list.current, userScrolled), [])
   const viewability = useRef({ itemVisiblePercentThreshold: 1 }).current
   const previews = useCallback(
-    (ids: string[]): void => {
-      for (const id of ids) engine.loadPreview?.(id).catch(() => undefined)
+    (ids: string[], retry = false): void => {
+      for (const id of ids)
+        engine.loadPreview?.(id, retry).catch(() => undefined)
     },
     [engine]
   )
@@ -697,6 +725,13 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
                 if (last != null && last !== item.chat.id) measureRow(last)
                 restoreList()
               }}
+              onRetryPreview={
+                engine.loadPreview == null
+                  ? undefined
+                  : () => {
+                      previews([item.chat.id], true)
+                    }
+              }
               now={now}
               selected={item.chat.id === props.selectedId}
               narrow={narrow}
@@ -739,6 +774,7 @@ function ConversationRow(props: {
   gestureGeneration: React.RefObject<number>
   onOpen: () => void
   onMenu: () => void
+  onRetryPreview?: () => void
   onLayout?: (event: LayoutChangeEvent) => void
   onRef?: (node: React.ComponentRef<typeof View> | null) => void
 }): React.ReactElement {
@@ -887,10 +923,12 @@ function ConversationRow(props: {
             <Text style={[shared.small, styles.preview]} numberOfLines={2}>
               {chat.locked
                 ? lstrings.chat_locked_message
-                : (chat.preview ??
-                  (chat.lastSeq === 0
-                    ? lstrings.chat_no_messages
-                    : lstrings.chat_latest_loading))}
+                : chat.previewFailed === true
+                  ? lstrings.chat_latest_failed
+                  : (chat.preview ??
+                    (chat.lastSeq === 0
+                      ? lstrings.chat_no_messages
+                      : lstrings.chat_latest_loading))}
             </Text>
             <View style={styles.trailing}>
               <Text style={shared.small}>
@@ -930,6 +968,37 @@ function ConversationRow(props: {
           </View>
         </View>
       </Pressable>
+      {chat.previewFailed === true &&
+        !chat.locked &&
+        props.onRetryPreview != null && (
+          <Pressable
+            testID={'chat-preview-retry-' + chat.id}
+            accessibilityRole="button"
+            accessibilityLabel={
+              chat.previewRetrying === true
+                ? lstrings.common_loading
+                : lstrings.chat_preview_retry
+            }
+            disabled={chat.previewRetrying === true}
+            onPressIn={event => {
+              event.stopPropagation()
+            }}
+            onPress={event => {
+              event.stopPropagation()
+              props.onRetryPreview?.()
+            }}
+            style={{
+              alignSelf: 'flex-start',
+              paddingVertical: theme.rem(0.25)
+            }}
+          >
+            <Text style={[shared.small, { color: theme.activeColor }]}>
+              {chat.previewRetrying === true
+                ? lstrings.common_loading
+                : lstrings.common_retry}
+            </Text>
+          </Pressable>
+        )}
       {props.narrow && (
         <Pressable
           accessibilityRole="button"
