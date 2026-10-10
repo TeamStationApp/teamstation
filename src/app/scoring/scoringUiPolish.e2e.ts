@@ -105,6 +105,7 @@ async function main(): Promise<void> {
   const tap = async (text: string): Promise<void> => {
     console.log('Tap', text)
     if (native) {
+      await m.waitForAnimationToEnd({ timeout: 3000 })
       if (
         !['Cancel', 'Add Player', 'More'].includes(text) &&
         !text.startsWith('Tag event:')
@@ -116,7 +117,6 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 500))
         return
       }
-      await m.waitForAnimationToEnd({ timeout: 3000 })
       const deadline = Date.now() + 15000
       let matches: Node[] = []
       do {
@@ -638,10 +638,14 @@ async function main(): Promise<void> {
     await tap('Place a Runner (Tiebreaker)')
     await shown('Place runner on base')
     await tap('Cancel')
-    for (let strike = 0; strike < 3; strike++) await tap('Called Strike')
-    await saved(state =>
-      state.liveData.plays.allPlays.some(play => play.about.isComplete)
-    )
+    for (let strike = 1; strike <= 3; strike++) {
+      await tap('Called Strike')
+      await saved(state =>
+        strike < 3
+          ? state.liveData.linescore.strikes === strike
+          : state.liveData.plays.allPlays.some(play => play.about.isComplete)
+      )
+    }
     await menu('End Half Inning')
     await tap('Confirm End Half Inning')
     await saved(state => !state.liveData.linescore.isTopInning)
