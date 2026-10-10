@@ -173,8 +173,7 @@ async function main(): Promise<void> {
       timeout: 15000
     })
   }
-  const capture = async (state: string): Promise<void> => {
-    await m.waitForAnimationToEnd({ timeout: 3000 })
+  const dismissDevelopmentWarnings = async (): Promise<void> => {
     if (native) {
       const warning = flat(await m.hierarchy()).find(
         node => node.text?.includes('Open debugger to view warnings.') === true
@@ -186,6 +185,10 @@ async function main(): Promise<void> {
         )
       }
     }
+  }
+  const capture = async (state: string): Promise<void> => {
+    await m.waitForAnimationToEnd({ timeout: 3000 })
+    await dismissDevelopmentWarnings()
     await writeFile(
       join(artifacts, `${surface}-${state}-${phase}.png`),
       await m.screenshot()
@@ -247,6 +250,7 @@ async function main(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 1500))
     await shown('^Open scoring menu$')
     await shown(missing ? 'Missing defensive positions' : '^Ball$')
+    await dismissDevelopmentWarnings()
     console.log('Opened synthetic scoring fixture')
     return gameId
   }
