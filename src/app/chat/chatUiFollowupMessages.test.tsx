@@ -33,6 +33,32 @@ import { PinnedMessages } from './PinnedMessages'
 import { ReplyQuote } from './ReplyQuote'
 import type { ChatScreenEngine } from './screenEngine'
 
+const { InteractionManager } = require('react-native-web') as {
+  InteractionManager: { runAfterInteractions: (task: () => void) => unknown }
+}
+
+let ownsTimeouts = false
+
+async function resetTimeouts(): Promise<void> {
+  if (!ownsTimeouts) return
+  // Reset would otherwise discard RNW's queued idle callback while its shared
+  // InteractionManager retains the handle and stops future list batching.
+  await act(async () => {
+    let completed = false
+    InteractionManager.runAfterInteractions(() => {
+      completed = true
+    })
+    mock.timers.tick(1)
+    await Promise.resolve()
+    expect(
+      completed,
+      'Owned interaction work drains before timer reset'
+    ).equals(true)
+  })
+  mock.timers.reset()
+  ownsTimeouts = false
+}
+
 let root: Root | undefined
 const stops: Array<() => void> = []
 const originals = new Map<string, PropertyDescriptor | undefined>(
@@ -46,12 +72,12 @@ const originals = new Map<string, PropertyDescriptor | undefined>(
 )
 
 afterEach(async function () {
-  mock.timers.reset()
   for (const stop of stops.splice(0)) stop()
   await act(async () => {
     root?.unmount()
   })
   root = undefined
+  await resetTimeouts()
   for (const [key, original] of originals) {
     const target = key === 'matchMedia' ? globalThis : navigator
     if (original != null) Object.defineProperty(target, key, original)
@@ -554,6 +580,7 @@ describe('chat follow-up message hold', function () {
       />
     )
     mock.timers.enable({ apis: ['setTimeout'] })
+    ownsTimeouts = true
     const row = document.querySelector<HTMLElement>(
       '[data-testid="chat-message-msg_1"]'
     )!
@@ -623,7 +650,7 @@ describe('chat follow-up message hold', function () {
     jumps: string[]
     generation: { current: number }
   }> {
-    mock.timers.reset()
+    await resetTimeouts()
     pointer(false)
     const opens: MessageView[] = []
     const fetches: string[] = []
@@ -682,6 +709,7 @@ describe('chat follow-up message hold', function () {
         ? button('Save notes.pdf')
         : button('Jump to message from Shohei Ohtani: Original body')
     mock.timers.enable({ apis: ['setTimeout'] })
+    ownsTimeouts = true
     return { target, opens, fetches, jumps, generation }
   }
 
@@ -784,6 +812,7 @@ describe('chat follow-up message hold', function () {
     )
     const target = button('Aurora Members')
     mock.timers.enable({ apis: ['setTimeout'] })
+    ownsTimeouts = true
     await touch(target, 'touchstart')
     await touch(target, 'touchmove', 31, 20)
     await tick(500)
@@ -1528,6 +1557,7 @@ describe('chat follow-up conversation message integration', function () {
     // Hold the real RNW end timer deterministically while composing; wall-clock
     // load must not let it fire before the assertion checkpoint is captured.
     mock.timers.enable({ apis: ['setTimeout'] })
+    ownsTimeouts = true
     await act(async () => {
       visible.scroller.dispatchEvent(
         new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
