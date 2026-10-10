@@ -3,6 +3,8 @@ import {
   awaitingResult,
   completesHitOffer,
   currentSetupError,
+  overrideOf,
+  tiebreakerSetupError,
   undoesHitOffer
 } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
@@ -23,7 +25,7 @@ import {
   stealsByBase
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
-import { moreReducer } from './moreActions'
+import { moreEligibility, moreReducer } from './moreActions'
 import {
   accepted,
   act,
@@ -715,6 +717,29 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       event.generation,
       event.dragged === true
     )
+  if (event.type === 'TIEBREAKER_OUTS') {
+    if (
+      moreEligibility(state, 'Place a Runner (Tiebreaker)') != null ||
+      tiebreakerSetupError(state.session) != null ||
+      !Number.isInteger(event.outs) ||
+      event.outs < 0 ||
+      event.outs > 2 ||
+      state.session.liveData.linescore.outs === event.outs
+    )
+      return state
+    return accepted(state, 'Set Outs', next => {
+      const draft = overrideOf(next.session)
+      act(next, {
+        type: 'gameFlow',
+        kind: 'override',
+        ...draft,
+        outs: event.outs,
+        batter: draft.batter ?? undefined,
+        pitcher: draft.pitcher ?? undefined
+      })
+      next.generation++
+    })
+  }
   if (event.type === 'ROSTER' || event.type === 'OVERRIDE') {
     if (
       state.moreDraft != null ||

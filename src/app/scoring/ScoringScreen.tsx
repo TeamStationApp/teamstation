@@ -106,11 +106,17 @@ import {
   type ScoringEvent,
   type Side
 } from './scoringTypes'
+import {
+  RunnerRosterSheet,
+  TiebreakerBases,
+  TiebreakerSetupSheet
+} from './TiebreakerSheets'
 import { dictationUrl } from './useDictation'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
+import { useTiebreakerSetup } from './useTiebreakerSetup'
 
 export interface ScoringScreenProps {
   client: TeamStationClient
@@ -513,27 +519,6 @@ function ScoringPanel(props: {
     'Open scoring menu'
   )
   const [hint, setHint] = useState(false)
-  const pauseClock = useScoringClock(
-    state,
-    menu ||
-      historyActive ||
-      tagTarget != null ||
-      sheet != null ||
-      defensiveOpen ||
-      outcomeMenu ||
-      moreOpen ||
-      gestureActive ||
-      state.presentation != null,
-    dispatch
-  )
-  const setGesture = useCallback(
-    (active: boolean) => {
-      if (active) pauseClock()
-      setGestureActive(active)
-      dispatch({ type: 'GESTURE', active })
-    },
-    [pauseClock]
-  )
   // Read-only takes no input at all, from the pointer, the keyboard or a
   // screen reader.
   const session = state.session
@@ -559,6 +544,39 @@ function ScoringPanel(props: {
     !status.readOnly &&
     !rosterLoading &&
     setupReady
+  const tiebreaker = useTiebreakerSetup(
+    state,
+    actionsAllowed &&
+      !menu &&
+      sheet == null &&
+      !defensiveOpen &&
+      !outcomeMenu &&
+      !historyActive &&
+      tagTarget == null,
+    dispatch
+  )
+  const pauseClock = useScoringClock(
+    state,
+    menu ||
+      historyActive ||
+      tagTarget != null ||
+      sheet != null ||
+      defensiveOpen ||
+      outcomeMenu ||
+      moreOpen ||
+      tiebreaker.active ||
+      gestureActive ||
+      state.presentation != null,
+    dispatch
+  )
+  const setGesture = useCallback(
+    (active: boolean) => {
+      if (active) pauseClock()
+      setGestureActive(active)
+      dispatch({ type: 'GESTURE', active })
+    },
+    [pauseClock]
+  )
   const canEditDefense =
     setupEditable(state) &&
     !status.readOnly &&
@@ -567,7 +585,8 @@ function ScoringPanel(props: {
     !defensiveOpen &&
     !rosterLoading &&
     !outcomeMenu &&
-    !moreOpen
+    !moreOpen &&
+    !tiebreaker.active
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
   const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
@@ -781,7 +800,12 @@ function ScoringPanel(props: {
     question: state.dictationQuestion,
     played,
     onAnswer: answer => {
-      if (rosterLoading || (!lineupAccepted && !hasActivePlay)) return
+      if (
+        tiebreaker.active ||
+        rosterLoading ||
+        (!lineupAccepted && !hasActivePlay)
+      )
+        return
       dispatch({
         type: 'DICTATION_ANSWER',
         ...answer,
@@ -795,11 +819,12 @@ function ScoringPanel(props: {
     spaceTalks:
       (atRest(state) || state.reel != null) &&
       !gestureActive &&
+      !tiebreaker.active &&
       !rosterLoading &&
       (lineupAccepted || hasActivePlay),
     undone,
     onActions: (transcript, actions, undo) => {
-      if (rosterLoading) return
+      if (rosterLoading || tiebreaker.active) return
       if (undo === true) {
         // Undone now, before the rest of the sentence is applied. With a
         // question open, what is taken back is the unanswered sentence.
@@ -1198,7 +1223,12 @@ function ScoringPanel(props: {
             : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
           : undefined))
   const celebrationPaused =
-    menu || sheet != null || defensiveOpen || outcomeMenu || moreOpen
+    menu ||
+    sheet != null ||
+    defensiveOpen ||
+    outcomeMenu ||
+    moreOpen ||
+    tiebreaker.active
   useHomeRunCelebration(state.celebration, celebrationPaused, dispatch)
   const fieldScoreboard = {
     ...scoreboardFor(session),
@@ -1234,7 +1264,8 @@ function ScoringPanel(props: {
     !defensiveOpen &&
     !rosterLoading &&
     !outcomeMenu &&
-    !moreOpen
+    !moreOpen &&
+    !tiebreaker.active
   const openLineup = (): void => {
     openRosters(true)
   }
@@ -1250,6 +1281,10 @@ function ScoringPanel(props: {
         .filter(player => player.team === 'defense')
         .map(player => player.id)
     : []
+  const fieldPlayers =
+    tiebreaker.mode === 'bases' || typeof tiebreaker.mode === 'number'
+      ? players.filter(player => player.team !== 'defense')
+      : players
   return (
     <BaseballScreen
       setupToast={
@@ -1268,7 +1303,7 @@ function ScoringPanel(props: {
       }
       field={{
         teams: session.gameData.teams,
-        players,
+        players: fieldPlayers,
         tapIds: defensiveIds,
         onPlayerTap: id => {
           if (!canEditDefense) return
@@ -1297,7 +1332,12 @@ function ScoringPanel(props: {
           state,
           angle,
           landingArc,
-          menu || sheet != null || defensiveOpen || outcomeMenu || moreOpen,
+          menu ||
+            sheet != null ||
+            defensiveOpen ||
+            outcomeMenu ||
+            moreOpen ||
+            tiebreaker.active,
           {
             dispatch,
             landing: arc => {
@@ -1309,7 +1349,8 @@ function ScoringPanel(props: {
         ),
         onLandingPreview: setLandingPreview,
         presentation: state.presentation,
-        presentationPaused: menu || sheet != null || outcomeMenu || moreOpen,
+        presentationPaused:
+          menu || sheet != null || outcomeMenu || moreOpen || tiebreaker.active,
         onPresentationContact: (id, generation) => {
           dispatch({ type: 'PRESENTATION_CONTACT', id, generation })
         },
@@ -1333,7 +1374,7 @@ function ScoringPanel(props: {
           })
         },
         onRunnerDrop: (id, to, decision, generation) => {
-          if (generation !== state.generation) return
+          if (tiebreaker.active || generation !== state.generation) return
           const player = players.find(item => item.id === id)
           if (player?.playerId == null) return
           dispatch({
@@ -1365,6 +1406,7 @@ function ScoringPanel(props: {
             defensiveOpen ||
             outcomeMenu ||
             moreOpen ||
+            tiebreaker.active ||
             state.presentation != null
               ? []
               : ['locateFielder', 'chooseThrower', 'chooseDefender'].includes(
@@ -1395,6 +1437,7 @@ function ScoringPanel(props: {
             defensiveOpen ||
             outcomeMenu ||
             moreOpen ||
+            tiebreaker.active ||
             state.presentation != null
               ? []
               : ['trajectory', 'locateLanding'].includes(state.phase)
@@ -1402,6 +1445,7 @@ function ScoringPanel(props: {
                 : ['place']
         },
         onTrajectoryAccepted: (value, generation, dragged) => {
+          if (tiebreaker.active) return
           scoringAudio.unlock()
           dispatch({
             type: 'TRAJECTORY',
@@ -1415,6 +1459,7 @@ function ScoringPanel(props: {
         },
         registerKeyboard,
         onFieldPlacement: event => {
+          if (tiebreaker.active) return
           const id = players.find(
             player => player.id === event.entityId
           )?.playerId
@@ -1446,12 +1491,14 @@ function ScoringPanel(props: {
         selectableIds:
           switchable &&
           !status.readOnly &&
+          !tiebreaker.active &&
           !menu &&
           sheet == null &&
           batterId != null
             ? [`offense-${batterId}`]
             : [],
         onPlayerPlacement: (id, point) => {
+          if (tiebreaker.active) return
           if (id === `offense-${batterId}`) {
             const rendered = players.find(player => player.id === id)
             if (rendered != null) {
@@ -1483,16 +1530,34 @@ function ScoringPanel(props: {
       moreControl={
         <MoreMenu
           state={state}
-          disabled={menu || sheet != null || outcomeMenu || !actionsAllowed}
+          disabled={
+            menu ||
+            sheet != null ||
+            outcomeMenu ||
+            tiebreaker.active ||
+            !actionsAllowed
+          }
           onActive={active => {
             if (active) pauseClock()
             setMoreOpen(active)
           }}
           onChoose={input => {
-            if (!actionsAllowed || menu || sheet != null || outcomeMenu) return
+            if (
+              !actionsAllowed ||
+              menu ||
+              sheet != null ||
+              outcomeMenu ||
+              tiebreaker.active
+            )
+              return
             setHint(false)
             setMoreOpen(false)
-            dispatch({ type: 'MORE', input })
+            if (
+              input.action === 'Place a Runner (Tiebreaker)' &&
+              input.base == null
+            )
+              tiebreaker.handleOpen()
+            else dispatch({ type: 'MORE', input })
           }}
         />
       }
@@ -1504,11 +1569,19 @@ function ScoringPanel(props: {
             menu ||
             sheet != null ||
             moreOpen ||
+            tiebreaker.active ||
             state.moreDraft != null
           }
           onActive={setOutcomeMenu}
           onChoose={(outcome, contactKind) => {
-            if (!actionsAllowed || menu || sheet != null || moreOpen) return
+            if (
+              !actionsAllowed ||
+              menu ||
+              sheet != null ||
+              moreOpen ||
+              tiebreaker.active
+            )
+              return
             scoringAudio.unlock()
             setHint(false)
             // Closed with the choice, so the field takes input the moment it asks.
@@ -1519,6 +1592,7 @@ function ScoringPanel(props: {
       }
       onMenuButton={setMenuButton}
       onMenu={() => {
+        if (tiebreaker.active) return
         pauseClock()
         setOutcomeMenu(false)
         setMenu(value => !value)
@@ -1526,9 +1600,10 @@ function ScoringPanel(props: {
       historyRows={tagHistory.rows}
       tagHistoryDetail={tagHistory.detail}
       onHistoryOpen={
-        props.source.saveTag == null
+        props.source.saveTag == null || tiebreaker.active
           ? undefined
           : () => {
+              if (tiebreaker.active) return
               pauseClock()
               setHistoryActive(true)
             }
@@ -1543,12 +1618,20 @@ function ScoringPanel(props: {
       onUndo={() => {
         scoringAudio.stop()
         if (status.readOnly || rosterLoading) return
+        tiebreaker.handleClose()
         // The reducer decides, from the state every earlier tap left, whether
         // this one is the screen's to take back or the saved game's.
         dispatch({ type: 'UNDO' })
       }}
       onPitch={kind => {
-        if (!actionsAllowed || menu || sheet != null || outcomeMenu || moreOpen)
+        if (
+          !actionsAllowed ||
+          menu ||
+          sheet != null ||
+          outcomeMenu ||
+          moreOpen ||
+          tiebreaker.active
+        )
           return
         scoringAudio.unlock()
         if (kind !== 'play') dispatch({ type: 'PITCH', kind })
@@ -1608,6 +1691,7 @@ function ScoringPanel(props: {
         !menu &&
         sheet == null &&
         !outcomeMenu &&
+        !tiebreaker.active &&
         !gestureActive &&
         state.presentation == null &&
         !state.motions.some(
@@ -1624,7 +1708,8 @@ function ScoringPanel(props: {
                 menu ||
                 sheet != null ||
                 outcomeMenu ||
-                moreOpen
+                moreOpen ||
+                tiebreaker.active
               )
                 return
               if (state.phase === 'chooseDefender') {
@@ -1650,14 +1735,41 @@ function ScoringPanel(props: {
         !defensiveOpen &&
         !outcomeMenu &&
         !moreOpen &&
+        !tiebreaker.active &&
         state.moreDraft == null &&
         state.presentation == null
       }
       summary={summary}
-      dictationControl={dictation.control}
+      dictationControl={tiebreaker.active ? undefined : dictation.control}
       dictationLog={dictation.log}
       accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
+      {tiebreaker.mode === 'settings' && (
+        <TiebreakerSetupSheet
+          outs={line.outs}
+          onPlace={tiebreaker.handlePlace}
+          onOuts={tiebreaker.handleSetOuts}
+          onClose={tiebreaker.handleClose}
+          problem={tiebreaker.problem}
+        />
+      )}
+      {tiebreaker.mode === 'bases' && (
+        <TiebreakerBases
+          projection={baseProjection}
+          occupied={baseIds(session)}
+          onChoose={tiebreaker.handleChooseBase}
+          onCancel={tiebreaker.handleClose}
+        />
+      )}
+      {typeof tiebreaker.mode === 'number' && (
+        <RunnerRosterSheet
+          session={displaySession}
+          base={tiebreaker.mode}
+          onChoose={tiebreaker.handleChooseRunner}
+          onClose={tiebreaker.handleBack}
+          problem={tiebreaker.problem}
+        />
+      )}
       {defensiveSlot != null && (
         <DefensiveRosterSheet
           session={displaySession}
@@ -1704,14 +1816,17 @@ function ScoringPanel(props: {
           />
         </View>
       )}
-      {!menu && sheet == null && state.presentation == null && (
-        <RunnerControls
-          state={state}
-          anchor={null}
-          projection={baseProjection}
-          dispatch={dispatchRunner}
-        />
-      )}
+      {!menu &&
+        sheet == null &&
+        !tiebreaker.active &&
+        state.presentation == null && (
+          <RunnerControls
+            state={state}
+            anchor={null}
+            projection={baseProjection}
+            dispatch={dispatchRunner}
+          />
+        )}
       {menu && (
         <>
           <Pressable
@@ -1790,7 +1905,7 @@ function ScoringPanel(props: {
       {sheet != null && (
         <ScoringSheet
           headerless={sheet === 'rosters'}
-          textCancel={sheet === 'rosters'}
+          textCancel
           fullScreen={sheet === 'rosters'}
           tall={sheet === 'settings'}
           done={sheet === 'settings'}

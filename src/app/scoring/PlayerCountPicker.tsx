@@ -43,6 +43,8 @@ export function PlayerCountPicker({
           right: 0,
           pointerEvents: 'none',
           borderRadius: 8,
+          border: `1px solid ${theme.scoringSurface.badges.green.border}`,
+          boxSizing: 'border-box',
           background: theme.scoringSelectorIdle
         }}
       />

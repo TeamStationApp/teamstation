@@ -23,8 +23,9 @@ import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
 import { copyState } from './scoringMachine'
+import { ScoringPlayerCard, scoringPlayerCardStyle } from './ScoringPlayerCard'
 import { baseIds, battingSide } from './scoringSelectors'
-import { ScoringButton, ScoringError, ScoringSheetHeight } from './ScoringSheet'
+import { ScoringError, ScoringSheetHeight } from './ScoringSheet'
 import type {
   Position,
   ScoringSessionState,
@@ -155,20 +156,7 @@ export function RosterEditor({
     fontSize: 14
   }
   const nameProps = rosterNameProps(Platform.OS)
-  const row = {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    minHeight: 48,
-    gap: 6,
-    paddingHorizontal: 6,
-    shadowColor: theme.buttonShadowColor,
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
-    borderRadius: 6,
-    backgroundColor: theme.scoringSelectorIdle
-  }
+  const row = scoringPlayerCardStyle(theme)
   return (
     <View
       style={{
@@ -231,15 +219,12 @@ export function RosterEditor({
             <Text style={text}>Choose Next Batter</Text>
             {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
               id => (
-                <ScoringButton
+                <ScoringPlayerCard
                   key={id}
                   label={`Next batter ${names[id].fullName}`}
                   disabled={baseIds(draft).includes(id)}
-                  color={
-                    nextBatter === id
-                      ? theme.scoringMenuActiveBackground
-                      : theme.scoringSelectorIdle
-                  }
+                  selected={nextBatter === id}
+                  name={names[id].fullName}
                   onPress={() => {
                     setNextBatter(id)
                   }}

@@ -48,6 +48,8 @@ export function PlayerCountWheel({
           left: 0,
           right: 0,
           borderRadius: 8,
+          borderWidth: 1,
+          borderColor: theme.scoringSurface.badges.green.border,
           backgroundColor: theme.scoringSelectorIdle
         }}
       />

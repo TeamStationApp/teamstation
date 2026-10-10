@@ -1,8 +1,7 @@
-import React, { useState } from 'react'
+import React from 'react'
 
 import { useDropMenu } from './dropMenu'
 import { DropMenuView } from './DropMenuView'
-import { MoreActionEditor } from './MoreActionEditor'
 import {
   MORE_GROUPS,
   type MoreAction,
@@ -35,7 +34,6 @@ export function MoreMenu({
   onActive,
   onChoose
 }: MoreMenuProps): React.ReactElement {
-  const [form, setForm] = useState<MoreInput>()
   const menu = useDropMenu({
     disabled,
     childKey: BASE,
@@ -44,10 +42,7 @@ export function MoreMenu({
     canChoose: key => moreEligibility(state, inputOf(key).action) == null,
     onChoose: key => {
       const input = inputOf(key)
-      if (input.action === 'Place a Runner (Tiebreaker)') {
-        setForm(input)
-        onActive(true)
-      } else onChoose(input)
+      onChoose(input)
     }
   })
   const rows = MORE_GROUPS.flatMap(group => group.actions)
@@ -90,22 +85,6 @@ export function MoreMenu({
         <ControlBackdrop kind="more" />
         <ControlFace kind="more" />
       </DropMenuView>
-      {form != null && (
-        <MoreActionEditor
-          state={state}
-          input={form}
-          onCancel={() => {
-            setForm(undefined)
-            onActive(false)
-          }}
-          onSave={input => {
-            if (disabled) return
-            setForm(undefined)
-            onActive(false)
-            onChoose(input)
-          }}
-        />
-      )}
     </>
   )
 }

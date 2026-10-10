@@ -37,7 +37,7 @@ export function TagPill({
     backgroundColor: theme.pillBackground,
     minHeight: onPress == null ? undefined : 44,
     justifyContent: 'center' as const,
-    paddingHorizontal: 9,
+    paddingHorizontal: 22,
     paddingVertical: 6,
     maxWidth: '100%' as const,
     flexShrink: 0

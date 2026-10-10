@@ -37,6 +37,7 @@ export function PlaceholderPlayersSheet({
   return (
     <ScoringSheet
       title="Select number of players to add."
+      placement="center"
       textCancel
       onClose={onClose}
     >

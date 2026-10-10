@@ -9,12 +9,14 @@ export function ScoringPill({
   accessibilityLabel = label,
   selected = false,
   disabled = false,
+  size,
   onPress
 }: {
   label: string
   accessibilityLabel?: string
   selected?: boolean
   disabled?: boolean
+  size?: number
   onPress: () => void
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
@@ -28,10 +30,11 @@ export function ScoringPill({
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
-        minHeight: 44,
+        minHeight: size ?? 44,
+        width: size,
         maxWidth: '100%',
         justifyContent: 'center',
-        paddingHorizontal: 14,
+        paddingHorizontal: size == null ? 22 : 10,
         paddingVertical: 8,
         borderRadius: theme.radiusPill,
         borderWidth: 1,
@@ -45,6 +48,7 @@ export function ScoringPill({
         style={{
           fontFamily: theme.semiBoldTextFont,
           fontSize: 14,
+          textAlign: 'center',
           color: selected ? theme.scoringSurface.activeText : badge.text
         }}
       >
