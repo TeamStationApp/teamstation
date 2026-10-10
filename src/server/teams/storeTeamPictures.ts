@@ -251,6 +251,7 @@ export async function storeTeamLogo(
             ? {}
             : { logo_path: stored.pathPrefix, logo_sha256: stored.sha256 }),
           logo_source: picture.source,
+          picture_catalog_id: null,
           logo_updated_at: new Date()
         })
         .where('id', '=', teamId)
@@ -307,6 +308,7 @@ export async function storePlayerAvatar(
                 avatar_sha256: stored.sha256
               }),
           avatar_source: picture.source,
+          picture_catalog_id: null,
           avatar_updated_at: new Date()
         })
         .where('id', '=', userId)

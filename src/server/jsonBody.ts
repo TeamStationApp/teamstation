@@ -45,6 +45,21 @@ const LARGE_BODIES: ReadonlyArray<{
     parser: pictureBody
   },
   {
+    method: 'PUT',
+    path: /^\/api\/v1\/me\/onboarding\/photo$/,
+    parser: pictureBody
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/v1\/(leagues|seasons|teams)$/,
+    parser: pictureBody
+  },
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/groups\/(league|season|team)\/[^/]+$/,
+    parser: pictureBody
+  },
+  {
     method: 'POST',
     path: /^\/api\/v1\/games\/[^/]+\/events$/,
     parser: gameBody
@@ -66,8 +81,10 @@ const LARGE_BODIES: ReadonlyArray<{
  * route.
  */
 export const jsonBody: RequestHandler = (req, res, next) => {
+  // Express accepts case differences and one trailing slash on these routes.
+  const path = req.path.toLowerCase().replace(/\/$/, '')
   const large = LARGE_BODIES.find(
-    entry => entry.method === req.method && entry.path.test(req.path)
+    entry => entry.method === req.method && entry.path.test(path)
   )
   const parser = large?.parser ?? smallBody
   parser(req, res, next)
