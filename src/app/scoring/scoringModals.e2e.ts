@@ -205,7 +205,7 @@ async function main(): Promise<void> {
   }
   let browserOpened = false
   const open = async (missing = false): Promise<void> => {
-    if (native && browserOpened) {
+    if (native) {
       await m.stopApp()
       await m.launchApp()
     }
@@ -218,7 +218,28 @@ async function main(): Promise<void> {
       await m.eraseText()
       await m.inputText({ text: link })
       await m.pressKey('Enter')
-    } else await m.openLink({ link, browser: !native })
+    } else if (native) {
+      const readyUntil = Date.now() + 45000
+      while (Date.now() < readyUntil) {
+        const nodes = flat(await m.hierarchy())
+        if (
+          nodes.some(
+            node =>
+              node.text === 'Open scoring menu' ||
+              node.text?.startsWith('Account,') === true ||
+              node.text === 'Sign in to TeamStation'
+          )
+        )
+          break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      const endpoint = await driver()
+      const result = await m.eval(
+        `http.post(${JSON.stringify(endpoint + '/url')},{body:${JSON.stringify({ url: link, bundleId: 'app.teamstation.app', idleTimeoutMs: 1500 })}})`
+      )
+      assert.equal(result.status, 200)
+      assert(JSON.parse(result.body).value?.error == null)
+    } else await m.openLink({ link, browser: true })
     browserOpened = true
     const deadline = Date.now() + 20000
     while (fixture.loaded() !== gameId && Date.now() < deadline)
