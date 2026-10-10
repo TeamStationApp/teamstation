@@ -107,10 +107,9 @@ async function main(): Promise<void> {
           )
           .at(-1) ?? matches.at(-1)
       assert(target?.bounds != null, `Native target ${text} must exist`)
-      await point(
-        target.bounds.x + target.bounds.width / 2,
-        target.bounds.y + target.bounds.height / 2
-      )
+      await m.tapOn({
+        point: `${Math.round(target.bounds.x + target.bounds.width / 2)},${Math.round(target.bounds.y + target.bounds.height / 2)}`
+      })
       await new Promise(resolve => setTimeout(resolve, 500))
       return
     }
@@ -355,6 +354,7 @@ async function main(): Promise<void> {
     await menu('Set Team Rosters')
     await shown('Gerrit Cole')
     await tap('Cancel')
+    await shown('Undo ')
     const restoredUndo = flat(await m.hierarchy()).find(
       node => node.text?.startsWith('Undo ') === true
     )?.text
