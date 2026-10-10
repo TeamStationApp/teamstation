@@ -1703,6 +1703,11 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/auth/password': {
         post: {
           summary: 'Sign in with an e-mail address and a password',
+          description:
+            'An address of an account that has been merged into another ' +
+            'signs in to the account it was merged into (following every ' +
+            'merge after it), with that account\u2019s password; the merged ' +
+            'account\u2019s own password no longer signs anybody in.',
           requestBody: {
             required: true,
             content: {
@@ -1736,7 +1741,9 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Ask for a sign-in code by e-mail',
           description:
             'Always answers 202, whether or not the address has an account, ' +
-            'so this cannot be used to find out who is registered.',
+            'so this cannot be used to find out who is registered. The code ' +
+            'goes to the address given, also when its account has been ' +
+            'merged into another.',
           requestBody: {
             required: true,
             content: {
@@ -1760,6 +1767,10 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/auth/email-code/verify': {
         post: {
           summary: 'Exchange an e-mailed code for a session',
+          description:
+            'An address of an account that has been merged into another ' +
+            'signs in to the account it was merged into (following every ' +
+            'merge after it), and the session is that account\u2019s.',
           requestBody: {
             required: true,
             content: {
@@ -1832,6 +1843,12 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/auth/me': {
         get: {
           summary: 'Who this token belongs to',
+          description:
+            'A token is refused with 401, as an expired one is, once its ' +
+            'account has been merged into another: a merge signs the merged ' +
+            'account out of every session, machine token and OAuth grant. ' +
+            'Signing in again with either account\u2019s address reaches the ' +
+            'account that was kept.',
           security: [{ bearer: [] }],
           responses: {
             200: {
