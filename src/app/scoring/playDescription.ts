@@ -5,7 +5,7 @@ import {
   type ScoringAction,
   shortName
 } from '../../common/scoring/actions'
-import { trajectoryOf } from '../../common/scoring/rules'
+import { overrideOf, trajectoryOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import {
   type GameState,
@@ -406,15 +406,22 @@ export function describePlay(
                   ? 'Batting order changed'
                   : 'Roster changed'
     } else if (flow?.type === 'gameFlow') {
+      const { outs: previousOuts, ...previousSetup } = overrideOf(before)
+      const { outs, ...setup } = overrideOf(after)
+      const onlyOutsChanged =
+        previousOuts !== outs &&
+        JSON.stringify(previousSetup) === JSON.stringify(setup)
       primary =
         flow.kind === 'endHalf'
           ? 'End of the half'
           : flow.kind === 'endGame'
             ? 'Game over'
             : flow.kind === 'override'
-              ? 'Game corrected'
+              ? onlyOutsChanged
+                ? `Set outs to ${outs}`
+                : 'Game corrected'
               : flow.kind === 'placeRunner'
-                ? 'Runner placed'
+                ? `${flow.runner == null ? 'Runner' : words.name(flow.runner)} placed${flow.base == null ? '' : ` on ${flow.base}`}`
                 : 'Play closed'
     } else if (error?.type === 'fieldingPlay' && error.error != null)
       primary = `Error charged to ${words.fielder(error.error)}`
