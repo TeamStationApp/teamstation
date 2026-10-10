@@ -18,6 +18,11 @@ export const scoringSurface = {
   danger: '#f87171',
   dangerFill: '#991b1b',
   switchThumb: '#e2e8f0',
+  baseTarget: {
+    background: 'rgba(255, 255, 255, 0.2)',
+    border: '#ffffff',
+    text: '#000000'
+  },
   badges: {
     green: { text: '#6ee7b7', background: '#10b98133', border: '#10b9814d' },
     amber: { text: '#fcd34d', background: '#f59e0b33', border: '#f59e0b4d' },

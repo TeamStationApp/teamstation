@@ -10,7 +10,7 @@ import {
 } from '../../common/api'
 import { tagTargets } from '../../common/eventTags'
 import type { ScoringAction } from '../../common/scoring/actions'
-import { freshGame } from '../../common/scoring/rules'
+import { baseIds, freshGame } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { F } from '../../test/scoringGames'
@@ -187,6 +187,172 @@ async function mount(
 }
 
 describe('scoring screen field wiring', function () {
+  it('places runners through projected bases, preserves outs setup and unwinds each change with normal Undo', async () => {
+    const initial = createDevelopmentSession(gameFixture, [], [])
+    const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+      requireCurrentSetup: true
+    })
+    await mount({ open: async () => live })
+    const press = async (label: string): Promise<void> => {
+      const control = document.querySelector<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(control, label).not.equals(null)
+      await step(() => {
+        control!.click()
+      })
+    }
+    await press('More')
+    await press('Place a Runner (Tiebreaker)')
+    expect(document.body.textContent).includes('Place runner on base')
+    expect(props().canPitch).equals(false)
+    expect(
+      document.querySelector('[aria-label="Set Outs 0"][aria-selected="true"]')
+    ).not.equals(null)
+    await press('Place runner on base')
+    expect(players().some(player => player.team === 'defense')).equals(false)
+    expect(field().interaction?.gestures).deep.equals([])
+    expect(field().interaction?.selectableIds).deep.equals([])
+    expect(field().tapIds).deep.equals([])
+    await step(() => {
+      props().onPitch('ball')
+    })
+    await step(() => {
+      props().onMenu()
+    })
+    expect(live.actions).has.length(0)
+    await step(() =>
+      field().onBaseProjection?.({
+        width: 390,
+        height: 844,
+        bases: [
+          { x: 195, y: 580 },
+          { x: 280, y: 450 },
+          { x: 195, y: 360 },
+          { x: 110, y: 450 }
+        ]
+      })
+    )
+    expect(
+      document.querySelectorAll('[aria-label^="Place runner on "]')
+    ).has.length(3)
+    expect(document.querySelector('[aria-label="Place runner on 4B"]')).equals(
+      null
+    )
+    await press('Place runner on 2B')
+    expect(document.body.textContent).includes('Select Runner for 2B')
+    expect(document.body.textContent).includes('Recently Batted Players')
+    expect(
+      [...document.querySelectorAll('[aria-label^="Select runner "]')].map(
+        node => node.getAttribute('aria-label')
+      )
+    ).deep.equals(
+      Array.from(
+        { length: 8 },
+        (_, i) => `Select runner #${9 - i} Player ${9 - i}`
+      )
+    )
+    await press('Select runner #9 Player 9')
+    expect(baseIds(live.state)).deep.equals([null, 9, null])
+    expect(document.body.textContent).includes('Place runner on base')
+    await press('Set Outs 1')
+    await press('Set Outs 2')
+    expect(live.state.liveData.linescore.outs).equals(2)
+    expect(baseIds(live.state)).deep.equals([null, 9, null])
+    expect(live.state.liveData.boxscore).deep.equals(initial.liveData.boxscore)
+    await press('Place runner on base')
+    expect(
+      document.querySelector(
+        '[aria-label="Place runner on 2B"][aria-disabled="true"]'
+      )
+    ).not.equals(null)
+    await press('Place runner on 1B')
+    expect(
+      document.querySelector('[aria-label="Select runner #9 Player 9"]')
+    ).equals(null)
+    await press('Select runner #8 Player 8')
+    await press('Cancel')
+    expect(props().canPitch).equals(true)
+    expect(players().some(player => player.team === 'defense')).equals(true)
+    for (const [outs, bases] of [
+      [2, [null, 9, null]],
+      [1, [null, 9, null]],
+      [0, [null, 9, null]],
+      [0, [null, null, null]]
+    ] as const) {
+      await step(() => {
+        props().onUndo()
+      })
+      expect(live.state.liveData.linescore.outs).equals(outs)
+      expect(baseIds(live.state)).deep.equals(bases)
+    }
+    await step(() => {
+      props().onPitch('ball')
+    })
+    await press('More')
+    expect(
+      document.querySelector(
+        '[aria-label="Place a Runner (Tiebreaker)"]:disabled'
+      )
+    ).not.equals(null)
+    await press('Dismiss More')
+    await step(() => {
+      props().onUndo()
+    })
+    await press('More')
+    expect(
+      document.querySelector(
+        '[aria-label="Place a Runner (Tiebreaker)"]:disabled'
+      )
+    ).equals(null)
+    await press('Dismiss More')
+  })
+
+  it('cancels runner selection back to bases, restores the field on cancellation and dismisses on account/game changes', async () => {
+    await mount()
+    const press = async (label: string): Promise<void> => {
+      await step(() => {
+        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+      })
+    }
+    await press('More')
+    await press('Place a Runner (Tiebreaker)')
+    await press('Place runner on base')
+    await step(() =>
+      field().onBaseProjection?.({
+        width: 390,
+        height: 844,
+        bases: Array.from({ length: 4 }, () => ({ x: 195, y: 420 }))
+      })
+    )
+    await press('Place runner on 3B')
+    await press('Cancel')
+    expect(
+      document.querySelector('[aria-label="Place runner on 3B"]')
+    ).not.equals(null)
+    await press('Cancel runner placement')
+    expect(props().canPitch).equals(true)
+    expect(players().some(player => player.team === 'defense')).equals(true)
+    await press('More')
+    await press('Place a Runner (Tiebreaker)')
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => gameFixture
+    client.roster = async () => []
+    await step(() => {
+      root!.render(
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g2"
+            userId={22}
+            onExit={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    expect(document.querySelector('[aria-label="Set Outs 0"]')).equals(null)
+    expect(props().canPitch).equals(true)
+  })
   for (const route of ['menu', 'lineup'] as const)
     for (const jersey of ['99', null])
       it(`keeps saved player details when saving ${route} with current jersey ${String(jersey)}`, async function () {
