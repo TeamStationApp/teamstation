@@ -23,9 +23,10 @@ describe('scoring modals', function () {
   it('run in portrait only, as the phone app does', function () {
     expect(MODAL_ORIENTATIONS).deep.equals(['portrait'])
     const tags = modalTags()
-    // The sheets, the More and Ball in Play drop menus, and a dictation
-    // question.
+    // The sheets, the More and Ball in Play drop menus, a dictation
+    // question, and the Apple Music settings walkthrough.
     expect(tags.map(tag => tag.file).sort()).deep.equals([
+      'AppleMusicSetup.tsx',
       'DropMenuView.tsx',
       'ScoringHistory.tsx',
       'ScoringSheet.tsx',

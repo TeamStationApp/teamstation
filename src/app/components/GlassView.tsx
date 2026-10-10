@@ -2,6 +2,7 @@ import React from 'react'
 import { View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { canBlur, glassStyle } from './glass'
 import type { GlassViewProps } from './glassViewProps'
 
@@ -21,9 +22,11 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     style,
     opaque = false,
     fallbackFill = true,
+    dark = false,
     ...rest
   } = props
-  const theme = useTheme()
+  const appTheme = useTheme()
+  const theme = dark ? tsDark : appTheme
   // A surface that is already on glass and cannot have real glass draws
   // nothing, rather than a flat tint over the blur beneath it. Where this
   // browser *can* blur there is no fallback to skip, so nothing changes.

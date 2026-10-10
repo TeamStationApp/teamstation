@@ -61,4 +61,11 @@ export interface GlassViewProps extends ViewProps {
    * backdrop every frame something beneath it changes.
    */
   androidBlur?: boolean
+  /**
+   * Draw the dark theme's glass whatever the app's theme.
+   *
+   * For a screen that is always dark — the Apple Music settings walkthrough
+   * — on an app whose theme is light.
+   */
+  dark?: boolean
 }

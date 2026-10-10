@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import { TeamStationClient } from '../../common/api'
@@ -13,6 +14,10 @@ import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
+import {
+  NO_READINESS_FLAGS,
+  type ReadinessFlags
+} from '../walkup/walkUpReadiness'
 import { AccountScreen } from './AccountScreen'
 
 let root: Root | undefined
@@ -264,6 +269,51 @@ describe('Account settings screen', () => {
     await press('Save profile picture')
     expect(f.calls).includes('/me/account/photo')
     expect(button('Add photo')).not.equals(undefined)
+  })
+  it('opens the Apple Music settings walkthrough from Walk-up songs, on an iPhone only', async () => {
+    const web = Platform.OS
+    const written: ReadinessFlags[] = []
+    const readiness = {
+      read: async () => ({ ...NO_READINESS_FLAGS, promptShown: true }),
+      write: async (value: ReadinessFlags) => {
+        written.push(value)
+      }
+    }
+    try {
+      Platform.OS = 'ios'
+      const f = fixture()
+      await render(
+        <AccountScreen
+          {...f}
+          onSignOut={() => undefined}
+          readiness={readiness}
+        />
+      )
+      const row = button('Apple Music settings')
+      const fade = document.querySelector(
+        '[aria-label="Fade Apple Music using the phone’s volume"]'
+      )
+      expect(row).not.equals(undefined)
+      expect(fade).not.equals(null)
+      expect(
+        row!.compareDocumentPosition(fade!) &
+          window.Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+      expect(text()).not.includes('TeamStation DJ, enable the following')
+      await press('Apple Music settings')
+      expect(text()).includes('TeamStation DJ, enable the following')
+      await press('Close')
+      expect(written).deep.equals([{ onboarded: true, promptShown: true }])
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      Platform.OS = 'android'
+      await render(<AccountScreen {...fixture()} onSignOut={() => undefined} />)
+      expect(button('Apple Music settings')).equals(undefined)
+    } finally {
+      Platform.OS = web
+    }
   })
   it('loads, retries, saves identity and handles photo selection, errors and sign-out', async () => {
     const f = fixture()

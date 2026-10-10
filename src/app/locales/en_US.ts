@@ -253,6 +253,20 @@ export const enUs = {
   walkup_start: 'Start',
   walkup_end: 'End',
   walkup_jog: 'Fine adjust: drag to move the clip slowly',
+  walkup_setup_intro:
+    'For the best and most reliable experience with TeamStation DJ, enable the following settings in your Apple Music app.',
+  walkup_setup_add_playlist: 'Add Playlist Songs',
+  walkup_setup_sync: 'Sync Library',
+  walkup_setup_cellular: 'Download over Cellular',
+  walkup_setup_auto: 'Automatic Downloads',
+  walkup_setup_path: 'Settings › Apps › Music',
+  walkup_setup_note:
+    'Songs that were already in your library don’t download by themselves. Open the TeamStation walkup songs playlist in Music and tap Download.',
+  walkup_setup_next: 'Next',
+  walkup_setup_back: 'Back',
+  walkup_setup_done: 'Done',
+  walkup_setup_settings: 'Go to Settings',
+  walkup_setup_close: 'Close',
   walkup_length: '%s s',
   walkup_earlier: '1 s earlier',
   walkup_later: '1 s later',
@@ -280,6 +294,7 @@ export const enUs = {
   walkup_note_stop: 'Stop %s’s walk-up song',
   walkup_note_not_here: 'Walk-up song for %s, not on this phone',
   account_walkup: 'Walk-up songs',
+  account_walkup_apple_music: 'Apple Music settings',
   account_walkup_fade: 'Fade Apple Music using the phone’s volume',
   account_walkup_fade_detail:
     'Some Bluetooth speakers beep when the volume changes. Turn this off for hard starts and stops.',
