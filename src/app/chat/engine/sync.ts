@@ -119,13 +119,14 @@ export async function openPending(
  */
 export async function syncMessages(
   ctx: EngineContext,
-  conversationId: string
+  conversationId: string,
+  through?: number
 ): Promise<number> {
   const state = await stateOf(ctx, conversationId)
   let arrived = 0
   if (!state.synced) {
     const page = await ctx.client.chatMessages(conversationId, {
-      before: Math.max(state.summary.lastSeq, state.newestSeq) + 1,
+      before: (through ?? Math.max(state.summary.lastSeq, state.newestSeq)) + 1,
       limit: ctx.pageSize
     })
     keep(state, page)
@@ -138,6 +139,7 @@ export async function syncMessages(
   for (;;) {
     const page = await ctx.client.chatMessages(conversationId, {
       after: state.newestSeq,
+      before: through == null ? undefined : through + 1,
       limit: ctx.pageSize
     })
     keep(state, page)
@@ -146,7 +148,11 @@ export async function syncMessages(
       state.newestSeq = page[page.length - 1].seq
       state.oldestSeq ??= page[0].seq
     }
-    if (page.length < ctx.pageSize) break
+    if (
+      page.length < ctx.pageSize ||
+      (through != null && state.newestSeq >= through)
+    )
+      break
   }
   await openPending(ctx, state)
   return arrived

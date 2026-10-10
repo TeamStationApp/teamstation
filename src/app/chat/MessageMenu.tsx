@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { Button } from '../components'
@@ -7,6 +7,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ChatActionOverlay } from './ChatActionOverlay'
 import { ChatAnchoredMenu } from './ChatAnchoredMenu'
 import { type MessageAction, QUICK_REACTIONS } from './chatModel'
+import { focusPopupControl } from './chatWebInteractions'
 import type { MessageView } from './engine/apply'
 
 export interface MessageMenuProps {
@@ -63,23 +64,13 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
     </View>
   )
   const children = confirming ? (
-    <>
-      <Text style={styles.detail}>{lstrings.chat_delete_confirm}</Text>
-      <Button
-        label={lstrings.chat_delete}
-        kind="text"
-        textColor={theme.dangerColor}
-        onPress={() => {
-          if (has('delete')) props.onDelete()
-          else props.onDeleteForEveryone?.()
-        }}
-      />
-      <Button
-        label={lstrings.chat_cancel}
-        kind="text"
-        onPress={props.onClose}
-      />
-    </>
+    <DeleteConfirmation
+      onClose={props.onClose}
+      onDelete={() => {
+        if (has('delete')) props.onDelete()
+        else props.onDeleteForEveryone?.()
+      }}
+    />
   ) : (
     <>
       {props.desktop !== true && has('reply') && (
@@ -171,6 +162,36 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
     >
       {children}
     </ChatActionOverlay>
+  )
+}
+/** The confirmation mounts inside the portal, after its controls exist. */
+function DeleteConfirmation(props: {
+  onClose: () => void
+  onDelete: () => void
+}): React.ReactElement {
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const cancel = useRef<React.ComponentRef<typeof View>>(null)
+  useEffect(() => {
+    focusPopupControl(cancel.current)
+  }, [])
+  return (
+    <>
+      <Text style={styles.detail}>{lstrings.chat_delete_confirm}</Text>
+      <Button
+        label={lstrings.chat_delete}
+        kind="text"
+        textColor={theme.dangerColor}
+        onPress={props.onDelete}
+      />
+      <View ref={cancel}>
+        <Button
+          label={lstrings.chat_cancel}
+          kind="text"
+          onPress={props.onClose}
+        />
+      </View>
+    </>
   )
 }
 const getStyles = cacheStyles((theme: Theme) => ({

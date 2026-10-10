@@ -333,33 +333,7 @@ export class ChatEngine {
    */
   async refresh(): Promise<ConversationListItem[]> {
     await this.serial('list', async () => {
-      const unreadBefore = new Map(
-        [...this.memory.conversations].map(([id, state]) => [
-          id,
-          state.summary.unread
-        ])
-      )
       await syncList({ client: this.options.client, memory: this.memory })
-      for (const [id, state] of this.memory.conversations) {
-        const pending = this.pendingAlerts.get(id)
-        const seq = state.summary.lastPostSeq
-        if (pending == null) continue
-        if (
-          seq != null &&
-          pending.has(seq) &&
-          seq > (this.alertedSeq.get(id) ?? 0) &&
-          state.summary.unread > (unreadBefore.get(id) ?? state.summary.unread)
-        ) {
-          this.alertedSeq.set(id, seq)
-          if (!state.summary.preferences?.muted)
-            this.memory.emit({ type: 'messageAlert', conversationId: id })
-        }
-        // The authoritative list classifies the latest post independently of
-        // later edit/reaction hints, including rows that were never opened.
-        for (const hinted of pending)
-          if (hinted <= state.summary.lastSeq) pending.delete(hinted)
-        if (pending.size === 0) this.pendingAlerts.delete(id)
-      }
       for (const state of this.memory.conversations.values()) {
         if (
           state.summary.kind === 'dm' &&
@@ -379,6 +353,46 @@ export class ChatEngine {
     ]) {
       for (const id of cache.keys())
         if (!this.memory.conversations.has(id)) cache.delete(id)
+    }
+    for (const id of [...this.pendingAlerts.keys()]) {
+      await this.serial(id, async () => {
+        const state = this.memory.state(id)
+        if (state == null || this.stopped) return
+        try {
+          this.announcePost(id)
+          const pending = this.pendingAlerts.get(id)
+          if (pending == null) return
+          let after = Math.min(...pending) - 1
+          const through = Math.max(...pending)
+          const limit = this.options.pageSize ?? 100
+          while (after < through) {
+            const page = await this.options.client.chatMessages(id, {
+              after,
+              before: through + 1,
+              limit
+            })
+            if (this.stopped || this.memory.state(id) !== state) return
+            this.announcePost(id, page)
+            const next = page.at(-1)?.seq
+            if (next == null || next <= after || page.length < limit) break
+            after = next
+          }
+        } catch (error) {
+          if (this.memory.state(id) !== state || this.stopped) return
+          if (isGone(error)) {
+            this.memory.conversations.delete(id)
+            this.personalPins.delete(id)
+            this.previewVersions.delete(id)
+            this.pendingAlerts.delete(id)
+            this.alertedSeq.delete(id)
+            this.active.delete(id)
+          } else {
+            // List metadata succeeded. Retain unknown hints for a later read;
+            // this optional classification failure must not hide that list.
+            this.memory.emit({ type: 'error', error })
+          }
+        }
+      })
     }
     for (const id of this.active) {
       if (this.memory.conversations.has(id)) {
@@ -491,28 +505,42 @@ export class ChatEngine {
         this.previewWaiting.push(resolve)
       })
     else this.previewActive += 1
+    let syncedVersion = version
     try {
       if (this.stopped || this.memory.state(conversationId) !== state) return
       await this.serial(conversationId, async () => {
         if (this.memory.state(conversationId) !== state) return
-        await syncMembers(this.ctx, conversationId)
-        await syncLog(this.ctx, conversationId)
-        await syncEpochs(this.ctx, conversationId)
-        await syncMessages(this.ctx, conversationId)
-        while (
-          state.summary.lastPostId != null &&
-          ![...state.envelopes.values()].some(
-            message => message.id === state.summary.lastPostId
-          ) &&
-          state.hasEarlier
-        ) {
-          await loadEarlier(this.ctx, conversationId)
+        // One catch-up pass handles a concurrent snapshot without waiting for
+        // an indefinitely busy chat to become quiet. A newer revision remains
+        // uncached and can be requested by the next visible-row refresh.
+        for (let pass = 0; pass < 2; pass += 1) {
+          if (this.stopped || this.memory.state(conversationId) !== state)
+            return
+          await syncMembers(this.ctx, conversationId)
+          await syncLog(this.ctx, conversationId)
+          await syncEpochs(this.ctx, conversationId)
+          const through = state.summary.lastSeq
+          const lastPostId = state.summary.lastPostId
+          syncedVersion = previewVersion()
+          await syncMessages(this.ctx, conversationId, through)
+          if (lastPostId != null)
+            while (
+              !this.stopped &&
+              this.memory.state(conversationId) === state &&
+              ![...state.envelopes.values()].some(
+                message => message.id === lastPostId
+              ) &&
+              state.hasEarlier
+            ) {
+              await loadEarlier(this.ctx, conversationId)
+            }
+          if (syncedVersion === previewVersion()) break
         }
       })
-      if (this.memory.state(conversationId) !== state) return
+      if (this.stopped || this.memory.state(conversationId) !== state) return
       this.previewVersions.set(conversationId, {
         state,
-        version: previewVersion()
+        version: syncedVersion
       })
       this.announcePost(conversationId)
       this.memory.emit({ type: 'conversations' })
@@ -1051,13 +1079,20 @@ export class ChatEngine {
 
   // --- Hints ------------------------------------------------------------
 
-  private announcePost(conversationId: string): void {
+  private announcePost(
+    conversationId: string,
+    received?: Iterable<ChatMessage>
+  ): void {
     const pending = this.pendingAlerts.get(conversationId)
     const state = this.memory.state(conversationId)
     if (pending == null || state == null) return
+    const known =
+      received == null
+        ? state.envelopes
+        : new Map([...received].map(envelope => [envelope.seq, envelope]))
     let announce = false
     for (const seq of [...pending].sort((a, b) => a - b)) {
-      const envelope = state.envelopes.get(seq)
+      const envelope = known.get(seq)
       if (envelope == null) continue
       pending.delete(seq)
       if (

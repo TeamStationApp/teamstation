@@ -1038,7 +1038,7 @@ describe('chat repeated offscreen announcements', function () {
     expect(state.selectedId).equals('cnv_aurora')
     expect(listPane.style.display).equals('flex')
     expect(messagePane.style.display).equals('none')
-    const region = listPane.querySelector<HTMLElement>('[aria-live="polite"]')!
+    const region = container.querySelector<HTMLElement>('[aria-live="polite"]')!
     const mutations: MutationRecord[] = []
     const observer = new MutationObserver(records => mutations.push(...records))
     observer.observe(region, {
@@ -1082,7 +1082,7 @@ describe('chat repeated offscreen announcements', function () {
       <ChatListScreen
         engine={engine}
         selectedId="cnv_aurora"
-        embedded
+        embedded={false}
         narrow
         onOpen={() => {}}
         onNewMessage={() => {}}

@@ -13,7 +13,7 @@ import { Badge, Button, Icon, Screen } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { announceChatArrival } from './chatAnnouncements'
+import { ChatArrivalHost } from './ChatArrivalHost'
 import { pressPoint, pressStamp } from './chatInteractionModel'
 import {
   canStartDm,
@@ -58,11 +58,32 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const [chats, setChats] = useState<ConversationListItem[]>()
   const [failed, setFailed] = useState(false)
   const [menu, setMenu] = useState<ConversationListItem>()
-  const [announcement, setAnnouncement] = useState({ text: '', revision: 0 })
   const list = useRef<FlatList<Row>>(null)
   const visible = useRef<string[]>([])
   const gestureGeneration = useRef(0)
   const restored = useRef(false)
+  const scrollOwner = useRef({
+    live: true,
+    visible: true,
+    onOffset: props.onOffset
+  })
+  scrollOwner.current.visible =
+    props.embedded !== true || !narrow || props.selectedVisible !== true
+  scrollOwner.current.onOffset = props.onOffset
+  useEffect(() => {
+    const owner = scrollOwner.current
+    owner.live = true
+    return () => {
+      owner.live = false
+    }
+  }, [])
+  const rememberOffset = (event: {
+    nativeEvent: { contentOffset: { y: number } }
+  }): void => {
+    const owner = scrollOwner.current
+    if (owner.live && owner.visible && restored.current)
+      owner.onOffset?.(Math.max(0, event.nativeEvent.contentOffset.y))
+  }
   // Metadata/preview refreshes produce new arrays without replacing the rows.
   const dataKey =
     chats == null
@@ -127,26 +148,6 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     const unsubscribe = engine.subscribe(event => {
       if (!live) return
       if (event.type === 'conversations') setChats(engine.conversations())
-      if (
-        event.type === 'messageAlert' &&
-        (props.selectedVisible === false ||
-          event.conversationId !== props.selectedId)
-      ) {
-        const conversation = engine
-          .conversations()
-          .find(chat => chat.id === event.conversationId)
-        if (conversation != null) {
-          const text = sprintf(
-            lstrings.chat_new_message_announcement,
-            conversationTitle(conversation)
-          )
-          announceChatArrival(text)
-          setAnnouncement(previous => ({
-            revision: previous.revision + 1,
-            text
-          }))
-        }
-      }
     })
     engine
       .refresh()
@@ -183,11 +184,16 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const now = props.now?.() ?? new Date()
   const content = (
     <View style={styles.fill}>
-      <Text accessibilityLiveRegion="polite" style={styles.announcement}>
-        <Text key={announcement.revision}>{announcement.text}</Text>
-      </Text>
+      {props.embedded !== true && (
+        <ChatArrivalHost
+          engine={engine}
+          selectedId={props.selectedId}
+          selectedVisible={props.selectedVisible}
+        />
+      )}
       <FlatList
         ref={list}
+        testID="chat-conversation-list"
         data={rows}
         keyExtractor={row => row.key}
         viewabilityConfig={viewability}
@@ -201,10 +207,9 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           listGeometry.current.data = dataKey
           restoreList()
         }}
-        onScroll={event => {
-          if (restored.current)
-            props.onOffset?.(event.nativeEvent.contentOffset.y)
-        }}
+        onScroll={rememberOffset}
+        onScrollEndDrag={rememberOffset}
+        onMomentumScrollEnd={rememberOffset}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
           restored.current = true
