@@ -11,6 +11,7 @@ import { defensiveRosterLabel, defensiveRosterName } from './currentSetup'
 import type { PlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { byJersey } from './rosterOrder'
+import { scoringPlayerCardStyle } from './ScoringPlayerCard'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 import {
@@ -135,19 +136,8 @@ export function DefensiveRosterSheet({
                         onChoose(id)
                       }}
                       style={({ pressed }) => ({
+                        ...scoringPlayerCardStyle(theme, pressed),
                         width: '48%',
-                        minHeight: 48,
-                        paddingHorizontal: 8,
-                        paddingVertical: 10,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 6,
-                        borderRadius: 12,
-                        borderWidth: 1,
-                        borderColor: surface.divider,
-                        backgroundColor: pressed
-                          ? surface.active
-                          : surface.idle,
                         opacity: busy ? 0.4 : 1
                       })}
                     >

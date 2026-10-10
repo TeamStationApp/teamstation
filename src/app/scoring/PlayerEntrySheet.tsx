@@ -5,12 +5,11 @@ import { Button } from '../components/Button'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
   emptyPlayerDraft,
-  PLAYER_POSITIONS,
   type PlayerDraft,
   playerDraftError
 } from './playerDraft'
+import { PlayerPositionField } from './PlayerPositionField'
 import { RosterSelector } from './RosterSelector'
-import { ScoringPill } from './ScoringPill'
 import { ScoringError, ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 import { ScoringTextInput } from './ScoringTextInput'
@@ -169,35 +168,17 @@ export function PlayerEntrySheet({
             <Text style={{ ...text, fontFamily: theme.semiBoldTextFont }}>
               Select Player Positions
             </Text>
-            <View
-              style={{
-                flexDirection: 'row',
-                flexWrap: 'wrap',
-                gap: 6
+            <PlayerPositionField
+              positions={draft.positions}
+              onToggle={position => {
+                setDraft(previous => ({
+                  ...previous,
+                  positions: previous.positions.includes(position)
+                    ? previous.positions.filter(value => value !== position)
+                    : [...previous.positions, position]
+                }))
               }}
-            >
-              {PLAYER_POSITIONS.map(position => {
-                const selected = draft.positions.includes(position)
-                return (
-                  <ScoringPill
-                    key={position}
-                    label={position}
-                    accessibilityLabel={`Player position ${position}`}
-                    selected={selected}
-                    onPress={() => {
-                      setDraft(previous => ({
-                        ...previous,
-                        positions: selected
-                          ? previous.positions.filter(
-                              value => value !== position
-                            )
-                          : [...previous.positions, position]
-                      }))
-                    }}
-                  />
-                )
-              })}
-            </View>
+            />
           </View>
         </View>
         <ScoringError

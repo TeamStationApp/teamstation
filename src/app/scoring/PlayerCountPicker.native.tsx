@@ -17,6 +17,22 @@ export function PlayerCountPicker(
   if (Platform.OS !== 'ios') return <PlayerCountWheel {...props} />
   return (
     <View style={{ alignSelf: 'center', width: 180 }}>
+      <View
+        testID="Placeholder count selection"
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: '50%',
+          marginTop: -20,
+          height: 40,
+          left: 0,
+          right: 0,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: theme.scoringSurface.badges.green.border,
+          backgroundColor: theme.scoringSelectorIdle
+        }}
+      />
       <Picker
         accessibilityLabel="Number of placeholder players"
         selectedValue={props.value}

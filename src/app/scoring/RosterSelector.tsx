@@ -159,6 +159,19 @@ export function RosterSelector({
           }
         ]}
       />
+      {theme.scoringSheet === true && (
+        <View
+          testID="Scoring selector outline"
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: theme.radiusPill,
+            borderWidth: 1,
+            borderColor: theme.scoringSurface.badges.green.border
+          }}
+        />
+      )}
       {labels.map((label, index) => (
         // Labels can be team names, which repeat or are empty: key by place.
         <Pressable
@@ -177,7 +190,7 @@ export function RosterSelector({
           style={{
             width: fitContent ? undefined : `${100 / count}%`,
             minWidth: fitContent ? labelWidth + 24 : undefined,
-            paddingHorizontal: fitContent ? 12 : 8,
+            paddingHorizontal: 12,
             minHeight: fitContent ? 36 : compact ? 40 : 48,
             alignSelf: fitContent ? 'center' : undefined,
             justifyContent: 'center',

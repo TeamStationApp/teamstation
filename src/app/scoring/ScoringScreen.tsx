@@ -1790,7 +1790,7 @@ function ScoringPanel(props: {
       {sheet != null && (
         <ScoringSheet
           headerless={sheet === 'rosters'}
-          textCancel={sheet === 'rosters'}
+          textCancel
           fullScreen={sheet === 'rosters'}
           tall={sheet === 'settings'}
           done={sheet === 'settings'}

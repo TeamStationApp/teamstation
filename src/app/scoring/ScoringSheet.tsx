@@ -87,6 +87,7 @@ export function ScoringButton({
         elevation: row ? 0 : pressed ? 1 : 3,
         minHeight: decision ? 66 : 44,
         padding: 10,
+        paddingHorizontal: pill && shape !== 'circle' && !row ? 22 : 10,
         justifyContent: 'center',
         borderRadius: pill
           ? theme.radiusPill
@@ -172,7 +173,7 @@ function SheetContent({
   placement = 'bottom',
   title,
   headerless = false,
-  textCancel = false,
+  textCancel = true,
   fullScreen = false,
   tall = false,
   height,
@@ -187,7 +188,7 @@ function SheetContent({
   children
 }: {
   compact?: boolean
-  placement?: 'top' | 'bottom'
+  placement?: 'top' | 'bottom' | 'center'
   title: string
   /** A compact full-screen editor supplies its own bottom close action. */
   headerless?: boolean
@@ -282,13 +283,18 @@ function SheetContent({
         >
           <SheetArea
             edges={
-              fullScreen || tall || placement === 'top'
+              fullScreen || tall || placement !== 'bottom'
                 ? ['top', 'bottom', 'left', 'right']
                 : ['bottom', 'left', 'right']
             }
             style={{
               flex: 1,
-              justifyContent: placement === 'top' ? 'flex-start' : 'flex-end',
+              justifyContent:
+                placement === 'center'
+                  ? 'center'
+                  : placement === 'top'
+                    ? 'flex-start'
+                    : 'flex-end',
               backgroundColor: fullScreen ? theme.backgroundColor : undefined
             }}
           >
@@ -313,11 +319,13 @@ function SheetContent({
                 maxHeight: fullScreen || tall ? undefined : '92%',
                 flex: fullScreen || tall ? 1 : undefined,
                 height,
+                marginHorizontal: placement === 'center' ? 12 : undefined,
+                marginVertical: placement === 'center' ? 24 : undefined,
                 marginTop: tall ? 8 : undefined,
                 backgroundColor: scoring
                   ? theme.scoringSurface.background
                   : theme.backgroundColor,
-                borderWidth: scoring ? 1 : undefined,
+                borderWidth: scoring && !fullScreen ? 1 : 0,
                 borderColor: scoring ? theme.scoringSurface.border : undefined,
                 borderTopLeftRadius: fullScreen
                   ? 0
@@ -325,6 +333,10 @@ function SheetContent({
                 borderTopRightRadius: fullScreen
                   ? 0
                   : theme.rem(theme.radiusLargeRem),
+                borderBottomLeftRadius:
+                  placement === 'center' ? theme.rem(theme.radiusLargeRem) : 0,
+                borderBottomRightRadius:
+                  placement === 'center' ? theme.rem(theme.radiusLargeRem) : 0,
                 padding: compact ? 12 : 16,
                 paddingBottom: headerless ? 0 : 16,
                 gap: compact ? 8 : 12
