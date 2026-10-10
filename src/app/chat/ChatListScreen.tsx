@@ -139,6 +139,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const measureRows = useRef<(id: string) => void>(() => {})
   const measuring = useRef(false)
   const dirty = useRef(false)
+  const seeking = useRef<
+    { data: string | undefined; index: number; version: number } | undefined
+  >(undefined)
+  const validatingGeometry = useRef(false)
+  const geometryDirty = useRef(false)
+  const geometryValidation = useRef<() => void>(() => {})
   const liveData = (): boolean =>
     scrollOwner.current.live &&
     scrollOwner.current.visible &&
@@ -252,6 +258,86 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     if (final) restored.current = false
     list.current?.scrollToOffset({ offset, animated: false })
   }
+  const seekAnchor = (index: number): void => {
+    const previous = seeking.current
+    if (
+      previous != null &&
+      previous.data === dataKey &&
+      previous.index === index &&
+      previous.version === layoutVersion.current
+    )
+      return
+    restored.current = false
+    requestedFinal.current = false
+    seeking.current = { data: dataKey, index, version: layoutVersion.current }
+    list.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 })
+  }
+  const revalidateGeometry = (): void => {
+    if (
+      !liveData() ||
+      dataKey == null ||
+      listGeometry.current.data == null ||
+      listGeometry.current.data === dataKey
+    )
+      return
+    if (validatingGeometry.current) {
+      geometryDirty.current = true
+      return
+    }
+    validatingGeometry.current = true
+    geometryDirty.current = false
+    const deadline = Date.now() + 2000
+    const generation = gestureGeneration.current
+    const validate = async (): Promise<void> => {
+      while (
+        liveData() &&
+        generation === gestureGeneration.current &&
+        listGeometry.current.data !== dataKey &&
+        Date.now() < deadline
+      ) {
+        const version = layoutVersion.current
+        const size = await new Promise<
+          { width: number; height: number } | undefined
+        >(resolve => {
+          const content = list.current?.getScrollResponder()?.getInnerViewRef()
+          if (content == null) {
+            resolve(undefined)
+            return
+          }
+          const timer = setTimeout(() => {
+            resolve(undefined)
+          }, 100)
+          content.measure((_x, _y, width, height) => {
+            clearTimeout(timer)
+            resolve(width > 0 && height > 0 ? { width, height } : undefined)
+          })
+        })
+        if (!liveData() || generation !== gestureGeneration.current) return
+        if (size != null && version === layoutVersion.current) {
+          listGeometry.current.content = size.height
+          listGeometry.current.data = dataKey
+          restoration.current()
+          for (const id of visible.current) measureRows.current(id)
+          return
+        }
+        await new Promise<void>(resolve => setTimeout(resolve, 25))
+      }
+    }
+    validate()
+      .catch(() => undefined)
+      .finally(() => {
+        validatingGeometry.current = false
+        if (
+          geometryDirty.current &&
+          scrollOwner.current.live &&
+          scrollOwner.current.visible
+        ) {
+          geometryDirty.current = false
+          geometryValidation.current()
+        }
+      })
+  }
+  geometryValidation.current = revalidateGeometry
   const restoreList = (): void => {
     if (
       !liveData() ||
@@ -262,6 +348,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     const { height, content, data } = listGeometry.current
     if (height <= 0 || content <= 0 || data !== dataKey) return
     const saved = anchor.current
+    const savedIndex =
+      saved == null ? -1 : rows.findIndex(row => row.key === saved.id)
+    if (savedIndex >= 0 && !rowRefs.current.has(saved!.id)) {
+      seekAnchor(savedIndex)
+      return
+    }
     if (
       saved != null &&
       rows.some(row => row.key === saved.id) &&
@@ -359,10 +451,10 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   }
   restoration.current = restoreList
   const userScrolled = (): void => {
+    if (!scrollOwner.current.live || !scrollOwner.current.visible) return
     restored.current = true
     anchorOwned.current = false
     anchor.current = undefined
-    scrollOwner.current.onAnchor?.(undefined)
     gestureGeneration.current += 1
   }
   const rememberOffset = (event: {
@@ -391,6 +483,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     for (const id of visible.current) measureRow(id)
   }
   useEffect(() => {
+    geometryValidation.current()
     restoration.current()
   }, [chats, dataKey, listVisible])
   useEffect(() => bindUserScroll(list.current, userScrolled), [])
@@ -460,6 +553,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           if (!liveData()) return
           layoutVersion.current += 1
           listGeometry.current.height = event.nativeEvent.layout.height
+          for (const id of visible.current) measureRows.current(id)
+          revalidateGeometry()
           restoreList()
           const last = rows.at(-1)?.key
           if (last != null) measureRow(last)
@@ -474,13 +569,33 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           const last = rows.at(-1)?.key
           if (last != null) measureRow(last)
         }}
+        onScrollToIndexFailed={info => {
+          const seek = seeking.current
+          if (
+            !liveData() ||
+            seek == null ||
+            seek.data !== dataKey ||
+            seek.index !== info.index ||
+            !anchorOwned.current
+          )
+            return
+          const available = Math.max(
+            0,
+            listGeometry.current.content - listGeometry.current.height
+          )
+          const estimated =
+            info.averageItemLength > 0
+              ? info.averageItemLength * info.index
+              : available
+          requestOffset(Math.min(available, estimated))
+        }}
         onScroll={rememberOffset}
         onScrollEndDrag={rememberOffset}
         onMomentumScrollEnd={rememberOffset}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
           // RNW also emits this for the programmatic restoration steps.
-          if (Platform.OS !== 'web') {
+          if (Platform.OS !== 'web' && liveData()) {
             userScrolled()
           }
         }}
@@ -534,6 +649,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
                 if (!liveData()) return
                 layoutVersion.current += 1
                 measureRow(item.chat.id)
+                for (const id of visible.current) measureRows.current(id)
+                revalidateGeometry()
                 const last = rows.at(-1)?.key
                 if (last != null && last !== item.chat.id) measureRow(last)
                 restoreList()
