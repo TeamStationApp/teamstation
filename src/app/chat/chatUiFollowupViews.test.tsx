@@ -485,6 +485,9 @@ describe('chat UI follow-up workspace', function () {
     expect(listMoves).contains(35)
     expect(messageMoves).contains(80)
     await act(async () => {
+      listScroll.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+      )
       listScroll.scrollTop = 120
       messageScroll.dispatchEvent(
         new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
