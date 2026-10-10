@@ -956,6 +956,218 @@ describe('scoring screen field wiring', function () {
     expect(document.body.textContent).includes('Remove tag')
   })
 
+  for (const editing of [false, true])
+    it(`updates a reopened pending tag editor while preserving ${editing ? 'new typing' : 'pristine input'}`, async () => {
+      const source = new DevelopmentScoringSource()
+      await mount(source)
+      await step(() => {
+        props().onPitch?.('ball')
+      })
+      await settle()
+      const target = tagTargets(source.store.games.get('g1')!.currentPlay!)[0]
+      let finish!: () => void
+      const save = source.saveTag.bind(source)
+      source.saveTag = async (...args) => {
+        await new Promise<void>(resolve => {
+          finish = resolve
+        })
+        return await save(...args)
+      }
+      await step(() => {
+        props().onTagSelect?.(target)
+      })
+      const old =
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+      let saving!: Promise<void>
+      await act(async () => {
+        saving = old.saveTag('great pitch')
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      await step(() => {
+        old.onClose()
+      })
+      await step(() => {
+        props().onHistoryOpen?.()
+      })
+      await step(() => {
+        props().onTagSelect?.(props().historyRows![0])
+      })
+      if (editing)
+        await act(async () => {
+          const input = document.querySelector<HTMLInputElement>(
+            '[aria-label="New tag"]'
+          )!
+          Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value'
+          )!.set!.call(input, 'my draft')
+          input.dispatchEvent(new window.Event('input', { bubbles: true }))
+        })
+      await act(async () => {
+        finish()
+        await saving
+      })
+      expect(
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+          .target.tag
+      ).equals('great pitch')
+      expect(
+        document.querySelector<HTMLInputElement>('[aria-label="New tag"]')!
+          .value
+      ).equals(editing ? 'my draft' : 'great pitch')
+      expect(document.querySelector('[aria-label="Remove tag"]')).not.equals(
+        null
+      )
+    })
+
+  for (const order of ['response', 'commit'] as const)
+    it(`retains authoritative tags after peer roster reload when A's ${order} is delayed`, async () => {
+      const development = new DevelopmentScoringSource()
+      const write = development.saveTag.bind(development)
+      let finish!: () => void
+      const source: ScoringSource = {
+        persistent: true,
+        open: development.open.bind(development),
+        tagChoices: development.tagChoices.bind(development),
+        saveTag: async (...args) => {
+          const gate = async (): Promise<void> => {
+            await new Promise<void>(resolve => {
+              finish = resolve
+            })
+          }
+          if (order === 'commit') await gate()
+          const result = await write(...args)
+          if (order === 'response') await gate()
+          return result
+        }
+      }
+      await mount(source)
+      await step(() => {
+        props().onPitch?.('ball')
+      })
+      await settle()
+      const target = tagTargets(
+        development.store.games.get('g1')!.currentPlay!
+      )[0]
+      const game = componentProps<{ game: ScoringSession }>('ScoringPanel').game
+      await step(() => {
+        props().onTagSelect?.(target)
+      })
+      const old =
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+      let saving!: Promise<void>
+      await act(async () => {
+        saving = old.saveTag('older label')
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      await step(() => {
+        old.onClose()
+      })
+      await write(game, target.id, 'newer label', 'peer')
+      await step(() => {
+        props().onMenu()
+      })
+      await step(() => {
+        document
+          .querySelector<HTMLElement>('[aria-label="Set Team Rosters"]')!
+          .click()
+      })
+      expect(game.eventTargets[0].tag).equals('newer label')
+      await act(async () => {
+        finish()
+        await saving
+      })
+      const expected = order === 'commit' ? 'older label' : 'newer label'
+      expect(game.eventTargets[0].tag).equals(expected)
+      expect(
+        tagTargets(development.store.games.get('g1')!.currentPlay!)[0].tag
+      ).equals(expected)
+    })
+
+  for (const change of ['reload', 'account'] as const)
+    it(`guards a tag refresh when ${change} changes during its authoritative read`, async () => {
+      const development = new DevelopmentScoringSource()
+      const write = development.saveTag.bind(development)
+      let finish!: () => void
+      const source: ScoringSource = {
+        persistent: true,
+        open: development.open.bind(development),
+        tagChoices: development.tagChoices.bind(development),
+        saveTag: async (...args) => {
+          const result = await write(...args)
+          await new Promise<void>(resolve => {
+            finish = resolve
+          })
+          return result
+        }
+      }
+      await mount(source)
+      await step(() => {
+        props().onPitch?.('ball')
+      })
+      await settle()
+      const target = tagTargets(
+        development.store.games.get('g1')!.currentPlay!
+      )[0]
+      const game = componentProps<{ game: ScoringSession }>('ScoringPanel').game
+      await step(() => {
+        props().onTagSelect?.(target)
+      })
+      const old =
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+      let saving!: Promise<unknown>
+      await act(async () => {
+        saving = old.saveTag('older label').catch((error: unknown) => error)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      await step(() => {
+        old.onClose()
+      })
+      await write(game, target.id, 'newer label', 'peer')
+      await act(async () => {
+        await game.reload()
+      })
+      const load = development.store.load.bind(development.store)
+      let finishRead!: () => void
+      let reads = 0
+      development.store.load = async (...args) => {
+        const result = await load(...args)
+        if (++reads === 1)
+          await new Promise<void>(resolve => {
+            finishRead = resolve
+          })
+        return result
+      }
+      await act(async () => {
+        finish()
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      expect(reads).equals(1)
+      if (change === 'reload')
+        await act(async () => {
+          await write(game, target.id, 'latest label', 'peer')
+          await game.reload()
+        })
+      else
+        componentProps<{ client: TeamStationClient }>(
+          'ScoringPanel'
+        ).client.token = 'SyntheticReplacementSession'
+      let result: unknown
+      await act(async () => {
+        finishRead()
+        result = await saving
+      })
+      if (change === 'reload') {
+        expect(game.eventTargets[0].tag).equals('latest label')
+        expect(reads).equals(3)
+        expect(result).equals(undefined)
+      } else {
+        expect(game.eventTargets[0].tag).equals('newer label')
+        expect(result).instanceOf(Error)
+        expect((result as Error).message).includes('selection changed')
+      }
+    })
+
   for (const order of ['response', 'commit'] as const)
     it(`reconciles committed tags when A's ${order} follows B on the same target`, async () => {
       const source = new DevelopmentScoringSource()

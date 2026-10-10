@@ -516,11 +516,18 @@ async function main(): Promise<void> {
     }
   }
   let complete = false
+  let scenarioFailed = false
+  let scenarioError: unknown
+  let reportingFailed = false
+  let reportingError: unknown
   try {
     const selected = process.env.EVENT_TAGS_SURFACE
     if (selected !== 'native') await surface('safari')
     if (selected !== 'safari') await surface('native')
     complete = true
+  } catch (error) {
+    scenarioFailed = true
+    scenarioError = error
   } finally {
     if (!complete)
       report.push(
@@ -540,10 +547,18 @@ async function main(): Promise<void> {
         join(output, 'tags-api.log'),
         apiReport.join('\n') + '\n' + proof
       )
+    } catch (error) {
+      reportingFailed = true
+      reportingError = error
+      console.error(
+        'Acceptance reporting failed; see the private driver diagnostic.'
+      )
     } finally {
       daemon.close()
     }
   }
+  if (scenarioFailed) throw scenarioError
+  if (reportingFailed) throw reportingError
 }
 main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : 'Acceptance failed')

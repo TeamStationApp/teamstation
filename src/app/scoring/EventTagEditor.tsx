@@ -69,6 +69,10 @@ export function EventTagEditor({
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
   const [input, setInput] = useState(target.tag ?? '')
+  const edited = useRef(false)
+  useEffect(() => {
+    if (!edited.current) setInput(target.tag ?? '')
+  }, [target.tag])
   const [choices, setChoices] = useState<TagChoices>({
     recent: [],
     popular: []
@@ -161,7 +165,10 @@ export function EventTagEditor({
         <ScoringTextInput
           accessibilityLabel="New tag"
           value={input}
-          onChangeText={setInput}
+          onChangeText={value => {
+            edited.current = true
+            setInput(value)
+          }}
           multiline={false}
           editable={!busy}
           autoCapitalize="none"

@@ -1989,6 +1989,7 @@ function ScoringPanel(props: {
               )
             )
               throw new Error('This scoring event no longer exists')
+            let snapshot = props.game.tagSnapshotVersion
             const result = await props.source.saveTag!(
               props.game,
               tagTarget.id,
@@ -2000,17 +2001,41 @@ function ScoringPanel(props: {
                 'The tag selection changed. Open the event again.'
               )
             // Commit revisions distinguish delayed requests from delayed responses.
-            const acknowledged = tagAcknowledgments.current.get(result.targetId)
-            if (
-              acknowledged != null &&
-              (result.revision.length < acknowledged.length ||
-                (result.revision.length === acknowledged.length &&
-                  result.revision < acknowledged))
-            )
-              return
-            if (!props.game.setEventTag(result.targetId, result.tag))
+            const superseded = (): boolean => {
+              const acknowledged = tagAcknowledgments.current.get(
+                result.targetId
+              )
+              return (
+                acknowledged != null &&
+                (result.revision.length < acknowledged.length ||
+                  (result.revision.length === acknowledged.length &&
+                    result.revision < acknowledged))
+              )
+            }
+            if (superseded()) return
+            let acknowledgedTag = result.tag
+            // A reload or another accepted write may have adopted a newer label.
+            // Read storage again rather than overwrite that snapshot with this reply.
+            while (snapshot !== props.game.tagSnapshotVersion) {
+              snapshot = props.game.tagSnapshotVersion
+              const storedTag = await props.game.readEventTag(result.targetId)
+              if (!currentContext())
+                throw new Error(
+                  'The tag selection changed. Open the event again.'
+                )
+              if (superseded()) return
+              if (storedTag === undefined)
+                throw new Error('This scoring event no longer exists')
+              acknowledgedTag = storedTag
+            }
+            if (!props.game.setEventTag(result.targetId, acknowledgedTag))
               throw new Error('This scoring event no longer exists')
             tagAcknowledgments.current.set(result.targetId, result.revision)
+            setTagTarget(current =>
+              current?.id === result.targetId
+                ? { ...current, tag: acknowledgedTag }
+                : current
+            )
           }}
         />
       )}
