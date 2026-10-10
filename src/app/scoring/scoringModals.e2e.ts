@@ -611,7 +611,9 @@ async function main(): Promise<void> {
         await tap('Undo Override')
       }
       if (process.env.SCORING_MODAL_SECTION === 'forms') {
-        console.log('PASS tiebreaker placement/Undo and override validation/Undo')
+        console.log(
+          'PASS tiebreaker placement/Undo and override validation/Undo'
+        )
         assert.deepEqual(fixture.unexpected, [])
         return
       }
