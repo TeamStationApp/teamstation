@@ -22,6 +22,12 @@ async function main(): Promise<void> {
   const surface = required('SCORING_MODAL_SURFACE')
   assert(['safari', 'native'].includes(surface))
   const native = surface === 'native'
+  const section = process.env.SCORING_UI_SECTION
+  assert(
+    section == null ||
+      ['roster', 'appearance', 'workflow', 'tags'].includes(section),
+    'SCORING_UI_SECTION must name a supported scenario'
+  )
   const phase = 'after'
   const artifacts = resolve(required('SCORING_ARTIFACT_DIR'))
   const daemonName = required('MAESTRO_D')
@@ -183,6 +189,19 @@ async function main(): Promise<void> {
       text: native ? text.replace(/^\^|\$$/g, '') : text,
       timeout: 15000
     })
+  }
+  const disabledTiebreaker = async (): Promise<void> => {
+    await shown('More scoring actions')
+    const target = flat(await m.hierarchy()).find(
+      node => node.text === 'Place a Runner (Tiebreaker)' && node.bounds != null
+    )?.bounds
+    assert(target != null, 'Disabled tiebreaker row must remain visible')
+    const before = JSON.stringify(fixture.stored())
+    // Native disabled rows are text rather than actionable button elements.
+    await point(target.x + target.width / 2, target.y + target.height / 2)
+    await shown('More scoring actions')
+    assert.equal(JSON.stringify(fixture.stored()), before)
+    await tap('Dismiss More')
   }
   const dismissDevelopmentWarnings = async (): Promise<void> => {
     if (native) {
@@ -612,9 +631,7 @@ async function main(): Promise<void> {
     await tap('Ball')
     await saved(state => state.liveData.linescore.balls === 1)
     await tap('More')
-    await tap('Place a Runner (Tiebreaker)')
-    await shown('More scoring actions')
-    await tap('Dismiss More')
+    await disabledTiebreaker()
     await undo()
     await saved(state => state.liveData.linescore.balls === 0)
     await tap('More')
@@ -629,9 +646,7 @@ async function main(): Promise<void> {
     await tap('Confirm End Half Inning')
     await saved(state => !state.liveData.linescore.isTopInning)
     await tap('More')
-    await tap('Place a Runner (Tiebreaker)')
-    await shown('More scoring actions')
-    await tap('Dismiss More')
+    await disabledTiebreaker()
     await menu('End Half Inning')
     await tap('Confirm End Half Inning')
     await saved(
@@ -691,11 +706,11 @@ async function main(): Promise<void> {
   try {
     await m.stopApp()
     await m.launchApp({ stopApp: true })
-    const section = process.env.SCORING_UI_SECTION
     if (section == null || section === 'roster') await rosterInteractions()
     if (section == null || section === 'appearance') await appearance()
     if (section == null || section === 'workflow') await workflow()
-    if (section == null || section === 'appearance') await tagsAndExit()
+    if (section == null || ['appearance', 'tags'].includes(section))
+      await tagsAndExit()
     console.log(`PASS ${surface} scoring UI polish`)
   } finally {
     fixture.pauseWrites(false)
