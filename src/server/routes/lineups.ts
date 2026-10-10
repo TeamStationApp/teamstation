@@ -47,7 +47,8 @@ import { teamWalkUpSongs } from './walkUpSongs'
  * lineup as it stands once TeamStation has a record of it (`'lineup'`), the
  * team's default before that (`'default'`), and otherwise the team's players
  * by jersey number, then name (`'roster'`). `canEditWalkUp` says whether the
- * caller keeps that team's songs. The same visibility rule as the lineups.
+ * caller keeps that team's songs. Game lineups share game visibility;
+ * defaults and rosters require team visibility.
  */
 export function lineupRoutes(db: Kysely<Database>): Router {
   const router = Router()
@@ -139,7 +140,7 @@ export function lineupRoutes(db: Kysely<Database>): Router {
           teamId: read.teamId,
           teamName: read.teamName,
           canEditWalkUp: canKeepSongs(roles, read.teamId),
-          ...(await djBatters(db, read))
+          ...(await djBatters(db, read, canSeeTeam(scopes, read.teamId)))
         }
       }
       const answer: DjGame = {
@@ -160,8 +161,13 @@ export function lineupRoutes(db: Kysely<Database>): Router {
  */
 async function djBatters(
   db: Kysely<Database>,
-  read: TeamSideLineups
+  read: TeamSideLineups,
+  maySeeTeam: boolean
 ): Promise<Pick<DjSide, 'source' | 'batters'>> {
+  // Game visibility shares this game’s lineup, never an unrelated team default
+  // or roster. Check before querying either fallback or its private songs.
+  if (read.current == null && !maySeeTeam)
+    return { source: 'roster', batters: [] }
   const songs = await teamWalkUpSongs(db, read.teamId)
   const withSongs = (lineup: Lineup): DjBatter[] =>
     lineup.batters.map(person => ({

@@ -13,6 +13,7 @@ import {
   canSeeGame,
   canSeeTeam,
   roleScopes,
+  type VisibleScopes,
   visibleScopes
 } from '../access'
 import type { Database } from '../db/database'
@@ -29,17 +30,13 @@ import {
 import { cleanBody } from '../jsonBody'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import {
-  posterSecond,
-  postersFor,
-  posterUrl,
-  warmPosters
-} from '../media/posters'
+import { posterSecond, posterUrl, warmPosters } from '../media/posters'
 import { stillUrl } from '../media/stills'
 import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import {
   type ScoreboardStore,
   ScoreboardUnavailable
@@ -59,7 +56,12 @@ import { gameStatsStatus } from '../statsBuilder/status'
 import { createTeam } from '../teams/createTeam'
 import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
-import { externalIdsAsked, schedulableSeasonIds, valuesAsked } from './seasons'
+import {
+  externalIdsAsked,
+  schedulableSeasonIds,
+  scheduleOf,
+  valuesAsked
+} from './seasons'
 
 /** The kinds of team `GET /teams?kind=` lists. */
 type TeamKindAsked = 'full' | 'external' | 'any'
@@ -307,6 +309,7 @@ export function teamRoutes(
         .selectFrom('season_teams')
         .select('team_id')
         .where('season_id', 'in', seasonIds)
+        .where('active', '=', true)
         .execute()
       for (const row of rows) members.add(row.team_id)
     }
@@ -390,64 +393,16 @@ export function teamRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (!canSeeTeam(scopes, teamId)) throw notFound()
 
-      // Newest first: a team's most recent game is the one people want.
-      const games = await db
-        .selectFrom('games')
-        .select([
-          'id',
-          'home_team_id',
-          'away_team_id',
-          'season_id',
-          'start_at',
-          'venue',
-          'status',
-          'home_score',
-          'away_score',
-          'ingest_status'
-        ])
-        .where(eb =>
-          eb.or([
-            eb('home_team_id', '=', teamId),
-            eb('away_team_id', '=', teamId)
-          ])
-        )
-        .orderBy('start_at', 'desc')
-        .execute()
-
-      const ids = games.map(game => game.id)
-      const videoCounts = await countVideos(db, ids)
-      const teamPosters = await postersFor(db, ids)
-      const names = await teamNames(
-        db,
-        games.flatMap(game => [game.home_team_id, game.away_team_id])
-      )
-
+      const rows = await scheduleOf(db, media, {
+        teamId,
+        actor,
+        visible: scopes
+      })
       res.json(
-        games.map(game => ({
-          id: game.id,
-          homeTeamId: game.home_team_id,
-          awayTeamId: game.away_team_id,
-          homeTeamName: names.get(game.home_team_id) ?? '',
-          awayTeamName: names.get(game.away_team_id) ?? '',
-          seasonId: game.season_id,
-          startAt: toIso(game.start_at),
-          venue: game.venue,
-          status: game.status,
-          homeScore: game.home_score,
-          awayScore: game.away_score,
-          ingestStatus: game.ingest_status,
-          videoCount: videoCounts.get(game.id) ?? 0,
-          durationSec: teamPosters.get(game.id)?.durationSec ?? null,
-          posterUrl: (() => {
-            const poster = teamPosters.get(game.id)
-            return poster == null
-              ? null
-              : posterUrl(
-                  media,
-                  poster.videoId,
-                  posterSecond(poster.durationSec)
-                )
-          })()
+        rows.map(({ homeLogoPath, awayLogoPath, ...row }) => ({
+          ...row,
+          homeLogoUrl: imageUrl(media.space, homeLogoPath),
+          awayLogoUrl: imageUrl(media.space, awayLogoPath)
         }))
       )
     })
@@ -557,8 +512,17 @@ export function teamRoutes(
           }))
       ).catch(() => undefined)
 
+      const [pending] = annotatePending(
+        [game],
+        await pendingSchedule(db, actor, new Date(), {
+          publishedGameIds: [game.id],
+          includeNew: false
+        })
+      )
       res.json({
         id: game.id,
+        pendingApproval: pending.pendingApproval,
+        pendingRequestId: pending.pendingRequestId,
         homeTeamId: game.home_team_id,
         awayTeamId: game.away_team_id,
         homeTeamName: names.get(game.home_team_id) ?? '',
@@ -566,6 +530,16 @@ export function teamRoutes(
         seasonId: game.season_id,
         startAt: toIso(game.start_at),
         venue: game.venue,
+        exhibition: game.exhibition,
+        timezone: game.timezone,
+        cancellationReason: game.cancellation_reason,
+        withdrawnByTeamId: game.withdrawn_by_team_id,
+        withdrawnByTeamName:
+          game.withdrawn_by_team_id == null
+            ? null
+            : ((await teamNames(db, [game.withdrawn_by_team_id])).get(
+                game.withdrawn_by_team_id
+              ) ?? null),
         status: game.status,
         homeScore: game.home_score,
         awayScore: game.away_score,
@@ -814,7 +788,7 @@ export function teamRoutes(
       // so it is their season to date rather than their afternoon: three
       // at-bats say nothing, and a box score has always printed the running
       // figure.
-      const seasonAvg = await averagesToDate(db, gameId, game.season_id)
+      const seasonAvg = await averagesToDate(db, gameId, game.season_id, scopes)
 
       const pitching = pitchingLines(rows).map(line => ({
         ...line,
@@ -838,26 +812,6 @@ export function teamRoutes(
   )
 
   return router
-}
-
-async function countVideos(
-  db: Kysely<Database>,
-  gameIds: string[]
-): Promise<Map<string, number>> {
-  if (gameIds.length === 0) return new Map()
-  const rows = await db
-    .selectFrom('videos')
-    .select(['game_id'])
-    .where('game_id', 'in', gameIds)
-    .where('hidden', '=', false)
-    .where(isRealVideo)
-    .execute()
-  const counts = new Map<string, number>()
-  for (const row of rows) {
-    if (row.game_id == null) continue
-    counts.set(row.game_id, (counts.get(row.game_id) ?? 0) + 1)
-  }
-  return counts
 }
 
 /**
@@ -907,14 +861,14 @@ function toIso(value: Date | string | null): string | null {
  *
  * The average printed beside a name in a box score is read as what kind of
  * hitter somebody is, and one afternoon does not say. So it is counted over
- * every game of the same season up to this one — and where a game belongs to
- * no season, over every game those teams have played, which is the only honest
- * answer available for a one-off.
+ * each currently visible game of the same season up to this one. For a game
+ * with no season, only visible games involving these teams contribute.
  */
 async function averagesToDate(
   db: Kysely<Database>,
   gameId: string,
-  seasonId: string | null
+  seasonId: string | null,
+  scopes: VisibleScopes
 ): Promise<Map<number, number>> {
   const game = await db
     .selectFrom('games')
@@ -924,9 +878,10 @@ async function averagesToDate(
   if (game == null) return new Map()
 
   const rows = await statRows(db, {
+    visibleGames: scopes,
     seasonId: seasonId ?? undefined,
     // A one-off belongs to no season, and the only honest answer for it is
-    // every game these two teams have played.
+    // visible games these two teams have played.
     teamIds:
       seasonId == null ? [game.home_team_id, game.away_team_id] : undefined,
     // Up to and including this one, by when it was played. A game with no date

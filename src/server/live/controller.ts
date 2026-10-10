@@ -1,7 +1,8 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { join } from 'path'
 
+import { canFilm, roleScopes } from '../access'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
@@ -360,7 +361,7 @@ async function writeStatus(
  * this is the moment it stops being a placeholder and becomes something people
  * can watch.
  */
-async function beganPublishing(
+export async function beganPublishing(
   current: LiveControllerOptions,
   liveStreamId: string
 ): Promise<void> {
@@ -368,12 +369,22 @@ async function beganPublishing(
   const now = new Date()
   const row = await db
     .selectFrom('live_streams')
-    .select(['video_id as videoId', 'first_published_at as firstPublishedAt'])
+    .select([
+      'video_id as videoId',
+      'first_published_at as firstPublishedAt',
+      'user_id as userId',
+      'game_id as gameId',
+      'team_id as teamId'
+    ])
     .where('id', '=', liveStreamId)
     .executeTakeFirst()
   if (row == null) return
+  if (!(await mayPublish(db, row))) {
+    await revokePublishing(db, liveStreamId, now)
+    return
+  }
 
-  await db
+  const updated = await db
     .updateTable('live_streams')
     .set({
       state: 'publishing',
@@ -383,8 +394,10 @@ async function beganPublishing(
       updated_at: now
     })
     .where('id', '=', liveStreamId)
-    .execute()
+    .where('state', 'in', ['idle', 'publishing'])
+    .executeTakeFirst()
 
+  if (updated.numUpdatedRows === 0n) return
   if (row.videoId == null) return
   await db
     .updateTable('videos')
@@ -482,6 +495,9 @@ export async function resolveKey(
     .selectFrom('live_streams')
     .select([
       'live_streams.id as id',
+      'live_streams.user_id as userId',
+      'live_streams.team_id as teamId',
+      'live_streams.game_id as gameId',
       'live_streams.state as state',
       'live_streams.opens_at as opensAt',
       'live_streams.closes_at as closesAt',
@@ -497,6 +513,10 @@ export async function resolveKey(
   }
   if (row.state === 'revoked') {
     return 'This key has been replaced. Ask for the game’s stream URL again.'
+  }
+  if (!(await mayPublish(db, row))) {
+    await revokePublishing(db, row.id, now)
+    return 'This account no longer has permission to stream this game.'
   }
   if (row.videoId == null) return undefined
   // A real key, at the wrong time. Saying so is the difference between an
@@ -528,6 +548,10 @@ export async function resolveKey(
 
   const hlsDir = liveVideoDir(mediaRoot, row.videoId)
   await mkdir(hlsDir, { recursive: true })
+  const known = tracked.get(row.id)
+  if (known != null && known.key !== key)
+    clearLive(known.key, 'the key was replaced')
+  tracked.set(row.id, { key, videoId: row.videoId })
   return {
     liveStreamId: row.id,
     hlsDir,
@@ -551,6 +575,9 @@ export async function sync(
     .selectFrom('live_streams')
     .select([
       'live_streams.id as id',
+      'live_streams.user_id as userId',
+      'live_streams.team_id as teamId',
+      'live_streams.game_id as gameId',
       'live_streams.key_cipher as keyCipher',
       'live_streams.state as state',
       'live_streams.opens_at as opensAt',
@@ -559,7 +586,15 @@ export async function sync(
       'live_streams.last_published_at as lastPublishedAt',
       'live_streams.last_error as lastError'
     ])
-    .where('live_streams.state', 'in', ['idle', 'publishing'])
+    .where(eb =>
+      eb.or([
+        eb('live_streams.state', 'in', ['idle', 'publishing']),
+        eb.and([
+          eb('live_streams.state', '=', 'revoked'),
+          eb('live_streams.ended_at', 'is', null)
+        ])
+      ])
+    )
     .execute()
 
   // One syscall a second, and only asked at all when there is something that
@@ -575,6 +610,19 @@ export async function sync(
 
   const wanted = new Set<string>()
   for (const row of rows) {
+    if (row.state === 'revoked') {
+      await finishStream(
+        current,
+        row.id,
+        row.lastError ?? 'streaming permission was removed'
+      )
+      continue
+    }
+    if (!(await mayPublish(db, row))) {
+      await revokePublishing(db, row.id, now)
+      await finishStream(current, row.id, 'streaming permission was removed')
+      continue
+    }
     // `closes_at` is now the moment somebody ended it rather than a window
     // shutting on its own, so this is what End stream, a rotation and a
     // removal all come through.
@@ -644,6 +692,60 @@ export async function sync(
   }
 }
 
+/** A key belongs to an active account filming a current side of this game. */
+async function mayPublish(
+  db: Kysely<Database>,
+  row: { userId: number; gameId: string; teamId: string }
+): Promise<boolean> {
+  const user = await db
+    .selectFrom('users')
+    .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
+    .where('id', '=', row.userId)
+    .executeTakeFirst()
+  if (
+    user == null ||
+    user.disabled_at != null ||
+    user.merged_into != null ||
+    !user.login_enabled
+  )
+    return false
+  const game = await db
+    .selectFrom('games')
+    .select(['home_team_id', 'away_team_id'])
+    .where('id', '=', row.gameId)
+    .executeTakeFirst()
+  if (
+    game == null ||
+    ![game.home_team_id, game.away_team_id].includes(row.teamId)
+  )
+    return false
+  return canFilm(await roleScopes(db, row.userId, user.is_admin), row.teamId)
+}
+
+/** Lost authority permanently invalidates the old key, even if later restored. */
+async function revokePublishing(
+  db: Kysely<Database>,
+  id: string,
+  now: Date
+): Promise<void> {
+  const known = tracked.get(id)
+  if (known != null) {
+    clearLive(known.key, 'streaming permission was removed')
+    tracked.delete(id)
+  }
+  await db
+    .updateTable('live_streams')
+    .set({
+      state: 'revoked',
+      closes_at: now,
+      updated_at: now,
+      last_error: 'Streaming permission was removed. Ask for a new stream URL.'
+    })
+    .where('id', '=', id)
+    .where('state', 'in', ['idle', 'publishing'])
+    .execute()
+}
+
 /**
  * Writes a reason on a stream's row, but only when it is news.
  *
@@ -684,18 +786,24 @@ export async function finishStream(
   }
 
   const now = new Date()
+  // Claim finalization once. A revoked key remains revoked while its recording
+  // follows the same retained-media lifecycle as an ordinarily ended stream.
   const row = await db
-    .selectFrom('live_streams')
-    .select(['video_id as videoId', 'first_published_at as firstPublishedAt'])
-    .where('id', '=', liveStreamId)
-    .executeTakeFirst()
-
-  await db
     .updateTable('live_streams')
-    .set({ state: 'ended', ended_at: now, last_error: reason, updated_at: now })
+    .set({
+      state: sql`case when state = 'revoked' then 'revoked' else 'ended' end`,
+      ended_at: now,
+      last_error: reason,
+      updated_at: now
+    })
     .where('id', '=', liveStreamId)
-    .where('state', 'in', ['idle', 'publishing'])
-    .execute()
+    .where('state', 'in', ['idle', 'publishing', 'revoked'])
+    .where('ended_at', 'is', null)
+    .returning([
+      'video_id as videoId',
+      'first_published_at as firstPublishedAt'
+    ])
+    .executeTakeFirst()
 
   if (row?.videoId == null) return
 

@@ -5,7 +5,12 @@ import type {
   CreateTeamBody,
   CreateTeamResponse
 } from '../../common/createTeam'
-import { conflict, forbidden, notFound } from '../../common/errors'
+import {
+  conflict,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { makeId } from '../../common/ids'
 import {
   type AdminScopes,
@@ -90,6 +95,9 @@ export async function createTeam(
   creator: TeamCreator
 ): Promise<CreateTeamResponse> {
   return await db.transaction().execute(async trx => {
+    // Use the same authority lock as suspension, person merge and role changes,
+    // before external-ID locks so every writer keeps one lock order.
+    await lockKeys(trx, ['creation:parent-graph'])
     const keys = body.externalIds.map(externalIdLockKey)
     if (body.season != null && 'name' in body.season) {
       keys.push(
@@ -97,7 +105,19 @@ export async function createTeam(
       )
     }
     await lockKeys(trx, keys)
-
+    const user = await trx
+      .selectFrom('users')
+      .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
+      .where('id', '=', creator.userId)
+      .executeTakeFirst()
+    if (
+      user == null ||
+      user.disabled_at != null ||
+      user.merged_into != null ||
+      !user.login_enabled
+    )
+      throw unauthorized()
+    creator = { ...creator, isAdmin: user.is_admin }
     const access = creatorAccess(trx, creator)
     const { held, orphans } = await heldTeam(trx, body, access)
     if (held != null) return held

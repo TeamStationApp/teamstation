@@ -126,6 +126,8 @@ export function eventListRoutes(
 
       const rows = await (async (): Promise<ScheduleRow[]> => {
         const shared = {
+          actor,
+          publishedOnly: parsed.scoreboardOpen,
           seasonIds: parsed.seasonIds,
           externalIds: parsed.externalIds,
           played: window.played,

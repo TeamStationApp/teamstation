@@ -53,6 +53,8 @@ interface Member {
   lastVersion: number
   /** Answered the last ping. */
   alive: boolean
+  token?: string
+  userId?: number
 }
 
 interface Room {
@@ -151,7 +153,13 @@ export function makeScoreboardHub(
   }
 
   /** Sends each of the room's sockets the state, unless it has newer. */
-  function deliver(room: Room, hash: ScoreboardHash, only?: Member): void {
+  async function deliver(
+    room: Room,
+    hash: ScoreboardHash,
+    only?: Member
+  ): Promise<void> {
+    for (const member of only == null ? room.members : [only])
+      if (member.kind === 'dashboard') await authorizeCurrent(room, member)
     const overrides = hash.overrides ?? NO_OVERRIDES
     const { automated, final } = composeScoreboard({
       baseline: room.record,
@@ -183,7 +191,7 @@ export function makeScoreboardHub(
       gameId: room.gameId,
       version: 0
     }
-    deliver(room, hash, only)
+    await deliver(room, hash, only)
   }
 
   function onMessage(text: string): void {
@@ -205,7 +213,7 @@ export function makeScoreboardHub(
           log(`scoreboard ${room.gameId}: record: ${describe(error)}`)
         }
       }
-      deliver(room, message)
+      await deliver(room, message)
     })
   }
 
@@ -234,7 +242,11 @@ export function makeScoreboardHub(
         const record = await gameRecord(db, room.gameId)
         const keyExists = await store.exists(room.gameId)
         if (record != null) room.record = record
-        if (scoreboardOpen(record, keyExists, now())) return
+        if (scoreboardOpen(record, keyExists, now())) {
+          for (const member of room.members)
+            if (member.kind !== 'viewer') await authorizeCurrent(room, member)
+          return
+        }
         for (const member of room.members) {
           shut(
             member.socket,
@@ -308,6 +320,8 @@ export function makeScoreboardHub(
           shut(socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
           return undefined
         }
+        member.token = token
+        member.userId = runner.userId
       }
       const record = await gameRecord(db, gameId)
       const keyExists = record == null ? false : await store.exists(gameId)
@@ -354,12 +368,54 @@ export function makeScoreboardHub(
     }
   }
 
+  /** Recheck the credential and current matchup before a private read or write. */
+  async function authorizeCurrent(
+    room: Room,
+    member: Member
+  ): Promise<boolean> {
+    try {
+      const actor =
+        member.token == null
+          ? undefined
+          : await actorForToken(db, member.token, { recordUse: false })
+      if (actor == null || actor.userId !== member.userId) {
+        shut(member.socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
+        return false
+      }
+      const record = await gameRecord(db, room.gameId)
+      if (
+        record == null ||
+        !scoreboardOpen(record, await store.exists(room.gameId), now())
+      ) {
+        shut(member.socket, SCOREBOARD_CLOSE.closed, 'The scoreboard is closed')
+        return false
+      }
+      room.record = record
+      if (
+        !mayRunGame(await adminScopes(db, actor.userId, actor.isAdmin), record)
+      ) {
+        shut(
+          member.socket,
+          SCOREBOARD_CLOSE.notAllowed,
+          'You do not run this game'
+        )
+        return false
+      }
+      return true
+    } catch (error) {
+      log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
+      shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
+      return false
+    }
+  }
+
   /** One message from a publisher or a dashboard, written in its turn. */
   async function receive(
     room: Room,
     member: Member,
     data: RawData
   ): Promise<void> {
+    if (!(await authorizeCurrent(room, member))) return
     const { socket } = member
     const refuse = (message: string): void => {
       if (socket.readyState === WebSocket.OPEN) {

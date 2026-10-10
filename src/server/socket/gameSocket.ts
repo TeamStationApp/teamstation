@@ -7,7 +7,6 @@ import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
 import { asLiteral } from '../../common/asLiteral'
 import type {
-  GameChange,
   GameSocketErrorCode,
   GameSocketReply
 } from '../../common/gameSocket'
@@ -20,7 +19,11 @@ import {
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
-import { GameFanout, type GameFanoutOptions } from './fanout'
+import {
+  type FanoutSubscriber,
+  GameFanout,
+  type GameFanoutOptions
+} from './fanout'
 
 /** The one path the socket answers on. */
 export const SOCKET_PATH = '/socket'
@@ -85,6 +88,7 @@ const asRequest = asEither(
 
 /** One open socket: who it is, what it has subscribed to, and its health. */
 interface Connection {
+  token: string
   ws: WebSocket
   actor: Actor
   games: Set<string>
@@ -109,10 +113,7 @@ interface Connection {
   scopes: VisibleScopes | undefined
   scopesAt: number
   reading: Promise<VisibleScopes> | undefined
-  subscriber: {
-    send: (message: GameChange) => void
-    maySee: (game: GameScope) => Promise<boolean>
-  }
+  subscriber: FanoutSubscriber
 }
 
 /**
@@ -223,6 +224,12 @@ export function attachGameSocket(
     connection: Connection,
     gameId: string
   ): Promise<GameScope | undefined> => {
+    const authenticated = await actorForToken(db, connection.token)
+    if (authenticated?.userId !== connection.actor.userId) {
+      connection.ws.close(1008, 'Sign in again')
+      return undefined
+    }
+    connection.actor = authenticated
     const game = await db
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id', 'season_id'])
@@ -236,6 +243,7 @@ export function attachGameSocket(
     }
     // Read fresh: a subscribe is the one time the answer is shown.
     connection.scopes = undefined
+    connection.reading = undefined
     return canSeeGame(await scopesOf(connection), scope) ? scope : undefined
   }
 
@@ -399,8 +407,9 @@ export function attachGameSocket(
     }
   }
 
-  const connected = (ws: WebSocket, actor: Actor): void => {
+  const connected = (ws: WebSocket, actor: Actor, token: string): void => {
     const connection: Connection = {
+      token,
       ws,
       actor,
       games: new Set(),
@@ -415,9 +424,23 @@ export function attachGameSocket(
         send: message => {
           reply(connection, message)
         },
-        maySee: async game => {
+        maySee: async (game, source) => {
           try {
-            return canSeeGame(await scopesOf(connection), game)
+            const authenticated = await actorForToken(source, token, {
+              recordUse: false
+            })
+            if (authenticated?.userId !== connection.actor.userId) {
+              connection.ws.close(1008, 'Sign in again')
+              return false
+            }
+            return canSeeGame(
+              await visibleScopes(
+                source,
+                authenticated.userId,
+                authenticated.isAdmin
+              ),
+              game
+            )
           } catch {
             return false
           }
@@ -467,7 +490,7 @@ export function attachGameSocket(
           return
         }
         wss.handleUpgrade(req, socket, head, ws => {
-          connected(ws, actor)
+          connected(ws, actor, token)
         })
       },
       (error: unknown) => {

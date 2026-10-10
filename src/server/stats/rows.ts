@@ -1,6 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import { asStatExtras } from '../../common/statExtras'
+import { visibleGamesWhere, type VisibleScopes } from '../access'
 import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { DEFAULT_ERA_INNINGS, type StatRow } from '../stats'
@@ -15,6 +16,8 @@ import { DEFAULT_ERA_INNINGS, type StatRow } from '../stats'
  */
 export interface StatRowFilter {
   gameId?: string
+  /** Bound historical aggregates to the caller’s currently visible games. */
+  visibleGames?: VisibleScopes
   userId?: number
   /** Every id one person has had — see `admin/people.ts`. */
   userIds?: number[]
@@ -96,6 +99,10 @@ export async function statRows(
       )
     ])
 
+  if (filter.visibleGames != null) {
+    const allowed = visibleGamesWhere(filter.visibleGames)
+    if (allowed != null) query = query.where(allowed)
+  }
   if (filter.gameId != null) {
     query = query.where('game_player_stats.game_id', '=', filter.gameId)
   }

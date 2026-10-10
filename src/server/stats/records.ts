@@ -23,6 +23,8 @@ export interface TeamRecord {
 export interface TeamRecordFilter {
   /** Only these teams. An empty list is nobody. */
   teamIds?: string[]
+  /** Omitted keeps the historical inclusion of exhibitions. */
+  includeExhibitions?: boolean
   /** One season, or `null` for games with no season. Absent is every season. */
   seasonId?: string | null
 }
@@ -33,6 +35,8 @@ export async function teamRecords(
   filter: TeamRecordFilter = {}
 ): Promise<TeamRecord[]> {
   const { teamIds, seasonId } = filter
+  const exhibitionClause =
+    filter.includeExhibitions === false ? sql`and exhibition = false` : sql``
   if (teamIds?.length === 0) return []
 
   const seasonClause =
@@ -49,13 +53,13 @@ export async function teamRecords(
            home_score as runs_for, away_score as runs_against
     from games
     where status = 'final' and home_score is not null and away_score is not null
-      ${seasonClause}
+      ${seasonClause} ${exhibitionClause}
     union all
     select away_team_id as team_id, season_id,
            away_score as runs_for, home_score as runs_against
     from games
     where status = 'final' and home_score is not null and away_score is not null
-      ${seasonClause}
+      ${seasonClause} ${exhibitionClause}
   `
   const teamClause =
     teamIds == null ? sql`` : sql`where team_id in (${sql.join(teamIds)})`
