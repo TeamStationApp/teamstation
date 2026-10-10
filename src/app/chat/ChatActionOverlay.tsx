@@ -60,6 +60,9 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
       <View
         style={[StyleSheet.absoluteFill, { zIndex: 100, elevation: 30 }]}
         accessibilityViewIsModal
+        onAccessibilityEscape={() => {
+          close.current()
+        }}
       >
         <GlassView androidBlur style={StyleSheet.absoluteFill} />
         <ScrollView
