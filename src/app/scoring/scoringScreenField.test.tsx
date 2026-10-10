@@ -504,7 +504,10 @@ describe('scoring screen field wiring', function () {
                 jersey,
                 positions: [],
                 isPlayer: true,
-                role: 'member'
+                role: 'member',
+                section: 'player',
+                staffRoles: [],
+                inheritedFrom: null
               })
             ]
           }
@@ -2121,6 +2124,9 @@ describe('scoring screen field wiring', function () {
               positions: [],
               isPlayer: true,
               role: 'member',
+              section: 'player',
+              staffRoles: [],
+              inheritedFrom: null,
               walkUpSong: {
                 provider: 'appleMusic',
                 providerId: '111',

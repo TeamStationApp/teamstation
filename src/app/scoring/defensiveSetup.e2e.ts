@@ -67,6 +67,9 @@ const roster = (
   positions: string[]
   isPlayer: boolean
   role: string
+  section: string
+  staffRoles: string[]
+  inheritedFrom: null
   bats: string
   throws: string
 }> =>
@@ -80,6 +83,9 @@ const roster = (
     positions: [POSITIONS[i % 9]],
     isPlayer: true,
     role: 'member',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null,
     bats: 'right',
     throws: 'right'
   }))

@@ -29,6 +29,9 @@ const roster = [
     positions: [],
     isPlayer: true,
     role: 'member',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null,
     bats: 'left'
   })
 ]

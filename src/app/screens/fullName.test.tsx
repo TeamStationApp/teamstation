@@ -67,7 +67,9 @@ const jordan = asRosterEntry({
   positions: ['SS', '2B'],
   isPlayer: true,
   role: 'member',
-  group: 'player'
+  section: 'player',
+  staffRoles: [],
+  inheritedFrom: null
 })
 
 const batting = asBattingRow({
@@ -216,9 +218,33 @@ describe('a player’s whole name is never shown', function () {
     expect(filters).deep.equals([{ seasonId: 'sea_1' }, {}])
   })
 
-  it('is not in the roster row’s subtitle, which is the positions alone', function () {
+  it('is not in the roster row’s subtitle: a player’s positions, a staff member’s roles', function () {
     expect(rosterSubtitle(jordan)).equals('SS · 2B')
     expect(rosterSubtitle({ ...jordan, positions: [] })).equals(undefined)
+    const staff = {
+      ...jordan,
+      section: 'staff' as const,
+      staffRoles: ['assistant' as const, 'scorekeeper' as const]
+    }
+    // A coach who also plays is listed by what they do on the staff.
+    expect(rosterSubtitle(staff)).equals('Assistant · Scorekeeper')
+    expect(
+      rosterSubtitle({ ...staff, section: 'admin', staffRoles: [] })
+    ).equals(undefined)
+    // A spectator and a follower have nothing under the name, a season's
+    // member included: the level is the pill's.
+    for (const section of ['spectator', 'follower'] as const)
+      expect(
+        rosterSubtitle({
+          ...jordan,
+          section,
+          isPlayer: false,
+          positions: [],
+          inheritedFrom:
+            section === 'spectator' ? { level: 'season', role: 'member' } : null
+        }),
+        section
+      ).equals(undefined)
   })
 
   it('is not on the team’s roster, and a row still opens the player', async function () {
@@ -251,7 +277,9 @@ describe('a player’s whole name is never shown', function () {
           positions: [],
           isPlayer: false,
           role: 'manager',
-          group: 'coach'
+          section: 'admin',
+          staffRoles: [],
+          inheritedFrom: null
         })
       ],
       teamStats: async () => [batting],

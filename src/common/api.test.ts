@@ -156,7 +156,10 @@ describe('api client', function () {
       bats: 'left',
       throws: 'right',
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     })
     const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
@@ -242,7 +245,10 @@ describe('api client', function () {
       jersey: '12',
       positions: [],
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     }
     const roster = stubFetch(200, [
       { ...entry, walkUpSong: song },

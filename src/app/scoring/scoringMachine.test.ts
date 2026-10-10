@@ -33,6 +33,9 @@ const roster = [
     positions: ['P'],
     isPlayer: true,
     role: 'member',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null,
     bats: 'switch',
     throws: 'left'
   })
@@ -86,7 +89,8 @@ describe('local scoring sessions', function () {
     const ignored = asRosterEntry({
       ...roster[0],
       userId: 104,
-      isPlayer: false
+      isPlayer: false,
+      section: 'spectator'
     })
     expect(
       createDevelopmentSession(gameFixture, [ignored], []).gameData.players[1]

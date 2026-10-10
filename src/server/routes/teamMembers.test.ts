@@ -1221,8 +1221,12 @@ describe('a team’s people by external id', function () {
       const userId = answer.body.results[0].userId
       const roster = await ask('GET', `/teams/${team}/roster`, ADMIN)
       expect(roster.status).equals(200)
-      expect(roster.body).to.have.length(1)
-      expect(roster.body[0]).deep.include({
+      // The team's administrators are listed too, above its players.
+      const players = roster.body.filter(
+        (entry: { section: string }) => entry.section === 'player'
+      )
+      expect(players).to.have.length(1)
+      expect(players[0]).deep.include({
         userId,
         jersey: '11',
         isPlayer: true
@@ -2428,7 +2432,10 @@ describe('a team’s people by external id', function () {
       expect(row.avatar_updated_at).not.equals(null)
       expect(answer.body.url).includes(`${row.avatar_path}-192.png`)
       const roster = await ask('GET', `/teams/${teamId}/roster`, ADMIN)
-      expect(roster.body[0].avatarUrl).to.be.a('string')
+      expect(
+        roster.body.find((entry: { userId: number }) => entry.userId === userId)
+          .avatarUrl
+      ).to.be.a('string')
     })
 
     it('uploads nothing for the picture it already holds', async function () {

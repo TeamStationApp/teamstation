@@ -204,7 +204,10 @@ describe('Edit Roster cards and selector', function () {
                     jersey: '1',
                     positions: [],
                     isPlayer: true,
-                    role: 'member'
+                    role: 'member',
+                    section: 'player',
+                    staffRoles: [],
+                    inheritedFrom: null
                   })
                 ]
               }}

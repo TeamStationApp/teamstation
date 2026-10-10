@@ -52,6 +52,12 @@ describe('locales', function () {
     expect(sprintf('%s', null)).equals('')
   })
 
+  it('fills placeholders named by their place', function () {
+    expect(sprintf('%1$s %2$s', 'Season', 'coach')).equals('Season coach')
+    expect(sprintf('%2$s, %1$s', 'Season', 'coach')).equals('coach, Season')
+    expect(sprintf('%3$s', 'one')).equals('')
+  })
+
   it('chooses the singular or the plural', function () {
     const one = enUs.games_video_count_one
     const other = enUs.games_video_count_other

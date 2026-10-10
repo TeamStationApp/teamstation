@@ -44,7 +44,10 @@ const roster = (first: number): RosterEntry[] =>
       jersey: String(i + 1),
       positions: [],
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     })
   )
 const away = roster(101)

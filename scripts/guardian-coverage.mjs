@@ -34,7 +34,10 @@ import { webSettings } from './web-build-settings.mjs'
 /** The app suites, each bundled alone. Later milestones append theirs. */
 const appSuites = [
   'src/app/components/RolesModal.test.tsx',
-  'src/app/App.searchTab.test.tsx'
+  'src/app/App.searchTab.test.tsx',
+  'src/app/screens/fullName.test.tsx',
+  'src/app/screens/teamSchedule.test.tsx',
+  'src/app/screens/teamRoster.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

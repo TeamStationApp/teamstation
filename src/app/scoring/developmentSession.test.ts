@@ -42,7 +42,10 @@ function roster(userIds: number[]): RosterEntry[] {
       jersey: String(userId % 100),
       positions: [],
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     })
   )
 }

@@ -76,6 +76,26 @@ export const enUs = {
   teams_title: 'Teams',
   teams_none: 'You are not on a team yet.',
 
+  // A team's roster, by section
+  roster_admins: 'Admins',
+  roster_staff: 'Staff',
+  roster_players: 'Players',
+  roster_family: 'Family members',
+  roster_spectators: 'Spectators',
+  roster_followers: 'Followers',
+  // The pill on somebody given their place from above: `Season coach`, and
+  // for a member of the season or league, `Season spectator`.
+  roster_inherited_pill: '%1$s %2$s',
+  roster_level_season: 'Season',
+  roster_level_league: 'League',
+  roster_role_member: 'spectator',
+  roster_role_admin: 'admin',
+  roster_role_coach: 'coach',
+  roster_role_assistant: 'assistant',
+  roster_role_scorekeeper: 'scorekeeper',
+  roster_role_songkeeper: 'songkeeper',
+  roster_role_videographer: 'videographer',
+
   // Games
   games_title: 'Games',
   games_none: 'No games yet.',

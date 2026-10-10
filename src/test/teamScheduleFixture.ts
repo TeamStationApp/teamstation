@@ -153,12 +153,13 @@ const PLAYERS = [
   ['Logan W.', '22', ['P']]
 ] as const
 const COACHES = ['Dave R.', 'Rob T.', 'Brian S.']
-const FOLLOWERS = ['Alex B.', 'Ichiro S.', 'Cal R.']
+// Members of the team with no role who do not play.
+const SPECTATORS = ['Alex B.', 'Ichiro S.', 'Cal R.']
 
 interface Person {
   shortName: string
   jersey: string | null
-  group: 'coach' | 'player' | 'follower'
+  section: 'staff' | 'player' | 'spectator'
   positions: string[]
 }
 
@@ -166,27 +167,29 @@ const ROSTER = [
   ...COACHES.map((shortName): Person => ({
     shortName,
     jersey: null,
-    group: 'coach',
+    section: 'staff',
     positions: []
   })),
   ...PLAYERS.map(([shortName, jersey, positions]): Person => ({
     shortName,
     jersey,
-    group: 'player',
+    section: 'player',
     positions: [...positions]
   })),
-  ...FOLLOWERS.map((shortName): Person => ({
+  ...SPECTATORS.map((shortName): Person => ({
     shortName,
     jersey: null,
-    group: 'follower',
+    section: 'spectator',
     positions: []
   }))
 ].map((person, index) => ({
   ...person,
   userId: 100 + index,
   avatarUrl: null,
-  isPlayer: person.group === 'player',
-  role: person.group,
+  isPlayer: person.section === 'player',
+  role: 'member',
+  staffRoles: person.section === 'staff' ? ['coach'] : [],
+  inheritedFrom: null,
   bats: null,
   throws: null,
   walkUpSong: null

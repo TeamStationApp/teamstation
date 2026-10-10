@@ -13,6 +13,7 @@ import type {
   GameSummary,
   PitchingRow,
   RosterEntry,
+  RosterSection,
   StandingsRow,
   TeamStationClient,
   TeamSummary
@@ -23,6 +24,7 @@ import {
   Badge,
   Card,
   Emblem,
+  flagLabel,
   GameRow,
   HANDOFF_RAMP,
   HandoffView,
@@ -47,7 +49,8 @@ import {
   WideTable
 } from '../components'
 import { FollowButton } from '../components/FollowButton'
-import { videoCountLabel } from '../locales/strings'
+import type { StringKey } from '../locales/en_US'
+import { lstrings, sprintf, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -505,24 +508,19 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 <Empty text="Nobody has been added to this team yet." />
               )}
               {/*
-            Coaches, then players, then the people who can see the team
-            without being on it — however they were given the right, on the
-            team, its season or its league. The server decides who is in which
-            group; this only draws them in order.
+            Admins, staff, players, family, spectators and followers. The
+            server decides who is in which section; this only draws them in
+            order.
           */}
-              {(
-                [
-                  ['coach', 'Coaches'],
-                  ['player', 'Players'],
-                  ['follower', 'Followers']
-                ] as const
-              ).map(([group, heading]) => {
-                const people = roster.filter(person => person.group === group)
+              {ROSTER_SECTIONS.map(([section, heading]) => {
+                const people = roster.filter(
+                  person => person.section === section
+                )
                 if (people.length === 0) return null
                 return (
-                  <View key={group} style={styles.section}>
+                  <View key={section} style={styles.section}>
                     <SectionHeader
-                      title={heading}
+                      title={lstrings[heading]}
                       note={String(people.length)}
                     />
                     <Card>
@@ -535,6 +533,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                             emblem={initialsOf(person.shortName)}
                             emblemUri={person.avatarUrl}
                             emblemShape="circle"
+                            badgeLabel={inheritedPill(person)}
+                            badgeTone="neutral"
                             trailing={
                               // An empty string is not a jersey number. Without
                               // this the row reads as a bare `#`.
@@ -544,7 +544,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                                 : `#${person.jersey.trim()}`
                             }
                             onPress={
-                              onOpenPlayer == null
+                              // Only a player has a page to open: anybody
+                              // else here, staff and family who do not play,
+                              // would answer `404`.
+                              onOpenPlayer == null || !person.isPlayer
                                 ? undefined
                                 : () => {
                                     onOpenPlayer(
@@ -647,12 +650,46 @@ function Band(props: {
   )
 }
 
-/** `1st Place`, `2nd Place`, `11th Place`. */
-/** The line under a roster name: the positions, if any. */
+/** The roster's sections, in order, each with its heading. */
+const ROSTER_SECTIONS: ReadonlyArray<readonly [RosterSection, StringKey]> = [
+  ['admin', 'roster_admins'],
+  ['staff', 'roster_staff'],
+  ['player', 'roster_players'],
+  ['family', 'roster_family'],
+  ['spectator', 'roster_spectators'],
+  ['follower', 'roster_followers']
+]
+
+/**
+ * The line under a roster name: a player's positions, and for an admin or
+ * staff the roles they hold, `Coach · Scorekeeper`.
+ */
 export function rosterSubtitle(person: RosterEntry): string | undefined {
-  return person.positions.length > 0 ? person.positions.join(' · ') : undefined
+  const parts =
+    person.section === 'admin' || person.section === 'staff'
+      ? person.staffRoles.map(flagLabel)
+      : person.positions
+  return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
+/**
+ * The pill on somebody given their place by a season or league above the
+ * team, naming the highest one: `Season coach`, `League admin`, and for a
+ * member of the season or league `Season spectator`.
+ */
+export function inheritedPill(person: RosterEntry): string | undefined {
+  const from = person.inheritedFrom
+  if (from == null) return undefined
+  return sprintf(
+    lstrings.roster_inherited_pill,
+    from.level === 'league'
+      ? lstrings.roster_level_league
+      : lstrings.roster_level_season,
+    lstrings[`roster_role_${from.role}`]
+  )
+}
+
+/** `1st Place`, `2nd Place`, `11th Place`. */
 function placeLabel(place: number): string {
   const rest = place % 100
   const suffix =

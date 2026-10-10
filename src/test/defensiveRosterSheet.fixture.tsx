@@ -74,6 +74,9 @@ const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
       positions: [POSITIONS[i % 9]],
       isPlayer: true,
       role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
       bats: 'right',
       throws: 'right'
     })

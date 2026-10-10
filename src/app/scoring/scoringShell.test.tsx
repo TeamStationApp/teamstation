@@ -72,7 +72,10 @@ function fixtureFetch(signedIn = true): void {
                 jersey: String(i + 1),
                 positions: [],
                 isPlayer: true,
-                role: 'member'
+                role: 'member',
+                section: 'player',
+                staffRoles: [],
+                inheritedFrom: null
               }))
             : path.endsWith('/live-streams')
               ? { streams: [] }
@@ -484,6 +487,9 @@ describe('scoring shell and exit', function () {
         positions: [],
         isPlayer: true,
         role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null,
         walkUpSong: song
       }))
     globalThis.fetch = async input => {
@@ -615,6 +621,9 @@ describe('scoring shell and exit', function () {
         positions: [],
         isPlayer: true,
         role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null,
         walkUpSong: index < ids.length ? song(ids[index]) : null
       }))
     globalThis.fetch = async input => {

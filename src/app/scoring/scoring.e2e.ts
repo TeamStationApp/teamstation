@@ -233,6 +233,9 @@ async function open(
               positions: ['P'],
               isPlayer: true,
               role: 'member',
+              section: 'player',
+              staffRoles: [],
+              inheritedFrom: null,
               bats,
               throws: 'right'
             }
@@ -244,6 +247,9 @@ async function open(
               positions: [createPlayers()[i + 1].id],
               isPlayer: true,
               role: 'member',
+              section: 'player',
+              staffRoles: [],
+              inheritedFrom: null,
               bats: 'right' as const,
               throws: 'right'
             }))
@@ -255,6 +261,9 @@ async function open(
             positions: [createPlayers()[i].id],
             isPlayer: true,
             role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null,
             bats: 'right',
             throws: 'right'
           }))

@@ -638,18 +638,14 @@ export async function givenRolesOnTeam(
 /** Where a role was given, from the team up. */
 export type RoleLevel = 'team' | 'season' | 'league'
 
-const LEVEL_RANK: Record<RoleLevel, number> = { team: 0, season: 1, league: 2 }
-
 /**
- * `givenRolesOnTeam` with, for each role, the highest level that gives it:
- * a coach of the team who also coaches its league is a league coach here.
- * Each person's roles are in `ROLES` order. An owner's or manager's `admin`
- * is the team's.
+ * The seasons a team's roles and members come down from, and their leagues
+ * with the team's own: the other side of what `inheritScopes` carries down.
  */
-export async function givenRoleLevelsOnTeam(
+async function levelsAboveTeam(
   db: Kysely<Database>,
   teamId: string
-): Promise<Map<number, Map<Role, RoleLevel>>> {
+): Promise<{ seasonIds: string[]; leagueIds: string[] }> {
   const seasons = await db
     .selectFrom(permissionParents(db))
     .innerJoin('seasons', 'seasons.id', 'permission_parents.season_id')
@@ -665,7 +661,85 @@ export async function givenRoleLevelsOnTeam(
   if (team?.league_id != null) leagueIds.add(team.league_id)
   for (const season of seasons)
     if (season.league_id != null) leagueIds.add(season.league_id)
-  const seasonIds = seasons.map(season => season.id)
+  return {
+    seasonIds: seasons.map(season => season.id),
+    leagueIds: [...leagueIds]
+  }
+}
+
+/**
+ * Everybody a season or league above the team makes a member of it, as
+ * `visibleScopes` reads it from their side, keyed by the row each signs in
+ * as, with the highest level that does: a member of both the season and its
+ * league is a league member here. A membership written under a row since
+ * closed into another is the open row's; a disabled account is left out.
+ */
+export async function membersAboveTeam(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<Map<number, Exclude<RoleLevel, 'team'>>> {
+  const { seasonIds, leagueIds } = await levelsAboveTeam(db, teamId)
+  const rows = [
+    ...(seasonIds.length === 0
+      ? []
+      : (
+          await db
+            .selectFrom('season_members')
+            .select('user_id')
+            .where('season_id', 'in', seasonIds)
+            .execute()
+        ).map(row => ({ userId: row.user_id, level: 'season' as const }))),
+    ...(leagueIds.length === 0
+      ? []
+      : (
+          await db
+            .selectFrom('league_members')
+            .select('user_id')
+            .where('league_id', 'in', leagueIds)
+            .execute()
+        ).map(row => ({ userId: row.user_id, level: 'league' as const })))
+  ]
+  const people = await peopleOf(
+    db,
+    rows.map(row => row.userId)
+  )
+  const survivors = [...new Set([...people.values()].map(p => p.userId))]
+  const open =
+    survivors.length === 0
+      ? new Set<number>()
+      : new Set(
+          (
+            await db
+              .selectFrom('users')
+              .select('id')
+              .where('id', 'in', survivors)
+              .where('disabled_at', 'is', null)
+              .where('merged_into', 'is', null)
+              .execute()
+          ).map(row => row.id)
+        )
+  const members = new Map<number, Exclude<RoleLevel, 'team'>>()
+  for (const row of rows) {
+    const userId = people.get(row.userId)?.userId ?? row.userId
+    if (!open.has(userId)) continue
+    if (members.get(userId) !== 'league') members.set(userId, row.level)
+  }
+  return members
+}
+
+const LEVEL_RANK: Record<RoleLevel, number> = { team: 0, season: 1, league: 2 }
+
+/**
+ * `givenRolesOnTeam` with, for each role, the highest level that gives it:
+ * a coach of the team who also coaches its league is a league coach here.
+ * Each person's roles are in `ROLES` order. An owner's or manager's `admin`
+ * is the team's.
+ */
+export async function givenRoleLevelsOnTeam(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<Map<number, Map<Role, RoleLevel>>> {
+  const { seasonIds, leagueIds } = await levelsAboveTeam(db, teamId)
 
   const rows = await db
     .selectFrom('scope_roles')
@@ -691,12 +765,12 @@ export async function givenRoleLevelsOnTeam(
                 eb('scope_roles.scope_id', 'in', seasonIds)
               ])
             ]),
-        ...(leagueIds.size === 0
+        ...(leagueIds.length === 0
           ? []
           : [
               eb.and([
                 eb('scope_roles.scope_type', '=', 'league'),
-                eb('scope_roles.scope_id', 'in', [...leagueIds])
+                eb('scope_roles.scope_id', 'in', leagueIds)
               ])
             ])
       ])

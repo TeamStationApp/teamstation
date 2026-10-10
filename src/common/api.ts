@@ -64,7 +64,7 @@ import {
   type GroupDetail,
   type PublicGroup
 } from './publicGroups'
-import { asRole, type Role, type RoleFlag } from './roles'
+import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
 import {
   cleanAction,
   type Problem,
@@ -497,6 +497,22 @@ export const asThrows = asEither(
   asLiteral('right')
 )
 
+/**
+ * A roster's sections, in the order they are listed: administrators, staff
+ * (coach, assistant, scorekeeper, songkeeper, videographer), players, the
+ * players' guardians, the other members (of the team, or of its season or
+ * league), and the people who follow the team.
+ */
+export const asRosterSection = asLiteral(
+  'admin',
+  'staff',
+  'player',
+  'family',
+  'spectator',
+  'follower'
+)
+export type RosterSection = ReturnType<typeof asRosterSection>
+
 export const asRosterEntry = asObject({
   /** Only sent for an explicitly authorized roster-management read. */
   nameDetails: asOptional(
@@ -520,8 +536,22 @@ export const asRosterEntry = asObject({
   positions: asArray(asString),
   isPlayer: asBoolean,
   role: asString,
-  /** `coach`, `player` or `follower` — the section they are listed under. */
-  group: asOptional(asString, 'player'),
+  /** The section they are listed under: the first of these that fits. */
+  section: asRosterSection,
+  /** The flags they were given on the team or above it, in flag order. */
+  staffRoles: asArray(asRoleFlag),
+  /**
+   * For somebody listed for a role given above the team, the highest level
+   * that gives it ("League admin", "Season coach"), and for a spectator
+   * who is a member through the team's season or league, that level with
+   * `member` ("Season spectator"); null for the team's own.
+   */
+  inheritedFrom: asNullable(
+    asObject({
+      level: asLiteral('season', 'league'),
+      role: asEither(asRole, asLiteral('member'))
+    })
+  ),
   /** Their walk-up song on this team, or null for none. */
   walkUpSong: asOptional(asNullable(asWalkUpSong), null)
 })

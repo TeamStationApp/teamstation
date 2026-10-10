@@ -292,6 +292,51 @@ describe('the API document', function () {
     expect(post.description).includes('429 `rateLimited`')
   })
 
+  it('describes a roster entry\u2019s section, staff roles and inherited pill', function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    const entry = schemas.RosterEntry
+    expect(entry.required).to.include.members([
+      'section',
+      'staffRoles',
+      'inheritedFrom'
+    ])
+    expect(entry.required).not.to.include('group')
+    expect(entry.properties).not.to.have.property('group')
+    expect(entry.properties.section.enum).deep.equals([
+      'admin',
+      'staff',
+      'player',
+      'family',
+      'spectator',
+      'follower'
+    ])
+    expect(entry.properties.staffRoles.items).deep.equals({
+      $ref: '#/components/schemas/RoleFlag'
+    })
+    expect(
+      entry.properties.inheritedFrom.oneOf[0].properties.level.enum
+    ).deep.equals(['season', 'league'])
+    // A spectator's pill names membership, which is not a role.
+    expect(
+      entry.properties.inheritedFrom.oneOf[0].properties.role.oneOf
+    ).deep.equals([
+      { $ref: '#/components/schemas/Role' },
+      { type: 'string', enum: ['member'] }
+    ])
+    const paths = document.paths as Record<string, any>
+    expect(
+      paths['/teams/{teamId}/roster'].get.responses[200].content[
+        'application/json'
+      ].schema.items
+    ).deep.equals({ $ref: '#/components/schemas/RosterEntry' })
+    expect(
+      paths['/teams/{teamId}/players/{userId}/settings'].put.responses[200]
+        .content['application/json'].schema
+    ).deep.equals({ $ref: '#/components/schemas/RosterEntry' })
+  })
+
   it('lists every role flag, the assistant included, wherever roles are named', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })

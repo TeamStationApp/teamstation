@@ -73,7 +73,9 @@ const jordan = asRosterEntry({
   throws: 'right',
   isPlayer: true,
   role: 'member',
-  group: 'player'
+  section: 'player',
+  staffRoles: [],
+  inheritedFrom: null
 })
 
 interface Saved {

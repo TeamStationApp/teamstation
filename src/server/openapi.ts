@@ -1604,6 +1604,119 @@ export function openApiDocument(version: string): OpenApiDocument {
             endMs: { type: 'integer' }
           }
         },
+        RosterEntry: {
+          type: 'object',
+          required: [
+            'userId',
+            'shortName',
+            'avatarUrl',
+            'jersey',
+            'positions',
+            'isPlayer',
+            'role',
+            'bats',
+            'throws',
+            'section',
+            'staffRoles',
+            'inheritedFrom',
+            'walkUpSong'
+          ],
+          description:
+            'One person on a team\u2019s roster. Somebody listed without a ' +
+            'membership of the team (staff given their role on its season ' +
+            'or league, a member of its season or league, a guardian of one ' +
+            'of its players, or a follower) has `role` `member`, `isPlayer` ' +
+            'false, no jersey, no positions and no walk-up song.',
+          properties: {
+            userId: { type: 'integer' },
+            shortName: {
+              type: 'string',
+              description: 'First name and last initial.'
+            },
+            nameDetails: {
+              type: 'object',
+              required: ['firstName', 'lastName', 'displayName'],
+              description:
+                'A player\u2019s whole name, only on a read with ' +
+                '`includeFullNames=true` by a roster manager.',
+              properties: {
+                firstName: { type: ['string', 'null'] },
+                lastName: { type: ['string', 'null'] },
+                displayName: { type: 'string' }
+              }
+            },
+            avatarUrl: { type: ['string', 'null'] },
+            jersey: { type: ['string', 'null'] },
+            positions: { type: 'array', items: { type: 'string' } },
+            isPlayer: { type: 'boolean' },
+            role: {
+              type: 'string',
+              description: 'Their membership: `owner`, `manager` or `member`.'
+            },
+            bats: {
+              type: ['string', 'null'],
+              enum: ['left', 'right', 'switch', null]
+            },
+            throws: { type: ['string', 'null'], enum: ['left', 'right', null] },
+            section: {
+              type: 'string',
+              enum: [
+                'admin',
+                'staff',
+                'player',
+                'family',
+                'spectator',
+                'follower'
+              ],
+              description:
+                'The first that fits: `admin` (owner, manager, or the ' +
+                'admin role on the team, its season or its league), ' +
+                '`staff` (any role flag there), `player`, `family` (a ' +
+                'guardian of one of its players), `spectator` (a member of ' +
+                'the team, its season or its league), `follower` (follows ' +
+                'the team, or a team merged into it).'
+            },
+            staffRoles: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/RoleFlag' },
+              description:
+                'The flags given on the team, its season or its league, in ' +
+                'flag order. Implied roles are not listed.'
+            },
+            inheritedFrom: {
+              description:
+                'For the role that placed them (`admin`, the first of ' +
+                '`staffRoles`, or for a spectator `member`), the highest ' +
+                'level giving it when that is above the team: a team coach ' +
+                'who also coaches the league is `{ level: league, role: ' +
+                'coach }`, and a member of the team\u2019s season `{ level: ' +
+                'season, role: member }`. Null when the team gives it, and ' +
+                'for players, family and followers.',
+              oneOf: [
+                {
+                  type: 'object',
+                  required: ['level', 'role'],
+                  properties: {
+                    level: { type: 'string', enum: ['season', 'league'] },
+                    role: {
+                      oneOf: [
+                        { $ref: '#/components/schemas/Role' },
+                        { type: 'string', enum: ['member'] }
+                      ]
+                    }
+                  }
+                },
+                { type: 'null' }
+              ]
+            },
+            walkUpSong: {
+              oneOf: [
+                { $ref: '#/components/schemas/WalkUpSong' },
+                { type: 'null' }
+              ]
+            }
+          }
+        },
         RoleFlag: {
           type: 'string',
           enum: [
@@ -3977,8 +4090,16 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/teams/{teamId}/roster': {
         get: {
-          summary: "A team's players, coaches and followers",
+          summary:
+            'Everybody on a team: administrators, staff, players, family and other members',
           description:
+            'Every member of the team, everybody given a role on the team, ' +
+            'its seasons or its league, and every guardian of one of its ' +
+            'players, each once, in the first `section` that fits: admin, ' +
+            'staff, player, family, other. Within a section the team’s ' +
+            'own people come first, then those given their role above it ' +
+            '(`inheritedFrom`), each by name. Following a team does not ' +
+            'list anybody. ' +
             'Names default to a first name and last initial. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
             'coach, assistant, scorekeeper or admin on this team or its parents. Others get 404. ' +
@@ -3998,7 +4119,17 @@ export function openApiDocument(version: string): OpenApiDocument {
             }
           ],
           responses: {
-            200: { description: 'The roster, coaches first' },
+            200: {
+              description: 'The roster, administrators first',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'array',
+                    items: { $ref: '#/components/schemas/RosterEntry' }
+                  }
+                }
+              }
+            },
             400: errorResponse,
             404: errorResponse
           }
@@ -4080,7 +4211,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                "The player's roster entry, as GET /teams/{teamId}/roster lists it"
+                "The player's roster entry, as GET /teams/{teamId}/roster lists it",
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
             },
             400: errorResponse,
             401: errorResponse,
