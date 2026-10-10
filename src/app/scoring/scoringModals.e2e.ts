@@ -118,7 +118,10 @@ async function main(): Promise<void> {
       ? flat(hierarchy).find(node => node.type === 'WebView')
       : undefined
     const nodes = flat(web ?? hierarchy).filter(
-      node => node.text === text && node.bounds != null
+      node =>
+        (node.text === text ||
+          (text.startsWith('Undo ') && node.text?.startsWith(text) === true)) &&
+        node.bounds != null
     )
     const node =
       nodes.at(-1) ??
