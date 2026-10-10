@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     console.log('Tap', text)
     if (native) {
       if (
-        !['Cancel', 'Add Player'].includes(text) &&
+        !['Cancel', 'Add Player', 'More'].includes(text) &&
         !text.startsWith('Tag event:')
       ) {
         await m.tapOn({
