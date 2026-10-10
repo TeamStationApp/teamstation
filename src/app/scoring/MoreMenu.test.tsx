@@ -25,12 +25,18 @@ async function click(label: string): Promise<void> {
     button(label).click()
   })
 }
-async function mount(native = false, occupied = false): Promise<void> {
+async function mount(
+  native = false,
+  occupied = false,
+  pristine = false
+): Promise<void> {
   let state = initialScoringState(createDevelopmentSession(gameFixture, [], []))
   if (occupied)
     state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
-  state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
-  state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
+  if (!pristine) {
+    state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
+    state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
+  }
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -127,7 +133,7 @@ describe('More scoring menu', function () {
   })
   for (const native of [false, true])
     it(`groups real scoring actions and places immediately on ${native ? 'native' : 'web'}`, async function () {
-      await mount(native)
+      await mount(native, false, true)
       await click('More')
       expect(document.body.textContent).not.includes('This pitch')
       expect(document.body.textContent).not.includes('Between pitches')
@@ -167,6 +173,22 @@ describe('More scoring menu', function () {
       })
       expect(inputs).has.length(0)
       await click('More')
+      await click('Dismiss More')
+    })
+  for (const native of [false, true])
+    it(`disables tiebreaker setup after a pitch on ${native ? 'native' : 'web'}`, async () => {
+      await mount(native)
+      await click('More')
+      const choice = button('Place a Runner (Tiebreaker)')
+      expect(
+        choice.hasAttribute('disabled') ||
+          choice.getAttribute('aria-disabled') === 'true'
+      ).equals(true)
+      await click('Place a Runner (Tiebreaker)')
+      expect(inputs).has.length(0)
+      expect(document.querySelector('[aria-label="Placed runner"]')).equals(
+        null
+      )
       await click('Dismiss More')
     })
   for (const native of [false, true])

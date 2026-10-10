@@ -294,6 +294,7 @@ export type ScoringEvent =
     }
   | { type: 'ROSTER'; draft: ScoringSessionState; nextBatter?: number }
   | { type: 'OVERRIDE'; draft: OverrideDraft }
+  | { type: 'TIEBREAKER_OUTS'; outs: number }
   | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }
   | { type: 'UNDO' }
   | {

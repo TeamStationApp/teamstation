@@ -9,6 +9,7 @@ import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
 import { PlayFolder } from './document'
 import { recordOf } from './gumbo'
+import { baseIds, overrideOf, tiebreakerSetupError } from './rules'
 import {
   type EventStore,
   type SaveChange,
@@ -88,6 +89,56 @@ async function open(
 }
 
 describe('a scoring session', function () {
+  it('persists tiebreaker runners and outs with each action independently undoable after reopening', async () => {
+    const { session, store } = await open()
+    const runners = session.state.liveData.boxscore.teams.away.battingOrder
+    const first = runners[1]
+    const second = runners[2]
+    expect(
+      session.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: first,
+        base: '2B'
+      }).problems
+    ).deep.equals([])
+    const before = JSON.parse(JSON.stringify(session.state.liveData.boxscore))
+    const draft = overrideOf(session.state)
+    expect(
+      session.apply({
+        type: 'gameFlow',
+        kind: 'override',
+        ...draft,
+        batter: draft.batter ?? undefined,
+        pitcher: draft.pitcher ?? undefined,
+        outs: 2
+      }).problems
+    ).deep.equals([])
+    expect(
+      session.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: second,
+        base: '1B'
+      }).problems
+    ).deep.equals([])
+    await session.flush()
+    const again = await open(store)
+    expect(baseIds(again.session.state)).deep.equals([second, first, null])
+    expect(again.session.state.liveData.linescore.outs).equals(2)
+    expect(tiebreakerSetupError(again.session.state)).equals(undefined)
+    expect(again.session.state.liveData.boxscore).deep.equals(before)
+    expect(again.session.undo().problems).deep.equals([])
+    expect(baseIds(again.session.state)).deep.equals([null, first, null])
+    expect(again.session.undo().problems).deep.equals([])
+    expect(again.session.state.liveData.linescore.outs).equals(0)
+    expect(baseIds(again.session.state)).deep.equals([null, first, null])
+    expect(again.session.undo().problems).deep.equals([])
+    expect(baseIds(again.session.state)).deep.equals([null, null, null])
+    await again.session.flush()
+    expect((await open(store)).session.state.liveData.linescore.outs).equals(0)
+  })
+
   it('coalesces the real hit-by-pitch event and retains its tag on completion', async () => {
     const { session, store } = await open()
     expect(

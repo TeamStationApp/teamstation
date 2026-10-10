@@ -1,3 +1,4 @@
+import { shortName } from '../../common/scoring/actions'
 import { moreEligibility as gameEligibility } from '../../common/scoring/rules'
 import { moreEvents } from './scoringContract'
 import { accepted, act, settleRunners } from './scoringFlow'
@@ -71,7 +72,13 @@ export function moreReducer(
   )
     return state
   if (action === 'Place a Runner (Tiebreaker)' && playerId == null) return state
-  return accepted(state, action, next => {
+  const runner =
+    playerId == null ? undefined : state.session.gameData.players[playerId]
+  const label =
+    action === 'Place a Runner (Tiebreaker)'
+      ? `Place ${runner == null ? `Player ${playerId}` : (runner.fullName ?? shortName(runner))} on ${bases[base! - 1]}`
+      : action
+  return accepted(state, label, next => {
     const batter = next.session.liveData.plays.currentPlay!.matchup.batter.id
     if (action === 'Place a Runner (Tiebreaker)') {
       act(next, {

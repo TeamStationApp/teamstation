@@ -6,6 +6,7 @@ import type {
   ResultAction,
   ScoringAction
 } from '../../common/scoring/actions'
+import { overrideOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
@@ -26,6 +27,63 @@ import {
 } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
+
+describe('setup history descriptions', () => {
+  it('identifies the runner and base, and distinguishes outs-only changes from other corrections', () => {
+    const before = createDevelopmentSession(gameFixture, [], [])
+    const placed = applyAction(before, {
+      type: 'gameFlow',
+      kind: 'placeRunner',
+      runner: 9,
+      base: '2B'
+    })
+    expect(
+      describePlay(
+        before,
+        [{ type: 'gameFlow', kind: 'placeRunner', runner: 9, base: '2B' }],
+        placed.state
+      )?.primary
+    ).equals('Player 9. placed on 2B')
+    for (const outs of [1, 2, 0]) {
+      const original = outs === 0 ? placed.state : before
+      const start =
+        outs === 0
+          ? applyAction(original, {
+              type: 'gameFlow',
+              kind: 'override',
+              ...overrideOf(original),
+              batter: overrideOf(original).batter ?? undefined,
+              pitcher: overrideOf(original).pitcher ?? undefined,
+              outs: 2
+            }).state
+          : original
+      const action: ScoringAction = {
+        type: 'gameFlow',
+        kind: 'override',
+        ...overrideOf(start),
+        batter: overrideOf(start).batter ?? undefined,
+        pitcher: overrideOf(start).pitcher ?? undefined,
+        outs
+      }
+      const after = applyAction(start, action).state
+      expect(describePlay(start, [action], after)?.primary).equals(
+        `Set outs to ${outs}`
+      )
+    }
+    const mixed: ScoringAction = {
+      type: 'gameFlow',
+      kind: 'override',
+      ...overrideOf(before),
+      batter: overrideOf(before).batter ?? undefined,
+      pitcher: overrideOf(before).pitcher ?? undefined,
+      outs: 2,
+      balls: 1
+    }
+    expect(
+      describePlay(before, [mixed], applyAction(before, mixed).state)?.primary
+    ).equals('Game corrected')
+  })
+})
 
 // Visitors 1-9 bat; the hosts field 10 P, 11 C, 12 1B, 13 2B, 14 SS, 15 3B,
 // 16 LF, 17 CF, 18 RF.
