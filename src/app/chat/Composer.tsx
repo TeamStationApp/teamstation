@@ -45,7 +45,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const [choosing, setChoosing] = useState(false)
   const input = useRef<React.ComponentRef<typeof TextInput>>(null)
   const latest = useRef(props)
-  latest.current = props
+  latest.current = { ...props, onAttach: props.onAttach }
   const canSend = sendAllowed({
     enabled,
     sending,
@@ -53,6 +53,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
     text,
     attachments
   })
+  const canAttach = enabled && !sending && props.preparing !== true
   useEffect(
     () =>
       bindComposerKeys(input.current, () => {
@@ -72,8 +73,11 @@ export function Composer(props: ComposerProps): React.ReactElement {
   )
 
   const attach = (source: PickSource): void => {
+    const current = latest.current
+    if (!current.enabled || current.sending || current.preparing === true)
+      return
     setChoosing(false)
-    props.onAttach(source)
+    current.onAttach(source)
   }
 
   return (
@@ -147,6 +151,8 @@ export function Composer(props: ComposerProps): React.ReactElement {
           {props.sources.map(source => (
             <Pressable
               key={source}
+              disabled={!canAttach}
+              accessibilityState={{ disabled: !canAttach }}
               accessibilityRole="button"
               accessibilityLabel={
                 source === 'photos'
@@ -185,8 +191,8 @@ export function Composer(props: ComposerProps): React.ReactElement {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={lstrings.chat_attach}
-            accessibilityState={{ disabled: !enabled }}
-            disabled={!enabled}
+            accessibilityState={{ disabled: !canAttach }}
+            disabled={!canAttach}
             onPress={() => {
               // One place to pick from opens it at once; two ask which.
               if (props.sources.length === 1) attach(props.sources[0])
@@ -196,7 +202,9 @@ export function Composer(props: ComposerProps): React.ReactElement {
           >
             <Icon
               name="attach_file"
-              color={enabled ? theme.primaryTextColor : theme.tertiaryTextColor}
+              color={
+                canAttach ? theme.primaryTextColor : theme.tertiaryTextColor
+              }
             />
           </Pressable>
         )}

@@ -323,8 +323,10 @@ export function ConversationScreen(
     []
   )
   const prepareFiles = (
-    work: (remaining: number) => Promise<PickedFile[]>
+    work: (remaining: number) => Promise<PickedFile[]>,
+    mode: 'queue' | 'picker' = 'queue'
   ): void => {
+    if (mode === 'picker' && preparingNow.current > 0) return
     const current = latestView.current
     if (
       current?.composer !== 'enabled' ||
@@ -339,11 +341,27 @@ export function ConversationScreen(
     preparingNow.current += 1
     setPreparing(preparingNow.current)
     setError(undefined)
+    // The system picker must open in its trusted activation turn. Drops
+    // still start in queue order with the current remaining capacity.
+    const started =
+      mode === 'picker'
+        ? new Promise<PickedFile[]>(resolve => {
+            resolve(work(MAX_ATTACHMENTS - pickedNow.current.length))
+          }).then(
+            chosen => ({ ok: true as const, chosen }),
+            (error: unknown) => ({ ok: false as const, error })
+          )
+        : undefined
     preparationQueue.current = preparationQueue.current
       .catch(() => undefined)
       .then(async () => {
         if (generation !== preparationGeneration.current) return
-        const chosen = await work(MAX_ATTACHMENTS - pickedNow.current.length)
+        const outcome = started == null ? undefined : await started
+        if (outcome?.ok === false) throw outcome.error
+        const chosen =
+          outcome == null
+            ? await work(MAX_ATTACHMENTS - pickedNow.current.length)
+            : outcome.chosen
         if (
           generation !== preparationGeneration.current ||
           latestView.current?.composer !== 'enabled'
@@ -1359,7 +1377,8 @@ export function ConversationScreen(
             sources={editing == null ? files.PICK_SOURCES : []}
             onAttach={source => {
               prepareFiles(
-                async remaining => await files.pickFiles(source, remaining)
+                async remaining => await files.pickFiles(source, remaining),
+                'picker'
               )
             }}
             onSend={send}
