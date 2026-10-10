@@ -3031,3 +3031,231 @@ describe('post-deep content validation lifetime', function () {
     })
   })
 })
+
+describe('post-deep review2 current geometry persistence', function () {
+  it('publishes the genuine intermediate clamp when a later current tail promotes it without another scroll event', async function () {
+    const pending = await returningList(true, 240)
+    await pending.populate(2)
+    const completions: Array<
+      (x: number, y: number, width: number, height: number) => void
+    > = []
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="chat-conversation-cnv_return_1"]'
+    )!.parentElement! as HTMLElement & {
+      measureLayout: (
+        relative: unknown,
+        success: (x: number, y: number, width: number, height: number) => void
+      ) => void
+    }
+    row.measureLayout = (_relative, success) => completions.push(success)
+    await pending.content(500)
+    expect(pending.moves).deep.equals([100])
+    await act(async () => {
+      pending.node.scrollTop = 100
+      ;(
+        renderedListCallbacks(pending.node) as ListLayoutCallbacks & {
+          onScroll: (event: {
+            nativeEvent: { contentOffset: { y: number } }
+          }) => void
+        }
+      ).onScroll({ nativeEvent: { contentOffset: { y: 100 } } })
+      expect(
+        pending.offsets,
+        'Observed scroll precedes tail completion'
+      ).deep.equals([])
+      expect(
+        completions.length,
+        'A real mounted tail measurement is pending'
+      ).greaterThan(0)
+      for (const complete of completions.splice(0)) complete(0, 420, 320, 80)
+      row.measureLayout = (_relative, success) => {
+        success(0, 420, 320, 80)
+      }
+      await wait(80)
+    })
+    expect(
+      pending.moves,
+      'Promotion does not need a second scroll request'
+    ).deep.equals([100])
+    expect(
+      pending.offsets.at(-1),
+      'The observed destination becomes the saved clamp'
+    ).equals(100)
+    await pending.content(1800)
+    expect(
+      pending.moves,
+      'Later content cannot restore obsolete240'
+    ).deep.equals([100])
+    expect(pending.offsets.at(-1)).equals(100)
+  })
+
+  for (const change of ['edit', 'delete'] as const)
+    it(`recaptures live ${change} reflow with current draft fields and returns to that exact non-following position`, async function () {
+      const engine = new ReviewEngine()
+      const above = { ...original('msg_above'), seq: 1 }
+      const visible = { ...original(), seq: 2 }
+      engine.update('cnv_aurora', { messages: [above, visible] })
+      let reads = 0
+      let activations = 0
+      engine.markRead = async () => {
+        reads += 1
+      }
+      const open = engine.open.bind(engine)
+      engine.open = async id => {
+        activations += 1
+        return await open(id)
+      }
+      const state = newChatWorkspaceState()
+      state.drafts.set('cnv_aurora', terminalDraft())
+      await workspace(engine, state)
+      await layout(
+        document.querySelector('[data-testid="chat-workspace"]')!,
+        320,
+        700
+      )
+      const reading = terminalReadingPane()
+      await reading.measure()
+      const row = document.querySelector<HTMLElement>(
+        '[data-testid="chat-message-msg_original"]'
+      )!.parentElement!
+      await layout(row, 640, 1000, 1030)
+      await act(async () => {
+        reading.node.dispatchEvent(
+          new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+        )
+        await wait()
+      })
+      await reading.deliver(
+        renderedReadingCallbacks(reading.node),
+        'onScroll',
+        1000
+      )
+      expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
+        id: 'msg_original',
+        relativeY: 30
+      })
+      await type('New current unsent caption')
+      const beforeReads = reads
+      const beforeActivations = activations
+      reading.moves.length = 0
+      await act(async () => {
+        engine.update('cnv_aurora', {
+          messages: [
+            change === 'edit'
+              ? { ...above, body: 'Shorter wording', edited: true }
+              : { ...above, body: '', status: 'removed', removedBy: 'author' },
+            visible
+          ]
+        })
+        await wait()
+      })
+      await layout(row, 640, 1000, 966)
+      const content = renderedReadingCallbacks(
+        reading.node
+      ) as ScrollCallbacks & {
+        onContentSizeChange: (width: number, height: number) => void
+      }
+      await act(async () => {
+        content.onContentSizeChange(640, 2136)
+        await wait()
+      })
+      const saved = state.drafts.get('cnv_aurora')!
+      expect(saved.scrollOffset).equals(1000)
+      expect(saved.followNewest).equals(false)
+      expect(saved.scrollAnchor).deep.equals({
+        id: 'msg_original',
+        relativeY: -34
+      })
+      expect(saved.text).equals('New current unsent caption')
+      expect(saved.replyTo?.id).equals('msg_original')
+      expect(saved.picked.map(file => file.fileName)).deep.equals(['notes.pdf'])
+      expect(reading.moves, 'Saving a live reflow must not scroll').deep.equals(
+        []
+      )
+      expect(reads, 'Geometry does not advance read cursor').equals(beforeReads)
+      expect(activations, 'Geometry does not activate a conversation').equals(
+        beforeActivations
+      )
+      await unmount()
+      await workspace(engine, state)
+      await layout(
+        document.querySelector('[data-testid="chat-workspace"]')!,
+        320,
+        700
+      )
+      const returning = terminalReadingPane()
+      const mountedRow = document.querySelector<HTMLElement>(
+        '[data-testid="chat-message-msg_original"]'
+      )!.parentElement!
+      Object.defineProperty(mountedRow, 'offsetTop', {
+        configurable: true,
+        value: 966
+      })
+      mountedRow.getBoundingClientRect = () =>
+        new window.DOMRect(0, 966 - returning.node.scrollTop, 640, 1000)
+      await returning.measure()
+      expect(returning.moves).contains(1000)
+      expect(
+        returning.moves.some(offset => offset === 936),
+        'No obsolete relative30 restore'
+      ).equals(false)
+      expect(returning.node.scrollTop).equals(1000)
+      expect(966 - returning.node.scrollTop).equals(-34)
+    })
+
+  it('ignores retained reflow layout callbacks after a narrow hide or full unmount without stale draft writes or scroll', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', { messages: [original()] })
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', terminalDraft())
+    await workspace(engine, state)
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      320,
+      700
+    )
+    const reading = terminalReadingPane()
+    await reading.measure()
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-msg_original"]'
+    )!.parentElement! as HTMLElement & {
+      __reactLayoutHandler: (event: {
+        nativeEvent: {
+          layout: { x: number; y: number; width: number; height: number }
+        }
+      }) => void
+    }
+    const retained = row.__reactLayoutHandler
+    await act(async () => {
+      reading.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+      )
+      await wait()
+    })
+    await reading.deliver(
+      renderedReadingCallbacks(reading.node),
+      'onScroll',
+      1000
+    )
+    await workspace(engine, state, null)
+    const saved = state.drafts.get('cnv_aurora')
+    reading.moves.length = 0
+    await act(async () => {
+      retained({
+        nativeEvent: { layout: { x: 0, y: 966, width: 640, height: 1000 } }
+      })
+      await wait()
+    })
+    expect(state.drafts.get('cnv_aurora')).equals(saved)
+    expect(reading.moves).deep.equals([])
+    await unmount()
+    await act(async () => {
+      retained({
+        nativeEvent: { layout: { x: 0, y: 900, width: 640, height: 1000 } }
+      })
+      await wait()
+    })
+    expect(state.drafts.get('cnv_aurora')).equals(saved)
+    expect(reading.moves).deep.equals([])
+  })
+})
