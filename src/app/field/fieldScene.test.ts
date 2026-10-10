@@ -13,6 +13,38 @@ import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 describe('rendered field interaction', function () {
+  it('removes and restores defenders without a movement or pause change', async function () {
+    const players = createPlayers()
+    const props = {
+      players,
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1,
+      presentationPaused: true,
+      movementRevision: 0
+    }
+    const renderer = await create(React.createElement(FieldScene, props))
+    try {
+      expect(renderer.scene.findAllByProps({ name: 'player-P' })).length(1)
+      await renderer.update(
+        React.createElement(FieldScene, {
+          ...props,
+          players: players.filter(player => player.team !== 'defense')
+        })
+      )
+      await renderer.advanceFrames(1, 1 / 60)
+      for (const player of players.filter(player => player.team === 'defense'))
+        expect(
+          renderer.scene.findAllByProps({ name: `player-${player.id}` })
+        ).length(0)
+      await renderer.update(React.createElement(FieldScene, props))
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(renderer.scene.findAllByProps({ name: 'player-P' })).length(1)
+    } finally {
+      await renderer.unmount()
+    }
+  })
   it('opens setup on a completed square tap, renders no athlete, and cancels moved or interrupted taps', async function () {
     const players = createPlayers()
       .slice(0, 1)

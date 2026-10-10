@@ -2902,8 +2902,9 @@ describe('scoring browser', function () {
     'Hit by Pitch',
     'Intentional Walk',
     "Catcher's Interference",
+    // Field-based tiebreaker coverage is in scoringUiPolish.e2e.ts,
+    // using the shared Maestro device/browser flow.
     'Put Batter on Base',
-    'Place a Runner (Tiebreaker)',
     'Balk',
     'Batter Out — Other',
     'Dropped Third Strike'
@@ -2929,13 +2930,6 @@ describe('scoring browser', function () {
         if (action === 'Put Batter on Base') {
           await click(page, 'Third')
         }
-        if (action === 'Place a Runner (Tiebreaker)') {
-          await click(page, 'Placed runner')
-          await click(page, 'Choose Placed runner Player 6')
-          await click(page, 'Destination base')
-          await click(page, 'Choose Destination base Second')
-          await click(page, 'Place Runner')
-        }
         if (action === 'Dropped Third Strike') {
           await page.waitForSelector(
             '[aria-label="Runner decision for Jordan K."]',
@@ -2951,7 +2945,6 @@ describe('scoring browser', function () {
           await click(page, 'Finish defensive play')
         }
         const windowExpected = ![
-          'Place a Runner (Tiebreaker)',
           'Put Batter on Base',
           'Hit by Pitch',
           'Intentional Walk',

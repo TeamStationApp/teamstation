@@ -205,7 +205,7 @@ async function main(): Promise<void> {
   }
   let browserOpened = false
   const open = async (missing = false): Promise<void> => {
-    if (native && browserOpened) {
+    if (native) {
       await m.stopApp()
       await m.launchApp()
     }
@@ -218,7 +218,28 @@ async function main(): Promise<void> {
       await m.eraseText()
       await m.inputText({ text: link })
       await m.pressKey('Enter')
-    } else await m.openLink({ link, browser: !native })
+    } else if (native) {
+      const readyUntil = Date.now() + 45000
+      while (Date.now() < readyUntil) {
+        const nodes = flat(await m.hierarchy())
+        if (
+          nodes.some(
+            node =>
+              node.text === 'Open scoring menu' ||
+              node.text?.startsWith('Account,') === true ||
+              node.text === 'Sign in to TeamStation'
+          )
+        )
+          break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      const endpoint = await driver()
+      const result = await m.eval(
+        `http.post(${JSON.stringify(endpoint + '/url')},{body:${JSON.stringify({ url: link, bundleId: 'app.teamstation.app', idleTimeoutMs: 1500 })}})`
+      )
+      assert.equal(result.status, 200)
+      assert(JSON.parse(result.body).value?.error == null)
+    } else await m.openLink({ link, browser: true })
     browserOpened = true
     const deadline = Date.now() + 20000
     while (fixture.loaded() !== gameId && Date.now() < deadline)
@@ -428,12 +449,22 @@ async function main(): Promise<void> {
   const placeRunner = async (): Promise<void> => {
     await tap('More')
     await tap('Place a Runner (Tiebreaker)')
-    await tap('Placed runner')
-    await tap('Choose Placed runner Mike Trout')
-    await tap('Destination base')
-    await tap('Choose Destination base First')
-    await tap('Place Runner')
-    await shown('Undo Place a Runner')
+    if (baseline) {
+      await tap('Placed runner')
+      await tap('Choose Placed runner Mike Trout')
+      await tap('Destination base')
+      await tap('Choose Destination base First')
+      await tap('Place Runner')
+    } else {
+      await tap('Place runner on base')
+      await tap('Place runner on 1B')
+      await shown('Select Runner for 1B')
+      await tap('Select runner #2 Mike Trout')
+      await tap('Cancel')
+    }
+    await shown(
+      baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
+    )
     await new Promise(resolve => setTimeout(resolve, 4000))
   }
   const advancedSheets = async (): Promise<void> => {
@@ -610,7 +641,9 @@ async function main(): Promise<void> {
     ) {
       if (process.env.SCORING_MODAL_SECTION !== 'picker') {
         await placeRunner()
-        await tap('Undo Place a Runner')
+        await tap(
+          baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
+        )
         await menu('Overrides')
         await input('inning', '0')
         await finishKeyboard()
@@ -762,7 +795,7 @@ async function main(): Promise<void> {
     ) {
       await tap('More')
       await tap('Place a Runner (Tiebreaker)')
-      await shown('^Placed runner$')
+      await shown(baseline ? '^Placed runner$' : '^Place runner on base$')
       await capture('tiebreaker')
       await tap('Cancel')
       for (const [label, state] of [

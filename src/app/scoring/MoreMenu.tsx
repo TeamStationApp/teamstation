@@ -1,7 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
-import { MoreActionEditor } from './MoreActionEditor'
 import {
   MORE_GROUPS,
   type MoreAction,
@@ -28,7 +27,6 @@ export function MoreMenu({
   const [open, setOpen] = useState(false)
   const [child, setChild] = useState(false)
   const [hover, setHover] = useState<string>()
-  const [form, setForm] = useState<MoreInput>()
   const gesture = useRef<{
     x: number
     y: number
@@ -65,7 +63,6 @@ export function MoreMenu({
     setOpen(false)
     setChild(false)
     setHover(undefined)
-    setForm(undefined)
     onActive(false)
   }
   useMenuEscape(open, close, 'More')
@@ -80,7 +77,6 @@ export function MoreMenu({
       gesture.current = null
       setOpen(false)
       setChild(false)
-      setForm(undefined)
       onActive(false)
     }
   }, [disabled, onActive])
@@ -100,14 +96,8 @@ export function MoreMenu({
       setChild(value => !value)
       return
     }
-    if (input.action === 'Place a Runner (Tiebreaker)') {
-      setOpen(false)
-      setForm(input)
-      onActive(true)
-    } else {
-      close()
-      onChoose(input)
-    }
+    close()
+    onChoose(input)
   }
   const hit = (x: number, y: number): string | undefined =>
     document
@@ -371,18 +361,6 @@ export function MoreMenu({
             </div>
           )}
         </>
-      )}
-      {form != null && (
-        <MoreActionEditor
-          state={state}
-          input={form}
-          onCancel={close}
-          onSave={input => {
-            if (disabled) return
-            close()
-            onChoose(input)
-          }}
-        />
       )}
     </div>
   )

@@ -154,16 +154,12 @@ describe('More scoring menu', function () {
       ).equals(null)
       await click('More')
       await click('Place a Runner (Tiebreaker)')
-      await click('Placed runner')
-      await click('Choose Placed runner Player 3')
-      await click('Destination base')
-      await click('Choose Destination base Second')
-      await click('Place Runner')
       expect(inputs.pop()).deep.equals({
-        action: 'Place a Runner (Tiebreaker)',
-        base: 2,
-        playerId: 3
+        action: 'Place a Runner (Tiebreaker)'
       })
+      expect(document.querySelector('[aria-label="Placed runner"]')).equals(
+        null
+      )
       await click('More')
       await click('Put Batter on Base')
       await click('First')
