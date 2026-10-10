@@ -252,6 +252,7 @@ export const enUs = {
   walkup_play: 'Play',
   walkup_start: 'Start',
   walkup_end: 'End',
+  walkup_jog: 'Fine adjust: drag to move the clip slowly',
   walkup_length: '%s s',
   walkup_earlier: '1 s earlier',
   walkup_later: '1 s later',

@@ -34,6 +34,7 @@ import {
   msAt,
   placeClip
 } from './clipModel'
+import { JogWheel } from './JogWheel'
 import { type DeviceLinks, deviceLinks } from './resolveSong'
 import { type ClipRequest, useSongPlayer } from './useSongPlayer'
 import { useSongSearch } from './useSongSearch'
@@ -79,8 +80,10 @@ type Access = MusicAccess | 'checking'
  * for music the search cannot see. Refused access says so and offers the
  * phone's Settings, and the answer is asked again on the way back.
  *
- * **Clip**: fifteen seconds of the song, on a timeline. The window slides
- * as one piece. Play starts at the window and runs to its end, with the
+ * **Clip**: fifteen seconds of the song, on a timeline, with its Start and
+ * End and the Play button above it, where a thumb on the timeline cannot
+ * cover them. The window slides as one piece, and the jog wheel under the
+ * timeline slides it a quarter as fast, for setting it finely. Play starts at the window and runs to its end, with the
  * same fades as a walk-up in a game, and Stop is that same button until
  * the clip ends. Dragging the window while it plays starts again from the
  * new place on release. Save stores it for the player on this team, keeps
@@ -118,6 +121,7 @@ export function WalkUpSongScreen(
           onDevice: false
         }
   )
+  const [timelineWidth, setTimelineWidth] = useState(0)
   const [clip, setClip] = useState<Clip | null>(
     song == null ? null : fitClip(song, song.durationMs)
   )
@@ -248,6 +252,17 @@ export function WalkUpSongScreen(
             ...part
           }
     const clipPlaying = playing === 'clip'
+    // Moving the window while it plays starts it again from the new place,
+    // whether the timeline or the wheel moved it.
+    const commit = (next: Clip): void => {
+      if (playingRef.current == null || chosen.handle == null) return
+      player.play({
+        key: 'clip',
+        handle: chosen.handle,
+        provider: chosen.song.provider,
+        ...next
+      })
+    }
     return (
       <Screen>
         <Card style={styles.card}>
@@ -268,22 +283,6 @@ export function WalkUpSongScreen(
               <Text style={styles.meta}>{formatLength(durationMs)}</Text>
             </View>
           </View>
-
-          <Timeline
-            clip={clip}
-            durationMs={durationMs}
-            onChange={setClip}
-            onCommit={next => {
-              if (playingRef.current == null || chosen.handle == null) return
-              player.play({
-                key: 'clip',
-                handle: chosen.handle,
-                provider: chosen.song.provider,
-                ...next
-              })
-            }}
-            styles={styles}
-          />
 
           <View style={styles.times}>
             <View style={styles.readouts}>
@@ -330,6 +329,23 @@ export function WalkUpSongScreen(
               />
             </Pressable>
           </View>
+          <Timeline
+            clip={clip}
+            durationMs={durationMs}
+            onChange={setClip}
+            onCommit={commit}
+            onWidth={setTimelineWidth}
+            styles={styles}
+          />
+
+          <JogWheel
+            clip={clip}
+            durationMs={durationMs}
+            timelineWidth={timelineWidth}
+            onChange={setClip}
+            onCommit={commit}
+          />
+
           {player.error != null && (
             <Text style={styles.error}>{player.error}</Text>
           )}
@@ -455,6 +471,8 @@ interface TimelineProps {
   onChange: (clip: Clip) => void
   /** After the finger lifts, when a drag actually moved the window. */
   onCommit?: (clip: Clip) => void
+  /** Its laid-out width, which the jog wheel's rate is a quarter of. */
+  onWidth?: (width: number) => void
   styles: ReturnType<typeof getStyles>
 }
 
@@ -463,7 +481,7 @@ interface TimelineProps {
  * Dragging slides that whole window. The ends stay a fixed distance apart.
  */
 function Timeline(props: TimelineProps): React.ReactElement {
-  const { clip, durationMs, onChange, onCommit, styles } = props
+  const { clip, durationMs, onChange, onCommit, onWidth, styles } = props
   const width = useRef(0)
   const origin = useRef({ startMs: 0, at: 0 })
   const latest = useRef(clip)
@@ -487,6 +505,7 @@ function Timeline(props: TimelineProps): React.ReactElement {
       testID="walkup-timeline"
       onLayout={event => {
         width.current = event.nativeEvent.layout.width
+        onWidth?.(width.current)
       }}
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}

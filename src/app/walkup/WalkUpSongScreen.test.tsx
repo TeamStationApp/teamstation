@@ -479,6 +479,59 @@ describe('the song picker’s clip', function () {
     expect(readout('start')).equals('0:10.0')
   })
 
+  it('shows Start, End and Play above the timeline, and the jog wheel below it', async function () {
+    await render({ song: saved, resolve: async () => 'catalog:1440833098' })
+    const order = [
+      '[data-testid="walkup-start"]',
+      '[data-testid="walkup-end"]',
+      '[aria-label="Play"]',
+      '[data-testid="walkup-timeline"]',
+      '[data-testid="walkup-jog"]'
+    ].map(selector => document.querySelector(selector))
+    order.forEach((node, i) => {
+      expect(node, String(i)).not.equals(null)
+    })
+    for (let i = 1; i < order.length; i++) {
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) &
+          window.Node.DOCUMENT_POSITION_FOLLOWING,
+        String(i)
+      ).not.equals(0)
+    }
+  })
+
+  it('starts a playing clip again when the window is let go', async function () {
+    const music = fakeMusic()
+    await render({
+      music,
+      song: saved,
+      resolve: async () => 'catalog:1440833098'
+    })
+    const timeline = document.querySelector<HTMLElement>(
+      '[data-testid="walkup-timeline"]'
+    )!
+    const letGo = async (): Promise<void> => {
+      await act(async () => {
+        timeline.dispatchEvent(
+          new window.MouseEvent('mousedown', {
+            bubbles: true,
+            clientX: 0,
+            button: 0
+          })
+        )
+        document.dispatchEvent(
+          new window.MouseEvent('mouseup', { bubbles: true, clientX: 0 })
+        )
+        await delay(10)
+      })
+    }
+    await letGo()
+    expect(music.played).deep.equals([])
+    await press('Play')
+    await letGo()
+    expect(music.played.map(play => play.startMs)).deep.equals([10000, 10000])
+  })
+
   it('leaves the fifteen-second window in place when the touch does not move', async function () {
     await render({ song: saved, resolve: async () => null })
     const timeline = document.querySelector<HTMLElement>(
