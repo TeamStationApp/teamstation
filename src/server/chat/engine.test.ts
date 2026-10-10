@@ -1793,6 +1793,125 @@ describe('the chat engine (U12)', function () {
           viewer.engine.stop()
         }
       })
+
+    it('review4: exposes one quiet preview failure and explicitly retries real encrypted content without activation or reading', async function () {
+      const a = await device('A')
+      const room = await freshRoom()
+      await a.engine.sendText(room, 'Recovered encrypted preview')
+      const { viewer, client, events } = await observer()
+      let once = true
+      const error = new Error('Controlled preview delivery failed')
+      client.afterMessages = async id => {
+        if (id === room && once) {
+          once = false
+          throw error
+        }
+      }
+      try {
+        const cursor = await client.observeRead(room)
+        let rejected: unknown
+        try {
+          await viewer.engine.loadPreview(room)
+        } catch (failure) {
+          rejected = failure
+        }
+        expect(rejected).equals(error)
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)
+            ?.previewFailed
+        ).equals(true)
+        expect(events.filter(event => event.type === 'error')).deep.equals([
+          { type: 'error', error }
+        ])
+        expect(events.some(event => event.type === 'conversations')).equals(
+          true
+        )
+        const attempts = client.queries.length
+        // Quiet layout/list consumers explicitly suppress automatic retries.
+        await viewer.engine.loadPreview(room, false)
+        await viewer.engine.loadPreview(room, false)
+        expect(client.queries.length).equals(attempts)
+        const retry = viewer.engine.loadPreview(room, true)
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)
+            ?.previewRetrying
+        ).equals(true)
+        // A second explicit click during the same attempt cannot duplicate I/O.
+        await viewer.engine.loadPreview(room, true)
+        await retry
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)?.preview
+        ).equals('Recovered encrypted preview')
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)
+            ?.previewFailed
+        ).equals(false)
+        expect(events.filter(event => event.type === 'error').length).equals(1)
+        await listOnly(viewer, client, new Map([[room, cursor]]))
+      } finally {
+        viewer.engine.stop()
+      }
+    })
+
+    it('review4: an obsolete failed delivery cannot discard a newer queued preview attempt or cause duplicate visible reads', async function () {
+      const a = await device('A')
+      const room = await freshRoom()
+      await a.engine.sendText(room, 'Before failed delivery')
+      const { viewer, client, events } = await observer()
+      const first = gate()
+      const next = gate()
+      let requests = 0
+      const error = new Error('Controlled old preview delivery failed')
+      client.afterMessages = async id => {
+        if (id !== room) return
+        requests += 1
+        if (requests === 1) {
+          first.entered()
+          await first.wait
+          throw error
+        }
+        if (requests === 2) {
+          next.entered()
+          await next.wait
+        }
+      }
+      try {
+        const cursor = await client.observeRead(room)
+        let rejected: unknown
+        const old = viewer.engine
+          .loadPreview(room)
+          .catch((failure: unknown) => {
+            rejected = failure
+          })
+        await reached(first.began)
+        await a.engine.sendText(room, 'Latest current preview')
+        await viewer.engine.refresh()
+        const current = viewer.engine.loadPreview(room)
+        first.release()
+        await old
+        expect(rejected).equals(error)
+        await reached(next.began)
+        const repeated = viewer.engine.loadPreview(room)
+        next.release()
+        await Promise.all([current, repeated])
+        expect(client.queries.filter(query => query.id === room).length).equals(
+          3
+        )
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)?.preview
+        ).equals('Latest current preview')
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)
+            ?.previewFailed
+        ).equals(false)
+        expect(events.filter(event => event.type === 'error')).deep.equals([])
+        await listOnly(viewer, client, new Map([[room, cursor]]))
+      } finally {
+        first.release()
+        next.release()
+        viewer.engine.stop()
+      }
+    })
   }
   it('seals, uploads, sends and opens attachments', async function () {
     const a = await device('A')

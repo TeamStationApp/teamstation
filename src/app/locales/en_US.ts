@@ -486,6 +486,8 @@ export const enUs = {
   chat_video_label: 'Video',
   chat_attachments_label: 'attachments',
   chat_latest_loading: 'Loading latest message…',
+  chat_latest_failed: 'Could not load latest message.',
+  chat_preview_retry: 'Try loading latest message again',
   chat_manual_unread_label: 'Marked unread',
   chat_new_message_announcement: 'New message in %s',
   chat_new_message: 'New message',

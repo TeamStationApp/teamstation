@@ -536,10 +536,22 @@ export function ConversationScreen(
     }
     return undefined
   }
+  const reachableOffset = (target: number): number => {
+    const { content, height } = scrolled.current
+    return content > 0 && height > 0
+      ? Math.min(Math.max(0, target), Math.max(0, content - height))
+      : Math.max(0, target)
+  }
   const rememberPosition = (
-    target: number,
+    requestedOffset: number,
     anchor = scrolled.current.anchor
-  ): void => {
+  ): number => {
+    const target = reachableOffset(requestedOffset)
+    if (anchor != null && target !== requestedOffset)
+      anchor = {
+        id: anchor.id,
+        relativeY: anchor.relativeY + requestedOffset - target
+      }
     restoreTarget.current = target
     scrolled.current.offset = target
     scrolled.current.hasPosition = true
@@ -556,6 +568,7 @@ export function ConversationScreen(
       followNewest: false,
       scrollAnchor: scrolled.current.anchor
     })
+    return target
   }
   const recaptureLiveAnchor = (): void => {
     const current = latestView.current
@@ -617,8 +630,10 @@ export function ConversationScreen(
     measurePosition(anchor.id, cancelled)
       .then(y => {
         if (y == null || cancelled() || restoreAnchorDirty.current) return
-        const target = Math.max(0, y - anchor.relativeY)
-        rememberPosition(target, anchor)
+        const target = rememberPosition(
+          Math.max(0, y - anchor.relativeY),
+          anchor
+        )
         scroller.current?.scrollTo({ y: target, animated: false })
       })
       .catch(() => undefined)
@@ -671,22 +686,9 @@ export function ConversationScreen(
           setError(lstrings.chat_message_unavailable)
           return
         }
-        const target = Math.max(0, y - theme.rem(0.5))
-        restoreTarget.current = target
-        scrolled.current.offset = target
-        scrolled.current.hasPosition = true
-        scrolled.current.followNewest = false
-        scrolled.current.anchor = { id, relativeY: y - target }
-        restoreAnchor.current = scrolled.current.anchor
-        onDraftChange?.({
-          text: textNow.current,
-          replyTo: replyNow.current,
-          editing: editingNow.current,
-          picked: pickedNow.current,
-          scrollOffset: target,
-          hasScrollPosition: true,
-          followNewest: false,
-          scrollAnchor: scrolled.current.anchor
+        const target = rememberPosition(Math.max(0, y - theme.rem(0.5)), {
+          id,
+          relativeY: theme.rem(0.5)
         })
         scroller.current?.scrollTo({
           y: target,
@@ -1038,7 +1040,23 @@ export function ConversationScreen(
   ): void => {
     if (!mounted.current || !paneActive.current) return
     const { contentOffset, layoutMeasurement } = event.nativeEvent
-    if (restoreTarget.current != null) return
+    if (restoreTarget.current != null) {
+      const actual = Math.max(0, contentOffset.y)
+      const target = reachableOffset(restoreTarget.current)
+      if (Math.abs(actual - target) <= 1) {
+        const anchor = scrolled.current.anchor
+        rememberPosition(
+          actual,
+          anchor == null
+            ? undefined
+            : {
+                id: anchor.id,
+                relativeY: anchor.relativeY + scrolled.current.offset - actual
+              }
+        )
+      }
+      return
+    }
     scrolled.current.offset = Math.max(0, contentOffset.y)
     const pending = prepend.current
     if (
@@ -1199,12 +1217,10 @@ export function ConversationScreen(
                 (previous.firstSeq == null || firstSeq < previous.firstSeq)
               ) {
                 prepend.current = undefined
-                const target = Math.max(
-                  0,
-                  previous.offset + height - previous.content
-                )
                 scrolled.current.content = height
-                rememberPosition(target)
+                const target = rememberPosition(
+                  Math.max(0, previous.offset + height - previous.content)
+                )
                 scroller.current?.scrollTo({ y: target, animated: false })
                 if (previous.anchor != null && measuringJump.current == null) {
                   const anchor = previous.anchor
@@ -1219,8 +1235,10 @@ export function ConversationScreen(
                   measurePosition(anchor.id, cancelled)
                     .then(y => {
                       if (y == null || cancelled()) return
-                      const measured = Math.max(0, y - anchor.relativeY)
-                      rememberPosition(measured, anchor)
+                      const measured = rememberPosition(
+                        Math.max(0, y - anchor.relativeY),
+                        anchor
+                      )
                       scroller.current?.scrollTo({
                         y: measured,
                         animated: false

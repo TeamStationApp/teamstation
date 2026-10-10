@@ -109,6 +109,9 @@ export interface ConversationListItem {
   lastPostSeq?: number
   preferences?: ChatPreferences
   preview?: string
+  /** A current preview attempt failed; a visible row can retry it explicitly. */
+  previewFailed?: boolean
+  previewRetrying?: boolean
   avatarUrl?: string | null
   unread: number
   canPost: boolean
@@ -223,7 +226,12 @@ export class ChatEngine {
   private readonly personalPins = new Map<string, ChatPin[]>()
   private readonly previewVersions = new Map<
     string,
-    { state: ConversationState; version: string }
+    {
+      state: ConversationState
+      version: string
+      failed?: boolean
+      loading?: boolean
+    }
   >()
 
   private readonly previewWaiting: Array<() => void> = []
@@ -482,6 +490,12 @@ export class ChatEngine {
             }).find(message => message.id === lastPost.id)
           )
         : undefined,
+      previewFailed:
+        this.previewVersions.get(summary.id)?.state === state &&
+        this.previewVersions.get(summary.id)?.failed === true,
+      previewRetrying:
+        this.previewVersions.get(summary.id)?.state === state &&
+        this.previewVersions.get(summary.id)?.loading === true,
       unread: summary.unread,
       canPost: summary.canPost,
       canModerate: summary.canModerate,
@@ -495,8 +509,11 @@ export class ChatEngine {
 
   // --- One chat ---------------------------------------------------------
 
-  /** Loads only visible-row previews, without activating a chat or marking read. */
-  async loadPreview(conversationId: string): Promise<void> {
+  /**
+   * Loads a local preview without activating the chat or marking read.
+   * Automatic row demands pass false to retain a quiet failure until retry.
+   */
+  async loadPreview(conversationId: string, retry = true): Promise<void> {
     const state = this.memory.state(conversationId)
     if (state == null || state.summary.lastSeq === 0 || this.status !== 'ready')
       return
@@ -504,8 +521,20 @@ export class ChatEngine {
       `${state.summary.lastSeq}:${this.item(state).locked}:${this.item(state).unverified}`
     const version = previewVersion()
     const cached = this.previewVersions.get(conversationId)
-    if (cached?.state === state && cached.version === version) return
-    this.previewVersions.set(conversationId, { state, version })
+    if (
+      cached?.state === state &&
+      cached.version === version &&
+      !(retry && cached.failed === true && cached.loading !== true)
+    )
+      return
+    const attempt = {
+      state,
+      version,
+      loading: true,
+      failed: retry && cached?.failed === true
+    }
+    this.previewVersions.set(conversationId, attempt)
+    if (attempt.failed) this.memory.emit({ type: 'conversations' })
     if (this.previewActive >= 3)
       await new Promise<void>(resolve => {
         this.previewWaiting.push(resolve)
@@ -551,9 +580,20 @@ export class ChatEngine {
       this.announcePost(conversationId)
       this.memory.emit({ type: 'conversations' })
     } catch (error) {
-      if (this.memory.state(conversationId) !== state) return
+      if (this.stopped || this.memory.state(conversationId) !== state) return
+      if (!isGone(error)) {
+        if (this.previewVersions.get(conversationId) === attempt) {
+          this.previewVersions.set(conversationId, {
+            state,
+            version,
+            failed: true
+          })
+          this.memory.emit({ type: 'error', error })
+          this.memory.emit({ type: 'conversations' })
+        }
+        throw error
+      }
       this.previewVersions.delete(conversationId)
-      if (!isGone(error)) throw error
       this.memory.conversations.delete(conversationId)
       this.personalPins.delete(conversationId)
       this.active.delete(conversationId)
