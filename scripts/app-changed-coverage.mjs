@@ -82,6 +82,7 @@ const check = spawnSync(
     '.ts',
     '--ext',
     '.tsx',
+    // A native twin runs on a phone, never under jsdom.
     '--exclude',
     '**/*.native.tsx',
     '--exclude',

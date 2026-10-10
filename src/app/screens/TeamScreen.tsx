@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Text, useWindowDimensions, View } from 'react-native'
+import {
+  type LayoutChangeEvent,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
+import Animated from 'react-native-reanimated'
 
 import type {
   BattingRow,
@@ -15,19 +21,24 @@ import {
   Card,
   Emblem,
   GameRow,
+  HANDOFF_RAMP,
   HandoffView,
   initialsOf,
   ListRow,
   ManageGear,
   PillTabs,
+  ScheduleRow,
   Screen,
   SectionHeader,
   type Stat,
   StatGrid,
   useBreakpoint,
+  useContentInset,
   useHandoff,
   useHeaderHandoff,
   useHeaderSlot,
+  usePinnedHead,
+  useScreenBottom,
   webStyle,
   WideTable
 } from '../components'
@@ -48,7 +59,7 @@ import {
   type StatColumn,
   statColumnWidths
 } from './statColumns'
-import { gamesFor } from './whenFilter'
+import { chronological, gamesFor, nextGameIndex } from './whenFilter'
 
 export interface TeamScreenProps {
   client: TeamStationClient
@@ -133,7 +144,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   // comes back down when it returns. The header carries no title for this
   // screen otherwise: the name is on the card a few pixels below it.
   const { headerHeight } = useHeaderSlot()
-  const handoff = useHandoff(headerHeight)
+  // Measured on the card's band, whose lower edge is the pills' upper one,
+  // and brought forward half the hand-off's ramp: the name has finished
+  // arriving at the moment the pills pin, and stays while they are pinned.
+  const handoff = useHandoff(headerHeight + HANDOFF_LEAD)
   const progress = handoff.progress
   useHeaderHandoff(
     useMemo(
@@ -233,191 +247,328 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   // sorts it to the bottom as a past game, so the screen disagreed with its
   // own header.
   const upcoming = gamesFor(games, 'upcoming')
+  // The season in the order it is played, as the nav bar's schedule draws it.
+  const schedule = chronological(games)
+  const next = nextGameIndex(schedule)
+
+  // The card scrolls away and the pills pin under the header; a selected tab
+  // starts directly under them, the schedule at its next game.
+  const screenBottom = useScreenBottom()
+  const pinned = usePinnedHead({
+    headerHeight,
+    ready: !loading,
+    tab,
+    anchorOnRow: tab === 'schedule' && next >= 0,
+    // The screen's bottom margin below the space after the content: the page
+    // can always scroll that much further.
+    tail: screenBottom,
+    onScroll: handoff.handleScroll,
+    cardRef: handoff.ref
+  })
 
   return (
-    <Screen onScroll={handoff.handleScroll}>
-      <Card style={styles.identity} ref={handoff.ref}>
-        <View style={styles.identityTop}>
-          <Emblem
-            uri={team.logoUrl}
-            fallback={initialsOf(team.name)}
-            size={3.5}
-          />
-          <View style={styles.identityText}>
-            <Text style={styles.teamName}>{team.name}</Text>
-            {standing != null && (
-              <Text style={styles.teamMeta}>
-                {standing.w}–{standing.l}
-                {standing.t > 0 ? `–${standing.t}` : ''} · {standing.played}{' '}
-                played
-              </Text>
-            )}
-          </View>
-          {place != null && <Badge label={placeLabel(place)} tone="honour" />}
-        </View>
+    <Screen {...pinned.screen}>
+      <Band
+        ref={pinned.cardBand.ref}
+        onLayout={pinned.cardBand.handleLayout}
+        style={[styles.band, styles.cardBand, pinned.cardBand.style]}
+      >
         {/*
+          The page behind the glass header, which the card band carries up
+          with it: a held card has earlier games scrolled up under it, and
+          they would otherwise show through the glass above the card.
+        */}
+        <View
+          pointerEvents="none"
+          // Placed by its top rather than `bottom: '100%'`, which Yoga
+          // measures against the band's padded content box, not its edge.
+          style={[
+            styles.backdrop,
+            { top: -headerHeight, height: headerHeight }
+          ]}
+        />
+        <Card style={styles.identity}>
+          <View style={styles.identityTop}>
+            <Emblem
+              uri={team.logoUrl}
+              fallback={initialsOf(team.name)}
+              size={3.5}
+            />
+            <View style={styles.identityText}>
+              <Text style={styles.teamName}>{team.name}</Text>
+              {standing != null && (
+                <Text style={styles.teamMeta}>
+                  {standing.w}–{standing.l}
+                  {standing.t > 0 ? `–${standing.t}` : ''} · {standing.played}{' '}
+                  played
+                </Text>
+              )}
+            </View>
+            {place != null && <Badge label={placeLabel(place)} tone="honour" />}
+          </View>
+          {/*
           The bottom right corner, floated rather than laid out: in the flow
           it pushed the card taller and left a band of empty space under the
           content, which reads as the page having lost its rhythm. The place
           pill keeps the top right, and the two never share a corner.
         */}
-        {onManage != null && (
-          <View style={styles.gearCorner}>
-            <ManageGear
-              client={client}
-              scopeType="team"
-              scopeId={team.id}
-              onPress={onManage}
-            />
-          </View>
-        )}
-      </Card>
+          {onManage != null && (
+            <View style={styles.gearCorner}>
+              <ManageGear
+                client={client}
+                scopeType="team"
+                scopeId={team.id}
+                onPress={onManage}
+              />
+            </View>
+          )}
+        </Card>
+      </Band>
 
-      <PillTabs
-        tabs={TABS}
-        selected={tab}
-        onSelect={next => {
-          setTab(next)
-          onTab?.(next)
-        }}
-        size="compact"
-        accessibilityLabel="Team sections"
-      />
+      <Band
+        ref={pinned.pillBand.ref}
+        onLayout={pinned.pillBand.handleLayout}
+        style={[styles.band, styles.pillBand, pinned.pillBand.style]}
+      >
+        {/*
+          A sliver of the page above the pills, under the header's lower edge.
+          iOS's glass blurs less at its very edge, and a row passing under it
+          showed sharp there, just above the pinned pills.
+        */}
+        <View
+          pointerEvents="none"
+          style={[styles.backdrop, { top: -GLASS_EDGE, height: GLASS_EDGE }]}
+        />
+        <PillTabs
+          tabs={TABS}
+          selected={tab}
+          onSelect={selected => {
+            pinned.select(selected)
+            setTab(selected)
+            onTab?.(selected)
+          }}
+          size="compact"
+          accessibilityLabel="Team sections"
+        />
+      </Band>
 
       {error != null && <Text style={styles.error}>{error}</Text>}
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
-      {!loading && tab === 'videos' && (
-        <View style={styles.section}>
-          <SectionHeader
-            title="Game video library"
-            note={`${withVideo.length} with video`}
-          />
-          {withVideo.length === 0 ? (
-            <Empty text="No game has a video attached yet." />
-          ) : (
-            withVideo.map(game => (
-              <GameCard
-                key={game.id}
-                game={game}
-                teamId={team.id}
-                onOpen={onOpenGame}
+      {/*
+        One view for whichever tab is showing, a new one for each tab: the
+        anchor measures it, and a tab that is new to the page has to be laid
+        out before it can be.
+      */}
+      {!loading && (
+        <View
+          key={tab}
+          testID="teamTabContent"
+          ref={pinned.content.ref}
+          onLayout={pinned.content.handleLayout}
+          style={styles.tabContent}
+        >
+          {tab === 'videos' && (
+            <View style={styles.section}>
+              <SectionHeader
+                title="Game video library"
+                note={`${withVideo.length} with video`}
               />
-            ))
+              {withVideo.length === 0 ? (
+                <Empty text="No game has a video attached yet." />
+              ) : (
+                withVideo.map(game => (
+                  <GameCard
+                    key={game.id}
+                    game={game}
+                    teamId={team.id}
+                    onOpen={onOpenGame}
+                  />
+                ))
+              )}
+            </View>
           )}
-        </View>
-      )}
 
-      {!loading && tab === 'schedule' && (
-        <View style={styles.section}>
-          <SectionHeader
-            title="Schedule"
-            note={`${games.length} games, ${upcoming.length} to play`}
-          />
-          {games.length === 0 ? (
-            <Empty text="No games scheduled." />
-          ) : (
-            games.map(game => (
-              <GameCard
-                key={game.id}
-                game={game}
-                teamId={team.id}
-                onOpen={onOpenGame}
+          {tab === 'schedule' && (
+            <View
+              style={styles.section}
+              ref={pinned.rowSection.ref}
+              onLayout={pinned.rowSection.handleLayout}
+            >
+              <SectionHeader
+                title="Schedule"
+                note={`${games.length} games, ${upcoming.length} to play`}
               />
-            ))
+              {schedule.length === 0 ? (
+                <Empty text="No games scheduled." />
+              ) : (
+                schedule.map((game, index) => (
+                  <View
+                    // The next game's row is its own element, so it is laid
+                    // out, and measured, again when the next game changes.
+                    key={index === next ? `${game.id}:next` : game.id}
+                    testID="scheduleGame"
+                    ref={index === next ? pinned.nextRow.ref : undefined}
+                    onLayout={
+                      index === next ? pinned.nextRow.handleLayout : undefined
+                    }
+                  >
+                    <ScheduleCard
+                      game={game}
+                      teamId={team.id}
+                      onOpen={onOpenGame}
+                    />
+                  </View>
+                ))
+              )}
+            </View>
           )}
-        </View>
-      )}
 
-      {!loading && tab === 'team' && (
-        <>
-          {roster.length === 0 && (
-            <Empty text="Nobody has been added to this team yet." />
-          )}
-          {/*
+          {tab === 'team' && (
+            <>
+              {roster.length === 0 && (
+                <Empty text="Nobody has been added to this team yet." />
+              )}
+              {/*
             Coaches, then players, then the people who can see the team
             without being on it — however they were given the right, on the
             team, its season or its league. The server decides who is in which
             group; this only draws them in order.
           */}
-          {(
-            [
-              ['coach', 'Coaches'],
-              ['player', 'Players'],
-              ['follower', 'Followers']
-            ] as const
-          ).map(([group, heading]) => {
-            const people = roster.filter(person => person.group === group)
-            if (people.length === 0) return null
-            return (
-              <View key={group} style={styles.section}>
-                <SectionHeader title={heading} note={String(people.length)} />
-                <Card>
-                  {people.map((person, index) => (
-                    <View key={person.userId}>
-                      {index > 0 && <View style={styles.divider} />}
-                      <ListRow
-                        title={person.shortName}
-                        subtitle={rosterSubtitle(person)}
-                        emblem={initialsOf(person.shortName)}
-                        emblemUri={person.avatarUrl}
-                        emblemShape="circle"
-                        trailing={
-                          // An empty string is not a jersey number. Without
-                          // this the row reads as a bare `#`.
-                          person.jersey == null || person.jersey.trim() === ''
-                            ? undefined
-                            : `#${person.jersey.trim()}`
-                        }
-                        onPress={
-                          onOpenPlayer == null
-                            ? undefined
-                            : () => {
-                                onOpenPlayer(person.userId, person.shortName, {
-                                  teamId: team.id,
-                                  onTeam: team.id
-                                })
-                              }
-                        }
-                      />
-                    </View>
-                  ))}
-                </Card>
-              </View>
-            )
-          })}
-        </>
-      )}
-
-      {!loading && tab === 'stats' && (
-        <View style={styles.section}>
-          <SectionHeader title="Season performance" />
-          <Card>
-            <StatGrid stats={seasonStats(standing)} columns={2} />
-          </Card>
-
-          <SectionHeader title="Batting" note={`${batting.length} players`} />
-          {batting.length === 0 ? (
-            <Empty text="No plays have been ingested for this team yet." />
-          ) : (
-            <Card flush>
-              <StatsTable rows={batting} columns={battingColumns} />
-            </Card>
-          )}
-          {pitching.length > 0 && (
-            <>
-              <SectionHeader
-                title="Pitching"
-                note={`${pitching.length} players`}
-              />
-              <Card flush>
-                <StatsTable rows={pitching} columns={pitchingColumns} />
-              </Card>
+              {(
+                [
+                  ['coach', 'Coaches'],
+                  ['player', 'Players'],
+                  ['follower', 'Followers']
+                ] as const
+              ).map(([group, heading]) => {
+                const people = roster.filter(person => person.group === group)
+                if (people.length === 0) return null
+                return (
+                  <View key={group} style={styles.section}>
+                    <SectionHeader
+                      title={heading}
+                      note={String(people.length)}
+                    />
+                    <Card>
+                      {people.map((person, index) => (
+                        <View key={person.userId}>
+                          {index > 0 && <View style={styles.divider} />}
+                          <ListRow
+                            title={person.shortName}
+                            subtitle={rosterSubtitle(person)}
+                            emblem={initialsOf(person.shortName)}
+                            emblemUri={person.avatarUrl}
+                            emblemShape="circle"
+                            trailing={
+                              // An empty string is not a jersey number. Without
+                              // this the row reads as a bare `#`.
+                              person.jersey == null ||
+                              person.jersey.trim() === ''
+                                ? undefined
+                                : `#${person.jersey.trim()}`
+                            }
+                            onPress={
+                              onOpenPlayer == null
+                                ? undefined
+                                : () => {
+                                    onOpenPlayer(
+                                      person.userId,
+                                      person.shortName,
+                                      {
+                                        teamId: team.id,
+                                        onTeam: team.id
+                                      }
+                                    )
+                                  }
+                            }
+                          />
+                        </View>
+                      ))}
+                    </Card>
+                  </View>
+                )
+              })}
             </>
+          )}
+
+          {tab === 'stats' && (
+            <View style={styles.section}>
+              <SectionHeader title="Season performance" />
+              <Card>
+                <StatGrid stats={seasonStats(standing)} columns={2} />
+              </Card>
+
+              <SectionHeader
+                title="Batting"
+                note={`${batting.length} players`}
+              />
+              {batting.length === 0 ? (
+                <Empty text="No plays have been ingested for this team yet." />
+              ) : (
+                <Card flush>
+                  <StatsTable rows={batting} columns={battingColumns} />
+                </Card>
+              )}
+              {pitching.length > 0 && (
+                <>
+                  <SectionHeader
+                    title="Pitching"
+                    note={`${pitching.length} players`}
+                  />
+                  <Card flush>
+                    <StatsTable rows={pitching} columns={pitchingColumns} />
+                  </Card>
+                </>
+              )}
+            </View>
           )}
         </View>
       )}
+      {/* Room for the tab to start under the pills however short it is. */}
+      <View
+        ref={pinned.spacer.ref}
+        onLayout={pinned.spacer.handleLayout}
+        style={[styles.spacer, pinned.spacer.style]}
+      />
     </Screen>
+  )
+}
+
+/** Half the hand-off's ramp: see where `useHandoff` is called. */
+const HANDOFF_LEAD = HANDOFF_RAMP / 2
+
+/** How much of the header's lower edge the pill band paints behind. */
+const GLASS_EDGE = 4
+
+/**
+ * A strip of the page as wide as the screen: through the column's margins, and
+ * painted, so what scrolls under it does not show at its sides.
+ */
+function Band(props: {
+  children: React.ReactNode
+  ref?: React.Ref<React.ComponentRef<typeof View>>
+  onLayout?: (event: LayoutChangeEvent) => void
+  style: React.ComponentProps<typeof Animated.View>['style']
+}): React.ReactElement {
+  const { children, ref, onLayout, style } = props
+  const inset = useContentInset()
+  return (
+    <Animated.View
+      ref={ref}
+      onLayout={onLayout}
+      style={[
+        {
+          marginLeft: -inset.left,
+          marginRight: -inset.right,
+          paddingLeft: inset.left,
+          paddingRight: inset.right
+        },
+        style
+      ]}
+    >
+      {children}
+    </Animated.View>
   )
 }
 
@@ -487,6 +638,39 @@ function GameCard(props: {
           The plays and the reported score disagree, so highlights are withheld.
         </Text>
       )}
+    </Card>
+  )
+}
+
+/**
+ * A game on the team's schedule: the nav bar schedule's row, with the one
+ * difference that the team's own name is not repeated on every line. The row
+ * says only who it is against, and where — `@ Owls`, `vs Hawks`.
+ */
+function ScheduleCard(props: {
+  game: GameSummary
+  teamId: string
+  onOpen: TeamScreenProps['onOpenGame']
+}): React.ReactElement {
+  const { game, teamId, onOpen } = props
+  const lines = matchupLines(game, teamId)
+  return (
+    <Card>
+      <ScheduleRow
+        first={lines.second}
+        startAt={game.startAt}
+        venue={game.venue}
+        status={game.status}
+        awayScore={game.awayScore}
+        homeScore={game.homeScore}
+        videoCount={game.videoCount}
+        result={resultFor(game, teamId)}
+        onPress={() => {
+          onOpen(game.id, `${lines.first} ${lines.second}`, {
+            autoPlay: game.videoCount > 0
+          })
+        }}
+      />
     </Card>
   )
 }
@@ -595,6 +779,44 @@ function seasonStats(standing: StandingsRow | undefined): Stat[] {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  band: {
+    backgroundColor: theme.backgroundColor,
+    // Android paints by elevation and ignores `zIndex` where the two
+    // disagree, and every row is a card with an elevation of its own. The
+    // shadow is not wanted: the band is the page, not something on it.
+    shadowColor: 'transparent'
+  },
+  cardBand: {
+    zIndex: 2,
+    elevation: 8,
+    // Over the column's top margin and the gap down to the pills, so a held
+    // card hides what has scrolled up under it.
+    marginTop: -theme.rem(theme.spaceLgRem),
+    paddingTop: theme.rem(theme.spaceLgRem),
+    marginBottom: -theme.rem(theme.spaceLgRem),
+    paddingBottom: theme.rem(theme.spaceLgRem)
+  },
+  pillBand: {
+    zIndex: 3,
+    elevation: 9,
+    // Takes back the column's gap, so the content starts at the band's lower
+    // edge: the pills' own target room, the same below them as above.
+    marginBottom: -theme.rem(theme.spaceLgRem)
+  },
+  backdrop: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: theme.backgroundColor
+  },
+  tabContent: {
+    gap: theme.rem(theme.spaceLgRem)
+  },
+  spacer: {
+    // Takes back the column's gap before it, so a tab with no room after it
+    // ends where it always did.
+    marginTop: -theme.rem(theme.spaceLgRem)
+  },
   headerHandoff: {
     flexDirection: 'row',
     alignItems: 'center',

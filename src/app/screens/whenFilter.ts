@@ -39,3 +39,38 @@ export function gamesFor<T extends Datable>(
     return when === 'upcoming' ? order : -order
   })
 }
+
+/** Oldest first, the way a season is read; a game with no date goes last. */
+export function chronological<T extends Datable>(games: readonly T[]): T[] {
+  return [...games].sort((a, b) => {
+    if (a.startAt == null || b.startAt == null) {
+      return (a.startAt == null ? 1 : 0) - (b.startAt == null ? 1 : 0)
+    }
+    return a.startAt.localeCompare(b.startAt)
+  })
+}
+
+/**
+ * The game a team's schedule opens on, as an index into `chronological`'s
+ * order: the one being played now, or else the next still to play by the
+ * same rule as Upcoming, or else — a season that is over — the last one
+ * played. A cancelled game is never it. Of two games still marked live, the
+ * later is the one being played; the earlier is a scoring session nobody
+ * finished. -1 for no games.
+ */
+export function nextGameIndex<T extends Datable & { status: string }>(
+  sorted: readonly T[],
+  now = Date.now()
+): number {
+  const live = sorted.findLastIndex(game => game.status === 'inProgress')
+  if (live >= 0) return live
+  const playable = (game: T): boolean => game.status !== 'cancelled'
+  const ahead = sorted.findIndex(
+    game => playable(game) && game.awayScore == null && isAhead(game, now)
+  )
+  if (ahead >= 0) return ahead
+  const dated = sorted.findLastIndex(
+    game => playable(game) && game.startAt != null
+  )
+  return dated >= 0 ? dated : sorted.length - 1
+}

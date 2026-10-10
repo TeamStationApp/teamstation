@@ -7,10 +7,16 @@ import { Badge, type BadgeTone } from './Badge'
 import { SideCamera } from './SideCamera'
 
 export interface ScheduleRowProps {
-  /** The away team, or the team whose page this is. */
+  /**
+   * The away team, or the team whose page this is. On that team's own page
+   * it is the only line, and it is the opponent: `@ Bay Stars`.
+   */
   first: string
-  /** `@ Bay Stars` or `vs Cyclones`. */
-  second: string
+  /**
+   * `@ Bay Stars` or `vs Cyclones`. Left out on a team's own page, where the
+   * row has one line and repeating the team's name on every game says nothing.
+   */
+  second?: string
   startAt: string | null
   venue?: string | null
   status: string
@@ -23,6 +29,12 @@ export interface ScheduleRowProps {
   // eslint-disable-next-line react/no-unused-prop-types -- accepted and ignored
   isLive?: boolean
   videoCount: number
+  /**
+   * The finished game's badge, written from one side: a team's own page reads
+   * `W 5–3` ours first, where a one-line row has no away team written first
+   * to say which score is whose. LIVE still takes its place while scored.
+   */
+  result?: { label: string; tone: BadgeTone }
   onPress?: () => void
 }
 
@@ -44,6 +56,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
     awayScore,
     homeScore,
     videoCount,
+    result,
     onPress
   } = props
   const theme = useTheme()
@@ -53,10 +66,13 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   const scored = awayScore != null && homeScore != null && !inProgress
   const badgeLabel = inProgress
     ? 'LIVE'
-    : scored
-      ? `${awayScore}\u2013${homeScore}`
-      : undefined
-  const badgeTone: BadgeTone = inProgress ? 'live' : 'neutral'
+    : result != null
+      ? result.label
+      : scored
+        ? `${awayScore}\u2013${homeScore}`
+        : undefined
+  const badgeTone: BadgeTone = inProgress ? 'live' : (result?.tone ?? 'neutral')
+  const teams = second == null ? first : `${first} ${second}`
 
   const content = (
     <>
@@ -71,9 +87,11 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
           </Text>
           {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
         </View>
-        <Text style={styles.team} numberOfLines={1}>
-          {second}
-        </Text>
+        {second != null && (
+          <Text style={styles.team} numberOfLines={1}>
+            {second}
+          </Text>
+        )}
         {dated.when !== '' && (
           <Text style={styles.detail} numberOfLines={1}>
             {dated.when}
@@ -98,7 +116,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${first} ${second}, ${dated.when}`}
+      accessibilityLabel={`${teams}, ${dated.when}`}
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >

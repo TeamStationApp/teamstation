@@ -93,4 +93,49 @@ describe('ScheduleRow', function () {
     expect(text(container)).includes('\u2014')
     expect(container.querySelector('[aria-label="Video"]')).equals(null)
   })
+
+  it('draws one team line when there is no second, and says only that', async function () {
+    const container = await render(row({ first: '@ Owls', second: undefined }))
+    const dated = scheduleDate(START)
+    const lines = [...container.querySelectorAll('div')]
+      .filter(node => node.childElementCount === 0)
+      .map(node => node.textContent)
+    expect(lines).includes('@ Owls')
+    expect(lines).not.includes('Badgers')
+    expect(text(container)).includes('4–0')
+    expect(
+      container.querySelector('[role="button"]')?.getAttribute('aria-label')
+    ).equals(`@ Owls, ${dated.when}`)
+  })
+
+  it('names both teams in its label when it has two lines', async function () {
+    const container = await render(row())
+    const dated = scheduleDate(START)
+    expect(
+      container.querySelector('[role="button"]')?.getAttribute('aria-label')
+    ).equals(`Badgers @ Sox, ${dated.when}`)
+  })
+
+  it('shows a result written from one side in place of the away–home score', async function () {
+    const container = await render(
+      row({
+        first: 'vs Hawks',
+        second: undefined,
+        result: { label: 'W 5\u20132', tone: 'win' }
+      })
+    )
+    expect(text(container)).includes('W 5\u20132')
+    expect(text(container)).not.includes('4\u20130')
+  })
+
+  it('still says LIVE over a result while the game is being scored', async function () {
+    const container = await render(
+      row({
+        status: 'inProgress',
+        result: { label: 'W 5\u20132', tone: 'win' }
+      })
+    )
+    expect(text(container)).includes('LIVE')
+    expect(text(container)).not.includes('W 5')
+  })
 })
