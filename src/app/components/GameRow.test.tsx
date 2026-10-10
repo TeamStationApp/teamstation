@@ -201,3 +201,33 @@ describe('GameRow result', function () {
     ).equals(false)
   })
 })
+
+describe('game status accessibility', () => {
+  it('includes pending approval in a tappable game label without changing the matchup', async () => {
+    const container = await render(
+      <GameRow
+        first="Demo Hawks"
+        second="vs Demo Eagles"
+        detail="Oct 15"
+        badgeLabel="Pending approval"
+        onPress={() => undefined}
+      />
+    )
+    expect(
+      container.querySelector('[role="button"]')?.getAttribute('aria-label')
+    ).equals('Demo Hawks vs Demo Eagles, Oct 15, Pending approval')
+  })
+  it('keeps ordinary unbadged games named without an empty suffix', async () => {
+    const container = await render(
+      <GameRow
+        first="Demo Hawks"
+        second="vs Demo Eagles"
+        detail="Oct 15"
+        onPress={() => undefined}
+      />
+    )
+    expect(
+      container.querySelector('[role="button"]')?.getAttribute('aria-label')
+    ).equals('Demo Hawks vs Demo Eagles, Oct 15')
+  })
+})

@@ -34,6 +34,30 @@ function ids(pills: ReturnType<typeof gameTabs>): string[] {
 }
 
 describe('the pills across a game', function () {
+  it('puts the separate Settings action last only when team administration and a destination are available', () => {
+    const game = gameWith({ canScore: true, canDj: true })
+    const onSettings = (): void => undefined
+    const input = { game, music, onDjGame, onSettings, canManage: true }
+    const pills = gameTabs(input)
+    expect(ids(pills)).deep.equals([
+      'boxScore',
+      'watch',
+      'score',
+      'dj',
+      'settings'
+    ])
+    expect(pills.at(-1)).deep.equals({
+      id: 'settings',
+      label: 'Settings',
+      role: 'button'
+    })
+    expect(ids(gameTabs({ ...input, canManage: false }))).not.includes(
+      'settings'
+    )
+    expect(ids(gameTabs({ ...input, onSettings: undefined }))).not.includes(
+      'settings'
+    )
+  })
   it('offers Score Game to a scorer of an unscored game', function () {
     const pills = gameTabs({ game: gameWith({ canScore: true }) })
     expect(ids(pills)).deep.equals(['boxScore', 'watch', 'score'])

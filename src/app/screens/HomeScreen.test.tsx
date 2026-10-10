@@ -12,6 +12,7 @@ import type {
   TeamStationClient,
   TeamSummary
 } from '../../common/api'
+import { asSeasonGame, asTeamSummary } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { HomeScreen } from './HomeScreen'
 
@@ -98,7 +99,7 @@ function team(
   name: string,
   patch: Partial<TeamSummary> = {}
 ): TeamSummary {
-  return {
+  return asTeamSummary({
     id,
     name,
     shortName: null,
@@ -106,8 +107,9 @@ function team(
     logoUrl: null,
     record: null,
     kind: 'full',
+    seasonCategory: 'inSeason',
     ...patch
-  }
+  })
 }
 
 function season(
@@ -131,7 +133,7 @@ function season(
 }
 
 function recentGame(patch: Partial<SeasonGame> = {}): SeasonGame {
-  return {
+  return asSeasonGame({
     id: 'gam_recent',
     homeTeamId: 'tem_sox',
     awayTeamId: 'tem_hawks',
@@ -153,8 +155,12 @@ function recentGame(patch: Partial<SeasonGame> = {}): SeasonGame {
     awayLogoUrl: null,
     isLive: false,
     externalIds: [],
+    exhibition: false,
+    timezone: 'UTC',
+    pendingApproval: false,
+    pendingRequestId: null,
     ...patch
-  }
+  })
 }
 
 function liveGame(
@@ -240,6 +246,7 @@ async function mount(setup: Setup = {}): Promise<Calls> {
       <ThemeProvider>
         <HomeScreen
           client={client}
+          onCreateGroup={() => undefined}
           onOpenTeam={opened => calls.teams.push(opened)}
           onOpenSeason={opened => calls.seasons.push(opened)}
           onOpenGame={(gameId, title, options) =>
@@ -386,10 +393,10 @@ describe('the home screen', function () {
     expect(text()).includes('Cannot load')
   })
 
-  it('tells somebody on no team and in no season that it will fill in', async function () {
+  it('offers creation actions and hides empty sections', async function () {
     await mount()
-    expect(text()).includes('Nothing to watch yet')
-    expect(text()).includes('Ask your league administrator to add you')
+    for (const action of ['Create League', 'Create Season', 'Create Team'])
+      expect(text()).includes(action)
     expect(text()).not.includes('YOUR TEAMS')
     expect(text()).not.includes('SEASONS')
     expect(text()).not.includes('LIVE NOW')
@@ -419,7 +426,7 @@ describe('the home screen', function () {
     const page = text()
     expect(page).includes('YOUR TEAMS')
     expect(page).includes('SEASONS')
-    expect(page).includes('Current & past')
+    labelled('Create Season')
     expect(page.indexOf('YOUR TEAMS')).lessThan(page.indexOf('SEASONS'))
     expect(page).not.includes('Nothing to watch yet')
 

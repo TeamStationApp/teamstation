@@ -56,7 +56,10 @@ async function render(element: React.ReactElement): Promise<void> {
     await delay()
   })
 }
-function fixture(legacy = false): {
+function fixture(
+  legacy = false,
+  node = false
+): {
   client: TeamStationClient
   session: { token: string; expiresAt: string; user: AccountSettings['user'] }
   calls: string[]
@@ -66,9 +69,9 @@ function fixture(legacy = false): {
   let state: AccountSettings = {
     user: {
       id: 101,
-      displayName: 'Alex Morgan',
+      displayName: 'Babe Ruth',
       email: 'alex@example.com',
-      isAdmin: false,
+      isAdmin: node,
       avatarUrl: null
     },
     hasPassword: legacy,
@@ -112,12 +115,43 @@ function fixture(legacy = false): {
         ...state,
         user: { ...state.user, displayName: body.displayName.trim() }
       }
+    if (route === '/pictures')
+      return new Response(
+        JSON.stringify({
+          version: 1,
+          entries: [
+            {
+              id: 'baseball',
+              label: 'Baseball',
+              kind: 'photo',
+              prefix: 'sports/baseball',
+              sha256: 'a'.repeat(64),
+              width: 192,
+              height: 192,
+              url: 'https://images.example.com/baseball.png'
+            }
+          ]
+        })
+      )
+    if (route === '/me/account/catalog-picture') {
+      state = {
+        ...state,
+        user: {
+          ...state.user,
+          avatarUrl: 'https://images.example.com/baseball.png'
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }))
+    }
     if (route === '/me/account/photo')
       state = {
         ...state,
         user: {
           ...state.user,
-          avatarUrl: 'https://images.example.com/photo.png'
+          avatarUrl:
+            init?.method === 'DELETE'
+              ? null
+              : 'https://images.example.com/photo.png'
         }
       }
     if (route === '/me/account/password')
@@ -184,6 +218,53 @@ afterEach(async () => {
 })
 
 describe('Account settings screen', () => {
+  it('opens node administration from the freshly loaded account even when the session predates the grant', async () => {
+    const f = fixture(false, true)
+    f.session.user = { ...f.session.user, isAdmin: false }
+    let opened = false
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => {}}
+        onNodeAdministration={() => {
+          opened = true
+        }}
+      />
+    )
+    await press('Node administration')
+    expect(opened).equals(true)
+  })
+  it('hides node administration after revocation even when the session still advertises that role', async () => {
+    const f = fixture()
+    f.session.user = { ...f.session.user, isAdmin: true }
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => {}}
+        onNodeAdministration={() => {
+          throw new Error('Revoked entry must be hidden')
+        }}
+      />
+    )
+    expect(button('Node administration')).equals(undefined)
+  })
+  it('changes an existing account to a shared catalog picture and back to initials, while cancellation preserves the saved picture', async () => {
+    const f = fixture()
+    await render(<AccountScreen {...f} onSignOut={() => {}} />)
+    await press('Add photo')
+    await press('Baseball')
+    await press('Save profile picture')
+    expect(f.calls).includes('/me/account/catalog-picture')
+    await press('Change photo')
+    await press('Use initials')
+    await press('Cancel photo change')
+    expect(button('Change photo')).not.equals(undefined)
+    await press('Change photo')
+    await press('Use initials')
+    await press('Save profile picture')
+    expect(f.calls).includes('/me/account/photo')
+    expect(button('Add photo')).not.equals(undefined)
+  })
   it('loads, retries, saves identity and handles photo selection, errors and sign-out', async () => {
     const f = fixture()
     f.controls.loadFailures = 1
@@ -213,16 +294,18 @@ describe('Account settings screen', () => {
     expect(users).deep.equals(['Alex Rivera'])
     expect(text()).includes('Name saved')
     await press('Add photo')
+    await press('Add Photo')
     expect(f.calls.filter(c => c.endsWith('/photo'))).length(0)
     pick = 'error'
-    await press('Add photo')
+    await press('Add Photo')
     expect(text()).includes('Picture unavailable')
     pick = 'photo'
     f.controls.fail = '/me/account/photo'
-    await press('Add photo')
+    await press('Add Photo')
+    await press('Save profile picture')
     expect(text()).includes('Please try again')
     f.controls.fail = ''
-    await press('Add photo')
+    await press('Save profile picture')
     expect(text()).includes('Profile picture saved')
     expect(button('Change photo')).not.equals(undefined)
     await press('Sign out')

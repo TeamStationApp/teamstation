@@ -55,6 +55,22 @@ function text(container: HTMLElement): string {
 }
 
 describe('ScheduleRow', function () {
+  it('keeps a canceled game labeled when its historical score is preserved', async function () {
+    const container = await render(row({ status: 'cancelled' }))
+    expect(text(container)).includes('Canceled')
+    expect(text(container)).not.includes('4–0')
+  })
+  it('shows pending approval instead of a stored final score or live status', async function () {
+    const container = await render(
+      row({ pendingApproval: true, status: 'inProgress' })
+    )
+    expect(text(container)).includes('Pending approval')
+    expect(text(container)).not.includes('4–0')
+    expect(text(container)).not.includes('LIVE')
+    expect(
+      container.querySelector('[role="button"]')?.getAttribute('aria-label')
+    ).includes('Pending approval')
+  })
   it('shows the month, the day, and the weekday and time, with no picture', async function () {
     const container = await render(row())
     const dated = scheduleDate(START)

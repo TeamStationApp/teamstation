@@ -62,6 +62,41 @@ const oct4 = {
 }
 
 describe('GameHeroCard', function () {
+  it('labels pending approval in the status position and suppresses final scores and winner treatment', async function () {
+    const container = await render(
+      <GameHeroCard
+        {...oct4}
+        pendingApproval
+        live
+        awayScore={4}
+        homeScore={0}
+        status="FINAL"
+        winner="away"
+      />
+    )
+    expect(container.textContent).includes('Pending approval')
+    expect(leaf(container, 'FINAL')).equals(undefined)
+    expect(leaf(container, '4')).equals(undefined)
+    expect(container.querySelector('[aria-label="Live now"]')).equals(null)
+  })
+  it('places a pending chip above a retained recording instead of a final-score overlay', async function () {
+    const container = await render(
+      <GameHeroCard
+        {...oct4}
+        compact={false}
+        posterUrl="https://example.com/recording.png"
+        pendingApproval
+        awayScore={4}
+        homeScore={0}
+        status="FINAL"
+      />
+    )
+    const chip = leaf(container, 'Pending approval')!.parentElement!
+    expect(getComputedStyle(chip).position).equals('absolute')
+    expect(getComputedStyle(chip).top).not.equals('')
+    expect(container.textContent).not.includes('FINAL')
+    expect(container.textContent).not.includes('Badgers (Ripken) 4')
+  })
   it('gives a side with no logo a tile of its initials in its team’s colour', async function () {
     const container = await render(<GameHeroCard {...oct4} />)
     const tile = tileOf(container, 'AG')
