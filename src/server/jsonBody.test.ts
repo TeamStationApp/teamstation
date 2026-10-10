@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'mocha'
 import { jsonBody } from './jsonBody'
 
 describe('the JSON body limit', function () {
+  this.timeout(60000)
   let server: Server | undefined
   let base = ''
 
@@ -95,6 +96,43 @@ describe('the JSON body limit', function () {
     })
     expect(response.status).equals(401)
     expect(Date.now() - started).lessThan(5000)
+  })
+
+  it('uses the authenticated picture boundary for onboarding, every group creation and group editing route', async function () {
+    const tenMiB = 4 * Math.ceil((10 * 1024 * 1024) / 3)
+    const routes = [
+      ['PUT', '/api/v1/me/onboarding/photo'],
+      ['POST', '/api/v1/leagues'],
+      ['POST', '/api/v1/seasons'],
+      ['POST', '/api/v1/teams'],
+      ['PUT', '/api/v1/groups/league/lea_demo'],
+      ['PUT', '/api/v1/groups/season/sea_demo'],
+      ['PUT', '/api/v1/groups/team/tem_demo']
+    ]
+    for (const [method, path] of routes.flatMap(([method, path]) => [
+      [method, path],
+      [method, path.toUpperCase() + '/']
+    ])) {
+      const request = async (
+        length: number,
+        signedIn: boolean
+      ): Promise<number> =>
+        (
+          await fetch(base + path, {
+            method,
+            headers: {
+              'content-type': 'application/json',
+              ...(signedIn ? { 'x-signed-in': '1' } : {})
+            },
+            body: JSON.stringify({
+              image: { contentType: 'image/png', base64: 'A'.repeat(length) }
+            })
+          })
+        ).status
+      expect(await request(tenMiB, true), path).equals(200)
+      expect(await request(15_000_000, true), path).equals(413)
+      expect(await request(tenMiB, false), path).equals(401)
+    }
   })
 
   it('holds every other route to 1 MB', async function () {

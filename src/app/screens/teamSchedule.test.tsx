@@ -51,6 +51,8 @@ const TEAM: TeamSummary = {
   logoPath: null,
   logoUrl: null,
   record: null,
+  seasonCategory: 'unscheduled',
+  canViewPrivate: true,
   kind: 'full'
 }
 

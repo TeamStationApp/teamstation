@@ -1,10 +1,8 @@
 import type { Kysely } from 'kysely'
 
-import { mintUserId } from '../../common/mintUserId'
-import { addEmail, findUserByEmail } from '../auth/emails'
-import { lockKeys } from '../db/advisoryLocks'
+import { settleAccount } from '../auth/settleAccount'
 import type { Database } from '../db/database'
-import { findInviteById, redeemInvite } from './invites'
+import { findInviteById, inviteProblem, redeemInvite } from './invites'
 
 /**
  * Finishing a sign-in that arrived with an invite on it.
@@ -32,20 +30,6 @@ export interface SettledJoin {
 }
 
 /**
- * A name for somebody who did not give one.
- *
- * The local part of the address, which is wrong often enough to be worth
- * changing later and right often enough to beat showing an e-mail address to
- * the whole team. Never blank: the column is not null, and a nameless row is
- * one every screen has to guess at.
- */
-export function nameFromEmail(email: string): string {
-  const local = email.split('@')[0] ?? ''
-  const cleaned = local.replace(/[._-]+/g, ' ').trim()
-  return cleaned === '' ? 'Somebody' : cleaned
-}
-
-/**
  * Makes the account if there is none, then redeems the invite for it.
  *
  * An address that already has an account simply gets the access: an invite
@@ -56,51 +40,13 @@ export async function settleInviteSignIn(
   db: Kysely<Database>,
   options: { email: string; inviteId: string; displayName?: string | null }
 ): Promise<SettledJoin | undefined> {
-  const invite = await findInviteById(db, options.inviteId)
-  if (invite == null) return undefined
-
-  const email = options.email.trim().toLowerCase()
-  // Under the address's lock, the one a roster import takes, so the two
-  // cannot both find it free and both attach it.
-  const settled = await db.transaction().execute(async trx => {
-    await lockKeys(trx, [`email:${email}`])
-    const existing = await findUserByEmail(trx, email)
-    if (existing != null) {
-      return {
-        userId: existing.id,
-        displayName: existing.displayName,
-        createdAccount: false
-      }
-    }
-
-    const wanted = (options.displayName ?? '').trim()
-    const displayName = wanted === '' ? nameFromEmail(email) : wanted
-    const held = new Set(
-      (await trx.selectFrom('users').select('id').execute()).map(row => row.id)
-    )
-    const minted = mintUserId(id => held.has(id))
-    await trx
-      .insertInto('users')
-      .values({
-        id: minted.userId,
-        legacyId: minted.legacyId,
-        display_name: displayName,
-        // By e-mail code, like everybody who arrived from PeerTube without
-        // a password. A password can be set later; nothing here needs one.
-        login_enabled: true,
-        is_admin: false
-      })
-      .execute()
-    await addEmail(trx, minted.userId, email, {
-      isPrimary: true,
-      source: 'manual',
-      // Verified by the very code or link that got us here.
-      verifiedAt: new Date()
-    })
-    return { userId: minted.userId, displayName, createdAccount: true }
+  const settled = await settleAccount(db, options.email, {
+    displayName: options.displayName
   })
   const { userId, displayName, createdAccount } = settled
-
+  const invite = await findInviteById(db, options.inviteId)
+  if (invite == null || inviteProblem(invite) != null)
+    return { ...settled, granted: false }
   const redemption = await redeemInvite(db, invite, userId, { createdAccount })
   return {
     userId,

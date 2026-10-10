@@ -12,8 +12,65 @@
  */
 
 export type When = 'upcoming' | 'past' | 'all'
+type GroupKind = 'league' | 'season' | 'team'
+interface GroupRef {
+  kind: GroupKind
+  id: string
+}
+export type CreationRoute =
+  | { name: 'nodeAdministration' }
+  | { name: 'createGame'; kind: 'team' | 'season'; id: string; gameId?: string }
+  | { name: 'gameSettings'; gameId: string }
+  | { name: 'promoteExternal'; id: string }
+  /** With `follow`, each result can be followed from the list. */
+  | { name: 'discover'; kind?: GroupKind; follow?: boolean }
+  | { name: 'group'; kind: GroupKind; id: string; tab?: string; when?: When }
+  | {
+      name: 'groupSettings'
+      kind: GroupKind
+      id: string
+      teamReturn?: { id: string; address: 'team' | 'group'; tab?: string }
+    }
+  | {
+      name: 'createGroup'
+      kind: GroupKind
+      parent?: GroupRef
+      custodian?: GroupRef
+    }
+  | {
+      name: 'groupLink'
+      kind: GroupKind
+      id: string
+      targetKind: GroupKind
+      relationship: 'parent' | 'participation'
+      direction: 'children' | 'parents'
+    }
+  | { name: 'notifications' }
+  | { name: 'notification'; id: string }
+
+export function isCreationRoute(route: {
+  name: string
+}): route is CreationRoute {
+  return [
+    'nodeAdministration',
+    'discover',
+    'group',
+    'groupSettings',
+    'createGroup',
+    'groupLink',
+    'notifications',
+    'notification',
+    'promoteExternal',
+    'createGame',
+    'gameSettings'
+  ].includes(route.name)
+}
+function groupKind(value: string | null | undefined): value is GroupKind {
+  return value === 'league' || value === 'season' || value === 'team'
+}
 
 export type Route =
+  | CreationRoute
   | { name: 'home' }
   | { name: 'oauthApprove'; uid: string }
   | { name: 'oauthNative'; handle: string }
@@ -112,6 +169,7 @@ function whenOf(raw: string | null, fallback: When): When {
 
 /** `/games/g1?video=v1&t=734` → the game, the video, and where in it. */
 export function parseRoute(path: string, search = ''): Route {
+  if (path === '/node') return { name: 'nodeAdministration' }
   const query = new URLSearchParams(search)
   const parts = path.split('/').filter(part => part !== '')
   if (parts.length === 0) return { name: 'home' }
@@ -126,6 +184,96 @@ export function parseRoute(path: string, search = ''): Route {
       if (id === 'native-approval' && /^[A-Za-z0-9_-]{43}$/.test(parts[2]))
         return { name: 'oauthNative', handle: parts[2] }
       return { name: 'home' }
+    case 'discover': {
+      const kind = query.get('kind')
+      return {
+        name: 'discover',
+        ...(groupKind(kind) ? { kind } : {}),
+        ...(query.get('follow') === '1' ? { follow: true } : {})
+      }
+    }
+    case 'notifications':
+      return id == null
+        ? { name: 'notifications' }
+        : { name: 'notification', id: decodeURIComponent(id) }
+    case 'create': {
+      if (!groupKind(id)) return { name: 'home' }
+      const parentKind = query.get('parentKind')
+      const parentId = query.get('parentId')
+      const custodianKind = query.get('custodianKind')
+      const custodianId = query.get('custodianId')
+      return {
+        name: 'createGroup',
+        kind: id,
+        ...(groupKind(parentKind) && parentId != null
+          ? { parent: { kind: parentKind, id: parentId } }
+          : {}),
+        ...(id === 'team' && groupKind(custodianKind) && custodianId != null
+          ? { custodian: { kind: custodianKind, id: custodianId } }
+          : {})
+      }
+    }
+    case 'groups': {
+      if (!groupKind(id) || parts[2] == null) return { name: 'home' }
+      const groupId = decodeURIComponent(parts[2])
+      if (parts[3] === 'settings') {
+        const teamId = query.get('teamId')
+        const address = query.get('teamAddress')
+        const tab = query.get('teamTab')
+        return {
+          name: 'groupSettings',
+          kind: id,
+          id: groupId,
+          ...(id === 'team' &&
+          teamId != null &&
+          teamId !== '' &&
+          (address === 'team' || address === 'group')
+            ? {
+                teamReturn: {
+                  id: teamId,
+                  address,
+                  ...(tab == null ? {} : { tab })
+                }
+              }
+            : {})
+        }
+      }
+      if (parts[3] === 'invite-administrator' && id === 'team')
+        return { name: 'promoteExternal', id: groupId }
+      if (parts[3] === 'create-game' && id !== 'league')
+        return {
+          name: 'createGame',
+          kind: id,
+          id: groupId,
+          ...(query.get('game') == null ? {} : { gameId: query.get('game')! })
+        }
+      if (parts[3] === 'link') {
+        const targetKind = query.get('target')
+        if (!groupKind(targetKind))
+          return { name: 'group', kind: id, id: groupId }
+        return {
+          name: 'groupLink',
+          kind: id,
+          id: groupId,
+          targetKind,
+          relationship:
+            query.get('relationship') === 'participation'
+              ? 'participation'
+              : 'parent',
+          direction:
+            query.get('direction') === 'parents' ? 'parents' : 'children'
+        }
+      }
+      return {
+        name: 'group',
+        kind: id,
+        id: groupId,
+        ...(query.get('tab') == null ? {} : { tab: query.get('tab')! }),
+        ...(query.get('when') == null
+          ? {}
+          : { when: whenOf(query.get('when'), 'past') })
+      }
+    }
     case 'videos':
       return { name: 'videos', when: whenOf(query.get('when'), 'past') }
     case 'schedule':
@@ -206,6 +354,8 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'league', leagueId: id }
     case 'games': {
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'settings')
+        return { name: 'gameSettings', gameId: decodeURIComponent(id) }
       if (parts[2] === 'score') return { name: 'scoreGame', gameId: id }
       if (parts[2] === 'dj') return { name: 'djGame', gameId: id }
       // The Score Game section of the game page. The same address it had as
@@ -256,6 +406,55 @@ export function routePath(route: Route): string {
       return `/oauth/approve/${route.uid}`
     case 'oauthNative':
       return `/oauth/native-approval/${route.handle}`
+    case 'nodeAdministration':
+      return '/node'
+    case 'createGame':
+      return `/groups/${route.kind}/${encodeURIComponent(route.id)}/create-game${route.gameId == null ? '' : '?game=' + encodeURIComponent(route.gameId)}`
+    case 'gameSettings':
+      return `/games/${encodeURIComponent(route.gameId)}/settings`
+    case 'promoteExternal':
+      return `/groups/team/${encodeURIComponent(route.id)}/invite-administrator`
+    case 'discover': {
+      const query = new URLSearchParams()
+      if (route.kind != null) query.set('kind', route.kind)
+      if (route.follow === true) query.set('follow', '1')
+      const search = query.toString()
+      return search === '' ? '/discover' : `/discover?${search}`
+    }
+    case 'notifications':
+      return '/notifications'
+    case 'notification':
+      return `/notifications/${encodeURIComponent(route.id)}`
+    case 'group': {
+      const query = new URLSearchParams()
+      if (route.tab != null) query.set('tab', route.tab)
+      if (route.when != null) query.set('when', route.when)
+      return `/groups/${route.kind}/${encodeURIComponent(route.id)}${query.size === 0 ? '' : '?' + query.toString()}`
+    }
+    case 'groupSettings': {
+      const query = new URLSearchParams()
+      if (route.kind === 'team' && route.teamReturn != null) {
+        query.set('teamId', route.teamReturn.id)
+        query.set('teamAddress', route.teamReturn.address)
+        if (route.teamReturn.tab != null)
+          query.set('teamTab', route.teamReturn.tab)
+      }
+      return `/groups/${route.kind}/${encodeURIComponent(route.id)}/settings${query.size === 0 ? '' : '?' + query.toString()}`
+    }
+    case 'groupLink':
+      return `/groups/${route.kind}/${encodeURIComponent(route.id)}/link?target=${route.targetKind}&relationship=${route.relationship}&direction=${route.direction}`
+    case 'createGroup': {
+      const query = new URLSearchParams()
+      if (route.parent != null) {
+        query.set('parentKind', route.parent.kind)
+        query.set('parentId', route.parent.id)
+      }
+      if (route.custodian != null) {
+        query.set('custodianKind', route.custodian.kind)
+        query.set('custodianId', route.custodian.id)
+      }
+      return `/create/${route.kind}${query.size === 0 ? '' : '?' + query.toString()}`
+    }
     case 'home':
       return '/'
     case 'scoreGame':
@@ -283,7 +482,7 @@ export function routePath(route: Route): string {
       // season page used to write `?when=past` where the schedule wrote
       // nothing, which is two answers to one question.
       const bits: string[] = []
-      if (route.tab != null && route.tab !== 'schedule') {
+      if (route.tab != null) {
         bits.push(`tab=${route.tab}`)
       }
       if (route.when != null && route.when !== 'past') {

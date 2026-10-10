@@ -202,6 +202,14 @@ describe('GET /seasons', function () {
         team_id: herons
       })
       .execute()
+    await db
+      .insertInto('season_members')
+      .values({
+        id: makeId('seasonMember'),
+        season_id: harbor,
+        user_id: people.member.userId
+      })
+      .execute()
     // An administrator of Bayside, and one of Inland Coyotes, neither of
     // whom belongs to anything.
     await db
@@ -284,7 +292,7 @@ describe('GET /seasons', function () {
     startsOn: '2026-03-01',
     endsOn: '2026-06-30',
     logoUrl: null,
-    teams: 2,
+    teams: 3,
     games: 2,
     videos: 0
   })
@@ -296,40 +304,49 @@ describe('GET /seasons', function () {
 
     const admin = await list(ADMIN)
     expect(admin.status).equals(200)
-    expect(admin.body).deep.equals([
-      {
-        id: bayside,
-        leagueId: null,
-        name: 'Bayside League 2026',
-        year: 2026,
-        term: null,
-        ageGroup: null,
-        startsOn: null,
-        endsOn: null,
-        logoUrl: null,
-        teams: 2,
-        games: 1,
-        videos: 0
-      },
-      harborItem(),
-      {
-        id: inland,
-        leagueId: null,
-        name: 'Inland League 2025',
-        year: 2025,
-        term: null,
-        ageGroup: null,
-        startsOn: null,
-        endsOn: null,
-        logoUrl: null,
-        teams: 1,
-        games: 0,
-        videos: 0
-      }
-    ])
+    expect(admin.body).deep.equals(
+      [
+        harborItem(),
+        {
+          id: bayside,
+          leagueId: null,
+          name: 'Bayside League 2026',
+          year: 2026,
+          term: null,
+          ageGroup: null,
+          startsOn: null,
+          endsOn: null,
+          logoUrl: null,
+          teams: 2,
+          games: 1,
+          videos: 0
+        },
+        {
+          id: inland,
+          leagueId: null,
+          name: 'Inland League 2025',
+          year: 2025,
+          term: null,
+          ageGroup: null,
+          startsOn: null,
+          endsOn: null,
+          logoUrl: null,
+          teams: 1,
+          games: 0,
+          videos: 0
+        }
+      ].sort((a, b) => {
+        const dateA = typeof a.startsOn === 'string' ? a.startsOn : ''
+        const dateB = typeof b.startsOn === 'string' ? b.startsOn : ''
+        const dateOrder = dateB.localeCompare(dateA)
+        return dateOrder !== 0
+          ? dateOrder
+          : String(a.id).localeCompare(String(b.id))
+      })
+    )
 
-    // Administering a season or a team opens nothing to see on its own.
-    expect((await list(SEASON_ADMIN)).body).deep.equals([])
+    // True season roles grant its own scope; team roles never widen upwards.
+    expect(names(await list(SEASON_ADMIN))).deep.equals(['Bayside League 2026'])
     expect((await list(TEAM_ADMIN)).body).deep.equals([])
     expect((await list(OUTSIDER)).body).deep.equals([])
     expect((await list(null)).status).equals(401)
@@ -345,8 +362,8 @@ describe('GET /seasons', function () {
       )
     )
     expect(names(await list(ADMIN, `?team=${herons}`))).deep.equals([
-      'Bayside League 2026',
-      'Harbor League 2026'
+      'Harbor League 2026',
+      'Bayside League 2026'
     ])
     // An external team plays in no season of its own.
     expect(names(await list(ADMIN, `?team=${gulls}`))).deep.equals([])

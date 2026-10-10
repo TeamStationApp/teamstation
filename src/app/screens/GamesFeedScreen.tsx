@@ -25,6 +25,7 @@ import {
   shortDateNoWeekday,
   shortTime
 } from './format'
+import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
 import { gamesFor, type When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
@@ -38,7 +39,7 @@ export interface GamesFeedScreenProps {
   onOpenGame: (
     gameId: string,
     title: string,
-    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+    options?: GameListOpenOptions
   ) => void
 }
 
@@ -213,6 +214,7 @@ export function GamesFeedScreen(
       <View style={styles.grid}>
         {sorted.map(game => {
           const lines = matchupLines(game)
+          const options = gameListOptions(game, mode)
           return (
             <View
               key={game.id}
@@ -230,11 +232,20 @@ export function GamesFeedScreen(
                     homeScore={game.homeScore}
                     isLive={game.isLive}
                     videoCount={game.videoCount}
-                    onPress={() => {
-                      onOpenGame(game.id, `${lines.first} ${lines.second}`, {
-                        autoPlay: game.videoCount > 0
-                      })
-                    }}
+                    pendingApproval={game.pendingApproval}
+                    cancellationReason={game.cancellationReason}
+                    withdrawnByTeamName={game.withdrawnByTeamName}
+                    onPress={
+                      options == null
+                        ? undefined
+                        : () => {
+                            onOpenGame(
+                              game.id,
+                              `${lines.first} ${lines.second}`,
+                              options
+                            )
+                          }
+                    }
                   />
                 ) : (
                   <GameRow
@@ -257,18 +268,30 @@ export function GamesFeedScreen(
                         : clock(game.durationSec)
                     }
                     badgeLabel={
-                      game.isLive
-                        ? 'live'
-                        : game.awayScore == null
-                          ? undefined
-                          : `${game.awayScore}–${game.homeScore}`
+                      game.pendingApproval
+                        ? 'Pending approval'
+                        : game.status === 'cancelled'
+                          ? 'Canceled'
+                          : game.isLive
+                            ? 'live'
+                            : game.awayScore == null
+                              ? undefined
+                              : `${game.awayScore}–${game.homeScore}`
                     }
-                    badgeTone={game.isLive ? 'live' : 'neutral'}
-                    onPress={() => {
-                      onOpenGame(game.id, `${lines.first} ${lines.second}`, {
-                        autoPlay: game.videoCount > 0
-                      })
-                    }}
+                    badgeTone={
+                      game.isLive && !game.pendingApproval ? 'live' : 'neutral'
+                    }
+                    onPress={
+                      options == null
+                        ? undefined
+                        : () => {
+                            onOpenGame(
+                              game.id,
+                              `${lines.first} ${lines.second}`,
+                              options
+                            )
+                          }
+                    }
                   />
                 )}
               </Card>

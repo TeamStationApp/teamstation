@@ -1292,18 +1292,17 @@ export function startIngest(): boolean {
       return
     }
     const entry = entries.get(key)
-    if (entry != null) {
+    const resolve = requireConfig().resolve
+    // Cached keys also need current authority before each new connection.
+    if (entry != null && resolve == null) {
       accept(entry, session)
       return
     }
-
-    const resolve = requireConfig().resolve
     if (resolve == null) {
       refuse(session, key)
       return
     }
-    // A key issued a moment ago. Asking costs one query and saves the operator
-    // a failed connection at the one moment they are least able to debug it.
+    // Resolve both fresh and cached keys; the controller checks current authority.
     resolve(key).then(
       spec => {
         if (spec == null) {

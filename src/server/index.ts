@@ -8,6 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
+import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
 import { makeDatabase } from './db/database'
@@ -46,14 +47,21 @@ import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
+import { gameApprovalRoutes } from './routes/gameApprovals'
+import { groupRoutes } from './routes/groups'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
+import { locationRoutes } from './routes/location'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
+import { nodeAdministrationRoutes } from './routes/nodeAdministration'
+import { notificationRoutes } from './routes/notifications'
+import { onboardingRoutes } from './routes/onboarding'
+import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
 import { scoreboardRoutes } from './routes/scoreboard'
@@ -146,32 +154,15 @@ function resolveMediaSecret(): string {
  * Delivers a sign-in code.
  *
  * With no relay configured it logs the code and says so plainly, rather than
- * pretending to have sent mail. With one, a failure is **thrown**: the caller
- * answers 202 either way so that asking cannot reveal who has an account, but
- * a send that failed must show up in the log rather than leaving somebody
- * waiting for a message that was never going to arrive.
+ * pretending to have sent mail. With a configured relay, delivery failure is
+ * propagated so the endpoint can invalidate the request and offer a retry.
  */
 async function sendCode(
   email: string,
   code: string,
   link?: string
 ): Promise<void> {
-  if (!mailConfigured(serverConfig.smtp)) {
-    console.log(
-      `[no mail configured] sign-in code for ${email}: ${code}` +
-        (link == null ? '' : `\n[no mail configured] link: ${link}`)
-    )
-    return
-  }
-  try {
-    const sent = await sendSignInCode(serverConfig.smtp, email, code, link)
-    console.log(
-      `sign-in code sent to ${email}: ${sent.accepted} accepted, id ${sent.messageId}`
-    )
-  } catch (error) {
-    // Logged loudly and swallowed: the reply must look the same either way.
-    console.error(`FAILED to send a sign-in code to ${email}: ${String(error)}`)
-  }
+  await deliverSignInCode(serverConfig.smtp, email, code, link)
 }
 
 /**
@@ -475,6 +466,13 @@ function runWorker(): void {
   )
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl }))
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
+  app.use(
+    '/api/v1',
+    groupRoutes(db, mediaContext, undefined, { sendInvite, publicUrl })
+  )
+  app.use('/api/v1', nodeAdministrationRoutes(db))
+  app.use('/api/v1', gameApprovalRoutes(db))
+  app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use(
     '/api/v1',
@@ -490,11 +488,14 @@ function runWorker(): void {
   app.use('/api/v1', lineupRoutes(db))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
-  app.use('/api/v1', statsRoutes(db))
+  app.use('/api/v1', statsRoutes(db, mediaContext))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db))
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
+  app.use('/api/v1', pictureRoutes(db, mediaContext.space))
+  app.use('/api/v1', onboardingRoutes(db, mediaContext))
+  app.use('/api/v1', locationRoutes())
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {

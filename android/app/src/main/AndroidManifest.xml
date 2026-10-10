@@ -12,6 +12,7 @@
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!--
       Walk-up songs: the phone's music files, to search and play. Android 13
       split the old storage permission; below it the old one still applies.

@@ -191,6 +191,34 @@ export function accountRoutes(
         await lockAccount(tx, userId)
         // The signed-in person may replace their own photo, like a site admin.
         await storePlayerAvatar(tx, options, userId, picture, true)
+        await tx
+          .updateTable('users')
+          .set({ picture_catalog_id: null })
+          .where('id', '=', userId)
+          .execute()
+      })
+      setAudit(res.locals, { entityType: 'user', entityId: userId })
+      res.json(await readAccount(db, userId, options))
+    })
+  )
+  router.delete(
+    '/me/account/photo',
+    withAsync(async (req, res) => {
+      const userId = accountId(req)
+      await db.transaction().execute(async tx => {
+        await lockAccount(tx, userId)
+        await tx
+          .updateTable('users')
+          .set({
+            picture_catalog_id: null,
+            avatar_path: null,
+            avatar_sha256: null,
+            avatar_source: null,
+            avatar_updated_at: new Date(),
+            updated_at: new Date()
+          })
+          .where('id', '=', userId)
+          .execute()
       })
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readAccount(db, userId, options))

@@ -9,6 +9,7 @@
 
 import { asExternalIdAt, type ExternalIdBody } from './externalIds'
 import { isFenceDistance, MAX_FENCE_DISTANCE_FT } from './fenceDistance'
+import { asGameTimezone } from './gameApprovals'
 
 /** At most this many rows per call. */
 export const SCHEDULE_GAMES_MAX = 200
@@ -40,6 +41,8 @@ export interface ScheduleGameRow {
   venue?: string | null
   /** Undefined means `scheduled` on create and "keep" on update. */
   status?: ScheduleStatus
+  exhibition?: boolean
+  timezone?: string
   externalId?: ScheduleExternalId
   /**
    * Feet to this game's fence, whole, 1 to 600. Undefined leaves it to the
@@ -190,6 +193,12 @@ export function asScheduleGameRow(raw: unknown): ScheduleGameRow {
   if (raw.externalId !== undefined) {
     row.externalId = asExternalId(raw.externalId)
   }
+  if (raw.exhibition !== undefined) {
+    if (typeof raw.exhibition !== 'boolean')
+      fail('exhibition must be true or false')
+    row.exhibition = raw.exhibition
+  }
+  if (raw.timezone !== undefined) row.timezone = asGameTimezone(raw.timezone)
   if (raw.fenceDistanceFt !== undefined) {
     if (!isFenceDistance(raw.fenceDistanceFt)) {
       fail(

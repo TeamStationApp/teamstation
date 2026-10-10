@@ -10,7 +10,9 @@ import {
   TeamStationClient,
   type TeamSummary
 } from '../common/api'
+import { asTeamSummary } from '../common/api'
 import { GameSocket } from '../common/gameSocket'
+import type { GroupRef } from '../common/groupCreation'
 import { coachesTeam, keepsSongs } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
@@ -23,14 +25,19 @@ import {
   useHandoffSlot
 } from './components'
 import { errorScreen } from './components/ErrorFallback'
+import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { StandaloneField } from './field/StandaloneField'
+import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { lstrings, sprintf } from './locales/strings'
 import {
+  type CreationRoute,
+  isCreationRoute,
   parseRoute,
   type Route,
   routePath,
   type When
 } from './navigation/routes'
+import { seasonParticipantDestination } from './navigation/seasonParticipant'
 import {
   filtersForRoute,
   initialTabFilters,
@@ -49,17 +56,34 @@ import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { CreateGameScreen } from './screens/CreateGameScreen'
+import { CreateGroupScreen } from './screens/CreateGroupScreen'
+import { DiscoverScreen } from './screens/DiscoverScreen'
 import { GameScreen } from './screens/GameScreen'
+import {
+  type GameSettingsResult,
+  GameSettingsScreen
+} from './screens/GameSettingsScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
+import { GroupLinkScreen } from './screens/GroupLinkScreen'
+import { GroupScreen } from './screens/GroupScreen'
+import { GroupSettingsScreen } from './screens/GroupSettingsScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { ManageScreen } from './screens/ManageScreen'
+import { NodeAdministrationScreen } from './screens/NodeAdministrationScreen'
+import {
+  NotificationDetailScreen,
+  NotificationsScreen
+} from './screens/NotificationsScreen'
 import { OAuthScreen } from './screens/OAuthScreen'
+import { OnboardingScreen } from './screens/OnboardingScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
+import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
-import { TeamScreen } from './screens/TeamScreen'
+import { TeamPage } from './screens/TeamPage'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import {
@@ -102,6 +126,7 @@ export interface AppProps {
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
+  | CreationRoute
   | { name: 'scoreGame'; gameId: string }
   /**
    * DJ Game, on a phone. The side showing is kept here, so coming back from
@@ -229,6 +254,10 @@ function Shell(props: AppProps): React.ReactElement {
     [apiBaseUrl, initialToken]
   )
   const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
+  const [roleRevision, setRoleRevision] = useState(0)
+  const refreshRoles = useCallback((): void => {
+    setRoleRevision(revision => revision + 1)
+  }, [])
   /**
    * A sign-in, or a sign-out, and what the platform should remember of it.
    *
@@ -241,12 +270,27 @@ function Shell(props: AppProps): React.ReactElement {
   const rememberSession = useCallback(
     (next: Session | undefined): void => {
       setSession(next)
+      refreshRoles()
       const token = next == null ? undefined : client.token
       onToken?.(token == null || token === '' ? undefined : token)
     },
-    [client, onToken]
+    [client, onToken, refreshRoles]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
+  const [hasPending, setHasPending] = useState(false)
+  const notificationUser = session?.user.id
+  const refreshNotifications = useCallback(async (): Promise<void> => {
+    if (notificationUser == null) {
+      setHasPending(false)
+      return
+    }
+    try {
+      setHasPending(await client.hasNotifications())
+    } catch {
+      setHasPending(false)
+    }
+  }, [client, notificationUser])
+  useForegroundRefresh(refreshNotifications)
   // Until we have asked, we do not know whether anybody is signed in. Showing
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.
@@ -278,6 +322,7 @@ function Shell(props: AppProps): React.ReactElement {
   // The address bar is the state, not a copy of it: the app starts on
   // whatever was linked to, and every move writes the new address.
   const [tab, setTab] = useState<NavTabId>(() => tabOf(currentRoute()))
+  const [successNotice, setSuccessNotice] = useState<SuccessNotice>()
   /**
    * The address the app is on, as state rather than as a reading.
    *
@@ -295,13 +340,15 @@ function Shell(props: AppProps): React.ReactElement {
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
     const opened = stackFor(currentRoute())
-    return { home: [], videos: [], schedule: [], ...opened }
+    return { home: [], videos: [], schedule: [], search: [], ...opened }
   })
+  const settingsVisitId = useRef(0)
+  const [settingsVisit, setSettingsVisit] = useState(0)
 
   const needsSession = props.fieldPreview !== true
 
   /**
-   * The roles the signed-in person holds, team by team, asked once a session.
+   * The roles the signed-in person holds, refreshed after permission changes.
    *
    * For the few things no other answer carries — whether to offer a player's
    * Settings or Walk-up tab — and never trusted for more than drawing: every write is
@@ -345,7 +392,7 @@ function Shell(props: AppProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, signedInAs])
+  }, [client, signedInAs, roleRevision])
 
   // The session lives in an `HttpOnly` cookie this code cannot read, so the
   // only way to know is to ask.
@@ -404,16 +451,10 @@ function Shell(props: AppProps): React.ReactElement {
   // there, on Home. Cold start only worked because this ran on mount.
   useEffect(() => {
     if (props.fieldPreview === true) return
-    if (route.name !== 'team' && route.name !== 'season') return
+    if (route.name !== 'season') return
     let live = true
     resolvingLink.current = true
     const find = async (): Promise<void> => {
-      if (route.name === 'team') {
-        const teams = await client.teams()
-        const team = teams.find(item => item.id === route.teamId)
-        if (live && team != null) push({ name: 'team', team, tab: route.tab })
-        return
-      }
       const seasons = await client.seasons()
       const season = seasons.find(item => item.id === route.seasonId)
       if (live && season != null) {
@@ -480,7 +521,14 @@ function Shell(props: AppProps): React.ReactElement {
   useEffect(() => {
     // Not while signed out: rewriting the address to `/` before the password
     // field has even been typed into throws away the link that brought them.
-    if (session == null) return
+    if (
+      session == null &&
+      !(tab === 'search' && top == null) &&
+      top?.name !== 'discover' &&
+      top?.name !== 'group' &&
+      top?.name !== 'team'
+    )
+      return
     // Nor while an invitation is open, for the same reason.
     if (joining != null) return
     if (route.name === 'oauthApprove' || route.name === 'oauthNative') return
@@ -495,14 +543,32 @@ function Shell(props: AppProps): React.ReactElement {
   }, [joining, session, tab, top, filters, route.name])
 
   const goToRoute = useCallback((route: Route): void => {
+    setSettingsVisit(++settingsVisitId.current)
     setRoute(route)
     setJoining(route.name === 'join' ? route.code : undefined)
     const next = tabOf(route)
     setTab(next)
-    setStacks(current => ({
-      ...current,
-      [next]: stackFor(route)[next] ?? []
-    }))
+    setStacks(current => {
+      const held = current[next]
+      // Browser Back from a team management flow returns to its settings
+      // frame, retaining the team and its selected section underneath.
+      const at =
+        route.name === 'groupSettings' && route.kind === 'team'
+          ? held.findLastIndex(
+              item =>
+                item.name === 'groupSettings' &&
+                item.kind === 'team' &&
+                item.id === route.id &&
+                item.teamReturn?.id === route.teamReturn?.id &&
+                item.teamReturn?.address === route.teamReturn?.address &&
+                item.teamReturn?.tab === route.teamReturn?.tab
+            )
+          : -1
+      return {
+        ...current,
+        [next]: at >= 0 ? held.slice(0, at + 1) : (stackFor(route)[next] ?? [])
+      }
+    })
     // The shell writes the address from these filters. Leaving them stale
     // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
     // would open Upcoming.
@@ -526,6 +592,32 @@ function Shell(props: AppProps): React.ReactElement {
   const push = (next: Pushed): void => {
     setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
   }
+  const openGroup = useCallback(
+    (group: GroupRef): void => {
+      setStacks(current => ({
+        ...current,
+        [tab]: [...current[tab], { name: 'group', ...group }]
+      }))
+    },
+    [tab]
+  )
+  const replace = (next: Pushed): void => {
+    setStacks(current => ({
+      ...current,
+      [tab]: [...current[tab].slice(0, -1), next]
+    }))
+  }
+  const openPrivateGroup = async (group: GroupRef): Promise<void> => {
+    if (group.kind === 'team') {
+      const team = (await client.teams()).find(team => team.id === group.id)
+      if (team != null) push({ name: 'team', team })
+    } else {
+      const season = (await client.seasons()).find(
+        season => season.id === group.id
+      )
+      if (season != null) push({ name: 'season', season })
+    }
+  }
   const pop = (): void => {
     // The address goes back with the screen. On the web the browser owns the
     // history and this does nothing; on a phone the two are kept by hand, and
@@ -538,9 +630,16 @@ function Shell(props: AppProps): React.ReactElement {
   const openGame = (
     gameId: string,
     title: string,
-    options: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean } = {}
+    options: {
+      tab?: 'watch' | 'boxScore'
+      autoPlay?: boolean
+      pendingRequestId?: string | null
+    } = {}
   ): void => {
-    push({ name: 'game', gameId, title, ...options })
+    const { pendingRequestId, ...presentation } = options
+    if (pendingRequestId != null) {
+      push({ name: 'notification', id: pendingRequestId })
+    } else push({ name: 'game', gameId, title, ...presentation })
   }
   /** A section change on the team or season screen, into the address. */
   const setTopTab = (next: string, correcting = false): void => {
@@ -551,6 +650,7 @@ function Shell(props: AppProps): React.ReactElement {
       if (
         last?.name !== 'team' &&
         last?.name !== 'season' &&
+        last?.name !== 'group' &&
         last?.name !== 'player'
       ) {
         return current
@@ -604,6 +704,7 @@ function Shell(props: AppProps): React.ReactElement {
    * whole reason this screen was on.
    */
   const openFromInvite = (scope: InviteInfo['scope']): void => {
+    refreshRoles()
     setJoining(undefined)
     const find = async (): Promise<void> => {
       if (scope.kind === 'team') {
@@ -625,6 +726,9 @@ function Shell(props: AppProps): React.ReactElement {
 
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
+  }
+  const openSeasonParticipant = (team: TeamSummary): void => {
+    push(seasonParticipantDestination(team))
   }
   /**
    * A name, from wherever it was tapped.
@@ -737,7 +841,12 @@ function Shell(props: AppProps): React.ReactElement {
     )
   }
 
-  if (session == null && props.fieldPreview !== true) {
+  const publicSurface =
+    (tab === 'search' && top == null) ||
+    top?.name === 'discover' ||
+    top?.name === 'group' ||
+    top?.name === 'team'
+  if (session == null && props.fieldPreview !== true && !publicSurface) {
     // The sign-in screen must not be drawn until the question is answered: a
     // flash of it is how a link to a game becomes a link to the sign-in
     // screen. The mark and a spinner rather than a blank page, because on a
@@ -803,11 +912,41 @@ function Shell(props: AppProps): React.ReactElement {
             }}
           />
         ) : (
-          <LoginScreen client={client} onSignedIn={signedIn} />
+          <LoginScreen
+            client={client}
+            onSignedIn={signedIn}
+            onDiscover={() => {
+              goToRoute({ name: 'discover' })
+              showRoute({ name: 'discover' })
+            }}
+          />
         )}
         {!isWide && (
           <AppNav mode="floating" selected={tab} onSelect={selectTab} />
         )}
+      </View>
+    )
+  }
+
+  if (
+    session?.user.onboarding != null &&
+    session.user.onboarding.step !== 'complete'
+  ) {
+    return (
+      <View style={styles.app}>
+        <AppHeader title="Welcome to TeamStation" showMark />
+        <OnboardingScreen
+          client={client}
+          initialName={session.user.displayName}
+          initialState={session.user.onboarding}
+          onComplete={async () => {
+            const user = await client.whoAmI()
+            if (user == null) throw new Error('Please sign in again')
+            setSession(current =>
+              current == null ? undefined : { ...current, user }
+            )
+          }}
+        />
       </View>
     )
   }
@@ -847,6 +986,17 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenTeam={openTeam}
           onOpenSeason={openSeason}
           onOpenGame={openGame}
+          onCreateGroup={kind => {
+            push({ name: 'createGroup', kind })
+          }}
+          onOpenGroup={openGroup}
+        />
+      ) : tab === 'search' ? (
+        <DiscoverScreen
+          key="search"
+          client={client}
+          onOpen={openGroup}
+          follow={session != null}
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen
@@ -867,9 +1017,240 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGame={openGame}
         />
       )
+    ) : top.name === 'discover' ? (
+      <DiscoverScreen
+        key={`${top.kind ?? 'team'}:${top.follow === true}`}
+        client={client}
+        onOpen={openGroup}
+        initialKind={top.kind}
+        follow={top.follow === true && session != null}
+      />
+    ) : top.name === 'createGroup' ? (
+      <CreateGroupScreen
+        client={client}
+        kind={top.kind}
+        parent={top.parent}
+        custodian={top.custodian}
+        onCreated={group => {
+          refreshRoles()
+          replace({ name: 'group', ...group })
+        }}
+        onCancel={pop}
+      />
+    ) : top.name === 'group' ? (
+      <GroupScreen
+        client={client}
+        groupRef={{ kind: top.kind, id: top.id }}
+        initialTab={top.tab}
+        onTab={setTopTab}
+        initialWhen={top.when}
+        onWhen={next => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held.at(-1)
+            if (last?.name !== 'group' || last.when === next) return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, when: next }]
+            }
+          })
+        }}
+        onOpenGame={openGame}
+        onOpen={openGroup}
+        onOpenTeam={openSeasonParticipant}
+        onOpenPlayer={openPlayer}
+        onCreate={(kind, parent) => {
+          push({ name: 'createGroup', kind, parent })
+        }}
+        onSettings={group => {
+          push({
+            name: 'groupSettings',
+            ...group,
+            ...(group.kind === 'team'
+              ? {
+                  teamReturn: {
+                    id: top.id,
+                    address: 'group' as const,
+                    tab: top.tab
+                  }
+                }
+              : {})
+          })
+        }}
+        onLink={choice => {
+          push({
+            name: 'groupLink',
+            kind: choice.subject.kind,
+            id: choice.subject.id,
+            targetKind: choice.targetKind,
+            relationship: choice.relationship,
+            direction: choice.direction
+          })
+        }}
+        onPrivate={group => {
+          openPrivateGroup(group).catch(() => undefined)
+        }}
+        onPromote={group => {
+          push({ name: 'promoteExternal', id: group.id })
+        }}
+        onCreateExternal={custodian => {
+          push({ name: 'createGroup', kind: 'team', custodian })
+        }}
+        onCreateGame={group => {
+          if (group.kind !== 'league')
+            push({ name: 'createGame', kind: group.kind, id: group.id })
+        }}
+        onOpenRequest={id => {
+          push({ name: 'notification', id })
+        }}
+      />
+    ) : top.name === 'groupSettings' ? (
+      <GroupSettingsScreen
+        key={`${top.kind}:${top.id}:${settingsVisit}`}
+        client={client}
+        groupRef={{ kind: top.kind, id: top.id }}
+        onLink={choice => {
+          push({
+            name: 'groupLink',
+            kind: choice.subject.kind,
+            id: choice.subject.id,
+            targetKind: choice.targetKind,
+            relationship: choice.relationship,
+            direction: choice.direction
+          })
+        }}
+        onChanged={refreshRoles}
+        onRequest={id => {
+          push({ name: 'notification', id })
+        }}
+        onCancel={pop}
+        onManage={group => {
+          openManage(group.kind, group.id)
+        }}
+        onCreateGame={group => {
+          if (group.kind === 'team')
+            push({ name: 'createGame', kind: 'team', id: group.id })
+        }}
+        onCreateExternal={custodian => {
+          push({ name: 'createGroup', kind: 'team', custodian })
+        }}
+        onPromote={group => {
+          push({ name: 'promoteExternal', id: group.id })
+        }}
+        onSaved={() => {
+          if (settingsVisitId.current !== settingsVisit) return
+          refreshRoles()
+          pop()
+        }}
+      />
+    ) : top.name === 'nodeAdministration' ? (
+      <NodeAdministrationScreen
+        client={client}
+        onChanged={userId => {
+          refreshRoles()
+          if (session?.user.id === userId)
+            client
+              .whoAmI()
+              .then(user => {
+                const updated =
+                  user == null || session == null
+                    ? undefined
+                    : { ...session, user }
+                setSession(updated)
+                rememberSession(updated)
+                pop()
+              })
+              .catch(() => undefined)
+        }}
+      />
+    ) : top.name === 'gameSettings' ||
+      (top.name === 'createGame' && top.gameId != null) ? (
+      <GameSettingsScreen
+        client={client}
+        gameId={top.gameId!}
+        onSaved={(result: GameSettingsResult) => {
+          setSuccessNotice({
+            id: Date.now(),
+            message:
+              result.status === 'pending'
+                ? 'Game proposal sent'
+                : 'Game changes saved'
+          })
+          if (
+            result.status === 'accepted' &&
+            result.gameId != null &&
+            result.gameId !== top.gameId
+          ) {
+            replace({ name: 'game', gameId: result.gameId, title: '' })
+          } else pop()
+          refreshRoles()
+          refreshNotifications().catch(() => undefined)
+        }}
+        onCancel={pop}
+      />
+    ) : top.name === 'createGame' ? (
+      <CreateGameScreen
+        client={client}
+        source={{ kind: top.kind, id: top.id }}
+        gameId={top.gameId}
+        onSent={id => {
+          replace({ name: 'notification', id })
+          refreshRoles()
+          refreshNotifications().catch(() => undefined)
+        }}
+        onCancel={pop}
+      />
+    ) : top.name === 'promoteExternal' ? (
+      <PromoteExternalScreen
+        client={client}
+        teamId={top.id}
+        onSent={id => {
+          replace({ name: 'notification', id })
+          refreshRoles()
+          refreshNotifications().catch(() => undefined)
+        }}
+        onCancel={pop}
+      />
+    ) : top.name === 'groupLink' ? (
+      <GroupLinkScreen
+        client={client}
+        choice={{
+          subject: { kind: top.kind, id: top.id },
+          targetKind: top.targetKind,
+          relationship: top.relationship,
+          direction: top.direction
+        }}
+        onSent={id => {
+          replace({ name: 'notification', id })
+          refreshRoles()
+          refreshNotifications().catch(() => undefined)
+        }}
+        onCancel={pop}
+      />
+    ) : top.name === 'notifications' ? (
+      <NotificationsScreen
+        client={client}
+        onOpen={id => {
+          push({ name: 'notification', id })
+        }}
+      />
+    ) : top.name === 'notification' ? (
+      <NotificationDetailScreen
+        client={client}
+        id={top.id}
+        onChanged={replacementId => {
+          refreshRoles()
+          if (replacementId != null)
+            replace({ name: 'notification', id: replacementId })
+          refreshNotifications().catch(() => undefined)
+        }}
+      />
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
+        onNodeAdministration={() => {
+          push({ name: 'nodeAdministration' })
+        }}
         onAccountChanged={user => {
           setSession(current =>
             current?.user.id !== user.id ? current : { ...current, user }
@@ -879,7 +1260,7 @@ function Shell(props: AppProps): React.ReactElement {
         onSignOut={() => {
           client.signOut().catch(() => undefined)
           rememberSession(undefined)
-          setStacks({ home: [], videos: [], schedule: [] })
+          setStacks({ home: [], videos: [], schedule: [], search: [] })
           setTab('home')
         }}
       />
@@ -955,13 +1336,19 @@ function Shell(props: AppProps): React.ReactElement {
         onSaved={pop}
       />
     ) : top.name === 'team' ? (
-      <TeamScreen
+      <TeamPage
         client={client}
+        id={top.team.id}
         team={top.team}
         onOpenGame={openGame}
         onOpenPlayer={openPlayer}
-        onManage={() => {
-          openManage('team', top.team.id)
+        onSettings={id => {
+          push({
+            name: 'groupSettings',
+            kind: 'team',
+            id,
+            teamReturn: { id: top.team.id, address: 'team', tab: top.tab }
+          })
         }}
         initialTab={top.tab}
         onTab={setTopTab}
@@ -971,9 +1358,12 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         season={top.season}
         onOpenGame={openGame}
-        onOpenTeam={openTeam}
+        onOpenTeam={openSeasonParticipant}
         onManage={() => {
           openManage('season', top.season.id)
+        }}
+        onSettings={() => {
+          push({ name: 'groupSettings', kind: 'season', id: top.season.id })
         }}
         initialTab={top.tab}
         onTab={setTopTab}
@@ -993,6 +1383,10 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'manage' ? (
       <ManageScreen
         client={client}
+        onChanged={refreshRoles}
+        onOpenRequest={id => {
+          push({ name: 'notification', id })
+        }}
         scopeKind={top.scopeKind}
         scopeId={top.scopeId}
         onTitle={title => {
@@ -1042,6 +1436,9 @@ function Shell(props: AppProps): React.ReactElement {
       <GameScreen
         client={client}
         gameId={top.gameId}
+        onSettings={() => {
+          push({ name: 'gameSettings', gameId: top.gameId })
+        }}
         onFullScoring={() => {
           push({ name: 'scoreGame', gameId: top.gameId })
         }}
@@ -1090,6 +1487,9 @@ function Shell(props: AppProps): React.ReactElement {
       <GameScreen
         client={client}
         gameId={top.gameId}
+        onSettings={() => {
+          push({ name: 'gameSettings', gameId: top.gameId })
+        }}
         onFullScoring={() => {
           push({ name: 'scoreGame', gameId: top.gameId })
         }}
@@ -1198,6 +1598,23 @@ function Shell(props: AppProps): React.ReactElement {
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
+      notifications={
+        session == null
+          ? undefined
+          : {
+              pending: hasPending,
+              onPress: () => {
+                setStacks(current => {
+                  const held = current[tab]
+                  if (held.at(-1)?.name === 'notifications') return current
+                  return {
+                    ...current,
+                    [tab]: [...held, { name: 'notifications' }]
+                  }
+                })
+              }
+            }
+      }
       account={
         session == null || top?.name === 'account'
           ? undefined
@@ -1246,6 +1663,7 @@ function Shell(props: AppProps): React.ReactElement {
             onSelect={selectTab}
           />
         )}
+        <SuccessToast notice={successNotice} />
       </View>
     </GestureHandlerRootView>
   )
@@ -1266,6 +1684,45 @@ export /**
  */
 function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   const tab = tabOf(route)
+  // The Search tab's own first screen, with nothing pushed on it.
+  if (tab === 'search') return {}
+  if (route.name === 'team')
+    return {
+      [tab]: [
+        {
+          name: 'team',
+          team: asTeamSummary({
+            id: route.teamId,
+            name: '',
+            shortName: null,
+            logoPath: null
+          }),
+          tab: route.tab
+        }
+      ]
+    }
+  if (route.name === 'gameSettings')
+    return { [tab]: [gameUnder(route.gameId), route] }
+  if (route.name === 'groupSettings' && route.kind === 'team') {
+    const target = route.teamReturn
+    const underlying =
+      target == null
+        ? [{ name: 'group' as const, kind: 'team' as const, id: route.id }]
+        : target.address === 'team'
+          ? stackFor({ name: 'team', teamId: target.id, tab: target.tab })[tab]!
+          : [
+              {
+                name: 'group' as const,
+                kind: 'team' as const,
+                id: target.id,
+                tab: target.tab
+              }
+            ]
+    return {
+      [tab]: [...underlying, route]
+    }
+  }
+  if (isCreationRoute(route)) return { [tab]: [route] }
   if (route.name === 'scoreGame') return { [tab]: [route] }
   if (route.name === 'djGame') return { [tab]: [route] }
   // The dashboard sits on the game's Score Game section, so Back returns to
@@ -1336,6 +1793,9 @@ function gameUnder(
 function tabOf(route: Route): NavTabId {
   if (route.name === 'videos') return 'videos'
   if (route.name === 'schedule') return 'schedule'
+  // Following from Home's Add stays on Home's stack; plain discovery is the
+  // Search tab itself.
+  if (route.name === 'discover' && route.follow !== true) return 'search'
   return 'home'
 }
 
@@ -1346,6 +1806,7 @@ function routeOf(
   filters: TabFilters
 ): Route {
   if (top != null) {
+    if (isCreationRoute(top)) return top
     if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
     if (top.name === 'scoreGame' || top.name === 'scoreboardOverride') {
       return top
@@ -1403,6 +1864,7 @@ function routeOf(
   }
   if (tab === 'videos') return { name: 'videos', when: filters.videos }
   if (tab === 'schedule') return { name: 'schedule', when: filters.schedule }
+  if (tab === 'search') return { name: 'discover' }
   return { name: 'home' }
 }
 
@@ -1412,11 +1874,16 @@ function routeOf(
  * A team, a game and the two lists say nothing: the team's name is on the card
  * below, the game's score is on its hero card, and the lists carry their filter
  * pills, which name the list better than the word `Videos` does. Each of those
- * hands its own content up as it scrolls away.
+ * hands its own content up as it scrolls away. A settings page does the same
+ * with its own title, `League Settings` and the like.
  */
 function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
-    if (top.name === 'season') return top.season.name
+    if (isCreationRoute(top))
+      return top.name === 'notifications' || top.name === 'notification'
+        ? 'Notifications'
+        : undefined
+    if (top.name === 'season') return undefined
     if (top.name === 'account') return 'Account'
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {

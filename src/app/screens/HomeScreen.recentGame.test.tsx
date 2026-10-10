@@ -130,6 +130,47 @@ async function press(container: HTMLElement, label: string): Promise<void> {
 }
 
 describe('HomeScreen', function () {
+  it('does not offer game controls for a pending event that has no published score or recording', async function () {
+    const { container, opened } = await renderHome(client => {
+      client.recentGame = async () =>
+        asSeasonGame({
+          ...recent,
+          pendingApproval: true,
+          pendingRequestId: null,
+          homeScore: null,
+          awayScore: null,
+          videoCount: 0,
+          status: 'scheduled'
+        })
+    })
+    expect(container.textContent).includes('Pending approval')
+    expect(container.textContent).not.includes('Box Score')
+    expect(container.textContent).not.includes('Open game proposal')
+    expect(opened.games).deep.equals([])
+  })
+  it('labels a pending revision of the recent played game and opens its request while preserving its box score', async function () {
+    const { container, opened } = await renderHome(client => {
+      client.recentGame = async () =>
+        asSeasonGame({
+          ...recent,
+          pendingApproval: true,
+          pendingRequestId: 'req_recent',
+          status: 'final',
+          homeScore: 3,
+          awayScore: 1
+        })
+    })
+    expect(container.textContent).includes('Pending approval')
+    expect(leaf(container, 'FINAL')).equals(undefined)
+    expect(leaf(container, '3')).equals(undefined)
+    expect(leaf(container, '1')).equals(undefined)
+    await press(container, 'Open game proposal')
+    await press(container, 'Box Score')
+    expect(opened.games).deep.equals([
+      { id: recent.id, options: { pendingRequestId: 'req_recent' } },
+      { id: recent.id, options: { tab: 'boxScore' } }
+    ])
+  })
   it('shows the recent game with the logo of a side that has one', async function () {
     const { container } = await renderHome()
     expect(container.textContent).includes('Badgers (Ripken)')

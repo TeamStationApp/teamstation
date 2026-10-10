@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import type { SeasonGame, TeamStationClient } from '../../common/api'
+import {
+  asSeasonGame,
+  type SeasonGame,
+  type TeamStationClient
+} from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { shortDate, shortDateNoWeekday } from './format'
 import { GamesFeedScreen } from './GamesFeedScreen'
@@ -20,7 +24,7 @@ const delay = async (ms: number): Promise<void> => {
 }
 
 function game(id: string, patch: Partial<SeasonGame> = {}): SeasonGame {
-  return {
+  return asSeasonGame({
     id,
     homeTeamId: 'tem_sox',
     awayTeamId: 'tem_badgers',
@@ -43,7 +47,7 @@ function game(id: string, patch: Partial<SeasonGame> = {}): SeasonGame {
     isLive: false,
     externalIds: [],
     ...patch
-  }
+  })
 }
 
 interface Opened {
@@ -121,6 +125,86 @@ async function setWidth(width: number): Promise<void> {
 }
 
 describe('the games feed', function () {
+  it('shows a pending schedule status instead of the score and opens its authorized request', async function () {
+    const opened = await mount(
+      'schedule',
+      [
+        game('gam_pending', {
+          pendingApproval: true,
+          pendingRequestId: 'req_private',
+          videoCount: 0
+        })
+      ],
+      'all'
+    )
+    expect(text()).includes('Pending approval')
+    expect(text()).not.includes('4–0')
+    await press(control('Badgers @ Sox'))
+    expect(opened).deep.equals([
+      {
+        gameId: 'gam_pending',
+        title: 'Badgers @ Sox',
+        options: { pendingRequestId: 'req_private' }
+      }
+    ])
+  })
+  it('leaves pending schedule rows informational when request access is absent', async function () {
+    const opened = await mount(
+      'schedule',
+      [
+        game('gam_reserved', {
+          pendingApproval: true,
+          pendingRequestId: null,
+          videoCount: 0,
+          awayScore: null,
+          homeScore: null,
+          status: 'scheduled'
+        })
+      ],
+      'all'
+    )
+    expect(text()).includes('Pending approval')
+    expect(host!.querySelector('[role="button"]')).equals(null)
+    expect(opened).deep.equals([])
+  })
+  it('preserves published video access while its scheduling revision is pending', async function () {
+    const opened = await mount('videos', [
+      game('gam_published', { pendingApproval: true, pendingRequestId: null })
+    ])
+    expect(text()).includes('Pending approval')
+    expect(text()).not.includes('4–0')
+    await press(control('Badgers @ Sox'))
+    expect(opened[0]).deep.equals({
+      gameId: 'gam_published',
+      title: 'Badgers @ Sox',
+      options: { autoPlay: true }
+    })
+  })
+  it('forwards cancellation history to the shared schedule row', async function () {
+    await mount(
+      'schedule',
+      [
+        game('gam_cancelled', {
+          status: 'cancelled',
+          cancellationReason: 'withdrawal',
+          withdrawnByTeamName: 'Sox'
+        })
+      ],
+      'all'
+    )
+    expect(text()).includes('Canceled')
+    expect(text()).includes('Sox withdrew')
+    expect(text()).not.includes('4–0')
+  })
+  it('keeps canceled recorded games labeled in the video library', async function () {
+    const opened = await mount('videos', [
+      game('gam_cancelled', { status: 'cancelled' })
+    ])
+    expect(text()).includes('Canceled')
+    expect(text()).not.includes('4–0')
+    await press(control('Badgers @ Sox'))
+    expect(opened[0].gameId).equals('gam_cancelled')
+  })
   afterEach(async function () {
     await act(async () => {
       root?.unmount()

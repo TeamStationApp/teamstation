@@ -1,4 +1,10 @@
-import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely'
+import {
+  type Expression,
+  type ExpressionBuilder,
+  type Kysely,
+  sql,
+  type SqlBool
+} from 'kysely'
 
 import { type Role, ROLE_FLAGS, ROLES } from '../common/roles'
 import { type OnePerson, onePerson } from './admin/people'
@@ -7,23 +13,15 @@ import type { Database } from './db/database'
 /**
  * What one person is allowed to see, worked out once per request.
  *
- * The rule, in order:
- *
- * 1. A team's own people always see everything of that team.
- * 2. A season with `spectatorAccess = season` shows every game of that season
- *    to everyone in any of its teams.
- * 3. A league with `spectatorAccess = league` does the same across all its
- *    seasons.
- * 4. Nothing else is visible, and a read that is not allowed answers 404 so
- *    that existence does not leak.
- *
- * These settings only ever widen *viewing*. What somebody may change is
- * `roleScopes` below: administrators, and the four role flags.
+ * Own-team memberships and genuine management roles grant team visibility.
+ * Explicit season/league viewing memberships are bounded to those seasons'
+ * games. Competition membership and raw game invitations grant no private
+ * scope. Public summaries are separate from these private permissions.
  */
 export interface VisibleScopes {
   /** Teams the user belongs to. */
   teamIds: Set<string>
-  /** Seasons opened up to the user, by a season or a league setting. */
+  /** Explicit season/league viewing grants and true parent roles. */
   seasonIds: Set<string>
   /** True for a site administrator, who sees everything. */
   isAdmin: boolean
@@ -41,6 +39,13 @@ export async function visibleScopes(
   userId: number,
   isAdmin: boolean
 ): Promise<VisibleScopes> {
+  const user = await db
+    .selectFrom('users')
+    .select(['disabled_at', 'merged_into'])
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  if (user == null || user.disabled_at != null || user.merged_into != null)
+    return { teamIds: new Set(), seasonIds: new Set(), isAdmin: false }
   const memberships = await db
     .selectFrom('memberships')
     .select(['team_id'])
@@ -50,7 +55,7 @@ export async function visibleScopes(
 
   // Belonging to a season is its own thing: PeerTube's channel allow-list
   // brought people who are on no team but may watch everything in the
-  // season, and a season member sees every team in it.
+  // season, bounded to its games rather than every team's unrelated data.
   const seasonMemberships = await db
     .selectFrom('season_members')
     .select(['season_id'])
@@ -81,58 +86,18 @@ export async function visibleScopes(
     for (const row of inThose) memberSeasonIds.push(row.id)
   }
 
-  if (memberSeasonIds.length > 0) {
-    const inThose = await db
-      .selectFrom('season_teams')
-      .select(['team_id'])
-      .where('season_id', 'in', memberSeasonIds)
-      .execute()
-    for (const row of inThose) teamIds.add(row.team_id)
+  // Only actual memberships and true management roles supply private scopes.
+  // Competition links never widen spectator access, even when a host opens itself.
+  const roles = await roleScopes(db, userId, isAdmin)
+  for (const role of ROLES) {
+    for (const teamId of roles[role].teamIds) teamIds.add(teamId)
+    memberSeasonIds.push(...roles[role].seasonIds)
   }
-
-  if (teamIds.size === 0) {
-    return { teamIds, seasonIds: new Set(memberSeasonIds), isAdmin }
+  return {
+    teamIds,
+    seasonIds: new Set(memberSeasonIds),
+    isAdmin: roles.isAdmin
   }
-
-  // Seasons this user's teams play in, with the season's and league's setting.
-  const rows = await db
-    .selectFrom('season_teams')
-    .innerJoin('seasons', 'seasons.id', 'season_teams.season_id')
-    // Left, not inner: a season imported before its league exists still
-    // grants what its own setting says.
-    .leftJoin('leagues', 'leagues.id', 'seasons.league_id')
-    .select([
-      'seasons.id as seasonId',
-      'seasons.league_id as leagueId',
-      'seasons.spectator_access as seasonAccess',
-      'leagues.spectator_access as leagueAccess'
-    ])
-    .where('season_teams.team_id', 'in', [...teamIds])
-    .execute()
-
-  const seasonIds = new Set<string>(memberSeasonIds)
-  const openLeagueIds = new Set<string>()
-  for (const row of rows) {
-    if (row.seasonAccess === 'season') seasonIds.add(row.seasonId)
-    // A season with no league yet — the migration imports them that way, and
-    // Paul attaches them afterwards — simply has no league to inherit from.
-    if (row.leagueAccess === 'league' && row.leagueId != null) {
-      openLeagueIds.add(row.leagueId)
-    }
-  }
-
-  // A league that has opened itself up brings every one of its seasons, not
-  // only the ones this user's teams happen to play in.
-  if (openLeagueIds.size > 0) {
-    const leagueSeasons = await db
-      .selectFrom('seasons')
-      .select(['id'])
-      .where('league_id', 'in', [...openLeagueIds])
-      .execute()
-    for (const row of leagueSeasons) seasonIds.add(row.id)
-  }
-
-  return { teamIds, seasonIds, isAdmin }
 }
 
 /** The leagues, seasons and teams one role reaches, inherited downwards. */
@@ -184,10 +149,41 @@ export async function inheritScopes<K extends string>(
       }
     }
   }
+  if (leagueIds.size > 0) {
+    const leagueTeams = await db
+      .selectFrom('teams')
+      .select(['id', 'league_id'])
+      .where('league_id', 'in', [...leagueIds])
+      .execute()
+    for (const set of sets)
+      for (const team of leagueTeams) {
+        if (team.league_id != null && set.leagueIds.has(team.league_id))
+          set.teamIds.add(team.id)
+      }
+  }
   const seasonIds = new Set(sets.flatMap(set => [...set.seasonIds]))
   if (seasonIds.size > 0) {
+    // The flag and selected edges use one statement snapshot: schema upgrade
+    // preserves legacy access until explicit ownership classification commits.
+    // New competition writers are gated by that same atomic cutover.
+    const ready = db
+      .selectFrom('system_settings')
+      .select('key')
+      .where('key', '=', 'creation.hierarchyReady')
+      .where(sql<boolean>`value = 'true'::jsonb`)
+    const parents = db
+      .selectFrom('season_team_parents')
+      .select(['season_id', 'team_id'])
+      .where(eb => eb.exists(ready))
+      .unionAll(
+        db
+          .selectFrom('season_teams')
+          .select(['season_id', 'team_id'])
+          .where(eb => eb.not(eb.exists(ready)))
+      )
+      .as('permission_parents')
     const teams = await db
-      .selectFrom('season_teams')
+      .selectFrom(parents)
       .select(['season_id', 'team_id'])
       .where('season_id', 'in', [...seasonIds])
       .execute()
@@ -211,11 +207,18 @@ export async function inheritScopes<K extends string>(
 export async function roleScopes(
   db: Kysely<Database>,
   userId: number,
-  isAdmin: boolean
+  _isAdmin: boolean
 ): Promise<RoleScopes> {
   const direct = Object.fromEntries(
     ROLES.map(role => [role, emptyScopes()])
   ) as Record<Role, ScopeSet>
+  const user = await db
+    .selectFrom('users')
+    .select(['is_admin', 'disabled_at', 'merged_into'])
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  if (user == null || user.disabled_at != null || user.merged_into != null)
+    return { ...direct, isAdmin: false }
 
   const rows = await db
     .selectFrom('scope_roles')
@@ -243,7 +246,7 @@ export async function roleScopes(
       for (const id of inherited.admin[key]) inherited[flag][key].add(id)
     }
   }
-  return { ...inherited, isAdmin }
+  return { ...inherited, isAdmin: user.is_admin }
 }
 
 /**
@@ -258,7 +261,7 @@ export async function adminScopes(
   isAdmin: boolean
 ): Promise<AdminScopes> {
   const scopes = await roleScopes(db, userId, isAdmin)
-  return { ...scopes.admin, isAdmin }
+  return { ...scopes.admin, isAdmin: scopes.isAdmin }
 }
 
 /** Whether these scopes hold `role` on `teamId`. A site admin holds all. */
@@ -352,14 +355,13 @@ export function canSeePlayedFor(
   scopes: VisibleScopes,
   team: PlayedFor
 ): boolean {
-  if (scopes.isAdmin) return true
-  if (scopes.teamIds.has(team.teamId)) return true
-  return team.seasonId != null && scopes.seasonIds.has(team.seasonId)
+  return scopes.isAdmin || scopes.teamIds.has(team.teamId)
 }
 
 /**
  * Whether a person may be seen: by themselves, and by anybody who can see a
- * team they have played for, or the season they played for it in.
+ * private team they have played for. Season viewing is bounded to games and
+ * cannot reveal a player's profile or external identity.
  */
 export function canSeePerson(
   scopes: VisibleScopes,

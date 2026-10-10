@@ -5,10 +5,12 @@ import type { SeasonGame } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import {
   type AdminScopes,
+  canSeeTeam,
   visibleGamesWhere,
   type VisibleScopes,
   visibleScopes
 } from '../access'
+import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { imageUrl } from '../media/imageUrls'
@@ -21,8 +23,13 @@ import {
 } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { scheduleRights } from '../schedule/scheduleGames'
 import { teamRecords } from '../stats/records'
+import {
+  seasonParticipantCounts,
+  seasonParticipants
+} from '../stats/seasonTeams'
 
 /**
  * Seasons, and what is in one.
@@ -31,10 +38,8 @@ import { teamRecords } from '../stats/records'
  * channel allow-list gave many of them a season and no team at all, and a
  * team-first screen would show them nothing.
  *
- * An **external team** — an opponent from outside the season — is deliberately
- * absent from `/seasons/:id/teams`. It appears on a game, and through
- * `GET /teams?season=…&kind=external`, which lists the external teams a
- * season's games were played against.
+ * The season team list combines active competition members and committed game
+ * participants, including placeholders, without creating management links.
  *
  * `GET /seasons?team=…` narrows the list to the seasons those teams play in.
  * Asked that way, a season the caller may schedule games in counts as one
@@ -82,14 +87,16 @@ export function seasonRoutes(
           sql<string | null>`to_char(starts_on, 'YYYY-MM-DD')`.as('startsOn'),
           sql<string | null>`to_char(ends_on, 'YYYY-MM-DD')`.as('endsOn')
         ])
-        .orderBy('year', 'desc')
-        .orderBy('name')
+        .orderBy('starts_on', ob => ob.desc().nullsLast())
+        .orderBy('ends_on', ob => ob.desc().nullsLast())
+        .orderBy('id')
       if (visible != null) query = query.where('id', 'in', [...visible])
       if (teamIds != null) {
         query = query.where('id', 'in', eb =>
           eb
             .selectFrom('season_teams')
             .select('season_teams.season_id')
+            .where('season_teams.active', '=', true)
             .where('season_teams.team_id', 'in', teamIds)
         )
       }
@@ -105,17 +112,10 @@ export function seasonRoutes(
       for (const id of ids) counts.set(id, { teams: 0, games: 0, videos: 0 })
 
       if (ids.length > 0) {
-        const teamRows = await db
-          .selectFrom('season_teams')
-          .innerJoin('teams', 'teams.id', 'season_teams.team_id')
-          .select(['season_teams.season_id as seasonId'])
-          .where('season_teams.season_id', 'in', ids)
-          // External teams are not in the season, so they are not counted.
-          .where('teams.kind', '=', 'full')
-          .execute()
-        for (const row of teamRows) {
-          const held = counts.get(row.seasonId)
-          if (held != null) held.teams += 1
+        const teamCounts = await seasonParticipantCounts(db, ids)
+        for (const [id, total] of teamCounts) {
+          const held = counts.get(id)
+          if (held != null) held.teams = total
         }
 
         const gameRows = await db
@@ -166,19 +166,7 @@ export function seasonRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (!scopes.isAdmin && !scopes.seasonIds.has(seasonId)) throw notFound()
 
-      const teams = await db
-        .selectFrom('season_teams')
-        .innerJoin('teams', 'teams.id', 'season_teams.team_id')
-        .select([
-          'teams.id as id',
-          'teams.name as name',
-          'teams.short_name as shortName',
-          'teams.logo_path as logoPath'
-        ])
-        .where('season_teams.season_id', '=', seasonId)
-        .where('teams.kind', '=', 'full')
-        .orderBy('teams.name')
-        .execute()
+      const { teams } = await seasonParticipants(db, seasonId)
 
       // A record and a signed logo URL, the same as `/teams` gives. Without
       // the URL the app correctly falls back to initials — it never builds an
@@ -186,10 +174,11 @@ export function seasonRoutes(
       const records = await teamRecords(db, { seasonId })
 
       res.json(
-        teams.map(team => {
+        teams.map(({ activeMember, parentMember, ...team }) => {
           const record = records.find(row => row.teamId === team.id)
           return {
             ...team,
+            canViewPrivate: canSeeTeam(scopes, team.id),
             logoUrl: imageUrl(media.space, team.logoPath),
             record:
               record == null || record.w + record.l + record.t === 0
@@ -225,6 +214,7 @@ export async function schedulableSeasonIds(
       .selectFrom('season_teams')
       .select('season_id')
       .where('team_id', 'in', [...rights.teamAdminIds])
+      .where('active', '=', true)
       .execute()
     for (const row of played) out.add(row.season_id)
   }
@@ -258,6 +248,9 @@ export interface ScheduleRow extends Omit<
 }
 
 export interface ScheduleFilter {
+  actor?: Actor
+  publishedOnly?: boolean
+  teamId?: string
   seasonIds?: string[]
   /** Games `canSeeGame` lets that person see. */
   visible?: VisibleScopes
@@ -299,6 +292,7 @@ export async function scheduleOf(
   media: MediaContext,
   filter: ScheduleFilter
 ): Promise<ScheduleRow[]> {
+  const effectiveNow = filter.now ?? new Date()
   const teamScope = filter.run ?? filter.film
   if (teamScope != null && !teamScope.isAdmin && teamScope.teamIds.size === 0) {
     return []
@@ -307,8 +301,16 @@ export async function scheduleOf(
     .selectFrom('games')
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
     .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin(
+      'teams as withdrawn',
+      'withdrawn.id',
+      'games.withdrawn_by_team_id'
+    )
     .leftJoin('videos', join =>
-      join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+      join
+        .onRef('videos.game_id', '=', 'games.id')
+        .on('videos.hidden', '=', false)
+        .on(isRealVideo)
     )
     .select([
       'games.id as id',
@@ -322,6 +324,11 @@ export async function scheduleOf(
       'games.season_id as seasonId',
       'games.start_at as startAt',
       'games.venue as venue',
+      'games.exhibition as exhibition',
+      'games.timezone as timezone',
+      'games.cancellation_reason as cancellationReason',
+      'games.withdrawn_by_team_id as withdrawnByTeamId',
+      'withdrawn.name as withdrawnByTeamName',
       'games.status as status',
       'games.home_score as homeScore',
       'games.away_score as awayScore',
@@ -342,6 +349,7 @@ export async function scheduleOf(
     )
     .groupBy([
       'games.id',
+      'withdrawn.name',
       'home.name',
       'away.name',
       'home.kind',
@@ -350,6 +358,15 @@ export async function scheduleOf(
       'away.logo_path'
     ])
 
+  if (filter.teamId != null) {
+    const teamId = filter.teamId
+    query = query.where(eb =>
+      eb.or([
+        eb('games.home_team_id', '=', teamId),
+        eb('games.away_team_id', '=', teamId)
+      ])
+    )
+  }
   if (filter.seasonIds != null) {
     query = query.where('games.season_id', 'in', filter.seasonIds)
   }
@@ -381,16 +398,16 @@ export async function scheduleOf(
       filter.until
     )
   }
-  if (filter.now != null && filter.future === true) {
-    query = query.where('games.start_at', '>', filter.now)
+  if (filter.future === true) {
+    query = query.where('games.start_at', '>', effectiveNow)
   }
-  if (filter.now != null && filter.upcoming === true) {
+  if (filter.upcoming === true) {
     query = query
-      .where('games.start_at', '>', filter.now)
+      .where('games.start_at', '>', effectiveNow)
       .where('games.away_score', 'is', null)
   }
-  if (filter.now != null && filter.past === true) {
-    const now = filter.now
+  if (filter.past === true) {
+    const now = effectiveNow
     query = query.where(eb =>
       eb.or([
         eb('games.start_at', 'is', null),
@@ -400,8 +417,10 @@ export async function scheduleOf(
     )
   }
   // Newest first, unless the caller is looking forward.
-  query = query.orderBy('games.start_at', filter.order ?? 'desc')
-  if (filter.limit != null) query = query.limit(filter.limit)
+  query = query
+    .orderBy('games.start_at', filter.order ?? 'desc')
+    // Match JavaScript's ID byte ordering regardless of the database locale.
+    .orderBy(sql<string>`games.id collate "C"`, filter.order ?? 'desc')
   if (filter.externalIds != null) {
     const externalIds = filter.externalIds
     query = query.where(eb =>
@@ -415,6 +434,8 @@ export async function scheduleOf(
       )
     )
   }
+  // Only the first N published rows can occur in the first N of the combined list.
+  if (filter.limit != null) query = query.limit(filter.limit)
   const games = await query
     .select(eb =>
       eb
@@ -453,6 +474,13 @@ export async function scheduleOf(
       seasonId: game.seasonId,
       startAt: toIso(game.startAt),
       venue: game.venue,
+      exhibition: game.exhibition,
+      timezone: game.timezone,
+      cancellationReason: game.cancellationReason,
+      withdrawnByTeamId: game.withdrawnByTeamId,
+      withdrawnByTeamName: game.withdrawnByTeamName,
+      pendingApproval: false,
+      pendingRequestId: null,
       status: game.status,
       homeScore: game.homeScore,
       awayScore: game.awayScore,
@@ -476,7 +504,113 @@ export async function scheduleOf(
   // Not waited for. The first person to open a list starts the work and sees
   // plain plates; everybody after sees pictures.
   warmPosters(media, [...posters.values()]).catch(() => undefined)
-  return answer
+  const pending = await pendingSchedule(db, filter.actor, effectiveNow, {
+    publishedGameIds: answer.map(game => game.id),
+    teamId: filter.teamId,
+    seasonIds: filter.seasonIds,
+    visible: filter.visible,
+    includeNew:
+      teamScope == null &&
+      filter.externalIds == null &&
+      filter.publishedOnly !== true
+  })
+  const projected: ScheduleRow[] =
+    teamScope != null ||
+    filter.externalIds != null ||
+    filter.publishedOnly === true
+      ? []
+      : pending
+          .filter(row => row.existingGameId == null)
+          .filter(
+            row =>
+              filter.seasonIds == null ||
+              filter.seasonIds.some(id => row.hostSeasonIds.includes(id))
+          )
+          .filter(
+            row =>
+              filter.teamId == null ||
+              row.homeTeamId === filter.teamId ||
+              row.awayTeamId === filter.teamId
+          )
+          .filter(
+            row =>
+              filter.visible == null ||
+              filter.visible.isAdmin ||
+              [row.homeTeamId, row.awayTeamId].some(
+                id => filter.visible?.teamIds.has(id) === true
+              ) ||
+              row.hostSeasonIds.some(
+                id => filter.visible?.seasonIds.has(id) === true
+              )
+          )
+          .map(
+            ({ existingGameId, affectedTeamIds, hostSeasonIds, ...row }) => ({
+              ...row,
+              pendingApproval: true,
+              status: 'scheduled',
+              cancellationReason: null,
+              withdrawnByTeamId: null,
+              withdrawnByTeamName: null,
+              homeScore: null,
+              awayScore: null,
+              ingestStatus: 'none',
+              videoCount: 0,
+              durationSec: null,
+              posterUrl: null,
+              isLive: false,
+              externalIds: []
+            })
+          )
+  const nowMs = effectiveNow.getTime()
+  let combined = [...annotatePending(answer, pending), ...projected].filter(
+    row => {
+      const when = row.startAt == null ? null : Date.parse(row.startAt)
+      if (filter.played === true && row.homeScore == null) return false
+      if (filter.omitCancelled === true && row.status === 'cancelled')
+        return false
+      if (
+        filter.since != null &&
+        (when == null || when < filter.since.getTime())
+      )
+        return false
+      if (
+        filter.until != null &&
+        (when == null ||
+          (filter.untilInclusive === true
+            ? when > filter.until.getTime()
+            : when >= filter.until.getTime()))
+      )
+        return false
+      if (
+        (filter.future === true || filter.upcoming === true) &&
+        (when == null || when <= nowMs)
+      )
+        return false
+      if (filter.upcoming === true && row.awayScore != null) return false
+      if (
+        filter.past === true &&
+        when != null &&
+        when > nowMs &&
+        row.awayScore == null
+      )
+        return false
+      return true
+    }
+  )
+  combined.sort((a, b) => {
+    const order = filter.order === 'asc' ? 1 : -1
+    if (a.startAt == null || b.startAt == null) {
+      if (a.startAt !== b.startAt) return (a.startAt == null ? 1 : -1) * order
+    }
+    const date =
+      a.startAt == null || b.startAt == null
+        ? 0
+        : Date.parse(a.startAt) - Date.parse(b.startAt)
+    const id = a.id === b.id ? 0 : a.id < b.id ? -1 : 1
+    return (date !== 0 ? date : id) * order
+  })
+  if (filter.limit != null) combined = combined.slice(0, filter.limit)
+  return combined
 }
 
 /**

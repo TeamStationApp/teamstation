@@ -45,9 +45,13 @@ import { migration046ExternalCleanup } from './046externalCleanup'
 import { migration047TeamStation } from './047teamStation'
 import { migration048DropStatRollups } from './048dropStatRollups'
 import { migration049ExpandedStats } from './049expandedStats'
+import { migration050CreationHierarchy } from './050creationHierarchy'
 import { migration050OAuth } from './050oauth'
 import { migration051EventTags } from './051eventTags'
+import { migration051PersonalRequests } from './051personalRequests'
+import { migration052SeasonGameRefinements } from './052seasonGameRefinements'
 import { migration052SignOutMergedAccounts } from './052signOutMergedAccounts'
+import { migration053Follows } from './053follows'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -97,7 +101,11 @@ export const migrations: Migration[] = [
   migration047TeamStation,
   migration048DropStatRollups,
   migration049ExpandedStats,
+  migration050CreationHierarchy,
   migration050OAuth,
   migration051EventTags,
-  migration052SignOutMergedAccounts
+  migration051PersonalRequests,
+  migration052SeasonGameRefinements,
+  migration052SignOutMergedAccounts,
+  migration053Follows
 ]

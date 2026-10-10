@@ -4,6 +4,7 @@ import { Client } from 'pg'
 import type { GameChange } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { playJson, readPlays } from '../events/postPlays'
 import { gameLineups } from '../events/teamLineups'
@@ -17,11 +18,11 @@ import {
 /** Somebody subscribed to a game in this worker: one socket. */
 export interface FanoutSubscriber {
   send: (message: GameChange) => void
-  /** Whether they may still see the game, asked before each send. */
-  maySee: (game: GameScope) => Promise<boolean>
+  /** Check current rights using this delivery's connection, before each send. */
+  maySee: (game: GameScope, db: Kysely<Database>) => Promise<boolean>
 }
 
-/** A game this worker has subscribers for, and its teams, read once. */
+/** A game this worker has subscribers for; scope refreshes before delivery. */
 interface Watched {
   scope: GameScope
   subscribers: Set<FanoutSubscriber>
@@ -172,13 +173,7 @@ export class GameFanout {
         ? this.watched.has(change.game)
           ? [change.game]
           : []
-        : [...this.watched.entries()]
-            .filter(
-              ([, { scope }]) =>
-                scope.homeTeamId === change.team ||
-                scope.awayTeamId === change.team
-            )
-            .map(([gameId]) => gameId)
+        : [...this.watched.keys()]
     if (games.length === 0) return
     const song =
       'team' in change
@@ -189,56 +184,72 @@ export class GameFanout {
           }
         : undefined
     for (const gameId of games) {
-      const data = song ?? (await this.read(gameId, change.kind))
-      const watched = this.watched.get(gameId)
-      if (data === undefined || watched == null) continue
-      const read = {
-        type: 'change',
-        gameId,
-        kind: change.kind,
-        at: this.now().toISOString(),
-        data
-      }
-      const message = read as GameChange
-      await Promise.all(
-        [...watched.subscribers].map(async subscriber => {
-          if (await subscriber.maySee(watched.scope)) subscriber.send(message)
-        })
-      )
-    }
-  }
-
-  /** A game's data for one kind of change; undefined once it has gone. */
-  private async read(gameId: string, kind: string): Promise<unknown> {
-    const game = await this.db
-      .selectFrom('games')
-      .select([
-        'home_team_id',
-        'away_team_id',
-        'status',
-        'away_score',
-        'home_score',
-        'currentPlay'
-      ])
-      .where('id', '=', gameId)
-      .executeTakeFirst()
-    if (game == null) return undefined
-    if (kind === 'game')
-      return {
-        status: game.status,
-        awayScore: game.away_score,
-        homeScore: game.home_score
-      }
-    if (kind === 'lineups')
-      return await gameLineups(this.db, {
-        id: gameId,
-        home_team_id: game.home_team_id,
-        away_team_id: game.away_team_id,
-        currentPlay: game.currentPlay
+      await atomic(this.db, async trx => {
+        // Hold the current matchup while reading and authorizing its private
+        // data. A revision cannot swap opponents between these two reads.
+        const game = await trx
+          .selectFrom('games')
+          .selectAll()
+          .where('id', '=', gameId)
+          .forShare()
+          .executeTakeFirst()
+        const watched = this.watched.get(gameId)
+        if (game == null || watched == null) return
+        const scope: GameScope = {
+          homeTeamId: game.home_team_id,
+          awayTeamId: game.away_team_id,
+          seasonId: game.season_id
+        }
+        watched.scope = scope
+        if (
+          'team' in change &&
+          scope.homeTeamId !== change.team &&
+          scope.awayTeamId !== change.team
+        )
+          return
+        const head = {
+          type: 'change' as const,
+          gameId,
+          at: this.now().toISOString()
+        }
+        const message: GameChange =
+          change.kind === 'walkUpSong'
+            ? { ...head, kind: 'walkUpSong', data: song! }
+            : change.kind === 'game'
+              ? {
+                  ...head,
+                  kind: 'game',
+                  data: {
+                    status: game.status,
+                    awayScore: game.away_score,
+                    homeScore: game.home_score
+                  }
+                }
+              : change.kind === 'lineups'
+                ? {
+                    ...head,
+                    kind: 'lineups',
+                    data: await gameLineups(trx, {
+                      id: gameId,
+                      home_team_id: game.home_team_id,
+                      away_team_id: game.away_team_id,
+                      currentPlay: game.currentPlay
+                    })
+                  }
+                : {
+                    ...head,
+                    kind: 'plays',
+                    data: {
+                      plays: (await readPlays(trx, gameId)).map(playJson),
+                      currentPlay: game.currentPlay ?? null
+                    }
+                  }
+        await Promise.all(
+          [...watched.subscribers].map(async subscriber => {
+            if (await subscriber.maySee(scope, trx)) subscriber.send(message)
+          })
+        )
       })
-    return {
-      plays: (await readPlays(this.db, gameId)).map(playJson),
-      currentPlay: game.currentPlay ?? null
     }
   }
 

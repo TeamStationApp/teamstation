@@ -13,6 +13,14 @@ import { attachInt8Parser } from './int8'
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
 type Json = ColumnType<unknown, unknown, unknown>
 
+/** A fan following a group: a line on their Home and no access. */
+export interface FollowsTable {
+  user_id: number
+  group_type: 'league' | 'season' | 'team'
+  group_id: string
+  created_at: Generated<Date>
+}
+
 export interface UsersTable {
   id: number
   /** The `usr_` string this id was taken from. The other 43 bits live only here. */
@@ -24,6 +32,10 @@ export interface UsersTable {
   password_hash: string | null
   login_enabled: Generated<boolean>
   is_admin: Generated<boolean>
+  onboarding_step: Generated<'name' | 'photo' | 'complete'>
+  onboarding_completed_at: Timestamp | null
+  disabled_at: Timestamp | null
+  picture_catalog_id: Generated<string | null>
   avatar_path: string | null
   avatar_sha256: string | null
   avatar_source: string | null
@@ -64,6 +76,8 @@ export interface UserLinksTable {
 
 export interface LeaguesTable {
   id: string
+  locality: Json | null
+  picture_catalog_id: Generated<string | null>
   name: string
   short_name: string | null
   website: string | null
@@ -86,6 +100,8 @@ export interface LeaguesTable {
 
 export interface SeasonsTable {
   id: string
+  timezone: Generated<string>
+  picture_catalog_id: Generated<string | null>
   /** Null until somebody creates a league and moves this season into it. */
   league_id: string | null
   name: string
@@ -117,6 +133,11 @@ export type TeamCreatedFrom =
 
 export interface TeamsTable {
   id: string
+  league_id: Generated<string | null>
+  locality: Json | null
+  picture_catalog_id: Generated<string | null>
+  custodian_type: Generated<'league' | 'season' | 'team' | null>
+  custodian_id: Generated<string | null>
   name: string
   short_name: string | null
   /** `external` plays games in a season without being in it. */
@@ -170,6 +191,7 @@ export interface LeagueMembersTable {
 }
 
 export interface SeasonTeamsTable {
+  active: Generated<boolean>
   season_id: string
   team_id: string
   joined_at: Timestamp
@@ -229,6 +251,13 @@ export interface ExternalIdsTable {
 }
 
 export interface GamesTable {
+  exhibition: Generated<boolean>
+  timezone: Generated<string>
+  outside_tournament: Generated<string | null>
+  cancellation_reason: Generated<string | null>
+  withdrawn_by_team_id: Generated<string | null>
+  withdrawn_by_user_id: Generated<number | null>
+  withdrawn_at: Timestamp | null
   id: string
   home_team_id: string
   away_team_id: string
@@ -462,6 +491,7 @@ export interface InvitesTable {
   created_at: Timestamp
   /** Set when the invitation was made out to one address and mailed to it. */
   for_email: string | null
+  request_id: string | null
 }
 
 /** Who redeemed which invite, and whether that is where their account began. */
@@ -635,10 +665,78 @@ export interface UserTagsTable {
   last_used: Generated<number>
 }
 
+export interface SeasonTeamParentsTable {
+  season_id: string
+  team_id: string
+  created_at: Timestamp
+}
+
+export interface CreationIdempotencyTable {
+  user_id: number
+  key: string
+  body_hash: string
+  response: Json
+  created_at: Timestamp
+}
+
+export interface GroupRequestsTable {
+  id: string
+  kind:
+    'parent' | 'participation' | 'promotion' | 'person' | 'game' | 'gameChange'
+  sender_id: number
+  sender_scope_type: 'league' | 'season' | 'team'
+  sender_scope_id: string
+  terms: Json
+  revision: Generated<number>
+  status: Generated<
+    'pending' | 'accepted' | 'declined' | 'expired' | 'cancelled' | 'superseded'
+  >
+  sent_at: Timestamp
+  expires_at: Timestamp
+  resolved_at: Timestamp | null
+  resolved_by: number | null
+  game_id: string | null
+  initiating_team_id: string | null
+  sender_hidden: Generated<boolean>
+  supersedes_id: string | null
+}
+
+export interface GroupRequestSidesTable {
+  request_id: string
+  scope_type: 'league' | 'season' | 'team' | 'user'
+  scope_id: string
+  approved_by: number | null
+  approved_at: Timestamp | null
+}
+
+export interface NotificationEventsTable {
+  id: string
+  source_type: string
+  source_id: string
+  revision: number
+  actor_id: number | null
+  metadata: Json
+  recorded_recipients: Generated<number[]>
+  created_at: Timestamp
+}
+
+export interface NotificationReceiptsTable {
+  event_id: string
+  user_id: number
+  viewed_at: Timestamp
+}
+
 export interface Database {
   event_tag_catalog: { tag: string }
   event_tags: EventTagsTable
   user_tags: UserTagsTable
+  creation_idempotency: CreationIdempotencyTable
+  follows: FollowsTable
+  group_requests: GroupRequestsTable
+  group_request_sides: GroupRequestSidesTable
+  notification_events: NotificationEventsTable
+  notification_receipts: NotificationReceiptsTable
+  season_team_parents: SeasonTeamParentsTable
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
   auth_sessions: AuthSessionsTable

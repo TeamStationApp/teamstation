@@ -37,7 +37,14 @@ const KEEP: Array<{ path: RegExp; line?: RegExp }> = [
   { path: /^README\.md$/, line: /202609150848-gameStationApp\.md/ },
   // Not names: a lockfile's integrity hashes and OpenType's GSUB table.
   { path: /(^|\/)package-lock\.json$/, line: /"integrity":/ },
-  { path: /./, line: /\bGSUB\b|\bGPOS\b/ }
+  { path: /./, line: /\bGSUB\b|\bGPOS\b/ },
+  // The baseball statistic GS means games started.
+  { path: /^src\/app\/screens\/statColumns\.ts$/, line: /label: 'GS'/ },
+  { path: /^src\/app\/screens\/statColumns\.test\.ts$/, line: /'IP GP GS BF/ },
+  {
+    path: /^src\/server\/stats\/expandedStats\.test\.ts$/,
+    line: /pitches and GS to their actual pitchers/
+  }
 ]
 
 /** Each tracked line naming the old product, as `path:line:text`. */

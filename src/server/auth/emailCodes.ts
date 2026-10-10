@@ -177,6 +177,7 @@ export async function claimApprovedRequest(
       'display_name'
     ])
     .where('id', '=', id)
+    .where('expires_at', '>', new Date())
     .executeTakeFirst()
   if (row?.approved_at == null) return null
   if (row.client_secret_hash == null) return null

@@ -2,9 +2,9 @@ import { asObject, asOptional, asString } from 'cleaners'
 import { type Response, Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
+import { asAccountEmail } from '../../common/accountSettings'
 import { asSession } from '../../common/api'
-import { badRequest, unauthorized } from '../../common/errors'
-import { makeId } from '../../common/ids'
+import { badRequest, unauthorized, unavailable } from '../../common/errors'
 import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
 import {
   asSignInOrigin,
@@ -12,7 +12,6 @@ import {
   claimSignInLink,
   createEmailCode,
   signInLink,
-  type SignInRequest,
   verifyEmailCode
 } from '../auth/emailCodes'
 import type { FoundUser } from '../auth/emails'
@@ -29,6 +28,7 @@ import {
   recordAttempts
 } from '../auth/rateLimit'
 import { createSession, revokeSession } from '../auth/sessions'
+import { onboardingFor, settleAccount } from '../auth/settleAccount'
 import { makeToken, SESSION_COOKIE, sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { settleInviteSignIn } from '../invites/joining'
@@ -43,7 +43,7 @@ const asPasswordLogin = asObject({
 })
 
 const asCodeRequest = asObject({
-  email: asString,
+  email: asAccountEmail,
   /**
    * Where the sign-in was asked for, so the link comes back to it.
    *
@@ -226,7 +226,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         inviteId: claim.inviteId,
         displayName: claim.displayName
       })
-    }
+    } else await settleAccount(db, email)
     return await findUserByEmail(db, email)
   }
 
@@ -322,7 +322,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
-            avatarUrl: await avatarFor(user.id)
+            avatarUrl: await avatarFor(user.id),
+            onboarding: await onboardingFor(db, user.id)
           }
         })
       )
@@ -346,22 +347,25 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       // only for real sends would make the quota itself say who has an account.
       await recordAttempts(db, rules)
 
-      const user = await findUserByEmail(db, email)
-
-      // Always the same answer, so this cannot be used to find out who has an
-      // account. The code is only made when there is somebody to send it to.
-      // The reply carries the request either way, so that a client waiting on
-      // it behaves identically whether or not the address has an account.
-      let request: SignInRequest | null = null
-      if (user != null) {
-        request = await createEmailCode(db, email, 'login', {
-          origin: body.origin,
-          next: body.next
-        })
+      // Email ownership is established by verification, never by requesting a code.
+      const request = await createEmailCode(db, email, 'login', {
+        origin: body.origin,
+        next: body.next
+      })
+      try {
         await options.sendCode(
           email,
           request.code,
           signInLink(options.publicUrl, request.token)
+        )
+      } catch {
+        await db
+          .updateTable('email_codes')
+          .set({ consumed_at: new Date() })
+          .where('id', '=', request.id)
+          .execute()
+        throw unavailable(
+          'The sign-in email could not be sent. Please try again.'
         )
       }
       res.status(202).json({
@@ -369,8 +373,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         // Named for what they are: the request this client is waiting on, and
         // the secret that proves the wait is its own. Both are useless without
         // somebody opening the link or typing the code.
-        requestId: request?.id ?? makeId('emailCode'),
-        clientSecret: request?.clientSecret ?? makeToken()
+        requestId: request.id,
+        clientSecret: request.clientSecret
       })
     })
   )
@@ -414,7 +418,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
-            avatarUrl: await avatarFor(user.id)
+            avatarUrl: await avatarFor(user.id),
+            onboarding: await onboardingFor(db, user.id)
           }
         })
       )
@@ -459,7 +464,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
-            avatarUrl: await avatarFor(user.id)
+            avatarUrl: await avatarFor(user.id),
+            onboarding: await onboardingFor(db, user.id)
           }
         })
       )
@@ -506,7 +512,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
-            avatarUrl: await avatarFor(user.id)
+            avatarUrl: await avatarFor(user.id),
+            onboarding: await onboardingFor(db, user.id)
           }
         })
       )
@@ -548,6 +555,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           options.space == null
             ? null
             : imageUrl(options.space, user.avatar_path),
+        onboarding: await onboardingFor(db, user.id),
         viaApiToken: actor.apiTokenId != null
       })
     })

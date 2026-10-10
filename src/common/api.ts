@@ -19,7 +19,32 @@ import { asLiteral } from './asLiteral'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
+import {
+  asGameScheduleProposal,
+  asGameScheduling,
+  type GameProposal,
+  type GameScheduleProposal
+} from './gameApprovals'
+import type { CreateGroup, GroupKind, GroupRef } from './groupCreation'
+import {
+  asParentPreview,
+  type ParentAction,
+  type ParentPreview
+} from './groupLinks'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
+import { asLocality, type Locality } from './locality'
+import {
+  asNodeAccounts,
+  type NodeAccount,
+  type NodeAccountChange
+} from './nodeAdministration'
+import {
+  asNotification,
+  asNotificationPage,
+  type Notification,
+  type RelationshipRequestInput
+} from './notifications'
+import { asOnboarding, type Onboarding } from './onboarding'
 import { calibratePasswordCosts } from './passwordCalibration'
 import {
   asArgonParameters,
@@ -31,7 +56,14 @@ import {
   type PasswordKdf,
   type ResetAuthorization
 } from './passwordProtocol'
+import type { AvailablePicture } from './pictureCatalog'
 import type { PlayerSettings } from './playerSettings'
+import {
+  asGroupDetail,
+  asPublicGroup,
+  type GroupDetail,
+  type PublicGroup
+} from './publicGroups'
 import { asRole, type Role, type RoleFlag } from './roles'
 import {
   cleanAction,
@@ -94,10 +126,15 @@ export const asTeamSummary = asObject({
     null
   ),
   /**
-   * `full` for a team in a season, `external` for an opponent from outside
-   * every season. Only a list asked for external teams holds one; a server
-   * from before the field sends none, and every team it lists is full.
+   * `full` for a team and the compatible `external` token for a placeholder.
+   * Placeholder identity is independent of season membership and exhibition
+   * game classification. Older servers omit this field and default to full.
    */
+  seasonCategory: asOptional(
+    asLiteral('inSeason', 'exhibition', 'unscheduled'),
+    'unscheduled'
+  ),
+  canViewPrivate: asOptional(asBoolean, false),
   kind: asOptional(asEither(asLiteral('full'), asLiteral('external')), 'full')
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
@@ -111,6 +148,13 @@ export const asGameSummary = asObject({
   seasonId: asNullable(asString),
   startAt: asNullable(asString),
   venue: asNullable(asString),
+  exhibition: asOptional(asBoolean, false),
+  timezone: asOptional(asString, 'UTC'),
+  pendingApproval: asOptional(asBoolean, false),
+  pendingRequestId: asOptional(asNullable(asString), null),
+  cancellationReason: asOptional(asNullable(asString), null),
+  withdrawnByTeamId: asOptional(asNullable(asString), null),
+  withdrawnByTeamName: asOptional(asNullable(asString), null),
   status: asString,
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
@@ -181,6 +225,13 @@ export const asGameDetail = asObject({
   seasonId: asNullable(asString),
   startAt: asNullable(asString),
   venue: asNullable(asString),
+  exhibition: asOptional(asBoolean, false),
+  timezone: asOptional(asString, 'UTC'),
+  pendingApproval: asOptional(asBoolean, false),
+  pendingRequestId: asOptional(asNullable(asString), null),
+  cancellationReason: asOptional(asNullable(asString), null),
+  withdrawnByTeamId: asOptional(asNullable(asString), null),
+  withdrawnByTeamName: asOptional(asNullable(asString), null),
   status: asString,
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
@@ -402,6 +453,13 @@ export const asPlayerStats = asObject({
 })
 export type PlayerStats = ReturnType<typeof asPlayerStats>
 
+export const asSeasonStats = asObject({
+  seasonId: asString,
+  batting: asArray(asBattingRow),
+  pitching: asArray(asPitchingRow)
+})
+export type SeasonStats = ReturnType<typeof asSeasonStats>
+
 export const asGameStatsStatus = asEither(
   asObject({ status: asLiteral('none') }),
   asObject({
@@ -558,7 +616,21 @@ export const asStandingsRow = asObject({
   runsAgainst: asNumber,
   played: asNumber,
   winningPct: asNullable(asNumber),
-  runDifferential: asNumber
+  runDifferential: asNumber,
+  logoUrl: asOptional(asNullable(asString), null),
+  teamKind: asOptional(asLiteral('full', 'external'), 'full'),
+  gamesBehind: asOptional(asNullable(asNumber), null),
+  streak: asOptional(asNullable(asString), null),
+  home: asOptional(asObject({ w: asNumber, l: asNumber, t: asNumber }), () => ({
+    w: 0,
+    l: 0,
+    t: 0
+  })),
+  away: asOptional(asObject({ w: asNumber, l: asNumber, t: asNumber }), () => ({
+    w: 0,
+    l: 0,
+    t: 0
+  }))
 })
 export type StandingsRow = ReturnType<typeof asStandingsRow>
 
@@ -598,12 +670,19 @@ export const asSeasonGame = asObject({
   awayTeamId: asString,
   homeTeamName: asString,
   awayTeamName: asString,
-  /** An opponent from outside the season: no roster, no team page. */
+  /** Placeholder identities have no roster of their own. */
   homeTeamExternal: asBoolean,
   awayTeamExternal: asBoolean,
   seasonId: asNullable(asString),
   startAt: asNullable(asString),
   venue: asNullable(asString),
+  exhibition: asOptional(asBoolean, false),
+  timezone: asOptional(asString, 'UTC'),
+  pendingApproval: asOptional(asBoolean, false),
+  pendingRequestId: asOptional(asNullable(asString), null),
+  cancellationReason: asOptional(asNullable(asString), null),
+  withdrawnByTeamId: asOptional(asNullable(asString), null),
+  withdrawnByTeamName: asOptional(asNullable(asString), null),
   status: asString,
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
@@ -761,15 +840,20 @@ export const asLiveNow = asObject({
 })
 export type LiveNow = ReturnType<typeof asLiveNow>
 
-export const asSessionUser = asObject({
+const cleanSessionUser = asObject({
   id: asUserId,
   displayName: asString,
   email: asOptional(asString),
   isAdmin: asBoolean,
   /** Signed and short-lived, for the picture in the header. */
-  avatarUrl: asOptional(asNullable(asString), null)
+  avatarUrl: asOptional(asNullable(asString), null),
+  onboarding: asOptional(asOnboarding)
 })
-export type SessionUser = ReturnType<typeof asSessionUser>
+export type SessionUser = Omit<
+  ReturnType<typeof cleanSessionUser>,
+  'onboarding'
+> & { onboarding?: Onboarding }
+export const asSessionUser: Cleaner<SessionUser> = cleanSessionUser
 
 export const asSession = asObject({
   token: asString,
@@ -821,7 +905,7 @@ export const asInviteList = asObject({
 export type InviteList = ReturnType<typeof asInviteList>
 
 /** What is behind a code, for the screen its link opens. */
-export const asInviteInfo = asObject({
+const cleanInviteInfo = asObject({
   code: asString,
   valid: asBoolean,
   problem: asNullable(asLiteral('revoked', 'expired', 'exhausted')),
@@ -832,9 +916,14 @@ export const asInviteInfo = asObject({
   }),
   signedIn: asBoolean,
   /** True when they already have what it offers, which is not a failure. */
-  alreadyIn: asBoolean
+  alreadyIn: asBoolean,
+  requestedRoles: asOptional(asArray(asString), [])
 })
-export type InviteInfo = ReturnType<typeof asInviteInfo>
+export type InviteInfo = Omit<
+  ReturnType<typeof cleanInviteInfo>,
+  'requestedRoles'
+> & { requestedRoles?: string[] }
+export const asInviteInfo: (raw: unknown) => InviteInfo = cleanInviteInfo
 
 export const asRedeemed = asObject({
   granted: asBoolean,
@@ -920,13 +1009,19 @@ export const asMyRoles = asObject({
 export type MyRoles = ReturnType<typeof asMyRoles>
 
 /** Somebody invited by address who has not opened the link yet. */
-export const asPendingPerson = asObject({
+const cleanPendingPerson = asObject({
   inviteId: asString,
   email: asString,
   code: asString,
-  invitedAt: asString
+  invitedAt: asString,
+  requestId: asOptional(asString)
 })
-export type PendingPerson = ReturnType<typeof asPendingPerson>
+export type PendingPerson = Omit<
+  ReturnType<typeof cleanPendingPerson>,
+  'requestId'
+> & { requestId?: string }
+export const asPendingPerson: (raw: unknown) => PendingPerson =
+  cleanPendingPerson
 
 /** Everything the page behind the gear draws, in one answer. */
 export const asManagePage = asObject({
@@ -1082,6 +1177,26 @@ export const asDjGame = asObject({
 export type DjGame = ReturnType<typeof asDjGame>
 
 export class TeamStationClient {
+  async nodeAccounts(query = ''): Promise<NodeAccount[]> {
+    return await this.request(
+      'GET',
+      `/users?view=administration&query=${encodeURIComponent(query)}`,
+      asNodeAccounts
+    )
+  }
+
+  async changeNodeAccount(
+    userId: number,
+    change: NodeAccountChange
+  ): Promise<void> {
+    await this.request(
+      'PATCH',
+      `/users/${userId}/administration`,
+      asUnknownOk,
+      change
+    )
+  }
+
   /** Where the API is, which is also where its sockets are. */
   readonly baseUrl: string
   private readonly doFetch: typeof fetch
@@ -1135,6 +1250,10 @@ export class TeamStationClient {
     return await this.request('PUT', '/me/account/photo', asAccountSettings, {
       image
     })
+  }
+
+  async clearAccountPhoto(): Promise<AccountSettings> {
+    return await this.request('DELETE', '/me/account/photo', asAccountSettings)
   }
 
   private requirePasswordKdf(): PasswordKdf {
@@ -1347,6 +1466,357 @@ export class TeamStationClient {
 
   async teams(): Promise<TeamSummary[]> {
     return await this.request('GET', '/teams', asArray(asTeamSummary))
+  }
+
+  async discoverGroups(kind: GroupKind, query = ''): Promise<PublicGroup[]> {
+    const collection =
+      kind === 'league' ? 'leagues' : kind === 'season' ? 'seasons' : 'teams'
+    return await this.request(
+      'GET',
+      `/${collection}?view=public&query=${encodeURIComponent(query)}`,
+      asArray(asPublicGroup)
+    )
+  }
+
+  /** With `admin`, only the groups this person administers. */
+  async ownGroups(role?: 'admin'): Promise<PublicGroup[]> {
+    return await this.request(
+      'GET',
+      role == null ? '/me/groups' : `/me/groups?role=${role}`,
+      asArray(asPublicGroup)
+    )
+  }
+
+  /** The leagues, seasons and teams this person follows as a fan. */
+  async follows(): Promise<PublicGroup[]> {
+    return await this.request('GET', '/me/follows', asArray(asPublicGroup))
+  }
+
+  async follow(ref: GroupRef): Promise<PublicGroup> {
+    return await this.request(
+      'PUT',
+      `/me/follows/${ref.kind}/${encodeURIComponent(ref.id)}`,
+      asPublicGroup
+    )
+  }
+
+  async unfollow(ref: GroupRef): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/me/follows/${ref.kind}/${encodeURIComponent(ref.id)}`,
+      () => undefined
+    )
+  }
+
+  async group(ref: GroupRef): Promise<GroupDetail> {
+    const collection =
+      ref.kind === 'league'
+        ? 'leagues'
+        : ref.kind === 'season'
+          ? 'seasons'
+          : 'teams'
+    return await this.request(
+      'GET',
+      `/${collection}/${encodeURIComponent(ref.id)}`,
+      asGroupDetail
+    )
+  }
+
+  async createGroup(body: CreateGroup): Promise<{
+    id: string
+    kind: GroupKind
+    name: string
+    imageUrl: string | null
+  }> {
+    const collection =
+      body.kind === 'league'
+        ? 'leagues'
+        : body.kind === 'season'
+          ? 'seasons'
+          : 'teams'
+    return await this.request(
+      'POST',
+      `/${collection}`,
+      asObject({
+        id: asString,
+        kind: asLiteral('league', 'season', 'team'),
+        name: asString,
+        imageUrl: asNullable(asString)
+      }),
+      body
+    )
+  }
+
+  async updateGroup(
+    ref: GroupRef,
+    fields: Partial<Omit<CreateGroup, 'kind' | 'parent' | 'idempotencyKey'>>
+  ): Promise<PublicGroup> {
+    return await this.request(
+      'PUT',
+      `/groups/${ref.kind}/${encodeURIComponent(ref.id)}`,
+      asPublicGroup,
+      fields
+    )
+  }
+
+  async parentPreview(actions: ParentAction[]): Promise<ParentPreview> {
+    return await this.request('POST', '/parent-previews', asParentPreview, {
+      actions
+    })
+  }
+
+  async changeParents(preview: ParentPreview): Promise<void> {
+    await this.request('PUT', '/parent-links', asUnknownOk, {
+      actions: preview.actions,
+      expected: preview.expected
+    })
+  }
+
+  async proposeGame(body: GameProposal): Promise<{
+    id: string
+    status: string
+    gameId: string | null
+    proposedGameId: string | null
+    replacesGameId: string | null
+  }> {
+    return await this.request(
+      'POST',
+      '/game-requests',
+      asObject({
+        id: asString,
+        status: asString,
+        gameId: asNullable(asString),
+        proposedGameId: asOptional(asNullable(asString), null),
+        replacesGameId: asOptional(asNullable(asString), null)
+      }),
+      body
+    )
+  }
+
+  async decideGameRequest(
+    id: string,
+    action: 'accept' | 'decline' | 'withdraw' | 'resend',
+    idempotencyKey?: string
+  ): Promise<{
+    id: string
+    status: string
+    gameId: string | null
+    proposedGameId: string | null
+    replacesGameId: string | null
+  }> {
+    return await this.request(
+      'POST',
+      `/game-requests/${encodeURIComponent(id)}/${action}`,
+      asObject({
+        id: asString,
+        status: asString,
+        gameId: asNullable(asString),
+        proposedGameId: asOptional(asNullable(asString), null),
+        replacesGameId: asOptional(asNullable(asString), null)
+      }),
+      { idempotencyKey }
+    )
+  }
+
+  async gameProposals(ref: GroupRef): Promise<GameScheduleProposal[]> {
+    return await this.request(
+      'GET',
+      `/game-requests?scopeKind=${ref.kind}&scopeId=${encodeURIComponent(ref.id)}`,
+      asArray(asGameScheduleProposal)
+    )
+  }
+
+  async deleteDeclinedGame(id: string, scope?: GroupRef): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/game-requests/${encodeURIComponent(id)}/schedule-entry${scope == null ? '' : `?scopeKind=${scope.kind}&scopeId=${encodeURIComponent(scope.id)}`}`,
+      asUnknownOk
+    )
+  }
+
+  async gameScheduling(
+    id: string
+  ): Promise<ReturnType<typeof asGameScheduling>> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(id)}/scheduling`,
+      asGameScheduling
+    )
+  }
+
+  async withdrawFromGame(id: string, teamId: string): Promise<void> {
+    await this.request(
+      'POST',
+      `/games/${encodeURIComponent(id)}/withdrawals`,
+      asObject({
+        id: asString,
+        status: asLiteral('cancelled'),
+        reason: asLiteral('withdrawal'),
+        withdrawnByTeamId: asString
+      }),
+      { teamId }
+    )
+  }
+
+  async inviteRelationship(
+    body: RelationshipRequestInput
+  ): Promise<{ id: string; status: string }> {
+    return await this.request(
+      'POST',
+      '/relationship-requests',
+      asObject({ id: asString, status: asString }),
+      body
+    )
+  }
+
+  async decideRelationship(
+    id: string,
+    decision: 'accept' | 'decline' | 'withdraw' | 'resend',
+    idempotencyKey?: string
+  ): Promise<{ id: string; status: string }> {
+    return await this.request(
+      'POST',
+      `/relationship-requests/${encodeURIComponent(id)}/${decision}`,
+      asObject({ id: asString, status: asString }),
+      { idempotencyKey }
+    )
+  }
+
+  async endParticipation(seasonId: string, teamId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/seasons/${encodeURIComponent(seasonId)}/memberships/${encodeURIComponent(teamId)}`,
+      asUnknownOk
+    )
+  }
+
+  async notifications(
+    options: {
+      history?: boolean
+      sent?: boolean
+      cursor?: string
+      limit?: number
+    } = {}
+  ): Promise<{
+    items: Notification[]
+    hasPending: boolean
+    nextCursor: string | null
+  }> {
+    const query = new URLSearchParams()
+    if (options.history === true) query.set('history', '1')
+    if (options.sent === true) query.set('sent', '1')
+    if (options.cursor != null) query.set('cursor', options.cursor)
+    if (options.limit != null) query.set('limit', String(options.limit))
+    return await this.request(
+      'GET',
+      `/me/notifications?${query.toString()}`,
+      asNotificationPage
+    )
+  }
+
+  async notification(id: string): Promise<Notification> {
+    return await this.request(
+      'GET',
+      `/me/notifications/${encodeURIComponent(id)}`,
+      asNotification
+    )
+  }
+
+  async viewNotification(id: string): Promise<void> {
+    await this.request(
+      'PUT',
+      `/me/notifications/${encodeURIComponent(id)}/viewed`,
+      asUnknownOk,
+      {}
+    )
+  }
+
+  async hasNotifications(): Promise<boolean> {
+    return (
+      await this.request(
+        'GET',
+        '/me/notifications/summary',
+        asObject({ hasPending: asBoolean })
+      )
+    ).hasPending
+  }
+
+  async pictures(): Promise<AvailablePicture[]> {
+    const answer = await this.request(
+      'GET',
+      '/pictures',
+      asObject({
+        version: asNumber,
+        entries: asArray(
+          asObject({
+            id: asString,
+            label: asString,
+            kind: asLiteral('photo', 'creation'),
+            prefix: asString,
+            sha256: asString,
+            width: asNumber,
+            height: asNumber,
+            url: asString
+          })
+        )
+      })
+    )
+    return answer.entries
+  }
+
+  async chooseCatalogPicture(catalogId: string): Promise<void> {
+    await this.request('PUT', '/me/account/catalog-picture', asUnknownOk, {
+      catalogId
+    })
+  }
+
+  async onboarding(): Promise<{ displayName: string; onboarding: Onboarding }> {
+    return await this.request(
+      'GET',
+      '/me/onboarding',
+      asObject({ displayName: asString, onboarding: asOnboarding })
+    )
+  }
+
+  async saveOnboardingName(
+    displayName: string
+  ): Promise<{ displayName: string; onboarding: Onboarding }> {
+    return await this.request(
+      'PUT',
+      '/me/onboarding/name',
+      asObject({ displayName: asString, onboarding: asOnboarding }),
+      { displayName }
+    )
+  }
+
+  async finishOnboarding(picture: {
+    catalogId?: string
+    image?: AccountPicture
+    initials?: boolean
+  }): Promise<void> {
+    await this.request('PUT', '/me/onboarding/photo', asUnknownOk, picture)
+  }
+
+  async locations(query: string): Promise<Locality[]> {
+    const answer = await this.request(
+      'GET',
+      `/locations?query=${encodeURIComponent(query)}`,
+      asObject({ places: asArray(asLocality) })
+    )
+    return answer.places
+  }
+
+  async locationSuggestion(
+    latitude: number,
+    longitude: number
+  ): Promise<Locality | null> {
+    const answer = await this.request(
+      'POST',
+      '/location-suggestions',
+      asObject({ place: asNullable(asLocality) }),
+      { latitude, longitude }
+    )
+    return answer.place
   }
 
   /** The seasons this person can see, which is what home leads with. */
@@ -1830,10 +2300,21 @@ export class TeamStationClient {
     )
   }
 
-  async standings(seasonId: string): Promise<StandingsRow[]> {
+  async seasonStats(seasonId: string): Promise<SeasonStats> {
     return await this.request(
       'GET',
-      `/seasons/${encodeURIComponent(seasonId)}/standings`,
+      `/seasons/${encodeURIComponent(seasonId)}/stats`,
+      asSeasonStats
+    )
+  }
+
+  async standings(
+    seasonId: string,
+    filter: { includeExhibitions?: boolean } = {}
+  ): Promise<StandingsRow[]> {
+    return await this.request(
+      'GET',
+      `/seasons/${encodeURIComponent(seasonId)}/standings${filter.includeExhibitions == null ? '' : `?includeExhibitions=${String(filter.includeExhibitions)}`}`,
       asArray(asStandingsRow)
     )
   }
@@ -1925,13 +2406,18 @@ export class TeamStationClient {
   async addPerson(
     kind: 'league' | 'season' | 'team',
     id: string,
-    email: string
+    email: string,
+    options: {
+      admin?: boolean
+      flags?: RoleFlag[]
+      idempotencyKey?: string
+    } = {}
   ): Promise<AddedPerson> {
     return await this.request(
       'POST',
       `/manage/${kind}/${encodeURIComponent(id)}/people`,
       asAddedPerson,
-      { email }
+      { email, ...options }
     )
   }
 
@@ -2061,7 +2547,15 @@ function errorFrom(status: number, text: string): HttpError {
     api = undefined
   }
   if (api != null) return new HttpError(api.code, api.message, api.details)
-  return new HttpError('internal', `The server answered ${status}`)
+  const code =
+    status === 401
+      ? 'unauthorized'
+      : status === 403
+        ? 'forbidden'
+        : status === 404
+          ? 'notFound'
+          : 'internal'
+  return new HttpError(code, `The server answered ${status}`)
 }
 
 /*

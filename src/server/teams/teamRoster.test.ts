@@ -66,6 +66,12 @@ describe('scoring roster HTTP contract', function () {
       .insertInto('season_teams')
       .values({ team_id: team, season_id: season })
       .execute()
+    // This fixture explicitly models management in addition to competition.
+
+    await db
+      .insertInto('season_team_parents')
+      .values({ team_id: team, season_id: season })
+      .execute()
     await db
       .insertInto('users')
       .values([
@@ -233,7 +239,7 @@ describe('scoring roster HTTP contract', function () {
     if (created) await admin.query(`drop database "${name}"`)
     await admin?.end()
   })
-  it('returns handedness and exact ids for members and followers in the existing group order', async function () {
+  it('returns handedness and exact ids only for actual team members in the existing group order', async function () {
     const response = await fetch(address, {
       headers: { 'x-test-user': String(coach) }
     })
@@ -241,11 +247,7 @@ describe('scoring roster HTTP contract', function () {
     const raw: unknown = await response.json()
     if (!Array.isArray(raw)) throw new Error('Expected roster array')
     const roster = raw.map(asRosterEntry)
-    expect(roster.map(row => row.group)).deep.equals([
-      'coach',
-      'player',
-      'follower'
-    ])
+    expect(roster.map(row => row.group)).deep.equals(['coach', 'player'])
     expect(roster[1]).includes({
       userId: child,
       shortName: 'Jordan K',
@@ -255,17 +257,13 @@ describe('scoring roster HTTP contract', function () {
       isPlayer: true
     })
     expect(roster[1].positions).deep.equals(['P', 'SS'])
-    expect(roster[2]).includes({
-      userId: follower,
-      bats: 'left',
-      throws: 'right',
-      isPlayer: false
-    })
+    expect(roster.some(row => row.userId === follower)).equals(false)
     expect(roster[0]).includes({ bats: null, throws: null })
     const followerResponse = await fetch(address, {
       headers: { 'x-test-user': String(follower) }
     })
-    expect(followerResponse.status).equals(200)
+    // Viewing season games does not grant access to a team's private roster.
+    expect(followerResponse.status).equals(404)
   })
   it('keeps existing team/game/video/box-score reads working after roster extraction', async function () {
     const origin = new URL(address).origin
@@ -387,7 +385,7 @@ describe('scoring roster HTTP contract', function () {
       endMs: 25000
     })
     expect(byUser.get(coach)).equals(null)
-    expect(byUser.get(follower)).equals(null)
+    expect(byUser.get(follower)).equals(undefined)
     const there = await read(`/teams/${opponent}/roster`)
     if (!Array.isArray(there)) throw new Error('Expected roster array')
     const theirs = there.map(asRosterEntry)

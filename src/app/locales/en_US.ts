@@ -377,7 +377,7 @@ export const enUs = {
   manage_pending: 'Invited, not joined yet',
   manage_add: 'Add somebody',
   manage_add_detail:
-    'Type an address. Somebody who already has an account is added to %s straight away; anybody else is sent an invitation.',
+    'Invite someone to %s by email. Existing and new accounts accept an invitation before group access or requested roles begin. Invitations last seven days.',
   manage_email: 'E-mail address',
   manage_add_submit: 'Add',
   manage_added: '%s has been added.',

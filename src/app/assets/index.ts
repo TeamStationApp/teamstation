@@ -1,6 +1,13 @@
 import type { ImageSourcePropType } from 'react-native'
 
+import cap from './sports/create-team-cap-192.png'
+import flag from './sports/flag-192.png'
+import trophy from './sports/league-trophy-192.png'
 import tsLogo from './tsLogo.png'
+export const creationIcons: Record<
+  'league' | 'season' | 'team',
+  ImageSourcePropType
+> = { league: { uri: flag }, season: { uri: trophy }, team: { uri: cap } }
 
 /**
  * The mark, as something `Image` will take.

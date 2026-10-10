@@ -1,0 +1,6 @@
+GeoNames geographical database
+https://www.geonames.org/
+Source: https://download.geonames.org/export/dump/cities500.zip
+Administrative names: https://download.geonames.org/export/dump/admin1CodesASCII.txt
+Licensed under Creative Commons Attribution 4.0: https://creativecommons.org/licenses/by/4.0/
+The included snapshot has been reduced to city, region, country, public city-center coordinates, timezone and population.

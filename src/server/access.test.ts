@@ -167,10 +167,25 @@ describe('role flags', function () {
       .execute()
     await db
       .insertInto('teams')
-      .values(TEAMS.map(id => ({ id, name: id })))
+      .values(
+        TEAMS.map(id => ({
+          id,
+          name: id,
+          league_id: id.startsWith('tem_a') ? 'lea_a' : 'lea_b'
+        }))
+      )
       .execute()
     await db
       .insertInto('season_teams')
+      .values([
+        { season_id: 'sea_a1', team_id: 'tem_a1' },
+        { season_id: 'sea_a1', team_id: 'tem_a2' },
+        { season_id: 'sea_a2', team_id: 'tem_a3' },
+        { season_id: 'sea_b1', team_id: 'tem_b1' }
+      ])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
       .values([
         { season_id: 'sea_a1', team_id: 'tem_a1' },
         { season_id: 'sea_a1', team_id: 'tem_a2' },

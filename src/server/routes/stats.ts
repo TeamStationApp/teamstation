@@ -1,11 +1,15 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { notFound, unauthorized } from '../../common/errors'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { shortNames } from '../../common/names'
+import { seasonStandings } from '../../common/seasonStandings'
 import { asUserId } from '../../common/userIdNumber'
 import { visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
+import { imageUrl } from '../media/imageUrls'
+import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import {
@@ -15,8 +19,8 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
-import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
+import { seasonParticipants } from '../stats/seasonTeams'
 
 /**
  * A player's stats by season and for their career, a season's standings, and
@@ -26,7 +30,10 @@ import { statRows } from '../stats/rows'
  * number was worked out from, so a total is never something a viewer has to
  * take on trust.
  */
-export function statsRoutes(db: Kysely<Database>): Router {
+export function statsRoutes(
+  db: Kysely<Database>,
+  media?: MediaContext
+): Router {
   const router = Router()
 
   /**
@@ -177,8 +184,14 @@ export function statsRoutes(db: Kysely<Database>): Router {
         .selectFrom('season_teams')
         .select(['team_id'])
         .where('season_id', '=', seasonId)
+        .where('active', '=', true)
         .execute()
-      if (teams.length === 0) throw notFound()
+      const season = await db
+        .selectFrom('seasons')
+        .select('id')
+        .where('id', '=', seasonId)
+        .executeTakeFirst()
+      if (season == null) throw notFound()
 
       // A season's table is visible to anyone in it, or to anyone the season
       // or its league has opened itself up to.
@@ -187,49 +200,71 @@ export function statsRoutes(db: Kysely<Database>): Router {
         throw notFound()
       }
 
-      // Counted from the season's finished games on every read, so a result
-      // is in the table as soon as the game is final.
-      const records = await teamRecords(db, { seasonId })
-      const names =
-        records.length === 0
-          ? []
-          : await db
-              .selectFrom('teams')
-              .select(['id', 'name'])
-              .where(
-                'id',
-                'in',
-                records.map(record => record.teamId)
+      const asked = req.query.includeExhibitions
+      if (asked !== undefined && asked !== 'true' && asked !== 'false')
+        throw badRequest('includeExhibitions must be true or false')
+      const participants = await seasonParticipants(db, seasonId)
+      res.json(
+        seasonStandings(
+          participants.teams.filter(
+            team =>
+              asked !== 'false' ||
+              team.activeMember ||
+              team.parentMember ||
+              participants.games.some(
+                game =>
+                  !game.exhibition &&
+                  (game.homeTeamId === team.id || game.awayTeamId === team.id)
               )
-              .execute()
-      const rows = records.map(record => ({
-        teamId: record.teamId,
-        teamName: names.find(team => team.id === record.teamId)?.name ?? '',
-        w: record.w,
-        l: record.l,
-        t: record.t,
-        runsFor: record.runsFor,
-        runsAgainst: record.runsAgainst
-      }))
-
-      const table = rows
-        .map(row => ({
+          ),
+          participants.games,
+          asked !== 'false'
+        ).map(({ logoPath, ...row }) => ({
           ...row,
-          played: row.w + row.l + row.t,
-          winningPct:
-            row.w + row.l + row.t === 0
-              ? null
-              : Math.round((row.w / (row.w + row.l + row.t)) * 1000) / 1000,
-          runDifferential: row.runsFor - row.runsAgainst
+          logoUrl: media == null ? null : imageUrl(media.space, logoPath)
         }))
-        .sort((a, b) => {
-          // Best record first, then run differential as the tie-break.
-          const byRecord = (b.winningPct ?? -1) - (a.winningPct ?? -1)
-          if (byRecord !== 0) return byRecord
-          return b.runDifferential - a.runDifferential
-        })
+      )
+    })
+  )
 
-      res.json(table)
+  router.get(
+    '/seasons/:seasonId/stats',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const seasonId = pathParam(req.params.seasonId)
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (!scopes.isAdmin && !scopes.seasonIds.has(seasonId)) throw notFound()
+      const season = await db
+        .selectFrom('seasons')
+        .select('id')
+        .where('id', '=', seasonId)
+        .executeTakeFirst()
+      if (season == null) throw notFound()
+      const rows = await statRows(db, { seasonId, visibleGames: scopes })
+      const names = shortNames(
+        rows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
+      res.json({
+        seasonId,
+        batting: battingLines(rows).map(line => ({
+          ...line,
+          shortName: names.get(line.userId) ?? 'Unknown',
+          rates: battingRates(line)
+        })),
+        pitching: pitchingLines(rows).map(line => ({
+          ...line,
+          shortName: names.get(line.userId) ?? 'Unknown',
+          ip: inningsPitched(line.outs),
+          rates: pitchingRates(line)
+        }))
+      })
     })
   )
 

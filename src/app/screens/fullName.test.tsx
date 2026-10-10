@@ -281,6 +281,8 @@ describe('a player’s whole name is never shown', function () {
           logoPath: null,
           logoUrl: null,
           record: null,
+          seasonCategory: 'unscheduled',
+          canViewPrivate: false,
           kind: 'full'
         }}
         initialTab="roster"

@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { testPasswordParameters } from '../test/passwordFixtures'
-import { TeamStationClient } from './api'
+import { asStandingsRow, TeamStationClient } from './api'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
@@ -499,6 +499,23 @@ describe('api client', function () {
       expect((error as HttpError).code).equals('internal')
     }
   })
+  it('keeps authoritative authorization refusals recognizable even when a proxy returns a non-JSON body', async function () {
+    for (const [status, code] of [
+      [401, 'unauthorized'],
+      [403, 'forbidden'],
+      [404, 'notFound']
+    ] as const) {
+      const { fetch } = stubFetch(status, '<html>refused</html>')
+      const client = new TeamStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch
+      })
+      expect(await client.teams().catch((error: unknown) => error)).property(
+        'code',
+        code
+      )
+    }
+  })
 
   it('carries the token once signed in, and drops it on sign-out', async function () {
     const session = {
@@ -706,8 +723,87 @@ describe('api client', function () {
     }
     const { fetch, calls } = stubFetch(200, [row])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
-    expect(await client.standings('sea 1')).deep.equals([row])
+    expect(await client.standings('sea 1')).deep.equals([asStandingsRow(row)])
     expect(calls[0].url).equals('http://x/api/v1/seasons/sea%201/standings')
+  })
+
+  it('retains reserved and replacement identities across game proposal responses', async function () {
+    const response = {
+      id: 'req_demo',
+      status: 'pending',
+      gameId: null,
+      proposedGameId: 'gam_reserved',
+      replacesGameId: 'gam_original'
+    }
+    const fake = stubFetch(200, response)
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: fake.fetch
+    })
+    const proposal = {
+      sender: { kind: 'team' as const, id: 'tem_demo' },
+      game: {
+        homeTeamId: 'tem_demo',
+        awayTeamId: 'tem_other',
+        seasonId: null,
+        startAt: '2027-04-01T19:00:00Z',
+        venue: null,
+        outsideTournament: null,
+        status: 'scheduled' as const
+      },
+      idempotencyKey: 'demo-proposal-key'
+    }
+    expect(await client.proposeGame(proposal)).deep.equals(response)
+    expect(await client.decideGameRequest('req_demo', 'accept')).deep.equals(
+      response
+    )
+    const legacy = stubFetch(200, {
+      id: 'req_demo',
+      status: 'accepted',
+      gameId: 'gam_demo'
+    })
+    const oldClient = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: legacy.fetch
+    })
+    expect(await oldClient.proposeGame(proposal)).deep.include({
+      proposedGameId: null,
+      replacesGameId: null
+    })
+    expect(
+      await oldClient.decideGameRequest('req_demo', 'decline')
+    ).deep.include({ proposedGameId: null, replacesGameId: null })
+  })
+
+  it('asks the standings collection for explicit exhibition inclusion and cleans authorized season stats', async function () {
+    const listed = stubFetch(200, [])
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: listed.fetch
+    })
+    await client.standings('season/one', { includeExhibitions: false })
+    await client.standings('season/one', { includeExhibitions: true })
+    expect(listed.calls.map(call => call.url)).deep.equals([
+      'http://example.com/api/v1/seasons/season%2Fone/standings?includeExhibitions=false',
+      'http://example.com/api/v1/seasons/season%2Fone/standings?includeExhibitions=true'
+    ])
+    const stats = stubFetch(200, {
+      seasonId: 'season/one',
+      batting: [],
+      pitching: []
+    })
+    const statsClient = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: stats.fetch
+    })
+    expect(await statsClient.seasonStats('season/one')).deep.equals({
+      seasonId: 'season/one',
+      batting: [],
+      pitching: []
+    })
+    expect(stats.calls[0].url).equals(
+      'http://example.com/api/v1/seasons/season%2Fone/stats'
+    )
   })
 
   it('signs in by code, by link, and by a sign-in approved elsewhere, and signs out', async function () {

@@ -41,6 +41,7 @@ export interface AppHeaderProps {
   onHeight?: (height: number) => void
   /** Whether the signed-in person is a site administrator. */
   isAdmin?: boolean
+  notifications?: { pending: boolean; onPress: () => void }
 }
 
 /**
@@ -153,6 +154,46 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
 
         <View style={[styles.side, styles.sideEnd]}>
           {nav}
+          {props.notifications != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Notifications"
+              accessibilityHint={
+                props.notifications.pending
+                  ? 'Pending approvals'
+                  : 'No pending approvals'
+              }
+              onPress={() => {
+                props.notifications?.onPress()
+              }}
+              style={{
+                width: theme.rem(3),
+                height: theme.rem(3),
+                justifyContent: 'center',
+                alignItems: 'center'
+              }}
+            >
+              <Icon
+                name="notifications"
+                size={1.5}
+                color={theme.headerTextColor}
+              />
+              {props.notifications.pending && (
+                <View
+                  testID="notification-pending-dot"
+                  style={{
+                    position: 'absolute',
+                    top: theme.rem(0.45),
+                    right: theme.rem(0.55),
+                    width: theme.rem(0.5),
+                    height: theme.rem(0.5),
+                    borderRadius: theme.rem(0.25),
+                    backgroundColor: theme.dangerColor
+                  }}
+                />
+              )}
+            </Pressable>
+          )}
           {account != null && (
             <Pressable
               accessibilityRole="button"

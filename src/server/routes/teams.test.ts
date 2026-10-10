@@ -98,6 +98,7 @@ describe('teams by external id, and making one', function () {
           id: person.made.userId,
           legacyId: person.made.legacyId,
           display_name: person.name,
+          login_enabled: true,
           is_admin: person.isAdmin,
           created_at: now,
           updated_at: now
@@ -237,8 +238,8 @@ describe('teams by external id, and making one', function () {
       }
     }
     const app = express()
-    app.use(jsonBody)
     app.use(withActor(db))
+    app.use(jsonBody)
     app.use(withAudit(db))
     app.use('/api/v1', teamRoutes(db, media))
     app.use(errorHandler)

@@ -10,6 +10,63 @@ const roundTrip = (route: Route): Route => {
 }
 
 describe('addresses', function () {
+  it('round-trips team settings return addresses, including aliases and selected sections', () => {
+    for (const address of ['team', 'group'] as const)
+      for (const tab of [undefined, 'schedule', 'roster']) {
+        const route: Route = {
+          name: 'groupSettings',
+          kind: 'team',
+          id: 'canonical',
+          teamReturn: {
+            id: 'alias / 2',
+            address,
+            ...(tab == null ? {} : { tab })
+          }
+        }
+        expect(roundTrip(route)).deep.equals(route)
+      }
+    for (const query of [
+      'teamId=a&teamAddress=other',
+      'teamId=&teamAddress=team',
+      'teamAddress=team'
+    ])
+      expect(parseRoute('/groups/team/a/settings', query)).deep.equals({
+        name: 'groupSettings',
+        kind: 'team',
+        id: 'a'
+      })
+    expect(
+      parseRoute(
+        '/groups/season/a/settings',
+        'teamId=a&teamAddress=team&teamTab=stats'
+      )
+    ).deep.equals({ name: 'groupSettings', kind: 'season', id: 'a' })
+    expect(
+      routePath({
+        name: 'groupSettings',
+        kind: 'season',
+        id: 'a',
+        teamReturn: { id: 'a', address: 'team' }
+      })
+    ).equals('/groups/season/a/settings')
+  })
+  it('round-trips the separate game settings screen and the Home season tabs and schedule filters', () => {
+    for (const route of [
+      { name: 'gameSettings', gameId: 'game one/2' },
+      {
+        name: 'group',
+        kind: 'season',
+        id: 'season one/2',
+        tab: 'teams',
+        when: 'all'
+      },
+      { name: 'group', kind: 'season', id: 'season one/2', tab: 'stats' }
+    ] as const)
+      expect(roundTrip(route)).deep.equals(route)
+    expect(routePath({ name: 'gameSettings', gameId: 'game_demo' })).equals(
+      '/games/game_demo/settings'
+    )
+  })
   it('preserves bounded OAuth interaction and native approval paths', () => {
     const handle = 'a'.repeat(43)
     for (const route of [
@@ -26,6 +83,39 @@ describe('addresses', function () {
       '/oauth/approve/%2f'
     ])
       expect(parseRoute(path)).deep.equals({ name: 'home' })
+  })
+  it('round-trips creation, public profiles, linking, settings and notifications including parent context', () => {
+    const routes: Route[] = [
+      { name: 'discover' },
+      { name: 'discover', kind: 'season', follow: true },
+      { name: 'discover', kind: 'league' },
+      { name: 'group', kind: 'team', id: 'team_demo' },
+      { name: 'groupSettings', kind: 'season', id: 'season_demo' },
+      {
+        name: 'createGroup',
+        kind: 'team',
+        parent: { kind: 'season', id: 'season_demo' }
+      },
+      {
+        name: 'createGroup',
+        kind: 'team',
+        custodian: { kind: 'league', id: 'league_demo' }
+      },
+      {
+        name: 'groupLink',
+        kind: 'team',
+        id: 'team_demo',
+        targetKind: 'season',
+        relationship: 'participation',
+        direction: 'parents'
+      },
+      { name: 'notifications' },
+      { name: 'notification', id: 'request_demo' },
+      { name: 'promoteExternal', id: 'external_demo' }
+    ]
+    for (const route of routes) expect(roundTrip(route)).deep.equals(route)
+    expect(parseRoute('/create/player')).deep.equals({ name: 'home' })
+    expect(parseRoute('/groups/team')).deep.equals({ name: 'home' })
   })
   it('reads the home screen from the root', function () {
     expect(parseRoute('/')).deep.equals({ name: 'home' })

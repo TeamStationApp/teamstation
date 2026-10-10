@@ -25,7 +25,7 @@
     "android": "react-native run-android",
     "audit-videos": "node -r sucrase/register src/server/dev/auditVideos.ts",
     "backfill-linescore": "node -r sucrase/register src/server/dev/backfillLinescore.ts",
-    "build": "tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/",
+    "build": "tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures lib/server/location && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/ && cp src/server/location/placesCatalog.json.gz lib/server/location/",
     "build.field": "TS_FIELD_PREVIEW=1 node src/build.mjs",
     "build.web": "node src/build.mjs",
     "camera-sweep": "node -r sucrase/register src/server/dev/cameraSweep.ts",
@@ -81,11 +81,14 @@
     "coverage.deploy": "c8 --all --include 'scripts/deploy.ts' --include 'scripts/deploy/**/*.ts' --exclude '**/*.test.ts' --report-dir coverage/deploy --reporter text --reporter json --reporter lcov --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
     "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts",
     "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'",
-    "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts"
+    "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts",
+    "coverage.creation": "node scripts/creation-coverage.mjs",
+    "coverage.refinements": "node scripts/refinements-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-clipboard/clipboard": "^1.16.3",
+    "@react-native-community/geolocation": "3.4.0",
     "@react-native-picker/picker": "^2.11.4",
     "@react-three/fiber": "9.7.0",
     "@sentry/core": "10.75.2",

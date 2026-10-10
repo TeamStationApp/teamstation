@@ -3,6 +3,7 @@ import { Platform, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
+import type { GroupPicture } from '../../common/groupCreation'
 import {
   type ClientPasswordCosts,
   newPasswordRequirements
@@ -16,6 +17,7 @@ import {
   SectionHeader,
   TextField
 } from '../components'
+import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { NewPasswordFields } from '../components/NewPasswordFields'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
@@ -27,6 +29,7 @@ export interface AccountScreenProps {
   client: TeamStationClient
   onAccountChanged?: (user: SessionUser) => void
   onSignOut: () => void
+  onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
 }
 
@@ -37,7 +40,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     client,
     onSignOut,
     onAccountChanged,
-    pickPhoto = pickAccountPhoto
+    pickPhoto = pickAccountPhoto,
+    onNodeAdministration
   } = props
   const styles = getStyles(useTheme())
   const [walkUp, setWalkUp] = useWalkUpPreferences()
@@ -49,6 +53,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const working = useRef(false)
   const [notice, setNotice] = useState<{ section: string; message: string }>()
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [photoOpen, setPhotoOpen] = useState(false)
+  const [photoChoice, setPhotoChoice] = useState<GroupPicture>()
   const preparation = useRef<Promise<ClientPasswordCosts> | undefined>(
     undefined
   )
@@ -181,6 +187,13 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
 
   return (
     <Screen>
+      {user.isAdmin && onNodeAdministration != null && (
+        <Button
+          label="Node administration"
+          kind="secondary"
+          onPress={onNodeAdministration}
+        />
+      )}
       <Card style={styles.identity}>
         <Emblem
           key={user.avatarUrl}
@@ -236,18 +249,53 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                   kind="secondary"
                   disabled={busy !== ''}
                   onPress={() => {
-                    run('profile', async () => {
-                      const picture = await pickPhoto()
-                      if (picture == null) return
-                      accept(await client.setAccountPhoto(picture))
-                      setNotice({
-                        section: 'profile',
-                        message: 'Profile picture saved'
-                      })
-                    })
+                    setPhotoChoice(undefined)
+                    setPhotoOpen(true)
                   }}
                 />
               </View>
+              {photoOpen && (
+                <View style={styles.setting}>
+                  <GroupPictureChooser
+                    client={client}
+                    name={name}
+                    allowCatalog
+                    value={photoChoice}
+                    onChange={setPhotoChoice}
+                    pickPhoto={pickPhoto}
+                  />
+                  <Button
+                    label="Save profile picture"
+                    disabled={photoChoice == null || busy !== ''}
+                    onPress={() => {
+                      const choice = photoChoice
+                      if (choice == null) return
+                      run('profile', async () => {
+                        if (choice.image != null)
+                          accept(await client.setAccountPhoto(choice.image))
+                        else if (choice.catalogId != null) {
+                          await client.chooseCatalogPicture(choice.catalogId)
+                          accept(await client.accountSettings())
+                        } else accept(await client.clearAccountPhoto())
+                        setPhotoOpen(false)
+                        setNotice({
+                          section: 'profile',
+                          message: 'Profile picture saved'
+                        })
+                      })
+                    }}
+                  />
+                  <Button
+                    label="Cancel photo change"
+                    kind="secondary"
+                    disabled={busy !== ''}
+                    onPress={() => {
+                      setPhotoOpen(false)
+                      setPhotoChoice(undefined)
+                    }}
+                  />
+                </View>
+              )}
               <Text style={styles.email}>JPEG, PNG or WebP, up to 10 MB.</Text>
               {feedback('profile')}
             </Card>

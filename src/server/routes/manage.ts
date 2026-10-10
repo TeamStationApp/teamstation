@@ -3,15 +3,23 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { asFenceDistanceBody } from '../../common/fenceDistance'
+import { makeId } from '../../common/ids'
 import { asRoleFlags, type RoleFlag } from '../../common/roles'
 import { asUserId } from '../../common/userIdNumber'
 import { adminScopes } from '../access'
-import { findUserByEmail } from '../auth/emails'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { type Clock, realClock } from '../groups/requests'
+import { currentActor } from '../groups/rights'
 import {
-  createInvite,
   type Invite,
   inviteProblem,
   type InviteScopeType,
@@ -20,14 +28,14 @@ import {
   scopeName
 } from '../invites/invites'
 import {
-  addToScope,
+  managementPeopleTree,
   pendingInvitations,
   peopleInScope,
   removeFromScope,
   rolesAt,
-  scopeTree,
   setScopeRoles
 } from '../invites/people'
+import { invitePerson } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -54,7 +62,10 @@ const asScopeType = asLiteral('league', 'season', 'team')
 const asPersonByEmail = asObject({
   email: asString,
   /** Shown in the invitation when there is no account to add yet. */
-  displayName: asOptional(asString)
+  displayName: asOptional(asString),
+  admin: asOptional(asBoolean, false),
+  flags: asOptional(asRoleFlags, []),
+  idempotencyKey: asOptional(asString)
 })
 
 const asRoleChange = asObject({
@@ -73,6 +84,7 @@ export interface ManageRouteOptions {
     invitation: { scopeName: string; invitedBy: string; link: string }
   ) => Promise<void>
   publicUrl?: string
+  clock?: Clock
 }
 
 export function manageRoutes(
@@ -80,6 +92,54 @@ export function manageRoutes(
   options: ManageRouteOptions
 ): Router {
   const router = Router()
+  router.use(
+    '/manage',
+    requireActor,
+    withAsync(async (req, res, next) => {
+      if (req.actor == null) throw unauthorized()
+      req.actor = await currentActor(db, req.actor)
+      next()
+    })
+  )
+  const connected = async (
+    source: Kysely<Database>,
+    kind: InviteScopeType,
+    id: string,
+    userId: number
+  ): Promise<void> => {
+    const role = await source
+      .selectFrom('scope_roles')
+      .select('id')
+      .where('scope_type', '=', kind)
+      .where('scope_id', '=', id)
+      .where('user_id', '=', userId)
+      .executeTakeFirst()
+    const member =
+      kind === 'team'
+        ? await source
+            .selectFrom('memberships')
+            .select('id')
+            .where('team_id', '=', id)
+            .where('user_id', '=', userId)
+            .executeTakeFirst()
+        : kind === 'season'
+          ? await source
+              .selectFrom('season_members')
+              .select('id')
+              .where('season_id', '=', id)
+              .where('user_id', '=', userId)
+              .executeTakeFirst()
+          : await source
+              .selectFrom('league_members')
+              .select('id')
+              .where('league_id', '=', id)
+              .where('user_id', '=', userId)
+              .executeTakeFirst()
+    if (role == null && member == null)
+      throw conflict(
+        'Invite this person to the group first. Access and roles begin after they accept.'
+      )
+  }
 
   /** The scope, refused as 404 to anybody who does not administer it. */
   const mustAdminister = async (
@@ -110,11 +170,11 @@ export function manageRoutes(
         scopeId
       )
 
-      const tree = await scopeTree(db, scopeType, scopeId)
+      const tree = await managementPeopleTree(db, scopeType, scopeId)
       if (tree == null) throw notFound()
       const [people, pending, invites] = await Promise.all([
         peopleInScope(db, tree),
-        pendingInvitations(db, scopeType, scopeId),
+        pendingInvitations(db, scopeType, scopeId, options.clock?.now()),
         listInvites(db, scopeType, scopeId)
       ])
 
@@ -135,12 +195,8 @@ export function manageRoutes(
   /**
    * Add one person by address.
    *
-   * Two outcomes, and the difference is whether that address already has an
-   * account. It does: they are given the access at once, because an
-   * administrator typing the address of somebody already here should not have
-   * to wait for them to read anything. It does not: an invitation made out to
-   * them is mailed, good for one use, and they appear as invited until they
-   * open it — the account is still made by the sign-in, never by this.
+   * Existing and new accounts both accept a seven-day personal invitation.
+   * Requested group roles stay pending until that verified recipient accepts.
    */
   router.post(
     '/manage/:scopeType/:scopeId/people',
@@ -157,32 +213,19 @@ export function manageRoutes(
         scopeId
       )
       const body = cleanBody(asPersonByEmail, req.body)
-      const email = body.email.trim().toLowerCase()
-      if (!email.includes('@')) throw badRequest('That is not an address')
-
-      const held = await findUserByEmail(db, email)
-      if (held != null) {
-        const added = await addToScope(db, scopeType, scopeId, held.id)
-        setAudit(res.locals, {
-          entityType: 'membership',
-          entityId: held.id,
-          after: { scopeType, scopeId, added: added.added }
-        })
-        res.status(201).json({
-          added: added.added,
-          person: { userId: held.id, displayName: held.displayName, email }
-        })
-        return
-      }
-
-      const invite = await createInvite(db, {
-        scopeType,
-        scopeId,
-        createdBy: actor.userId,
-        forEmail: email,
-        label: email,
-        maxUses: 1
-      })
+      const { request, invite } = await invitePerson(
+        db,
+        actor,
+        { kind: scopeType, id: scopeId },
+        {
+          email: body.email,
+          admin: body.admin,
+          flags: body.flags,
+          idempotencyKey: body.idempotencyKey ?? makeId('invite')
+        },
+        options.clock ?? realClock
+      )
+      const email = invite.forEmail!
       const who = await db
         .selectFrom('users')
         .select(['display_name'])
@@ -202,6 +245,7 @@ export function manageRoutes(
         added: false,
         invited: {
           inviteId: invite.id,
+          requestId: request.id,
           email,
           code: invite.code,
           invitedAt: invite.createdAt.toISOString()
@@ -222,7 +266,13 @@ export function manageRoutes(
       const userId = userIdParam(req.params.userId)
       await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
 
-      const gone = await removeFromScope(db, scopeType, scopeId, userId)
+      const gone = await removeFromScope(
+        db,
+        scopeType,
+        scopeId,
+        userId,
+        actor.userId
+      )
       setAudit(res.locals, {
         entityType: 'membership',
         entityId: userId,
@@ -275,26 +325,22 @@ export function manageRoutes(
       await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
       const body = cleanBody(asRolesChange, req.body)
 
-      // Nobody demotes themselves: it is the one change that cannot be undone
-      // from the screen it was made on.
-      if (userId === actor.userId && !body.admin) {
-        const held = await rolesAt(db, scopeType, scopeId, userId)
-        if (held.includes('admin')) {
-          throw badRequest('You cannot remove yourself as an administrator')
-        }
-      }
       await mustBePerson(userId)
 
-      const before = await rolesAt(db, scopeType, scopeId, userId)
-      await addToScope(db, scopeType, scopeId, userId)
-      const roles = await setScopeRoles(
-        db,
-        scopeType,
-        scopeId,
-        userId,
-        body,
-        actor.userId
-      )
+      const { before, roles } = await atomic(db, async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        await connected(trx, scopeType, scopeId, userId)
+        const before = await rolesAt(trx, scopeType, scopeId, userId)
+        const roles = await setScopeRoles(
+          trx,
+          scopeType,
+          scopeId,
+          userId,
+          body,
+          actor.userId
+        )
+        return { before, roles }
+      })
 
       setAudit(res.locals, {
         entityType: 'scopeRoles',
@@ -323,24 +369,25 @@ export function manageRoutes(
       await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
       const body = cleanBody(asRoleChange, req.body)
 
-      if (userId === actor.userId && body.role === 'member') {
-        throw badRequest('You cannot remove yourself as an administrator')
-      }
       await mustBePerson(userId)
 
-      const before = await rolesAt(db, scopeType, scopeId, userId)
-      await addToScope(db, scopeType, scopeId, userId)
-      const roles = await setScopeRoles(
-        db,
-        scopeType,
-        scopeId,
-        userId,
-        {
-          admin: body.role === 'admin',
-          flags: before.filter((role): role is RoleFlag => role !== 'admin')
-        },
-        actor.userId
-      )
+      const { before, roles } = await atomic(db, async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        await connected(trx, scopeType, scopeId, userId)
+        const before = await rolesAt(trx, scopeType, scopeId, userId)
+        const roles = await setScopeRoles(
+          trx,
+          scopeType,
+          scopeId,
+          userId,
+          {
+            admin: body.role === 'admin',
+            flags: before.filter((role): role is RoleFlag => role !== 'admin')
+          },
+          actor.userId
+        )
+        return { before, roles }
+      })
 
       setAudit(res.locals, {
         entityType: 'scopeRoles',

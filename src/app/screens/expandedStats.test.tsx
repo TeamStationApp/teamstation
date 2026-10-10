@@ -4,11 +4,13 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import {
+  asGameSummary,
   asPlayerDetail,
   asPlayerStats,
   asTeamSummary,
   type TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
 import { battingColumns, pitchingColumns } from './statColumns'
@@ -76,6 +78,39 @@ afterEach(async function () {
 })
 
 describe('expanded statistics screens', function () {
+  it('keeps authorized team statistics usable when optional host standings are absent or private', async function () {
+    await render(
+      <TeamScreen
+        client={client({
+          teamGames: async () => [
+            asGameSummary({
+              id: 'gam_demo_optional_standing',
+              seasonId: 'sea_demo_guest',
+              startAt: '2027-04-01T19:00:00Z',
+              homeTeamId: team.id,
+              awayTeamId: 'tem_demo_opponent',
+              homeTeamName: team.name,
+              awayTeamName: 'Demo Opponent',
+              venue: null,
+              homeScore: null,
+              awayScore: null,
+              ingestStatus: 'none',
+              videoCount: 0,
+              status: 'scheduled'
+            })
+          ],
+          standings: async () => {
+            throw new HttpError('notFound', 'Host standings unavailable')
+          }
+        })}
+        team={team}
+        initialTab="stats"
+        onOpenGame={() => {}}
+      />
+    )
+    expect(text()).includes('BATTING').and.includes('PITCHING')
+    expect(text()).not.includes('Host standings unavailable')
+  })
   it('shares compact header and row widths with no leading statistics gutter', async function () {
     await render(
       <TeamScreen

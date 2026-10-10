@@ -8,6 +8,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 export interface LoginScreenProps {
   client: TeamStationClient
   onSignedIn: (session: Session) => void
+  onDiscover?: () => void
 }
 
 /** Which of the two ways in the form is currently offering. */
@@ -204,8 +205,8 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
 
         {method === 'code' && codeSent && (
           <Text style={styles.sent}>
-            If that address has an account, a six-digit code is on its way. It
-            lasts ten minutes.
+            A six-digit code is on its way. Verifying your email creates an
+            account when needed. It lasts ten minutes.
           </Text>
         )}
 
@@ -222,6 +223,13 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
             setMethod(method === 'code' ? 'password' : 'code')
           }}
         />
+        {props.onDiscover != null && (
+          <Button
+            label="Discover leagues, seasons and teams"
+            kind="text"
+            onPress={props.onDiscover}
+          />
+        )}
       </Card>
     </Screen>
   )

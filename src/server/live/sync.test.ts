@@ -133,6 +133,21 @@ describe('what the ingest is told', function () {
     // A key publishes video as somebody.
     const owner = await addPerson(db, 'owner')
     await db
+      .updateTable('users')
+      .set({ login_enabled: true })
+      .where('id', '=', owner.userId)
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values({
+        id: 'rol_sync_owner',
+        user_id: owner.userId,
+        scope_type: 'team',
+        scope_id: 'tem_home',
+        role: 'videographer'
+      })
+      .execute()
+    await db
       .insertInto('live_streams')
       .values({
         id: 'liv_1',

@@ -11,8 +11,10 @@ import {
 import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { asScheduleGamesBody } from '../../common/scheduleGames'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
+import { canAdminister, currentActor } from '../groups/rights'
 import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -39,7 +41,7 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
     '/teams/:teamId/games',
     requireActor,
     withAsync(async (req, res) => {
-      const actor = req.actor
+      const actor = req.actor == null ? null : await currentActor(db, req.actor)
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
 
@@ -50,17 +52,10 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
         .executeTakeFirst()
       if (team == null) throw notFound()
 
-      const rights = await scheduleRights(db, actor.userId, actor.isAdmin)
-      let administers = rights.siteAdmin || rights.teamAdminIds.has(teamId)
-      if (!administers && rights.seasonIds.size > 0) {
-        const inSeason = await db
-          .selectFrom('season_teams')
-          .select(['season_id'])
-          .where('team_id', '=', teamId)
-          .where('season_id', 'in', [...rights.seasonIds])
-          .executeTakeFirst()
-        administers = inSeason != null
-      }
+      const administers = await canAdminister(db, actor, {
+        kind: 'team',
+        id: teamId
+      })
       if (!administers) {
         const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
         if (!canSeeTeam(scopes, teamId)) throw notFound()
@@ -83,7 +78,7 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
         )
       }
 
-      res.json(await scheduleGames(db, { teamId, rows: body.games, rights }))
+      res.json(await scheduleGames(db, { teamId, rows: body.games, actor }))
     })
   )
 
@@ -136,13 +131,37 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
       // a post locks it, and its plays read after, so a post that stored
       // some while this waited is seen.
       const updated = await db.transaction().execute(async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        const current = await trx
+          .selectFrom('users')
+          .select(['is_admin', 'disabled_at', 'merged_into'])
+          .where('id', '=', actor.userId)
+          .executeTakeFirst()
+        if (
+          current == null ||
+          current.disabled_at != null ||
+          current.merged_into != null
+        )
+          throw unauthorized()
+        const liveRights = await scheduleRights(
+          trx,
+          actor.userId,
+          current.is_admin
+        )
         const locked = await trx
           .selectFrom('games')
-          .select('id')
+          .select(['id', 'home_team_id', 'away_team_id', 'season_id'])
           .where('id', '=', gameId)
           .forUpdate()
           .executeTakeFirst()
         if (locked == null) throw notFound()
+        if (
+          !mayScheduleIn(liveRights, locked.home_team_id, locked.season_id) &&
+          !mayScheduleIn(liveRights, locked.away_team_id, locked.season_id)
+        )
+          throw forbidden(
+            'Administrator authority changed. Reload before changing the field.'
+          )
         if (await gameHasPlays(trx, gameId))
           throw conflict('The fence is fixed once a game has plays')
         return await trx

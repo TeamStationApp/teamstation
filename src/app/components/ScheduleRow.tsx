@@ -20,6 +20,9 @@ export interface ScheduleRowProps {
   startAt: string | null
   venue?: string | null
   status: string
+  pendingApproval?: boolean
+  cancellationReason?: string | null
+  withdrawnByTeamName?: string | null
   awayScore: number | null
   homeScore: number | null
   /**
@@ -57,21 +60,34 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
     homeScore,
     videoCount,
     result,
-    onPress
+    onPress,
+    pendingApproval = false,
+    cancellationReason,
+    withdrawnByTeamName
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
   const inProgress = status === 'inProgress'
   const scored = awayScore != null && homeScore != null && !inProgress
-  const badgeLabel = inProgress
-    ? 'LIVE'
-    : result != null
-      ? result.label
-      : scored
-        ? `${awayScore}\u2013${homeScore}`
-        : undefined
-  const badgeTone: BadgeTone = inProgress ? 'live' : (result?.tone ?? 'neutral')
+  const cancelled = status === 'cancelled'
+  const badgeLabel = pendingApproval
+    ? 'Pending approval'
+    : cancelled
+      ? 'Canceled'
+      : inProgress
+        ? 'LIVE'
+        : result != null
+          ? result.label
+          : scored
+            ? `${awayScore}\u2013${homeScore}`
+            : undefined
+  const badgeTone: BadgeTone =
+    pendingApproval || cancelled
+      ? 'neutral'
+      : inProgress
+        ? 'live'
+        : (result?.tone ?? 'neutral')
   const teams = second == null ? first : `${first} ${second}`
 
   const content = (
@@ -102,6 +118,11 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
             {venue}
           </Text>
         )}
+        {status === 'cancelled' && cancellationReason === 'withdrawal' && (
+          <Text style={styles.detail}>
+            Withdrawal — {withdrawnByTeamName ?? 'A team'} withdrew
+          </Text>
+        )}
       </View>
       {videoCount > 0 && (
         <View style={styles.camera} pointerEvents="none">
@@ -116,7 +137,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${teams}, ${dated.when}`}
+      accessibilityLabel={`${teams}, ${dated.when}${pendingApproval ? ', Pending approval' : ''}`}
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >

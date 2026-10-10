@@ -123,6 +123,16 @@ describe('a player, and who may change their name', function () {
       .insertInto('season_teams')
       .values({ season_id: seasonId, team_id: teamId })
       .execute()
+    // This fixture explicitly models management in addition to competition.
+    await db
+      .updateTable('teams')
+      .set({ league_id: leagueId })
+      .where('id', '=', teamId)
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values({ season_id: seasonId, team_id: teamId })
+      .execute()
     await db
       .insertInto('users')
       .values([

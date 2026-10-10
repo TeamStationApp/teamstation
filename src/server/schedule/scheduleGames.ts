@@ -1,5 +1,7 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
+import { HttpError } from '../../common/errors'
+import type { GameIntent } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
 import {
   asScheduleGameRow,
@@ -10,6 +12,7 @@ import {
   type ScheduleGamesResponse
 } from '../../common/scheduleGames'
 import { adminScopes } from '../access'
+import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import {
@@ -19,11 +22,13 @@ import {
 } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
 import { scoredInTeamStation } from '../games/opponentFixed'
+import { currentActor, requireGroupAdmin } from '../groups/rights'
 import { notifyGameChange } from '../socket/gameChanges'
 import { requestGameStats } from '../statsBuilder/request'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
 import { isUndeterminedName, teamNameKey } from '../teams/teamNames'
+import { materialGame, requireImmediateGameConsent } from './gameApprovals'
 
 /**
  * Who may write a team's schedule, and into which seasons.
@@ -107,6 +112,8 @@ interface HeldGame {
   venue: string | null
   status: GameStatus
   fence_distance_ft: number | null
+  exhibition: boolean
+  timezone: string
 }
 
 interface Context {
@@ -114,6 +121,9 @@ interface Context {
   teamName: string
   seasons: TeamSeason[]
   rights: ScheduleRights
+  actor: Actor
+  previous?: GameIntent
+  withdrawn?: boolean
 }
 
 type Applied = { result: 'created' | 'updated' | 'unchanged' } & {
@@ -131,33 +141,25 @@ type Applied = { result: 'created' | 'updated' | 'unchanged' } & {
  */
 export async function scheduleGames(
   db: Kysely<Database>,
-  options: { teamId: string; rows: unknown[]; rights: ScheduleRights }
+  options: {
+    teamId: string
+    rows: unknown[]
+    actor?: Actor
+    rights?: ScheduleRights
+  }
 ): Promise<ScheduleGamesResponse> {
-  const { teamId, rights } = options
+  const { teamId } = options
   const team = await db
     .selectFrom('teams')
     .select(['id', 'name'])
     .where('id', '=', teamId)
     .executeTakeFirstOrThrow()
-  const seasons = await db
-    .selectFrom('season_teams')
-    .innerJoin('seasons', 'seasons.id', 'season_teams.season_id')
-    .select([
-      'seasons.id as id',
-      'seasons.name as name',
-      'seasons.year as year',
-      sql<string | null>`to_char(seasons.starts_on, 'YYYY-MM-DD')`.as(
-        'startsOn'
-      ),
-      sql<string | null>`to_char(seasons.ends_on, 'YYYY-MM-DD')`.as('endsOn')
-    ])
-    .where('season_teams.team_id', '=', teamId)
-    .execute()
   const context: Context = {
     teamId,
     teamName: team.name,
-    seasons,
-    rights
+    seasons: [],
+    rights: { siteAdmin: false, teamAdminIds: new Set(), seasonIds: new Set() },
+    actor: options.actor ?? { userId: 0, isAdmin: false, scopes: [] }
   }
 
   // Opponent name key to team id, for the whole call. A team a row
@@ -178,9 +180,97 @@ export async function scheduleGames(
 
     const rowKnown = new Map(known)
     try {
-      const applied = await db
-        .transaction()
-        .execute(async trx => await applyRow(trx, context, row, rowKnown))
+      const applied = await db.transaction().execute(async trx => {
+        // This is also the service boundary for importers. Precomputed rights
+        // cannot authorize publication or outlive an unlink or role revocation.
+        await lockKeys(trx, ['creation:parent-graph'])
+        if (options.actor == null)
+          throw new RowError('forbidden', 'Sign in to schedule games')
+        const actor = await currentActor(trx, options.actor)
+        await requireGroupAdmin(trx, actor, { kind: 'team', id: teamId })
+        const scopes = await adminScopes(trx, actor.userId, actor.isAdmin)
+        const fresh: Context = {
+          ...context,
+          actor,
+          seasons: await trx
+            .selectFrom('season_teams')
+            .innerJoin('seasons', 'seasons.id', 'season_teams.season_id')
+            .select([
+              'seasons.id as id',
+              'seasons.name as name',
+              'seasons.year as year',
+              sql<string | null>`to_char(seasons.starts_on, 'YYYY-MM-DD')`.as(
+                'startsOn'
+              ),
+              sql<string | null>`to_char(seasons.ends_on, 'YYYY-MM-DD')`.as(
+                'endsOn'
+              )
+            ])
+            .where('season_teams.team_id', '=', teamId)
+            .where('season_teams.active', '=', true)
+            .execute(),
+          rights: {
+            siteAdmin: scopes.isAdmin,
+            teamAdminIds: scopes.teamIds,
+            seasonIds: scopes.seasonIds
+          }
+        }
+        if (
+          row.seasonId != null &&
+          !fresh.seasons.some(s => s.id === row.seasonId)
+        ) {
+          const named = await trx
+            .selectFrom('seasons')
+            .select([
+              'id',
+              'name',
+              'year',
+              sql<string | null>`to_char(starts_on, 'YYYY-MM-DD')`.as(
+                'startsOn'
+              ),
+              sql<string | null>`to_char(ends_on, 'YYYY-MM-DD')`.as('endsOn')
+            ])
+            .where('id', '=', row.seasonId)
+            .executeTakeFirst()
+          if (named != null) fresh.seasons = [...fresh.seasons, named]
+        }
+        const applied = await applyRow(trx, fresh, row, rowKnown)
+        if (applied.result !== 'unchanged') {
+          await requirePublicationReady(trx)
+          if (fresh.withdrawn === true)
+            throw new RowError('conflict', 'A withdrawn game cannot be revised')
+          const game = await trx
+            .selectFrom('games')
+            .selectAll()
+            .where('id', '=', applied.gameId)
+            .executeTakeFirstOrThrow()
+          await requireImmediateGameConsent(
+            trx,
+            actor,
+            fresh.previous == null
+              ? [materialGame(game)]
+              : [fresh.previous, materialGame(game)]
+          )
+          await trx
+            .insertInto('audit_log')
+            .values({
+              id: makeId('audit'),
+              actor_user_id: actor.userId,
+              api_token_id: null,
+              method: 'BATCH',
+              path: '/teams/:teamId/games',
+              entity_type: 'game',
+              entity_id: game.id,
+              before: fresh.previous == null ? null : { ...fresh.previous },
+              after: {
+                ...materialGame(game),
+                approval: 'Both participants approved by current administrator'
+              }
+            })
+            .execute()
+        }
+        return applied
+      })
       for (const [name, id] of rowKnown) known.set(name, id)
       results.push({ index, ...applied })
       counts[applied.result] += 1
@@ -188,7 +278,17 @@ export async function scheduleGames(
       results.push(
         error instanceof RowError
           ? errorResult(index, error.code, error.message)
-          : errorResult(index, 'invalid', messageOf(error))
+          : error instanceof HttpError
+            ? errorResult(
+                index,
+                error.code === 'forbidden' || error.code === 'unauthorized'
+                  ? 'forbidden'
+                  : error.code === 'conflict'
+                    ? 'conflict'
+                    : 'invalid',
+                error.message
+              )
+            : errorResult(index, 'invalid', messageOf(error))
       )
       counts.error += 1
     }
@@ -206,6 +306,19 @@ function errorResult(
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+async function requirePublicationReady(db: Kysely<Database>): Promise<void> {
+  const ready = await db
+    .selectFrom('system_settings')
+    .select('value')
+    .where('key', '=', 'creation.hierarchyReady')
+    .executeTakeFirst()
+  if (ready?.value !== true)
+    throw new RowError(
+      'forbidden',
+      'Finish organization setup before publishing schedule changes'
+    )
 }
 
 async function applyRow(
@@ -242,11 +355,31 @@ async function applyRow(
         'games.status',
         'games.fence_distance_ft'
       ])
+      .select([
+        'games.outside_tournament',
+        'games.cancellation_reason',
+        'games.exhibition',
+        'games.timezone'
+      ])
       .where('external_ids.entity_type', '=', 'game')
       .where('external_ids.system', '=', externalId.system)
       .where('external_ids.external_id', '=', externalId.id)
       .executeTakeFirst()
     if (held != null) {
+      context.withdrawn =
+        held.cancellation_reason === 'withdrawal' ||
+        held.cancellation_reason === 'replacement'
+      context.previous = {
+        homeTeamId: held.home_team_id,
+        awayTeamId: held.away_team_id,
+        seasonId: held.season_id,
+        startAt: held.start_at.toISOString(),
+        venue: held.venue,
+        outsideTournament: held.outside_tournament,
+        exhibition: held.exhibition,
+        timezone: held.timezone,
+        status: held.status === 'cancelled' ? 'cancelled' : 'scheduled'
+      }
       if (held.home_team_id !== teamId && held.away_team_id !== teamId) {
         throw new RowError(
           'conflict',
@@ -277,7 +410,13 @@ async function applyRow(
             : row.opponent.teamId === opponent &&
               !(await isPlaceholderTeam(trx, opponent)))
         ) {
-          await takeId(trx, opponent, opponentKey, holder)
+          // Opponent ID enrichment can leave the game itself unchanged, but
+          // still writes identity data and cannot use pre-cutover authority.
+          await requirePublicationReady(trx)
+          await requireImmediateGameConsent(trx, context.actor, [
+            context.previous
+          ])
+          await takeId(trx, opponent, opponentKey, holder, context.actor)
         }
       }
       // Whatever its status: a game imported against a placeholder gets its
@@ -329,7 +468,9 @@ async function applyRow(
         'start_at',
         'venue',
         'status',
-        'fence_distance_ft'
+        'fence_distance_ft',
+        'exhibition',
+        'timezone'
       ])
       .where('season_id', '=', season.id)
       .where('start_at', '=', startAt)
@@ -348,6 +489,15 @@ async function applyRow(
       .orderBy('created_at')
       .executeTakeFirst()
     if (twin != null) {
+      const original = await trx
+        .selectFrom('games')
+        .selectAll()
+        .where('id', '=', twin.id)
+        .executeTakeFirstOrThrow()
+      context.previous = materialGame(original)
+      context.withdrawn =
+        original.cancellation_reason === 'withdrawal' ||
+        original.cancellation_reason === 'replacement'
       await recordExternalId(trx, 'game', twin.id, externalId)
       if (twin.status === 'inProgress' || twin.status === 'final') {
         return { result: 'updated', gameId: twin.id, status: twin.status }
@@ -374,7 +524,18 @@ async function applyRow(
       start_at: startAt,
       venue: row.venue ?? null,
       status,
-      fence_distance_ft: row.fenceDistanceFt ?? null
+      fence_distance_ft: row.fenceDistanceFt ?? null,
+      exhibition: row.exhibition ?? false,
+      timezone:
+        row.timezone ??
+        (
+          await trx
+            .selectFrom('seasons')
+            .select('timezone')
+            .where('id', '=', season.id)
+            .executeTakeFirst()
+        )?.timezone ??
+        'UTC'
     })
     .execute()
   if (externalId != null)
@@ -387,14 +548,18 @@ function mustMaySchedule(
   seasonId: string | null,
   seasonName?: string
 ): void {
-  if (mayScheduleIn(context.rights, context.teamId, seasonId)) return
+  if (
+    context.rights.siteAdmin ||
+    context.rights.teamAdminIds.has(context.teamId)
+  )
+    return
   const name =
     seasonName ??
     context.seasons.find(season => season.id === seasonId)?.name ??
     'its season'
   throw new RowError(
     'forbidden',
-    `Only an admin of this team or of ${name} may schedule games in it`
+    `Only an admin of ${name} may add games to its schedule`
   )
 }
 
@@ -431,12 +596,21 @@ async function updateHeld(
       'start_at',
       'venue',
       'status',
-      'fence_distance_ft'
+      'cancellation_reason',
+      'fence_distance_ft',
+      'exhibition',
+      'timezone'
     ])
     .where('id', '=', held.id)
     .forUpdate()
     .executeTakeFirstOrThrow()
   const game = { ...held, ...locked }
+  if (
+    (game.cancellation_reason === 'withdrawal' ||
+      game.cancellation_reason === 'replacement') &&
+    row.status === 'scheduled'
+  )
+    throw new RowError('conflict', 'A withdrawn game cannot be restored')
   if (game.status === 'inProgress' || game.status === 'final') {
     return {
       result: alreadyWritten ? 'updated' : 'unchanged',
@@ -454,6 +628,8 @@ async function updateHeld(
     venue?: string
     status?: 'scheduled' | 'cancelled'
     fence_distance_ft?: number
+    exhibition?: boolean
+    timezone?: string
   } = {}
   if (
     sidesFor != null &&
@@ -475,6 +651,10 @@ async function updateHeld(
     changes.start_at = startAt
   }
   if (row.venue != null && row.venue !== game.venue) changes.venue = row.venue
+  if (row.exhibition != null && row.exhibition !== game.exhibition)
+    changes.exhibition = row.exhibition
+  if (row.timezone != null && row.timezone !== game.timezone)
+    changes.timezone = row.timezone
   if (row.status != null && row.status !== game.status) {
     changes.status = row.status
   }
@@ -505,8 +685,8 @@ async function updateHeld(
 
 /**
  * The season a row lands in: the one it names, else the team's season whose
- * dates hold the game's day (the latest to start, when several do), else the
- * team's season of that year. A team is never enrolled in a season here.
+ * dates hold the game's day, else its season of that year. Inference requires
+ * exactly one eligible season; an overlap is resolved explicitly by the caller.
  */
 function resolveSeason(
   context: Context,
@@ -526,8 +706,6 @@ function resolveSeason(
   // Wall-clock calendar day from the request (`YYYY-MM-DD…`), not UTC — an
   // evening game on 2026-08-31 in -07:00 must still match a season ending that day.
   const day = row.startAt.slice(0, 10)
-  const latestFirst = (a: TeamSeason, b: TeamSeason): number =>
-    (b.startsOn ?? '').localeCompare(a.startsOn ?? '')
   const holding = context.seasons
     .filter(
       season =>
@@ -536,14 +714,31 @@ function resolveSeason(
         season.startsOn <= day &&
         day <= season.endsOn
     )
-    .sort(latestFirst)
-  if (holding.length > 0) return holding[0]
+    .filter(
+      season =>
+        context.rights.siteAdmin ||
+        context.rights.teamAdminIds.has(context.teamId)
+    )
+  if (holding.length === 1) return holding[0]
+  if (holding.length > 1)
+    throw new RowError(
+      'noSeason',
+      'Several seasons match this date: send seasonId'
+    )
 
   const year = Number(day.slice(0, 4))
-  const ofYear = context.seasons
-    .filter(season => season.year === year)
-    .sort(latestFirst)
-  if (ofYear.length > 0) return ofYear[0]
+  const ofYear = context.seasons.filter(
+    season =>
+      season.year === year &&
+      (context.rights.siteAdmin ||
+        context.rights.teamAdminIds.has(context.teamId))
+  )
+  if (ofYear.length === 1) return ofYear[0]
+  if (ofYear.length > 1)
+    throw new RowError(
+      'noSeason',
+      'Several seasons match this year: send seasonId'
+    )
   throw new RowError(
     'noSeason',
     `${context.teamName} has no season in ${year}: send seasonId`
@@ -624,7 +819,7 @@ async function changeOpponent(
           seasonId: held.season_id
         })
       ) {
-        await renameExternal(trx, opponentId, opponent.name)
+        await renameExternal(trx, opponentId, opponent.name, context.actor)
         return true
       }
       byName = true
@@ -649,6 +844,8 @@ async function changeOpponent(
     { byName }
   )
   if (named === opponentId) return false
+  // This legacy identity correction is atomic and audited by the batch
+  // bridge only when the actor represents every old/new team and host.
   if (!(await isExternal(trx, named))) {
     await mustHaveNoTwin(trx, context, held.season_id, named, game.id, [
       new Date(game.start_at),
@@ -663,7 +860,7 @@ async function changeOpponent(
     named === holderTeam &&
     !(await isNamed(trx, named, opponent.name))
   ) {
-    await renameExternal(trx, named, opponent.name)
+    await renameExternal(trx, named, opponent.name, context.actor)
   }
   return true
 }
@@ -760,8 +957,11 @@ async function nameFindsATeam(
 async function renameExternal(
   trx: Transaction<Database>,
   externalTeamId: string,
-  name: string
+  name: string,
+  actor: Actor
 ): Promise<void> {
+  if (!(await isExternal(trx, externalTeamId))) return
+  await requireGroupAdmin(trx, actor, { kind: 'team', id: externalTeamId })
   await trx
     .updateTable('teams')
     .set({ name, updated_at: new Date() })
@@ -947,7 +1147,8 @@ async function resolveRowOpponent(
     const key = opponent.externalId
     if (key != null && !(await isPlaceholderTeam(trx, found.id))) {
       const holder = await idHolder(trx, key)
-      if (holder.free) await recordOnExternalTeam(trx, found.id, key, holder)
+      if (holder.free)
+        await recordOnExternalTeam(trx, found.id, key, holder, context.actor)
     }
     return found.id
   }
@@ -977,6 +1178,16 @@ async function resolveRowOpponent(
     createdFrom: 'api'
   })
   const id = await followMerges(trx, resolved.id)
+  if (resolved.found === 'created') {
+    await trx
+      .updateTable('teams')
+      .set({
+        custodian_type: seasonId == null ? 'team' : 'season',
+        custodian_id: seasonId ?? teamId
+      })
+      .where('id', '=', id)
+      .execute()
+  }
   if (id === teamId) {
     throw new RowError(
       'conflict',
@@ -989,7 +1200,7 @@ async function resolveRowOpponent(
     holder?.free === true &&
     !isUndeterminedName(opponent.name)
   ) {
-    await recordOnExternalTeam(trx, id, key, holder)
+    await recordOnExternalTeam(trx, id, key, holder, context.actor)
   }
   return id
 }
@@ -1005,6 +1216,7 @@ async function seasonTeamsOf(
     .innerJoin('teams', 'teams.id', 'season_teams.team_id')
     .select(['teams.id as id', 'teams.name as name'])
     .where('season_teams.season_id', '=', seasonId)
+    .where('season_teams.active', '=', true)
     .execute()
 }
 
@@ -1079,9 +1291,11 @@ async function recordOnExternalTeam(
   trx: Transaction<Database>,
   teamId: string,
   key: ExternalIdKey,
-  holder: { orphanId?: string }
+  holder: { orphanId?: string },
+  actor: Actor
 ): Promise<void> {
-  if (await isExternal(trx, teamId)) await takeId(trx, teamId, key, holder)
+  if (await isExternal(trx, teamId))
+    await takeId(trx, teamId, key, holder, actor)
 }
 
 /** Whether a team's name says the opponent is not known yet. */
@@ -1118,8 +1332,10 @@ async function takeId(
   trx: Transaction<Database>,
   teamId: string,
   key: ExternalIdKey,
-  holder: { orphanId?: string }
+  holder: { orphanId?: string },
+  actor: Actor
 ): Promise<void> {
+  await requireGroupAdmin(trx, actor, { kind: 'team', id: teamId })
   if (holder.orphanId == null) {
     await recordExternalId(trx, 'team', teamId, key)
     return

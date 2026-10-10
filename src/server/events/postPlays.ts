@@ -79,6 +79,7 @@ export async function postGamePlays(
           'away_team_id',
           'scoringOwner',
           'status',
+          'cancellation_reason',
           'away_score',
           'home_score',
           'ingest_status',
@@ -211,7 +212,8 @@ export async function postGamePlays(
           away_score: posted.away,
           home_score: posted.home,
           linescore: lineScore(documents, halves, posted.away, posted.home),
-          status,
+          status:
+            game.cancellation_reason === 'withdrawal' ? 'cancelled' : status,
           // A game's first plays fix its fence, so a later season or league
           // change leaves their distances be: the fence the scorer's
           // documents were sized by, when the post says, else the one the

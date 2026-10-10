@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import {
@@ -8,7 +8,7 @@ import {
   type ScopePerson,
   type TeamStationClient
 } from '../../common/api'
-import type { Role } from '../../common/roles'
+import { type Role, ROLE_FLAGS, type RoleFlag } from '../../common/roles'
 import {
   adminLabel,
   Button,
@@ -30,6 +30,13 @@ export interface ManageScreenProps {
   scopeId: string
   /** Tells the shell what this page is called, once it knows. */
   onTitle?: (title: string) => void
+  onOpenRequest?: (id: string) => void
+  onChanged?: () => void
+  /**
+   * Drawn inside another page — a league's or season's People tab — rather
+   * than as a screen of its own, so it brings no scroller of its own.
+   */
+  embedded?: boolean
 }
 
 /**
@@ -66,13 +73,31 @@ export interface ManageScreenProps {
 const TABLE_MIN_REM = 58
 
 export function ManageScreen(props: ManageScreenProps): React.ReactElement {
-  const { client, scopeKind, scopeId, onTitle } = props
+  const {
+    client,
+    scopeKind,
+    scopeId,
+    onTitle,
+    onOpenRequest,
+    onChanged,
+    embedded = false
+  } = props
+  const Wrap = embedded ? EmbeddedPage : Screen
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const [page, setPage] = useState<ManagePage | undefined>(undefined)
   const [refused, setRefused] = useState(false)
   const [email, setEmail] = useState('')
+  const [inviteRoles, setInviteRoles] = useState<{
+    admin: boolean
+    flags: RoleFlag[]
+  }>({ admin: false, flags: [] })
+  const [choosingInviteRoles, setChoosingInviteRoles] = useState(false)
+  const invitationKey = useRef<{ body: string; key: string } | undefined>(
+    undefined
+  )
+  const [sentRequest, setSentRequest] = useState<string>()
   const [filter, setFilter] = useState('')
   const [changing, setChanging] = useState<ScopePerson | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -111,6 +136,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
     setError(undefined)
     work()
       .then(async () => {
+        onChanged?.()
         await load()
       })
       .catch((caught: unknown) => {
@@ -126,7 +152,22 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const add = (): void => {
     const wanted = email.trim()
     run(async () => {
-      const answer = await client.addPerson(scopeKind, scopeId, wanted)
+      const body = JSON.stringify({
+        kind: scopeKind,
+        id: scopeId,
+        email: wanted.toLowerCase(),
+        ...inviteRoles
+      })
+      if (invitationKey.current?.body !== body)
+        invitationKey.current = {
+          body,
+          key: `person-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        }
+      const answer = await client.addPerson(scopeKind, scopeId, wanted, {
+        ...inviteRoles,
+        idempotencyKey: invitationKey.current.key
+      })
+      setSentRequest(answer.invited?.requestId)
       setNote(
         answer.added
           ? sprintf(lstrings.manage_added, answer.person?.displayName ?? wanted)
@@ -157,21 +198,21 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
 
   if (refused) {
     return (
-      <Screen>
+      <Wrap>
         <Card>
           <Text style={styles.muted}>{lstrings.manage_refused}</Text>
         </Card>
-      </Screen>
+      </Wrap>
     )
   }
 
   if (page == null) {
     return (
-      <Screen>
+      <Wrap>
         <Card>
           <Text style={styles.muted}>{lstrings.common_loading}</Text>
         </Card>
-      </Screen>
+      </Wrap>
     )
   }
 
@@ -199,7 +240,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   }
 
   return (
-    <Screen>
+    <Wrap>
       <View style={styles.section}>
         <SectionHeader
           title={lstrings.manage_people}
@@ -345,6 +386,31 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
             disabled={!email.includes('@')}
             onPress={add}
           />
+          <Button
+            label="Choose invitation roles"
+            kind="secondary"
+            onPress={() => {
+              setChoosingInviteRoles(true)
+            }}
+          />
+          <Text style={styles.detail}>
+            Requested access:{' '}
+            {inviteRoles.admin
+              ? adminLabel(scopeKind)
+              : inviteRoles.flags.length === 0
+                ? 'Watching'
+                : inviteRoles.flags.map(flagLabel).join(', ')}
+            . Access starts after acceptance.
+          </Text>
+          {sentRequest != null && onOpenRequest != null && (
+            <Button
+              label="Open sent invitation"
+              kind="secondary"
+              onPress={() => {
+                onOpenRequest(sentRequest)
+              }}
+            />
+          )}
           {note != null && <Text style={styles.detail}>{note}</Text>}
         </Card>
       </View>
@@ -378,8 +444,32 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
           }}
         />
       )}
-    </Screen>
+      {choosingInviteRoles && (
+        <RolesModal
+          displayName={email.trim() === '' ? 'invited person' : email.trim()}
+          scopeKind={scopeKind}
+          scopeName={page.scope.name}
+          held={[
+            ...(inviteRoles.admin ? ['admin' as const] : []),
+            ...ROLE_FLAGS.filter(flag => inviteRoles.flags.includes(flag))
+          ]}
+          onClose={() => {
+            setChoosingInviteRoles(false)
+          }}
+          onSave={roles => {
+            setInviteRoles(roles)
+            setChoosingInviteRoles(false)
+          }}
+        />
+      )}
+    </Wrap>
   )
+}
+
+function EmbeddedPage(props: {
+  children: React.ReactNode
+}): React.ReactElement {
+  return <View style={{ gap: 16 }}>{props.children}</View>
 }
 
 function labelFor(column: 'team' | 'season' | 'league'): string {

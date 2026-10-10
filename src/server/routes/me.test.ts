@@ -99,6 +99,19 @@ describe('what the signed-in person may do', function () {
         { season_id: 'sea_me', team_id: 'tem_b' }
       ])
       .execute()
+    // This fixture explicitly models management in addition to competition.
+    await db
+      .updateTable('teams')
+      .set({ league_id: 'lea_me' })
+      .where('id', 'in', ['tem_a', 'tem_b'])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values([
+        { season_id: 'sea_me', team_id: 'tem_a' },
+        { season_id: 'sea_me', team_id: 'tem_b' }
+      ])
+      .execute()
     await db
       .insertInto('scope_roles')
       .values([

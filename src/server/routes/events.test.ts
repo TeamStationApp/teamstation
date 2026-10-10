@@ -1168,6 +1168,55 @@ describe('posting and reading plays', function () {
     expect(await statusOf(pendingId)).equals('inProgress')
   })
 
+  it('keeps an attributed withdrawal cancelled when a delayed score update arrives', async function () {
+    const game = await db!
+      .selectFrom('games')
+      .selectAll()
+      .where('id', '=', cancelledId)
+      .executeTakeFirstOrThrow()
+    const when = new Date()
+    await db!
+      .updateTable('games')
+      .set({
+        cancellation_reason: 'withdrawal',
+        withdrawn_by_team_id: game.home_team_id,
+        withdrawn_by_user_id: admin.userId,
+        withdrawn_at: when
+      })
+      .where('id', '=', cancelledId)
+      .execute()
+    const scored = await ask(`/games/${cancelledId}/events`, 'POST', {
+      plays: [
+        {
+          about: { atBatIndex: 0 },
+          result: { eventType: 'final_score', awayScore: 1, homeScore: 2 }
+        }
+      ],
+      source: { system: 'manual' }
+    })
+    expect(scored.status).equals(200)
+    const retained = await db!
+      .selectFrom('games')
+      .selectAll()
+      .where('id', '=', cancelledId)
+      .executeTakeFirstOrThrow()
+    expect(retained.status).equals('cancelled')
+    expect(retained.cancellation_reason).equals('withdrawal')
+    expect(retained.withdrawn_by_team_id).equals(game.home_team_id)
+    expect(retained.withdrawn_by_user_id).equals(admin.userId)
+    expect(retained.withdrawn_at!.getTime()).equals(when.getTime())
+    await db!
+      .updateTable('games')
+      .set({
+        cancellation_reason: null,
+        withdrawn_by_team_id: null,
+        withdrawn_by_user_id: null,
+        withdrawn_at: null
+      })
+      .where('id', '=', cancelledId)
+      .execute()
+  })
+
   it("drops an outside sender's play text and keeps TeamStation's own", async function () {
     const worded = {
       ...play({ atBatIndex: 0, awayScore: 1, homeScore: 0 }),

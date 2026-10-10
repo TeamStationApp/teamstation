@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "baseball",
+      "label": "Baseball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/baseball/ed84f5276702",
+      "sha256": "ed84f5276702281182cf1ef8d0d29a6d10d5866b945052edd59d65b551be61b6",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "football",
+      "label": "American football",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/football/31850925ff59",
+      "sha256": "31850925ff5916cc2c001d57c1e6890098f3c33a837f83446a6ce8f688e2974e",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "basketball",
+      "label": "Basketball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/basketball/77592799699a",
+      "sha256": "77592799699a96ebee01e5dd17d54d016d962355c8cbf75f1a85a28e89a5a9bd",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "soccer-ball",
+      "label": "Soccer ball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/soccer-ball/a7a12a94d379",
+      "sha256": "a7a12a94d379599904c5728d212b679bb24254b6987b0c81d45387c233ea16dd",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "volleyball",
+      "label": "Volleyball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/volleyball/7b492f1b8ef5",
+      "sha256": "7b492f1b8ef569572488d50da3969965637770c272501e6e8808c7918172c0b5",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "tennis-ball",
+      "label": "Tennis ball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/tennis-ball/db9de3b26ce5",
+      "sha256": "db9de3b26ce5bf570a09bf369c3af6db8d9632fde69c635a5b41e270a29a203e",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "softball",
+      "label": "Softball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/softball/c1c423764653",
+      "sha256": "c1c4237646530a4418460c171a6389b8cd6ef1368bff04531552941380e6a26c",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "golf-ball",
+      "label": "Golf ball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/golf-ball/67039cb688ae",
+      "sha256": "67039cb688aea4ca19dae6b2206c4e81d5d26084c9c520e81446f5440b6b7078",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "hockey-sticks",
+      "label": "Hockey sticks",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/hockey-sticks/fe8573feceb8",
+      "sha256": "fe8573feceb8c0c4c3ef61421c3ddc7dba25a5d8eb62dcd37ad0bca7ef11aeb9",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "hockey-puck",
+      "label": "Hockey puck",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/hockey-puck/d9c4f9118ed4",
+      "sha256": "d9c4f9118ed4503e6cfb024eeacf7e0cd9ad9cc5bf1f4fc0f5d632b482cd1d90",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "field-hockey-stick",
+      "label": "Field hockey stick",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/field-hockey-stick/ee04603d9e31",
+      "sha256": "ee04603d9e314abdc2876cee25d4c2d2ee8e6b2c94606f1cc7f74f65d0722651",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "lacrosse-stick",
+      "label": "Lacrosse stick",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/lacrosse-stick/67df19bbe72e",
+      "sha256": "67df19bbe72ec7e8add062ecbe3c3c7955f43a4dedc42a9971fb47fa21750c3c",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "baseball-glove",
+      "label": "Baseball glove",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/baseball-glove/b460cbbfed0c",
+      "sha256": "b460cbbfed0c055b6afba28da3705aa4eb46fccb4fa595a8fbb606fbef7681ee",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "baseball-bat",
+      "label": "Baseball bat",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/baseball-bat/029278517d6c",
+      "sha256": "029278517d6c2147418ae73c1bb32c1b9bf681155e7cea777bee554ee2a2ceac",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "baseball-cap",
+      "label": "Baseball cap",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/baseball-cap/521ae6e8a157",
+      "sha256": "521ae6e8a15783edaa291d3fbb8885ccf0561e5ba0b43b1a88f62eeabb453cd7",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "batting-helmet",
+      "label": "Batting helmet",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/batting-helmet/526498f20dfe",
+      "sha256": "526498f20dfe8736a0e1d3e6ec93ab70a4385a777392ef65f12bd783c739c3dd",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "football-helmet",
+      "label": "Football helmet",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/football-helmet/027e15aefebb",
+      "sha256": "027e15aefebb7fd0ea6e371cd288a3cedf8b2bfb0a0460e09bc44c3cd5b66d66",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "ice-skates",
+      "label": "Ice skates",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/ice-skates/27ac8eb043a3",
+      "sha256": "27ac8eb043a3b512f41dcdcbea1cd79f8c8e4025f3f48ada44c43bfed54dabaa",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "running-shoe",
+      "label": "Running shoe",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/running-shoe/aa65872072ab",
+      "sha256": "aa65872072abcdf80f4ea0e6cbb3863badef7a6443a20d0c19aa7a0d697af6e9",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "cleats",
+      "label": "Cleats",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/cleats/d24d7757646d",
+      "sha256": "d24d7757646d7127f30c98ec71850079c80c4558f627733a27689bf51c5a5b0b",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "tennis-racket",
+      "label": "Tennis racket",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/tennis-racket/477cec7745d7",
+      "sha256": "477cec7745d743f9c0132933a8e5342470d3540e08756e1844c365f6d3930476",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "badminton-racket-shuttlecock",
+      "label": "Badminton racket and shuttlecock",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/badminton-racket-shuttlecock/304475b3784d",
+      "sha256": "304475b3784dbfc8c2eef582554249c8a4c8f16ba7200b34ce42205e1f6b0b4b",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "cricket-bat",
+      "label": "Cricket bat",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/cricket-bat/3b1caa34e358",
+      "sha256": "3b1caa34e358067f5a7bf852655511f9786aeb7616ff023ed2c8ead3ebbd2e0b",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "rugby-ball",
+      "label": "Rugby ball",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/rugby-ball/9ed6ab57d3fb",
+      "sha256": "9ed6ab57d3fb7520e06178bfcc9fda12e6b78a110ae4a3cddc5ed88449439242",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "boxing-gloves",
+      "label": "Boxing gloves",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/boxing-gloves/bda863ff7546",
+      "sha256": "bda863ff7546ab5d3bf70bf70c88cb00fdfdab3961e68be4d7e3371870625e78",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "swimming-goggles",
+      "label": "Swimming goggles",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/swimming-goggles/13977173c367",
+      "sha256": "13977173c36766d5b51bf20147e2007b8509ed42e735c18e9c34cd37c6bce621",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "skateboard",
+      "label": "Skateboard",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/skateboard/e70305b477c0",
+      "sha256": "e70305b477c02cf008924e18bad09e2513681097629c2db9460144df9d96944f",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "whistle",
+      "label": "Whistle",
+      "kind": "photo",
+      "prefix": "images/catalog/v1/whistle/e7d2c8d469a5",
+      "sha256": "e7d2c8d469a59af617361f575fb1365b51857938237162f18ebb8b67cc77c2b4",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "flag",
+      "label": "Waving flag",
+      "kind": "creation",
+      "prefix": "images/catalog/v1/flag/b0b286834d3a",
+      "sha256": "b0b286834d3a5e85e041740db0e52df57b537a1aa6c506147fb0b0151ca1f80e",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "league-trophy",
+      "label": "Trophy",
+      "kind": "creation",
+      "prefix": "images/catalog/v1/league-trophy/c6c7eb79bfa6",
+      "sha256": "c6c7eb79bfa610f6deb45e39bec7c645c37f256e910134be9256fa36d0a1ad08",
+      "width": 192,
+      "height": 192
+    },
+    {
+      "id": "create-team-cap",
+      "label": "Baseball cap",
+      "kind": "creation",
+      "prefix": "images/catalog/v1/create-team-cap/521ae6e8a157",
+      "sha256": "521ae6e8a15783edaa291d3fbb8885ccf0561e5ba0b43b1a88f62eeabb453cd7",
+      "width": 192,
+      "height": 192
+    }
+  ]
+}

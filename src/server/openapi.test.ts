@@ -21,13 +21,20 @@ import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { directorRoutes } from './routes/director'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
+import { gameApprovalRoutes } from './routes/gameApprovals'
+import { groupRoutes } from './routes/groups'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
 import { type LiveRouteOptions, liveRoutes } from './routes/live'
+import { locationRoutes } from './routes/location'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
+import { nodeAdministrationRoutes } from './routes/nodeAdministration'
+import { notificationRoutes } from './routes/notifications'
+import { onboardingRoutes } from './routes/onboarding'
+import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
 import { scoreboardRoutes } from './routes/scoreboard'
@@ -154,7 +161,14 @@ describe('the API document', function () {
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
+      ...routesOf(onboardingRoutes(db, media)),
+      ...routesOf(pictureRoutes(db, media.space)),
+      ...routesOf(locationRoutes()),
+      ...routesOf(groupRoutes(db, media)),
+      ...routesOf(gameApprovalRoutes(db)),
+      ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
+      ...routesOf(nodeAdministrationRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(scoreboardRoutes(db, store))
     ]
@@ -197,7 +211,14 @@ describe('the API document', function () {
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
+      ...routesOf(onboardingRoutes(db, media)),
+      ...routesOf(pictureRoutes(db, media.space)),
+      ...routesOf(locationRoutes()),
+      ...routesOf(groupRoutes(db, media)),
+      ...routesOf(gameApprovalRoutes(db)),
+      ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
+      ...routesOf(nodeAdministrationRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
       // Only the player routes the document describes: the reads of a
       // player's page are left out of it, as they always have been.

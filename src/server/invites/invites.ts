@@ -2,10 +2,20 @@ import { randomBytes } from 'node:crypto'
 
 import type { Kysely } from 'kysely'
 
-import { badRequest, conflict } from '../../common/errors'
+import { badRequest, conflict, forbidden } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import type { RequestTerms } from '../../common/notifications'
 import type { AdminScopes } from '../access'
+import type { Actor } from '../auth/sessions'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import {
+  approvesSide,
+  decideRelationshipRequest,
+  relationshipSides,
+  withdrawRelationshipRequest
+} from '../groups/requests'
 
 /**
  * Invite codes: who may make one, what one is worth, and what redeeming does.
@@ -37,6 +47,7 @@ export interface Invite {
   createdAt: Date
   /** The one person it was made out to, or null for a link anybody may use. */
   forEmail: string | null
+  requestId?: string | null
 }
 
 /** Why an invite cannot be redeemed, or null when it can. */
@@ -53,7 +64,8 @@ const FIELDS = [
   'expires_at',
   'revoked_at',
   'created_at',
-  'for_email'
+  'for_email',
+  'request_id'
 ] as const
 
 interface InviteFields {
@@ -68,6 +80,7 @@ interface InviteFields {
   revoked_at: Date | string | null
   created_at: Date | string
   for_email: string | null
+  request_id?: string | null
 }
 
 const asDate = (value: Date | string | null): Date | null =>
@@ -85,7 +98,8 @@ function shape(row: InviteFields): Invite {
     expiresAt: asDate(row.expires_at),
     revokedAt: asDate(row.revoked_at),
     createdAt: asDate(row.created_at) ?? new Date(),
-    forEmail: row.for_email
+    forEmail: row.for_email,
+    requestId: row.request_id ?? null
   }
 }
 
@@ -223,6 +237,7 @@ export interface NewInvite {
   createdAt?: Date
   /** Made out to one address, mailed to it, and good for one use. */
   forEmail?: string
+  requestId?: string
 }
 
 export async function createInvite(
@@ -243,9 +258,16 @@ export async function createInvite(
     label: invite.label ?? null,
     max_uses: invite.maxUses ?? null,
     uses: invite.uses ?? 0,
-    expires_at: invite.expiresAt ?? null,
+    expires_at:
+      invite.expiresAt ??
+      (invite.forEmail == null
+        ? null
+        : new Date(
+            (invite.createdAt ?? new Date()).getTime() + 7 * 24 * 3600 * 1000
+          )),
     source: invite.source ?? 'manual',
     for_email: invite.forEmail ?? null,
+    request_id: invite.requestId ?? null,
     ...(invite.createdAt == null ? {} : { created_at: invite.createdAt })
   }
   await db.insertInto('invites').values(row).execute()
@@ -278,8 +300,16 @@ export async function listInvites(
  */
 export async function revokeInvite(
   db: Kysely<Database>,
-  id: string
+  id: string,
+  actor?: Actor
 ): Promise<void> {
+  const invitation = await findInviteById(db, id)
+  if (invitation?.requestId != null) {
+    if (actor == null)
+      throw forbidden('Sign in to withdraw a personal invitation')
+    await withdrawRelationshipRequest(db, actor, invitation.requestId)
+    return
+  }
   await db
     .updateTable('invites')
     .set({ revoked_at: new Date() })
@@ -346,7 +376,59 @@ export async function redeemInvite(
   const problem = inviteProblem(invite)
   if (problem != null) throw badRequest(`That invite is ${problem}`)
 
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
+    await lockKeys(trx, [
+      ...(invite.requestId == null
+        ? []
+        : ['creation:parent-graph', `request:${invite.requestId}`]),
+      `invite:${invite.id}`
+    ])
+    await trx
+      .selectFrom('invites')
+      .select('id')
+      .where('id', '=', invite.id)
+      .forUpdate()
+      .executeTakeFirst()
+    const current = await findInviteById(trx, invite.id)
+    if (current == null) throw badRequest('That invite is no longer available')
+    const currentProblem = inviteProblem(current)
+    if (currentProblem != null)
+      throw badRequest(`That invite is ${currentProblem}`)
+    let requestGrant: boolean | undefined
+    if (current.requestId != null) {
+      const request = await trx
+        .selectFrom('group_requests')
+        .selectAll()
+        .where('id', '=', current.requestId)
+        .executeTakeFirstOrThrow()
+      const terms = request.terms as RequestTerms
+      const personal = relationshipSides(terms).find(
+        side => side.kind === 'user'
+      )
+      if (
+        terms.kind !== 'person' ||
+        personal == null ||
+        !(await approvesSide(
+          trx,
+          { userId, isAdmin: false, scopes: [] },
+          personal
+        ))
+      )
+        throw forbidden('This invitation belongs to its named recipient')
+      const decided = await decideRelationshipRequest(
+        trx,
+        { userId, isAdmin: false, scopes: [] },
+        request.id,
+        'accept'
+      )
+      if (decided.status !== 'accepted')
+        return {
+          granted: false,
+          scopeType: invite.scopeType,
+          scopeId: invite.scopeId
+        }
+      requestGrant = request.status !== 'accepted'
+    }
     const recorded = await trx
       .insertInto('invite_redemptions')
       .values({
@@ -359,7 +441,7 @@ export async function redeemInvite(
       .returning(['id'])
       .executeTakeFirst()
 
-    const granted = await grant(trx, invite, userId)
+    const granted = requestGrant ?? (await grant(trx, current, userId))
 
     if (recorded != null) {
       await trx

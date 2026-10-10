@@ -162,7 +162,7 @@ run('node', [
   '--exclude',
   'src/test',
   '--allow-empty',
-  'src/app',
-  'src/common',
-  'src/server'
+  // This command gates its account/password modules. Other feature modules
+  // have their own measured coverage gate rather than an absent account report.
+  ...required
 ])

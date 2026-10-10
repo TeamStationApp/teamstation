@@ -5,6 +5,8 @@ export interface StatColumn<T> {
   /** Typical formatted value; larger actual values expand the whole column. */
   sample?: string
   value: (row: T) => string
+  /** Spoken meaning for flags whose visible glyph is not descriptive. */
+  accessibilityValue?: (row: T) => string
 }
 
 const count = (value: number | null | undefined): string =>
