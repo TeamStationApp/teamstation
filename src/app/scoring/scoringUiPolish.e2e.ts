@@ -289,30 +289,6 @@ async function main(): Promise<void> {
     await tap(label)
   }
   const reach = async (text: string): Promise<void> => {
-    if (text.startsWith('Add Owls ')) {
-      // The roster has separate columns; swipe inside the player column.
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const nodes = flat(await m.hierarchy())
-        const screen = nodes.find(node => node.type === 'Window')?.bounds
-        assert(screen != null)
-        const target = nodes.filter(node => node.text === text).at(-1)?.bounds
-        if (
-          target != null &&
-          target.height > 0 &&
-          target.y > 200 &&
-          target.y + target.height < screen.height - 180
-        )
-          return
-        const endpoint = await driver()
-        const x = Math.round(screen.width / 4)
-        const result = await m.eval(
-          `http.post(${JSON.stringify(endpoint + '/wda/dragfromtoforduration')}, {body:${JSON.stringify({ fromX: x, fromY: Math.round(screen.height - 220), toX: x, toY: 300, duration: 0.001 })}})`
-        )
-        assert.equal(result.status, 200)
-        await new Promise(resolve => setTimeout(resolve, 500))
-      }
-      assert.fail(`Roster player must be reachable: ${text}`)
-    }
     if (!native) {
       for (let attempt = 0; attempt < 8; attempt++) {
         const nodes = flat(await m.hierarchy())
