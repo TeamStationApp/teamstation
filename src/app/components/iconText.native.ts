@@ -1,5 +1,5 @@
-import { iconCodepoints } from './iconCodepoints'
 import type { IconName } from './Icon'
+import { iconCodepoints } from './iconCodepoints'
 
 /**
  * The character the phone font draws for this icon. The name itself is what

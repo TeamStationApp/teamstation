@@ -44,6 +44,8 @@ export type IconName =
   | 'stop'
   | 'mic'
   | 'mic_off'
+  | 'notifications'
+  | 'search'
 
 export interface IconProps {
   name: IconName

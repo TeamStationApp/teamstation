@@ -36,5 +36,7 @@ export const iconCodepoints: Record<IconName, number> = {
   description: 0xe873,
   stop: 0xe047,
   mic: 0xe029,
-  mic_off: 0xe02b
+  mic_off: 0xe02b,
+  notifications: 0xe7f4,
+  search: 0xe8b6
 }

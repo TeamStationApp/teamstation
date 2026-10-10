@@ -8,3 +8,11 @@ import type { ImageSourcePropType } from 'react-native'
  */
 export const tsLogoSource: ImageSourcePropType =
   require('./tsLogo.png') as ImageSourcePropType
+export const creationIcons: Record<
+  'league' | 'season' | 'team',
+  ImageSourcePropType
+> = {
+  league: require('./sports/flag-192.png') as ImageSourcePropType,
+  season: require('./sports/league-trophy-192.png') as ImageSourcePropType,
+  team: require('./sports/create-team-cap-192.png') as ImageSourcePropType
+}
