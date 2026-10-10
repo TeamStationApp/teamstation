@@ -100,9 +100,15 @@ async function main(): Promise<void> {
     console.log('Tap', text)
     if (native) {
       await m.waitForAnimationToEnd({ timeout: 3000 })
-      const matches = flat(await m.hierarchy()).filter(
-        node => node.text === text && node.bounds != null
-      )
+      const deadline = Date.now() + 15000
+      let matches: Node[] = []
+      do {
+        matches = flat(await m.hierarchy()).filter(
+          node => node.text === text && node.bounds != null
+        )
+        if (matches.length !== 0) break
+        await new Promise(resolve => setTimeout(resolve, 200))
+      } while (Date.now() < deadline)
       const target =
         matches
           .filter(node =>
