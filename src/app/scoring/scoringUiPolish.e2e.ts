@@ -552,6 +552,17 @@ async function main(): Promise<void> {
   const workflow = async (): Promise<void> => {
     setup = undefined
     const game = await open()
+    const inspectSetupHistory = async (
+      label: string,
+      detail: string
+    ): Promise<void> => {
+      await tap('Cancel')
+      await shown(label)
+      await shown(detail)
+      await tap('More')
+      await tap('Place a Runner (Tiebreaker)')
+      await shown('Place runner on base')
+    }
     await tap('More')
     await tap('Place a Runner (Tiebreaker)')
     await shown('Place runner on base')
@@ -592,14 +603,16 @@ async function main(): Promise<void> {
     await tap('Select runner #9 Bobby Witt')
     await shown('Place runner on base')
     await saved(state => baseIds(state).filter(id => id != null).length === 1)
-    await shown('Undo Place Bobby Witt on 2B')
-    await shown('Bobby W. placed on 2B')
+    await inspectSetupHistory(
+      'Undo Place Bobby Witt on 2B',
+      'Bobby W. placed on 2B'
+    )
     const first = baseIds(snapshot()!)[1]
     assert(first != null)
     const unchanged = snapshot()!
     await tap('Set Outs 1')
     await saved(state => state.liveData.linescore.outs === 1)
-    await shown('Set outs to 1')
+    await inspectSetupHistory('Undo Set Outs', 'Set outs to 1')
     const beforeActions = recordOf(fixture.stored().currentPlay)!.actions.length
     const nodes = flat(await m.hierarchy())
     const from = nodes.filter(node => node.text === 'Set Outs 1').at(-1)?.bounds
@@ -616,7 +629,7 @@ async function main(): Promise<void> {
       duration: 800
     })
     await saved(state => state.liveData.linescore.outs === 2)
-    await shown('Set outs to 2')
+    await inspectSetupHistory('Undo Set Outs', 'Set outs to 2')
     assert.equal(
       recordOf(fixture.stored().currentPlay)!.actions.length,
       beforeActions + 1,
