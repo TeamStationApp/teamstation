@@ -43,7 +43,9 @@ export interface ChatListScreenProps {
   /** A remembered selection on the narrow list is still offscreen. */
   selectedVisible?: boolean
   initialOffset?: number
+  initialAnchor?: { id: string; relativeY: number }
   onOffset?: (offset: number) => void
+  onAnchor?: (anchor: { id: string; relativeY: number } | undefined) => void
 }
 type Row =
   | { type: 'heading'; key: string; title: string }
@@ -66,12 +68,20 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const scrollOwner = useRef({
     live: true,
     visible: true,
-    onOffset: props.onOffset
+    onOffset: props.onOffset,
+    onAnchor: props.onAnchor
   })
   const listVisible =
     props.embedded !== true || !narrow || props.selectedVisible !== true
+  const visibilityState = useRef({ visible: listVisible, version: 0 })
+  if (visibilityState.current.visible !== listVisible) {
+    visibilityState.current.visible = listVisible
+    visibilityState.current.version += 1
+  }
+  const visibilityVersion = visibilityState.current.version
   scrollOwner.current.visible = listVisible
   scrollOwner.current.onOffset = props.onOffset
+  scrollOwner.current.onAnchor = props.onAnchor
   useEffect(() => {
     const owner = scrollOwner.current
     owner.live = true
@@ -79,18 +89,21 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       owner.live = false
     }
   }, [])
-  const rememberOffset = (event: {
-    nativeEvent: { contentOffset: { y: number } }
-  }): void => {
-    const owner = scrollOwner.current
-    if (owner.live && owner.visible && restored.current)
-      owner.onOffset?.(Math.max(0, event.nativeEvent.contentOffset.y))
-  }
-  // Metadata/preview refreshes produce new arrays without replacing the rows.
-  const dataKey =
+  const rows: Row[] =
     chats == null
-      ? undefined
-      : JSON.stringify(chats.map(chat => chat.id).sort())
+      ? []
+      : groupChats(chats).flatMap(group => [
+          { type: 'heading' as const, key: group.key, title: group.title! },
+          ...group.chats.map(chat => ({
+            type: 'chat' as const,
+            key: chat.id,
+            chat
+          }))
+        ])
+  // Row order is geometry. A same-ID recency/pin reorder invalidates work,
+  // while a metadata array that retains that order does not.
+  const dataKey =
+    chats == null ? undefined : JSON.stringify(rows.map(row => row.key))
   const currentDataKey = useRef(dataKey)
   currentDataKey.current = dataKey
   const listGeometry = useRef({
@@ -99,59 +112,288 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     data: undefined as string | undefined
   })
   const restoreOffset = useRef(props.initialOffset ?? 0)
-  const measuredTail = useRef<string | undefined>(undefined)
+  const anchor = useRef(props.initialAnchor)
+  const anchorOwned = useRef(props.initialAnchor != null)
+  const currentOffset = useRef(props.initialOffset ?? 0)
+  const requested = useRef<number | undefined>(undefined)
+  const requestedFinal = useRef(false)
+  const requestedVisibility = useRef(visibilityVersion)
+  const requestedVersion = useRef(0)
+  const rejectedRequest = useRef(false)
+  const rowRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
+  const positions = useRef(
+    new Map<
+      string,
+      { y: number; height: number; data: string | undefined; version: number }
+    >()
+  )
+  const measuredTail = useRef<
+    { data: string | undefined; end: number; version: number } | undefined
+  >(undefined)
+  const layoutVersion = useRef(0)
   const revealProgress = useRef({
     data: undefined as string | undefined,
     offset: -1
   })
-  const restoreList = useCallback(() => {
+  const restoration = useRef<() => void>(() => {})
+  const measureRows = useRef<(id: string) => void>(() => {})
+  const measuring = useRef(false)
+  const dirty = useRef(false)
+  const liveData = (): boolean =>
+    scrollOwner.current.live &&
+    scrollOwner.current.visible &&
+    dataKey === currentDataKey.current &&
+    visibilityVersion === visibilityState.current.version
+  const rowPosition = async (
+    id: string,
+    retry = false,
+    cancelled: () => boolean = () => !liveData()
+  ): Promise<{ y: number; height: number } | undefined> => {
+    const deadline = Date.now() + 2000
+    while (!cancelled()) {
+      const position = await new Promise<
+        { y: number; height: number } | undefined
+      >(resolve => {
+        const row = rowRefs.current.get(id)
+        const content = list.current?.getScrollResponder()?.getInnerViewRef()
+        if (row == null || content == null) {
+          resolve(undefined)
+          return
+        }
+        const timeout = setTimeout(() => {
+          resolve(undefined)
+        }, 100)
+        row.measureLayout(
+          content,
+          (_x, y, width, height) => {
+            clearTimeout(timeout)
+            resolve(
+              Number.isFinite(y) && width > 0 && height > 0
+                ? { y, height }
+                : undefined
+            )
+          },
+          () => {
+            clearTimeout(timeout)
+            resolve(undefined)
+          }
+        )
+      })
+      if (position != null || !retry || Date.now() >= deadline) return position
+      await new Promise<void>(resolve => setTimeout(resolve, 25))
+    }
+    return undefined
+  }
+
+  const savePosition = (): void => {
+    if (!liveData() || !restored.current) return
+    const offset = currentOffset.current
+    scrollOwner.current.onOffset?.(offset)
+    const candidates = [...positions.current].filter(
+      ([, p]) =>
+        p.data === dataKey &&
+        p.version === layoutVersion.current &&
+        p.y + p.height > offset &&
+        p.y < offset + listGeometry.current.height
+    )
+    candidates.sort((a, b) => a[1].y - b[1].y)
+    const first = candidates[0]
+    if (first != null)
+      scrollOwner.current.onAnchor?.({
+        id: first[0],
+        relativeY: first[1].y - offset
+      })
+  }
+  const measureRow = (id: string): void => {
+    const version = layoutVersion.current
+    const generation = gestureGeneration.current
+    rowPosition(id)
+      .then(position => {
+        if (
+          !liveData() ||
+          version !== layoutVersion.current ||
+          generation !== gestureGeneration.current ||
+          position == null
+        )
+          return
+        positions.current.set(id, { ...position, data: dataKey, version })
+        if (id === rows.at(-1)?.key)
+          measuredTail.current = {
+            data: dataKey,
+            end: position.y + position.height,
+            version
+          }
+        savePosition()
+        restoration.current()
+      })
+      .catch(() => undefined)
+  }
+  measureRows.current = measureRow
+  const requestOffset = (offset: number, final = false): void => {
     if (
-      !listVisible ||
-      !scrollOwner.current.live ||
-      !scrollOwner.current.visible ||
-      dataKey !== currentDataKey.current ||
-      restored.current ||
-      chats == null
+      requested.current === offset &&
+      requestedVisibility.current === visibilityVersion &&
+      !(
+        rejectedRequest.current &&
+        requestedVersion.current !== layoutVersion.current
+      )
+    ) {
+      // A reveal already reached this same numeric destination. Validate its
+      // final meaning without issuing a duplicate scroll in this visible pane.
+      requestedFinal.current = final
+      requestedVersion.current = layoutVersion.current
+      return
+    }
+    requested.current = offset
+    requestedFinal.current = final
+    requestedVisibility.current = visibilityVersion
+    requestedVersion.current = layoutVersion.current
+    rejectedRequest.current = false
+    if (final) restored.current = false
+    list.current?.scrollToOffset({ offset, animated: false })
+  }
+  const restoreList = (): void => {
+    if (
+      !liveData() ||
+      chats == null ||
+      (restored.current && !anchorOwned.current)
     )
       return
     const { height, content, data } = listGeometry.current
     if (height <= 0 || content <= 0 || data !== dataKey) return
+    const saved = anchor.current
+    if (
+      saved != null &&
+      rows.some(row => row.key === saved.id) &&
+      rowRefs.current.has(saved.id)
+    ) {
+      if (measuring.current) {
+        dirty.current = true
+        return
+      }
+      measuring.current = true
+      dirty.current = false
+      const version = layoutVersion.current
+      const generation = gestureGeneration.current
+      rowPosition(
+        saved.id,
+        true,
+        () =>
+          !liveData() ||
+          version !== layoutVersion.current ||
+          generation !== gestureGeneration.current ||
+          !anchorOwned.current
+      )
+        .then(position => {
+          if (
+            !liveData() ||
+            generation !== gestureGeneration.current ||
+            anchor.current !== saved ||
+            !anchorOwned.current ||
+            version !== layoutVersion.current ||
+            dirty.current
+          )
+            return
+          if (position == null) {
+            if (listGeometry.current.content >= height + restoreOffset.current)
+              requestOffset(restoreOffset.current, true)
+            return
+          }
+          const target = Math.max(0, position.y - saved.relativeY)
+          restoreOffset.current = target
+          // A mounted tail is not proof that its preceding content callback
+          // has measured the same complete content coordinates.
+          if (target > Math.max(0, listGeometry.current.content - height)) {
+            const available = Math.max(0, listGeometry.current.content - height)
+            requestOffset(available)
+            return
+          }
+          positions.current.set(saved.id, {
+            ...position,
+            data: dataKey,
+            version
+          })
+          requestOffset(target, true)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          measuring.current = false
+          if (dirty.current && liveData()) {
+            dirty.current = false
+            restoration.current()
+          }
+        })
+    }
+    const tail = measuredTail.current
+    const complete =
+      tail != null &&
+      tail.data === dataKey &&
+      tail.version === layoutVersion.current &&
+      Math.abs(tail.end - content) <= 1
     if (
       content < height + restoreOffset.current &&
       chats.length > 0 &&
-      measuredTail.current !== dataKey
+      !complete
     ) {
-      // Without exact item heights, virtualization measures its next window
-      // only after scrolling. Advance through current content without
-      // consuming the saved target or publishing these intermediate offsets.
       const available = Math.max(0, content - height)
       const progress = revealProgress.current
       if (progress.data !== dataKey || available > progress.offset) {
         revealProgress.current = { data: dataKey, offset: available }
-        list.current?.scrollToOffset({ offset: available, animated: false })
+        requestOffset(available)
       }
       return
     }
-    // Refresh can legitimately remove rows; clamp only measured current data.
-    const offset = Math.min(
-      restoreOffset.current,
-      Math.max(0, content - height)
+    if (saved != null && rows.some(row => row.key === saved.id)) {
+      if (!rowRefs.current.has(saved.id))
+        requestOffset(
+          Math.min(restoreOffset.current, Math.max(0, content - height))
+        )
+      return
+    }
+    anchorOwned.current = false
+    anchor.current = undefined
+    requestOffset(
+      Math.min(restoreOffset.current, Math.max(0, content - height)),
+      true
     )
-    list.current?.scrollToOffset({
-      offset,
-      animated: false
-    })
+  }
+  restoration.current = restoreList
+  const userScrolled = (): void => {
     restored.current = true
+    anchorOwned.current = false
+    anchor.current = undefined
+    scrollOwner.current.onAnchor?.(undefined)
+    gestureGeneration.current += 1
+  }
+  const rememberOffset = (event: {
+    nativeEvent: { contentOffset: { y: number } }
+  }): void => {
+    if (!liveData()) return
+    const offset = Math.max(0, event.nativeEvent.contentOffset.y)
+    currentOffset.current = offset
+    if (
+      !restored.current &&
+      requestedFinal.current &&
+      requestedVersion.current === layoutVersion.current &&
+      requested.current != null &&
+      Math.abs(offset - requested.current) <= 1
+    )
+      restored.current = true
+    if (
+      !restored.current &&
+      requestedFinal.current &&
+      requested.current != null &&
+      Math.abs(offset - requested.current) > 1
+    )
+      rejectedRequest.current = true
+    savePosition()
+    if (!restored.current || anchorOwned.current) restoration.current()
+    for (const id of visible.current) measureRow(id)
+  }
+  useEffect(() => {
+    restoration.current()
   }, [chats, dataKey, listVisible])
-  useEffect(restoreList, [restoreList])
-  useEffect(
-    () =>
-      bindUserScroll(list.current, () => {
-        restored.current = true
-        gestureGeneration.current += 1
-      }),
-    []
-  )
+  useEffect(() => bindUserScroll(list.current, userScrolled), [])
   const viewability = useRef({ itemVisiblePercentThreshold: 1 }).current
   const previews = useCallback(
     (ids: string[]): void => {
@@ -165,6 +407,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         token.item.type === 'chat' ? [token.item.chat.id] : []
       )
       previews(visible.current)
+      for (const id of visible.current) measureRows.current(id)
     },
     [previews]
   )
@@ -196,17 +439,6 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   }, [chats, previews])
   const target =
     menu == null ? undefined : chats?.find(chat => chat.id === menu.id)
-  const rows: Row[] =
-    chats == null
-      ? []
-      : groupChats(chats).flatMap(group => [
-          { type: 'heading' as const, key: group.key, title: group.title! },
-          ...group.chats.map(chat => ({
-            type: 'chat' as const,
-            key: chat.id,
-            chat
-          }))
-        ])
   const now = props.now?.() ?? new Date()
   const content = (
     <View style={styles.fill}>
@@ -225,25 +457,22 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         viewabilityConfig={viewability}
         onViewableItemsChanged={onVisible}
         onLayout={event => {
-          if (
-            !scrollOwner.current.live ||
-            !scrollOwner.current.visible ||
-            dataKey !== currentDataKey.current
-          )
-            return
+          if (!liveData()) return
+          layoutVersion.current += 1
           listGeometry.current.height = event.nativeEvent.layout.height
           restoreList()
+          const last = rows.at(-1)?.key
+          if (last != null) measureRow(last)
         }}
         onContentSizeChange={(_width, height) => {
-          if (
-            !scrollOwner.current.live ||
-            !scrollOwner.current.visible ||
-            dataKey !== currentDataKey.current
-          )
-            return
+          if (!liveData()) return
+          layoutVersion.current += 1
           listGeometry.current.content = height
           listGeometry.current.data = dataKey
           restoreList()
+          for (const id of visible.current) measureRows.current(id)
+          const last = rows.at(-1)?.key
+          if (last != null) measureRow(last)
         }}
         onScroll={rememberOffset}
         onScrollEndDrag={rememberOffset}
@@ -252,8 +481,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         onScrollBeginDrag={() => {
           // RNW also emits this for the programmatic restoration steps.
           if (Platform.OS !== 'web') {
-            restored.current = true
-            gestureGeneration.current += 1
+            userScrolled()
           }
         }}
         keyboardShouldPersistTaps="handled"
@@ -298,20 +526,17 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           ) : (
             <ConversationRow
               chat={item.chat}
+              onRef={node => {
+                if (node == null) rowRefs.current.delete(item.chat.id)
+                else rowRefs.current.set(item.chat.id, node)
+              }}
               onLayout={event => {
-                if (
-                  !scrollOwner.current.live ||
-                  !scrollOwner.current.visible ||
-                  dataKey !== currentDataKey.current
-                )
-                  return
-                if (
-                  item.chat.id === rows.at(-1)?.key &&
-                  event.nativeEvent.layout.height > 0
-                ) {
-                  measuredTail.current = dataKey
-                  restoreList()
-                }
+                if (!liveData()) return
+                layoutVersion.current += 1
+                measureRow(item.chat.id)
+                const last = rows.at(-1)?.key
+                if (last != null && last !== item.chat.id) measureRow(last)
+                restoreList()
               }}
               now={now}
               selected={item.chat.id === props.selectedId}
@@ -356,6 +581,7 @@ function ConversationRow(props: {
   onOpen: () => void
   onMenu: () => void
   onLayout?: (event: LayoutChangeEvent) => void
+  onRef?: (node: React.ComponentRef<typeof View> | null) => void
 }): React.ReactElement {
   const { chat } = props
   const theme = useTheme()
@@ -388,7 +614,10 @@ function ConversationRow(props: {
   }
   return (
     <View
-      ref={ref}
+      ref={node => {
+        ref.current = node
+        props.onRef?.(node)
+      }}
       collapsable={false}
       onLayout={props.onLayout}
       style={[styles.row, props.selected && styles.selected]}
