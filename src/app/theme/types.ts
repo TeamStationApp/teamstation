@@ -7,6 +7,8 @@
  * and never for `palette.tsBeige`, so a colour can be changed in one place and
  * a second theme is a second mapping rather than a second app.
  */
+import type { ScoringSurface } from './scoringSurface'
+
 export interface ThemeGradientPoint {
   x: number
   y: number
@@ -16,6 +18,9 @@ export interface Theme {
   /** Scales a size against the device, so 1 rem is one comfortable line. */
   rem: (size: number) => number
   isDark: boolean
+  scoringSurface: ScoringSurface
+  /** Set only within scoring sheets; main scoring controls keep their theme. */
+  scoringSheet?: boolean
 
   defaultBorderColor: string
 

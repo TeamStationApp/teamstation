@@ -3,6 +3,7 @@ import { Text, View } from 'react-native'
 
 import { DefensiveFieldArt } from './DefensiveFieldArt'
 import { RosterDrag } from './RosterDrag'
+import { useScoringSheetTheme } from './scoringSheetTheme'
 import { type Position, POSITIONS } from './scoringTypes'
 
 /** Position centres as percentages of the top-down field. */
@@ -32,6 +33,7 @@ export function DefensiveField({
   onPlace: (id: number, position: Position) => void
   onClear: (position: Position) => void
 }): React.ReactElement {
+  const { scoringSurface: surface } = useScoringSheetTheme()
   const [viewportHeight, setViewportHeight] = useState(0)
   const singleLine = compact || (viewportHeight > 0 && viewportHeight < 180)
   const cardHeight =
@@ -49,7 +51,7 @@ export function DefensiveField({
         style={{
           flex: 1,
           minHeight: 0,
-          backgroundColor: '#eeeeee',
+          backgroundColor: surface.canvas,
           borderRadius: 8
         }}
       >
@@ -58,6 +60,9 @@ export function DefensiveField({
           const id = defense[position]
           const [x, y] = DEFENSE_LOCATIONS[position]
           const assigned = id != null
+          const textColor = assigned
+            ? surface.activeText
+            : surface.badges.red.text
           return (
             <View
               key={position}
@@ -91,9 +96,13 @@ export function DefensiveField({
                     paddingVertical: singleLine ? 0 : 3,
                     borderWidth: 1,
                     borderStyle: assigned ? 'solid' : 'dashed',
-                    borderColor: assigned ? '#409754' : '#b79c9c',
+                    borderColor: assigned
+                      ? surface.accent
+                      : surface.badges.red.border,
                     borderRadius: 5,
-                    backgroundColor: assigned ? '#d5ecd9' : '#eadfdf',
+                    backgroundColor: assigned
+                      ? surface.active
+                      : surface.badges.red.background,
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}
@@ -102,7 +111,7 @@ export function DefensiveField({
                     <Text
                       numberOfLines={1}
                       style={{
-                        color: '#222',
+                        color: textColor,
                         fontSize: 10,
                         lineHeight: 10,
                         width: '100%',
@@ -115,7 +124,7 @@ export function DefensiveField({
                     <>
                       <Text
                         style={{
-                          color: '#222',
+                          color: textColor,
                           fontSize: 11,
                           fontWeight: '700'
                         }}
@@ -127,7 +136,7 @@ export function DefensiveField({
                         adjustsFontSizeToFit
                         minimumFontScale={0.91}
                         style={{
-                          color: '#222',
+                          color: textColor,
                           fontSize: 11,
                           width: '100%',
                           textAlign: 'center'

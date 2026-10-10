@@ -61,7 +61,7 @@ describe('player entry sheet', function () {
     expect(
       (node('Save and Add Another Player').firstChild as HTMLElement).style
         .color
-    ).equals('rgb(122, 152, 96)')
+    ).equals('rgb(52, 211, 153)')
     await act(async () => {
       changeTheme(tsBallpark)
     })

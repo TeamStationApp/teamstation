@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Pressable, Switch, Text, View } from 'react-native'
+import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import {
   DICTATION_MODEL_NAMES,
@@ -92,6 +92,15 @@ export function ScoringSettings({
         accessibilityLabel={label}
         value={on}
         disabled={value == null}
+        trackColor={{
+          false: theme.scoringSurface.inputBorder,
+          true: theme.scoringSurface.active
+        }}
+        thumbColor={theme.scoringSurface.switchThumb}
+        {...(Platform.OS === 'web'
+          ? { activeThumbColor: theme.scoringSurface.switchThumb }
+          : {})}
+        ios_backgroundColor={theme.scoringSurface.idle}
         onValueChange={change}
       />
     </View>

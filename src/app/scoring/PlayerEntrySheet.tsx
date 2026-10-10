@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, TextInput, View } from 'react-native'
+import { Pressable, Text, type TextInput, View } from 'react-native'
 
 import { Button } from '../components/Button'
-import { useTheme } from '../theme/ThemeContext'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
   emptyPlayerDraft,
@@ -11,7 +10,10 @@ import {
   playerDraftError
 } from './playerDraft'
 import { RosterSelector } from './RosterSelector'
+import { ScoringPill } from './ScoringPill'
 import { ScoringError, ScoringSheet } from './ScoringSheet'
+import { useScoringSheetTheme } from './scoringSheetTheme'
+import { ScoringTextInput } from './ScoringTextInput'
 
 export function PlayerEntrySheet({
   onClose,
@@ -24,7 +26,7 @@ export function PlayerEntrySheet({
   onAddPlaceholders?: (count: number) => void | Promise<void>
   onAdd: (draft: PlayerDraft) => void | Promise<void>
 }): React.ReactElement {
-  const theme = useTheme()
+  const theme = useScoringSheetTheme()
   const [draft, setDraft] = useState(emptyPlayerDraft)
   const [submitted, setSubmitted] = useState(false)
   const [placeholders, setPlaceholders] = useState(false)
@@ -100,7 +102,7 @@ export function PlayerEntrySheet({
                 return (
                   <View key={key} style={{ gap: 4 }}>
                     <Text style={text}>{label}</Text>
-                    <TextInput
+                    <ScoringTextInput
                       ref={
                         key === 'firstName'
                           ? first
@@ -126,16 +128,6 @@ export function PlayerEntrySheet({
                       autoCapitalize="words"
                       onChangeText={value => {
                         setDraft(previous => ({ ...previous, [key]: value }))
-                      }}
-                      style={{
-                        ...text,
-                        fontSize: 16,
-                        minHeight: 44,
-                        padding: 10,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: theme.inputBorderColor,
-                        backgroundColor: theme.backgroundColor
                       }}
                     />
                   </View>
@@ -179,61 +171,32 @@ export function PlayerEntrySheet({
             </Text>
             <View
               style={{
-                borderRadius: 10,
-                backgroundColor: theme.backgroundColor,
-                shadowColor: theme.buttonShadowColor,
-                shadowOpacity: 1,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 3 },
-                elevation: 3
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                gap: 6
               }}
             >
-              <View style={{ borderRadius: 10, overflow: 'hidden' }}>
-                {PLAYER_POSITIONS.map((position, index) => {
-                  const selected = draft.positions.includes(position)
-                  return (
-                    <Pressable
-                      key={position}
-                      accessibilityRole="checkbox"
-                      accessibilityLabel={`Player position ${position}`}
-                      accessibilityState={{ checked: selected }}
-                      aria-checked={selected}
-                      onPress={() => {
-                        setDraft(previous => ({
-                          ...previous,
-                          positions: selected
-                            ? previous.positions.filter(
-                                value => value !== position
-                              )
-                            : [...previous.positions, position]
-                        }))
-                      }}
-                      style={{
-                        minHeight: 40,
-                        justifyContent: 'center',
-                        paddingHorizontal: 12,
-                        borderBottomWidth:
-                          index === PLAYER_POSITIONS.length - 1 ? 0 : 1,
-                        borderBottomColor: theme.defaultBorderColor,
-                        backgroundColor: selected
-                          ? theme.scoringMenuActiveBackground
-                          : theme.backgroundColor
-                      }}
-                    >
-                      <Text
-                        style={{
-                          ...text,
-                          color: selected
-                            ? theme.scoringMenuActiveText
-                            : theme.primaryTextColor
-                        }}
-                      >
-                        {position}
-                      </Text>
-                    </Pressable>
-                  )
-                })}
-              </View>
+              {PLAYER_POSITIONS.map(position => {
+                const selected = draft.positions.includes(position)
+                return (
+                  <ScoringPill
+                    key={position}
+                    label={position}
+                    accessibilityLabel={`Player position ${position}`}
+                    selected={selected}
+                    onPress={() => {
+                      setDraft(previous => ({
+                        ...previous,
+                        positions: selected
+                          ? previous.positions.filter(
+                              value => value !== position
+                            )
+                          : [...previous.positions, position]
+                      }))
+                    }}
+                  />
+                )
+              })}
             </View>
           </View>
         </View>

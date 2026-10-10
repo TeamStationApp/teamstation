@@ -2,28 +2,25 @@ import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { lstrings } from '../locales/strings'
+import { scoringSurface } from '../theme/scoringSurface'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringMenuIcon } from './ScoringMenuIcon'
 import type { MenuIconKind } from './scoringMenuIcons'
 
 export const SCORING_MENU = {
-  background: 'rgba(18, 28, 23, 0.95)',
-  border: 'rgba(16, 185, 129, 0.4)',
-  divider: 'rgba(6, 78, 59, 0.5)',
-  text: '#e2e8f0',
-  active: '#1d6b42',
-  activeEnd: '#165835',
-  accent: '#34d399',
+  background: scoringSurface.background,
+  border: scoringSurface.border,
+  divider: scoringSurface.divider,
+  text: scoringSurface.text,
+  active: scoringSurface.active,
+  activeEnd: scoringSurface.activeEnd,
+  accent: scoringSurface.accent,
   bottom: 144,
   rowHeight: 44,
   outPanelHeight: 160
 } as const
 
-const badgeColors = {
-  green: { text: '#6ee7b7', background: '#10b98133', border: '#10b9814d' },
-  amber: { text: '#fcd34d', background: '#f59e0b33', border: '#f59e0b4d' },
-  red: { text: '#fca5a5', background: '#450a0acc', border: '#991b1b99' }
-} as const
+const badgeColors = scoringSurface.badges
 export const SCORING_GREEN_BADGE = badgeColors.green
 const decorations: Record<
   string,
@@ -68,7 +65,7 @@ export function ScoringMenuLabel({
   const decoration = decorations[label]
   const colors =
     decoration != null && 'badge' in decoration
-      ? badgeColors[decoration.tone]
+      ? theme.scoringSurface.badges[decoration.tone]
       : undefined
   return (
     <View
@@ -88,7 +85,9 @@ export function ScoringMenuLabel({
         <Text
           selectable={false}
           style={{
-            color: active ? '#a7f3d0' : '#a3a3a3',
+            color: active
+              ? theme.scoringSurface.chevronActive
+              : theme.scoringSurface.mutedText,
             fontSize: 17,
             lineHeight: 18
           }}
@@ -109,14 +108,24 @@ export function ScoringMenuLabel({
           lineHeight: 18,
           fontWeight: '700',
           letterSpacing: 0.2,
-          color: danger ? '#f87171' : active ? '#ffffff' : SCORING_MENU.text
+          color: danger
+            ? theme.scoringSurface.danger
+            : active
+              ? theme.scoringSurface.activeText
+              : theme.scoringSurface.text
         }}
       >
         {label === 'Place a Runner (Tiebreaker)' ? (
           <>
             {lstrings.scoring_place_runner}
             {'\n'}
-            <Text style={{ color: '#cbd5e1', fontSize: 11, fontWeight: '500' }}>
+            <Text
+              style={{
+                color: theme.scoringSurface.secondaryText,
+                fontSize: 11,
+                fontWeight: '500'
+              }}
+            >
               {lstrings.scoring_tiebreaker}
             </Text>
           </>
@@ -136,8 +145,8 @@ export function ScoringMenuLabel({
               width: 8,
               height: 8,
               borderRadius: 4,
-              backgroundColor: '#6ee7b7',
-              shadowColor: '#34d399',
+              backgroundColor: theme.scoringSurface.badges.green.text,
+              shadowColor: theme.scoringSurface.accent,
               shadowOpacity: 1,
               shadowRadius: 6,
               shadowOffset: { width: 0, height: 0 }
@@ -146,7 +155,11 @@ export function ScoringMenuLabel({
         ) : decoration != null && 'icon' in decoration ? (
           <ScoringMenuIcon
             kind={decoration.icon}
-            color={active ? '#6ee7b7' : '#a3a3a3'}
+            color={
+              active
+                ? theme.scoringSurface.badges.green.text
+                : theme.scoringSurface.mutedText
+            }
           />
         ) : decoration != null && 'badge' in decoration && colors != null ? (
           <View
@@ -176,7 +189,12 @@ export function ScoringMenuLabel({
         {chevron === 'right' && (
           <Text
             selectable={false}
-            style={{ color: active ? '#a7f3d0' : '#a3a3a3', fontSize: 17 }}
+            style={{
+              color: active
+                ? theme.scoringSurface.chevronActive
+                : theme.scoringSurface.mutedText,
+              fontSize: 17
+            }}
           >
             ›
           </Text>
@@ -197,7 +215,7 @@ export function OutTypeHeader(): React.ReactElement {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: '#172720',
+        backgroundColor: theme.scoringSurface.idle,
         borderBottomWidth: 1,
         borderBottomColor: SCORING_MENU.border
       }}
@@ -227,7 +245,7 @@ export function OutTypeHeader(): React.ReactElement {
         style={{
           fontFamily: theme.regularTextFont,
           fontSize: 9,
-          color: '#a3a3a3',
+          color: theme.scoringSurface.mutedText,
           fontWeight: '600'
         }}
       >
