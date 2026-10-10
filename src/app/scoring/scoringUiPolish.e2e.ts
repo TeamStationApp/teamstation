@@ -377,7 +377,9 @@ async function main(): Promise<void> {
       from: {
         point: `${Math.round(from.x + from.width / 2)},${Math.round(from.y + from.height / 2)}`
       },
-      to: { point: `${Math.round(to.x + to.width / 2)},${Math.round(to.y + 6)}` },
+      to: {
+        point: `${Math.round(to.x + to.width / 2)},${Math.round(to.y + 6)}`
+      },
       holdDuration: 700,
       duration: 1000
     })
