@@ -133,7 +133,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     }
   })
   useEffect(() => {
-    invalidate()
+    invalidate(2)
   }, [invalidate, players, props.movementRevision, props.presentationPaused])
   useEffect(() => {
     gl.shadowMap.autoUpdate = false

@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const section = process.env.SCORING_UI_SECTION
   assert(
     section == null ||
-      ['roster', 'appearance', 'workflow', 'tags'].includes(section),
+      ['roster', 'appearance', 'workflow', 'bases', 'tags'].includes(section),
     'SCORING_UI_SECTION must name a supported scenario'
   )
   const phase = 'after'
@@ -67,6 +67,7 @@ async function main(): Promise<void> {
   interface Node {
     text?: string
     type?: string
+    enabled?: boolean
     bounds?: { x: number; y: number; width: number; height: number }
     children?: Node[]
   }
@@ -106,6 +107,23 @@ async function main(): Promise<void> {
     console.log('Tap', text)
     if (native) {
       await m.waitForAnimationToEnd({ timeout: 3000 })
+      if (text === 'More') {
+        const deadline = Date.now() + 15000
+        while (Date.now() < deadline) {
+          const nodes = flat(await m.hierarchy())
+          if (nodes.some(node => node.text === 'Dismiss More')) return
+          const target = nodes.find(
+            node => node.text === text && node.enabled !== false
+          )?.bounds
+          if (target != null)
+            await point(
+              target.x + target.width / 2,
+              target.y + target.height / 2
+            )
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+        assert.fail('Native More menu must open after its transition settles')
+      }
       if (
         !['Cancel', 'Add Player', 'More'].includes(text) &&
         !text.startsWith('Tag event:')
@@ -528,6 +546,12 @@ async function main(): Promise<void> {
       /^Place runner on [123]B$/.test(node.text ?? '')
     )
     assert.equal(new Set(bases.map(node => node.text)).size, 3)
+    if (section === 'bases') {
+      await tap('Cancel runner placement')
+      await shown('Juan Soto')
+      console.log('PASS base targets and restoration after cancel')
+      return
+    }
     await tap('Place runner on 2B')
     await shown('Select Runner for 2B')
     await shown('Recently Batted Players')
@@ -701,7 +725,8 @@ async function main(): Promise<void> {
     await m.launchApp({ stopApp: true })
     if (section == null || section === 'roster') await rosterInteractions()
     if (section == null || section === 'appearance') await appearance()
-    if (section == null || section === 'workflow') await workflow()
+    if (section == null || ['workflow', 'bases'].includes(section))
+      await workflow()
     if (section == null || ['appearance', 'tags'].includes(section))
       await tagsAndExit()
     console.log(`PASS ${surface} scoring UI polish`)
