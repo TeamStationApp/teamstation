@@ -86,8 +86,9 @@ async function main(): Promise<void> {
     console.log('Tap', text)
     if (native) {
       const id = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      await m.assertVisible({ id, timeout: 15000 })
-      if (text !== 'Add Player' && text !== 'Cancel') {
+      const defensivePlayer = text.startsWith('Assign P #')
+      if (!defensivePlayer) await m.assertVisible({ id, timeout: 15000 })
+      if (text !== 'Add Player' && text !== 'Cancel' && !defensivePlayer) {
         await m.tapOn({ id, timeout: 15000 })
         await new Promise(resolve => setTimeout(resolve, 500))
         return
@@ -217,6 +218,30 @@ async function main(): Promise<void> {
     await tap(label)
   }
   const reach = async (text: string): Promise<void> => {
+    if (text.startsWith('Add Owls ')) {
+      // The roster has separate columns; swipe inside the player column.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const nodes = flat(await m.hierarchy())
+        const screen = nodes.find(node => node.type === 'Window')?.bounds
+        assert(screen != null)
+        const target = nodes.filter(node => node.text === text).at(-1)?.bounds
+        if (
+          target != null &&
+          target.height > 0 &&
+          target.y > 200 &&
+          target.y + target.height < screen.height - 180
+        )
+          return
+        const endpoint = await driver()
+        const x = Math.round(screen.width / 4)
+        const result = await m.eval(
+          `http.post(${JSON.stringify(endpoint + '/wda/dragfromtoforduration')}, {body:${JSON.stringify({ fromX: x, fromY: Math.round(screen.height - 220), toX: x, toY: 300, duration: 0.001 })}})`
+        )
+        assert.equal(result.status, 200)
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+      assert.fail(`Roster player must be reachable: ${text}`)
+    }
     if (!native) {
       for (let attempt = 0; attempt < 8; attempt++) {
         const nodes = flat(await m.hierarchy())
@@ -520,8 +545,36 @@ async function main(): Promise<void> {
       await open(true)
       await tap('Assign P')
       await shown('^Assign pitcher$')
+      await shown('Bench')
+      await shown('Fielders')
       await capture('defensive')
+      await tap('Create Player')
+      await shown('First Name')
       await tap('Cancel')
+      await shown('^Assign pitcher$')
+      await tap('Create Player')
+      await finishKeyboard()
+      await reach('Add Placeholder Players')
+      await tap('Add Placeholder Players')
+      await shown('Select number of players to add')
+      await tap('Cancel')
+      await shown('First Name')
+      await tap('Cancel')
+      await shown('^Assign pitcher$')
+      await tap('Cancel')
+      await shown('Assign P')
+      await tap('Assign P')
+      const candidate = flat(await m.hierarchy()).find(
+        node => node.text?.startsWith('Assign P #1 ') === true
+      )?.text
+      assert(candidate != null)
+      await tap(candidate)
+      await shown('Undo')
+      assert(!flat(await m.hierarchy()).some(node => node.text === 'Assign P'))
+      console.log(
+        'PASS defensive badges, nested child cancellation and existing player assignment'
+      )
+      assert.deepEqual(fixture.unexpected, [])
       return
     }
     if (process.env.SCORING_MODAL_SECTION === 'behavior') {
@@ -529,24 +582,28 @@ async function main(): Promise<void> {
       assert.deepEqual(fixture.unexpected, [])
       return
     }
-    if (process.env.SCORING_MODAL_SECTION === 'extended') {
-      await placeRunner()
-      await tap('Undo Place a Runner')
-      await menu('Overrides')
-      await input('inning', '0')
-      await finishKeyboard()
-      await reach(
-        'Use whole numbers: inning 1 or higher, scores 0 or higher, balls 0–3, strikes 0–2, outs 0–2.'
-      )
-      await shown('Use whole numbers')
-      await tap('Cancel')
-      await menu('Overrides')
-      await input('inning', '2')
-      await finishKeyboard()
-      await reach('Apply Override')
-      await tap('Apply Override')
-      await shown('Undo Override')
-      await tap('Undo Override')
+    if (
+      ['extended', 'picker'].includes(process.env.SCORING_MODAL_SECTION ?? '')
+    ) {
+      if (process.env.SCORING_MODAL_SECTION === 'extended') {
+        await placeRunner()
+        await tap('Undo Place a Runner')
+        await menu('Overrides')
+        await input('inning', '0')
+        await finishKeyboard()
+        await reach(
+          'Use whole numbers: inning 1 or higher, scores 0 or higher, balls 0–3, strikes 0–2, outs 0–2.'
+        )
+        await shown('Use whole numbers')
+        await tap('Cancel')
+        await menu('Overrides')
+        await input('inning', '2')
+        await finishKeyboard()
+        await reach('Apply Override')
+        await tap('Apply Override')
+        await shown('Undo Override')
+        await tap('Undo Override')
+      }
       for (const count of [1, 16]) {
         await menu('Set Team Rosters')
         await tap('Create Player')
@@ -555,26 +612,22 @@ async function main(): Promise<void> {
         await tap('Add Placeholder Players')
         await shown('Select number of players to add')
         if (native) {
-          const endpoint = await driver()
-          const found = await m.eval(
-            `http.post(${JSON.stringify(endpoint + '/element')}, {body:{using:'class chain',value:'**/XCUIElementTypePickerWheel'}})`
-          )
-          const value = JSON.parse(found.body).value
-          const id =
-            value['element-6066-11e4-a52e-4f735466cecf'] ?? value.ELEMENT
-          assert(typeof id === 'string')
-          const selected = await m.eval(
-            `http.post(${JSON.stringify(endpoint + '/element/' + id + '/value')}, {body:{value:[${JSON.stringify(String(count))}]}})`
-          )
-          assert.equal(selected.status, 200)
-          await new Promise(resolve => setTimeout(resolve, 2500))
-          const actual = await m.eval(
-            `http.get(${JSON.stringify(endpoint + '/element/' + id + '/attribute/value')})`
-          )
-          assert.equal(
-            String(JSON.parse(actual.body).value).split(',')[0],
-            String(count)
-          )
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const wheel = flat(await m.hierarchy()).find(
+              node => node.type === 'PickerWheel'
+            )
+            assert(wheel?.bounds != null)
+            const selected = Number(wheel.text?.split(',')[0])
+            assert(Number.isInteger(selected))
+            if (selected === count) break
+            assert(attempt < 19, 'Native picker count must be selectable')
+            await point(
+              wheel.bounds.x + wheel.bounds.width / 2,
+              wheel.bounds.y +
+                wheel.bounds.height * (selected < count ? 0.64 : 0.36)
+            )
+            await new Promise(resolve => setTimeout(resolve, 500))
+          }
         } else {
           for (let attempt = 0; attempt < 8; attempt++) {
             const nodes = flat(await m.hierarchy())
@@ -606,6 +659,7 @@ async function main(): Promise<void> {
             })
           }
         }
+        console.log('Selected placeholder count', count)
         await tap('Add')
         await shown('Create Player')
         await tap('Cancel')
@@ -618,8 +672,12 @@ async function main(): Promise<void> {
         await tap('Undo Set team roster')
       }
       console.log(
-        'PASS tiebreaker placement/Undo, Overrides validation/apply/Undo, real placeholder picker minimum/maximum and roster save/Undo'
+        'PASS real placeholder picker minimum/maximum and roster save/Undo'
       )
+      if (process.env.SCORING_MODAL_SECTION === 'extended')
+        console.log(
+          'PASS tiebreaker placement/Undo, Overrides validation/apply/Undo'
+        )
       assert.deepEqual(fixture.unexpected, [])
       return
     }
