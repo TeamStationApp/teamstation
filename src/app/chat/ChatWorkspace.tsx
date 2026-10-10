@@ -105,6 +105,10 @@ function WorkspaceContent(
             selectedId={selected}
             selectedVisible={messagesVisible}
             initialOffset={props.state.listOffset}
+            initialAnchor={props.state.listAnchor}
+            onAnchor={anchor => {
+              props.state.listAnchor = anchor
+            }}
             onOffset={offset => {
               props.state.listOffset = offset
             }}

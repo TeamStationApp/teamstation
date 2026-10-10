@@ -18,6 +18,7 @@ export interface ChatDraft {
 export interface ChatWorkspaceState {
   drafts: Map<string, ChatDraft>
   listOffset: number
+  listAnchor?: { id: string; relativeY: number }
   selectedId?: string
 }
 export function newChatWorkspaceState(): ChatWorkspaceState {
@@ -174,6 +175,7 @@ export function chatDraftOwner(
     state.drafts.clear()
     state.selectedId = undefined
     state.listOffset = 0
+    state.listAnchor = undefined
   }
   const owner = new ChatDraftOwner(state)
   owners.set(state, { engine, userId, owner })
