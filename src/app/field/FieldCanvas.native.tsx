@@ -125,7 +125,12 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       style={{ flex: 1 }}
       onLayout={event => {
         const { width, height } = event.nativeEvent.layout
-        setLayout({ width: Math.round(width), height: Math.round(height) })
+        const next = { width: Math.round(width), height: Math.round(height) }
+        setLayout(current =>
+          current?.width === next.width && current.height === next.height
+            ? current
+            : next
+        )
       }}
     >
       {layout != null && (
@@ -150,16 +155,19 @@ function RelayedScene({
   onNameplates: (plates: NameplatePlacement[]) => void
 }): React.ReactElement {
   const relayed = useRelay(relay)
-  // Draw a presentation's first frame and player-list changes in the task
-  // that brought them. A paused demand loop must also clear removed figures.
+  // A presentation's first frame is drawn in the task that brought it, not
+  // in the frame after, when Fiber's own loop would: that frame after was
+  // most of a pitch's wait between the tap and the ball leaving the hand.
   const advance = useThree(state => state.advance)
+  const invalidate = useThree(state => state.invalidate)
+  useEffect(() => invalidate(), [relayed.players, invalidate])
   const starting = relayed.presentation?.id
   useLayoutEffect(() => {
     // React Native has `performance.now()`, but its types leave it out.
     const clock = (globalThis as { performance?: { now: () => number } })
       .performance
-    advance(clock?.now() ?? Date.now())
-  }, [starting, relayed.players, advance])
+    if (starting != null) advance(clock?.now() ?? Date.now())
+  }, [starting, advance])
   return <FieldScene {...relayed} onNameplates={onNameplates} touchPlacement />
 }
 

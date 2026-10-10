@@ -187,7 +187,7 @@ export function TiebreakerBases({
         onPress={onCancel}
         style={{
           position: 'absolute',
-          bottom: 140,
+          bottom: 180,
           alignSelf: 'center',
           minHeight: 44,
           paddingHorizontal: 24,
