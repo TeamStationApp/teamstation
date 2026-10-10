@@ -1,61 +1,69 @@
+import * as defaultSdk from '../sentrySdk'
+import type { WalkUpClip, WalkUpMusicOptions } from './makeWalkUpMusic'
 import type { NativeWalkUpMusicState } from './NativeWalkUpMusic'
 
-/** How long reports gather before they are sent together. */
-export const MUSIC_LOG_FLUSH_MS = 1000
-
-type Post = (url: string, body: string) => Promise<unknown>
-
-const defaultPost: Post = async (url, body) =>
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body
-  })
+export type MusicLogSdk = Pick<typeof defaultSdk, 'addBreadcrumb'>
 
 /**
- * Sends every `WalkUpMusicState` report to the server's `/logs`, tagged
- * `[client walkUpMusic-<platform>]`, so what a phone played — positions,
- * levels, fades — can be read next to what the server did. Reports gather
- * for a second, and an `idle` or `error` sends at once. Each is also written
- * to the console, which is the device log. A post that fails is dropped:
- * this is a record, never a reason for playback to stop.
+ * Records every clip started and every `WalkUpMusicState` report, so what a
+ * phone played — positions, levels, fades — is known when something goes
+ * wrong. Each report is written to the console, which is the device log.
+ * Sentry keeps the ones that tell the story as breadcrumbs: each start, with
+ * its handle, clip and fades; every report but `playing`, which comes every
+ * 250 ms and would crowd out everything else; and the first `playing` of
+ * each start, which shows the clip really began. A start is told apart by
+ * its handle and its clip: a tick from the clip before can still arrive
+ * after the next one is asked for. An `error` is kept at the
+ * error level but sends no event of its own: the screen already shows it,
+ * and the app does not report what the screen explains. Without a DSN,
+ * Sentry keeps nothing.
  */
 export function musicLog(
-  apiBaseUrl: string,
-  platform: string,
-  post: Post = defaultPost
-): (report: NativeWalkUpMusicState) => void {
-  const run = Math.random().toString(36).slice(2, 10)
-  let lines: Array<{
-    at: string
-    level: 'info'
-    text: string
-    data: NativeWalkUpMusicState
-  }> = []
-  let timer: ReturnType<typeof setTimeout> | undefined
+  sdk: MusicLogSdk = defaultSdk
+): Required<Pick<WalkUpMusicOptions, 'onPlay' | 'onReport'>> {
+  let started: WalkUpClip | undefined
+  let heard = false
 
-  const flush = (): void => {
-    if (timer != null) clearTimeout(timer)
-    timer = undefined
-    if (lines.length === 0) return
-    const body = JSON.stringify({
-      source: `walkUpMusic-${platform}`,
-      run,
-      lines
-    })
-    lines = []
-    post(`${apiBaseUrl}/logs`, body).catch(() => undefined)
+  return {
+    onPlay: clip => {
+      started = clip
+      heard = false
+      sdk.addBreadcrumb({
+        category: 'walkUpMusic',
+        level: 'info',
+        message: 'WalkUpMusic play',
+        data: { ...clip }
+      })
+    },
+    onReport: report => {
+      console.log(`WalkUpMusicState ${JSON.stringify(report)}`)
+      if (report.kind === 'playing') {
+        if (heard || !isFrom(started, report)) return
+        heard = true
+      }
+      sdk.addBreadcrumb({
+        category: 'walkUpMusic',
+        level: report.kind === 'error' ? 'error' : 'info',
+        message: `WalkUpMusicState ${report.kind}`,
+        data: { ...report }
+      })
+    }
   }
+}
 
-  return report => {
-    console.log(`WalkUpMusicState ${JSON.stringify(report)}`)
-    lines.push({
-      at: new Date().toISOString(),
-      level: 'info',
-      text: `WalkUpMusicState ${report.kind}`,
-      data: report
-    })
-    if (report.kind !== 'playing' || lines.length >= 50) flush()
-    else timer ??= setTimeout(flush, MUSIC_LOG_FLUSH_MS)
-  }
+/** How far before its start a clip's first tick may read, as a seek settles. */
+const SEEK_SLACK_MS = 1000
+
+/** Whether a `playing` report is from this clip, or from the one before. */
+function isFrom(
+  clip: WalkUpClip | undefined,
+  report: NativeWalkUpMusicState
+): boolean {
+  if (clip == null) return true
+  const positionMs = report.positionMs ?? 0
+  return (
+    report.handle === clip.handle &&
+    positionMs >= clip.startMs - SEEK_SLACK_MS &&
+    positionMs <= clip.endMs
+  )
 }

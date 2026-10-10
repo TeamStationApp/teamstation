@@ -1,4 +1,4 @@
-import type { Event } from '@sentry/core'
+import type { Breadcrumb, Event } from '@sentry/core'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
@@ -46,6 +46,14 @@ describe('sentry scrub', function () {
     [
       '/media/1700000000/sig_abc/videos/9/hls/x.m3u8',
       `/media/${FILTERED}/videos/9/hls/x.m3u8`
+    ],
+    [
+      'GET https://app.example.test/media/1700000000/sig_abc/x.mp4',
+      `GET https://app.example.test/media/${FILTERED}/x.mp4`
+    ],
+    [
+      'content://media/external/audio/media/31',
+      'content://media/external/audio/media/31'
     ],
     [
       'rtmps://live.example.test:1936/live/streamkey123',
@@ -150,6 +158,34 @@ describe('sentry scrub', function () {
     expect(scrubBreadcrumb({ category: 'navigation' })).deep.equals({
       category: 'navigation'
     })
+  })
+
+  it('keeps a walk-up music breadcrumb, its levels and its handle', function () {
+    const crumb = (data: Record<string, unknown>): Breadcrumb => ({
+      category: 'walkUpMusic',
+      level: 'info',
+      message: `WalkUpMusicState ${String(data.kind)}`,
+      data
+    })
+    for (const data of [
+      {
+        kind: 'idle',
+        handle: 'catalog:1440833098',
+        fade: 'system',
+        lowestLevel: 0.1,
+        restoredLevel: 0.8
+      },
+      { kind: 'error', handle: 'catalog:1', message: 'Media unavailable' }
+    ]) {
+      expect(scrubBreadcrumb(crumb(data))).deep.equals(crumb(data))
+    }
+    const android = {
+      kind: 'playing',
+      handle: 'content://media/external/audio/media/31',
+      positionMs: 5250,
+      volume: 0.5
+    }
+    expect(scrubBreadcrumb(crumb(android))).deep.equals(crumb(android))
   })
 
   it('keeps a request to its method, path and harmless headers', function () {

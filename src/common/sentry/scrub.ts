@@ -49,7 +49,12 @@ export function scrubText(text: string): string {
         /\/(i|join|invite|approvals|native-approval)\/[^\s/?#]+/g,
         `/$1/${FILTERED}`
       )
-      .replace(/\/media\/[^\s/?#]+\/[^\s/?#]+\//g, `/media/${FILTERED}/`)
+      // A signed media path follows a host or a path segment; the phone's own
+      // `content://media/...` URIs, where `media` is the authority, are kept.
+      .replace(
+        /(^|[^/])\/media\/[^\s/?#]+\/[^\s/?#]+\//g,
+        `$1/media/${FILTERED}/`
+      )
       .replace(EMAIL, '[email]')
   )
 }

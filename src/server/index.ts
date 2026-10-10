@@ -49,7 +49,6 @@ import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
-import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
@@ -488,7 +487,6 @@ function runWorker(): void {
   )
   app.use('/api/v1', lineupRoutes(db))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
-  app.use('/api/v1', logRoutes())
   app.use('/api/v1', adminRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))

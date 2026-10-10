@@ -23,14 +23,6 @@ export function setAudit(
   locals.audit = subject
 }
 
-/**
- * Marks a write that changes nothing anyone would audit, such as a client's
- * log lines, so it does not add a row per post to the audit trail.
- */
-export function skipAudit(locals: Record<string, unknown>): void {
-  locals.skipAudit = true
-}
-
 const READ_ONLY = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 /**
@@ -50,7 +42,7 @@ export function withAudit(db: Kysely<Database>): RequestHandler {
     }
 
     res.on('finish', () => {
-      if (res.statusCode >= 400 || res.locals.skipAudit === true) return
+      if (res.statusCode >= 400) return
       const subject = (res.locals.audit ?? {}) as AuditSubject
       db.insertInto('audit_log')
         .values({

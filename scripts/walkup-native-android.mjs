@@ -2,16 +2,15 @@
 //
 // Required: WALKUP_DEVICE_UDID (an adb serial), MAESTRO_D (this agent's own
 // daemon; run `maestro-d ps` first), WALKUP_ARTIFACT_DIR. Optional:
-// WALKUP_SERVER_LOG, the API's log, to check the WalkUpMusicState lines that
-// reached /api/v1/logs; MAESTRO_D_CLIENT_ROOT, a checkout of the maestro-d
-// npm package when it is not installed.
+// MAESTRO_D_CLIENT_ROOT, a checkout of the maestro-d npm package when it is
+// not installed.
 //
 // The app must be signed in as S, T's songkeeper, with player C (Tom A)
 // holding no song or a song this script may remove, and player B (Blake B)
 // holding an Apple Music song. The phone must be unlocked. Real phones only.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
@@ -28,7 +27,6 @@ const required = key => {
 }
 const device = required('WALKUP_DEVICE_UDID')
 const artifacts = resolve(required('WALKUP_ARTIFACT_DIR'))
-const serverLog = process.env.WALKUP_SERVER_LOG
 const fixture = resolve('src/test/fixtures/walkup-fixture.mp3')
 const appId = 'app.teamstation.app'
 const permission = 'android.permission.READ_MEDIA_AUDIO'
@@ -136,7 +134,6 @@ try {
     '1'
   )
   await sleep(6000)
-  const serverStart = serverLog ? (await readFile(serverLog)).length : 0
 
   // E21: C → Set, refused, then allowed from Settings.
   await openPlayer('Tom A')
@@ -243,15 +240,6 @@ try {
   assert.equal(walkUpLog().length, 0, 'A disabled Preview plays nothing')
   await shot('e22-not-here')
 
-  if (serverLog != null) {
-    const lines = (await readFile(serverLog))
-      .subarray(serverStart)
-      .toString('utf8')
-      .split('\n')
-      .filter(line => line.includes('[client walkUpMusic-android]'))
-    assert(lines.length > 20, 'The reports reached /api/v1/logs')
-    await writeFile(join(artifacts, 'server-walkup.log'), lines.join('\n'))
-  }
   console.log('E21 and E22 passed')
 } catch (error) {
   await shot('failure').catch(() => undefined)

@@ -19,8 +19,19 @@ export type WalkUpMusicModule = Pick<
 export interface WalkUpMusicOptions {
   /** `ios` or `android`: which store the phone searches. */
   platform: string
+  /** Every clip asked for, as it starts: the native module reports none. */
+  onPlay?: (clip: WalkUpClip) => void
   /** Every raw state report, for the device log. */
   onReport?: (report: NativeWalkUpMusicState) => void
+}
+
+/** A clip as it is handed to the native module. */
+export interface WalkUpClip {
+  handle: string
+  startMs: number
+  endMs: number
+  fadeInMs: number
+  fadeOutMs: number
 }
 
 const ACCESS: readonly MusicAccess[] = [
@@ -78,6 +89,13 @@ export function makeWalkUpMusic(
       return picked == null ? null : asCandidate(picked)
     },
     async play(handle, startMs, endMs, fade) {
+      options.onPlay?.({
+        handle,
+        startMs,
+        endMs,
+        fadeInMs: fade.inMs,
+        fadeOutMs: fade.outMs
+      })
       await module
         .play(handle, startMs, endMs, fade.inMs, fade.outMs)
         .catch(rethrow)
