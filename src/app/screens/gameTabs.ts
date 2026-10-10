@@ -2,7 +2,7 @@ import type { GameDetail } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
 
-export type GameTab = 'boxScore' | 'watch' | 'score' | 'dj'
+export type GameTab = 'boxScore' | 'watch' | 'score' | 'dj' | 'settings'
 
 export interface GameTabPill {
   id: GameTab
@@ -26,6 +26,8 @@ export interface GameTabsInput {
   music?: { available: boolean }
   /** Present where the app can open DJ Game. */
   onDjGame?: () => void
+  onSettings?: () => void
+  canManage?: boolean
 }
 
 /**
@@ -54,6 +56,9 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
   // songs are set and played before, during and after.
   if (game.canDj && music?.available === true && onDjGame != null) {
     pills.push({ id: 'dj', label: lstrings.dj_game, role: 'button' })
+  }
+  if (input.canManage === true && input.onSettings != null) {
+    pills.push({ id: 'settings', label: 'Settings', role: 'button' })
   }
   return pills
 }

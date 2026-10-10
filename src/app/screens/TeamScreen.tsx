@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   type LayoutChangeEvent,
+  Pressable,
   Text,
   useWindowDimensions,
   View
@@ -16,6 +17,8 @@ import type {
   TeamStationClient,
   TeamSummary
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
+import type { GroupDetail } from '../../common/publicGroups'
 import {
   Badge,
   Card,
@@ -23,6 +26,7 @@ import {
   GameRow,
   HANDOFF_RAMP,
   HandoffView,
+  Icon,
   initialsOf,
   ListRow,
   ManageGear,
@@ -42,6 +46,7 @@ import {
   webStyle,
   WideTable
 } from '../components'
+import { FollowButton } from '../components/FollowButton'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -52,6 +57,8 @@ import {
   shortDateNoWeekday,
   shortTime
 } from './format'
+import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
+import { PublicTeamContent } from './PublicTeamContent'
 import {
   battingColumns,
   pitchingColumns,
@@ -64,12 +71,16 @@ import { chronological, gamesFor, nextGameIndex } from './whenFilter'
 export interface TeamScreenProps {
   client: TeamStationClient
   team: TeamSummary
+  /** Public projection supplied only when private team access is absent. */
+  publicDetail?: GroupDetail
+  /** Revalidate private collections when the access adapter refreshes. */
+  refreshRevision?: number
   /** The gear in the card's corner, for somebody who administers this team. */
   onManage?: () => void
   onOpenGame: (
     gameId: string,
     title: string,
-    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+    options?: GameListOpenOptions
   ) => void
   /**
    * A name on the roster. The team travels with it, so the player's stats open
@@ -135,7 +146,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     onOpenPlayer,
     initialTab,
     onTab,
-    onManage
+    onManage,
+    publicDetail,
+    refreshRevision
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -189,17 +202,22 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
 
-  // An address that names a section this screen does not have showed the
-  // default while still claiming the other one. Say what is actually on
-  // screen, correcting the entry rather than adding one.
+  // Browser/native Back can change the address while this team stays mounted.
   useEffect(() => {
-    if (initialTab != null && initialTab !== tab) onTab?.(tab, true)
-    // Once, against the address the screen opened on.
+    const next = tabOf(initialTab)
+    setTab(next)
+    if (initialTab != null && initialTab !== next) onTab?.(next, true)
+    // React to the address, not the shell's freshly created callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [initialTab])
 
   useEffect(() => {
     let cancelled = false
+    if (publicDetail != null) {
+      setLoading(false)
+      return
+    }
+    setError(undefined)
     const load = async (): Promise<void> => {
       const loadedGames = await client.teamGames(team.id)
       if (cancelled) return
@@ -213,7 +231,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           client.teamPitchingStats(team.id, seasonId ?? undefined),
           seasonId == null
             ? Promise.resolve<StandingsRow[]>([])
-            : client.standings(seasonId)
+            : client.standings(seasonId).catch((error: unknown) => {
+                // A team's own roster and stats do not require access to an
+                // unrelated host season or a season with no enrolled teams.
+                if (
+                  error instanceof HttpError &&
+                  ['forbidden', 'notFound'].includes(error.code)
+                )
+                  return []
+                throw error
+              })
         ])
       if (cancelled) return
       setRoster(loadedRoster)
@@ -229,6 +256,17 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     load()
       .catch((caught: unknown) => {
         if (!cancelled) {
+          if (
+            caught instanceof HttpError &&
+            ['forbidden', 'notFound'].includes(caught.code)
+          ) {
+            setGames([])
+            setRoster([])
+            setBatting([])
+            setPitching([])
+            setStanding(undefined)
+            setPlace(undefined)
+          }
           setError(caught instanceof Error ? caught.message : 'Cannot load')
         }
       })
@@ -238,7 +276,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, team.id])
+  }, [client, team.id, publicDetail, refreshRevision])
 
   const withVideo = games.filter(game => game.videoCount > 0)
   // The same rule as the schedule and the season page, not a fourth copy of
@@ -305,6 +343,19 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               )}
             </View>
             {place != null && <Badge label={placeLabel(place)} tone="honour" />}
+            {/*
+              Somebody who neither runs this team nor belongs to it sees the
+              public page; where an administrator has the gear, they can
+              follow. In the row rather than the corner, so a long name wraps
+              beside it instead of running underneath.
+            */}
+            {onManage == null && publicDetail != null && (
+              <FollowButton
+                client={client}
+                group={{ kind: 'team', id: team.id }}
+                name={team.name}
+              />
+            )}
           </View>
           {/*
           The bottom right corner, floated rather than laid out: in the flow
@@ -314,12 +365,27 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         */}
           {onManage != null && (
             <View style={styles.gearCorner}>
-              <ManageGear
-                client={client}
-                scopeType="team"
-                scopeId={team.id}
-                onPress={onManage}
-              />
+              {publicDetail == null ? (
+                <ManageGear
+                  client={client}
+                  scopeType="team"
+                  scopeId={team.id}
+                  onPress={onManage}
+                />
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Team settings"
+                  onPress={onManage}
+                  style={styles.publicGear}
+                >
+                  <Icon
+                    name="settings"
+                    size={1.25}
+                    color={theme.secondaryTextColor}
+                  />
+                </Pressable>
+              )}
             </View>
           )}
         </Card>
@@ -355,12 +421,20 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {error != null && <Text style={styles.error}>{error}</Text>}
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
+      {publicDetail != null && (
+        <PublicTeamContent
+          detail={publicDetail}
+          tab={tab}
+          onOpenGame={onOpenGame}
+        />
+      )}
+
       {/*
         One view for whichever tab is showing, a new one for each tab: the
         anchor measures it, and a tab that is new to the page has to be laid
         out before it can be.
       */}
-      {!loading && (
+      {!loading && publicDetail == null && (
         <View
           key={tab}
           testID="teamTabContent"
@@ -381,6 +455,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   <GameCard
                     key={game.id}
                     game={game}
+                    mode="videos"
                     teamId={team.id}
                     onOpen={onOpenGame}
                   />
@@ -595,14 +670,12 @@ function placeLabel(place: number): string {
 
 function GameCard(props: {
   game: GameSummary
+  mode: 'schedule' | 'videos'
   teamId: string
-  onOpen: (
-    gameId: string,
-    title: string,
-    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
-  ) => void
+  onOpen: (gameId: string, title: string, options?: GameListOpenOptions) => void
 }): React.ReactElement {
-  const { game, teamId, onOpen } = props
+  const { game, teamId, onOpen, mode } = props
+  const options = gameListOptions(game, mode)
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
   const result = resultFor(game, teamId)
@@ -625,14 +698,30 @@ function GameCard(props: {
         venue={game.venue}
         posterUrl={game.posterUrl}
         length={game.durationSec == null ? undefined : clock(game.durationSec)}
-        badgeLabel={result?.label}
-        badgeTone={result?.tone ?? 'neutral'}
-        onPress={() => {
-          onOpen(game.id, `${lines.first} ${lines.second}`, {
-            autoPlay: game.videoCount > 0
-          })
-        }}
+        badgeLabel={
+          game.pendingApproval
+            ? 'Pending approval'
+            : game.status === 'cancelled'
+              ? 'Canceled'
+              : result?.label
+        }
+        badgeTone={
+          game.pendingApproval ? 'neutral' : (result?.tone ?? 'neutral')
+        }
+        onPress={
+          options == null
+            ? undefined
+            : () => {
+                onOpen(game.id, `${lines.first} ${lines.second}`, options)
+              }
+        }
       />
+      {game.status === 'cancelled' &&
+        game.cancellationReason === 'withdrawal' && (
+          <Text style={styles.muted}>
+            Withdrawal — {game.withdrawnByTeamName ?? 'A team'} withdrew
+          </Text>
+        )}
       {game.ingestStatus === 'scoreMismatch' && (
         <Text style={styles.warning}>
           The plays and the reported score disagree, so highlights are withheld.
@@ -654,6 +743,8 @@ function ScheduleCard(props: {
 }): React.ReactElement {
   const { game, teamId, onOpen } = props
   const lines = matchupLines(game, teamId)
+  // A pending game opens its proposal, and only for those allowed to see it.
+  const options = gameListOptions(game, 'schedule')
   return (
     <Card>
       <ScheduleRow
@@ -665,11 +756,16 @@ function ScheduleCard(props: {
         homeScore={game.homeScore}
         videoCount={game.videoCount}
         result={resultFor(game, teamId)}
-        onPress={() => {
-          onOpen(game.id, `${lines.first} ${lines.second}`, {
-            autoPlay: game.videoCount > 0
-          })
-        }}
+        pendingApproval={game.pendingApproval}
+        cancellationReason={game.cancellationReason}
+        withdrawnByTeamName={game.withdrawnByTeamName}
+        onPress={
+          options == null
+            ? undefined
+            : () => {
+                onOpen(game.id, `${lines.first} ${lines.second}`, options)
+              }
+        }
       />
     </Card>
   )
@@ -858,6 +954,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '700',
     color: theme.scoreboardAccentColor
+  },
+  publicGear: {
+    width: theme.rem(2),
+    height: theme.rem(2),
+    borderRadius: theme.rem(1),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.containerBackgroundColor
   },
   identityText: {
     flex: 1,

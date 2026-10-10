@@ -8,6 +8,11 @@ import type {
   TeamStationClient,
   TeamSummary
 } from '../../common/api'
+import type { GroupKind, GroupRef } from '../../common/groupCreation'
+import { localityLabel } from '../../common/locality'
+import type { PublicGroup } from '../../common/publicGroups'
+import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
+import { creationIcons } from '../assets'
 import {
   Button,
   Card,
@@ -19,8 +24,10 @@ import {
   SectionHeader,
   VideoPoster
 } from '../components'
+import { CreationCard } from '../components/CreationCard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
+import type { GameListOpenOptions } from './gameListOptions'
 
 export interface HomeScreenProps {
   client: TeamStationClient
@@ -29,8 +36,10 @@ export interface HomeScreenProps {
   onOpenGame: (
     gameId: string,
     title: string,
-    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+    options?: GameListOpenOptions
   ) => void
+  onCreateGroup?: (kind: GroupKind) => void
+  onOpenGroup?: (ref: GroupRef) => void
 }
 
 /**
@@ -47,6 +56,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const styles = getStyles(useTheme())
 
   const [teams, setTeams] = useState<TeamSummary[]>([])
+  const [groups, setGroups] = useState<PublicGroup[]>([])
+  const [followed, setFollowed] = useState<PublicGroup[]>([])
   const [seasons, setSeasons] = useState<SeasonSummary[]>([])
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
   const [live, setLive] = useState<LiveNow[]>([])
@@ -132,13 +143,21 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
-      const [loadedTeams, loadedSeasons] = await Promise.all([
-        client.teams(),
-        client.seasons()
-      ])
+      const [loadedTeams, loadedSeasons, ownGroups, follows] =
+        await Promise.all([
+          client.teams(),
+          client.seasons(),
+          props.onOpenGroup == null ? Promise.resolve([]) : client.ownGroups(),
+          // Following is a nicety: Home still opens when it cannot be read.
+          props.onOpenGroup == null
+            ? Promise.resolve([])
+            : client.follows().catch(() => [])
+        ])
       if (cancelled) return
       setTeams(loadedTeams)
       setSeasons(loadedSeasons)
+      setGroups(ownGroups)
+      setFollowed(follows)
 
       // The most recently played game anywhere this person can see. It used
       // to look inside the first season it was handed, which showed a game
@@ -159,7 +178,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client])
+  }, [client, props.onOpenGroup])
 
   if (loading) {
     return (
@@ -169,12 +188,112 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     )
   }
 
-  const nothing = teams.length === 0 && seasons.length === 0
+  const leagues = groups.filter(group => group.kind === 'league')
+  // recentGame asks for played rows, so pending revisions here retain an
+  // approved score/recording. A projected unapproved event has neither.
+  const recentPublished =
+    recent != null &&
+    (!recent.pendingApproval ||
+      recent.videoCount > 0 ||
+      recent.homeScore != null ||
+      recent.awayScore != null)
 
+  // Followed groups sit in the same sections, after the person's own, and
+  // never twice.
+  const followedOf = (kind: GroupKind, own: Set<string>): PublicGroup[] =>
+    followed.filter(group => group.kind === kind && !own.has(group.id))
+  const followedTeams = followedOf('team', new Set(teams.map(team => team.id)))
+  const followedSeasons = followedOf(
+    'season',
+    new Set(seasons.map(season => season.id))
+  )
+  const followedLeagues = followedOf(
+    'league',
+    new Set(leagues.map(league => league.id))
+  )
+  const counts = {
+    league: leagues.length + followedLeagues.length,
+    season: seasons.length + followedSeasons.length,
+    team: teams.length + followedTeams.length
+  }
+  const missingKinds = (['league', 'season', 'team'] as const).filter(
+    kind => counts[kind] === 0
+  )
+  const canCreate = props.onCreateGroup != null && error == null
+  const titleOf = (kind: GroupKind): string =>
+    `${kind[0].toUpperCase()}${kind.slice(1)}`
+  /**
+   * `Create Team` beside a section's title. Finding a group to follow is the
+   * Search tab's job, so Home only creates.
+   */
+  const sectionActions = (
+    kind: GroupKind
+  ): Array<{
+    label: string
+    accessibilityLabel: string
+    onPress: () => void
+  }> =>
+    canCreate
+      ? [
+          {
+            label: `Create ${titleOf(kind)}`,
+            accessibilityLabel: `Create ${titleOf(kind)}`,
+            onPress: () => props.onCreateGroup?.(kind)
+          }
+        ]
+      : []
+  const followedRow = (group: PublicGroup): React.ReactElement => (
+    <ListRow
+      title={group.name}
+      subtitle={
+        group.kind === 'season'
+          ? seasonPeriodLabel(group.startsOn, group.endsOn)
+          : (group.parentNames[0] ??
+            (group.locality == null
+              ? undefined
+              : localityLabel(group.locality)))
+      }
+      emblem={initialsOf(group.name)}
+      emblemUri={group.imageUrl}
+      badgeLabel="Following"
+      badgeTone="neutral"
+      onPress={() => {
+        props.onOpenGroup?.({ kind: group.kind, id: group.id })
+      }}
+    />
+  )
+  const showEmptyHero = canCreate && missingKinds.length === 3
+  const descriptions: Record<GroupKind, string> = {
+    league:
+      'Create an organization that runs multiple seasons or tournaments. Leagues represent a longstanding organization that runs repeated seasons with new or recurring teams.',
+    season:
+      'Create a season or tournament with a game schedule for selected teams. A season is a time-scoped duration of games such as Spring 2027, Fall 2026, or 2026 Labor Day Classic. Seasons can be standalone or managed by a league.',
+    team: 'A team is a collection of coaches, staff, and players that can stand alone, be added to a season, and be managed by staff of the team, its parent seasons, or its parent league.'
+  }
+  const creationCards = (kinds: readonly GroupKind[]): React.ReactElement => (
+    <View
+      style={{
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 16,
+        marginBottom: 20
+      }}
+    >
+      {kinds.map(kind => (
+        <CreationCard
+          key={kind}
+          title={`Create ${kind[0].toUpperCase()}${kind.slice(1)}`}
+          icon={creationIcons[kind]}
+          description={descriptions[kind]}
+          onPress={() => props.onCreateGroup?.(kind)}
+        />
+      ))}
+    </View>
+  )
   return (
     <Screen>
       {error != null && <Text style={styles.error}>{error}</Text>}
-
+      {showEmptyHero && creationCards(missingKinds)}
       {live.length > 0 && (
         <View style={styles.section}>
           <SectionHeader title="Live now" />
@@ -263,6 +382,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               awayScore={recent.awayScore}
               homeScore={recent.homeScore}
               status={gameStatusLine(recent)}
+              pendingApproval={recent.pendingApproval}
               live={recent.status === 'inProgress'}
               date={shortDate(recent.startAt)}
               venue={recent.venue ?? undefined}
@@ -290,23 +410,37 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   }}
                 />
               )}
-              <Button
-                label="Box Score"
-                icon="format_list_bulleted"
-                kind="secondary"
-                style={styles.action}
-                onPress={() => {
-                  onOpenGame(recent.id, matchup(recent), { tab: 'boxScore' })
-                }}
-              />
+              {recentPublished && (
+                <Button
+                  label="Box Score"
+                  icon="format_list_bulleted"
+                  kind="secondary"
+                  style={styles.action}
+                  onPress={() => {
+                    onOpenGame(recent.id, matchup(recent), { tab: 'boxScore' })
+                  }}
+                />
+              )}
+              {recent.pendingApproval && recent.pendingRequestId != null && (
+                <Button
+                  label="Open game proposal"
+                  kind="secondary"
+                  style={styles.action}
+                  onPress={() => {
+                    onOpenGame(recent.id, matchup(recent), {
+                      pendingRequestId: recent.pendingRequestId
+                    })
+                  }}
+                />
+              )}
             </View>
           </Card>
         </View>
       )}
 
-      {teams.length > 0 && (
+      {counts.team > 0 && (
         <View style={styles.section}>
-          <SectionHeader title="Your teams" note={String(teams.length)} />
+          <SectionHeader title="Your teams" actions={sectionActions('team')} />
           <Card>
             {teams.map((team, index) => (
               <View key={team.id}>
@@ -322,13 +456,19 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 />
               </View>
             ))}
+            {followedTeams.map((group, index) => (
+              <View key={group.id}>
+                {index + teams.length > 0 && <View style={styles.divider} />}
+                {followedRow(group)}
+              </View>
+            ))}
           </Card>
         </View>
       )}
 
-      {seasons.length > 0 && (
+      {counts.season > 0 && (
         <View style={styles.section}>
-          <SectionHeader title="Seasons" note="Current & past" />
+          <SectionHeader title="Seasons" actions={sectionActions('season')} />
           <Card>
             {seasons.map((season, index) => (
               <View key={season.id}>
@@ -341,23 +481,67 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   badgeLabel={season.term ?? undefined}
                   badgeTone="neutral"
                   onPress={() => {
-                    onOpenSeason(season)
+                    props.onOpenGroup == null
+                      ? onOpenSeason(season)
+                      : props.onOpenGroup({ kind: 'season', id: season.id })
                   }}
                 />
+              </View>
+            ))}
+            {followedSeasons.map((group, index) => (
+              <View key={group.id}>
+                {index + seasons.length > 0 && <View style={styles.divider} />}
+                {followedRow(group)}
               </View>
             ))}
           </Card>
         </View>
       )}
-
-      {nothing && (
-        <Card>
-          <Text style={styles.emptyTitle}>Nothing to watch yet</Text>
-          <Text style={styles.muted}>
-            Your account is not on a team or in a season yet. Ask your league
-            administrator to add you, and this screen will fill in.
-          </Text>
-        </Card>
+      {canCreate &&
+        !showEmptyHero &&
+        missingKinds.length > 0 &&
+        (counts.team === 0 ? (
+          creationCards(missingKinds)
+        ) : (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {missingKinds.flatMap(kind =>
+              sectionActions(kind).map(action => (
+                <Button
+                  key={`${kind}:${action.label}`}
+                  compact
+                  kind="secondary"
+                  label={action.label}
+                  onPress={() => {
+                    action.onPress()
+                  }}
+                />
+              ))
+            )}
+          </View>
+        ))}
+      {counts.league > 0 && (
+        <View style={styles.section}>
+          <SectionHeader
+            title="Your leagues"
+            actions={sectionActions('league')}
+          />
+          <Card>
+            {leagues.map(league => (
+              <ListRow
+                key={league.id}
+                title={league.name}
+                emblem={initialsOf(league.name)}
+                emblemUri={league.imageUrl}
+                onPress={() => {
+                  props.onOpenGroup?.({ kind: 'league', id: league.id })
+                }}
+              />
+            ))}
+            {followedLeagues.map(group => (
+              <View key={group.id}>{followedRow(group)}</View>
+            ))}
+          </Card>
+        </View>
       )}
     </Screen>
   )

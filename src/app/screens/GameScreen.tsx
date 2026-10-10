@@ -85,6 +85,8 @@ export interface GameScreenProps {
    */
   /** Opens DJ Game, for a songkeeper of either team. */
   onDjGame?: () => void
+  /** Opens a separate scheduling settings screen for a participating team admin. */
+  onSettings?: () => void
   /**
    * The phone's music. DJ Game plays songs, so it is offered only where
    * there is music to play them with: never on the web.
@@ -325,6 +327,22 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [initialTab])
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
+  const [canManageSchedule, setCanManageSchedule] = useState(false)
+  useEffect(() => {
+    let active = true
+    setCanManageSchedule(false)
+    client.gameScheduling(gameId).then(
+      state => {
+        if (active) setCanManageSchedule(state.withdrawTeamIds.length > 0)
+      },
+      () => {
+        if (active) setCanManageSchedule(false)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [client, gameId, game])
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
@@ -933,9 +951,19 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const tabs = (
     <PillTabs
-      tabs={gameTabs({ game, music: props.music, onDjGame: props.onDjGame })}
+      tabs={gameTabs({
+        game,
+        music: props.music,
+        onDjGame: props.onDjGame,
+        canManage: canManageSchedule,
+        onSettings: props.onSettings
+      })}
       selected={tab}
       onSelect={next => {
+        if (next === 'settings') {
+          props.onSettings?.()
+          return
+        }
         if (next === 'dj') {
           props.onDjGame?.()
           return

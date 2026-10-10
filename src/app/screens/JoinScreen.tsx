@@ -172,6 +172,12 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
         <View style={styles.heading}>
           <Text style={styles.title}>{lstrings.join_title}</Text>
           <Text style={styles.subtitle}>{offer}</Text>
+          {info.requestedRoles != null && info.requestedRoles.length > 0 && (
+            <Text style={styles.subtitle}>
+              Requested access: {info.requestedRoles.join(', ')}. These roles
+              begin after you accept.
+            </Text>
+          )}
         </View>
 
         {!info.valid && !joined ? (
