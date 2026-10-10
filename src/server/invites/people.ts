@@ -2,7 +2,10 @@ import type { Kysely } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { authorizePersonChange, requireDirectAdmin } from '../groups/adminGuard'
 import type { InviteScopeType } from './invites'
 
 /**
@@ -85,6 +88,7 @@ export interface PendingPerson {
   email: string
   code: string
   invitedAt: string
+  requestId?: string
 }
 
 /**
@@ -116,7 +120,15 @@ export async function scopeTree(
       db,
       seasons.map(season => season.id)
     )
-    return { leagues: [league], seasons, teams }
+    const directTeams = await db
+      .selectFrom('teams')
+      .select(['id', 'name'])
+      .where('league_id', '=', scopeId)
+      .execute()
+    const merged = new Map(
+      [...teams, ...directTeams].map(team => [team.id, team])
+    )
+    return { leagues: [league], seasons, teams: [...merged.values()] }
   }
 
   if (scopeType === 'season') {
@@ -144,19 +156,21 @@ export async function scopeTree(
 
   const team = await db
     .selectFrom('teams')
-    .select(['id', 'name'])
+    .select(['id', 'name', 'league_id'])
     .where('id', '=', scopeId)
     .executeTakeFirst()
   if (team == null) return undefined
   const seasons = await db
-    .selectFrom('season_teams')
-    .innerJoin('seasons', 'seasons.id', 'season_teams.season_id')
+    .selectFrom('season_team_parents')
+    .innerJoin('seasons', 'seasons.id', 'season_team_parents.season_id')
     .select(['seasons.id as id', 'seasons.name as name', 'seasons.league_id'])
-    .where('season_teams.team_id', '=', scopeId)
+    .where('season_team_parents.team_id', '=', scopeId)
     .execute()
   const leagueIds = seasons
     .map(season => season.league_id)
     .filter((id): id is string => id != null)
+  if (team.league_id != null && !leagueIds.includes(team.league_id))
+    leagueIds.push(team.league_id)
   const leagues =
     leagueIds.length === 0
       ? []
@@ -172,16 +186,56 @@ export async function scopeTree(
   }
 }
 
+/** Management lists contain direct grants and actual ancestors, never descendants. */
+export async function managementPeopleTree(
+  db: Kysely<Database>,
+  scopeType: InviteScopeType,
+  scopeId: string,
+  seen = new Set<string>()
+): Promise<ScopeTree | undefined> {
+  const key = `${scopeType}:${scopeId}`
+  if (seen.has(key)) return undefined
+  seen.add(key)
+  const tree = await scopeTree(db, scopeType, scopeId)
+  if (tree == null) return undefined
+  if (scopeType === 'league')
+    return { leagues: tree.leagues, seasons: [], teams: [] }
+  if (scopeType === 'season')
+    return { leagues: tree.leagues, seasons: tree.seasons, teams: [] }
+  const team = await db
+    .selectFrom('teams')
+    .select(['custodian_type', 'custodian_id'])
+    .where('id', '=', scopeId)
+    .executeTakeFirstOrThrow()
+  if (team.custodian_type != null && team.custodian_id != null) {
+    const parent = await managementPeopleTree(
+      db,
+      team.custodian_type,
+      team.custodian_id,
+      seen
+    )
+    if (parent != null) {
+      for (const level of ['leagues', 'seasons', 'teams'] as const)
+        tree[level] = [
+          ...new Map(
+            [...tree[level], ...parent[level]].map(group => [group.id, group])
+          ).values()
+        ]
+    }
+  }
+  return tree
+}
+
 async function teamsOfSeasons(
   db: Kysely<Database>,
   seasonIds: string[]
 ): Promise<Array<{ id: string; name: string }>> {
   if (seasonIds.length === 0) return []
   const rows = await db
-    .selectFrom('season_teams')
-    .innerJoin('teams', 'teams.id', 'season_teams.team_id')
+    .selectFrom('season_team_parents')
+    .innerJoin('teams', 'teams.id', 'season_team_parents.team_id')
     .select(['teams.id as id', 'teams.name as name'])
-    .where('season_teams.season_id', 'in', seasonIds)
+    .where('season_team_parents.season_id', 'in', seasonIds)
     .groupBy(['teams.id', 'teams.name'])
     .orderBy('teams.name')
     .execute()
@@ -387,23 +441,47 @@ export async function peopleInScope(
 export async function pendingInvitations(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
-  scopeId: string
+  scopeId: string,
+  now = new Date()
 ): Promise<PendingPerson[]> {
   const rows = await db
     .selectFrom('invites')
-    .select(['id', 'code', 'for_email', 'created_at'])
-    .where('scope_type', '=', scopeType)
-    .where('scope_id', '=', scopeId)
+    .leftJoin('group_requests', 'group_requests.id', 'invites.request_id')
+    .select([
+      'invites.id',
+      'invites.code',
+      'invites.for_email',
+      'invites.created_at',
+      'invites.request_id'
+    ])
+    .where('invites.scope_type', '=', scopeType)
+    .where('invites.scope_id', '=', scopeId)
     .where('for_email', 'is not', null)
-    .where('revoked_at', 'is', null)
+    .where('invites.revoked_at', 'is', null)
     .where('uses', '=', 0)
-    .orderBy('created_at', 'desc')
+    .where(eb =>
+      eb.or([
+        eb('invites.expires_at', 'is', null),
+        eb('invites.expires_at', '>', now)
+      ])
+    )
+    .where(eb =>
+      eb.or([
+        eb('invites.request_id', 'is', null),
+        eb.and([
+          eb('group_requests.status', '=', 'pending'),
+          eb('group_requests.expires_at', '>', now)
+        ])
+      ])
+    )
+    .orderBy('invites.created_at', 'asc')
     .execute()
   return rows.map(row => ({
     inviteId: row.id,
     email: row.for_email ?? '',
     code: row.code,
-    invitedAt: new Date(row.created_at).toISOString()
+    invitedAt: new Date(row.created_at).toISOString(),
+    requestId: row.request_id ?? undefined
   }))
 }
 
@@ -419,33 +497,57 @@ export async function removeFromScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: number
+  userId: number,
+  actorId?: number
 ): Promise<{ removed: boolean }> {
-  if (scopeType === 'team') {
-    const gone = await db
-      .deleteFrom('memberships')
-      .where('team_id', '=', scopeId)
+  return await atomic(db, async trx => {
+    await lockKeys(trx, [
+      'creation:parent-graph',
+      `group:${scopeType}:${scopeId}`
+    ])
+    if (actorId != null)
+      await authorizePersonChange(
+        trx,
+        { kind: scopeType, id: scopeId },
+        userId,
+        actorId
+      )
+    const roles = await trx
+      .deleteFrom('scope_roles')
+      .where('scope_type', '=', scopeType)
+      .where('scope_id', '=', scopeId)
       .where('user_id', '=', userId)
-      .returning(['id'])
-      .executeTakeFirst()
-    return { removed: gone != null }
-  }
-  if (scopeType === 'season') {
-    const gone = await db
-      .deleteFrom('season_members')
-      .where('season_id', '=', scopeId)
-      .where('user_id', '=', userId)
-      .returning(['id'])
-      .executeTakeFirst()
-    return { removed: gone != null }
-  }
-  const gone = await db
-    .deleteFrom('league_members')
-    .where('league_id', '=', scopeId)
-    .where('user_id', '=', userId)
-    .returning(['id'])
-    .executeTakeFirst()
-  return { removed: gone != null }
+      .returning('id')
+      .execute()
+    let removed = roles.length > 0
+    if (scopeType === 'team') {
+      const gone = await trx
+        .deleteFrom('memberships')
+        .where('team_id', '=', scopeId)
+        .where('user_id', '=', userId)
+        .returning('id')
+        .executeTakeFirst()
+      removed ||= gone != null
+    } else if (scopeType === 'season') {
+      const gone = await trx
+        .deleteFrom('season_members')
+        .where('season_id', '=', scopeId)
+        .where('user_id', '=', userId)
+        .returning('id')
+        .executeTakeFirst()
+      removed ||= gone != null
+    } else {
+      const gone = await trx
+        .deleteFrom('league_members')
+        .where('league_id', '=', scopeId)
+        .where('user_id', '=', userId)
+        .returning('id')
+        .executeTakeFirst()
+      removed ||= gone != null
+    }
+    await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
+    return { removed }
+  })
 }
 
 /** Gives somebody who already has an account the access this scope grants. */
@@ -537,7 +639,27 @@ export async function setScopeRoles(
       (role === 'admin' && wanted.admin) ||
       wanted.flags.includes(role as RoleFlag)
   )
-  await db.transaction().execute(async trx => {
+  await atomic(db, async trx => {
+    await lockKeys(trx, [
+      'creation:parent-graph',
+      `group:${scopeType}:${scopeId}`
+    ])
+    await authorizePersonChange(
+      trx,
+      { kind: scopeType, id: scopeId },
+      userId,
+      grantedBy,
+      wanted.admin
+    )
+    await addToScope(trx, scopeType, scopeId, userId)
+    if (scopeType === 'team' && !wanted.admin)
+      await trx
+        .updateTable('memberships')
+        .set({ role: 'member' })
+        .where('team_id', '=', scopeId)
+        .where('user_id', '=', userId)
+        .where('role', 'in', ['owner', 'manager'])
+        .execute()
     let gone = trx
       .deleteFrom('scope_roles')
       .where('scope_type', '=', scopeType)
@@ -545,7 +667,10 @@ export async function setScopeRoles(
       .where('user_id', '=', userId)
     if (roles.length > 0) gone = gone.where('role', 'not in', roles)
     await gone.execute()
-    if (roles.length === 0) return
+    if (roles.length === 0) {
+      await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
+      return
+    }
     await trx
       .insertInto('scope_roles')
       .values(
@@ -562,6 +687,7 @@ export async function setScopeRoles(
         oc.columns(['user_id', 'scope_type', 'scope_id', 'role']).doNothing()
       )
       .execute()
+    await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
   })
   return roles
 }

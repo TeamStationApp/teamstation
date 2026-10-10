@@ -1,6 +1,9 @@
 import { type Kysely, sql } from 'kysely'
 
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { requireDirectAdmin } from '../groups/adminGuard'
+import { mergeParents } from '../groups/teamMerge'
 import { requestGameStats } from '../statsBuilder/request'
 
 /**
@@ -109,6 +112,7 @@ export async function mergeTeams(
     fixtures: [],
     eventsDiscarded: 0
   }
+  await mergeParents(db, fromTeamId, intoTeamId)
 
   // Everything that names a team. A team's record is counted from the games
   // on every read, so it follows them here; the stat lines' team is rewritten
@@ -118,6 +122,7 @@ export async function mergeTeams(
     ['memberships', 'team_id'],
     ['games', 'home_team_id'],
     ['games', 'away_team_id'],
+    ['games', 'withdrawn_by_team_id'],
     ['events', 'battingTeamId'],
     ['event_players', 'team_id']
   ]
@@ -142,6 +147,31 @@ export async function mergeTeams(
   if (!apply) return report
 
   await db.transaction().execute(async trx => {
+    await lockKeys(trx, [
+      'creation:parent-graph',
+      `group:team:${fromTeamId}`,
+      `group:team:${intoTeamId}`
+    ])
+    await mergeParents(trx, fromTeamId, intoTeamId, true)
+    // Merge overlapping rows before repointing, so unique constraints remain valid.
+    await sql`update memberships target set
+      role = case when target.role = 'owner' or source.role = 'owner' then 'owner'
+        when target.role = 'manager' or source.role = 'manager' then 'manager' else 'member' end,
+      is_player = target.is_player or source.is_player,
+      is_spectator = target.is_spectator or source.is_spectator
+      from memberships source where target.team_id = ${intoTeamId} and source.team_id = ${fromTeamId} and target.user_id = source.user_id`.execute(
+      trx
+    )
+    await sql`delete from memberships source using memberships target where source.team_id = ${fromTeamId} and target.team_id = ${intoTeamId} and source.user_id = target.user_id`.execute(
+      trx
+    )
+    await sql`update season_teams target set active = target.active or source.active, joined_at = least(target.joined_at, source.joined_at)
+      from season_teams source where target.team_id = ${intoTeamId} and source.team_id = ${fromTeamId} and target.season_id = source.season_id`.execute(
+      trx
+    )
+    await sql`delete from season_teams source using season_teams target where source.team_id = ${fromTeamId} and target.team_id = ${intoTeamId} and source.season_id = target.season_id`.execute(
+      trx
+    )
     const movedGames = await trx
       .selectFrom('games')
       .select('id')
@@ -154,12 +184,32 @@ export async function mergeTeams(
       .execute()
 
     for (const [table, column] of references) {
+      if (table === 'games') continue
       await trx
         .updateTable(table as 'games')
         .set(Object.fromEntries([[column, intoTeamId]]) as never)
         .where(column as 'home_team_id', '=', fromTeamId)
         .execute()
     }
+    // Update opponents and withdrawal identity in one statement so the
+    // withdrawal remains attributed to an opponent throughout the merge.
+    await sql`update games set
+      home_team_id = case when home_team_id = ${fromTeamId} then ${intoTeamId} else home_team_id end,
+      away_team_id = case when away_team_id = ${fromTeamId} then ${intoTeamId} else away_team_id end,
+      withdrawn_by_team_id = case when withdrawn_by_team_id = ${fromTeamId} then ${intoTeamId} else withdrawn_by_team_id end
+      where home_team_id = ${fromTeamId} or away_team_id = ${fromTeamId}`.execute(
+      trx
+    )
+    if (
+      (
+        await trx
+          .selectFrom('system_settings')
+          .select('value')
+          .where('key', '=', 'creation.hierarchyReady')
+          .executeTakeFirst()
+      )?.value === true
+    )
+      await requireDirectAdmin(trx, { kind: 'team', id: intoTeamId })
 
     // `memberships` and `season_teams` can now hold the same person or team
     // twice, and both have a unique constraint, so the duplicates go rather
@@ -181,6 +231,39 @@ export async function mergeTeams(
     `.execute(trx)
 
     for (const fixture of fixtures) {
+      const withdrawal = await trx
+        .selectFrom('games')
+        .select([
+          'withdrawn_by_team_id',
+          'withdrawn_by_user_id',
+          'withdrawn_at'
+        ])
+        .where('id', 'in', [fixture.keptGameId, fixture.retiredGameId])
+        .where('cancellation_reason', '=', 'withdrawal')
+        .orderBy('withdrawn_at')
+        .orderBy('id')
+        .executeTakeFirst()
+      if (withdrawal != null)
+        await trx
+          .updateTable('games')
+          .set({
+            ...withdrawal,
+            status: 'cancelled',
+            cancellation_reason: 'withdrawal'
+          })
+          .where('id', '=', fixture.keptGameId)
+          .execute()
+      await trx
+        .updateTable('group_requests')
+        .set({ status: 'superseded', resolved_at: new Date() })
+        .where('status', '=', 'pending')
+        .where('game_id', 'in', [fixture.keptGameId, fixture.retiredGameId])
+        .execute()
+      await trx
+        .updateTable('group_requests')
+        .set({ game_id: fixture.keptGameId })
+        .where('game_id', '=', fixture.retiredGameId)
+        .execute()
       // The video is the whole point: it lives on the game that was never
       // scored, and the plays live on the one that was never filmed.
       await trx

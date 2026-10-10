@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import type { RequestTerms } from '../../common/notifications'
 import { adminScopes } from '../access'
 import { asSignInOrigin, createEmailCode, signInLink } from '../auth/emailCodes'
 import {
@@ -13,6 +14,7 @@ import {
   recordAttempts
 } from '../auth/rateLimit'
 import type { Database } from '../db/database'
+import { currentActor } from '../groups/rights'
 import {
   alreadyInScope,
   createInvite,
@@ -193,7 +195,7 @@ export function inviteRoutes(
         invite.scopeId
       )
 
-      await revokeInvite(db, invite.id)
+      await revokeInvite(db, invite.id, actor)
       setAudit(res.locals, {
         entityType: 'invite',
         entityId: invite.id,
@@ -218,16 +220,36 @@ export function inviteRoutes(
       const name = await scopeName(db, invite.scopeType, invite.scopeId)
       if (name == null) throw notFound()
 
-      const problem = inviteProblem(invite)
       const actor = req.actor
+      let alreadyIn =
+        actor != null && (await alreadyInScope(db, invite, actor.userId))
+      let problem = inviteProblem(invite)
+      let requestedRoles: string[] = []
+      if (invite.requestId != null) {
+        const request = await db
+          .selectFrom('group_requests')
+          .select(['terms', 'status'])
+          .where('id', '=', invite.requestId)
+          .executeTakeFirstOrThrow()
+        const terms = request.terms as RequestTerms
+        if (terms.kind === 'person') {
+          const own = terms.recipientUserId === actor?.userId
+          alreadyIn = alreadyIn && own && request.status === 'accepted'
+          if (alreadyIn) problem = null
+          requestedRoles = [
+            ...(terms.admin ? ['administrator'] : []),
+            ...terms.flags
+          ]
+        }
+      }
       res.json({
         code: invite.code,
         valid: problem == null,
         problem,
         scope: { kind: invite.scopeType, id: invite.scopeId, name },
         signedIn: actor != null,
-        alreadyIn:
-          actor == null ? false : await alreadyInScope(db, invite, actor.userId)
+        alreadyIn,
+        requestedRoles
       })
     })
   )
@@ -243,7 +265,7 @@ export function inviteRoutes(
       if (invite == null) throw notFound()
       const name = await scopeName(db, invite.scopeType, invite.scopeId)
       if (name == null) throw notFound()
-
+      if (invite.requestId != null) await currentActor(db, actor)
       const result = await redeemInvite(db, invite, actor.userId)
       setAudit(res.locals, {
         entityType: 'invite',
