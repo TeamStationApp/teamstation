@@ -1228,7 +1228,14 @@ describe('a team’s people by external id', function () {
         isPlayer: true
       })
       const found = await ask('GET', '/users?externalId=found-1', ADMIN)
-      expect(found.body).deep.equals([{ userId, externalIds: ['found-1'] }])
+      expect(found.body).deep.equals([
+        {
+          userId,
+          externalIds: ['found-1'],
+          shortName: 'Kai M',
+          avatarUrl: null
+        }
+      ])
     })
 
     it('records an audit entry for the team', async function () {

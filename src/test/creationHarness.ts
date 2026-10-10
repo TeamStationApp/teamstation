@@ -55,7 +55,7 @@ export async function creationHarness(
       app.use('/api/v1', scheduleRoutes(db))
       app.use('/api/v1', notificationRoutes(db, clock))
       app.use('/api/v1', seasonRoutes(db, media))
-      app.use('/api/v1', userRoutes(db))
+      app.use('/api/v1', userRoutes(db, space))
       app.use('/api/v1', statsRoutes(db, media))
       app.use('/api/v1', walkUpSongRoutes(db))
       app.use('/api/v1', lineupRoutes(db))

@@ -4,7 +4,7 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userIdNumber'
 import { asWalkUpSong, type WalkUpSong } from '../../common/walkUpSong'
-import { canKeepSongs, roleScopes } from '../access'
+import { canKeepSongs, guardsPlayer, roleScopes } from '../access'
 import type { Database, WalkUpSongsTable } from '../db/database'
 import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
@@ -16,8 +16,8 @@ import { notifyGameChange } from '../socket/gameChanges'
  * Each player's walk-up song on a team.
  *
  * A songkeeper or scorekeeper of the team — the flag set on the team, its
- * season or its league — an admin of any of those, and a site admin may set
- * or remove one.
+ * season or its league — an admin of any of those, a site admin, and a
+ * guardian of the player, for their own child alone, may set or remove one.
  * Anybody else, and a target who is not a player on the team, is answered
  * 404. Both writes are audited, and both announce the change on the game
  * socket as `{ team, kind: 'walkUpSong', userId }`, which reaches every
@@ -37,7 +37,11 @@ export function walkUpSongRoutes(db: Kysely<Database>): Router {
     const teamId = pathParam(params.teamId)
     const userId = userIdParam(params.userId)
     const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-    if (!canKeepSongs(scopes, teamId)) throw notFound()
+    if (
+      !canKeepSongs(scopes, teamId) &&
+      !(await guardsPlayer(db, actor.userId, userId))
+    )
+      throw notFound()
     const player = await db
       .selectFrom('memberships')
       .innerJoin('users', 'users.id', 'memberships.user_id')

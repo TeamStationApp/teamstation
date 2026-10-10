@@ -694,6 +694,7 @@ describe('a player, and who may change their name', function () {
         .set({ login_enabled: false })
         .where('id', '=', childId)
         .execute()
+      // The player's guardian manages their child, the name included.
       for (const viewer of [
         teamCoachId,
         assistantId,
@@ -701,7 +702,8 @@ describe('a player, and who may change their name', function () {
         leagueCoachId,
         coachId,
         seasonAdminId,
-        siteAdminId
+        siteAdminId,
+        parentId
       ]) {
         const body = {
           name: { firstName: ' Mookie ', lastName: ' Betts ' },
@@ -724,7 +726,6 @@ describe('a player, and who may change their name', function () {
         videographerId,
         strangerId,
         otherCoachId,
-        parentId,
         childId
       ]) {
         const body = {
@@ -796,8 +797,9 @@ describe('a player, and who may change their name', function () {
     }
   })
 
-  it('lets a coach, an assistant, a scorekeeper or an admin of the team set a player’s settings', async function () {
+  it('lets a coach, an assistant, a scorekeeper or an admin of the team, or the player’s guardian, set a player’s settings', async function () {
     for (const [viewer, jersey] of [
+      [parentId, '2'],
       [teamCoachId, '3'],
       [scorekeeperId, '4'],
       [assistantId, '7'],
@@ -821,7 +823,6 @@ describe('a player, and who may change their name', function () {
       videographerId,
       strangerId,
       otherCoachId,
-      parentId,
       childId
     ]) {
       const answer = await put(settingsOf(teamId, childId), viewer, {
@@ -829,6 +830,11 @@ describe('a player, and who may change their name', function () {
       })
       expect(answer.status, String(viewer)).equals(404)
     }
+    // A guardian manages their own child, never another player.
+    expect(
+      (await put(settingsOf(teamId, bothTeamsId), parentId, { jersey: '99' }))
+        .status
+    ).equals(404)
     // Rights come first: a bad body from somebody with none is still 404.
     expect(
       (await put(settingsOf(teamId, childId), songkeeperId, {})).status
@@ -958,6 +964,128 @@ describe('a player, and who may change their name', function () {
         }
       }
     ])
+  })
+
+  const handsOf = (player: number | string): string =>
+    `/players/${player}/settings`
+
+  it('lets a guardian, a coach of any of the player’s teams or a site admin set how they bat and throw', async function () {
+    const mine = await put(handsOf(childId), parentId, {
+      bats: 'right',
+      throws: 'left'
+    })
+    expect(mine.status).equals(200)
+    expect(mine.body).deep.equals({
+      userId: childId,
+      bats: 'right',
+      throws: 'left'
+    })
+    // A field left out is left alone.
+    expect(
+      (await put(handsOf(childId), teamCoachId, { throws: null })).body
+    ).deep.equals({ userId: childId, bats: 'right', throws: null })
+    const user = await db
+      .selectFrom('users')
+      .select(['bats', 'throws', 'bats_source'])
+      .where('id', '=', childId)
+      .executeTakeFirstOrThrow()
+    expect(user).deep.equals({
+      bats: 'right',
+      throws: null,
+      bats_source: 'manual'
+    })
+    // The Legends' coach, for a player who is on the Legends too; an
+    // assistant, a scorekeeper and a coach carried down from the league; a
+    // site admin.
+    for (const [viewer, bats] of [
+      [otherCoachId, 'switch'],
+      [assistantId, 'left'],
+      [scorekeeperId, 'switch'],
+      [leagueCoachId, 'right'],
+      [siteAdminId, 'left']
+    ] as const) {
+      const answer = await put(handsOf(bothTeamsId), viewer, { bats })
+      expect(answer.status, String(viewer)).equals(200)
+      expect((answer.body as { bats: string }).bats).equals(bats)
+    }
+    let audited: Array<{ before: unknown; after: unknown }> = []
+    for (let tries = 0; tries < 50 && audited.length < 2; tries++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      audited = await db
+        .selectFrom('audit_log')
+        .select(['before', 'after'])
+        .where('entity_type', '=', 'playerSettings')
+        .where('entity_id', '=', String(childId))
+        .where('path', '=', handsOf(childId))
+        .orderBy('at')
+        .execute()
+    }
+    expect(audited).deep.equals([
+      {
+        before: { bats: 'left', throws: null },
+        after: { bats: 'right', throws: 'left' }
+      },
+      {
+        before: { bats: 'right', throws: 'left' },
+        after: { bats: 'right', throws: null }
+      }
+    ])
+  })
+
+  it('answers 404 to anybody else for a player’s hands, and 400 for a team’s fields', async function () {
+    for (const [viewer, player] of [
+      [strangerId, childId],
+      [songkeeperId, childId],
+      [videographerId, childId],
+      // The Legends' coach, for a player who is not on the Legends.
+      [otherCoachId, childId],
+      // A guardian, for somebody else's child.
+      [parentId, bothTeamsId],
+      [childId, childId]
+    ] as const) {
+      const answer = await put(handsOf(player), viewer, { bats: 'right' })
+      expect(answer.status, `${viewer} ${player}`).equals(404)
+    }
+    // Rights come first: a bad body from somebody with none is still 404.
+    expect((await put(handsOf(childId), strangerId, {})).status).equals(404)
+    expect((await put(handsOf('nobody'), siteAdminId, {})).status).equals(404)
+    expect(
+      (await put(handsOf(mintUser()), siteAdminId, { bats: 'left' })).status
+    ).equals(404)
+    for (const body of [
+      {},
+      [],
+      { jersey: '7' },
+      { positions: ['SS'] },
+      { bats: 'left', jersey: '7' },
+      { bats: 'both' },
+      { throws: 'switch' }
+    ]) {
+      const answer = await put(handsOf(childId), parentId, body)
+      expect(answer.status, JSON.stringify(body)).equals(400)
+    }
+    const user = await db
+      .selectFrom('users')
+      .select(['bats'])
+      .where('id', '=', childId)
+      .executeTakeFirstOrThrow()
+    expect(user.bats).equals('right')
+  })
+
+  it('shows a guardian their child’s page, and lists their child in GET /me/roles', async function () {
+    const page = await get(`/players/${childId}`, parentId)
+    expect(page.status).equals(200)
+    expect(
+      asPlayerDetail(page.body).teams.map(team => team.teamId)
+    ).deep.equals([teamId])
+    const roles = await get('/me/roles', parentId)
+    expect((roles.body as { guardianOf: number[] }).guardianOf).deep.equals([
+      childId
+    ])
+    expect(
+      ((await get('/me/roles', teamCoachId)).body as { guardianOf: number[] })
+        .guardianOf
+    ).deep.equals([])
   })
 
   it('lists coach on the team in GET /me/roles, and keeps the roster a bare array', async function () {

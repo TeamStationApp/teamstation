@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { unauthorized } from '../../common/errors'
 import { type Role, ROLES } from '../../common/roles'
-import { roleScopes, rolesOnTeam } from '../access'
+import { guardedPlayers, roleScopes, rolesOnTeam } from '../access'
 import type { Database } from '../db/database'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -19,6 +19,8 @@ import { activeHuman } from '../oauth/provider'
  * `scorekeeper`, which holds everything a songkeeper does. An assistant is
  * listed as `assistant`. A team where they hold none is left out rather than
  * listed empty. A site administrator holds every role on every team.
+ * `guardianOf` is the players they are a guardian of, by the row each signs
+ * in as.
  */
 export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
   const router = Router()
@@ -52,7 +54,7 @@ export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
       for (const teamId of [...teamIds].sort()) {
         teams[teamId] = rolesOnTeam(scopes, teamId)
       }
-      res.json({ teams })
+      res.json({ teams, guardianOf: await guardedPlayers(db, actor.userId) })
     })
   )
 

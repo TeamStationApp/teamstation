@@ -714,7 +714,11 @@ export type SeasonGame = ReturnType<typeof asSeasonGame>
 /** A person another service knows, and which of the asked ids are theirs. */
 export const asUserMatch = asObject({
   userId: asUserId,
-  externalIds: asArray(asString)
+  externalIds: asArray(asString),
+  /** `Jordan P`, told apart from anybody else in the same answer. */
+  shortName: asOptional(asString),
+  /** Their picture, signed and short-lived; null when they have none. */
+  avatarUrl: asOptional(asNullable(asString), null)
 })
 export type UserMatch = ReturnType<typeof asUserMatch>
 
@@ -1026,7 +1030,9 @@ export function grantsOf(person: ScopePerson): RoleGrant[] {
 
 /** The roles the signed-in person holds on each team where they hold any. */
 export const asMyRoles = asObject({
-  teams: asObject(asArray(asRole))
+  teams: asObject(asArray(asRole)),
+  /** The players they are a guardian of, by the row each signs in as. */
+  guardianOf: asOptional(asArray(asUserId), () => [])
 })
 export type MyRoles = ReturnType<typeof asMyRoles>
 
@@ -1939,6 +1945,15 @@ export class TeamStationClient {
       .map(id => `externalId=${encodeURIComponent(id)}`)
       .join('&')
     return await this.request('GET', `/users?${query}`, asArray(asUserMatch))
+  }
+
+  /** The players the signed-in person is a guardian of, by short name. */
+  async guardedPlayers(): Promise<UserMatch[]> {
+    return await this.request(
+      'GET',
+      '/users?guardedBy=me',
+      asArray(asUserMatch)
+    )
   }
 
   async seasonGames(seasonId: string): Promise<SeasonGame[]> {

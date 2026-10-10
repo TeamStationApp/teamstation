@@ -20,7 +20,10 @@ describe('the Search tab', () => {
     })
     proto.whoAmI = async () =>
       asSessionUser({ id: 1, displayName: 'Demo Fan', isAdmin: false })
-    proto.myRoles = async () => ({ teams: {} })
+    // Roles that cannot be read leave the app as somebody holding none.
+    proto.myRoles = async () => {
+      throw new Error('offline')
+    }
     proto.hasNotifications = async () => false
     proto.teams = async () => []
     proto.seasons = async () => []

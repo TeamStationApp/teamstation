@@ -111,6 +111,8 @@ describe('walk-up songs', function () {
   const coachId = mintUser()
   const videographerId = mintUser()
   const memberId = mintUser()
+  // The batter's guardian, who belongs to no team.
+  const parentId = mintUser()
 
   const songOf = (team: string, player: number): string =>
     `/teams/${team}/players/${player}/walk-up-song`
@@ -281,6 +283,15 @@ describe('walk-up songs', function () {
         flag(videographerId, 'team', teamId, 'videographer')
       ])
       .execute()
+    await db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: parentId,
+        related_user_id: batterId,
+        kind: 'guardian'
+      })
+      .execute()
     const now = Date.now()
     await db
       .insertInto('games')
@@ -411,6 +422,29 @@ describe('walk-up songs', function () {
         .status
     ).equals(200)
     expect(await readWalkUpSong(db, teamId, secondId)).equals(null)
+  })
+
+  it('lets a guardian set and remove their own child’s song, and nobody else’s', async function () {
+    const before = await readWalkUpSong(db, teamId, batterId)
+    const mine = await send('PUT', songOf(teamId, batterId), parentId, fixture)
+    expect(mine.status).equals(200)
+    expect(await readWalkUpSong(db, teamId, batterId)).deep.equals(fixture)
+    expect(
+      (await send('DELETE', songOf(teamId, batterId), parentId)).status
+    ).equals(204)
+    expect(await readWalkUpSong(db, teamId, batterId)).equals(null)
+    for (const method of ['PUT', 'DELETE'] as const) {
+      const answer = await send(
+        method,
+        songOf(teamId, secondId),
+        parentId,
+        method === 'PUT' ? fixture : undefined
+      )
+      expect(answer.status, method).equals(404)
+    }
+    expect(await readWalkUpSong(db, teamId, secondId)).equals(null)
+    if (before != null)
+      await send('PUT', songOf(teamId, batterId), siteAdminId, before)
   })
 
   it('refuses a bad body with 400', async function () {

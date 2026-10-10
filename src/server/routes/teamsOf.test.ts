@@ -8,6 +8,10 @@ import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  type GuardianFixture,
+  guardianFixture
+} from '../../test/guardianFixture'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { teamsOf } from './players'
@@ -211,5 +215,204 @@ describe('the teams and seasons a player has played in', function () {
 
   it('answers nobody for no ids', async function () {
     expect(await teamsOf(db!, [])).deep.equals([])
+  })
+})
+
+/**
+ * A guardian reads their own child's whole page: every team the child has
+ * played for, every figure and every highlight, the teams the child has left
+ * included. A coach of one of those teams reads that team's part alone.
+ *
+ * On `guardianFixture`: Avery (201) plays for Demo Hawks and Demo Comets, and
+ * Tim Raines (106) is his guardian with no membership of his own. A Comets
+ * game with a video, a credited play and stat lines is added, then Avery
+ * leaves the Comets.
+ */
+describe('a guardian reading their child’s page', function () {
+  this.timeout(120000)
+
+  let f: GuardianFixture
+  const avery = 201
+  const comets = 'guardian-game-3'
+
+  before(async function () {
+    f = await guardianFixture()
+    const db = f.h.db
+    const startAt = new Date('2026-09-27T18:00:00Z')
+    await db
+      .insertInto('games')
+      .values({
+        id: comets,
+        home_team_id: f.secondTeam,
+        away_team_id: f.standaloneTeam,
+        season_id: f.playoffs,
+        start_at: startAt,
+        venue: 'Demo Field',
+        status: 'final',
+        home_score: 4,
+        away_score: 1,
+        timezone: 'UTC'
+      })
+      .execute()
+    await db
+      .insertInto('videos')
+      .values({
+        id: 'vid_guardian_3',
+        game_id: comets,
+        kind: 'program',
+        title: 'Demo game video',
+        storage: 'spaces',
+        status: 'ready',
+        start_at: startAt,
+        duration_sec: 7200
+      })
+      .execute()
+    const at = new Date(startAt.getTime() + 20 * 60_000).toISOString()
+    await db
+      .insertInto('events')
+      .values({
+        id: 'evt_guardian_comets_0',
+        gameId: comets,
+        startTime: at,
+        battingTeamId: f.secondTeam,
+        gumbo: {
+          about: {
+            atBatIndex: 0,
+            inning: 1,
+            halfInning: 'bottom',
+            isScoringPlay: false,
+            startTime: at
+          },
+          result: { eventType: 'double', awayScore: 0, homeScore: 0 },
+          credits: [
+            {
+              eventType: 'double',
+              label: 'Double: Avery S',
+              teamId: f.secondTeam,
+              creditUserId: avery,
+              credit: { name: 'Avery S', role: 'batter', position: null }
+            }
+          ]
+        }
+      })
+      .execute()
+    await db
+      .insertInto('event_players')
+      .values(
+        (
+          [
+            ['evt_guardian_comets_0', f.secondTeam],
+            ['evt_guardian_guardian-game-1_0', f.teamA]
+          ] as const
+        ).map(([eventId, teamId]) => ({
+          id: makeId('eventPlayer'),
+          event_id: eventId,
+          user_id: avery,
+          team_id: teamId,
+          role: 'batter' as const,
+          position: null
+        }))
+      )
+      .execute()
+    await db
+      .insertInto('game_player_stats')
+      .values(
+        (
+          [
+            ['guardian-game-1', f.teamA],
+            [comets, f.secondTeam]
+          ] as const
+        ).map(([gameId, teamId]) => ({
+          id: makeId('gamePlayerStats'),
+          game_id: gameId,
+          user_id: avery,
+          team_id: teamId,
+          pa: 4,
+          ab: 4,
+          h: 2
+        }))
+      )
+      .execute()
+    // Avery leaves the Comets.
+    await db
+      .deleteFrom('memberships')
+      .where('user_id', '=', avery)
+      .where('team_id', '=', f.secondTeam)
+      .execute()
+  })
+
+  after(async function () {
+    await f?.h.close()
+  })
+
+  const read = async (path: string, userId: number): Promise<any> => {
+    const answer = await f.h.request('GET', path, undefined, userId)
+    expect(answer.status, `${path} as ${userId}`).equals(200)
+    return await answer.json()
+  }
+
+  it('lists every team the child has played for to the guardian, and the coach’s team to the coach', async function () {
+    // One entry per team and season, so a team can be there twice.
+    const teamIds = (answer: any): string[] =>
+      [
+        ...new Set(
+          (answer.teams as Array<{ teamId: string }>).map(team => team.teamId)
+        )
+      ].sort()
+    const mine = await read(`/players/${avery}`, f.people.guardian)
+    expect(teamIds(mine)).deep.equals([f.teamA, f.secondTeam].sort())
+    const coach = await read(`/players/${avery}`, f.people.teamCoach)
+    expect(teamIds(coach)).deep.equals([f.teamA])
+  })
+
+  it('adds up every figure for the guardian, and the coach’s team for the coach', async function () {
+    const mine = await read(`/players/${avery}/stats`, f.people.guardian)
+    expect(mine.games).equals(2)
+    expect(
+      (mine.options.teams as Array<{ teamId: string }>).map(team => team.teamId)
+    ).deep.equals([f.secondTeam, f.teamA])
+    const coach = await read(`/players/${avery}/stats`, f.people.teamCoach)
+    expect(coach.games).equals(1)
+    const plays = await read(`/players/${avery}/plays`, f.people.guardian)
+    expect(
+      (plays as Array<{ gameId: string }>).map(play => play.gameId).sort()
+    ).deep.equals(['guardian-game-1', comets])
+    const coachPlays = await read(`/players/${avery}/plays`, f.people.teamCoach)
+    expect(
+      (coachPlays as Array<{ gameId: string }>).map(play => play.gameId)
+    ).deep.equals(['guardian-game-1'])
+  })
+
+  it('shows the guardian the highlights of a team the child left, and the coach none of them', async function () {
+    const games = (answer: any): string[] => [
+      ...new Set(
+        (answer.highlights as Array<{ gameId: string }>).map(
+          highlight => highlight.gameId
+        )
+      )
+    ]
+    expect(
+      games(await read(`/players/${avery}/highlights`, f.people.guardian))
+    ).deep.equals([comets, 'guardian-game-1', 'guardian-game-2'])
+    expect(
+      games(await read(`/players/${avery}/highlights`, f.people.teamCoach))
+    ).deep.equals(['guardian-game-1', 'guardian-game-2'])
+  })
+
+  it('still opens the child’s page for the guardian once the child is on no team', async function () {
+    await f.h.db
+      .deleteFrom('memberships')
+      .where('user_id', '=', avery)
+      .execute()
+    const mine = await read(`/players/${avery}`, f.people.guardian)
+    expect(mine.userId).equals(avery)
+    // Somebody who never saw a team of his sees nothing.
+    const stranger = await f.h.request(
+      'GET',
+      `/players/${avery}`,
+      undefined,
+      f.people.oneTeam
+    )
+    expect(stranger.status).equals(404)
   })
 })

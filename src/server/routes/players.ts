@@ -4,14 +4,14 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
-import { asPlayerSettings } from '../../common/playerSettings'
+import { asPersonSettings, asPlayerSettings } from '../../common/playerSettings'
 import { asUserId } from '../../common/userIdNumber'
 import {
-  canManageRoster,
   canSeePerson,
   canSeePlayedFor,
+  guardsPerson,
   mayEditName,
-  roleScopes,
+  mayManagePlayer,
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
@@ -95,8 +95,12 @@ export function playerRoutes(
 
       // The same rule as every other read: you may see somebody if you can
       // already see a team they are on, or a season opened up to you. Their
-      // own page is always theirs.
-      if (!canSeePerson(scopes, userId === actor.userId, teams)) {
+      // own page is always theirs, and their guardian's: every team they
+      // have played for, the ones they have left included.
+      const ownPage =
+        userId === actor.userId ||
+        (await guardsPerson(db, scopes, actor.userId, person))
+      if (!canSeePerson(scopes, ownPage, teams)) {
         throw notFound()
       }
 
@@ -119,9 +123,7 @@ export function playerRoutes(
         avatarUrl: imageUrl(media.space, user.avatarPath, PROFILE_SIZE),
         bats: user.bats,
         throws: user.throws,
-        teams: teams.filter(
-          team => userId === actor.userId || canSeePlayedFor(scopes, team)
-        )
+        teams: teams.filter(team => ownPage || canSeePlayedFor(scopes, team))
       })
     })
   )
@@ -223,6 +225,10 @@ export function playerRoutes(
       // Every row that is this person, because a merge closes a row without
       // moving what was written under it.
       const person = await onePerson(db, userId)
+      // Their own plays, and their guardian's child's, from every team.
+      const ownPlays =
+        person.userIds.includes(actor.userId) ||
+        (await guardsPerson(db, scopes, actor.userId, person))
 
       // The plays this person is credited on. The credit is what the row is
       // drawn from, so the credit is what is searched: `event_players` says
@@ -263,7 +269,7 @@ export function playerRoutes(
       const seen = rows.filter(
         row =>
           scopes.isAdmin ||
-          person.userIds.includes(actor.userId) ||
+          ownPlays ||
           scopes.teamIds.has(row.homeTeamId) ||
           scopes.teamIds.has(row.awayTeamId) ||
           (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
@@ -411,12 +417,13 @@ export function playerRoutes(
    * positions belong to this team; the name and how they bat and throw belong
    * to the player and read the same on every team.
    *
-   * A coach or scorekeeper (set on the team, its season or league), an
-   * administrator of any of those, and a site administrator. Anybody else,
-   * and anybody who is not a player on this team, is answered 404: the
-   * question "may I change this?" is not asked of a page nobody offered.
-   * Preserve canManageRoster's intentional scorekeeper exception: they may
-   * be the only person responsible for maintaining the roster.
+   * A coach, assistant or scorekeeper of the team (set on it, or on its
+   * season or league), an administrator of any of those, a guardian of the
+   * player, and a site administrator (`mayManagePlayer`). Anybody else, and
+   * anybody who is not a player on this team, is answered 404: the question
+   * "may I change this?" is not asked of a page nobody offered. Preserve
+   * canManageRoster's intentional scorekeeper exception: they may be the only
+   * person responsible for maintaining the roster.
    *
    * Setting either hand marks it `manual`, so the next roster import
    * leaves the roster manager's answer alone. The answer is the player's roster
@@ -430,8 +437,7 @@ export function playerRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const userId = userIdParam(req.params.userId)
-      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-      if (!canManageRoster(scopes, teamId)) throw notFound()
+      if (!(await mayManagePlayer(db, actor, userId, teamId))) throw notFound()
 
       const place = await db
         .selectFrom('memberships')
@@ -541,6 +547,59 @@ export function playerRoutes(
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()
       res.json(entry)
+    })
+  )
+
+  /**
+   * How a player bats and throws, which is theirs on every team, asked about
+   * the person rather than their place on one team: what a guardian sets
+   * from Home.
+   *
+   * A guardian of the player, a coach, assistant or scorekeeper of any team
+   * they play on, or its administrator, and a site administrator
+   * (`mayManagePlayer` without a team). Anybody else,
+   * and a row closed into another, is answered 404. `jersey` and `positions`
+   * belong to a team and are refused here with 400, as is a body that changes
+   * nothing. Setting either hand marks it `manual`, as the team's settings
+   * do, and is audited the same way.
+   */
+  router.put(
+    '/players/:userId/settings',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const userId = userIdParam(req.params.userId)
+      if (!(await mayManagePlayer(db, actor, userId, null))) throw notFound()
+
+      const user = await db
+        .selectFrom('users')
+        .select(['bats', 'throws'])
+        .where('id', '=', userId)
+        .where('merged_into', 'is', null)
+        .executeTakeFirst()
+      if (user == null) throw notFound()
+
+      const body = cleanBody(asPersonSettings, req.body)
+      const after = await db
+        .updateTable('users')
+        .set({
+          ...(body.bats === undefined ? {} : { bats: body.bats }),
+          ...(body.throws === undefined ? {} : { throws: body.throws }),
+          bats_source: 'manual',
+          updated_at: new Date()
+        })
+        .where('id', '=', userId)
+        .returning(['bats', 'throws'])
+        .executeTakeFirstOrThrow()
+
+      setAudit(res.locals, {
+        entityType: 'playerSettings',
+        entityId: userId,
+        before: { bats: user.bats, throws: user.throws },
+        after: { bats: after.bats, throws: after.throws }
+      })
+      res.json({ userId, bats: after.bats, throws: after.throws })
     })
   )
 

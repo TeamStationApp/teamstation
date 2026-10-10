@@ -569,7 +569,26 @@ describe('api client', function () {
     expect(calls[0].url).equals(
       'http://x/api/v1/users?externalId=a%26b&externalId=c'
     )
-    expect(users).deep.equals([{ userId: 7, externalIds: ['a&b', 'c'] }])
+    // An answer without the name and picture still reads.
+    expect(users).deep.equals([
+      {
+        userId: 7,
+        externalIds: ['a&b', 'c'],
+        shortName: undefined,
+        avatarUrl: null
+      }
+    ])
+  })
+
+  it('asks for the players the signed-in person is a guardian of', async function () {
+    const { fetch, calls } = stubFetch(200, [
+      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+    ])
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect(await client.guardedPlayers()).deep.equals([
+      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+    ])
+    expect(calls[0].url).equals('http://x/api/v1/users?guardedBy=me')
   })
 
   it('trims a trailing slash off the base so paths do not double up', async function () {

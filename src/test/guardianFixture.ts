@@ -21,7 +21,8 @@ import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
  * and credited plays, so highlights list, and every still those lists and the
  * schedule's posters point at is the checked-in `fixtures/still.jpg`: the
  * pages draw thumbnails without FFmpeg. A last user runs one standalone team
- * of their own, for Home.
+ * of their own, for Home. Avery also plays for Demo Comets, in Demo
+ * Playoffs, which nobody else here belongs to.
  *
  * Users from `groupFixture`: 101 Babe Ruth (alex@example.com) created and
  * administers League A, its seasons and Demo Hawks; 105 is a site admin.
@@ -54,6 +55,12 @@ export interface GuardianFixture extends GroupFixture {
   emails: Record<number, string>
   /** Demo Rookies, Hank Moss's team. */
   rookies: string
+  /**
+   * Demo Comets, in Demo Playoffs, a second team Avery plays on (#9, P) and
+   * nobody else does: the team a guardian gains through the child, and loses
+   * when the child leaves it.
+   */
+  secondTeam: string
   games: Array<{ id: string; videoId: string }>
 }
 
@@ -237,6 +244,33 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     throw new Error(`Demo Rookies: ${created.status} ${await created.text()}`)
   const rookies = ((await created.json()) as { id: string }).id
 
+  const comets = await f.h.request(
+    'POST',
+    '/teams',
+    {
+      name: 'Demo Comets',
+      idempotencyKey: 'guardian-fixture-second-team',
+      locality: demoLocality,
+      parent: { kind: 'season', id: f.playoffs }
+    },
+    101
+  )
+  if (comets.status !== 201)
+    throw new Error(`Demo Comets: ${comets.status} ${await comets.text()}`)
+  const secondTeam = ((await comets.json()) as { id: string }).id
+  await db
+    .insertInto('memberships')
+    .values({
+      id: makeId('membership'),
+      user_id: 201,
+      team_id: secondTeam,
+      role: 'member',
+      is_player: true,
+      jersey: '9',
+      positions: ['P']
+    })
+    .execute()
+
   const games = [
     {
       id: 'guardian-game-1',
@@ -415,6 +449,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     players: guardianPlayers,
     emails,
     rookies,
+    secondTeam,
     games: games.map(g => ({ id: g.id, videoId: g.videoId }))
   }
 }

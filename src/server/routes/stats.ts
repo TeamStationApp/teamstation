@@ -5,7 +5,7 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { seasonStandings } from '../../common/seasonStandings'
 import { asUserId } from '../../common/userIdNumber'
-import { visibleScopes } from '../access'
+import { guardsPerson, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { imageUrl } from '../media/imageUrls'
@@ -86,21 +86,21 @@ export function statsRoutes(
         })
       )
 
-      // A player's own figures are always theirs to see; anyone else's are
+      // A player's own figures are always theirs to see, and their
+      // guardian's, from every team they have played for; anyone else's are
       // visible only for the teams the reader can already see.
+      const ownFigures =
+        person.userIds.includes(actor.userId) ||
+        (await guardsPerson(db, scopes, actor.userId, person))
       const visible =
-        person.userIds.includes(actor.userId) || scopes.isAdmin
+        ownFigures || scopes.isAdmin
           ? all
           : all.filter(
               row =>
                 (row.teamId != null && scopes.teamIds.has(row.teamId)) ||
                 (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
             )
-      if (
-        visible.length === 0 &&
-        all.length > 0 &&
-        !person.userIds.includes(actor.userId)
-      ) {
+      if (visible.length === 0 && all.length > 0 && !ownFigures) {
         throw notFound()
       }
 
@@ -280,6 +280,10 @@ export function statsRoutes(
       // Every row that is this person: a merge closes a row without moving
       // the plays written under it.
       const person = await onePerson(db, userId)
+      // Their own plays, and their guardian's child's, from every team.
+      const ownPlays =
+        person.userIds.includes(actor.userId) ||
+        (await guardsPerson(db, scopes, actor.userId, person))
 
       let query = db
         .selectFrom('event_players')
@@ -326,7 +330,7 @@ export function statsRoutes(
       const visible = rows.filter(
         row =>
           scopes.isAdmin ||
-          person.userIds.includes(actor.userId) ||
+          ownPlays ||
           (row.teamId != null && scopes.teamIds.has(row.teamId)) ||
           (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
       )

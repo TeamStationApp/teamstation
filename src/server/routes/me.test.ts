@@ -27,7 +27,15 @@ import { meRoutes } from './me'
 const scratchName = `teamstation_me_${Date.now()}`
 const scratchUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
-const PEOPLE = ['keeper', 'assistant', 'manager', 'site', 'nobody'] as const
+const PEOPLE = [
+  'keeper',
+  'assistant',
+  'manager',
+  'site',
+  'nobody',
+  'parent',
+  'child'
+] as const
 type Person = (typeof PEOPLE)[number]
 const token = (person: Person): string => `tok_me_${person}`.padEnd(35, '0')
 
@@ -147,6 +155,15 @@ describe('what the signed-in person may do', function () {
         role: 'manager'
       })
       .execute()
+    await db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: user('parent'),
+        related_user_id: user('child'),
+        kind: 'family'
+      })
+      .execute()
 
     const app = express()
     app.use(withActor(db))
@@ -205,6 +222,22 @@ describe('what the signed-in person may do', function () {
       tem_b: [...ROLES],
       tem_c: [...ROLES]
     })
+  })
+
+  it('lists the players somebody is a guardian of, and nobody for anybody else', async function () {
+    if (db == null) this.skip()
+    const guardianOf = async (person: Person): Promise<unknown> => {
+      const response = await fetch(`${base}/me/roles`, {
+        headers: { authorization: `Bearer ${token(person)}` }
+      })
+      return ((await response.json()) as { guardianOf: unknown }).guardianOf
+    }
+    expect(await guardianOf('parent')).deep.equals([users.get('child')])
+    for (const person of ['child', 'keeper', 'site', 'nobody'] as const) {
+      expect(await guardianOf(person), person).deep.equals([])
+    }
+    // An answer from before the list existed reads as guarding nobody.
+    expect(asMyRoles({ teams: {} }).guardianOf).deep.equals([])
   })
 
   it('lists nothing for somebody with no role, and needs a session', async function () {

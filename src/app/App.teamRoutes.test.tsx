@@ -82,7 +82,7 @@ describe('team settings browser history', () => {
     })
     proto.whoAmI = async () =>
       asSessionUser({ id: 1, displayName: 'Demo Admin', isAdmin: false })
-    proto.myRoles = async () => ({ teams: {} })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
     proto.hasNotifications = async () => false
     proto.group = async () => detail
     proto.gameProposals = async () => []

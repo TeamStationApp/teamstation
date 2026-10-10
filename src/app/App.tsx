@@ -493,7 +493,7 @@ function Shell(props: AppProps): React.ReactElement {
             actor: signedInAs,
             client,
             revision: roleRevision,
-            roles: { teams: {} }
+            roles: { teams: {}, guardianOf: [] }
           })
       })
     return () => {

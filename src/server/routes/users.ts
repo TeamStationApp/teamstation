@@ -2,10 +2,18 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
+import { shortNames } from '../../common/names'
 import { asUserId } from '../../common/userIdNumber'
-import { canSeePerson, type VisibleScopes, visibleScopes } from '../access'
+import {
+  canSeePerson,
+  guardedPlayers,
+  type VisibleScopes,
+  visibleScopes
+} from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { imageUrl } from '../media/imageUrls'
+import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { teamsOf } from './players'
@@ -15,10 +23,15 @@ import { externalIdsAsked } from './seasons'
 export interface UserMatch {
   userId: number
   externalIds: string[]
+  /** `Jordan P`, told apart from anybody else in the same answer. */
+  shortName: string
+  /** Their picture, signed and short-lived; null when they have none. */
+  avatarUrl: string | null
 }
 
 /**
- * Who people are here, asked by the ids another service knows them by.
+ * Who people are here, asked by the ids another service knows them by, or
+ * the players the asker is a guardian of.
  *
  * A sender names people in a play by TeamStation user id alone, so it asks
  * this first with the ids it holds. An `external_ids` row of entity type
@@ -26,8 +39,15 @@ export interface UserMatch {
  * was merged into, carrying every asked id that points at any of their rows.
  * Only people the asker could open the page of are answered, so the ids are
  * no way to find out who else is here.
+ *
+ * `guardedBy=me` asks instead for the players the asker is a guardian of
+ * (`guardedPlayers`), by short name: what Home lists as "Your Players". Only
+ * `me` is accepted, and never beside `externalId`.
  */
-export function userRoutes(db: Kysely<Database>): Router {
+export function userRoutes(
+  db: Kysely<Database>,
+  space?: SpaceSettings
+): Router {
   const router = Router()
 
   router.get(
@@ -36,16 +56,71 @@ export function userRoutes(db: Kysely<Database>): Router {
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      const guardedBy = req.query.guardedBy
+      if (guardedBy !== undefined) {
+        if (guardedBy !== 'me') throw badRequest('guardedBy must be me')
+        if (req.query.externalId !== undefined) {
+          throw badRequest('Ask by externalId or by guardedBy, not both')
+        }
+        const guarded = await guardedPlayers(db, actor.userId)
+        const people = await describe(
+          db,
+          space,
+          guarded.map(userId => ({ userId, externalIds: [] }))
+        )
+        res.json(
+          people.sort((a, b) => {
+            const byName = a.shortName.localeCompare(b.shortName)
+            return byName === 0 ? a.userId - b.userId : byName
+          })
+        )
+        return
+      }
       // Asked for nothing, it would be a list of everybody, which is not what
       // this is for.
       const asked = externalIdsAsked(req.query.externalId)
       if (asked == null) throw badRequest('externalId is required')
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      res.json(await usersByExternalId(db, asked, scopes, actor.userId))
+      const matches = await usersByExternalId(db, asked, scopes, actor.userId)
+      res.json(await describe(db, space, matches))
     })
   )
 
   return router
+}
+
+/** Each person's short name and picture, beside what was already known. */
+async function describe(
+  db: Kysely<Database>,
+  space: SpaceSettings | undefined,
+  people: Array<Pick<UserMatch, 'userId' | 'externalIds'>>
+): Promise<UserMatch[]> {
+  if (people.length === 0) return []
+  const rows = await db
+    .selectFrom('users')
+    .select([
+      'id',
+      'display_name as displayName',
+      'first_name as firstName',
+      'last_name as lastName',
+      'avatar_path as avatarPath'
+    ])
+    .where(
+      'id',
+      'in',
+      people.map(person => person.userId)
+    )
+    .execute()
+  const names = shortNames(rows)
+  const byId = new Map(rows.map(row => [row.id, row]))
+  return people.map(person => {
+    const row = byId.get(person.userId)
+    return {
+      ...person,
+      shortName: names.get(person.userId) ?? '',
+      avatarUrl: space == null ? null : imageUrl(space, row?.avatarPath ?? null)
+    }
+  })
 }
 
 async function usersByExternalId(
@@ -53,7 +128,7 @@ async function usersByExternalId(
   externalIds: string[],
   scopes: VisibleScopes,
   actorUserId: number
-): Promise<UserMatch[]> {
+): Promise<Array<Pick<UserMatch, 'userId' | 'externalIds'>>> {
   const rows = await db
     .selectFrom('external_ids')
     .select(['entity_id as entityId', 'external_id as externalId'])
@@ -86,7 +161,7 @@ async function usersByExternalId(
     bySurvivor.set(survivor, ids)
   }
 
-  const out: UserMatch[] = []
+  const out: Array<Pick<UserMatch, 'userId' | 'externalIds'>> = []
   for (const [userId, ids] of bySurvivor) {
     const person = await onePerson(db, userId)
     const teams = await teamsOf(db, person.userIds)

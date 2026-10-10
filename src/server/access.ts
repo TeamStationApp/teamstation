@@ -14,18 +14,145 @@ import type { Database } from './db/database'
 /**
  * What one person is allowed to see, worked out once per request.
  *
- * Own-team memberships and genuine management roles grant team visibility.
- * Explicit season/league viewing memberships are bounded to those seasons'
- * games. Competition membership and raw game invitations grant no private
- * scope. Public summaries are separate from these private permissions.
+ * Membership at any level, genuine management roles and a guardian's child's
+ * current teams grant team visibility. A member is the same at every level:
+ * a season's member is a member of every team in the season, and a league's
+ * of every team in the league and in its seasons, as roles flow down.
+ * Competition membership and raw game invitations grant no private scope.
+ * Public summaries are separate from these private permissions.
  */
 export interface VisibleScopes {
-  /** Teams the user belongs to. */
+  /**
+   * Teams the user is a member of — directly, or through a season or league
+   * they are a member of — or holds a role on, or their guarded child plays
+   * on now.
+   */
   teamIds: Set<string>
-  /** Explicit season/league viewing grants and true parent roles. */
+  /** The seasons they are a member of or hold a role on, and their leagues'. */
   seasonIds: Set<string>
   /** True for a site administrator, who sees everything. */
   isAdmin: boolean
+  /**
+   * The open rows of everybody this person guards, read once with the rest,
+   * so a route that asks `guardsPerson` reads them no second time. Absent
+   * from scopes made by hand.
+   */
+  guardedIds?: ReadonlySet<number>
+}
+
+/**
+ * Everybody this person is a parent of — a `user_links` row of kind
+ * `guardian` or `family` — each as every row they are.
+ *
+ * Read across every row of both people, as `mayEditName` reads them: a link
+ * names the rows the two had when it was made, and either may since have been
+ * closed into another.
+ */
+async function guardedPeople(
+  db: Kysely<Database>,
+  userId: number
+): Promise<OnePerson[]> {
+  const actor = await onePerson(db, userId)
+  const links = await db
+    .selectFrom('user_links')
+    .select(['related_user_id'])
+    .where('user_id', 'in', actor.userIds)
+    .where('kind', 'in', ['guardian', 'family'])
+    .execute()
+  const people = new Map<number, OnePerson>()
+  for (const relatedId of new Set(links.map(row => row.related_user_id))) {
+    const child = await onePerson(db, relatedId)
+    // Somebody closed into the asker is the asker, not their child.
+    if (child.userIds.some(id => actor.userIds.includes(id))) continue
+    people.set(child.userId, child)
+  }
+  return [...people.values()].sort((a, b) => a.userId - b.userId)
+}
+
+/**
+ * The players this person is a guardian of, by the row each signs in as:
+ * every person a `guardian` or `family` link relates to any of the asker's
+ * rows, in user id order.
+ */
+export async function guardedPlayers(
+  db: Kysely<Database>,
+  userId: number
+): Promise<number[]> {
+  return (await guardedPeople(db, userId)).map(child => child.userId)
+}
+
+/**
+ * `guardsPlayer` for a route that has the asker's `visibleScopes` and the
+ * player as `onePerson` read them: from the guarded people already read.
+ */
+export async function guardsPerson(
+  db: Kysely<Database>,
+  scopes: VisibleScopes,
+  actorUserId: number,
+  player: OnePerson
+): Promise<boolean> {
+  const guarded =
+    scopes.guardedIds ?? new Set(await guardedPlayers(db, actorUserId))
+  return guarded.has(player.userId)
+}
+
+/** Whether `actorUserId` is a guardian of any row of `playerUserId`. */
+export async function guardsPlayer(
+  db: Kysely<Database>,
+  actorUserId: number,
+  playerUserId: number
+): Promise<boolean> {
+  const player = await onePerson(db, playerUserId)
+  const guarded = await guardedPlayers(db, actorUserId)
+  return guarded.includes(player.userId)
+}
+
+/**
+ * Whether somebody may change a player's details: the jersey and positions
+ * on a team, how they bat and throw, and their walk-up song.
+ *
+ * A site administrator, and a guardian of the player wherever they are
+ * asked. With a team, whoever manages that team's roster — a coach,
+ * assistant or scorekeeper of it, or its administrator (`canManageRoster`);
+ * without one, whoever manages the roster of any team the player plays on,
+ * by any of their rows.
+ */
+export async function mayManagePlayer(
+  db: Kysely<Database>,
+  actor: { userId: number; isAdmin: boolean },
+  playerUserId: number,
+  teamId: string | null
+): Promise<boolean> {
+  if (actor.isAdmin) return true
+  if (await guardsPlayer(db, actor.userId, playerUserId)) return true
+  const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+  if (teamId != null) return canManageRoster(scopes, teamId)
+  const player = await onePerson(db, playerUserId)
+  const plays = await teamsPlayedOnNow(db, player.userIds)
+  return plays.some(teamId => canManageRoster(scopes, teamId))
+}
+
+/**
+ * The teams any of these rows plays on now: a player's membership of a team
+ * that has not been merged into another, each team once, in no particular
+ * order. The one reading of "plays on now" that guardian visibility, player
+ * management, guardian invitations and a player's `current` teams share.
+ */
+export async function teamsPlayedOnNow(
+  db: Kysely<Database>,
+  userIds: readonly number[]
+): Promise<string[]> {
+  if (userIds.length === 0) return []
+  const plays = await db
+    .selectFrom('memberships')
+    .innerJoin('teams', 'teams.id', 'memberships.team_id')
+    .select(['memberships.team_id'])
+    .distinct()
+    .where('memberships.user_id', 'in', userIds)
+    .where('memberships.is_player', '=', true)
+    .where('teams.merged_into', 'is', null)
+    .execute()
+  return plays.map(row => row.team_id)
 }
 
 export interface AdminScopes {
@@ -46,7 +173,12 @@ export async function visibleScopes(
     .where('id', '=', userId)
     .executeTakeFirst()
   if (user == null || user.disabled_at != null || user.merged_into != null)
-    return { teamIds: new Set(), seasonIds: new Set(), isAdmin: false }
+    return {
+      teamIds: new Set(),
+      seasonIds: new Set(),
+      isAdmin: false,
+      guardedIds: new Set()
+    }
   const memberships = await db
     .selectFrom('memberships')
     .select(['team_id'])
@@ -54,41 +186,46 @@ export async function visibleScopes(
     .execute()
   const teamIds = new Set(memberships.map(row => row.team_id))
 
-  // Belonging to a season is its own thing: PeerTube's channel allow-list
-  // brought people who are on no team but may watch everything in the
-  // season, bounded to its games rather than every team's unrelated data.
+  // A member of a season or a league is the same member a team has, of every
+  // team below it, carried down as a role is: a league's seasons and teams,
+  // each season's teams. Read as the teams there now rather than stored, so a
+  // season created next spring is in the league the moment it exists. Read
+  // across every row of the person, because a merge moves team memberships
+  // onto the row kept but leaves these where they were written.
+  const actor = await onePerson(db, userId)
   const seasonMemberships = await db
     .selectFrom('season_members')
     .select(['season_id'])
-    .where('user_id', '=', userId)
+    .where('user_id', 'in', actor.userIds)
     .execute()
-  const memberSeasonIds = seasonMemberships.map(row => row.season_id)
-
-  // Belonging to a league is the same idea one level up, and is what a
-  // league-scoped invite grants. Read as the league's seasons rather than
-  // stored as them: a season created next spring is in the league the moment
-  // it exists, which a list written down on the day somebody joined would
-  // never catch up with.
   const leagueMemberships = await db
     .selectFrom('league_members')
     .select(['league_id'])
-    .where('user_id', '=', userId)
+    .where('user_id', 'in', actor.userIds)
     .execute()
-  if (leagueMemberships.length > 0) {
-    const inThose = await db
-      .selectFrom('seasons')
-      .select(['id'])
-      .where(
-        'league_id',
-        'in',
-        leagueMemberships.map(row => row.league_id)
-      )
-      .execute()
-    for (const row of inThose) memberSeasonIds.push(row.id)
-  }
+  const { member } = await inheritScopes(db, {
+    member: {
+      leagueIds: new Set(leagueMemberships.map(row => row.league_id)),
+      seasonIds: new Set(seasonMemberships.map(row => row.season_id)),
+      teamIds: new Set<string>()
+    }
+  })
+  for (const teamId of member.teamIds) teamIds.add(teamId)
+  const memberSeasonIds = [...member.seasonIds]
+
+  // A guardian is a member of every team their child plays on, for as long
+  // as the child does: read from the child's memberships now, never written
+  // down, so leaving a team takes it away again unless the guardian belongs
+  // to it themselves.
+  const guarded = await guardedPeople(db, userId)
+  const guardedIds = new Set(guarded.map(child => child.userId))
+  const childRows = guarded.flatMap(child => child.userIds)
+  for (const teamId of await teamsPlayedOnNow(db, childRows))
+    teamIds.add(teamId)
 
   // Only actual memberships and true management roles supply private scopes.
-  // Competition links never widen spectator access, even when a host opens itself.
+  // Competition links never widen a member's access, even when a host opens
+  // itself.
   const roles = await roleScopes(db, userId, isAdmin)
   for (const role of ROLES) {
     for (const teamId of roles[role].teamIds) teamIds.add(teamId)
@@ -97,7 +234,8 @@ export async function visibleScopes(
   return {
     teamIds,
     seasonIds: new Set(memberSeasonIds),
-    isAdmin: roles.isAdmin
+    isAdmin: roles.isAdmin,
+    guardedIds
   }
 }
 
@@ -521,8 +659,11 @@ export function canSeePlayedFor(
 
 /**
  * Whether a person may be seen: by themselves, and by anybody who can see a
- * private team they have played for. Season viewing is bounded to games and
- * cannot reveal a player's profile or external identity.
+ * private team they have played for. Membership at any level reaches the
+ * player pages of the teams below it: a member of a season or a league sees
+ * the players of its teams as a member of the team does, as does a guardian
+ * of a player on it. A season a team only competes in reaches none of its
+ * players.
  */
 export function canSeePerson(
   scopes: VisibleScopes,

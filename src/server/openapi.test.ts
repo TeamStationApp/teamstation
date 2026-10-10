@@ -289,6 +289,36 @@ describe('the API document', function () {
     expect(paths['/me/roles'].get.description).includes('`songkeeper`')
   })
 
+  it('describes what a guardian may read and change', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const hands = paths['/players/{userId}/settings'].put
+    expect(hands.description).includes('guardian')
+    expect(hands.description).includes('400')
+    expect(hands.description).includes('404')
+    expect(
+      Object.keys(
+        hands.requestBody.content['application/json'].schema.properties
+      )
+    ).deep.equals(['bats', 'throws'])
+    expect(
+      paths['/teams/{teamId}/players/{userId}/settings'].put.description
+    ).includes('guardian')
+    expect(
+      paths['/teams/{teamId}/players/{userId}/walk-up-song'].put.description
+    ).includes('guardian')
+    const roles =
+      paths['/me/roles'].get.responses[200].content['application/json'].schema
+    expect(roles.required).deep.equals(['teams', 'guardianOf'])
+    expect(roles.properties.guardianOf.type).equals('array')
+    const users = paths['/users'].get
+    const guardedBy = users.parameters.find(
+      (parameter: { name: string }) => parameter.name === 'guardedBy'
+    )
+    expect(guardedBy.schema.enum).deep.equals(['me'])
+    expect(users.description).includes('`guardedBy=me`')
+    expect(users.description).includes('shortName')
+  })
+
   it('describes the box-score stats field and the events play contract', function () {
     const paths = openApiDocument('0.0.0').paths as Record<
       string,

@@ -11,6 +11,10 @@ import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  type GuardianFixture,
+  guardianFixture
+} from '../../test/guardianFixture'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -1303,5 +1307,48 @@ describe('teams by external id, and making one', function () {
         seasons: before.seasons + 1
       })
     })
+  })
+})
+
+/**
+ * A guardian is a member of every team their child plays on now: `GET /teams`
+ * lists them, and stops listing one the child leaves. On `guardianFixture`,
+ * where Avery plays for Demo Hawks and Demo Comets and Tim Raines is his
+ * guardian with no membership of his own.
+ */
+describe('GET /teams for a guardian', function () {
+  this.timeout(120000)
+
+  let f: GuardianFixture
+
+  before(async function () {
+    f = await guardianFixture()
+  })
+
+  after(async function () {
+    await f?.h.close()
+  })
+
+  const teamsOf = async (userId: number): Promise<string[]> => {
+    const answer = await f.h.request('GET', '/teams', undefined, userId)
+    expect(answer.status).equals(200)
+    return ((await answer.json()) as Array<{ id: string }>)
+      .map(team => team.id)
+      .sort()
+  }
+
+  it('lists the child’s teams, and drops one the child leaves', async function () {
+    expect(await teamsOf(f.people.guardian)).deep.equals(
+      [f.teamA, f.secondTeam].sort()
+    )
+    // Nobody else's list changes: a follower and the coach of the Hawks.
+    expect(await teamsOf(f.people.follower)).deep.equals([])
+    expect(await teamsOf(f.people.teamCoach)).deep.equals([f.teamA])
+    await f.h.db
+      .deleteFrom('memberships')
+      .where('user_id', '=', f.players[0].id)
+      .where('team_id', '=', f.secondTeam)
+      .execute()
+    expect(await teamsOf(f.people.guardian)).deep.equals([f.teamA])
   })
 })

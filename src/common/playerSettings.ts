@@ -98,6 +98,30 @@ export function asPlayerSettings(raw: unknown): PlayerSettings {
   return sent
 }
 
+/**
+ * What may be changed about a player away from any team: how they bat and
+ * throw. `asPlayerSettings` restricted to those two, so a jersey or positions
+ * sent here, which only mean something on a team, are refused rather than
+ * dropped.
+ */
+export function asPersonSettings(raw: unknown): PersonSettings {
+  if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const body = raw as Record<string, unknown>
+    for (const name of ['jersey', 'positions']) {
+      if (body[name] !== undefined) {
+        throw new TypeError(`${name}: Set on a team, not here`)
+      }
+    }
+  }
+  const { bats, throws } = asPlayerSettings(raw)
+  return {
+    ...(bats === undefined ? {} : { bats }),
+    ...(throws === undefined ? {} : { throws })
+  }
+}
+
+export type PersonSettings = Pick<PlayerSettings, 'bats' | 'throws'>
+
 /** One field, with its name on the refusal. */
 function field<T>(
   name: string,

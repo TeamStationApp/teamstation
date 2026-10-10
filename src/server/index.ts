@@ -501,7 +501,7 @@ function runWorker(): void {
   app.use('/api/v1', statsRoutes(db, mediaContext))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
-  app.use('/api/v1', userRoutes(db))
+  app.use('/api/v1', userRoutes(db, mediaContext.space))
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))

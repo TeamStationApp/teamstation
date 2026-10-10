@@ -2189,7 +2189,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'they hold there: set on the team, carried down from its season ' +
             'or league, every role on a team they administer, and ' +
             '`songkeeper` wherever they are `scorekeeper`. A site ' +
-            'admin holds every role on every team.',
+            'admin holds every role on every team. `guardianOf` lists the ' +
+            'players the caller is a guardian of (a `guardian` or `family` ' +
+            'link), by the user id each now signs in as.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -2198,7 +2200,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['teams'],
+                    required: ['teams', 'guardianOf'],
                     properties: {
                       teams: {
                         type: 'object',
@@ -2206,6 +2208,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                           type: 'array',
                           items: { $ref: '#/components/schemas/Role' }
                         }
+                      },
+                      guardianOf: {
+                        type: 'array',
+                        items: { type: 'integer' },
+                        description: 'Player user ids, in id order'
                       }
                     }
                   }
@@ -3892,15 +3899,22 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/users': {
         get: {
-          summary: 'Who people are here, by the ids another service has',
+          summary:
+            'Who people are here, by the ids another service has, or the players you guard',
           description:
             'A play names people by TeamStation user id alone, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
-            '`{ userId, externalIds }`: a person, and which of the asked ids ' +
-            'are theirs. A merged row answers as the person it was merged ' +
+            '`{ userId, externalIds, shortName, avatarUrl }`: a person, ' +
+            'which of the asked ids are theirs, their short name and their ' +
+            'signed picture (null when none). A merged row answers as the ' +
+            'person it was merged ' +
             'into. Only people you could see the page of are answered. ' +
             '`externalId` is required and may be given more than once; an ' +
-            'empty one is refused. With view=administration, a signed-in node ' +
+            'empty one is refused. With `guardedBy=me` instead, the answer ' +
+            'is the players you are a guardian of, sorted by short name, ' +
+            'each with empty `externalIds`; any other `guardedBy` is 400, ' +
+            'and so is `guardedBy` beside `externalId`. ' +
+            'With view=administration, a signed-in node ' +
             'administrator instead receives account identity and node/suspension ' +
             'state, filtered by query (name or verified email, at most 120 ' +
             'characters). This view requires no externalId and does not alter ' +
@@ -3928,11 +3942,20 @@ export function openApiDocument(version: string): OpenApiDocument {
               style: 'form',
               explode: true,
               description: "Another service's ids for the people"
+            },
+            {
+              name: 'guardedBy',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['me'] },
+              description:
+                'The players the caller is a guardian of, in place of externalId'
             }
           ],
           responses: {
             200: {
-              description: 'In user id order; empty when nobody matches'
+              description:
+                'By externalId, in user id order; by guardedBy, by short name. Empty when nobody matches'
             },
             400: errorResponse,
             401: errorResponse
@@ -3974,7 +3997,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'For a coach, assistant or scorekeeper of the team — the flag ' +
             'set on the team, its season or its league — an admin of any of ' +
-            'those, or a site admin. ' +
+            'those, a guardian of the player, or a site admin. ' +
             'Anybody else, and a user who is not a player on the team, gets ' +
             '404. Send only the fields to change; a body with none is 400. ' +
             "`jersey` and `positions` are the player's place on this team. " +
@@ -4052,13 +4075,83 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/players/{userId}/settings': {
+        put: {
+          summary: 'Set how a player bats and throws',
+          description:
+            'The hands are the player\u2019s own and read the same on every ' +
+            'team. For a guardian of the player, a coach, assistant, ' +
+            'scorekeeper or admin of any team the player plays on, or a site ' +
+            'admin; anybody else, and a ' +
+            'merged row, gets 404. Only `bats` and `throws` are accepted: ' +
+            '`jersey` and `positions` belong to a team ' +
+            '(PUT /teams/{teamId}/players/{userId}/settings) and are 400 ' +
+            'here, as is a body that changes nothing. Setting either hand ' +
+            'marks them set by hand, so a roster import no longer ' +
+            'overwrites them. Audited as `playerSettings`.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  minProperties: 1,
+                  properties: {
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The hands as they now read',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'bats', 'throws'],
+                    properties: {
+                      userId: { type: 'integer' },
+                      bats: {
+                        type: 'string',
+                        nullable: true,
+                        enum: ['left', 'right', 'switch']
+                      },
+                      throws: {
+                        type: 'string',
+                        nullable: true,
+                        enum: ['left', 'right']
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/players/{userId}/walk-up-song': {
         put: {
           summary: "Set a player's walk-up song on a team",
           description:
             'For a songkeeper or scorekeeper of the team — the flag set on ' +
             'the team, its season or its league — an admin of any of those, ' +
-            'or a site ' +
+            'a guardian of the player, or a site ' +
             'admin. Anybody else, and a user who is not a player on the ' +
             'team, gets 404; a bad body is 400. Replaces any song the player ' +
             'had on the team. Audited, and announced on the game socket as a ' +
