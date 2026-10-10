@@ -902,6 +902,558 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
   }
 }
 
+/** Real peer arrivals and keyboard confirmation on independent owned rooms. */
+async function review2Browser(daemon: Daemon): Promise<void> {
+  const narrow = process.env.CHAT_UI_VIEWPORT === 'narrow'
+  const selected = required('CHAT_UI_CONVERSATION')
+  const incoming = required('CHAT_UI_TEST_CONVERSATION')
+  assert.notEqual(selected, incoming)
+  const browser = await puppeteer.executablePath()
+  const attach = async (device: string, profile: string): Promise<Device> =>
+    await daemon.attach({
+      device,
+      platform: 'web',
+      driver: 'cdp',
+      url: WEB,
+      artifacts: 'on-failure',
+      extra: {
+        browser,
+        userDataDir: profile,
+        windowSize: narrow ? '390x844' : '1440x1000'
+      }
+    })
+  const primary = await attach(
+    'chat-review2-observer',
+    required('CHAT_UI_PROFILE_DIR')
+  )
+  const peer = await attach(
+    'chat-review2-peer',
+    required('CHAT_UI_PEER_PROFILE_DIR')
+  )
+  const read = async <T>(m: Device, script: string): Promise<T> => {
+    const response = (await m.evalBrowserScript({ script })) as {
+      data: unknown
+    }
+    return (
+      typeof response.data === 'string'
+        ? JSON.parse(response.data)
+        : response.data
+    ) as T
+  }
+  const api = `async function request(method,path,body){const r=await fetch(${JSON.stringify(API)}+path,{method,credentials:'include',headers:body==null?{}:{'Content-Type':'application/json'},...(body==null?{}:{body:JSON.stringify(body)})});if(!r.ok)throw Error(method+' '+path+' '+r.status);return r.json()}`
+  const chat = async (
+    m: Device
+  ): Promise<{ lastSeq: number; preferences: { muted: boolean } }> =>
+    await read(
+      m,
+      `${api};return JSON.stringify((await request('GET','/chat/conversations')).find(c=>c.id===${JSON.stringify(incoming)}))`
+    )
+  const mute = async (muted: boolean): Promise<void> => {
+    await read(
+      primary,
+      `${api};await request('PATCH',${JSON.stringify('/chat/conversations/' + incoming + '/preferences')},{muted:${muted}});return true`
+    )
+    await new Promise(resolve => setTimeout(resolve, 600))
+  }
+  const composer = '[data-testid="chat-composer"]'
+  const send = async (m: Device, text: string): Promise<string> => {
+    const before = await chat(m)
+    assert(
+      await read<boolean>(
+        m,
+        `return JSON.stringify(document.querySelector(${JSON.stringify(composer)})?.value==='')`
+      ),
+      'Owned composer must start empty'
+    )
+    await m.tapOn({ css: composer })
+    await m.inputText({ text })
+    await m.tapOn({ text: 'Send' })
+    return await read(
+      m,
+      `${api};for(let n=0;n<150;n++){const c=(await request('GET','/chat/conversations')).find(c=>c.id===${JSON.stringify(incoming)});const input=document.querySelector(${JSON.stringify(composer)});if(c.lastSeq>${before.lastSeq}&&input?.value===''){const posts=(await request('GET',${JSON.stringify('/chat/conversations/' + incoming + '/messages?after=' + before.lastSeq)})).filter(p=>p.kind==='post');if(posts.length!==1)throw Error('Send must acknowledge exactly one new post');return JSON.stringify(posts[0].id)}await new Promise(r=>setTimeout(r,100))}throw Error('Normal encrypted send did not settle')`
+    )
+  }
+  const observe = async (): Promise<void> => {
+    await read(
+      primary,
+      `window.review2MO?.disconnect();const live=[...document.querySelectorAll('[aria-live="polite"]')];if(live.length!==1)throw Error('Exactly one arrival host required');window.review2Live=live[0];window.review2Updates=[];window.review2MO=new MutationObserver(ms=>{if(ms.some(m=>m.type==='childList'))window.review2Updates.push(window.review2Live.textContent)});window.review2MO.observe(window.review2Live,{childList:true,subtree:true});return true`
+    )
+  }
+  const hostGeometry = async (): Promise<unknown> =>
+    await read(
+      primary,
+      `const live=window.review2Live,list=document.querySelector('[data-testid="chat-list-pane"]'),messages=document.querySelector('[data-testid="chat-message-pane"]'),input=document.querySelector(${JSON.stringify(composer)});const hidden=[];for(let n=live;n;n=n.parentElement)if(getComputedStyle(n).display==='none'||n.getAttribute('aria-hidden')==='true')hidden.push(n.tagName);if(hidden.length||!live.checkVisibility()||!input?.checkVisibility())throw Error('Live host and selected composer must remain exposed');if(${narrow}&&getComputedStyle(list).display!=='none')throw Error('Narrow selected pane must hide its list');return JSON.stringify({width:innerWidth,height:innerHeight,soleExposedHost:true,selectedComposerVisible:true,listDisplay:getComputedStyle(list).display,messagePaneVisible:messages?.checkVisibility(),hostHiddenAncestors:hidden})`
+    )
+  const quiet = async (name: string): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, 2200))
+    assert.equal(
+      await read(
+        primary,
+        'return JSON.stringify(window.review2Updates.length)'
+      ),
+      0,
+      name
+    )
+  }
+  const capture = async (name: string): Promise<void> => {
+    writeFileSync(
+      join(
+        required('CHAT_UI_ARTIFACTS'),
+        `${narrow ? 'narrow' : 'wide'}-${name}.png`
+      ),
+      await primary.screenshot()
+    )
+  }
+  let originalMuted: boolean | undefined
+  try {
+    await signIn(primary, 'Hc')
+    await signIn(peer, 'Hs')
+    // Fixture membership is supplied privately; no shared-reader room is altered.
+    console.log(
+      await read(
+        primary,
+        `${api};const me=await request('GET','/auth/me');const members={};for(const id of ${JSON.stringify([selected, incoming])})members[id]=(await request('GET','/chat/conversations/'+id+'/members')).map(m=>Number(m.userId));const forbidden=Number(${JSON.stringify(process.env.CHAT_UI_EXCLUDED_USER ?? '0')});if(Object.values(members).some(ids=>ids.includes(forbidden)))throw Error('Independent browser room includes reserved native actor');if(members[${JSON.stringify(incoming)}].length!==2)throw Error('Peer fixture must be an ordinary two-adult DM');return JSON.stringify({actor:me.id,members})`
+      )
+    )
+    originalMuted = (await chat(primary)).preferences.muted
+    if (process.env.CHAT_UI_REVIEW2_FOCUS_ONLY !== '1') {
+      await primary.openLink({ link: `${WEB}/chat/${selected}` })
+      await primary.assertVisible({ css: composer, timeout: 60000 })
+      await peer.openLink({ link: `${WEB}/chat/${incoming}` })
+      await peer.assertVisible({ css: composer, timeout: 60000 })
+      await mute(false)
+      await observe()
+      console.log(await hostGeometry())
+      const repeated = 'Repeated arrival ' + Date.now()
+      const peerIds: string[] = []
+      for (let iteration = 0; iteration < 2; iteration++) {
+        await read(
+          primary,
+          'window.review2PreviousChild=window.review2Live.firstChild;return true'
+        )
+        peerIds.push(await send(peer, repeated))
+        console.log(
+          await read(
+            primary,
+            `for(let n=0;n<150;n++){if(window.review2Updates.length===${iteration + 1}){await new Promise(r=>setTimeout(r,300));if(window.review2Updates.length!==${iteration + 1}||window.review2Live.firstChild===window.review2PreviousChild)throw Error('Peer arrival must replace exactly one alert child');return JSON.stringify({repeat:${iteration + 1},updates:window.review2Updates.length,text:window.review2Live.textContent})}await new Promise(r=>setTimeout(r,100))}throw Error('Peer alert missing')`
+          )
+        )
+      }
+      console.log(await hostGeometry())
+      await capture('arrival-host-selected-after')
+      await mute(true)
+      await observe()
+      const mutedId = await send(peer, 'Muted delivery ' + Date.now())
+      await quiet('Muted peer post must not announce')
+      await mute(false)
+      await observe()
+      // Hold only this normal own POST while selecting a different room.
+      await primary.openLink({ link: `${WEB}/chat/${incoming}` })
+      await primary.assertVisible({ css: composer, timeout: 60000 })
+      const beforeSelf = await chat(primary)
+      const gateId = 'review2-self-' + Date.now()
+      await primary.tapOn({ css: composer })
+      await primary.inputText({ text: 'Disposable self arrival ' + Date.now() })
+      execFileSync(
+        process.execPath,
+        [required('CHAT_UI_PENDING_CONTROL'), 'Hc', 'success', gateId, '15000'],
+        { stdio: 'pipe' }
+      )
+      await primary.tapOn({ text: 'Send' })
+      const consumptionDeadline = Date.now() + 8000
+      let consumed = false
+      while (Date.now() < consumptionDeadline) {
+        const hits = readFileSync(required('CHAT_UI_PENDING_AUDIT'), 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map(line => JSON.parse(line) as { gateId: string; event?: string })
+        if (hits.some(hit => hit.gateId === gateId && hit.event == null)) {
+          consumed = true
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      assert(consumed, 'Own normal encrypted send must consume its exact gate')
+      if (narrow) await primary.tapOn({ text: 'Back' })
+      await primary.evalBrowserScript({
+        script: `const row=document.querySelector('[data-testid="chat-conversation-${selected}"]');row.scrollIntoView({block:'center'});return true`
+      })
+      await primary.tapOn({
+        css: `[data-testid="chat-conversation-${selected}"]`
+      })
+      await primary.assertVisible({ css: composer, timeout: 60000 })
+      const ownObserverReadyAt = Date.now()
+      await observe()
+      const ownId = await read<string>(
+        primary,
+        `${api};for(let n=0;n<300;n++){const posts=(await request('GET',${JSON.stringify('/chat/conversations/' + incoming + '/messages?after=' + beforeSelf.lastSeq)})).filter(p=>p.kind==='post');if(posts.length===1)return JSON.stringify(posts[0].id);if(posts.length>1)throw Error('Own arrival produced multiple posts');await new Promise(r=>setTimeout(r,100))}throw Error('Own encrypted send missing')`
+      )
+      const ownHits = readFileSync(required('CHAT_UI_PENDING_AUDIT'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map(
+          line =>
+            JSON.parse(line) as { gateId: string; event?: string; at: string }
+        )
+        .filter(hit => hit.gateId === gateId)
+      assert.equal(ownHits.filter(hit => hit.event == null).length, 1)
+      const release = ownHits.find(hit => hit.event === 'delay-released')
+      assert(
+        release != null && ownObserverReadyAt < Date.parse(release.at),
+        'Different selected room must be visible before the own post is forwarded'
+      )
+      await quiet('Own offscreen post must not announce')
+      execFileSync(
+        process.execPath,
+        [required('CHAT_UI_PENDING_CONTROL'), 'clear'],
+        { stdio: 'pipe' }
+      )
+      console.log({
+        ownId,
+        ownOffscreenQuiet: true,
+        ownObserverReadyAt,
+        ownReleaseAt: release.at,
+        gateId
+      })
+      await primary.openLink({ link: `${WEB}/chat/${incoming}` })
+      await primary.assertVisible({ css: composer, timeout: 60000 })
+      await observe()
+      const selectedId = await send(
+        peer,
+        'Selected conversation arrival ' + Date.now()
+      )
+      await primary.evalBrowserScript({
+        script: `for(let n=0;n<100;n++){const row=document.querySelector(${JSON.stringify(`[data-testid="chat-message-${selectedId}"]`)});if(row){row.scrollIntoView({block:'center'});return true}await new Promise(r=>setTimeout(r,100))}throw Error('Selected received row absent')`
+      })
+      await primary.assertVisible({
+        css: `[data-testid="chat-message-${selectedId}"]`,
+        timeout: 30000
+      })
+      await quiet('Visible selected conversation must not announce')
+      console.log({
+        repeatedPeerIds: peerIds,
+        mutedId,
+        ownId,
+        selectedId,
+        mutedQuiet: true,
+        ownQuiet: true,
+        selectedQuiet: true,
+        selfObserverVisibleBeforeForward: true
+      })
+    }
+    await primary.openLink({ link: `${WEB}/chat/${incoming}` })
+    await primary.assertVisible({ css: composer, timeout: 60000 })
+    const beforeDelete = (await chat(primary)).lastSeq
+    const previewBody = 'Disposable preview ' + Date.now()
+    const deleteId = await send(primary, previewBody)
+    const row = `[data-testid="chat-message-${deleteId}"]`
+    const trigger = row + ' [aria-label="More message actions"]'
+    const focusIs = async (label: string): Promise<boolean> =>
+      await read(
+        primary,
+        `return JSON.stringify(document.activeElement?.getAttribute('role')==='button'&&document.activeElement?.textContent.trim()===${JSON.stringify(label)})`
+      )
+    const openConfirmation = async (): Promise<void> => {
+      await primary.evalBrowserScript({
+        script: `const row=document.querySelector(${JSON.stringify(row)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+      })
+      await primary.tapOn({ css: `[data-testid="chat-bubble-${deleteId}"]` })
+      await primary.evalBrowserScript({
+        script: `document.removeEventListener('focusin',window.review2FocusListener);window.review2FocusTrail=[];window.review2FocusListener=e=>window.review2FocusTrail.push({label:e.target.getAttribute('aria-label'),row:e.target.closest('[data-testid^="chat-message-"]')?.getAttribute('data-testid'),tag:e.target.tagName});document.addEventListener('focusin',window.review2FocusListener);return true`
+      })
+      for (let n = 0; n < 40; n++) {
+        if (
+          await read<boolean>(
+            primary,
+            `return JSON.stringify(document.activeElement===document.querySelector(${JSON.stringify(trigger)}))`
+          )
+        )
+          break
+        await primary.pressKey({ key: 'Shift+Tab' })
+      }
+      console.log(
+        await read(
+          primary,
+          `const t=document.querySelector(${JSON.stringify(trigger)}),a=document.activeElement;return JSON.stringify({trail:window.review2FocusTrail,keyboardEntryFocus:{tag:a?.tagName,label:a?.getAttribute('aria-label'),text:a?.textContent?.slice(0,80)},triggerPresent:t!=null,triggerTabIndex:t?.tabIndex,triggerVisible:t?.checkVisibility(),isTrigger:a===t,allFocusable:[...document.querySelectorAll('[tabindex="0"],button,textarea')].slice(-12).map(x=>({tag:x.tagName,label:x.getAttribute('aria-label'),text:x.textContent?.slice(0,30)}))})`
+        )
+      )
+      assert(
+        await read<boolean>(
+          primary,
+          `return JSON.stringify(document.activeElement===document.querySelector(${JSON.stringify(trigger)}))`
+        ),
+        'Physical keyboard must focus the original More trigger before opening'
+      )
+      await primary.pressKey({ key: 'Enter' })
+      for (let n = 0; n < 16 && !(await focusIs('Delete')); n++)
+        await primary.pressKey({ key: 'Tab' })
+      assert(
+        await focusIs('Delete'),
+        'Keyboard must reach original Delete action'
+      )
+      await primary.pressKey({ key: 'Enter' })
+      await primary.assertVisible({
+        text: 'This message will be removed for everyone.'
+      })
+      assert(await focusIs('Cancel'), 'Mounted confirmation must focus Cancel')
+    }
+    const restored = async (): Promise<void> => {
+      assert(
+        await read<boolean>(
+          primary,
+          `await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return JSON.stringify(document.activeElement===document.querySelector(${JSON.stringify(trigger)}))`
+        ),
+        'Closing confirmation must restore the original message trigger'
+      )
+      assert(
+        await read<boolean>(
+          primary,
+          'return JSON.stringify(!document.querySelector("[aria-label^=\\"Message actions for\\"]"))'
+        ),
+        'Confirmation must close'
+      )
+    }
+    await openConfirmation()
+    await primary.pressKey({ key: 'Tab' })
+    assert(await focusIs('Delete'), 'Tab must wrap from Cancel to Delete')
+    await primary.pressKey({ key: 'Shift+Tab' })
+    assert(await focusIs('Cancel'), 'Shift Tab must return to Cancel')
+    await mute(!originalMuted)
+    assert(
+      await focusIs('Cancel'),
+      'Metadata update must preserve confirmation focus'
+    )
+    await capture('delete-confirmation-focused-after')
+    await primary.pressKey({ key: 'Enter' })
+    await restored()
+    await openConfirmation()
+    await primary.pressKey({ key: 'Escape' })
+    await restored()
+    await openConfirmation()
+    await primary.tapOn({ text: 'Cancel' })
+    await restored()
+    console.log({
+      physicalConfirmationCancelTabEnterEscape: true,
+      focusSurvivesMetadata: true,
+      originalTriggerRestored: true
+    })
+    // Only the new owned post is deleted; earlier retained originals remain intact.
+    await openConfirmation()
+    await primary.pressKey({ key: 'Tab' })
+    await primary.pressKey({ key: 'Enter' })
+    console.log(
+      await read(
+        primary,
+        `${api};for(let n=0;n<100;n++){const posts=await request('GET',${JSON.stringify('/chat/conversations/' + incoming + '/messages?after=' + beforeDelete)});const post=posts.find(p=>p.id===${JSON.stringify(deleteId)});if(post?.clearedAt){return JSON.stringify({newOwnedDelete:true,deletedId:post.id})}await new Promise(r=>setTimeout(r,100))}throw Error('New owned deletion unavailable')`
+      )
+    )
+    if (narrow) await primary.tapOn({ text: 'Back' })
+    const listRow = `[data-testid="chat-conversation-${incoming}"]`
+    await primary.evalBrowserScript({
+      script: `const row=document.querySelector(${JSON.stringify(listRow)});if(!row)throw Error('Preview row missing');row.scrollIntoView({block:'center'});return true`
+    })
+    await primary.assertVisible({ css: listRow })
+    console.log(
+      await read(
+        primary,
+        `for(let n=0;n<100;n++){const row=document.querySelector(${JSON.stringify(listRow)});if(row?.textContent.includes('Message deleted')){if(row.textContent.includes(${JSON.stringify(previewBody)}))throw Error('Deleted latest preview retained plaintext');return JSON.stringify({latestDeletedPreviewPurged:true,deleteId:${JSON.stringify(deleteId)}})}await new Promise(r=>setTimeout(r,100))}throw Error('Latest deleted preview did not refresh')`
+      )
+    )
+    await capture('deleted-latest-preview-after')
+    console.log(
+      'Review2 exposed-host guards and physical Delete confirmation browser PASS'
+    )
+  } finally {
+    await read(
+      primary,
+      "window.review2MO?.disconnect();document.removeEventListener('focusin',window.review2FocusListener);return true"
+    ).catch(() => {})
+    if (originalMuted != null) await mute(originalMuted)
+    execFileSync(
+      process.execPath,
+      [required('CHAT_UI_PENDING_CONTROL'), 'clear'],
+      { stdio: 'pipe' }
+    )
+    await primary.detach()
+    await peer.detach()
+  }
+}
+
+/** A normal peer sends only after a fresh native receiver stage is ready. */
+async function arrivalPeer(daemon: Daemon): Promise<void> {
+  const request = JSON.parse(
+    readFileSync(required('CHAT_UI_ARRIVAL_REQUEST'), 'utf8')
+  ) as {
+    actorUserId: number
+    selectedConversationId: string
+    proposedOffscreenConversationId: string
+    probeBody: string
+  }
+  assert.notEqual(
+    request.selectedConversationId,
+    request.proposedOffscreenConversationId
+  )
+  const m = await daemon.attach({
+    device: 'chat-arrival-peer',
+    platform: 'web',
+    driver: 'cdp',
+    url: WEB,
+    artifacts: 'on-failure',
+    extra: {
+      browser: await puppeteer.executablePath(),
+      windowSize: '1440x1000',
+      userDataDir: required('CHAT_UI_PROFILE_DIR')
+    }
+  })
+  const read = async <T>(script: string): Promise<T> => {
+    const result = (await m.evalBrowserScript({ script })) as { data: unknown }
+    return (
+      typeof result.data === 'string' ? JSON.parse(result.data) : result.data
+    ) as T
+  }
+  const api = `async function get(path){const r=await fetch(${JSON.stringify(API)}+path,{credentials:'include'});if(!r.ok)throw Error('Peer preflight '+r.status);return r.json()}`
+  try {
+    await signIn(m, 'Hc')
+    const preflight = await read<{
+      authorUserId: number
+      rooms: Array<{
+        conversationId: string
+        memberIds: number[]
+        canPost: boolean
+        lastSeq: number
+      }>
+    }>(
+      `${api};const me=await get('/auth/me'),chats=await get('/chat/conversations'),result=[];for(const id of ${JSON.stringify([request.selectedConversationId, request.proposedOffscreenConversationId])}){const chat=chats.find(c=>c.id===id),members=await get('/chat/conversations/'+id+'/members');if(!chat?.canPost||chat.closed||chat.locked||chat.noHolder||!members.some(m=>Number(m.userId)===${request.actorUserId})||!members.some(m=>Number(m.userId)===Number(me.id)))throw Error('Current peer/receiver membership or posting eligibility missing');result.push({conversationId:id,memberIds:members.map(m=>Number(m.userId)),canPost:chat.canPost,lastSeq:chat.lastSeq})}return JSON.stringify({authorUserId:me.id,rooms:result})`
+    )
+    writeFileSync(
+      required('CHAT_UI_ARRIVAL_PREFLIGHT'),
+      JSON.stringify(preflight, null, 2) + '\n'
+    )
+    console.log(
+      '$ Authenticated current peer/receiver membership and posting preflight',
+      preflight
+    )
+    if (process.env.CHAT_UI_ARRIVAL_PREFLIGHT_ONLY === '1') return
+    const ready = JSON.parse(
+      readFileSync(required('CHAT_UI_ARRIVAL_READY'), 'utf8')
+    ) as {
+      ready: boolean
+      stage: string
+      phaseToken: string
+      conversationId: string
+      body: string
+      priorSeq: number
+      expiresAt: number | string
+      sourceHead: string
+    }
+    assert.equal(ready.ready, true)
+    assert.equal(ready.stage, required('CHAT_UI_ARRIVAL_STAGE'))
+    assert.equal(ready.sourceHead, required('CHAT_UI_APP_SOURCE'))
+    assert(
+      ready.phaseToken !== '' &&
+        Date.now() <
+          (typeof ready.expiresAt === 'number'
+            ? ready.expiresAt
+            : Date.parse(ready.expiresAt)),
+      'Receiver token must be unexpired'
+    )
+    assert(
+      [
+        request.selectedConversationId,
+        request.proposedOffscreenConversationId
+      ].includes(ready.conversationId)
+    )
+    assert.equal(ready.body, request.probeBody)
+    assert(Number.isInteger(ready.priorSeq) && ready.priorSeq >= 0)
+    assert(
+      Date.now() - statSync(required('CHAT_UI_ARRIVAL_READY')).mtimeMs < 120000,
+      'Receiver ready marker must be fresh'
+    )
+    const ackPath = required('CHAT_UI_ARRIVAL_ACK')
+    const attemptedPath = ackPath + '.attempted.json'
+    assert(
+      !existsSync(ackPath) && !existsSync(attemptedPath),
+      'A stage acknowledgement or attempt already exists; never send again'
+    )
+    await m.openLink({ link: WEB + '/chat/' + ready.conversationId })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    const before = await read<number>(
+      `${api};return JSON.stringify((await get('/chat/conversations')).find(c=>c.id===${JSON.stringify(ready.conversationId)}).lastSeq)`
+    )
+    assert.equal(
+      before,
+      ready.priorSeq,
+      'No other post may race this receiver stage'
+    )
+    assert(
+      await read<boolean>(
+        "return JSON.stringify(document.querySelector('[data-testid=\"chat-composer\"]').value==='')"
+      ),
+      'Peer composer must start empty'
+    )
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: ready.body })
+    const stillReady = JSON.parse(
+      readFileSync(required('CHAT_UI_ARRIVAL_READY'), 'utf8')
+    ) as typeof ready
+    assert(
+      stillReady.ready &&
+        stillReady.phaseToken === ready.phaseToken &&
+        stillReady.stage === ready.stage &&
+        Date.now() <
+          (typeof stillReady.expiresAt === 'number'
+            ? stillReady.expiresAt
+            : Date.parse(stillReady.expiresAt)),
+      'Receiver must still own the exact active stage'
+    )
+    // Claim before clicking so even a transport failure cannot repeat this send.
+    writeFileSync(
+      attemptedPath,
+      JSON.stringify({
+        attempted: true,
+        stage: ready.stage,
+        conversationId: ready.conversationId,
+        priorSeq: before
+      }) + '\n'
+    )
+    await m.tapOn({ text: 'Send' })
+    const posted = await read<{
+      messageId: string
+      seq: number
+      senderUserId: number
+    }>(
+      `${api};for(let n=0;n<150;n++){const posts=(await get(${JSON.stringify('/chat/conversations/' + ready.conversationId + '/messages?after=' + before)})).filter(p=>p.kind==='post');if(posts.length===1&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify({messageId:posts[0].id,seq:posts[0].seq,senderUserId:posts[0].senderUserId});if(posts.length>1)throw Error('Peer stage appended more than one post');await new Promise(r=>setTimeout(r,100))}throw Error('Normal encrypted peer stage did not settle')`
+    )
+    assert.equal(
+      posted.senderUserId,
+      preflight.authorUserId,
+      'Exactly the verified normal author must send this stage'
+    )
+    const ack = {
+      stage: ready.stage,
+      conversationId: ready.conversationId,
+      body: ready.body,
+      priorSeq: before,
+      phaseToken: ready.phaseToken,
+      postId: posted.messageId,
+      postSeq: posted.seq,
+      senderUserId: posted.senderUserId,
+      acknowledged: true,
+      normalUi: true
+    }
+    writeFileSync(ackPath, JSON.stringify(ack, null, 2) + '\n')
+    console.log(
+      '$ Normal encrypted peer stage acknowledged exactly one post',
+      ack
+    )
+  } finally {
+    await m.detach()
+  }
+}
+
 async function pendingSend(daemon: Daemon): Promise<void> {
   const narrow = process.env.CHAT_UI_VIEWPORT === 'narrow'
   const conversation = required('CHAT_UI_TEST_CONVERSATION')
@@ -2698,6 +3250,8 @@ async function main(): Promise<void> {
       scenario === 'bands' ||
       scenario === 'pendingSend' ||
       scenario === 'reviewNavigation' ||
+      scenario === 'review2Browser' ||
+      scenario === 'arrivalPeer' ||
       scenario === 'historyFixture' ||
       scenario === 'composeFull' ||
       scenario === 'picker' ||
@@ -2740,6 +3294,8 @@ async function main(): Promise<void> {
     else if (scenario === 'bands') await bands(daemon)
     else if (scenario === 'pendingSend') await pendingSend(daemon)
     else if (scenario === 'reviewNavigation') await reviewNavigation(daemon)
+    else if (scenario === 'review2Browser') await review2Browser(daemon)
+    else if (scenario === 'arrivalPeer') await arrivalPeer(daemon)
     else if (scenario === 'historyFixture') await historyFixture(daemon)
     else if (scenario === 'composeFull') await composeFull(daemon)
     else if (scenario === 'picker') await picker(daemon)
