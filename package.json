@@ -86,6 +86,7 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-clipboard/clipboard": "^1.16.3",
+    "@react-native-community/geolocation": "3.4.0",
     "@react-native-picker/picker": "^2.11.4",
     "@react-three/fiber": "9.7.0",
     "@sentry/core": "10.75.2",

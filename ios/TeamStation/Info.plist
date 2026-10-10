@@ -53,7 +53,9 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose a profile picture for your TeamStation account.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>Suggest a city and region for your league or team. You can enter a location yourself.</string>
+	<key>NSLocationDefaultAccuracyReduced</key>
+	<true/>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIBackgroundModes</key>
