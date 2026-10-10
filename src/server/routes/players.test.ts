@@ -69,6 +69,7 @@ describe('a player, and who may change their name', function () {
   // One person per flag on the Badgers, a coach of the league above them, a
   // coach of the Legends only, and a site administrator with no role at all.
   const teamCoachId = mintUser()
+  const assistantId = mintUser()
   const scorekeeperId = mintUser()
   const songkeeperId = mintUser()
   const videographerId = mintUser()
@@ -146,6 +147,7 @@ describe('a player, and who may change their name', function () {
         },
         ...[
           teamCoachId,
+          assistantId,
           scorekeeperId,
           songkeeperId,
           videographerId,
@@ -243,6 +245,7 @@ describe('a player, and who may change their name', function () {
         // leaves them: a member of the team they hold it on.
         ...[
           teamCoachId,
+          assistantId,
           scorekeeperId,
           songkeeperId,
           videographerId,
@@ -282,6 +285,7 @@ describe('a player, and who may change their name', function () {
       .insertInto('scope_roles')
       .values([
         flag(teamCoachId, 'team', teamId, 'coach'),
+        flag(assistantId, 'team', teamId, 'assistant'),
         flag(scorekeeperId, 'team', teamId, 'scorekeeper'),
         flag(songkeeperId, 'team', teamId, 'songkeeper'),
         flag(videographerId, 'team', teamId, 'videographer'),
@@ -380,17 +384,17 @@ describe('a player, and who may change their name', function () {
     expect(await mayEditName(db, childId, childId, about)).equals(true)
   })
 
-  // Paul's rule, 2026-10-02: team admins, coaches and other staff can see
-  // and edit a child's full name. A team-mate, a parent of somebody else and
-  // the staff of another team cannot.
-  it('lets the staff of the child’s team change it, and nobody else', async function () {
+  // Team admins, coaches, assistants and scorekeepers can see and edit a
+  // child's full name: a scorekeeper may be the only person keeping the
+  // roster. A songkeeper or videographer, a team-mate, a parent of somebody
+  // else and the staff of another team cannot.
+  it('lets the roster managers of the child’s team change it, and nobody else', async function () {
     for (const staff of [
       coachId,
       seasonAdminId,
       teamCoachId,
+      assistantId,
       scorekeeperId,
-      songkeeperId,
-      videographerId,
       leagueCoachId
     ]) {
       expect(
@@ -398,7 +402,12 @@ describe('a player, and who may change their name', function () {
         String(staff)
       ).equals(true)
     }
-    for (const outsider of [strangerId, otherCoachId]) {
+    for (const outsider of [
+      songkeeperId,
+      videographerId,
+      strangerId,
+      otherCoachId
+    ]) {
       expect(
         await mayEditName(db, outsider, childId, about),
         String(outsider)
@@ -424,6 +433,7 @@ describe('a player, and who may change their name', function () {
   // Everybody who can see the team in this fixture, from a site admin down.
   const everyViewer = (): number[] => [
     teamCoachId,
+    assistantId,
     leagueCoachId,
     coachId,
     childId,
@@ -458,8 +468,14 @@ describe('a player, and who may change their name', function () {
     }
   })
 
-  it('gives the name field to the staff of the team, and to nobody else on it', async function () {
-    for (const viewer of [teamCoachId, scorekeeperId, coachId, leagueCoachId]) {
+  it('gives the name field to the roster managers of the team, and to nobody else on it', async function () {
+    for (const viewer of [
+      teamCoachId,
+      assistantId,
+      scorekeeperId,
+      coachId,
+      leagueCoachId
+    ]) {
       const answer = await get(`/players/${childId}/name`, viewer)
       expect(answer.status, String(viewer)).equals(200)
       expect(answer.body).deep.include({
@@ -473,7 +489,12 @@ describe('a player, and who may change their name', function () {
     }
     // A parent on another team asks for the name alone.
     expect((await get(`/players/${childId}/name`, parentId)).status).equals(200)
-    for (const viewer of [strangerId, otherCoachId]) {
+    for (const viewer of [
+      songkeeperId,
+      videographerId,
+      strangerId,
+      otherCoachId
+    ]) {
       const answer = await get(`/players/${childId}/name`, viewer)
       expect(answer.status, String(viewer)).equals(404)
       const detail = asPlayerDetail(
@@ -675,6 +696,7 @@ describe('a player, and who may change their name', function () {
         .execute()
       for (const viewer of [
         teamCoachId,
+        assistantId,
         scorekeeperId,
         leagueCoachId,
         coachId,
@@ -774,10 +796,11 @@ describe('a player, and who may change their name', function () {
     }
   })
 
-  it('lets a coach, scorekeeper or admin of the team set player settings', async function () {
+  it('lets a coach, an assistant, a scorekeeper or an admin of the team set a player’s settings', async function () {
     for (const [viewer, jersey] of [
       [teamCoachId, '3'],
       [scorekeeperId, '4'],
+      [assistantId, '7'],
       [leagueCoachId, '5'],
       [coachId, '6'],
       [seasonAdminId, '8'],
@@ -943,6 +966,10 @@ describe('a player, and who may change their name', function () {
     expect(
       (roles.body as { teams: Record<string, string[]> }).teams[teamId]
     ).deep.equals(['coach'])
+    const assistant = await get('/me/roles', assistantId)
+    expect(
+      (assistant.body as { teams: Record<string, string[]> }).teams[teamId]
+    ).deep.equals(['assistant'])
     const roster = await get(`/teams/${teamId}/roster`, teamCoachId)
     expect(Array.isArray(roster.body)).equals(true)
   })

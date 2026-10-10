@@ -15,8 +15,9 @@ import { notifyGameChange } from '../socket/gameChanges'
 /**
  * Each player's walk-up song on a team.
  *
- * A songkeeper of the team — the flag set on the team, its season or its
- * league — an admin of any of those, and a site admin may set or remove one.
+ * A songkeeper or scorekeeper of the team — the flag set on the team, its
+ * season or its league — an admin of any of those, and a site admin may set
+ * or remove one.
  * Anybody else, and a target who is not a player on the team, is answered
  * 404. Both writes are audited, and both announce the change on the game
  * socket as `{ team, kind: 'walkUpSong', userId }`, which reaches every

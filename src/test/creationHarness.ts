@@ -21,13 +21,18 @@ import { statsRoutes } from '../server/routes/stats'
 import { teamMemberRoutes } from '../server/routes/teamMembers'
 import { userRoutes } from '../server/routes/users'
 import { walkUpSongRoutes } from '../server/routes/walkUpSongs'
-import { type AccountHarness, accountHarness } from './accountHarness'
+import {
+  type AccountHarness,
+  accountHarness,
+  type MountExtra
+} from './accountHarness'
 
 /** Real server/database/mail/object service; no creation or approval response is stubbed. */
 export async function creationHarness(
   webRoot?: string,
   clock: Clock = realClock,
-  bindHost = '127.0.0.1'
+  bindHost = '127.0.0.1',
+  mountExtra?: MountExtra
 ): Promise<AccountHarness> {
   const h: AccountHarness = await accountHarness(
     webRoot,
@@ -72,7 +77,8 @@ export async function creationHarness(
         })
       )
     },
-    bindHost
+    bindHost,
+    mountExtra
   )
   try {
     // This synthetic harness starts after the explicit migration cutover.

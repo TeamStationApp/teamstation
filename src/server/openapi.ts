@@ -1549,10 +1549,19 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         Role: {
           type: 'string',
-          enum: ['admin', 'coach', 'scorekeeper', 'songkeeper', 'videographer'],
+          enum: [
+            'admin',
+            'coach',
+            'assistant',
+            'scorekeeper',
+            'songkeeper',
+            'videographer'
+          ],
           description:
             'What somebody may do on a league, season or team and everything ' +
-            'inside it. `admin` holds every flag without having one set.'
+            'inside it. `admin` holds every flag without having one set. ' +
+            '`assistant` may do everything `coach` may, and `scorekeeper` ' +
+            'everything `songkeeper` may.'
         },
         WalkUpSong: {
           type: 'object',
@@ -1597,7 +1606,13 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         RoleFlag: {
           type: 'string',
-          enum: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
+          enum: [
+            'coach',
+            'assistant',
+            'scorekeeper',
+            'songkeeper',
+            'videographer'
+          ]
         },
         RoleGrant: {
           type: 'object',
@@ -2172,7 +2187,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Every team on which the caller holds any role, with the roles ' +
             'they hold there: set on the team, carried down from its season ' +
-            'or league, and every role on a team they administer. A site ' +
+            'or league, every role on a team they administer, and ' +
+            '`songkeeper` wherever they are `scorekeeper`. A site ' +
             'admin holds every role on every team.',
           security: [{ bearer: [] }],
           responses: {
@@ -3107,8 +3123,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             "league's, else 200. A game with plays keeps the fence it had " +
             'when they began. `canScore` is whether the caller may post its ' +
             'plays: a scorekeeper of either team, which every admin of it ' +
-            'is. `canDj` is whether the caller may DJ it: a songkeeper of ' +
-            'either team, which every admin of it is. `scoreboard` is `{ open, mayOverride }`: ' +
+            'is. `canDj` is whether the caller may DJ it: a songkeeper or ' +
+            'scorekeeper of either team, which every admin of it is. ' +
+            '`scoreboard` is `{ open, mayOverride }`: ' +
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +
             'scoreboard store cannot be asked.',
@@ -3928,10 +3945,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Names default to a first name and last initial. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
-            'coach, scorekeeper or admin on this team or its parents. Others get 404. ' +
+            'coach, assistant, scorekeeper or admin on this team or its parents. Others get 404. ' +
             '`walkUpSong` is the WalkUpSong the person has ' +
             'on this team, or null. Whether the caller may change the songs ' +
-            'is `GET /me/roles`: `songkeeper` or `admin` on the team.',
+            'is `GET /me/roles`: `songkeeper` (which every scorekeeper ' +
+            'holds) or `admin` on the team.',
           security: [{ bearer: [] }],
           parameters: [
             teamIdParam,
@@ -3954,8 +3972,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         put: {
           summary: "Set a player's name, jersey, positions, bats and throws",
           description:
-            'For a coach or scorekeeper of the team — the flag set on the team, its season ' +
-            'or its league — an admin of any of those, or a site admin. ' +
+            'For a coach, assistant or scorekeeper of the team — the flag ' +
+            'set on the team, its season or its league — an admin of any of ' +
+            'those, or a site admin. ' +
             'Anybody else, and a user who is not a player on the team, gets ' +
             '404. Send only the fields to change; a body with none is 400. ' +
             "`jersey` and `positions` are the player's place on this team. " +
@@ -4037,8 +4056,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         put: {
           summary: "Set a player's walk-up song on a team",
           description:
-            'For a songkeeper of the team — the flag set on the team, its ' +
-            'season or its league — an admin of any of those, or a site ' +
+            'For a songkeeper or scorekeeper of the team — the flag set on ' +
+            'the team, its season or its league — an admin of any of those, ' +
+            'or a site ' +
             'admin. Anybody else, and a user who is not a player on the ' +
             'team, gets 404; a bad body is 400. Replaces any song the player ' +
             'had on the team. Audited, and announced on the game socket as a ' +
@@ -4504,6 +4524,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                         type: 'string',
                         enum: [
                           'coach',
+                          'assistant',
                           'scorekeeper',
                           'songkeeper',
                           'videographer'
@@ -4588,7 +4609,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Set everything somebody may do at this level',
           description:
             'Replaces their roles on this one level: `admin`, and any of ' +
-            'the flags `coach`, `scorekeeper`, `songkeeper` and ' +
+            'the flags `coach`, `assistant`, `scorekeeper`, `songkeeper` and ' +
             '`videographer`. A role set here reaches everything inside ' +
             'this level. Only at the level named: a team page sets team ' +
             'roles and nothing wider. It adds them to the level as well, so ' +

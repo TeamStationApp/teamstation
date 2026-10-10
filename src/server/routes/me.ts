@@ -15,9 +15,10 @@ import { activeHuman } from '../oauth/provider'
  *
  * `GET /me/roles` is every team on which they hold any role, with the roles
  * they hold there: the ones set on the team, the ones its season and league
- * carry down, and every role on a team they administer. A team where they
- * hold none is left out rather than listed empty. A site administrator holds
- * every role on every team.
+ * carry down, every role on a team they administer, and `songkeeper` beside
+ * `scorekeeper`, which holds everything a songkeeper does. An assistant is
+ * listed as `assistant`. A team where they hold none is left out rather than
+ * listed empty. A site administrator holds every role on every team.
  */
 export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
   const router = Router()

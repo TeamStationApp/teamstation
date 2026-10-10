@@ -517,12 +517,16 @@ describe('the lineup routes (U11)', function () {
       expect(dj.home.canEditWalkUp).equals(true)
     })
 
-    it('lets only a songkeeper of a side edit its songs', async function () {
-      for (const token of [MEMBER, SCOREKEEPER]) {
-        const dj = asDjGame((await get(`/games/${scored}/dj`, token)).body)
-        expect(dj.away.canEditWalkUp, token).equals(false)
-        expect(dj.home.canEditWalkUp, token).equals(false)
-      }
+    it('lets only a songkeeper or scorekeeper of a side edit its songs', async function () {
+      // The visitors' scorekeeper keeps their songs, and not the hosts'.
+      const scorer = asDjGame(
+        (await get(`/games/${scored}/dj`, SCOREKEEPER)).body
+      )
+      expect(scorer.away.canEditWalkUp).equals(true)
+      expect(scorer.home.canEditWalkUp).equals(false)
+      const member = asDjGame((await get(`/games/${scored}/dj`, MEMBER)).body)
+      expect(member.away.canEditWalkUp).equals(false)
+      expect(member.home.canEditWalkUp).equals(false)
     })
 
     it('is 404 for a game you cannot see, and 401 signed out', async function () {

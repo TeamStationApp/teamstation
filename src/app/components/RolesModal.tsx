@@ -26,9 +26,9 @@ export interface RolesModalProps {
 }
 
 /**
- * Changing what one person may do at one level: five switches.
+ * Changing what one person may do at one level: six switches.
  *
- * Administrator, then the four flags, each with a line saying what it allows
+ * Administrator, then the five flags, each with a line saying what it allows
  * here, because "scorekeeper" on its own does not say whose games. An
  * administrator already holds every flag, so with Admin on the flags show on
  * and fixed rather than inviting somebody to turn off what admin gives
@@ -165,9 +165,10 @@ export function adminLabel(scopeKind: 'league' | 'season' | 'team'): string {
   return lstrings.role_league_admin
 }
 
-/** `Coach`, `Scorekeeper`, `Songkeeper`, `Videographer`. */
+/** `Coach`, `Assistant`, `Scorekeeper`, `Songkeeper`, `Videographer`. */
 export function flagLabel(flag: RoleFlag): string {
   if (flag === 'coach') return lstrings.role_coach
+  if (flag === 'assistant') return lstrings.role_assistant
   if (flag === 'scorekeeper') return lstrings.role_scorekeeper
   if (flag === 'songkeeper') return lstrings.role_songkeeper
   return lstrings.role_videographer
@@ -176,6 +177,7 @@ export function flagLabel(flag: RoleFlag): string {
 /** What a flag allows, with a `%s` for the level it is set on. */
 function flagDetail(flag: RoleFlag): string {
   if (flag === 'coach') return lstrings.role_coach_detail
+  if (flag === 'assistant') return lstrings.role_assistant_detail
   if (flag === 'scorekeeper') return lstrings.role_scorekeeper_detail
   if (flag === 'songkeeper') return lstrings.role_songkeeper_detail
   return lstrings.role_videographer_detail

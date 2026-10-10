@@ -1,4 +1,5 @@
 import {
+  type AliasedSelectQueryBuilder,
   type Expression,
   type ExpressionBuilder,
   type Kysely,
@@ -122,6 +123,37 @@ function emptyScopes(): ScopeSet {
 }
 
 /**
+ * Which seasons a team's roles come down from, as `season_id`/`team_id` rows.
+ *
+ * The flag and selected edges use one statement snapshot: schema upgrade
+ * preserves legacy access until explicit ownership classification commits.
+ * New competition writers are gated by that same atomic cutover.
+ */
+function permissionParents(
+  db: Kysely<Database>
+): AliasedSelectQueryBuilder<
+  { season_id: string; team_id: string },
+  'permission_parents'
+> {
+  const ready = db
+    .selectFrom('system_settings')
+    .select('key')
+    .where('key', '=', 'creation.hierarchyReady')
+    .where(sql<boolean>`value = 'true'::jsonb`)
+  return db
+    .selectFrom('season_team_parents')
+    .select(['season_id', 'team_id'])
+    .where(eb => eb.exists(ready))
+    .unionAll(
+      db
+        .selectFrom('season_teams')
+        .select(['season_id', 'team_id'])
+        .where(eb => eb.not(eb.exists(ready)))
+    )
+    .as('permission_parents')
+}
+
+/**
  * Each role's rows, carried down: a league's to its seasons and their teams,
  * a season's to its teams. Never upwards.
  *
@@ -163,27 +195,8 @@ export async function inheritScopes<K extends string>(
   }
   const seasonIds = new Set(sets.flatMap(set => [...set.seasonIds]))
   if (seasonIds.size > 0) {
-    // The flag and selected edges use one statement snapshot: schema upgrade
-    // preserves legacy access until explicit ownership classification commits.
-    // New competition writers are gated by that same atomic cutover.
-    const ready = db
-      .selectFrom('system_settings')
-      .select('key')
-      .where('key', '=', 'creation.hierarchyReady')
-      .where(sql<boolean>`value = 'true'::jsonb`)
-    const parents = db
-      .selectFrom('season_team_parents')
-      .select(['season_id', 'team_id'])
-      .where(eb => eb.exists(ready))
-      .unionAll(
-        db
-          .selectFrom('season_teams')
-          .select(['season_id', 'team_id'])
-          .where(eb => eb.not(eb.exists(ready)))
-      )
-      .as('permission_parents')
     const teams = await db
-      .selectFrom(parents)
+      .selectFrom(permissionParents(db))
       .select(['season_id', 'team_id'])
       .where('season_id', 'in', [...seasonIds])
       .execute()
@@ -201,8 +214,12 @@ export async function inheritScopes<K extends string>(
  *
  * The `scope_roles` rows, plus a team's owner or manager as that team's
  * administrator, so there is one place to look rather than two. Then each
- * role is carried downwards, and the administrator's sets are added to every
- * flag's.
+ * role is carried downwards, the administrator's sets are added to every
+ * flag's, and the scorekeeper's to the songkeeper's: a scorekeeper holds
+ * everything a songkeeper does, never the other way round.
+ *
+ * These are the roles a person may **use**. The roles they were **given**,
+ * which is what a list of staff shows, are `givenRolesOnTeam`.
  */
 export async function roleScopes(
   db: Kysely<Database>,
@@ -246,6 +263,10 @@ export async function roleScopes(
       for (const id of inherited.admin[key]) inherited[flag][key].add(id)
     }
   }
+  for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const) {
+    for (const id of inherited.scorekeeper[key])
+      inherited.songkeeper[key].add(id)
+  }
   return { ...inherited, isAdmin: user.is_admin }
 }
 
@@ -278,14 +299,20 @@ export function canScore(scopes: RoleScopes, teamId: string): boolean {
   return hasRole(scopes, 'scorekeeper', teamId)
 }
 
-/** Sets the team's walk-up songs and DJs its games. */
+/** Sets the team's walk-up songs and DJs its games; every scorekeeper does. */
 export function canKeepSongs(scopes: RoleScopes, teamId: string): boolean {
   return hasRole(scopes, 'songkeeper', teamId)
 }
 
-/** Edits the team's players' settings, and sees their whole names. */
+/**
+ * Coaches the team: a coach or an assistant, who may do everything a coach
+ * may. Editing the team's players' settings and seeing their whole names
+ * reaches scorekeepers too: see `canManageRoster`.
+ */
 export function canCoach(scopes: RoleScopes, teamId: string): boolean {
-  return hasRole(scopes, 'coach', teamId)
+  return (
+    hasRole(scopes, 'coach', teamId) || hasRole(scopes, 'assistant', teamId)
+  )
 }
 
 /** Scorekeepers can edit player settings and view full names because they
@@ -302,9 +329,134 @@ export function canFilm(scopes: RoleScopes, teamId: string): boolean {
   return hasRole(scopes, 'videographer', teamId)
 }
 
-/** The roles these scopes hold on one team, administrator first. */
+/**
+ * The roles these scopes hold on one team, administrator first: every role
+ * the person may use there, so an administrator lists every flag and a
+ * scorekeeper lists songkeeper too.
+ */
 export function rolesOnTeam(scopes: RoleScopes, teamId: string): Role[] {
   return ROLES.filter(role => hasRole(scopes, role, teamId))
+}
+
+/**
+ * The roles each person was **given** on one team, keyed by user id, each
+ * list in `ROLES` order: their `scope_roles` rows on the team, on the seasons
+ * it belongs to and on its league, and `admin` for its owner or manager.
+ *
+ * Unlike `rolesOnTeam`, nothing is implied: an administrator is listed as
+ * `admin` alone and a scorekeeper as `scorekeeper` alone, which is what a
+ * list of a team's staff shows. Disabled and merged accounts are left out,
+ * as they hold no role at all. A site administrator is not listed for
+ * holding every role everywhere.
+ */
+export async function givenRolesOnTeam(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<Map<number, Role[]>> {
+  const levels = await givenRoleLevelsOnTeam(db, teamId)
+  return new Map(
+    [...levels].map(([userId, held]) => [userId, [...held.keys()]])
+  )
+}
+
+/** Where a role was given, from the team up. */
+export type RoleLevel = 'team' | 'season' | 'league'
+
+const LEVEL_RANK: Record<RoleLevel, number> = { team: 0, season: 1, league: 2 }
+
+/**
+ * `givenRolesOnTeam` with, for each role, the highest level that gives it:
+ * a coach of the team who also coaches its league is a league coach here.
+ * Each person's roles are in `ROLES` order. An owner's or manager's `admin`
+ * is the team's.
+ */
+export async function givenRoleLevelsOnTeam(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<Map<number, Map<Role, RoleLevel>>> {
+  const seasons = await db
+    .selectFrom(permissionParents(db))
+    .innerJoin('seasons', 'seasons.id', 'permission_parents.season_id')
+    .select(['seasons.id', 'seasons.league_id'])
+    .where('permission_parents.team_id', '=', teamId)
+    .execute()
+  const team = await db
+    .selectFrom('teams')
+    .select('league_id')
+    .where('id', '=', teamId)
+    .executeTakeFirst()
+  const leagueIds = new Set<string>()
+  if (team?.league_id != null) leagueIds.add(team.league_id)
+  for (const season of seasons)
+    if (season.league_id != null) leagueIds.add(season.league_id)
+  const seasonIds = seasons.map(season => season.id)
+
+  const rows = await db
+    .selectFrom('scope_roles')
+    .innerJoin('users', 'users.id', 'scope_roles.user_id')
+    .select([
+      'scope_roles.user_id',
+      'scope_roles.role',
+      'scope_roles.scope_type'
+    ])
+    .where('users.disabled_at', 'is', null)
+    .where('users.merged_into', 'is', null)
+    .where(eb =>
+      eb.or([
+        eb.and([
+          eb('scope_roles.scope_type', '=', 'team'),
+          eb('scope_roles.scope_id', '=', teamId)
+        ]),
+        ...(seasonIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('scope_roles.scope_type', '=', 'season'),
+                eb('scope_roles.scope_id', 'in', seasonIds)
+              ])
+            ]),
+        ...(leagueIds.size === 0
+          ? []
+          : [
+              eb.and([
+                eb('scope_roles.scope_type', '=', 'league'),
+                eb('scope_roles.scope_id', 'in', [...leagueIds])
+              ])
+            ])
+      ])
+    )
+    .execute()
+  const owners = await db
+    .selectFrom('memberships')
+    .innerJoin('users', 'users.id', 'memberships.user_id')
+    .select('memberships.user_id')
+    .where('memberships.team_id', '=', teamId)
+    .where('memberships.role', 'in', ['owner', 'manager'])
+    .where('users.disabled_at', 'is', null)
+    .where('users.merged_into', 'is', null)
+    .execute()
+
+  const held = new Map<number, Map<Role, RoleLevel>>()
+  const give = (userId: number, role: Role, level: RoleLevel): void => {
+    const roles = held.get(userId) ?? new Map<Role, RoleLevel>()
+    const before = roles.get(role)
+    if (before == null || LEVEL_RANK[level] > LEVEL_RANK[before])
+      roles.set(role, level)
+    held.set(userId, roles)
+  }
+  for (const row of rows) give(row.user_id, row.role, row.scope_type)
+  for (const row of owners) give(row.user_id, 'admin', 'team')
+  return new Map(
+    [...held].map(([userId, roles]) => [
+      userId,
+      new Map(
+        ROLES.flatMap(role => {
+          const level = roles.get(role)
+          return level == null ? [] : [[role, level] as const]
+        })
+      )
+    ])
+  )
 }
 
 export interface GameScope {
@@ -393,15 +545,17 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
  *
  * A site administrator, a parent — a `user_links` row of kind `guardian` or
  * `family` — the player themselves, whose own name is their own business,
- * and the staff of a team the person plays for: anybody holding any role on
- * it, an administrator, coach, scorekeeper, songkeeper or videographer, set
- * on the team or carried down from its season or league, and its owner or
- * manager. Paul, 2026-10-02: team admins, coaches and other staff can see
- * and edit a child's full name.
+ * and whoever manages the roster of a team the person plays for: an
+ * administrator, coach, assistant or scorekeeper of it, set on the team or
+ * carried down from its season or league, and its owner or manager. A
+ * scorekeeper may be the only person keeping the roster, so keeps this
+ * (`canManageRoster`). A songkeeper or videographer holds a role on the team
+ * but does not read its players' whole names.
  *
- * This is also the only way to **read** the whole name: it is sent nowhere
- * but `GET /players/:userId/name`, which this guards. Everything else — the
- * roster, the player page, the box score — carries `Jordan P` alone.
+ * The whole name is read through `GET /players/:userId/name`, which this
+ * guards, and a roster read with `includeFullNames` (`canManageRoster`).
+ * Everything else — the ordinary roster, the player page, the box score —
+ * carries `Jordan P` alone.
  *
  * A parent's link and the player's team rows are read across every row of
  * each person, not one id each. A merge closes a row into another and leaves
@@ -467,7 +621,11 @@ export async function mayEditName(
 
   const scopes = await roleScopes(db, actorUserId, false)
   // Preserve scorekeepers' full-name access: they may maintain the roster alone.
-  const staffOf = new Set(ROLES.flatMap(role => [...scopes[role].teamIds]))
+  const staffOf = new Set(
+    (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(role => [
+      ...scopes[role].teamIds
+    ])
+  )
   if (staffOf.size === 0) return false
   const plays = await db
     .selectFrom('memberships')

@@ -475,7 +475,8 @@ export function teamRoutes(
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
       // Whether to offer Score Game: a scorekeeper of either team, which
       // every administrator of it is. The events route holds the same rule.
-      // And whether to offer DJ Game: a songkeeper of either team.
+      // And whether to offer DJ Game: a songkeeper of either team, which
+      // every scorekeeper is.
       const roles = await roleScopes(db, actor.userId, actor.isAdmin)
 
       // Each side's record in the season this game was played in.

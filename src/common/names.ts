@@ -7,9 +7,11 @@
  * drawn only in authorized roster management and player Settings. The API
  * sends it to nobody except whoever may edit it —
  * `mayEditName` on the server: a guardian, the player, a site
- * administrator, and anybody holding a role on a team the player plays for,
- * set on the team or carried down from its season or league, or that team's
- * owner or manager — through `GET /players/:userId/name`.
+ * administrator, and an administrator, coach, assistant or scorekeeper of a
+ * team the player plays for, set on the team or carried down from its season
+ * or league, or that team's owner or manager — through
+ * `GET /players/:userId/name`, and a roster read with `includeFullNames` by
+ * the team's roster managers. A songkeeper or videographer never reads it.
  */
 
 export interface NamedPerson {

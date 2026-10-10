@@ -278,8 +278,9 @@ export const asGameDetail = asObject({
    */
   canScore: asOptional(asBoolean, false),
   /**
-   * Whether this viewer may DJ the game: a songkeeper of either team, which
-   * every administrator of it is. Absent from an older server, and false.
+   * Whether this viewer may DJ the game: a songkeeper or scorekeeper of
+   * either team, which every administrator of it is. Absent from an older
+   * server, and false.
    */
   canDj: asOptional(asBoolean, false),
   /**

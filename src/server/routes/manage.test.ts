@@ -714,9 +714,13 @@ describe('the manage page', function () {
       `/manage/team/tem_hawks/people/${ghostId}/roles`,
       COACH,
       'PUT',
-      { admin: false, flags: ['videographer'] }
+      { admin: false, flags: ['videographer', 'assistant'] }
     )
-    expect(team.body.roles).deep.equals(['videographer'])
+    expect(team.body.roles).deep.equals(['assistant', 'videographer'])
+    expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([
+      'assistant',
+      'videographer'
+    ])
     expect(await rowsOf(ghostId, 'league', 'lea_npll')).deep.equals([
       'scorekeeper'
     ])

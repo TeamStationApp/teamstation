@@ -352,11 +352,12 @@ describe('walk-up songs', function () {
     }
   })
 
-  it('lets songkeepers of the team, season and league, and admins, set a song', async function () {
+  it('lets songkeepers of the team, season and league, scorekeepers, and admins, set a song', async function () {
     for (const viewer of [
       songkeeperId,
       seasonSongkeeperId,
       leagueSongkeeperId,
+      scorekeeperId,
       teamAdminId,
       managerId,
       siteAdminId
@@ -377,7 +378,7 @@ describe('walk-up songs', function () {
   })
 
   it('answers 404 to anybody else, and for anybody who is not a player on the team', async function () {
-    for (const viewer of [scorekeeperId, coachId, videographerId, memberId]) {
+    for (const viewer of [coachId, videographerId, memberId]) {
       for (const method of ['PUT', 'DELETE'] as const) {
         const answer = await send(
           method,

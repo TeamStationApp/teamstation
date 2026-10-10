@@ -62,6 +62,7 @@ function saveButton(): HTMLElement {
 const LABELS = [
   'Team admin',
   'Coach',
+  'Assistant',
   'Scorekeeper',
   'Songkeeper',
   'Videographer'
@@ -77,12 +78,13 @@ describe('the roles of one person on one level', function () {
     root = undefined
   })
 
-  it('shows five switches, each saying what it allows here', async function () {
+  it('shows six switches, each saying what it allows here', async function () {
     await mount()
     for (const label of LABELS)
       expect(toggle(label).checked, label).equals(false)
     const text = document.body.textContent ?? ''
     expect(text).includes('Roles for Sam Keeper')
+    expect(text).includes('Same as a coach')
     expect(text).includes('Scores the games of Hawks.')
     expect(text).includes('Sets walk-up songs and DJs the games of Hawks.')
     expect(text).includes('Films and streams the games of Hawks.')
@@ -99,7 +101,7 @@ describe('the roles of one person on one level', function () {
     expect(
       (document.body.textContent ?? '').split('Admins can do all of this')
         .length - 1
-    ).equals(4)
+    ).equals(5)
   })
 
   it('shows a flag set above on and fixed, naming where it comes from', async function () {
@@ -123,12 +125,13 @@ describe('the roles of one person on one level', function () {
       inherited: { scorekeeper: 'Spring league' }
     })
     expect(saveButton().getAttribute('aria-disabled')).equals('true')
+    await flip('Assistant')
     await flip('Coach')
     await flip('Songkeeper')
     await act(async () => {
       saveButton().click()
     })
-    expect(saved).deep.equals([{ admin: false, flags: ['coach'] }])
+    expect(saved).deep.equals([{ admin: false, flags: ['coach', 'assistant'] }])
   })
 
   it('saves admin with the flags held under it', async function () {

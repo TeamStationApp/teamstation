@@ -420,6 +420,9 @@ export const enUs = {
   role_coach: 'Coach',
   role_coach_detail:
     'Edits the players\u2019 jerseys, positions, bats and throws in %s, and sees their full names.',
+  role_assistant: 'Assistant',
+  role_assistant_detail:
+    'Same as a coach: edits the players\u2019 jerseys, positions, bats and throws in %s, and sees their full names.',
   role_scorekeeper: 'Scorekeeper',
   role_scorekeeper_detail: 'Scores the games of %s.',
   role_songkeeper: 'Songkeeper',

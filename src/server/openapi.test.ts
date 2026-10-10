@@ -10,6 +10,7 @@ import {
   PITCH_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
+import { ROLE_FLAGS, ROLES } from '../common/roles'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
@@ -252,6 +253,40 @@ describe('the API document', function () {
     expect(settings?.description ?? '').includes('coach')
     expect(settings?.description ?? '').includes('404')
     expect(JSON.stringify(settings?.requestBody)).includes('"DH"')
+  })
+
+  it('lists every role flag, the assistant included, wherever roles are named', function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    expect(schemas.Role.enum).deep.equals([...ROLES])
+    expect(schemas.RoleFlag.enum).deep.equals([...ROLE_FLAGS])
+    expect(schemas.Role.description).includes('`assistant`')
+    const paths = document.paths as Record<string, any>
+    const invite =
+      paths['/manage/{scopeType}/{scopeId}/people'].post.requestBody.content[
+        'application/json'
+      ].schema
+    expect(invite.properties.flags.items.enum).deep.equals([...ROLE_FLAGS])
+    const personal =
+      paths['/relationship-requests'].post.requestBody.content[
+        'application/json'
+      ].schema
+    expect(personal.properties.flags.items.enum).deep.equals([...ROLE_FLAGS])
+    expect(
+      paths['/manage/{scopeType}/{scopeId}/people/{userId}/roles'].put
+        .description
+    ).includes('`assistant`')
+    expect(
+      paths['/teams/{teamId}/players/{userId}/settings'].put.description
+    ).includes('assistant')
+    expect(
+      paths['/teams/{teamId}/players/{userId}/walk-up-song'].put.description
+    ).includes('scorekeeper')
+    expect(paths['/games/{gameId}'].get.description).includes(
+      'songkeeper or scorekeeper'
+    )
+    expect(paths['/me/roles'].get.description).includes('`songkeeper`')
   })
 
   it('describes the box-score stats field and the events play contract', function () {

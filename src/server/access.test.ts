@@ -19,6 +19,7 @@ import {
   canScore,
   canSeeGame,
   canSeeTeam,
+  givenRolesOnTeam,
   hasRole,
   mayEditName,
   type RoleScopes,
@@ -221,6 +222,10 @@ describe('role flags', function () {
           { type: 'team', id: 'tem_a1', role: 'songkeeper' }
         ]
       },
+      {
+        name: 'disabled',
+        roles: [{ type: 'team', id: 'tem_a2', role: 'coach' }]
+      },
       { name: 'manager', roles: [] },
       { name: 'owner', roles: [] },
       { name: 'siteAdmin', roles: [] },
@@ -237,7 +242,8 @@ describe('role flags', function () {
           id: made.userId,
           legacyId: made.legacyId,
           display_name: row.name,
-          is_admin: row.name === 'siteAdmin'
+          is_admin: row.name === 'siteAdmin',
+          disabled_at: row.name === 'disabled' ? new Date() : null
         })
         .execute()
       for (const role of row.roles) {
@@ -335,11 +341,15 @@ describe('role flags', function () {
     expect(await teamsHolding('union', 'songkeeper')).deep.equals(['tem_a1'])
   })
 
-  it('grants each flag only itself', async function () {
+  it('grants each flag itself, an assistant what a coach may do, and a scorekeeper songkeeper', async function () {
+    const implied: Partial<Record<Role, Role[]>> = {
+      scorekeeper: ['scorekeeper', 'songkeeper']
+    }
     for (const flag of ROLE_FLAGS) {
       const scopes = await scopesOf(`${flag}@tem_a2`)
-      expect(rolesOnTeam(scopes, 'tem_a2'), flag).deep.equals([flag])
-      for (const other of ROLE_FLAGS.filter(item => item !== flag)) {
+      const held = implied[flag] ?? [flag]
+      expect(rolesOnTeam(scopes, 'tem_a2'), flag).deep.equals(held)
+      for (const other of ROLE_FLAGS.filter(item => !held.includes(item))) {
         expect(hasRole(scopes, other, 'tem_a2'), `${flag} ${other}`).equals(
           false
         )
@@ -347,9 +357,61 @@ describe('role flags', function () {
     }
     const scorer = await scopesOf('scorekeeper@tem_a2')
     expect(canScore(scorer, 'tem_a2')).equals(true)
-    expect(canKeepSongs(scorer, 'tem_a2')).equals(false)
+    expect(canKeepSongs(scorer, 'tem_a2')).equals(true)
     expect(canCoach(scorer, 'tem_a2')).equals(false)
     expect(canFilm(scorer, 'tem_a2')).equals(false)
+    // Carried down like the scorekeeper flag itself, and never across.
+    const leagueScorer = await scopesOf('scorekeeper@lea_a')
+    expect(TEAMS.filter(id => canKeepSongs(leagueScorer, id))).deep.equals([
+      'tem_a1',
+      'tem_a2',
+      'tem_a3'
+    ])
+    // A songkeeper does not score.
+    const songs = await scopesOf('songkeeper@tem_a2')
+    expect(canKeepSongs(songs, 'tem_a2')).equals(true)
+    expect(canScore(songs, 'tem_a2')).equals(false)
+    // An assistant coaches as a coach does, and keeps its own name.
+    for (const height of HEIGHTS) {
+      const assistant = await scopesOf(`assistant@${height.id}`)
+      const coach = await scopesOf(`coach@${height.id}`)
+      for (const teamId of TEAMS) {
+        expect(canCoach(assistant, teamId), `${height.id} ${teamId}`).equals(
+          canCoach(coach, teamId)
+        )
+      }
+      expect(rolesOnTeam(assistant, height.teams[0])).deep.equals(['assistant'])
+    }
+    const assistant = await scopesOf('assistant@tem_a2')
+    expect(canScore(assistant, 'tem_a2')).equals(false)
+    expect(canKeepSongs(assistant, 'tem_a2')).equals(false)
+  })
+
+  it('lists the roles each person was given on a team, implying nothing', async function () {
+    const named = (given: Map<number, Role[]>): Record<string, Role[]> =>
+      Object.fromEntries(
+        [...people]
+          .filter(([, made]) => given.has(made.userId))
+          .map(([name, made]) => [name, given.get(made.userId) ?? []])
+      )
+    // Everything set on the team, its season and its league; no implied
+    // songkeeper for the scorekeeper, no flags for the admin.
+    expect(named(await givenRolesOnTeam(db, 'tem_a2'))).deep.equals(
+      Object.fromEntries([
+        ...ROLE_FLAGS.flatMap(flag =>
+          HEIGHTS.map(height => [`${flag}@${height.id}`, [flag]])
+        ),
+        ...HEIGHTS.map(height => [`admin@${height.id}`, ['admin']])
+      ])
+    )
+    // A manager is the team's admin, beside roles set at several heights.
+    const a1 = named(await givenRolesOnTeam(db, 'tem_a1'))
+    expect(a1.manager).deep.equals(['admin'])
+    expect(a1.union).deep.equals(['coach', 'songkeeper'])
+    expect(a1['coach@tem_a2']).equals(undefined)
+    const b1 = named(await givenRolesOnTeam(db, 'tem_b1'))
+    expect(b1).deep.equals({ union: ['coach'], owner: ['admin'] })
+    expect((await givenRolesOnTeam(db, 'tem_none')).size).equals(0)
   })
 
   it('gives every flag to an admin of a scope, a team owner or manager, and a site admin', async function () {
@@ -395,11 +457,12 @@ describe('role flags', function () {
     expect(site.isAdmin).equals(true)
   })
 
-  it('gives the name to the player, a guardian, a site admin and the staff of their team', async function () {
+  it('gives the name to the player, a guardian, a site admin and the roster managers of their team', async function () {
     const player = idOf('player')
     const about = { isAdmin: false }
-    // Every role, set on the team or carried down from its season or league.
-    for (const role of ['admin', ...ROLE_FLAGS]) {
+    // An admin, coach, assistant or scorekeeper, set on the team or carried
+    // down from its season or league: a scorekeeper may keep the roster alone.
+    for (const role of ['admin', 'coach', 'assistant', 'scorekeeper']) {
       for (const height of HEIGHTS) {
         const name = `${role}@${height.id}`
         expect(await mayEditName(db, idOf(name), player, about), name).equals(
@@ -407,8 +470,17 @@ describe('role flags', function () {
         )
       }
     }
-    // Staff of other teams, and a member who is not staff.
-    for (const name of ['manager', 'owner', 'union', 'member']) {
+    // The other flags hold a role on the team but never read the name.
+    for (const role of ['songkeeper', 'videographer']) {
+      for (const height of HEIGHTS) {
+        const name = `${role}@${height.id}`
+        expect(await mayEditName(db, idOf(name), player, about), name).equals(
+          false
+        )
+      }
+    }
+    // Staff of other teams, a member who is not staff, and a disabled coach.
+    for (const name of ['manager', 'owner', 'union', 'member', 'disabled']) {
       expect(await mayEditName(db, idOf(name), player, about), name).equals(
         false
       )

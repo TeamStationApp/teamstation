@@ -215,7 +215,13 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
               type: 'array',
               items: {
                 type: 'string',
-                enum: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
+                enum: [
+                  'coach',
+                  'assistant',
+                  'scorekeeper',
+                  'songkeeper',
+                  'videographer'
+                ]
               }
             }
           }
