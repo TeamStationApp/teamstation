@@ -120,6 +120,7 @@ function written(play: GumboPlay): string {
 export class ScoringSession {
   private log: ScoringAction[] = []
   private tagIdentities = new TagIdentityRegistry()
+  private tagSnapshot = 0
   private readonly importedDocuments = new Map<number, GumboPlay>()
   /** The log as far as the server has acknowledged it. */
   private savedLog: ScoringAction[] = []
@@ -327,6 +328,24 @@ export class ScoringSession {
       .flatMap(historyTargets)
   }
 
+  /** Changes when an accepted tag acknowledgment or reload replaces tag state. */
+  get tagSnapshotVersion(): number {
+    return this.tagSnapshot
+  }
+
+  /** Read one authoritative label without replacing scoring actions or Undo. */
+  async readEventTag(targetId: string): Promise<string | null | undefined> {
+    const stored = await this.store.load(this.gameId)
+    return [
+      ...stored.plays.filter(
+        play => play.about.atBatIndex !== stored.currentPlay?.about.atBatIndex
+      ),
+      ...(stored.currentPlay == null ? [] : [stored.currentPlay])
+    ]
+      .flatMap(tagTargets)
+      .find(target => target.id === targetId)?.tag
+  }
+
   /** Acknowledged annotations change no scoring action or Undo step. */
   setEventTag(targetId: string, tag: string | null): boolean {
     const before = this.picture()
@@ -338,6 +357,7 @@ export class ScoringSession {
     const currentAcknowledged =
       this.postedCurrent === JSON.stringify(before.current)
     if (!this.tagIdentities.setTag(targetId, tag)) return false
+    this.tagSnapshot++
     this.revision++
     const picture = this.picture()
     for (const [index, document] of this.importedDocuments)
@@ -551,6 +571,7 @@ export class ScoringSession {
     )
       return false
     this.tagIdentities = fresh.tagIdentities
+    this.tagSnapshot++
     this.importedDocuments.clear()
     for (const [index, play] of fresh.importedDocuments)
       this.importedDocuments.set(index, play)

@@ -107,6 +107,41 @@ describe('a scoring session', function () {
     expect(completedPlayTag(play)).equals('tough batter')
   })
 
+  it('reads authoritative tags without replacing pending scoring or local annotations', async () => {
+    const { session, store } = await open()
+    session.apply(ball)
+    await session.flush()
+    const target = session.eventTargets[0]
+    const version = session.tagSnapshotVersion
+    session.setEventTag(target.id, 'local label')
+    expect(session.tagSnapshotVersion).equals(version + 1)
+    store.current = withTargetTags(
+      store.current!,
+      new Map([[target.id, 'peer label']])
+    )
+    session.apply(strike)
+    const pending = session.pending
+    expect(await session.readEventTag(target.id)).equals('peer label')
+    expect(await session.readEventTag('missing_target')).equals(undefined)
+    expect(session.eventTargets[0].tag).equals('local label')
+    expect(session.pending).equals(pending)
+    expect(session.actions).has.length(2)
+    session.undo()
+    expect(session.pending).equals(0)
+    expect(await session.reload()).equals(true)
+    expect(session.tagSnapshotVersion).equals(version + 2)
+    expect(session.eventTargets[0].tag).equals('peer label')
+    expect(await session.reload()).equals(false)
+    expect(session.tagSnapshotVersion).equals(version + 2)
+    session.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await session.flush()
+    const completed = session.eventTargets.find(
+      item => item.completed === true
+    )!
+    expect(await session.readEventTag(completed.id)).equals(null)
+  })
+
   it('does not acknowledge newer scoring when a tag save completes later', async () => {
     const { session, store } = await open()
     session.apply(ball)
