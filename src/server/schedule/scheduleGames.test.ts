@@ -49,12 +49,50 @@ describe('scheduling a team’s games', function () {
   const post = async (
     rows: unknown[],
     options: { teamId?: string; rights?: ScheduleRights } = {}
-  ): Promise<ScheduleGamesResponse> =>
-    await scheduleGames(db!, {
+  ): Promise<ScheduleGamesResponse> => {
+    // Historical import fixtures predate explicit custody; production data is
+    // assigned by the ownership preflight rather than guessed by the service.
+    await db!
+      .updateTable('teams')
+      .set({ custodian_type: 'season', custodian_id: summer })
+      .where('kind', '=', 'external')
+      .where('custodian_id', 'is', null)
+      .execute()
+    if (options.rights != null && !options.rights.siteAdmin) {
+      await db!.deleteFrom('scope_roles').where('user_id', '=', 902).execute()
+      for (const id of options.rights.seasonIds)
+        await db!
+          .insertInto('scope_roles')
+          .values({
+            id: makeId('scopeRole'),
+            user_id: 902,
+            scope_type: 'season',
+            scope_id: id,
+            role: 'admin'
+          })
+          .execute()
+      for (const id of options.rights.teamAdminIds)
+        await db!
+          .insertInto('scope_roles')
+          .values({
+            id: makeId('scopeRole'),
+            user_id: 902,
+            scope_type: 'team',
+            scope_id: id,
+            role: 'admin'
+          })
+          .execute()
+    }
+    return await scheduleGames(db!, {
       teamId: options.teamId ?? harbor,
       rows,
-      rights: options.rights ?? SITE
+      actor: {
+        userId: options.rights != null && !options.rights.siteAdmin ? 902 : 901,
+        isAdmin: false,
+        scopes: []
+      }
     })
+  }
 
   const gamesCount = async (): Promise<number> =>
     Number(
@@ -93,6 +131,28 @@ describe('scheduling a team’s games', function () {
     await migrateUp(pool, migrations)
     await pool.end()
     db = makeDatabase(scratchUrl)
+    await db
+      .insertInto('system_settings')
+      .values({ key: 'creation.hierarchyReady', value: true })
+      .execute()
+    await db
+      .insertInto('users')
+      .values([
+        {
+          id: 901,
+          legacyId: 'usr_schedule_node',
+          display_name: 'Babe Ruth',
+          login_enabled: true,
+          is_admin: true
+        },
+        {
+          id: 902,
+          legacyId: 'usr_schedule_season',
+          display_name: 'Lou Gehrig',
+          login_enabled: true
+        }
+      ])
+      .execute()
     await db
       .insertInto('seasons')
       .values([
@@ -148,6 +208,10 @@ describe('scheduling a team’s games', function () {
         { season_id: lateSummer, team_id: harbor },
         { season_id: summer, team_id: others }
       ])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values({ season_id: summer, team_id: harbor })
       .execute()
   })
 
@@ -678,7 +742,7 @@ describe('scheduling a team’s games', function () {
     expect(await gamesCount()).equals(count + 2)
   })
 
-  it('resolves the season by name, by range, then by year', async function () {
+  it('requires an explicit season when reference dates or years are ambiguous', async function () {
     const seasonOf = async (row: object): Promise<string | null> => {
       const answer = await post([
         { opponent: { name: 'Dunlins' }, side: 'home', ...row }
@@ -686,16 +750,29 @@ describe('scheduling a team’s games', function () {
       return (await game(idOf(answer.results[0]))).season_id
     }
     expect(await seasonOf({ startAt: '2026-10-20T17:00:00Z' })).equals(fall)
-    // Summer and late summer both hold it; late summer started later.
-    expect(await seasonOf({ startAt: '2026-09-05T17:00:00Z' })).equals(
-      lateSummer
-    )
+    const ambiguous = await post([
+      {
+        opponent: { name: 'Dunlins' },
+        side: 'home',
+        startAt: '2026-09-05T17:00:00Z'
+      }
+    ])
+    expect(ambiguous.results[0]).deep.include({ result: 'error' })
+    expect(
+      await seasonOf({ startAt: '2026-09-05T17:00:00Z', seasonId: lateSummer })
+    ).equals(lateSummer)
     // Wall-clock day of the offset, not UTC — evening on summer's last day.
     expect(await seasonOf({ startAt: '2026-09-13T19:00:00-07:00' })).equals(
       summer
     )
-    // Outside every range: the latest-starting season of 2026.
-    expect(await seasonOf({ startAt: '2026-09-19T17:00:00Z' })).equals(fall)
+    const ambiguousYear = await post([
+      {
+        opponent: { name: 'Dunlins' },
+        side: 'home',
+        startAt: '2026-09-19T17:00:00Z'
+      }
+    ])
+    expect(ambiguousYear.results[0]).deep.include({ result: 'error' })
     expect(
       await seasonOf({ startAt: '2026-10-20T17:00:00Z', seasonId: summer })
     ).equals(summer)
@@ -919,7 +996,8 @@ describe('scheduling a team’s games', function () {
     expect(idOf(a.results[0])).equals(idOf(b.results[0]))
   })
 
-  it('refuses a row into a season a season admin does not administer', async function () {
+  it('requires initial host permission without adding a separate host-season consent', async function () {
+    const beforeCount = await gamesCount()
     const rights: ScheduleRights = {
       siteAdmin: false,
       teamAdminIds: new Set(),
@@ -935,21 +1013,39 @@ describe('scheduling a team’s games', function () {
         {
           opponent: { name: 'Dunlins' },
           side: 'home',
-          startAt: '2026-10-20T17:00:00Z'
+          startAt: '2026-10-20T17:00:00Z',
+          seasonId: fall
         }
       ],
       { rights }
     )
     expect(answer.results[0].result).equals('created')
-    expect(answer.results[1]).deep.equals({
-      index: 1,
-      result: 'error',
-      error: {
-        code: 'forbidden',
-        message:
-          'Only an admin of this team or of Fall 2026 may schedule games in it'
-      }
+    expect(answer.results[1]).includes({ index: 1, result: 'error' })
+    expect(await gamesCount()).equals(beforeCount + 1)
+    const permitted = await post(
+      [
+        {
+          opponent: { name: 'Dunlins' },
+          side: 'home',
+          startAt: '2026-10-20T17:00:00Z',
+          seasonId: fall
+        }
+      ],
+      { rights: { ...rights, seasonIds: new Set([summer, fall]) } }
+    )
+    expect(permitted.results[0]).includes({
+      index: 0,
+      result: 'created',
+      status: 'scheduled'
     })
+    expect(await gamesCount()).equals(beforeCount + 2)
+    expect(
+      await db!
+        .selectFrom('group_requests')
+        .select('id')
+        .where('kind', '=', 'game')
+        .execute()
+    ).length(0)
   })
 
   it('judges rights by team, then by season', function () {

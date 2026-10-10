@@ -25,6 +25,38 @@ const ROOT = '/me/account'
 describe('account settings HTTP API', function () {
   this.timeout(60000)
   let h: AccountHarness
+  it('clears only the signed-in account picture reference and preserves a shared catalog object used by another account', async () => {
+    const prefix = 'sports/fixture-shared-baseball'
+    h.objects.set(prefix + '-96.png', Buffer.from('synthetic catalog object'))
+    await h.db
+      .updateTable('users')
+      .set({
+        picture_catalog_id: 'baseball',
+        avatar_path: prefix,
+        avatar_source: 'upload'
+      })
+      .where('id', 'in', [101, 102])
+      .execute()
+    const cleared = await h.request('DELETE', ROOT + '/photo')
+    expect(cleared.status).equals(200)
+    expect(asAccountSettings(await cleared.json()).user.avatarUrl).equals(null)
+    expect(
+      (
+        await h.db
+          .selectFrom('users')
+          .select('avatar_path')
+          .where('id', '=', 102)
+          .executeTakeFirstOrThrow()
+      ).avatar_path
+    ).equals(prefix)
+    expect(h.objects.has(prefix + '-96.png')).equals(true)
+    h.objects.delete(prefix + '-96.png')
+    await h.db
+      .updateTable('users')
+      .set({ picture_catalog_id: null, avatar_path: null, avatar_source: null })
+      .where('id', '=', 102)
+      .execute()
+  })
   before(async () => {
     h = await accountHarness()
   })
@@ -114,7 +146,7 @@ describe('account settings HTTP API', function () {
       .select('display_name')
       .where('id', '=', 102)
       .executeTakeFirstOrThrow()
-    expect(other.display_name).equals('Casey Taylor')
+    expect(other.display_name).equals('Lou Gehrig')
     expect(
       (await h.request('PUT', ROOT + '/name', { displayName: 'Alex' })).status
     ).equals(200)

@@ -169,7 +169,11 @@ describe('live ingest', function () {
       setLive(KEY, spec())
       forcePublishForTest(KEY, true)
       let args: string[] = []
-      for (let i = 0; i < 100 && args.length === 0; i++) {
+      for (
+        let i = 0;
+        i < 100 && args.at(-1) !== join(spec().hlsDir, 'master.m3u8');
+        i++
+      ) {
         await new Promise(resolve => setTimeout(resolve, 20))
         try {
           args = readFileSync(argsFile, 'utf8').trim().split('\n')

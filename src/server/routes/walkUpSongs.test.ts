@@ -200,6 +200,19 @@ describe('walk-up songs', function () {
         { season_id: seasonId, team_id: rivalId }
       ])
       .execute()
+    // This fixture explicitly models management in addition to competition.
+    await db
+      .updateTable('teams')
+      .set({ league_id: leagueId })
+      .where('id', 'in', [teamId, rivalId])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values([
+        { season_id: seasonId, team_id: teamId },
+        { season_id: seasonId, team_id: rivalId }
+      ])
+      .execute()
     await db
       .insertInto('users')
       .values(

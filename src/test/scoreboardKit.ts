@@ -98,7 +98,7 @@ export async function dropPrefix(prefix: string): Promise<void> {
 export async function scratchDatabase(
   label: string
 ): Promise<{ db: Kysely<Database>; drop: () => Promise<void> }> {
-  const name = `teamstation_${label}_${Date.now()}`
+  const name = `teamstation_${label}_${process.pid}_${Date.now()}_${randomBytes(4).toString('hex')}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
   await admin.query(`create database ${name}`)
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)

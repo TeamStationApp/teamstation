@@ -341,11 +341,29 @@ describe('the scoreboard over HTTP', function () {
         { season_id: season, team_id: guests, joined_at: new Date() }
       ])
       .execute()
+    // This fixture explicitly models management in addition to competition.
+    await db
+      .updateTable('teams')
+      .set({ league_id: league })
+      .where('id', 'in', [hosts, guests])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values([
+        { season_id: season, team_id: hosts },
+        { season_id: season, team_id: guests }
+      ])
+      .execute()
     const gameId = await addGame(db, {
       homeTeamId: hosts,
       awayTeamId: guests,
       startAt: new Date()
     })
+    await db
+      .updateTable('games')
+      .set({ season_id: season })
+      .where('id', '=', gameId)
+      .execute()
     const owner = await addPerson(db, 'hostOwner', { owns: hosts })
     const manager = await addPerson(db, 'guestManager')
     const member = await addPerson(db, 'hostMember')

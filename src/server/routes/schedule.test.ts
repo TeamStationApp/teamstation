@@ -93,6 +93,7 @@ describe('scheduling a team’s games over HTTP', function () {
           legacyId: made.legacyId,
           display_name: person,
           is_admin: person === 'site',
+          login_enabled: true,
           created_at: now,
           updated_at: now
         })
@@ -137,10 +138,29 @@ describe('scheduling a team’s games over HTTP', function () {
     await db
       .insertInto('teams')
       .values([
-        { id: hawks, name: 'Hawks' },
-        { id: gulls, name: 'Gulls' },
-        { id: outsiders, name: 'Outsiders', kind: 'external' }
+        { id: hawks, name: 'Hawks', league_id: league },
+        { id: gulls, name: 'Gulls', league_id: league },
+        {
+          id: outsiders,
+          name: 'Outsiders',
+          kind: 'external',
+          custodian_type: 'season',
+          custodian_id: spring
+        }
       ])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values([
+        { season_id: spring, team_id: hawks },
+        { season_id: spring, team_id: gulls }
+      ])
+      .execute()
+    // These explicit parents model an already completed ownership cutover.
+    await db
+      .insertInto('system_settings')
+      .values({ key: 'creation.hierarchyReady', value: true })
+      .onConflict(oc => oc.column('key').doUpdateSet({ value: true }))
       .execute()
     await db
       .insertInto('season_teams')
@@ -194,7 +214,11 @@ describe('scheduling a team’s games over HTTP', function () {
             ['teamRole', 'team', hawks],
             ['seasonAdmin', 'season', spring],
             ['otherSeasonAdmin', 'season', fall],
-            ['leagueAdmin', 'league', league]
+            ['leagueAdmin', 'league', league],
+            ['owner', 'season', spring],
+            ['manager', 'season', spring],
+            ['teamRole', 'season', spring],
+            ['otherSeasonAdmin', 'team', hawks]
           ] as const
         ).map(([person, scopeType, scopeId]) => ({
           id: makeId('scopeRole'),
@@ -269,11 +293,14 @@ describe('scheduling a team’s games over HTTP', function () {
     return {
       opponent: { name: 'Dunlins' },
       side: 'home',
+      seasonId: spring,
       startAt: new Date(Date.UTC(2026, 3, 1, 17, minute)).toISOString()
     }
   }
   const fallRow = (): object => ({
     ...springRow(),
+    opponent: { name: 'Demo Autumn Opponent' },
+    seasonId: fall,
     startAt: new Date(Date.UTC(2026, 9, 1, 17, minute)).toISOString()
   })
 
@@ -282,6 +309,12 @@ describe('scheduling a team’s games over HTTP', function () {
     body: unknown,
     teamId = hawks
   ): Promise<{ status: number; body: any }> {
+    await db!
+      .updateTable('teams')
+      .set({ custodian_type: 'season', custodian_id: spring })
+      .where('kind', '=', 'external')
+      .where('custodian_id', 'is', null)
+      .execute()
     const response = await fetch(`${base}/teams/${teamId}/games`, {
       method: 'POST',
       headers: {
@@ -314,7 +347,7 @@ describe('scheduling a team’s games over HTTP', function () {
     }
   })
 
-  it('lets every kind of admin schedule', async function () {
+  it('publishes when the current administrator represents the host and both teams', async function () {
     for (const person of [
       'site',
       'owner',
@@ -370,7 +403,7 @@ describe('scheduling a team’s games over HTTP', function () {
       games: [
         { ...springRow(), externalId: { system: 'otherLeague', id: 'mix-1' } },
         { ...springRow(), startAt: '2026-04-01 17:00' },
-        { ...springRow(), startAt: '2027-04-01T17:00:00Z' }
+        { ...springRow(), seasonId: undefined, startAt: '2027-04-01T17:00:00Z' }
       ]
     })
     expect(answer.status).equals(200)
@@ -1972,6 +2005,12 @@ describe('scheduling a team’s games over HTTP', function () {
   })
 
   it('refuses a game’s fence to anybody who does not run the game', async function () {
+    await db!
+      .deleteFrom('scope_roles')
+      .where('user_id', '=', userOf('otherSeasonAdmin'))
+      .where('scope_type', '=', 'team')
+      .where('scope_id', '=', hawks)
+      .execute()
     expect((await setField(null, { fenceDistanceFt: 200 })).status).equals(401)
     expect(
       (await setField('site', { fenceDistanceFt: 200 }, makeId('game'))).status
@@ -2001,6 +2040,51 @@ describe('scheduling a team’s games over HTTP', function () {
       ).equals(400)
     }
     expect(await storedFence()).equals(null)
+  })
+
+  it('rechecks field authority after waiting for a parent-role change to commit', async function () {
+    const connection = new Client({ connectionString: scratchUrl })
+    await connection.connect()
+    const before = await storedFence()
+    try {
+      await connection.query('begin')
+      await connection.query(
+        "select pg_advisory_xact_lock(hashtextextended('creation:parent-graph', 0))"
+      )
+      const pending = setField('seasonAdmin', { fenceDistanceFt: 190 })
+      let queued = false
+      for (let attempt = 0; attempt < 100 && !queued; attempt++) {
+        const blocked = await connection.query<{ n: string }>(
+          "select count(*) as n from pg_stat_activity where datname = current_database() and wait_event = 'advisory' and pid <> pg_backend_pid()"
+        )
+        queued = Number(blocked.rows[0].n) > 0
+        if (!queued) await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      expect(queued).equals(true)
+      await connection.query(
+        'delete from scope_roles where user_id = $1 and scope_type = $2 and scope_id = $3',
+        [userOf('seasonAdmin'), 'season', spring]
+      )
+      await connection.query('commit')
+      expect((await pending).status).equals(403)
+      expect(await storedFence()).equals(before)
+    } finally {
+      await connection.query('rollback')
+      await connection.end()
+      await db!
+        .insertInto('scope_roles')
+        .values({
+          id: makeId('scopeRole'),
+          user_id: userOf('seasonAdmin'),
+          scope_type: 'season',
+          scope_id: spring,
+          role: 'admin'
+        })
+        .onConflict(oc =>
+          oc.columns(['user_id', 'scope_type', 'scope_id', 'role']).doNothing()
+        )
+        .execute()
+    }
   })
   it('refuses a game’s fence once the game has plays, whatever its status', async function () {
     const setStatus = async (

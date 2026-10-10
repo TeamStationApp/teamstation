@@ -35,12 +35,17 @@ describe('expanded statistics routes', function () {
     await fetch(`${base}${path}`, { headers: { 'x-test-actor': actor } })
   before(async function () {
     const { db, ids } = fixture
+    await db
+      .updateTable('users')
+      .set({ is_admin: true })
+      .where('id', '=', ids[0])
+      .execute()
     const app = express()
     app.use((req, _res, next) => {
       const actor = req.header('x-test-actor')
       if (actor !== 'none')
         req.actor = {
-          userId: asUserId(String(ids[2])),
+          userId: asUserId(String(actor === 'admin' ? ids[0] : ids[1])),
           isAdmin: actor === 'admin',
           scopes: []
         }

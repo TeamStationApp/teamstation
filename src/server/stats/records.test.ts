@@ -305,11 +305,12 @@ describe('team records, read from the games', function () {
       const table: Array<{ teamId: string; teamName: string }> = await ask(
         `/seasons/${spring}/standings`
       )
-      // A tie is a game played: Hawks .500, Eagles .333, Owls .000.
+      // Ties count half: all three have .500; differential then name orders them.
       expect(table.map(row => row.teamName)).deep.equals([
-        'Hawks',
         'Eagles',
-        'Owls'
+        'Owls',
+        'Hawks',
+        'Idle'
       ])
     })
 
@@ -399,22 +400,24 @@ describe('team records, read from the games', function () {
       const before: Array<{ teamName: string }> = await ask(
         `/seasons/${spring}/standings`
       )
-      // Hawks .667, Eagles .333, Owls .000.
+      // Hawks .667, Eagles .500, Owls .250.
       expect(before.map(row => row.teamName)).deep.equals([
         'Hawks',
         'Eagles',
-        'Owls'
+        'Owls',
+        'Idle'
       ])
       const gameId = await game(owls, eagles, spring, 'scheduled', null, null)
       await postFinal(gameId, 6, 0)
-      // Owls 1–1–1 is .333 and Eagles 1–2–1 is .250.
+      // Owls 1–1–1 is .500 and Eagles 1–2–1 is .375.
       const after: Array<{ teamName: string }> = await ask(
         `/seasons/${spring}/standings`
       )
       expect(after.map(row => row.teamName)).deep.equals([
         'Hawks',
         'Owls',
-        'Eagles'
+        'Eagles',
+        'Idle'
       ])
     })
   })

@@ -202,6 +202,19 @@ describe('a team’s people by external id', function () {
         { season_id: season, team_id: gulls }
       ])
       .execute()
+    // This fixture explicitly models management in addition to competition.
+    await db
+      .updateTable('teams')
+      .set({ league_id: league })
+      .where('id', 'in', [hawks, gulls])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values([
+        { season_id: season, team_id: hawks },
+        { season_id: season, team_id: gulls }
+      ])
+      .execute()
     await db
       .insertInto('memberships')
       .values({
@@ -395,6 +408,16 @@ describe('a team’s people by external id', function () {
     await database().insertInto('teams').values({ id, name }).execute()
     await database()
       .insertInto('season_teams')
+      .values({ season_id: season, team_id: id })
+      .execute()
+    // This fixture explicitly models management in addition to competition.
+    await database()
+      .updateTable('teams')
+      .set({ league_id: league })
+      .where('id', '=', id)
+      .execute()
+    await database()
+      .insertInto('season_team_parents')
       .values({ season_id: season, team_id: id })
       .execute()
     return id

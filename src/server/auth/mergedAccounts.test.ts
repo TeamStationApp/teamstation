@@ -386,7 +386,8 @@ describe('signing in to merged accounts', function () {
     const unknown = await ask('nobody.here@example.test')
     expect(await ask(closed.email)).deep.equals(unknown)
     expect(await ask(kept.email)).deep.equals(unknown)
-    expect(h.mail.has('nobody.here@example.test')).equals(false)
+    // An unknown address gets a code too: verifying it creates an account.
+    expect(h.mail.has('nobody.here@example.test')).equals(true)
     // The code goes to the address that was typed.
     expect(h.mail.has(closed.email)).equals(true)
   })

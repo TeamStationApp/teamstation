@@ -184,6 +184,10 @@ describe('invite codes', function () {
         .insertInto('season_teams')
         .values({ season_id: 'sea_spring', team_id: id })
         .execute()
+      await db
+        .insertInto('season_team_parents')
+        .values({ season_id: 'sea_spring', team_id: id })
+        .execute()
     }
     await db
       .insertInto('scope_roles')
@@ -311,11 +315,11 @@ describe('invite codes', function () {
     expect(first.status).equals(200)
     expect(first.body.granted).equals(true)
 
-    // A season member sees every team in the season, including the one they
-    // are not on. That is the rule the row is there to produce.
+    // An explicit season viewer sees its games, without private access to
+    // other teams' unrelated rosters, statistics or schedules.
     const after = await visibleScopes(db, parentId, false)
     expect(after.seasonIds.has('sea_spring')).equals(true)
-    expect(after.teamIds.has('tem_ravens')).equals(true)
+    expect(after.teamIds.has('tem_ravens')).equals(false)
 
     // A link sits in a mailbox and gets opened twice. The second time is not
     // an error and must not cost the invite a use.
@@ -502,7 +506,7 @@ describe('invite codes', function () {
 
     const after = await visibleScopes(db, coachId, false)
     expect(after.seasonIds.has('sea_autumn')).equals(true)
-    expect(after.teamIds.has('tem_badgers')).equals(true)
+    expect(after.teamIds.has('tem_badgers')).equals(false)
   })
 
   it('stops a link without forgetting who came through it', async function () {

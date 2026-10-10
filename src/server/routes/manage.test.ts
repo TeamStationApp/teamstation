@@ -14,6 +14,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { findInviteByCode, redeemInvite } from '../invites/invites'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -138,6 +139,7 @@ describe('the manage page', function () {
           id,
           legacyId: legacyId(id),
           display_name: name,
+          login_enabled: true,
           created_at: now,
           updated_at: now
         })
@@ -148,7 +150,8 @@ describe('the manage page', function () {
           id: makeId('userEmail'),
           user_id: id,
           email,
-          is_primary: true
+          is_primary: true,
+          verified_at: now
         })
         .execute()
     }
@@ -194,10 +197,20 @@ describe('the manage page', function () {
     ]) {
       await db
         .insertInto('teams')
-        .values({ id, name, created_at: now, updated_at: now })
+        .values({
+          id,
+          name,
+          league_id: 'lea_npll',
+          created_at: now,
+          updated_at: now
+        })
         .execute()
       await db
         .insertInto('season_teams')
+        .values({ season_id: 'sea_spring', team_id: id })
+        .execute()
+      await db
+        .insertInto('season_team_parents')
         .values({ season_id: 'sea_spring', team_id: id })
         .execute()
     }
@@ -288,6 +301,26 @@ describe('the manage page', function () {
 
   const peopleOf = (body: Record<string, unknown>): Person[] =>
     body.people as Person[]
+  let invitationNumber = 0
+  const join = async (
+    kind: 'team' | 'season' | 'league',
+    id: string,
+    userId: number,
+    email: string,
+    inviter = BOSS
+  ): Promise<void> => {
+    const reply = await ask(`/manage/${kind}/${id}/people`, inviter, 'POST', {
+      email,
+      idempotencyKey: `fixture-person-${++invitationNumber}`
+    })
+    expect(reply.status).equals(201)
+    const invite = await findInviteByCode(
+      db!,
+      (reply.body.invited as { code: string }).code
+    )
+    expect(invite).not.equals(undefined)
+    await redeemInvite(db!, invite!, userId)
+  }
 
   it('shows every level a person\u2019s access comes through', async function () {
     if (db == null) this.skip()
@@ -353,13 +386,26 @@ describe('the manage page', function () {
     expect(parent?.seasons.length).equals(1)
   })
 
-  it('adds somebody who already has an account at once', async function () {
+  it('waits for an existing account to accept before adding group access', async function () {
     if (db == null) this.skip()
     const added = await ask('/manage/team/tem_hawks/people', COACH, 'POST', {
       email: parentEmail
     })
     expect(added.status).equals(201)
-    expect(added.body.added).equals(true)
+    expect(added.body.added).equals(false)
+    expect(
+      await db
+        .selectFrom('memberships')
+        .select('id')
+        .where('user_id', '=', parentId)
+        .where('team_id', '=', 'tem_hawks')
+        .execute()
+    ).length(0)
+    const invitation = await findInviteByCode(
+      db,
+      (added.body.invited as { code: string }).code
+    )
+    await redeemInvite(db, invitation!, parentId)
 
     const membership = await db
       .selectFrom('memberships')
@@ -395,6 +441,7 @@ describe('the manage page', function () {
 
   it('makes somebody an administrator of this level, and unmakes them', async function () {
     if (db == null) this.skip()
+    await join('season', 'sea_spring', coachId, coachEmail)
     const made = await ask(
       `/manage/season/sea_spring/people/${coachId}/role`,
       BOSS,
@@ -466,7 +513,7 @@ describe('the manage page', function () {
       'PUT',
       { role: 'member' }
     )
-    expect(refused.status).equals(400)
+    expect(refused.status).equals(409)
     const page = await ask('/manage/season/sea_spring', BOSS)
     expect(page.status).equals(200)
   })
@@ -609,6 +656,7 @@ describe('the manage page', function () {
         id: chiefId,
         legacyId: legacyId(chiefId),
         display_name: 'Lee Chief',
+        login_enabled: true,
         created_at: now,
         updated_at: now
       })
@@ -634,6 +682,8 @@ describe('the manage page', function () {
       })
       .execute()
 
+    await join('league', 'lea_npll', ghostId, ghostEmail, CHIEF)
+    await join('season', 'sea_spring', ghostId, ghostEmail)
     const league = await ask(
       `/manage/league/lea_npll/people/${ghostId}/roles`,
       CHIEF,
@@ -797,7 +847,7 @@ describe('the manage page', function () {
       'PUT',
       { admin: false, flags: ['coach'] }
     )
-    expect(refused.status).equals(400)
+    expect(refused.status).equals(409)
     const kept = await ask(
       `/manage/season/sea_spring/people/${bossId}/roles`,
       BOSS,
@@ -807,6 +857,17 @@ describe('the manage page', function () {
     expect(kept.body.roles).deep.equals(['admin', 'coach'])
     // A league administrator holds no row on the season, so has none here to
     // clear, and may set their own flags on it.
+    await db
+      .insertInto('user_emails')
+      .values({
+        id: makeId('userEmail'),
+        user_id: chiefId,
+        email: 'chief@example.com',
+        is_primary: true,
+        verified_at: new Date()
+      })
+      .execute()
+    await join('season', 'sea_spring', chiefId, 'chief@example.com')
     const flags = await ask(
       `/manage/season/sea_spring/people/${chiefId}/roles`,
       CHIEF,

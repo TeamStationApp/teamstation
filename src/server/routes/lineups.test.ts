@@ -481,7 +481,7 @@ describe('the lineup routes (U11)', function () {
     })
 
     it("lists each team's default before the game has a record", async function () {
-      const dj = asDjGame((await get(`/games/${fresh}/dj`, MEMBER)).body)
+      const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
       expect(dj.home.source).equals('default')
       expect(dj.home.batters.map(batter => batter.name)).deep.equals([
         'H1',

@@ -24,14 +24,28 @@ import { authRoutes } from '../server/routes/auth'
 import { meRoutes } from '../server/routes/me'
 import { playerRoutes } from '../server/routes/players'
 import { teamRoutes } from '../server/routes/teams'
+import { traceHttp } from './httpTrace'
 
 /** Real DB, real routes, real image uploads; external mail and S3 terminate locally. */
 export async function accountHarness(
   webRoot?: string,
   configure?: (
     app: express.Express,
-    fixture: { tokens: Map<number, string>; db: Kysely<Database> }
-  ) => void
+    fixture: {
+      tokens: Map<number, string>
+      db: Kysely<Database>
+      space: SpaceSettings
+      media: {
+        space: SpaceSettings
+        ffmpegPath: string
+        mediaRoot: string
+        mediaSecret: string
+        publicUrl: string
+      }
+      sendCode: (email: string, code: string) => Promise<void>
+    }
+  ) => void,
+  bindHost = '127.0.0.1'
 ): Promise<AccountHarness> {
   const name = `account_test_${Date.now()}_${Math.floor(Math.random() * 100000)}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
@@ -43,8 +57,8 @@ export async function accountHarness(
   await pool.end()
   const db = makeDatabase(url)
   for (const [id, label] of [
-    [101, 'Alex Morgan'],
-    [102, 'Casey Taylor']
+    [101, 'Babe Ruth'],
+    [102, 'Lou Gehrig']
   ] as const) {
     await db
       .insertInto('users')
@@ -105,14 +119,22 @@ export async function accountHarness(
       })
     } else {
       const bytes = objects.get(key)
+      if (bytes != null && req.headers.range === 'bytes=0-0') {
+        res.writeHead(206, {
+          'content-range': `bytes 0-0/${bytes.length}`,
+          'content-length': '1'
+        })
+        res.end(bytes.subarray(0, 1))
+        return
+      }
       res.writeHead(bytes == null ? 404 : 200, { 'content-type': 'image/png' })
       res.end(bytes)
     }
   })
-  objectServer.listen(0, '127.0.0.1')
+  objectServer.listen(0, bindHost)
   await new Promise<void>(resolve => objectServer.once('listening', resolve))
   const space = {
-    endpoint: `http://127.0.0.1:${(objectServer.address() as AddressInfo).port}`,
+    endpoint: `http://${bindHost}:${(objectServer.address() as AddressInfo).port}`,
     region: 'test',
     bucket: 'account-test',
     accessKeyId: 'test-key',
@@ -120,9 +142,15 @@ export async function accountHarness(
     pathStyle: true
   }
   const mail = new Map<string, string>()
-  const sendCode = async (email: string, code: string): Promise<void> => {
+  const links = new Map<string, string>()
+  const sendCode = async (
+    email: string,
+    code: string,
+    link?: string
+  ): Promise<void> => {
     if (controls.failMail) throw new Error('Test mail failure')
     mail.set(email, code)
+    if (link != null) links.set(email, link)
   }
   const media = {
     space,
@@ -135,9 +163,12 @@ export async function accountHarness(
   app.use(withActor(db))
   app.use(jsonBody)
   app.use(withAudit(db))
-  configure?.(app, { tokens, db })
+  configure?.(app, { tokens, db, space, media, sendCode })
   app.use('/api/v1', accountRoutes(db, { ...media, sendCode }))
-  app.use('/api/v1', authRoutes(db, { space, sendCode }))
+  app.use(
+    '/api/v1',
+    authRoutes(db, { space, sendCode, publicUrl: 'http://localhost' })
+  )
   app.use('/api/v1', meRoutes(db))
   app.use('/api/v1', teamRoutes(db, media))
   app.use('/api/v1', playerRoutes(db, media))
@@ -151,12 +182,13 @@ export async function accountHarness(
     })
   }
   app.use(errorHandler)
-  const server = app.listen(0, '127.0.0.1')
+  const server = app.listen(0, bindHost)
   await new Promise<void>(resolve => server.once('listening', resolve))
-  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  const origin = `http://${bindHost}:${(server.address() as AddressInfo).port}`
   return {
     db,
     mail,
+    links,
     space,
     objects,
     controls,
@@ -169,7 +201,7 @@ export async function accountHarness(
       user: number | string | null = 101
     ): Promise<Response> {
       const token = typeof user === 'number' ? tokens.get(user) : user
-      return await fetch(`${origin}/api/v1${route}`, {
+      const response = await fetch(`${origin}/api/v1${route}`, {
         method,
         headers: {
           ...(token == null ? {} : { authorization: `Bearer ${token}` }),
@@ -177,6 +209,8 @@ export async function accountHarness(
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       })
+      await traceHttp(method, route, body, response)
+      return response
     },
     async resetLimits(): Promise<void> {
       await db.deleteFrom('rate_events').execute()
@@ -201,6 +235,7 @@ export async function accountHarness(
 export interface AccountHarness {
   db: Kysely<Database>
   mail: Map<string, string>
+  links: Map<string, string>
   space: SpaceSettings
   objects: Map<string, Buffer>
   controls: { failMail: boolean; failPut: boolean }

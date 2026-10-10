@@ -869,23 +869,29 @@ describe('the game socket (U14)', function () {
       quiet.ws.terminate()
     })
 
-    it('stops sending to a viewer who can no longer see the game, within a minute', async function () {
+    it('stops private delivery immediately after permission loss, even with a cached subscription scope', async function () {
       const listener = await listen(FADING)
       await subscribed(listener, scored)
+      const control = await listen(SCORER)
+      await subscribed(control, scored)
       await db!
         .deleteFrom('memberships')
         .where('user_id', '=', fading.userId)
         .execute()
-      // Read at the subscribe and trusted for a minute.
+      // The earlier subscription cache cannot authorize a later private frame.
       let from = listener.frames.length
+      let controlFrom = control.frames.length
       await apply(ball)
-      expect(await settled(listener, from)).deep.equals(['game', 'plays'])
+      await settled(control, controlFrom)
+      expect(kindsHeard(listener, from)).deep.equals([])
       now += 60_000
       from = listener.frames.length
+      controlFrom = control.frames.length
       await apply(strike)
-      await wait(300)
+      await settled(control, controlFrom)
       expect(kindsHeard(listener, from)).deep.equals([])
       listener.ws.terminate()
+      control.ws.terminate()
     })
   })
 

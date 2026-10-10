@@ -326,16 +326,11 @@ describe('every game somebody can see', function () {
     expect((await games(MEMBER)).ids).not.include(owlsGame)
   })
 
-  it('holds a season’s schedule among its games', async function () {
+  it('keeps a participating team member out of the private season schedule', async function () {
     const response = await fetch(`${base}/events?season=${spring}`, {
       headers: { authorization: `Bearer ${MEMBER}` }
     })
-    const schedule = (await response.json()) as Array<{ seasonId: string }>
-    expect(schedule).deep.equals(
-      ((await games(MEMBER)).body as Array<{ seasonId: string }>).filter(
-        game => game.seasonId === spring
-      )
-    )
+    expect(response.status).equals(404)
   })
 
   it('gives an administrator every game, in a season or not', async function () {
@@ -570,6 +565,19 @@ describe('whether a viewer may score a game', function () {
       .execute()
     await db
       .insertInto('season_teams')
+      .values([
+        { season_id: season, team_id: home },
+        { season_id: season, team_id: away }
+      ])
+      .execute()
+    // This fixture explicitly models management in addition to competition.
+    await db
+      .updateTable('teams')
+      .set({ league_id: league })
+      .where('id', 'in', [home, away])
+      .execute()
+    await db
+      .insertInto('season_team_parents')
       .values([
         { season_id: season, team_id: home },
         { season_id: season, team_id: away }
