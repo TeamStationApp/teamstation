@@ -556,13 +556,19 @@ export class ScoringSession {
       this.running == null &&
       this.pending === 0
     if (!idle()) return false
-    const fresh = await ScoringSession.open(
-      this.store,
-      this.gameId,
-      this.context!,
-      this.options
-    )
-    if (!idle()) return false
+    let fresh: ScoringSession
+    for (;;) {
+      const snapshot = this.tagSnapshot
+      fresh = await ScoringSession.open(
+        this.store,
+        this.gameId,
+        this.context!,
+        this.options
+      )
+      if (!idle()) return false
+      // An acknowledgment or competing reload can land during the read.
+      if (snapshot === this.tagSnapshot) break
+    }
     if (
       fresh.refusal === this.refusal &&
       JSON.stringify(fresh.log) === JSON.stringify(this.log) &&

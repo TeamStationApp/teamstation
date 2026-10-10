@@ -142,6 +142,53 @@ describe('a scoring session', function () {
     expect(await session.readEventTag(completed.id)).equals(null)
   })
 
+  for (const peer of [false, true])
+    it(`refreshes a reload snapshot overtaken by a tag acknowledgment${peer ? ' and peer write' : ''}`, async () => {
+      const { session, store } = await open()
+      session.apply(ball)
+      await session.flush()
+      const target = session.eventTargets[0]
+      const load = store.load.bind(store)
+      let release!: () => void
+      let started!: () => void
+      let reads = 0
+      const reading = new Promise<void>(resolve => {
+        started = resolve
+      })
+      store.load = async () => {
+        const result = await load()
+        if (++reads === 1) {
+          started()
+          await new Promise<void>(resolve => {
+            release = resolve
+          })
+        }
+        return result
+      }
+      const reloading = session.reload()
+      await reading
+      store.current = withTargetTags(
+        store.current!,
+        new Map([[target.id, 'great pitch']])
+      )
+      expect(session.setEventTag(target.id, 'great pitch')).equals(true)
+      if (peer)
+        store.current = withTargetTags(
+          store.current,
+          new Map([[target.id, 'peer label']])
+        )
+      release()
+      expect(await reloading).equals(peer)
+      expect(reads).equals(2)
+      expect(session.eventTargets[0].tag).equals(
+        peer ? 'peer label' : 'great pitch'
+      )
+      expect(session.pending).equals(0)
+      expect(session.actions).has.length(1)
+      expect(session.undo().problems).deep.equals([])
+      expect(session.actions).has.length(0)
+    })
+
   it('does not acknowledge newer scoring when a tag save completes later', async () => {
     const { session, store } = await open()
     session.apply(ball)
