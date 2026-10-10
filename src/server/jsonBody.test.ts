@@ -99,7 +99,6 @@ describe('the JSON body limit', function () {
 
   it('holds every other route to 1 MB', async function () {
     expect(await post('/api/v1/auth/code')).equals(413)
-    expect(await post('/api/v1/logs')).equals(413)
     expect(await post('/api/v1/games/gam_one/events/extra')).equals(413)
   })
 })

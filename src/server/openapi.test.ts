@@ -24,7 +24,6 @@ import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { lineupRoutes } from './routes/lineups'
 import { type LiveRouteOptions, liveRoutes } from './routes/live'
-import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
@@ -145,7 +144,6 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
-      ...routesOf(logRoutes()),
       ...routesOf(adminRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
@@ -188,7 +186,6 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
-      ...routesOf(logRoutes()),
       ...routesOf(adminRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
