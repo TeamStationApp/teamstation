@@ -417,7 +417,7 @@ describe('list screens', function () {
             const row = document.querySelector(`[aria-label^="${name}"]`)
             if (row == null) return undefined
             const img = row.querySelector('img')
-            if (img == null || img.parentElement == null) return undefined
+            if (img?.parentElement == null) return undefined
             const frame = img.parentElement.parentElement
             if (frame == null) return undefined
             const frameBox = frame.getBoundingClientRect()
