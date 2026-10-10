@@ -99,6 +99,17 @@ async function main(): Promise<void> {
   const tap = async (text: string): Promise<void> => {
     console.log('Tap', text)
     if (native) {
+      if (
+        !['Cancel', 'Add Player'].includes(text) &&
+        !text.startsWith('Tag event:')
+      ) {
+        await m.tapOn({
+          id: text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          timeout: 15000
+        })
+        await new Promise(resolve => setTimeout(resolve, 500))
+        return
+      }
       await m.waitForAnimationToEnd({ timeout: 3000 })
       const deadline = Date.now() + 15000
       let matches: Node[] = []
