@@ -1514,3 +1514,168 @@ describe('chat conversation shared file preparation and sending', function () {
     ).equals(null)
   })
 })
+
+function renderedComposerProps(): ComposerProps {
+  interface Fiber {
+    return?: Fiber
+    memoizedProps?: Partial<ComposerProps>
+  }
+  const node = input() as unknown as Record<string, unknown>
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
+  let fiber = node[key] as Fiber | undefined
+  while (fiber != null) {
+    const props = fiber.memoizedProps
+    if (props?.onAttach != null && props.sources != null)
+      return props as ComposerProps
+    fiber = fiber.return
+  }
+  throw new Error('Actual mounted Composer props unavailable')
+}
+
+describe('review3 picker activation and busy lifetime', function () {
+  // Proposed additions inside the existing shared file-preparation family.
+  it('does not queue a stale Attach behind a slow drop and recovers both controls', async function () {
+    const engine = new FakeEngine()
+    const slow = pending<ArrayBuffer>()
+    let pickerCalls = 0
+    let expiredActivation = false
+    const picker = pending<PickedFile[]>()
+    await screen(engine, {
+      files: {
+        ...files,
+        pickFiles: async () => {
+          pickerCalls += 1
+          // Simulates an OS picker which produces no event after activation expiry.
+          if (expiredActivation)
+            return await new Promise<PickedFile[]>(() => {})
+          return await picker.promise
+        }
+      },
+      draft: { text: 'Preserved caption', picked: [], scrollOffset: 0 }
+    })
+    const staleAttach = renderedComposerProps().onAttach
+    await drag(
+      'drop',
+      transfer([file('slow.txt', async () => await slow.promise)])
+    )
+    const attachWasDisabled =
+      button('Attach').getAttribute('aria-disabled') === 'true'
+    expect(button('Send').getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      staleAttach('files')
+      expiredActivation = true
+      slow.resolve(new Uint8Array([1, 2, 3]).buffer)
+      await wait()
+    })
+    expect(
+      pickerCalls,
+      'old Attach must not invoke a picker after the earlier read'
+    ).equals(0)
+    expect(attachWasDisabled, 'busy Attach is disabled').equals(true)
+    expect(button('Attach').getAttribute('aria-disabled')).not.equals('true')
+    expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
+    expect(input().value).equals('Preserved caption')
+    expect(
+      document.querySelectorAll('[data-testid="chat-attachment-chip"]')
+    ).length(1)
+    expect(engine.calls).deep.equals([])
+  })
+
+  it('invokes a valid picker in its original Attach turn and releases preparation on cancel', async function () {
+    const engine = new FakeEngine()
+    const picker = pending<PickedFile[]>()
+    let inPress = false
+    const calls: boolean[] = []
+    await screen(engine, {
+      files: {
+        ...files,
+        pickFiles: async () => {
+          calls.push(inPress)
+          return await picker.promise
+        }
+      },
+      draft: { text: 'Retained caption', picked: [], scrollOffset: 0 }
+    })
+    await act(async () => {
+      inPress = true
+      button('Attach').click()
+      inPress = false
+      await wait()
+    })
+    expect(
+      calls,
+      'picker is invoked before returning from its activation turn'
+    ).deep.equals([true])
+    expect(button('Attach').getAttribute('aria-disabled')).equals('true')
+    expect(button('Send').getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      picker.resolve([])
+      await wait()
+    })
+    expect(button('Attach').getAttribute('aria-disabled')).not.equals('true')
+    expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
+    expect(input().value).equals('Retained caption')
+    expect(
+      document.querySelectorAll('[data-testid="chat-attachment-chip"]')
+    ).length(0)
+    expect(engine.calls).deep.equals([])
+  })
+})
+
+describe('review3 started picker stale lifetime', function () {
+  it('observes a held picker rejection after synchronous screen unmount without stale writes', async function () {
+    const engine = new FakeEngine()
+    let rejectPicker!: (error: Error) => void
+    const held = new Promise<PickedFile[]>((_resolve, reject) => {
+      rejectPicker = reject
+    })
+    let pickerCalls = 0
+    const drafts: ChatDraft[] = []
+    const unhandled: unknown[] = []
+    const capture = (error: unknown): void => {
+      unhandled.push(error)
+    }
+    process.on('unhandledRejection', capture)
+    try {
+      await screen(engine, {
+        files: {
+          ...files,
+          pickFiles: async () => {
+            pickerCalls++
+            return await held
+          }
+        },
+        draft: { text: 'Held picker caption', picked: [], scrollOffset: 0 },
+        onDraftChange: draft => drafts.push(draft)
+      })
+      const attach = renderedComposerProps().onAttach
+      await act(async () => {
+        attach('files')
+        expect(pickerCalls, 'picker really started').equals(1)
+        root!.unmount()
+        root = undefined
+        await wait()
+      })
+      const before = drafts.length
+      rejectPicker(new Error('Late picker rejection'))
+      await wait(50)
+      expect(
+        unhandled,
+        'every started promise has a rejection observer'
+      ).deep.equals([])
+      expect(drafts.length, 'no stale draft write after unmount').equals(before)
+      expect(engine.calls).deep.equals([])
+      await screen(engine, {
+        draft: { text: 'Next screen caption', picked: [], scrollOffset: 0 }
+      })
+      expect(input().value).equals('Next screen caption')
+      expect(button('Attach').getAttribute('aria-disabled')).not.equals('true')
+      expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
+      expect(document.body.textContent).not.contains(
+        'That attachment could not be opened.'
+      )
+    } finally {
+      process.removeListener('unhandledRejection', capture)
+    }
+  })
+})

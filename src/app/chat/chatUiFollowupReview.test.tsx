@@ -15,6 +15,7 @@ import {
   emptyChatDraft,
   newChatWorkspaceState
 } from './chatWorkspaceModel'
+import { ConversationMenu } from './ConversationMenu'
 import type { MessageView } from './engine/apply'
 import type { ConversationListItem, ConversationView } from './engine/engine'
 import type { ChatEngineEvent, ChatEngineListener } from './engine/store'
@@ -1697,4 +1698,83 @@ describe('chat review2 arrival host, confirmation focus and list terminals', fun
     await layout(next.firstElementChild as HTMLElement, 320, 1800)
     expect(moves).deep.equals([0])
   })
+})
+
+function renderedModalEscape(): (() => void) | undefined {
+  interface Fiber {
+    return?: Fiber
+    memoizedProps?: {
+      accessibilityViewIsModal?: boolean
+      onAccessibilityEscape?: () => void
+    }
+  }
+  for (const node of document.querySelectorAll('*')) {
+    const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))
+    if (key == null) continue
+    let fiber = (node as unknown as Record<string, unknown>)[key] as
+      Fiber | undefined
+    while (fiber != null) {
+      if (fiber.memoizedProps?.accessibilityViewIsModal === true)
+        return fiber.memoizedProps.onAccessibilityEscape
+      fiber = fiber.return
+    }
+  }
+  throw new Error('Mounted native modal props unavailable')
+}
+
+describe('review3 native modal escape current-close path', function () {
+  for (const kind of ['conversation', 'message'] as const)
+    it(
+      'closes the mounted ' +
+        kind +
+        ' through its latest native escape callback',
+      async function () {
+        const closed: number[] = []
+        let mutations = 0
+        const element = (revision: number): React.ReactElement => (
+          <ChatOverlayHost>
+            {kind === 'conversation' ? (
+              <ConversationMenu
+                conversation={chat()}
+                engine={{
+                  setPreferences: async () => {
+                    mutations++
+                  }
+                }}
+                onClose={() => closed.push(revision)}
+              />
+            ) : (
+              <MessageMenu
+                message={original('msg_original', true)}
+                actions={['copy', 'pin', 'delete']}
+                onReply={() => {
+                  mutations++
+                }}
+                onReact={() => {
+                  mutations++
+                }}
+                onMoreEmoji={() => {
+                  mutations++
+                }}
+                onDelete={() => {
+                  mutations++
+                }}
+                onClose={() => closed.push(revision)}
+              />
+            )}
+          </ChatOverlayHost>
+        )
+        await render(element(1), false)
+        const retainedEscape = renderedModalEscape()
+        await render(element(2), false)
+        await act(async () => {
+          // Dispatches the actual native-only View prop, not an OS VoiceOver gesture.
+          retainedEscape?.()
+          await wait()
+        })
+        expect(closed, 'only the current close callback').deep.equals([2])
+        expect(mutations, 'dismissal does not run an action').equals(0)
+        await unmount()
+      }
+    )
 })
