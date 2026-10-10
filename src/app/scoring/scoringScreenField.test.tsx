@@ -905,56 +905,66 @@ describe('scoring screen field wiring', function () {
     expect(stored[1].tag).equals(null)
   })
 
-  it('reconciles a successful dismissed save into current history without reopening the editor', async () => {
-    const source = new DevelopmentScoringSource()
-    await mount(source)
-    await step(() => {
-      props().onPitch?.('ball')
-    })
-    await settle()
-    const target = tagTargets(source.store.games.get('g1')!.currentPlay!)[0]
-    let finish!: () => void
-    const save = source.saveTag.bind(source)
-    source.saveTag = async (...args) => {
-      await new Promise<void>(resolve => {
-        finish = resolve
+  for (const opening of ['before', 'after'] as const)
+    it(`reconciles a dismissed save when history opens ${opening} acknowledgment`, async () => {
+      const source = new DevelopmentScoringSource()
+      await mount(source)
+      await step(() => {
+        props().onPitch?.('ball')
       })
-      return await save(...args)
-    }
-    await step(() => {
-      props().onTagSelect?.(target)
+      await settle()
+      const target = tagTargets(source.store.games.get('g1')!.currentPlay!)[0]
+      let finish!: () => void
+      const save = source.saveTag.bind(source)
+      source.saveTag = async (...args) => {
+        await new Promise<void>(resolve => {
+          finish = resolve
+        })
+        return await save(...args)
+      }
+      await step(() => {
+        props().onTagSelect?.(target)
+      })
+      const editor =
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+      let saving!: Promise<void>
+      await act(async () => {
+        saving = editor.saveTag('great pitch')
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      await step(() => {
+        editor.onClose()
+      })
+      if (opening === 'before')
+        await step(() => {
+          props().onHistoryOpen?.()
+        })
+      await act(async () => {
+        finish()
+        await saving
+      })
+      expect(
+        tagTargets(source.store.games.get('g1')!.currentPlay!)[0].tag
+      ).equals('great pitch')
+      expect(container?.textContent).not.includes('New tag')
+      if (opening === 'after')
+        await step(() => {
+          props().onHistoryOpen?.()
+        })
+      expect(props().historyRows![0].tag).equals('great pitch')
+      await step(() => {
+        props().onTagSelect?.(props().historyRows![0])
+      })
+      expect(
+        componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
+          .target.tag
+      ).equals('great pitch')
+      expect(
+        document.querySelector<HTMLInputElement>('[aria-label="New tag"]')!
+          .value
+      ).equals('great pitch')
+      expect(document.body.textContent).includes('Remove tag')
     })
-    const editor =
-      componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
-    let saving!: Promise<void>
-    await act(async () => {
-      saving = editor.saveTag('great pitch')
-      await new Promise(resolve => setTimeout(resolve, 0))
-    })
-    await step(() => {
-      editor.onClose()
-    })
-    await act(async () => {
-      finish()
-      await saving
-    })
-    expect(
-      tagTargets(source.store.games.get('g1')!.currentPlay!)[0].tag
-    ).equals('great pitch')
-    expect(container?.textContent).not.includes('New tag')
-    await step(() => {
-      props().onHistoryOpen?.()
-    })
-    expect(props().historyRows![0].tag).equals('great pitch')
-    await step(() => {
-      props().onTagSelect?.(props().historyRows![0])
-    })
-    expect(
-      componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
-        .target.tag
-    ).equals('great pitch')
-    expect(document.body.textContent).includes('Remove tag')
-  })
 
   for (const editing of [false, true])
     it(`updates a reopened pending tag editor while preserving ${editing ? 'new typing' : 'pristine input'}`, async () => {

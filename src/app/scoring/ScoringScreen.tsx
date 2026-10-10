@@ -2031,6 +2031,13 @@ function ScoringPanel(props: {
             if (!props.game.setEventTag(result.targetId, acknowledgedTag))
               throw new Error('This scoring event no longer exists')
             tagAcknowledgments.current.set(result.targetId, result.revision)
+            setTagRows(rows =>
+              rows.map(row =>
+                row.id === result.targetId
+                  ? { ...row, tag: acknowledgedTag }
+                  : row
+              )
+            )
             setTagTarget(current =>
               current?.id === result.targetId
                 ? { ...current, tag: acknowledgedTag }
