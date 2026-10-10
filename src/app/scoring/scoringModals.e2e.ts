@@ -93,6 +93,7 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 500))
         return
       }
+      await m.waitForAnimationToEnd({ timeout: 3000 })
       const matches = flat(await m.hierarchy()).filter(
         node => node.text === text
       )
