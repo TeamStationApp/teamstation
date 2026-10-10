@@ -3,6 +3,7 @@ import {
   FlatList,
   Image,
   type LayoutChangeEvent,
+  Platform,
   Pressable,
   Text,
   useWindowDimensions,
@@ -67,8 +68,9 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     visible: true,
     onOffset: props.onOffset
   })
-  scrollOwner.current.visible =
+  const listVisible =
     props.embedded !== true || !narrow || props.selectedVisible !== true
+  scrollOwner.current.visible = listVisible
   scrollOwner.current.onOffset = props.onOffset
   useEffect(() => {
     const owner = scrollOwner.current
@@ -89,6 +91,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     chats == null
       ? undefined
       : JSON.stringify(chats.map(chat => chat.id).sort())
+  const currentDataKey = useRef(dataKey)
+  currentDataKey.current = dataKey
   const listGeometry = useRef({
     height: 0,
     content: 0,
@@ -96,16 +100,38 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   })
   const restoreOffset = useRef(props.initialOffset ?? 0)
   const measuredTail = useRef<string | undefined>(undefined)
+  const revealProgress = useRef({
+    data: undefined as string | undefined,
+    offset: -1
+  })
   const restoreList = useCallback(() => {
-    if (restored.current || chats == null) return
+    if (
+      !listVisible ||
+      !scrollOwner.current.live ||
+      !scrollOwner.current.visible ||
+      dataKey !== currentDataKey.current ||
+      restored.current ||
+      chats == null
+    )
+      return
     const { height, content, data } = listGeometry.current
     if (height <= 0 || content <= 0 || data !== dataKey) return
     if (
       content < height + restoreOffset.current &&
       chats.length > 0 &&
       measuredTail.current !== dataKey
-    )
+    ) {
+      // Without exact item heights, virtualization measures its next window
+      // only after scrolling. Advance through current content without
+      // consuming the saved target or publishing these intermediate offsets.
+      const available = Math.max(0, content - height)
+      const progress = revealProgress.current
+      if (progress.data !== dataKey || available > progress.offset) {
+        revealProgress.current = { data: dataKey, offset: available }
+        list.current?.scrollToOffset({ offset: available, animated: false })
+      }
       return
+    }
     // Refresh can legitimately remove rows; clamp only measured current data.
     const offset = Math.min(
       restoreOffset.current,
@@ -116,7 +142,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       animated: false
     })
     restored.current = true
-  }, [chats, dataKey])
+  }, [chats, dataKey, listVisible])
   useEffect(restoreList, [restoreList])
   useEffect(
     () =>
@@ -199,10 +225,22 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         viewabilityConfig={viewability}
         onViewableItemsChanged={onVisible}
         onLayout={event => {
+          if (
+            !scrollOwner.current.live ||
+            !scrollOwner.current.visible ||
+            dataKey !== currentDataKey.current
+          )
+            return
           listGeometry.current.height = event.nativeEvent.layout.height
           restoreList()
         }}
         onContentSizeChange={(_width, height) => {
+          if (
+            !scrollOwner.current.live ||
+            !scrollOwner.current.visible ||
+            dataKey !== currentDataKey.current
+          )
+            return
           listGeometry.current.content = height
           listGeometry.current.data = dataKey
           restoreList()
@@ -212,8 +250,11 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         onMomentumScrollEnd={rememberOffset}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
-          restored.current = true
-          gestureGeneration.current += 1
+          // RNW also emits this for the programmatic restoration steps.
+          if (Platform.OS !== 'web') {
+            restored.current = true
+            gestureGeneration.current += 1
+          }
         }}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
@@ -258,6 +299,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
             <ConversationRow
               chat={item.chat}
               onLayout={event => {
+                if (
+                  !scrollOwner.current.live ||
+                  !scrollOwner.current.visible ||
+                  dataKey !== currentDataKey.current
+                )
+                  return
                 if (
                   item.chat.id === rows.at(-1)?.key &&
                   event.nativeEvent.layout.height > 0

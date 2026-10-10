@@ -95,6 +95,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
           (message.mine ? 0 : RECEIVED_BUBBLE_BORDER))
   )
   const desktop = isFinePointer()
+  const BubbleContainer = props.selected === true ? View : Pressable
   const row = useRef<React.ComponentRef<typeof View>>(null)
   const [hovered, setHovered] = useState(false)
   const held = useRef({
@@ -256,7 +257,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 }}
               />
             )}
-          <Pressable
+          <BubbleContainer
             testID={'chat-bubble-' + message.id}
             onLayout={event => {
               const width = event.nativeEvent.layout.width
@@ -284,7 +285,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
               <ReplyQuote
                 quote={message.quote}
                 userId={props.userId ?? -1}
-                onJump={id => props.onJump?.(id)}
+                onJump={props.selected === true ? undefined : props.onJump}
                 messageGesture={messageGesture}
               />
             )}
@@ -344,7 +345,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 {sprintf(lstrings.chat_sent_before_change, sender)}
               </Text>
             )}
-          </Pressable>
+          </BubbleContainer>
           {desktop &&
             props.selected !== true &&
             actions.length > 0 &&
@@ -377,28 +378,55 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
         </View>
         {message.reactions.length > 0 && (
           <View style={[styles.reactions, message.mine && styles.rowMine]}>
-            {message.reactions.map(reaction => (
-              <Pressable
-                key={reaction.emoji}
-                {...messageGesture?.pressProps}
-                accessibilityRole="button"
-                accessibilityLabel={sprintf(
-                  lstrings.chat_reaction_label,
-                  reaction.emoji,
-                  reaction.userIds.length
-                )}
-                accessibilityState={{ selected: reaction.mine }}
-                onPress={event => {
-                  if (messageGesture?.canOpen(event) === false) return
-                  props.onToggleReaction(message, reaction.emoji, reaction.mine)
-                }}
-                style={[styles.reaction, reaction.mine && styles.reactionMine]}
-              >
-                <Text style={styles.reactionText}>
-                  {`${reaction.emoji} ${reaction.userIds.length}`}
-                </Text>
-              </Pressable>
-            ))}
+            {message.reactions.map(reaction =>
+              props.selected === true ? (
+                <View
+                  key={reaction.emoji}
+                  accessible
+                  accessibilityLabel={sprintf(
+                    lstrings.chat_reaction_label,
+                    reaction.emoji,
+                    reaction.userIds.length
+                  )}
+                  style={[
+                    styles.reaction,
+                    reaction.mine && styles.reactionMine
+                  ]}
+                >
+                  <Text style={styles.reactionText}>
+                    {`${reaction.emoji} ${reaction.userIds.length}`}
+                  </Text>
+                </View>
+              ) : (
+                <Pressable
+                  key={reaction.emoji}
+                  {...messageGesture?.pressProps}
+                  accessibilityRole="button"
+                  accessibilityLabel={sprintf(
+                    lstrings.chat_reaction_label,
+                    reaction.emoji,
+                    reaction.userIds.length
+                  )}
+                  accessibilityState={{ selected: reaction.mine }}
+                  onPress={event => {
+                    if (messageGesture?.canOpen(event) === false) return
+                    props.onToggleReaction(
+                      message,
+                      reaction.emoji,
+                      reaction.mine
+                    )
+                  }}
+                  style={[
+                    styles.reaction,
+                    reaction.mine && styles.reactionMine
+                  ]}
+                >
+                  <Text style={styles.reactionText}>
+                    {`${reaction.emoji} ${reaction.userIds.length}`}
+                  </Text>
+                </Pressable>
+              )
+            )}
           </View>
         )}
       </View>

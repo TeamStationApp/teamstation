@@ -94,10 +94,65 @@ export function bindUserScroll(view: unknown, read: () => void): () => void {
     )
       read()
   }
+  // A native scrollbar press targets the scroll node's actual gutter.
+  // Bare content presses and descendant focus cannot cancel restoration.
+  let scrollbarHeld = false
+  const start = (event: MouseEvent): void => {
+    if (event.button !== 0 || event.target !== element || scrollbarHeld) return
+    const rect = element.getBoundingClientRect()
+    const styles = getComputedStyle(element)
+    const scaleX =
+      element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1
+    const scaleY =
+      element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1
+    const border = (value: string): number => {
+      const parsed = Number.parseFloat(value)
+      return Number.isNaN(parsed) ? 0 : parsed
+    }
+    const innerLeft = rect.left + border(styles.borderLeftWidth) * scaleX
+    const innerRight = rect.right - border(styles.borderRightWidth) * scaleX
+    const innerTop = rect.top + border(styles.borderTopWidth) * scaleY
+    const innerBottom = rect.bottom - border(styles.borderBottomWidth) * scaleY
+    const left = rect.left + element.clientLeft * scaleX
+    const right = left + element.clientWidth * scaleX
+    const top = rect.top + element.clientTop * scaleY
+    const bottom = top + element.clientHeight * scaleY
+    const vertical =
+      element.scrollHeight > element.clientHeight &&
+      event.clientY >= top &&
+      event.clientY < bottom &&
+      ((event.clientX >= innerLeft && event.clientX < left) ||
+        (event.clientX >= right && event.clientX < innerRight))
+    const horizontal =
+      element.scrollWidth > element.clientWidth &&
+      event.clientX >= left &&
+      event.clientX < right &&
+      ((event.clientY >= innerTop && event.clientY < top) ||
+        (event.clientY >= bottom && event.clientY < innerBottom))
+    if (!vertical && !horizontal) return
+    scrollbarHeld = true
+    read()
+  }
+  const finish = (): void => {
+    scrollbarHeld = false
+  }
+  const doc = element.ownerDocument
+  element.addEventListener('pointerdown', start)
+  element.addEventListener('mousedown', start)
+  doc.addEventListener('pointerup', finish)
+  doc.addEventListener('mouseup', finish)
+  doc.addEventListener('pointercancel', finish)
+  doc.defaultView?.addEventListener('blur', finish)
   element.addEventListener('wheel', read, { passive: true })
   element.addEventListener('touchmove', read, { passive: true })
   element.addEventListener('keydown', key)
   return () => {
+    element.removeEventListener('pointerdown', start)
+    element.removeEventListener('mousedown', start)
+    doc.removeEventListener('pointerup', finish)
+    doc.removeEventListener('mouseup', finish)
+    doc.removeEventListener('pointercancel', finish)
+    doc.defaultView?.removeEventListener('blur', finish)
     element.removeEventListener('wheel', read)
     element.removeEventListener('touchmove', read)
     element.removeEventListener('keydown', key)

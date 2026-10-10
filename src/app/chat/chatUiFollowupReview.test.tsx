@@ -671,15 +671,19 @@ describe('chat review list return restoration', function () {
     await layout(scroll.firstElementChild as HTMLElement, 320, contentHeight)
     expect(
       moves,
-      'Insufficient rows must not clamp the saved offset'
+      'Intermediate reveal must not consume the saved offset'
+    ).deep.equals([100])
+    expect(
+      offsets,
+      'Intermediate offset is not the saved reading position'
     ).deep.equals([])
     contentHeight = 1800
     await layout(scroll.firstElementChild as HTMLElement, 320, contentHeight)
-    expect(moves).deep.equals([240])
+    expect(moves).deep.equals([100, 240])
     expect(scroll.scrollTop).equals(240)
     await layout(scroll.firstElementChild as HTMLElement, 320, 1900)
     expect(moves, 'Later content must not repeat restoration').deep.equals([
-      240
+      100, 240
     ])
   })
 
@@ -768,7 +772,10 @@ describe('chat review list return restoration', function () {
   })
 })
 
-async function returningList(measureViewport = true): Promise<{
+async function returningList(
+  measureViewport = true,
+  initialOffset = 240
+): Promise<{
   node: HTMLElement
   moves: number[]
   offsets: number[]
@@ -777,6 +784,9 @@ async function returningList(measureViewport = true): Promise<{
   setDomContent: (height: number) => void
   content: (height: number) => Promise<void>
   scroll: (top: number) => Promise<void>
+  hide: () => Promise<void>
+  show: () => Promise<void>
+  replace: (count: number) => Promise<void>
 }> {
   const engine = new ReviewEngine()
   const refreshed = deferred<ConversationListItem[]>()
@@ -787,7 +797,7 @@ async function returningList(measureViewport = true): Promise<{
     <ChatListScreen
       engine={engine}
       embedded
-      initialOffset={240}
+      initialOffset={initialOffset}
       onOffset={offset => offsets.push(offset)}
       onOpen={() => {}}
       onNewMessage={() => {}}
@@ -852,6 +862,51 @@ async function returningList(measureViewport = true): Promise<{
         node.scrollTop = top
         node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
         await wait(150)
+      })
+    },
+    hide: async () => {
+      await render(
+        <ChatListScreen
+          engine={engine}
+          embedded
+          narrow
+          selectedVisible
+          initialOffset={initialOffset}
+          onOffset={offset => offsets.push(offset)}
+          onOpen={() => {}}
+          onNewMessage={() => {}}
+          onFollowTeam={() => {}}
+        />
+      )
+    },
+    show: async () => {
+      await render(
+        <ChatListScreen
+          engine={engine}
+          embedded
+          narrow
+          selectedVisible={false}
+          initialOffset={initialOffset}
+          onOffset={offset => offsets.push(offset)}
+          onOpen={() => {}}
+          onNewMessage={() => {}}
+          onFollowTeam={() => {}}
+        />
+      )
+    },
+    replace: async count => {
+      await act(async () => {
+        rows = Array.from({ length: count }, (_, index) =>
+          chat({
+            id: `cnv_replacement_${index}`,
+            title: `Aurora ${index} Members`,
+            scopeName: `Aurora ${index}`
+          })
+        )
+        engine.conversations = () => rows
+        engine.refreshWork = Promise.resolve(rows)
+        engine.emit({ type: 'conversations' })
+        await wait()
       })
     }
   }
@@ -1358,7 +1413,9 @@ describe('chat review native-time message holds', function () {
 
   it('retains scheduled long recognition without native metadata and never duplicates it on release', async function () {
     const value = await nativeGesture('file')
-    const ordinary: NativePressEvent = { nativeEvent: { pageX: 20, pageY: 20 } }
+    const ordinary: NativePressEvent = {
+      nativeEvent: { pageX: 20, pageY: 20 }
+    }
     await nativePress(value.target, 'onPressIn', ordinary)
     await nativePress(value.target, 'onLongPress', ordinary)
     await nativePress(value.target, 'onPress', contact(1568))
@@ -1778,3 +1835,375 @@ describe('review3 native modal escape current-close path', function () {
       }
     )
 })
+
+describe('review4 selected clone controls', function () {
+  it('keeps the real selected quote and counts readable without dead controls while its toolbar acts', async function () {
+    const engine = new ReviewEngine()
+    const changed: Array<{ id: string; emoji: string }> = []
+    engine.react = async (...args: unknown[]) => {
+      changed.push({ id: String(args[1]), emoji: String(args[2]) })
+    }
+    const reply = message({
+      id: 'msg_quoted',
+      seq: 2,
+      senderName: 'Shohei Ohtani',
+      body: 'Current reply body',
+      quote: {
+        id: 'msg_original',
+        authorId: 1,
+        authorName: 'Mookie Betts',
+        snippet: 'Original quoted body',
+        status: 'ok'
+      },
+      reactions: [{ emoji: '👍', userIds: [2], mine: false }]
+    })
+    engine.update('cnv_aurora', {
+      messages: [
+        { ...original('msg_original', true), body: 'Original quoted body' },
+        reply
+      ]
+    })
+    await render(
+      <ChatOverlayHost>
+        <ChatWorkspace
+          engine={engine}
+          userId={1}
+          state={newChatWorkspaceState()}
+          conversationId="cnv_aurora"
+          onOpen={() => {}}
+          onMembers={() => {}}
+          onNewMessage={() => {}}
+          onFollowTeam={() => {}}
+          onTitle={() => {}}
+        />
+      </ChatOverlayHost>,
+      false
+    )
+    const normal = document.querySelector(
+      '[data-testid="chat-message-msg_quoted"]'
+    )!
+    expect(
+      normal.querySelector(
+        '[role="button"][aria-label="Jump to message from You: Original quoted body"]'
+      )
+    ).not.equals(null)
+    expect(button('👍, 1', normal)).not.equals(undefined)
+    await press('More message actions', normal)
+    const panel = document.querySelector(
+      '[aria-label="Message from Shohei Ohtani"]'
+    )!
+    expect(panel.textContent).contains('Original quoted body')
+    expect(panel.textContent).contains('Current reply body')
+    expect(
+      panel
+        .querySelector('[data-testid="chat-bubble-msg_quoted"]')!
+        .getAttribute('tabindex'),
+      'Static selected body is not an unnamed dead focus target'
+    ).not.equals('0')
+    expect(
+      panel.querySelector('[role="button"][aria-label^="Jump to message"]')
+    ).equals(null)
+    const count = [...panel.querySelectorAll('[aria-label]')].find(
+      node => node.getAttribute('aria-label') === '👍, 1'
+    )!
+    expect(count, 'count remains readable').not.equals(null)
+    expect(
+      count.getAttribute('role'),
+      'static count is not a dead button'
+    ).not.equals('button')
+    expect(count.getAttribute('tabindex')).not.equals('0')
+    expect(changed).deep.equals([])
+    await press('React with 👍', panel)
+    expect(changed).deep.equals([{ id: 'msg_quoted', emoji: '👍' }])
+    expect(
+      document.querySelector('[aria-label="Message from Shohei Ohtani"]')
+    ).equals(null)
+  })
+
+  it('exposes no jump button when a regular bubble has no jump callback', async function () {
+    const reply = message({
+      quote: {
+        id: 'msg_original',
+        authorId: 1,
+        authorName: 'Mookie Betts',
+        snippet: 'Original quoted body',
+        status: 'ok'
+      }
+    })
+    await render(
+      <MessageBubble
+        message={reply}
+        conversation={chat()}
+        members={[]}
+        engine={{ openAttachment: async () => new Uint8Array() }}
+        files={{
+          bytesUri: async () => '',
+          releaseUri: async () => {},
+          saveFile: async () => {}
+        }}
+        maxWidth={300}
+        swipe={false}
+        actions={[]}
+        userId={1}
+        onLongPress={() => {}}
+        onReply={() => {}}
+        onToggleReaction={() => {}}
+      />
+    )
+    expect(document.body.textContent).contains('Original quoted body')
+    expect(
+      document.querySelector('[role="button"][aria-label^="Jump to message"]')
+    ).equals(null)
+  })
+})
+
+describe('review4 virtualized restoration and scrollbar intent', function () {
+  it('advances an unmounted long-list tail incrementally without consuming or saving the target early', async function () {
+    const pending = await returningList(true, 6000)
+    await pending.populate(300)
+    expect(
+      document.querySelector(
+        '[data-testid="chat-conversation-cnv_return_299"]'
+      ),
+      'Tail remains outside the actual mounted virtualized window'
+    ).equals(null)
+    await pending.content(1200)
+    expect(pending.moves).deep.equals([800])
+    await pending.scroll(800)
+    expect(
+      pending.offsets,
+      'Programmatic reveal is not final restoration'
+    ).deep.equals([])
+    await pending.content(1200)
+    expect(pending.moves, 'Unchanged geometry does not spin').deep.equals([800])
+    await pending.content(2800)
+    expect(pending.moves).deep.equals([800, 2400])
+    await pending.content(9000)
+    expect(pending.moves).deep.equals([800, 2400, 6000])
+    await pending.scroll(6000)
+    expect(pending.offsets.at(-1)).equals(6000)
+    await pending.content(10000)
+    expect(pending.moves).deep.equals([800, 2400, 6000])
+  })
+
+  it('abandons incremental restoration on a real scrollbar offset change and saves the user position', async function () {
+    const pending = await returningList(true, 6000)
+    await pending.populate(300)
+    await pending.content(1200)
+    pending.node.getBoundingClientRect = () =>
+      new window.DOMRect(0, 0, 320, 400)
+    Object.defineProperties(pending.node, {
+      clientWidth: { configurable: true, value: 304 },
+      clientLeft: { configurable: true, value: 0 },
+      clientTop: { configurable: true, value: 0 },
+      offsetWidth: { configurable: true, value: 320 },
+      offsetHeight: { configurable: true, value: 400 }
+    })
+    pending.node.dispatchEvent(
+      new window.MouseEvent('mousedown', {
+        bubbles: true,
+        button: 0,
+        clientX: 319,
+        clientY: 100
+      })
+    )
+    await pending.scroll(500)
+    document.dispatchEvent(
+      new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+    )
+    expect(pending.offsets.at(-1)).equals(500)
+    await pending.content(9000)
+    expect(pending.moves, 'No later jump over the reader').deep.equals([800])
+  })
+
+  it('preserves a changed message reading position after scrollbar drag but ignores child/programmatic focus scrolls', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', { messages: [original()] })
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', { ...terminalDraft(), scrollOffset: 700 })
+    await workspace(engine, state)
+    const reading = terminalReadingPane()
+    await reading.measure()
+    const callbacks = renderedReadingCallbacks(reading.node)
+    reading.moves.length = 0
+    Object.defineProperties(reading.node, {
+      clientWidth: { configurable: true, value: 624 },
+      clientLeft: { configurable: true, value: 0 },
+      clientTop: { configurable: true, value: 0 }
+    })
+    reading.node.firstElementChild!.dispatchEvent(
+      new window.MouseEvent('mousedown', { bubbles: true, button: 0 })
+    )
+    await reading.deliver(callbacks, 'onScroll', 500)
+    document.dispatchEvent(
+      new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+    )
+    expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(700)
+    reading.node.dispatchEvent(
+      new window.MouseEvent('mousedown', {
+        bubbles: true,
+        button: 0,
+        clientX: 300,
+        clientY: 100
+      })
+    )
+    await reading.deliver(callbacks, 'onScroll', 450)
+    document.dispatchEvent(
+      new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+    )
+    expect(
+      state.drafts.get('cnv_aurora')!.scrollOffset,
+      'Bare content press plus programmatic nudge is not reading'
+    ).equals(700)
+    reading.node.dispatchEvent(
+      new window.MouseEvent('mousedown', {
+        bubbles: true,
+        button: 0,
+        clientX: 639,
+        clientY: 100
+      })
+    )
+    await act(async () => {
+      reading.node.scrollTop = 400
+      reading.node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      await wait(150)
+    })
+    document.dispatchEvent(
+      new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+    )
+    expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(400)
+    reading.moves.length = 0
+    await layout(reading.node.firstElementChild as HTMLElement, 640, 2300)
+    expect(
+      reading.moves,
+      'Later content cannot reapply the old reading target'
+    ).deep.equals([])
+    await workspace(engine, state, 'cnv_solstice')
+    await workspace(engine, state)
+    const reopened = terminalReadingPane()
+    await reopened.measure()
+    expect(reopened.moves).contains(400)
+    expect(reopened.moves).not.contains(700)
+  })
+})
+
+interface ListLayoutCallbacks {
+  onContentSizeChange: (width: number, height: number) => void
+  onLayout: (event: { nativeEvent: { layout: { height: number } } }) => void
+}
+function renderedListCallbacks(node: HTMLElement): ListLayoutCallbacks {
+  interface Fiber {
+    memoizedProps?: ListLayoutCallbacks & { testID?: string; data?: unknown }
+    return?: Fiber
+  }
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
+  let fiber = (node as unknown as Record<string, Fiber>)[key]
+  let appProps: ListLayoutCallbacks | undefined
+  while (fiber != null) {
+    if (
+      fiber.memoizedProps?.testID === 'chat-conversation-list' &&
+      Array.isArray(fiber.memoizedProps.data) &&
+      typeof fiber.memoizedProps.onContentSizeChange === 'function'
+    )
+      appProps = fiber.memoizedProps
+    fiber = fiber.return!
+  }
+  if (appProps != null) return appProps
+  throw Error('Rendered app list callbacks unavailable')
+}
+
+describe('review4 incremental restoration lifecycle', function () {
+  it('rejects delayed content/layout work after hide/unmount, including tail layout, and restores only fresh visible geometry', async function () {
+    for (const count of [300, 2]) {
+      const pending = await returningList(true, 6000)
+      await pending.populate(count)
+      const content = count === 300 ? 1200 : 500
+      const available = content - 400
+      await pending.content(content)
+      const retained = renderedListCallbacks(pending.node)
+      const tail = count === 2 ? renderedRowLayout('cnv_return_1') : undefined
+      await pending.hide()
+      await act(async () => {
+        retained.onContentSizeChange(320, 9000)
+        retained.onLayout({ nativeEvent: { layout: { height: 500 } } })
+        tail?.({ nativeEvent: { layout: { height: 80 } } })
+        await wait()
+      })
+      expect(
+        pending.moves,
+        'Hidden content/tail cannot consume the target'
+      ).deep.equals([available])
+      await pending.show()
+      expect(
+        pending.moves,
+        'A hidden tail cannot clamp on visibility return'
+      ).deep.equals([available])
+      if (count === 300) await pending.content(9000)
+      else
+        await act(async () => {
+          // A fresh visible tail now permits a legitimate short-list clamp.
+          renderedRowLayout('cnv_return_1')({
+            nativeEvent: { layout: { height: 80 } }
+          })
+          await wait()
+        })
+      const expected = [available, count === 300 ? 6000 : available]
+      expect(pending.moves).deep.equals(expected)
+      await unmount()
+      await act(async () => {
+        retained.onContentSizeChange(320, 10000)
+        retained.onLayout({ nativeEvent: { layout: { height: 400 } } })
+        tail?.({ nativeEvent: { layout: { height: 80 } } })
+        await wait()
+      })
+      expect(
+        pending.moves,
+        'Unmounted content cannot command scroll'
+      ).deep.equals(expected)
+    }
+  })
+
+  it('ignores older-data callbacks while advancing only the replacement list geometry', async function () {
+    const pending = await returningList(true, 6000)
+    await pending.populate(300)
+    await pending.content(1200)
+    const retained = renderedListCallbacks(pending.node)
+    await pending.replace(300)
+    await act(async () => {
+      retained.onContentSizeChange(320, 9000)
+      retained.onLayout({ nativeEvent: { layout: { height: 500 } } })
+      await wait()
+    })
+    expect(pending.moves, 'Old data cannot complete a new list').deep.equals([
+      800
+    ])
+    await pending.content(4000)
+    expect(pending.moves).deep.equals([800, 3600])
+    await pending.content(9000)
+    expect(pending.moves).deep.equals([800, 3600, 6000])
+  })
+})
+
+function renderedRowLayout(id: string): ListLayoutCallbacks['onLayout'] {
+  const node = document.querySelector<HTMLElement>(
+    `[data-testid="chat-conversation-${id}"]`
+  )!
+  interface Fiber {
+    memoizedProps?: {
+      chat?: { id: string }
+      onLayout?: ListLayoutCallbacks['onLayout']
+    }
+    return?: Fiber
+  }
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
+  let fiber = (node as unknown as Record<string, Fiber | undefined>)[key]
+  while (fiber != null) {
+    if (
+      fiber.memoizedProps?.chat?.id === id &&
+      fiber.memoizedProps.onLayout != null
+    )
+      return fiber.memoizedProps.onLayout
+    fiber = fiber.return
+  }
+  throw Error('Rendered app row layout callback unavailable')
+}
