@@ -955,4 +955,82 @@ describe('the manage page', function () {
       }
     ])
   })
+
+  it('lists a season’s watcher on its team’s page, and gives them a team role only through an accepted invitation', async function () {
+    if (db == null) this.skip()
+    // Somebody who watches the season and holds nothing on the team itself:
+    // the team's page lists them, with their tick under Season.
+    const watcherId = mintUser()
+    const watcherEmail = exampleEmail()
+    const now = new Date()
+    await db
+      .insertInto('users')
+      .values({
+        id: watcherId,
+        legacyId: legacyId(watcherId),
+        display_name: 'Lou Watcher',
+        login_enabled: true,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    await db
+      .insertInto('user_emails')
+      .values({
+        id: makeId('userEmail'),
+        user_id: watcherId,
+        email: watcherEmail,
+        is_primary: true,
+        verified_at: now
+      })
+      .execute()
+    await db
+      .insertInto('season_members')
+      .values({
+        id: 'smb_watcher',
+        user_id: watcherId,
+        season_id: 'sea_spring',
+        role: 'spectator',
+        source: 'peertube'
+      })
+      .execute()
+    const page = await ask('/manage/team/tem_hawks', COACH)
+    const listed = peopleOf(page.body).find(
+      person => person.userId === watcherId
+    )
+    expect(listed?.seasons.map(season => season.id)).deep.equals(['sea_spring'])
+    expect(listed?.teams).deep.equals([])
+
+    // Making them a coach of the team straight away is refused: the role
+    // waits for them to accept, so the page has to invite them instead.
+    const refused = await ask(
+      `/manage/team/tem_hawks/people/${watcherId}/roles`,
+      COACH,
+      'PUT',
+      { admin: false, flags: ['coach'] }
+    )
+    expect(refused.status).equals(409)
+    expect(refused.body.message).includes('Invite this person')
+    expect(await rowsOf(watcherId, 'team', 'tem_hawks')).deep.equals([])
+
+    const invited = await ask('/manage/team/tem_hawks/people', COACH, 'POST', {
+      email: watcherEmail,
+      admin: false,
+      flags: ['coach'],
+      idempotencyKey: 'watcher-coach-invitation'
+    })
+    expect(invited.status).equals(201)
+    expect(await rowsOf(watcherId, 'team', 'tem_hawks')).deep.equals([])
+    const pending = await ask('/manage/team/tem_hawks', COACH)
+    expect(
+      (pending.body.pending as Array<{ email: string }>).map(item => item.email)
+    ).includes(watcherEmail)
+
+    const invite = await findInviteByCode(
+      db,
+      (invited.body.invited as { code: string }).code
+    )
+    await redeemInvite(db, invite!, watcherId)
+    expect(await rowsOf(watcherId, 'team', 'tem_hawks')).deep.equals(['coach'])
+  })
 })

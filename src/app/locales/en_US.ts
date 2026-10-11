@@ -496,6 +496,12 @@ export const enUs = {
   role_scorekeeper_all: 'Scorekeepers can do this',
   role_save: 'Save',
   role_cancel: 'Cancel',
+  role_invite_notice:
+    '%s is not in %s yet, so these roles go in an invitation. They start when it is accepted.',
+  role_invite_save: 'Send invitation',
+  manage_roles_saved: 'Saved the roles of %s.',
+  manage_roles_invited:
+    'Invited %s to %s as %s. Nothing changes until the invitation is accepted.',
   manage_no_address_header: 'No address on file',
 
   // Coming in through an invite

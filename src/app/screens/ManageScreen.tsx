@@ -104,6 +104,19 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const [note, setNote] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   /**
+   * What happened to the last change made from the table, said above the
+   * table. The add form's own line is a screen further down, and a phone
+   * never shows the two at once.
+   */
+  const [peopleNote, setPeopleNote] = useState<
+    { text: string; warning: boolean; requestId?: string } | undefined
+  >(undefined)
+  /** Why the roles sheet's last Save failed, said inside the sheet. */
+  const [rolesError, setRolesError] = useState<string | undefined>(undefined)
+  const rolesInvitationKey = useRef<{ body: string; key: string } | undefined>(
+    undefined
+  )
+  /**
    * How wide the table is allowed to be, measured rather than declared.
    *
    * Inside a horizontal `ScrollView` the content's width is *indefinite*: the
@@ -131,7 +144,15 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
     })
   }, [load])
 
-  const run = (work: () => Promise<void>): void => {
+  /**
+   * Does one change, then reloads the page. A failure is said where the
+   * change was asked for: `fail` puts it there, and by default it goes under
+   * the add form.
+   */
+  const run = (
+    work: () => Promise<void>,
+    fail: (message: string) => void = setError
+  ): void => {
     setBusy(true)
     setError(undefined)
     work()
@@ -140,13 +161,64 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
         await load()
       })
       .catch((caught: unknown) => {
-        setError(
-          caught instanceof Error ? caught.message : 'Something went wrong'
-        )
+        fail(caught instanceof Error ? caught.message : 'Something went wrong')
       })
       .finally(() => {
         setBusy(false)
       })
+  }
+
+  /**
+   * Saves the roles sheet. Somebody already in this level gets the roles at
+   * once. Somebody the page lists only because a level above lets them
+   * watch — a season's spectator on one of its teams — holds nothing here
+   * the roles can attach to, and the server rightly refuses to hand anybody
+   * a role they have not accepted. So for them Save sends the same
+   * invitation **Add somebody** would, with these roles in it, and says that
+   * nothing changes until it is accepted. Saying nothing was the bug: the
+   * sheet closed, the refusal landed under the add form a screen below, and
+   * the table looked exactly as before.
+   */
+  const saveRoles = (
+    who: ScopePerson,
+    roles: { admin: boolean; flags: RoleFlag[] },
+    scopeName: string
+  ): void => {
+    setRolesError(undefined)
+    setPeopleNote(undefined)
+    const invite = !isInHere(who, scopeKind, scopeId)
+    run(async () => {
+      if (invite) {
+        const email = who.emails[0]
+        const body = JSON.stringify({ userId: who.userId, email, ...roles })
+        if (rolesInvitationKey.current?.body !== body)
+          rolesInvitationKey.current = {
+            body,
+            key: `roles-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          }
+        const answer = await client.addPerson(scopeKind, scopeId, email, {
+          ...roles,
+          idempotencyKey: rolesInvitationKey.current.key
+        })
+        setPeopleNote({
+          requestId: answer.invited?.requestId,
+          text: sprintf(
+            lstrings.manage_roles_invited,
+            who.displayName,
+            scopeName,
+            rolesInWords(roles, scopeKind)
+          ),
+          warning: false
+        })
+      } else {
+        await client.setRoles(scopeKind, scopeId, who.userId, roles)
+        setPeopleNote({
+          text: sprintf(lstrings.manage_roles_saved, who.displayName),
+          warning: false
+        })
+      }
+      setChanging(undefined)
+    }, setRolesError)
   }
 
   const add = (): void => {
@@ -229,12 +301,20 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
     scopeKind,
     scopeId,
     busy,
+    invited: new Set(page.pending.map(pending => pending.email.toLowerCase())),
     onRemove: (person: ScopePerson) => {
-      run(async () => {
-        await client.removePerson(scopeKind, scopeId, person.userId)
-      })
+      setPeopleNote(undefined)
+      run(
+        async () => {
+          await client.removePerson(scopeKind, scopeId, person.userId)
+        },
+        message => {
+          setPeopleNote({ text: message, warning: true })
+        }
+      )
     },
     onChangeRole: (person: ScopePerson) => {
+      setRolesError(undefined)
       setChanging(person)
     }
   }
@@ -258,6 +338,20 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
             onChangeText={setFilter}
             placeholder={lstrings.manage_filter_placeholder}
           />
+          {peopleNote != null && (
+            <Text style={peopleNote.warning ? styles.warning : styles.detail}>
+              {peopleNote.text}
+            </Text>
+          )}
+          {peopleNote?.requestId != null && onOpenRequest != null && (
+            <Button
+              label="Open sent invitation"
+              kind="secondary"
+              onPress={() => {
+                onOpenRequest(peopleNote.requestId!)
+              }}
+            />
+          )}
         </Card>
 
         {/*
@@ -432,15 +526,27 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
           held={heldAt(changing, scopeId)}
           inherited={inheritedAt(changing, scopeKind)}
           busy={busy}
+          notice={
+            isInHere(changing, scopeKind, scopeId)
+              ? undefined
+              : sprintf(
+                  lstrings.role_invite_notice,
+                  changing.displayName,
+                  page.scope.name
+                )
+          }
+          saveLabel={
+            isInHere(changing, scopeKind, scopeId)
+              ? undefined
+              : lstrings.role_invite_save
+          }
+          error={rolesError}
           onClose={() => {
+            setRolesError(undefined)
             setChanging(undefined)
           }}
           onSave={roles => {
-            const who = changing
-            setChanging(undefined)
-            run(async () => {
-              await client.setRoles(scopeKind, scopeId, who.userId, roles)
-            })
+            saveRoles(changing, roles, page.scope.name)
           }}
         />
       )}
@@ -476,6 +582,41 @@ function labelFor(column: 'team' | 'season' | 'league'): string {
   if (column === 'team') return lstrings.manage_via_team
   if (column === 'season') return lstrings.manage_via_season
   return lstrings.manage_via_league
+}
+
+/**
+ * Whether this person is in this very level — a member of it, or holding a
+ * role on it — and so can be given roles here without an invitation.
+ * Somebody listed only through a level above it is not.
+ */
+function isInHere(
+  person: ScopePerson,
+  scopeKind: 'league' | 'season' | 'team',
+  scopeId: string
+): boolean {
+  const members =
+    scopeKind === 'team'
+      ? person.teams
+      : scopeKind === 'season'
+        ? person.seasons
+        : person.leagues
+  return (
+    members.some(member => member.id === scopeId) ||
+    grantsOf(person).some(
+      grant => grant.kind === scopeKind && grant.id === scopeId
+    )
+  )
+}
+
+/** `Coach, Scorekeeper`, or `Team admin`: what an invitation asks for. */
+function rolesInWords(
+  roles: { admin: boolean; flags: RoleFlag[] },
+  scopeKind: 'league' | 'season' | 'team'
+): string {
+  return [
+    ...(roles.admin ? [adminLabel(scopeKind)] : []),
+    ...ROLE_FLAGS.filter(flag => roles.flags.includes(flag)).map(flagLabel)
+  ].join(', ')
 }
 
 /** The roles set on this one level, which is all this page may change. */
@@ -517,11 +658,21 @@ function PersonRow(props: {
   scopeKind: 'league' | 'season' | 'team'
   scopeId: string
   busy: boolean
+  /** The addresses with an invitation to this level still waiting. */
+  invited: Set<string>
   onRemove: (person: ScopePerson) => void
   onChangeRole: (person: ScopePerson) => void
 }): React.ReactElement {
-  const { person, columns, scopeKind, scopeId, busy, onRemove, onChangeRole } =
-    props
+  const {
+    person,
+    columns,
+    scopeKind,
+    scopeId,
+    busy,
+    invited,
+    onRemove,
+    onChangeRole
+  } = props
   const styles = getStyles(useTheme())
 
   const grantsFor = (
@@ -539,6 +690,11 @@ function PersonRow(props: {
   // cannot, so there is nothing to make an administrator of.
   const canHoldRole = person.emails.length > 0
   const roles = rolesOf(person, scopeKind, scopeId)
+  // Invited here and not yet accepted: what the invitation asks for is not
+  // theirs yet, and the row says so rather than looking unchanged.
+  const isInvited = person.emails.some(address =>
+    invited.has(address.toLowerCase())
+  )
 
   return (
     <View style={styles.row}>
@@ -574,6 +730,9 @@ function PersonRow(props: {
               {line.text}
             </Text>
           ))
+        )}
+        {isInvited && (
+          <Text style={styles.muted}>{lstrings.manage_pending}</Text>
         )}
       </Pressable>
       {columns.map(column => (

@@ -285,9 +285,11 @@ export function manageRoutes(
 
   /**
    * Somebody who may be given a role here: an account that has not been
-   * merged into another. They are added to the scope as well, so they can
-   * see it: an administrator or a scorekeeper with no membership holds a
-   * role on something they cannot open, which nobody asks for on purpose.
+   * merged into another. They must also already be in this level — a member
+   * of it or holding a role on it (`connected`, 409 otherwise). Somebody the
+   * page lists only through a level above, such as a season's spectator on
+   * one of its teams, gets roles here through an invitation they accept,
+   * which is what the app sends for them instead.
    */
   const mustBePerson = async (userId: number): Promise<void> => {
     const person = await db
