@@ -142,8 +142,9 @@ async function main(): Promise<void> {
       timeout: 15000
     })
     await capture(admin.m, artifacts, 'home-leagues-after.png')
-    await tap(admin.m, 'Search')
-    await contains(admin.page, 'Public profiles show location')
+    await tap(admin.m, 'Search', 'tab')
+    // Signed in, Search is for following; a team opens followed or not.
+    await contains(admin.page, 'A team opens on its own page, followed or not')
     await visit(admin, `/groups/league/${f.leagueA}`)
     await contains(admin.page, 'Demo League A')
     await capture(admin.m, artifacts, 'league-after.png')
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
     const mobile = await make('web-refinements-mobile', 390, 844, 101)
     await contains(mobile.page, 'YOUR TEAMS')
     await capture(mobile.m, artifacts, 'mobile-nav-after.png')
-    await tap(mobile.m, 'Search')
+    await tap(mobile.m, 'Search', 'tab')
     await contains(mobile.page, 'Discover')
     await pass(
       'B1',
@@ -354,8 +355,14 @@ async function main(): Promise<void> {
     })
     expect(sticky?.top).at.least(0)
     expect(sticky?.bottom).lessThan((sticky?.height ?? 0) / 2)
-    await visit(admin, `/seasons/${f.seasonA}/manage`)
-    await contains(admin.page, 'Demo League Admin')
+    // The season's people, on its People tab now the Manage page is gone.
+    await visit(admin, `/seasons/${f.seasonA}?tab=people`)
+    // The league's administrator, inherited and pilled, and the child only
+    // as a player of the season's Demo Comets, both by short name.
+    await contains(admin.page, 'ADMINS')
+    await contains(admin.page, 'League admin')
+    await contains(admin.page, 'PLAYERS')
+    await contains(admin.page, 'Demo CDemo Comets')
     await absent(admin.page, 'Demo Child Player')
     await capture(admin.m, artifacts, 'people-after.png')
     await pass(
