@@ -323,6 +323,34 @@ export function teamScheduleAnswer(
     case '/invites':
       // The manage gear shows for somebody who may invite.
       return { status: 200, body: { canInvite: true, invites: [] } }
+    case `/teams/${TEAM_ID}`:
+      // The team's page reads the team first; a member who manages it, so
+      // the gear shows.
+      return {
+        status: 200,
+        body: {
+          group: {
+            kind: 'team',
+            id: TEAM_ID,
+            name: TEAM_NAME,
+            imageUrl: null,
+            locality: null
+          },
+          parents: [],
+          children: [],
+          participatingSeasons: [],
+          competingTeams: [],
+          staff: [],
+          games: [],
+          canViewPrivate: true,
+          nonMemberView: false,
+          canManage: true,
+          canManagePeople: true,
+          canSeePeople: true
+        }
+      }
+    case '/me/notifications/summary':
+      return { status: 200, body: { hasPending: false } }
     default:
       onUnknown(method, route)
       return { status: 200, body: [] }

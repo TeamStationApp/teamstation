@@ -472,13 +472,13 @@ describe('team screen: pinned pills and the schedule', function () {
       if (gear != null) {
         await gear.click()
         await page
-          .waitForFunction(() => location.pathname.endsWith('/manage'), {
+          .waitForFunction(() => location.pathname.endsWith('/settings'), {
             timeout: 5000
           })
           .catch(() => undefined)
         check(
-          new URL(page.url()).pathname === `/teams/${TEAM_ID}/manage`,
-          `${at} E9: the gear opens the team's manage page`
+          new URL(page.url()).pathname === `/groups/team/${TEAM_ID}/settings`,
+          `${at} E9: the gear opens the team's Settings`
         )
       }
       await page.close()
