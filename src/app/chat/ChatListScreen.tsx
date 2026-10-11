@@ -26,8 +26,8 @@ import {
 import { getChatStyles } from './chatStyles'
 import {
   bindUserScroll,
-  immediatePressProps,
-  isScrollEventDispatch
+  cancelUserScroll,
+  immediatePressProps
 } from './chatWebInteractions'
 import { CHAT_WIDE_WIDTH } from './chatWorkspaceModel'
 import { ConversationMenu } from './ConversationMenu'
@@ -68,6 +68,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const list = useRef<FlatList<Row>>(null)
   const visible = useRef<string[]>([])
   const gestureGeneration = useRef(0)
+  const webInput = useRef<() => void>(() => {})
+  const webPosition = useRef<(offset: number) => void>(() => {})
+  const webOwner = useRef<
+    | { data: string | undefined; visibility: number; generation: number }
+    | undefined
+  >(undefined)
   const restored = useRef(false)
   const scrollOwner = useRef({
     live: true,
@@ -346,6 +352,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     if (final) restored.current = false
     userPosition.current = undefined
     pendingMomentum.current = undefined
+    webOwner.current = undefined
+    cancelUserScroll(list.current)
     list.current?.scrollToOffset({ offset, animated: false })
     if (verifyZeroDistance(offset, final)) finishRestoration(offset)
   }
@@ -364,6 +372,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     seeking.current = { data: dataKey, index, version: layoutVersion.current }
     userPosition.current = undefined
     pendingMomentum.current = undefined
+    webOwner.current = undefined
+    cancelUserScroll(list.current)
     list.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 })
   }
   const revalidateGeometry = (): void => {
@@ -546,7 +556,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     anchorOwned.current = false
     anchor.current = undefined
     gestureGeneration.current += 1
-    userPosition.current = { native, moved: false }
+    userPosition.current = native ? { native, moved: false } : undefined
     pendingMomentum.current = undefined
   }
   const rememberOffset = (
@@ -616,15 +626,48 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     if (!restored.current || anchorOwned.current) restoration.current()
     for (const id of visible.current) measureRow(id)
   }
+  webInput.current = () => {
+    userScrolled()
+    webOwner.current = {
+      data: dataKey,
+      visibility: visibilityVersion,
+      generation: gestureGeneration.current
+    }
+  }
+  webPosition.current = offset => {
+    const owner = webOwner.current
+    if (
+      !liveData() ||
+      owner == null ||
+      owner.data !== dataKey ||
+      owner.visibility !== visibilityVersion ||
+      owner.generation !== gestureGeneration.current
+    )
+      return
+    // The DOM adapter delivers only actual movement from a current input.
+    // Classify it inside this callback, without sharing dispatch lifetime.
+    userPosition.current = { native: false, moved: true }
+    rememberOffset({ nativeEvent: { contentOffset: { y: offset } } }, 'web')
+  }
+  useEffect(() => {
+    webOwner.current = undefined
+    cancelUserScroll(list.current)
+  }, [dataKey, listVisible])
   useEffect(() => {
     geometryValidation.current()
     restoration.current()
   }, [chats, dataKey, listVisible])
   useEffect(
     () =>
-      bindUserScroll(list.current, () => {
-        userScrolled()
-      }),
+      bindUserScroll(
+        list.current,
+        () => {
+          webInput.current()
+        },
+        offset => {
+          webPosition.current(offset)
+        }
+      ),
     []
   )
   const viewability = useRef({ itemVisiblePercentThreshold: 1 }).current
@@ -738,18 +781,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         // Web batches remain bounded; queue them directly for the interaction
         // scheduler instead of adding a timer between restoration steps.
         updateCellsBatchingPeriod={Platform.OS === 'web' ? 0 : undefined}
-        onScroll={event => {
-          // RNW emits its ending callback through onScroll, outside the DOM
-          // scroll dispatch. Ingest that final coordinate before closing intent.
-          rememberOffset(
-            event,
-            Platform.OS === 'web' &&
-              userPosition.current?.native === false &&
-              !isScrollEventDispatch(list.current)
-              ? 'web'
-              : undefined
-          )
-        }}
+        onScroll={rememberOffset}
         onScrollEndDrag={event => {
           rememberOffset(event, 'drag')
         }}
