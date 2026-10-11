@@ -4693,3 +4693,112 @@ describe('qa4 review4 delayed and finite web input', function () {
     }
   })
 })
+
+describe('qa4 review5 independent touch stream', function () {
+  function touchScroller(modern: boolean): {
+    element: HTMLElement
+    positions: number[]
+    touch: (type: string, y?: number) => void
+    scroll: (top: number) => void
+    stop: () => void
+    dispose: () => void
+  } {
+    const element = document.createElement('div')
+    document.body.append(element)
+    const restoreEnd = scrollEndSupport(modern)
+    element.scrollTop = 240
+    element.getBoundingClientRect = () => new window.DOMRect(0, 0, 320, 400)
+    Object.defineProperties(element, {
+      clientHeight: { value: 400, configurable: true },
+      clientWidth: { value: 304, configurable: true },
+      offsetWidth: { value: 320, configurable: true },
+      offsetHeight: { value: 400, configurable: true },
+      scrollHeight: { value: 1800, configurable: true },
+      clientTop: { value: 0, configurable: true },
+      clientLeft: { value: 0, configurable: true }
+    })
+    const positions: number[] = []
+    const stop = WebScroll.bindUserScroll(
+      element,
+      () => {},
+      top => {
+        positions.push(top)
+      }
+    )
+    return {
+      element,
+      positions,
+      touch: (type, y) => {
+        const event = new window.Event(type, { bubbles: true })
+        Object.defineProperty(event, 'touches', {
+          value: y == null ? [] : [{ clientY: y }]
+        })
+        element.dispatchEvent(event)
+      },
+      scroll: top => {
+        element.scrollTop = top
+        element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      },
+      stop,
+      dispose: () => {
+        stop()
+        restoreEnd()
+        element.remove()
+      }
+    }
+  }
+
+  for (const modern of [true, false])
+    it(`keeps the same physical touch pan after pointercancel (${modern ? 'scrollend present' : 'legacy'})`, function () {
+      const pane = touchScroller(modern)
+      try {
+        pane.touch('touchstart', 200)
+        pane.touch('touchmove', 240)
+        document.dispatchEvent(new window.Event('pointercancel'))
+        pane.scroll(160)
+        pane.touch('touchmove', 400)
+        pane.scroll(0)
+        expect(pane.positions).deep.equals([160, 0])
+      } finally {
+        pane.dispose()
+      }
+    })
+
+  for (const boundary of ['touchcancel', 'touchend', 'blur', 'dispose'])
+    it(`retires the actual touch stream at ${boundary} and ignores subsequent offsets without a new touchstart`, function () {
+      const pane = touchScroller(false)
+      try {
+        pane.touch('touchstart', 200)
+        pane.touch('touchmove', 240)
+        if (boundary === 'dispose') pane.stop()
+        else if (boundary === 'blur')
+          window.dispatchEvent(new window.Event('blur'))
+        else pane.touch(boundary)
+        pane.scroll(160)
+        pane.touch('touchmove', 400)
+        pane.scroll(0)
+        expect(pane.positions).deep.equals([])
+      } finally {
+        pane.dispose()
+      }
+    })
+
+  it('cancels pointer-only scrollbar ownership when there is no active touch stream', function () {
+    const pane = touchScroller(true)
+    try {
+      pane.element.dispatchEvent(
+        new window.MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          clientX: 319,
+          clientY: 200
+        })
+      )
+      document.dispatchEvent(new window.Event('pointercancel'))
+      pane.scroll(0)
+      expect(pane.positions).deep.equals([])
+    } finally {
+      pane.dispose()
+    }
+  })
+})
