@@ -1,11 +1,16 @@
 import type { Kysely } from 'kysely'
 
+import { conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { authorizePersonChange, requireDirectAdmin } from '../groups/adminGuard'
+import {
+  authorizePersonChange,
+  type PersonChangeAuthority,
+  requireDirectAdmin
+} from '../groups/adminGuard'
 import type { InviteScopeType } from './invites'
 
 /**
@@ -492,13 +497,20 @@ export async function pendingInvitations(
  * them from the season, which is not theirs to decide and would quietly
  * remove that person from four other teams as well. The screen says which
  * grants it could not touch rather than pretending.
+ *
+ * With `keepPlayer`, a team's player is not taken off it (409, and nothing
+ * changed): their membership is their place on its roster, which is the
+ * roster's to change. The delete itself skips a player's row, so a roster
+ * edit that makes them one while this waits is seen.
  */
 export async function removeFromScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
   userId: number,
-  actorId?: number
+  actorId?: number,
+  authority: PersonChangeAuthority = 'admin',
+  keepPlayer = false
 ): Promise<{ removed: boolean }> {
   return await atomic(db, async trx => {
     await lockKeys(trx, [
@@ -510,7 +522,9 @@ export async function removeFromScope(
         trx,
         { kind: scopeType, id: scopeId },
         userId,
-        actorId
+        actorId,
+        false,
+        authority
       )
     const roles = await trx
       .deleteFrom('scope_roles')
@@ -525,8 +539,10 @@ export async function removeFromScope(
         .deleteFrom('memberships')
         .where('team_id', '=', scopeId)
         .where('user_id', '=', userId)
+        .$if(keepPlayer, qb => qb.where('is_player', '=', false))
         .returning('id')
         .executeTakeFirst()
+      if (gone == null && keepPlayer) await refusePlayer(trx, scopeId, userId)
       removed ||= gone != null
     } else if (scopeType === 'season') {
       const gone = await trx
@@ -548,6 +564,27 @@ export async function removeFromScope(
     await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
     return { removed }
   })
+}
+
+/** 409 when this person plays for the team: they stay while on its roster. */
+async function refusePlayer(
+  db: Kysely<Database>,
+  teamId: string,
+  userId: number
+): Promise<void> {
+  const player = await db
+    .selectFrom('memberships')
+    .innerJoin('users', 'users.id', 'memberships.user_id')
+    .innerJoin('teams', 'teams.id', 'memberships.team_id')
+    .select(['users.display_name as name', 'teams.name as team'])
+    .where('memberships.team_id', '=', teamId)
+    .where('memberships.user_id', '=', userId)
+    .where('memberships.is_player', '=', true)
+    .executeTakeFirst()
+  if (player != null)
+    throw conflict(
+      `${player.name} plays for ${player.team}, so stays a member while on its roster.`
+    )
 }
 
 /**
@@ -629,7 +666,8 @@ export async function rolesAt(
  *
  * A role they keep keeps its row, and so who granted it and when. The rest
  * are taken away and the new ones added, in one transaction, so a reader
- * never sees half of a change.
+ * never sees half of a change. `authority` is whose say it needs (an
+ * administrator's unless the caller says otherwise).
  */
 export async function setScopeRoles(
   db: Kysely<Database>,
@@ -637,7 +675,8 @@ export async function setScopeRoles(
   scopeId: string,
   userId: number,
   wanted: { admin: boolean; flags: RoleFlag[] },
-  grantedBy: number
+  grantedBy: number,
+  authority: PersonChangeAuthority = 'admin'
 ): Promise<Role[]> {
   const roles: Role[] = ROLES.filter(
     role =>
@@ -654,7 +693,8 @@ export async function setScopeRoles(
       { kind: scopeType, id: scopeId },
       userId,
       grantedBy,
-      wanted.admin
+      wanted.admin,
+      authority
     )
     await addToScope(trx, scopeType, scopeId, userId)
     if (scopeType === 'team' && !wanted.admin)

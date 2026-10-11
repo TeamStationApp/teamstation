@@ -48,7 +48,7 @@ const relationship = {
       format: 'email',
       description:
         'Verified active account email; provide this or recipientUserId' +
-        '. Personal role invitations require recipientEmail; unknown addresses may verify before acceptance.'
+        '. A person kind requires recipientEmail: an address an account has verified adds that account at once (201 with status `accepted`, and the id of the notification telling them; 409 when it holds all of it already), and only an address nobody has verified is invited, applied when it is verified.'
     },
     admin: {
       type: 'boolean',
@@ -397,7 +397,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           }
         ],
         description:
-          'hasPending counts actionable requests across every page. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
+          'hasPending counts actionable requests across every page, and every `grant` notification (somebody added you to a team, season or league) not yet viewed. The default list holds both; history holds resolved requests and every piece of information, grants included. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
         responses
       }
     },
@@ -433,7 +433,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           'Public minimal group profile with optional current management capability',
         parameters: [parameter('id')],
         description:
-          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league.',
+          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league. `canManagePeople` is true for its administrators, coaches and assistants, who open anybody on its people list and give or take away every role there but Admin; `canSeePeople` for its members and role holders, who read that list.',
         responses
       }
     }

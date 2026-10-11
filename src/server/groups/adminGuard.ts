@@ -2,8 +2,9 @@ import type { Kysely } from 'kysely'
 
 import { conflict, forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
+import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
-import { currentActor, requireGroupAdmin } from './rights'
+import { currentActor, requireGroupAdmin, requirePeopleManager } from './rights'
 
 /** Direct active administrators survive removal of any inherited parent edge. */
 export async function directAdminIds(
@@ -58,19 +59,34 @@ export async function requireDirectAdmin(
     )
 }
 
+/**
+ * Whose say a change to somebody's place in a group needs: an
+ * administrator's (`admin`); an administrator's, coach's or assistant's, for
+ * anything but who is an administrator (`manager`); or the person's own, to
+ * leave or step down (`self`).
+ */
+export type PersonChangeAuthority = 'admin' | 'manager' | 'self'
+
 export async function authorizePersonChange(
   db: Kysely<Database>,
   ref: GroupRef,
   targetId: number,
   actorId: number,
-  grantAdmin = false
+  grantAdmin = false,
+  authority: PersonChangeAuthority = 'admin'
 ): Promise<void> {
   const actor = await currentActor(db, {
     userId: actorId,
     isAdmin: false,
     scopes: []
   })
-  await requireGroupAdmin(db, actor, ref)
+  if (authority === 'self') {
+    if (!(await onePerson(db, actorId)).userIds.includes(targetId))
+      throw forbidden('Only they can leave or step down themselves')
+    return
+  }
+  if (authority === 'manager') await requirePeopleManager(db, actor, ref)
+  else await requireGroupAdmin(db, actor, ref)
   if (
     grantAdmin &&
     ref.kind === 'team' &&

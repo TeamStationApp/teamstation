@@ -201,6 +201,81 @@ export function guardianInviteSender(
   }
 }
 
+/** What the mail saying somebody was added to a group says. */
+export interface AddedNotice {
+  /** Who added them. */
+  addedBy: string
+  /** The team, season or league. */
+  scopeName: string
+  /** "Coach and Scorekeeper", or empty for a membership alone. */
+  roles: string
+  /** The notification, where they can leave again. */
+  link: string
+}
+
+/**
+ * Tells somebody they were added to a team, season or league, as a person
+ * with an account is now, with no invitation to accept: who did it, as what,
+ * and a link to the notification, which is where they can leave.
+ */
+export async function sendAddedNotice(
+  smtp: SmtpSettings,
+  to: string,
+  notice: AddedNotice
+): Promise<SentMail> {
+  const { addedBy, scopeName, roles, link } = notice
+  const what = roles === '' ? `to ${scopeName}` : `as ${roles} of ${scopeName}`
+  const info = await transporterFor(smtp).sendMail({
+    from:
+      smtp.fromName === ''
+        ? smtp.fromAddress
+        : `${smtp.fromName} <${smtp.fromAddress}>`,
+    to,
+    subject: `${addedBy} added you ${what} on TeamStation`,
+    text: [
+      `${addedBy} added you ${what} on TeamStation.`,
+      '',
+      'Nothing to accept. If you don’t want to be in it, you can leave it here:',
+      link
+    ].join('\n'),
+    html: [
+      `<p><strong>${escapeHtml(addedBy)}</strong> added you`,
+      roles === ''
+        ? `to <strong>${escapeHtml(scopeName)}</strong>`
+        : `as ${escapeHtml(roles)} of <strong>${escapeHtml(scopeName)}</strong>`,
+      'on TeamStation.</p>',
+      '<p>Nothing to accept. If you don’t want to be in it, you can leave it from the notification.</p>',
+      linkButton(link, 'Open the notification')
+    ].join('\n')
+  })
+  return {
+    accepted: Array.isArray(info.accepted) ? info.accepted.length : 0,
+    messageId: String(info.messageId ?? '')
+  }
+}
+
+/**
+ * `sendAddedNotice` as the routes call it: logged when no relay is set up,
+ * and thrown on failure, so the add that wanted it is not left half done.
+ */
+export function addedNoticeSender(
+  smtp: SmtpSettings,
+  logger: Pick<Console, 'log'> = console
+): (email: string, notice: AddedNotice) => Promise<void> {
+  return async (email, notice) => {
+    if (!mailConfigured(smtp)) {
+      logger.log(
+        `[no mail configured] added notice for ${email}: ${notice.link}`
+      )
+      return
+    }
+    const sent = await sendAddedNotice(smtp, email, notice)
+    logger.log(
+      `added notice sent to ${email}: ${sent.accepted} accepted, id ${sent.messageId}`
+    )
+  }
+}
+
 /**
  * The green button, in the markup that survives a mail client.
  *
@@ -228,13 +303,18 @@ export async function verifyMail(smtp: SmtpSettings): Promise<boolean> {
 
 /** The same button, worded for an invitation rather than a sign-in. */
 function inviteButton(link: string): string {
+  return linkButton(link, 'Accept the invitation')
+}
+
+/** The same button, with its own words. */
+function linkButton(link: string, label: string): string {
   const href = escapeHtml(link)
   return [
     '<table role="presentation" cellpadding="0" cellspacing="0" border="0">',
     '<tr><td align="center" bgcolor="#334423" style="border-radius:8px">',
     `<a href="${href}" style="display:inline-block;padding:14px 28px;`,
     'font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;',
-    'color:#ffffff;text-decoration:none">Accept the invitation</a>',
+    `color:#ffffff;text-decoration:none">${escapeHtml(label)}</a>`,
     '</td></tr></table>',
     `<p style="color:#666;font-size:12px">Or paste this address: ${href}</p>`
   ].join('')

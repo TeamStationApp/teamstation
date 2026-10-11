@@ -1,4 +1,12 @@
-import { asArray, asBoolean, asObject, asString } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asEither,
+  asNull,
+  asObject,
+  asOptional,
+  asString
+} from 'cleaners'
 
 import { asLiteral } from './asLiteral'
 import type { GameRequestTerms } from './gameApprovals'
@@ -89,7 +97,7 @@ export interface RelationshipInvitation {
   confirmBoth?: boolean
   idempotencyKey: string
 }
-export const asNotification = asObject({
+const cleanNotification = asObject({
   id: asString,
   requestId: asString,
   type: asString,
@@ -108,9 +116,29 @@ export const asNotification = asObject({
   canAct: asBoolean,
   canWithdraw: asBoolean,
   canResend: asBoolean,
-  viewed: asBoolean
+  viewed: asBoolean,
+  /**
+   * On a notification that somebody added you to a team, season or league
+   * (`type` `grant`): that level, while you are still in it, so you can
+   * leave it from here. Null once you have left, and on every other kind.
+   */
+  leave: asOptional(
+    asEither(
+      asNull,
+      asObject({
+        kind: asLiteral('league', 'season', 'team'),
+        id: asString,
+        name: asString
+      })
+    ),
+    null
+  )
 })
-export type Notification = ReturnType<typeof asNotification>
+type Cleaned = ReturnType<typeof cleanNotification>
+export type Notification = Omit<Cleaned, 'leave'> & {
+  leave?: Cleaned['leave']
+}
+export const asNotification: (raw: unknown) => Notification = cleanNotification
 export const asNotificationPage = asObject({
   items: asArray(asNotification),
   hasPending: asBoolean,

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 
 import { makeToken } from '../server/auth/tokens'
-import type { GuardianInvitation } from '../server/email/sendMail'
+import type { AddedNotice, GuardianInvitation } from '../server/email/sendMail'
 import { type Clock, realClock } from '../server/groups/requests'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { eventListRoutes } from '../server/routes/eventList'
@@ -15,6 +15,7 @@ import { manageRoutes } from '../server/routes/manage'
 import { nodeAdministrationRoutes } from '../server/routes/nodeAdministration'
 import { notificationRoutes } from '../server/routes/notifications'
 import { onboardingRoutes } from '../server/routes/onboarding'
+import { peopleRoutes } from '../server/routes/people'
 import { pictureRoutes } from '../server/routes/pictures'
 import { scheduleRoutes } from '../server/routes/schedule'
 import { seasonRoutes } from '../server/routes/seasons'
@@ -56,11 +57,25 @@ export async function creationHarness(
         h.links.set(email, invitation.link)
         h.invitations.set(email, invitation)
       }
+      // Mail telling somebody they were added: its link, and the notice.
+      const sendAdded = async (
+        email: string,
+        notice: AddedNotice
+      ): Promise<void> => {
+        if (h.controls.failMail) throw new Error('Test added mail failure')
+        h.links.set(email, notice.link)
+        h.invitations.set(email, notice)
+      }
       app.use(
         '/api/v1',
-        groupRoutes(db, media, clock, { sendInvite, sendGuardianInvite })
+        groupRoutes(db, media, clock, {
+          sendInvite,
+          sendGuardianInvite,
+          sendAdded
+        })
       )
-      app.use('/api/v1', manageRoutes(db, { sendInvite, clock }))
+      app.use('/api/v1', manageRoutes(db, { sendInvite, sendAdded, clock }))
+      app.use('/api/v1', peopleRoutes(db, media, { sendAdded, clock }))
       app.use('/api/v1', inviteRoutes(db, { sendCode }))
       app.use('/api/v1', nodeAdministrationRoutes(db))
       app.use('/api/v1', gameApprovalRoutes(db, clock))

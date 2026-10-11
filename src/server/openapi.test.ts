@@ -35,6 +35,7 @@ import { mediaRoutes } from './routes/media'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
+import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
@@ -160,6 +161,7 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(peopleRoutes(db, media)),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),
@@ -210,6 +212,7 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(peopleRoutes(db, media)),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),

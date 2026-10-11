@@ -3,6 +3,7 @@ import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { grantInformation, roleList } from './requestInformation'
 
 describe('invitation display snapshots', function () {
   this.timeout(60000)
@@ -233,7 +234,8 @@ describe('invitation display snapshots', function () {
               'POST',
               `/manage/team/${f.teamA}/people`,
               {
-                email: 'fixture106@example.com',
+                // An address nobody holds yet, so it waits as an invitation.
+                email: 'snapshot-person@example.com',
                 admin: false,
                 flags: ['coach'],
                 idempotencyKey: 'snapshot-person'
@@ -272,6 +274,17 @@ describe('invitation display snapshots', function () {
       }
       const id = kind === 'person' ? body.invited!.requestId : body.id!
       const user = kind === 'person' ? 106 : kind === 'parent' ? 103 : 101
+      // The address is Tim Raines's afterwards, who reads and accepts it.
+      if (kind === 'person')
+        await f.h.db
+          .insertInto('user_emails')
+          .values({
+            id: 'email_snapshot_person',
+            user_id: 106,
+            email: 'snapshot-person@example.com',
+            verified_at: new Date()
+          })
+          .execute()
       const before = await information(id, user)
       for (const [groupKind, groupId, administrator] of [
         ['team', f.teamA, 101],
@@ -302,4 +315,23 @@ describe('invitation display snapshots', function () {
       ).property('status', 'accepted')
       expect(await information(id, user)).deep.equals(before)
     })
+})
+
+describe('what a grant\u2019s notification says', () => {
+  it('names who added them, as what and to what', () => {
+    expect(grantInformation('Dana Lee', 'Owls', [])).deep.equals({
+      title: 'Dana Lee added you to Owls',
+      description:
+        "You are a member of Owls now. If you don't want to be, leave it here."
+    })
+    expect(grantInformation('Dana Lee', 'Owls', ['coach']).title).equals(
+      'Dana Lee added you as Coach of Owls'
+    )
+    expect(roleList(['admin', 'coach', 'videographer'])).equals(
+      'Admin, Coach and Videographer'
+    )
+    expect(roleList(['assistant', 'scorekeeper', 'songkeeper'])).equals(
+      'Assistant, Scorekeeper and Songkeeper'
+    )
+  })
 })

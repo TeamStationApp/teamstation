@@ -65,10 +65,11 @@ import {
   currentActor,
   requireGroupAdmin
 } from '../groups/rights'
+import type { AddedMail } from '../invites/grants'
 import { setScopeRoles } from '../invites/people'
 import {
+  addPersonByAddress,
   ensurePersonLink,
-  invitePerson,
   personTerms
 } from '../invites/personRequests'
 import type { MediaContext } from '../media/mediaContext'
@@ -288,6 +289,7 @@ export function groupRoutes(
       email: string,
       invitation: GuardianInvitation
     ) => Promise<void>
+    sendAdded?: AddedMail['sendAdded']
   }
 ): Router {
   const router = Router()
@@ -791,23 +793,37 @@ export function groupRoutes(
           clean(asGroupRef, req.body?.sender)
         )
       const body = await invitation(db, req.body, actorOf(req).userId)
-      const result: SentRequest =
-        body.terms.kind === 'person'
-          ? (
-              await invitePerson(
-                db,
-                actorOf(req),
-                body.terms.scope,
-                {
-                  email: body.terms.recipientEmail,
-                  admin: body.terms.admin,
-                  flags: body.terms.flags,
-                  idempotencyKey: body.idempotencyKey
-                },
-                clock
-              )
-            ).request
-          : await createRelationshipRequest(db, actorOf(req), body, clock)
+      let result: SentRequest
+      if (body.terms.kind === 'person') {
+        // An address an account holds adds that account at once; there is
+        // nothing to wait for, and the answer says so.
+        const added = await addPersonByAddress(
+          db,
+          actorOf(req),
+          body.terms.scope,
+          {
+            email: body.terms.recipientEmail,
+            admin: body.terms.admin,
+            flags: body.terms.flags,
+            idempotencyKey: body.idempotencyKey
+          },
+          clock,
+          { publicUrl: personMail?.publicUrl, sendAdded: personMail?.sendAdded }
+        )
+        if ('applied' in added) {
+          if (added.applied.added.length === 0)
+            throw conflict(
+              `${added.applied.displayName} already has this access here`
+            )
+          res.status(201).json({
+            id: added.applied.notificationId ?? '',
+            status: 'accepted'
+          })
+          return
+        }
+        result = added.invited.request
+      } else
+        result = await createRelationshipRequest(db, actorOf(req), body, clock)
       if (result.answer == null) {
         await deliverPerson(result)
         res.status(201).json({ id: result.id, status: result.status })

@@ -4,7 +4,9 @@ import * as nodemailer from 'nodemailer'
 
 import type { SmtpSettings } from '../serverConfig'
 import {
+  addedNoticeSender,
   guardianInviteSender,
+  sendAddedNotice,
   sendGuardianInvitation,
   sendInvitation
 } from './sendMail'
@@ -148,5 +150,56 @@ describe('the guardian invitation mail', () => {
     )
     expect(mail.html).not.contains('<img')
     expect(mail.html).not.contains('<a href="https://evil')
+  })
+
+  it('says who added somebody, as what and to what, linking to the notification', async () => {
+    await sendAddedNotice(smtp, 'coach@example.com', {
+      addedBy: 'Dana Lee',
+      scopeName: 'Owls',
+      roles: 'Coach and Scorekeeper',
+      link: 'https://example.com/notifications/aud_one'
+    })
+    const mail = sent.at(-1)!
+    expect(mail.subject).equals(
+      'Dana Lee added you as Coach and Scorekeeper of Owls on TeamStation'
+    )
+    expect(mail.text).equals(
+      'Dana Lee added you as Coach and Scorekeeper of Owls on TeamStation.\n\nNothing to accept. If you don\u2019t want to be in it, you can leave it here:\nhttps://example.com/notifications/aud_one'
+    )
+    expect(mail.html).contains('Open the notification')
+    // A membership alone, and names printed as text.
+    await sendAddedNotice(smtp, 'fan@example.com', {
+      addedBy: marked.invitedBy,
+      scopeName: marked.teamName,
+      roles: '',
+      link: marked.link
+    })
+    const plain = sent.at(-1)!
+    expect(plain.subject).equals(
+      `<img src="x"> "Coach" & 'Co' added you to <a href="https://evil.example/">Hawks</a> & 'Co' on TeamStation`
+    )
+    expect(plain.html).not.contains('<img')
+    expect(plain.html).not.contains('<a href="https://evil')
+  })
+
+  it('sends the added notice through the relay when one is set up, and only logs it when not', async () => {
+    const lines: string[] = []
+    const logger = { log: (line: string) => lines.push(line) }
+    const notice = {
+      addedBy: 'Dana Lee',
+      scopeName: 'Owls',
+      roles: '',
+      link: 'https://example.com/notifications/aud_two'
+    }
+    await addedNoticeSender(smtp, logger)('member@example.com', notice)
+    await addedNoticeSender({ ...smtp, host: '' }, logger)(
+      'quiet@example.com',
+      notice
+    )
+    expect(sent.map(mail => mail.to)).not.includes('quiet@example.com')
+    expect(lines).deep.equals([
+      'added notice sent to member@example.com: 1 accepted, id fixture-message',
+      '[no mail configured] added notice for quiet@example.com: https://example.com/notifications/aud_two'
+    ])
   })
 })

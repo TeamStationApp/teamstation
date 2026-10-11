@@ -123,6 +123,16 @@ describe('the non-member view', function () {
             row => row.avatarUrl === null
           )
         ).equals(true)
+        // Avery's guardian is listed as family, without whom he guards.
+        const rows = body as Array<{
+          userId: number
+          section: string
+          guardianOf?: string[]
+        }>
+        expect(
+          rows.find(row => row.userId === f.people.guardian)?.section
+        ).equals('family')
+        expect(rows.every(row => !('guardianOf' in row))).equals(true)
       })
 
       it('lists the schedule with video counts, posters and logos', async function () {
@@ -362,6 +372,11 @@ describe('the non-member view', function () {
         roster.body as Array<{ userId: number; avatarUrl: string | null }>
       ).find(row => row.userId === f.players[0].id)
       expect(avery?.avatarUrl).to.be.a('string')
+      // A member reads whom a family member is a guardian of.
+      const guardian = (
+        roster.body as Array<{ userId: number; guardianOf?: string[] }>
+      ).find(row => row.userId === f.people.guardian)
+      expect(guardian?.guardianOf).deep.equals(['Avery S'])
 
       for (const path of [
         `/teams/${f.teamA}/stats`,

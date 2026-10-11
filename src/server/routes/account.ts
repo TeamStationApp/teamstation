@@ -33,6 +33,7 @@ import {
 } from '../auth/passwords'
 import { checkLimits, type LimitRule, recordAttempts } from '../auth/rateLimit'
 import type { Database } from '../db/database'
+import { applyWaitingInvitations } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import { setAudit } from '../middleware/withAudit'
@@ -360,6 +361,8 @@ export function accountRoutes(
         throw badRequest(
           'That code is incorrect or expired. Request a new code'
         )
+      // Whatever the new address was added to while nobody held it applies.
+      await applyWaitingInvitations(db, userId)
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readAccount(db, userId, options))
     })

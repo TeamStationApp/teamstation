@@ -734,9 +734,16 @@ export function teamRoutes(
         return
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
-      // A non-member reads every name, and no face.
+      // A non-member reads every name, and no face, and not whom a family
+      // member is a guardian of.
       const roster = await teamRoster(db, media.space, teamId)
-      res.json(roster.map(entry => ({ ...entry, avatarUrl: null })))
+      res.json(
+        roster.map(entry => ({
+          ...entry,
+          avatarUrl: null,
+          guardianOf: undefined
+        }))
+      )
     })
   )
 

@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely'
 
 import { forbidden, notFound, unauthorized } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
-import { adminScopes } from '../access'
+import { adminScopes, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 
@@ -91,6 +91,48 @@ export async function requireGroupAdmin(
     throw notFound()
   if (!(await canAdminister(db, actor, group)))
     throw forbidden('Only an administrator can manage this group')
+}
+
+/**
+ * Whether somebody may manage this level's people: give and take away every
+ * role but Admin, and membership. Its administrators, coaches and assistants,
+ * set on the level or carried down from one above it. Who is an
+ * administrator is for administrators alone (`requirePeopleManager`). A
+ * placeholder team's people are its custodian's administrators' to manage.
+ */
+export async function canManagePeople(
+  db: Kysely<Database>,
+  actor: Actor,
+  group: GroupRef
+): Promise<boolean> {
+  if (await canAdminister(db, actor, group)) return true
+  const fresh = await currentActor(db, actor)
+  const scopes = await roleScopes(db, fresh.userId, fresh.isAdmin)
+  const key =
+    group.kind === 'league'
+      ? 'leagueIds'
+      : group.kind === 'season'
+        ? 'seasonIds'
+        : 'teamIds'
+  return scopes.coach[key].has(group.id) || scopes.assistant[key].has(group.id)
+}
+
+/**
+ * `canManagePeople`, or 404 for somebody who is neither an administrator,
+ * coach nor assistant here, so a level's people are not confirmed to anybody
+ * else; and 403 for a coach or assistant asking to change who is an
+ * administrator (`touchesAdmin`).
+ */
+export async function requirePeopleManager(
+  db: Kysely<Database>,
+  actor: Actor,
+  group: GroupRef,
+  touchesAdmin = false
+): Promise<void> {
+  if (await canAdminister(db, actor, group)) return
+  if (!(await canManagePeople(db, actor, group))) throw notFound()
+  if (touchesAdmin)
+    throw forbidden('Only an administrator can change who is an administrator')
 }
 
 /** Snapshot recipients for resolved information; pending requests always use live rights. */

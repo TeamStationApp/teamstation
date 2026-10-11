@@ -524,6 +524,50 @@ const scopeIdParam = {
   required: true,
   schema: { type: 'string' }
 }
+/** A role one person is given or loses at a level, or its membership. */
+const roleParam = {
+  name: 'role',
+  in: 'path',
+  required: true,
+  schema: {
+    type: 'string',
+    enum: [
+      'admin',
+      'coach',
+      'assistant',
+      'scorekeeper',
+      'songkeeper',
+      'videographer',
+      'member'
+    ]
+  }
+}
+const roleOnlyParam = {
+  name: 'role',
+  in: 'path',
+  required: true,
+  schema: { $ref: '#/components/schemas/Role' }
+}
+const kindParam = {
+  name: 'kind',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', enum: ['league', 'season', 'team'] }
+}
+const idParam = {
+  name: 'id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+const heldAtResponse = {
+  description: 'What they hold at the level itself now',
+  content: {
+    'application/json': {
+      schema: { $ref: '#/components/schemas/HeldAt' }
+    }
+  }
+}
 /** Feet to the fence a level sets, or null to leave it to the one above. */
 const fenceDistanceFt = {
   type: ['integer', 'null'],
@@ -1749,7 +1793,157 @@ export function openApiDocument(version: string): OpenApiDocument {
                 { $ref: '#/components/schemas/WalkUpSong' },
                 { type: 'null' }
               ]
+            },
+            teamNames: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'On a season\u2019s or league\u2019s people list, the teams ' +
+                'a player plays on there. Absent from a team\u2019s roster.'
+            },
+            guardianOf: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'For a family member, the short names of the players on this ' +
+                'list they are a parent or guardian of. Absent for everybody ' +
+                'else.'
             }
+          }
+        },
+        PersonProfile: {
+          type: 'object',
+          required: ['context', 'person', 'guardianOf', 'sections', 'viewer'],
+          description:
+            'One person as a team, season or league sees them, for the ' +
+            'profile opened from its people list.',
+          properties: {
+            context: {
+              type: 'object',
+              required: ['kind', 'id', 'name'],
+              properties: {
+                kind: { type: 'string', enum: ['league', 'season', 'team'] },
+                id: { type: 'string' },
+                name: { type: 'string' }
+              }
+            },
+            person: {
+              type: 'object',
+              required: [
+                'userId',
+                'shortName',
+                'fullName',
+                'avatarUrl',
+                'canHoldRoles'
+              ],
+              properties: {
+                userId: { type: 'integer' },
+                shortName: { type: 'string' },
+                fullName: {
+                  type: ['string', 'null'],
+                  description:
+                    'For a viewer who manages the level\u2019s people, or ' +
+                    'may read the whole name anyway; null for anybody else.'
+                },
+                avatarUrl: { type: ['string', 'null'] },
+                canHoldRoles: {
+                  type: 'boolean',
+                  description:
+                    'An account that signs in, not suspended or closed: ' +
+                    'only such a person is given a role.'
+                }
+              }
+            },
+            guardianOf: {
+              type: 'array',
+              description:
+                'The players they guard who play now on a team the level ' +
+                'reaches (the team; any team of the season; any team of ' +
+                'the league), each with the first such team by name.',
+              items: {
+                type: 'object',
+                required: ['userId', 'shortName', 'avatarUrl', 'teamId'],
+                properties: {
+                  userId: { type: 'integer' },
+                  shortName: { type: 'string' },
+                  avatarUrl: { type: ['string', 'null'] },
+                  teamId: { type: 'string' }
+                }
+              }
+            },
+            sections: {
+              type: 'array',
+              description:
+                'A team\u2019s profile: the team, all its seasons as one, ' +
+                'its league. A season\u2019s: the season and its league. A ' +
+                'league\u2019s: the league. A level with no group is left ' +
+                'out. `roles` and `member` are what was given at that level ' +
+                'itself; `editable` is true only for the level the profile ' +
+                'is opened from, for a viewer who manages its people.',
+              items: {
+                type: 'object',
+                required: [
+                  'level',
+                  'groups',
+                  'roles',
+                  'member',
+                  'follower',
+                  'editable'
+                ],
+                properties: {
+                  level: {
+                    type: 'string',
+                    enum: ['league', 'season', 'team']
+                  },
+                  groups: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['id', 'name'],
+                      properties: {
+                        id: { type: 'string' },
+                        name: { type: 'string' }
+                      }
+                    }
+                  },
+                  roles: {
+                    type: 'array',
+                    items: { $ref: '#/components/schemas/Role' }
+                  },
+                  member: { type: 'boolean' },
+                  follower: { type: 'boolean' },
+                  editable: { type: 'boolean' }
+                }
+              }
+            },
+            viewer: {
+              type: 'object',
+              required: ['manages', 'admin'],
+              properties: {
+                manages: {
+                  type: 'boolean',
+                  description:
+                    'An administrator, coach or assistant of the level.'
+                },
+                admin: {
+                  type: 'boolean',
+                  description: 'An administrator of it, who changes Admin.'
+                }
+              }
+            }
+          }
+        },
+        HeldAt: {
+          type: 'object',
+          required: ['userId', 'roles', 'member'],
+          description: 'What somebody holds at one level itself, now.',
+          properties: {
+            userId: { type: 'integer' },
+            roles: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Role' }
+            },
+            member: { type: 'boolean' }
           }
         },
         RoleFlag: {
@@ -4912,11 +5106,18 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'Add one person by address',
           description:
-            'Both existing and new accounts accept a seven-day invitation ' +
-            'before membership or requested roles begin. The email link and ' +
-            'bell inbox refer to one shared request. Inviting creates no ' +
-            'account; sign-in still requires email verification. A pending ' +
-            'replacement does not count as an active direct administrator.',
+            'An address an account has verified adds that account at once, ' +
+            'as a member of this level with the roles asked for, Admin ' +
+            'included: `added` true and `person` (`added` false when they ' +
+            'held all of it already). They are told in their inbox, with a ' +
+            'way to leave, and mailed at the address; a failed mail undoes ' +
+            'the add (500), so a retry adds and mails again. An address ' +
+            'nobody has verified gets a seven-day invitation (`invited`), ' +
+            'applied when somebody signs in with it or verifies it, or ' +
+            'accepted from its link. Inviting creates no account. A pending ' +
+            'replacement does not count as an active direct administrator. ' +
+            'Only an administrator of the level may call; anybody else gets ' +
+            '404.',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam],
           requestBody: {
@@ -4958,7 +5159,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             201: {
               description:
-                'Pending personal invitation; no new group grants yet',
+                'Added at once (`person`), or invited by address (`invited`)',
               content: {
                 'application/json': {
                   schema: {
@@ -5024,9 +5225,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`videographer`. A role set here reaches everything inside ' +
             'this level. Only at the level named: a team page sets team ' +
             'roles and nothing wider. It adds them to the level as well, so ' +
-            'they can see what they hold a role on. Only an admin of this ' +
-            'level or one above it may call; anybody else gets 404. Nobody ' +
-            'may clear their own `admin` here.',
+            'they can see what they hold a role on, at once, and tells them ' +
+            'of what is new. Its administrators, coaches and assistants (set ' +
+            'here or on a level above) may call; changing `admin` is for an ' +
+            'administrator (403), and anybody else gets 404, as does somebody ' +
+            'not on the level\u2019s people list. Nobody may clear their own ' +
+            '`admin` here.',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam, userIdParam],
           requestBody: {
@@ -5072,6 +5276,168 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/manage/{scopeType}/{scopeId}/people/{userId}/roles/{role}': {
+        put: {
+          summary: 'Give one role at this level, or its membership, at once',
+          description:
+            '`role` is `admin`, a flag, or `member`. A role brings the ' +
+            'level\u2019s membership with it. Nothing waits for acceptance: ' +
+            'the person is told in their inbox, and mailed when they were ' +
+            'not in the level before. Its administrators, coaches and ' +
+            'assistants may call; `admin` is for an administrator (403). ' +
+            'Anybody else, and anybody not on the level\u2019s people list, ' +
+            'gets 404. A role needs an account that signs in (409).',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam, roleParam],
+          responses: {
+            200: heldAtResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Take one role at this level away, or take them out of it',
+          description:
+            'A role, or with `member` the level\u2019s membership and every ' +
+            'role there. What a level above gives stays. Taking away ' +
+            '`admin`, or taking an administrator out, is for an ' +
+            'administrator (403), and the last direct administrator stays ' +
+            '(409). A player of a team is not taken out of it this way ' +
+            '(409): their membership is their place on its roster.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam, roleParam],
+          responses: {
+            200: heldAtResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/me/groups/{kind}/{id}': {
+        delete: {
+          summary: 'Leave a team, season or league',
+          description:
+            'Takes away your membership of it and every role you hold ' +
+            'there. What a level above gives you is left there, to leave ' +
+            'at that level. The last direct administrator stays (409).',
+          security: [{ bearer: [] }],
+          parameters: [kindParam, idParam],
+          responses: {
+            200: {
+              description: 'Whether there was anything to leave',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['removed'],
+                    properties: { removed: { type: 'boolean' } }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/me/groups/{kind}/{id}/roles/{role}': {
+        delete: {
+          summary: 'Step down from one of your roles at a level',
+          description:
+            'Keeps the level\u2019s membership and your other roles. A role ' +
+            'you do not hold there changes nothing. The last direct ' +
+            'administrator stays (409).',
+          security: [{ bearer: [] }],
+          parameters: [kindParam, idParam, roleOnlyParam],
+          responses: {
+            200: heldAtResponse,
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      ...Object.fromEntries(
+        (['seasons', 'leagues'] as const).map(collection => [
+          `/${collection}/{id}/people`,
+          {
+            get: {
+              summary: `A ${collection.slice(0, -1)}\u2019s people, in the roster\u2019s sections`,
+              description:
+                'Admins and Staff: roles given here and on the league ' +
+                'above. Players: everybody playing now on a team this ' +
+                'level reaches, with `teamNames`. Family members: their ' +
+                'guardians. Spectators: members here and of the league ' +
+                'above. Followers: people following this level. Each ' +
+                'person once, in the first that fits, with a pill for a ' +
+                'level above. For its members and role holders and site ' +
+                'administrators; anybody else gets 404. `manages` and ' +
+                '`admin` say what this viewer may do with them.',
+              security: [{ bearer: [] }],
+              parameters: [idParam],
+              responses: {
+                200: {
+                  description: 'The people, and what this viewer may do',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        required: ['people', 'manages', 'admin'],
+                        properties: {
+                          people: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/RosterEntry' }
+                          },
+                          manages: { type: 'boolean' },
+                          admin: { type: 'boolean' }
+                        }
+                      }
+                    }
+                  }
+                },
+                401: errorResponse,
+                404: errorResponse
+              }
+            }
+          }
+        ])
+      ),
+      ...Object.fromEntries(
+        (['teams', 'seasons', 'leagues'] as const).map(collection => [
+          `/${collection}/{id}/people/{userId}`,
+          {
+            get: {
+              summary: `One person, as a ${collection.slice(0, -1)} sees them`,
+              description:
+                'For the level\u2019s administrators, coaches and assistants, ' +
+                'and the person themselves; anybody else gets 404, as does ' +
+                'somebody not on the level\u2019s people list.',
+              security: [{ bearer: [] }],
+              parameters: [idParam, userIdParam],
+              responses: {
+                200: {
+                  description: 'The profile',
+                  content: {
+                    'application/json': {
+                      schema: { $ref: '#/components/schemas/PersonProfile' }
+                    }
+                  }
+                },
+                401: errorResponse,
+                404: errorResponse
+              }
+            }
+          }
+        ])
+      ),
       '/manage/{scopeType}/{scopeId}/people/{userId}/role': {
         put: {
           summary: 'Make somebody an administrator of this level, or not',

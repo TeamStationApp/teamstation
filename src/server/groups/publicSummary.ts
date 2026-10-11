@@ -13,14 +13,19 @@ import type {
   PublicGroup
 } from '../../common/publicGroups'
 import { publicStaffName } from '../../common/publicStaffName'
-import { givenRolesOnTeam, nonMemberTeam, visibleScopes } from '../access'
+import {
+  givenRolesOnTeam,
+  nonMemberTeam,
+  seesPeopleOf,
+  visibleScopes
+} from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { followMerges } from '../teams/followMerges'
-import { canAdminister } from './rights'
+import { canAdminister, canManagePeople } from './rights'
 
 export async function publicGroup(
   db: Kysely<Database>,
@@ -496,6 +501,11 @@ export async function groupDetail(
     canManage:
       actor == null || actor.apiTokenId != null
         ? false
-        : await canAdminister(db, actor, ref)
+        : await canAdminister(db, actor, ref),
+    canManagePeople:
+      actor == null || actor.apiTokenId != null
+        ? false
+        : await canManagePeople(db, actor, ref),
+    canSeePeople: actor == null ? false : await seesPeopleOf(db, actor, ref)
   }
 }

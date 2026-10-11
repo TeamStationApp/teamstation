@@ -15,6 +15,7 @@ import {
   type StoredRequest
 } from '../groups/requests'
 import { currentActor } from '../groups/rights'
+import { groupName, heldAt } from '../invites/grants'
 import { titleAndDescription } from './requestInformation'
 
 async function informationFor(
@@ -33,7 +34,18 @@ async function informationFor(
     .where('event_id', '=', event.id)
     .where('user_id', '=', actor.userId)
     .executeTakeFirst()
-  const metadata = event.metadata as { title?: string; description?: string }
+  const metadata = event.metadata as {
+    title?: string
+    description?: string
+    scope?: GroupRef
+  }
+  // A grant offers to leave the level it gave, for as long as they are in it.
+  let leave: Notification['leave'] = null
+  if (event.source_type === 'grant' && metadata.scope != null) {
+    const held = await heldAt(db, metadata.scope, actor.userId)
+    if (held.member || held.roles.length > 0)
+      leave = { ...metadata.scope, name: await groupName(db, metadata.scope) }
+  }
   return {
     id: event.id,
     requestId: event.id,
@@ -46,8 +58,17 @@ async function informationFor(
     canAct: false,
     canWithdraw: false,
     canResend: false,
-    viewed: receipt != null
+    viewed: receipt != null,
+    leave
   }
+}
+
+/**
+ * Whether a notification is new news: one waiting for this person's answer,
+ * or a grant they have not opened yet, which lights the bell until they do.
+ */
+function isNews(row: Notification): boolean {
+  return row.canAct || (row.type === 'grant' && !row.viewed)
 }
 
 export async function notificationFor(
@@ -124,7 +145,8 @@ export async function notificationFor(
       canAct: false,
       canWithdraw: true,
       canResend: false,
-      viewed: receipt != null
+      viewed: receipt != null,
+      leave: null
     }
   const historical =
     status !== 'pending' &&
@@ -147,7 +169,8 @@ export async function notificationFor(
       (senderAdmin || request.sender_id === fresh.userId || representedConsent),
     canResend:
       status !== 'accepted' && senderAdmin && request.kind !== 'guardian',
-    viewed: receipt != null
+    viewed: receipt != null,
+    leave: null
   }
 }
 
@@ -329,19 +352,22 @@ export async function inbox(
     const row = await notificationFor(db, fresh, request, clock)
     if (row != null) projected.push(row)
   }
-  if (options.history === true) {
-    const information = await db
-      .selectFrom('notification_events')
-      .selectAll()
-      .where('source_type', '!=', 'groupRequest')
-      .where(eb =>
-        eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
-      )
-      .execute()
-    for (const event of information) {
-      const row = await informationFor(db, fresh, event)
-      if (row != null) projected.push(row)
-    }
+  // History lists every piece of information; the other tabs read grants,
+  // which are news until opened, and light the bell.
+  const information = await db
+    .selectFrom('notification_events')
+    .selectAll()
+    .where('source_type', '!=', 'groupRequest')
+    .$if(options.history !== true, query =>
+      query.where('source_type', '=', 'grant')
+    )
+    .where(eb =>
+      eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
+    )
+    .execute()
+  for (const event of information) {
+    const row = await informationFor(db, fresh, event)
+    if (row != null) projected.push(row)
   }
   projected.sort((a, b) =>
     a.sentAt === b.sentAt
@@ -354,13 +380,13 @@ export async function inbox(
         ? -1
         : 1
   )
-  const hasPending = projected.some(row => row.canAct)
+  const hasPending = projected.some(isNews)
   let visible = projected.filter(row =>
     options.history === true
       ? row.status !== 'pending'
       : options.sent === true
         ? row.canWithdraw
-        : row.canAct
+        : isNews(row)
   )
   if (options.cursor != null) {
     const [time, id] = options.cursor.split('|')

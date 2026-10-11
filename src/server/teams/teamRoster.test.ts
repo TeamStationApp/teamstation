@@ -700,6 +700,10 @@ describe('roster sections', function () {
       section: 'family',
       inheritedFrom: null
     })
+    // Under a family member, the players here they guard, by short name;
+    // nobody else carries the field.
+    expect(byUser.get(f.people.guardian)?.guardianOf).deep.equals(['Avery S'])
+    expect(byUser.get(201)?.guardianOf).equals(undefined)
     expect(byUser.get(f.people.teamCoach)).to.include({
       section: 'staff',
       inheritedFrom: null

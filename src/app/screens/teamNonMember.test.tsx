@@ -140,6 +140,19 @@ const roster = [
     staffRoles: [],
     inheritedFrom: null,
     avatarUrl: null
+  }),
+  // A family member as a non-member is answered: no `guardianOf`.
+  asRosterEntry({
+    userId: 106,
+    shortName: 'Tim R',
+    jersey: null,
+    positions: [],
+    isPlayer: false,
+    role: 'member',
+    section: 'family',
+    staffRoles: [],
+    inheritedFrom: null,
+    avatarUrl: null
   })
 ]
 
@@ -223,6 +236,9 @@ describe('a non-member’s team page', function () {
     const { players } = await team('team')
     for (const name of ['Ichiro', 'Avery S', 'Coach', 'SS · 2B', '#7'])
       expect(text()).includes(name)
+    // A family member by name, without whom they are a guardian of.
+    expect(text()).includes('Tim R')
+    expect(text()).not.includes('Parent/guardian of')
     expect(text()).includes('AS')
     expect(document.querySelector('img')).equals(null)
     expect(text()).not.includes('chevron_right')

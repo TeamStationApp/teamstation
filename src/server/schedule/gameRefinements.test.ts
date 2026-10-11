@@ -330,7 +330,8 @@ describe('two-team scheduling and replacement history', function () {
       'POST',
       `/manage/team/${f.teamA}/people`,
       {
-        email: 'fixture106@example.com',
+        // An address nobody holds, so the key is spent on an invitation.
+        email: 'cross-kind@example.com',
         admin: false,
         flags: ['coach'],
         idempotencyKey: 'cross-kind-body-key'

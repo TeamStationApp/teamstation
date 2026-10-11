@@ -13,7 +13,6 @@ import type {
   RelationshipInvitation,
   RequestTerms
 } from '../../common/notifications'
-import { ROLE_FLAGS } from '../../common/roles'
 import {
   canCoach,
   canSeeTeam,
@@ -28,7 +27,7 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GroupRequestsTable } from '../db/database'
-import { addToScope, rolesAt, setScopeRoles } from '../invites/people'
+import { grantAt, notifyGrant } from '../invites/grants'
 import { snapshotRequestInformation } from '../notifications/requestInformation'
 import { authorizePersonChange } from './adminGuard'
 import { checkGuardianLimits, isGuardianRequest } from './guardianLimits'
@@ -1021,21 +1020,6 @@ export async function finishRelationshipRequest(
       .where('scope_type', '=', 'user')
       .executeTakeFirstOrThrow()
     const recipient = side.approved_by!
-    const existing = await rolesAt(
-      db,
-      terms.scope.kind,
-      terms.scope.id,
-      recipient
-    )
-    const owner =
-      terms.scope.kind !== 'team'
-        ? null
-        : await db
-            .selectFrom('memberships')
-            .select('role')
-            .where('team_id', '=', terms.scope.id)
-            .where('user_id', '=', recipient)
-            .executeTakeFirst()
     const source = await db
       .selectFrom('group_request_sides')
       .select('approved_by')
@@ -1050,25 +1034,22 @@ export async function finishRelationshipRequest(
       source.approved_by!,
       terms.admin
     )
-    if (terms.admin || terms.flags.length > 0)
-      await setScopeRoles(
-        db,
-        terms.scope.kind,
-        terms.scope.id,
-        recipient,
-        {
-          admin:
-            terms.admin ||
-            existing.includes('admin') ||
-            owner?.role === 'owner' ||
-            owner?.role === 'manager',
-          flags: ROLE_FLAGS.filter(
-            role => existing.includes(role) || terms.flags.includes(role)
-          )
-        },
-        source.approved_by!
-      )
-    else await addToScope(db, terms.scope.kind, terms.scope.id, recipient)
+    // What the invitation offered is added to what they hold, and they are
+    // told so, as anybody added with an account is.
+    const added = await grantAt(
+      db,
+      terms.scope,
+      recipient,
+      [...(terms.admin ? (['admin'] as const) : []), ...terms.flags, 'member'],
+      source.approved_by!
+    )
+    await notifyGrant(db, {
+      ref: terms.scope,
+      userId: recipient,
+      added,
+      actorId: source.approved_by!,
+      at: clock.now()
+    })
   } else if (terms.kind === 'guardian') {
     // The guardian is whoever approved the guardian's side: the sender of a
     // request, or the account that accepted an invitation.
