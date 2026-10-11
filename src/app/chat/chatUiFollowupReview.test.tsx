@@ -4929,3 +4929,214 @@ describe('native deliberate-top ownership', function () {
     })
   })
 })
+
+function nativeMomentumBeginAt(
+  node: HTMLElement,
+  event?: NativeListEvent,
+  platform: 'android' | 'ios' = 'android'
+): void {
+  const props = renderedListCallbacks(node) as ListLayoutCallbacks & {
+    onMomentumScrollBegin?: (event?: NativeListEvent) => void
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(
+    ReactNative.Platform,
+    'OS'
+  )!
+  try {
+    Object.defineProperty(ReactNative.Platform, 'OS', {
+      ...descriptor,
+      value: platform
+    })
+    props.onMomentumScrollBegin?.(event)
+  } finally {
+    Object.defineProperty(ReactNative.Platform, 'OS', descriptor)
+  }
+}
+
+describe('android non-drag momentum lifecycle', function () {
+  it('persists an already-delivered hardware-wheel position through a zero-velocity momentum begin and changed-prefix return', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    // Installed Android ACTION_SCROLL dispatches the ordinary scroll before
+    // momentum begin, with zero velocity and without a begin-drag callback.
+    await pending.scroll(120)
+    await act(async () => {
+      nativeMomentumBeginAt(pending.node, {
+        nativeEvent: { contentOffset: { y: 120 }, velocity: { y: 0 } }
+      })
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 120 } } })
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(40)
+    })
+    expect(
+      pending.offsets.at(-1),
+      'Native wheel movement replaces the deliberately saved top'
+    ).equals(120)
+    const saved = pending.anchors.at(-1)
+    expect(saved).deep.equals({ id: 'cnv_return_0', relativeY: -16 })
+    await unmount()
+    const returning = await returningList(true, pending.offsets.at(-1), saved)
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_0', 160)
+    await returning.content(1800)
+    await returning.scroll(returning.moves.at(-1)!)
+    expect(returning.moves).deep.equals([176])
+    expect(returning.anchors.at(-1)).deep.equals(saved)
+  })
+})
+
+describe('android non-drag momentum ownership guards', function () {
+  it('does not invent Android input for a missing or nonfinite momentum event', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await pending.scroll(52)
+    await act(async () => {
+      nativeMomentumBeginAt(pending.node)
+      nativeMomentumBeginAt(pending.node, {
+        nativeEvent: { contentOffset: { y: NaN } }
+      })
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 52 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+  })
+
+  it('does not classify a programmatic restoration event as new Android input', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    await act(async () => {
+      nativeMomentumBeginAt(pending.node, {
+        nativeEvent: { contentOffset: { y: 120 }, velocity: { y: 0 } }
+      })
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 120 } } })
+      await wait()
+    })
+    expect(pending.offsets).deep.equals([])
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(1800)
+    await pending.scroll(pending.moves.at(-1)!)
+    expect(pending.moves).deep.equals([240])
+    expect(pending.offsets.at(-1)).equals(240)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+  })
+
+  for (const staleScope of ['visibility', 'data'])
+    it(`rejects an Android momentum begin retained from older ${staleScope} ownership`, async function () {
+      const pending = await returningList(true, 0)
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_0', 104)
+      await pending.content(1800)
+      await pending.scroll(0)
+      const begin = (
+        renderedListCallbacks(pending.node) as ListLayoutCallbacks & {
+          onMomentumScrollBegin: (event: NativeListEvent) => void
+        }
+      ).onMomentumScrollBegin
+      if (staleScope === 'visibility') {
+        await pending.hide()
+        await pending.show()
+      } else await pending.reorder()
+      await pending.scroll(0)
+      await act(async () => {
+        const descriptor = Object.getOwnPropertyDescriptor(
+          ReactNative.Platform,
+          'OS'
+        )!
+        try {
+          Object.defineProperty(ReactNative.Platform, 'OS', {
+            ...descriptor,
+            value: 'android'
+          })
+          begin({
+            nativeEvent: { contentOffset: { y: 120 }, velocity: { y: 0 } }
+          })
+        } finally {
+          Object.defineProperty(ReactNative.Platform, 'OS', descriptor)
+        }
+        nativeListEnd(
+          pending.node,
+          true
+        )({ nativeEvent: { contentOffset: { y: 120 } } })
+        await wait()
+      })
+      expect(pending.offsets.at(-1)).equals(0)
+      expect(pending.anchors.at(-1)).equals(undefined)
+    })
+
+  it('keeps iOS momentum dependent on the preceding native release', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await pending.scroll(120)
+    await act(async () => {
+      nativeMomentumBeginAt(
+        pending.node,
+        { nativeEvent: { contentOffset: { y: 120 }, velocity: { y: 0 } } },
+        'ios'
+      )
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 120 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+  })
+
+  it('retains the supplied zero relative boundary after stationary Android momentum and changed header geometry', async function () {
+    const pending = await returningList(true, 0, {
+      id: 'cnv_return_0',
+      relativeY: 105
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 105)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await act(async () => {
+      nativeMomentumBeginAt(pending.node, {
+        nativeEvent: { contentOffset: { y: 0 }, velocity: { y: 0 } }
+      })
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    const saved = pending.anchors.at(-1)
+    expect(saved).deep.equals({ id: 'cnv_return_0', relativeY: 105 })
+    await unmount()
+    const returning = await returningList(true, 0, saved)
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_0', 169)
+    await returning.content(1800)
+    await returning.scroll(returning.moves.at(-1)!)
+    expect(returning.moves).deep.equals([64])
+  })
+})
