@@ -550,7 +550,13 @@ export async function removeFromScope(
   })
 }
 
-/** Gives somebody who already has an account the access this scope grants. */
+/**
+ * Makes somebody who already has an account a plain member of this level, the
+ * same kind of member at every level: a team membership as `member`, or a
+ * season or league row as `member`, which reaches every team below it. A row
+ * they already have, however strong, is left as it is; `added` says whether
+ * one was written.
+ */
 export async function addToScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
@@ -564,8 +570,7 @@ export async function addToScope(
         id: makeId('membership'),
         user_id: userId,
         team_id: scopeId,
-        role: 'member',
-        is_spectator: true
+        role: 'member'
       })
       .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
       .returning(['id'])
@@ -579,7 +584,7 @@ export async function addToScope(
         id: makeId('seasonMember'),
         user_id: userId,
         season_id: scopeId,
-        role: 'spectator',
+        role: 'member',
         source: 'manual'
       })
       .onConflict(oc => oc.columns(['user_id', 'season_id']).doNothing())
@@ -593,7 +598,7 @@ export async function addToScope(
       id: makeId('leagueMember'),
       user_id: userId,
       league_id: scopeId,
-      role: 'spectator',
+      role: 'member',
       source: 'manual'
     })
     .onConflict(oc => oc.columns(['user_id', 'league_id']).doNothing())

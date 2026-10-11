@@ -380,12 +380,12 @@ describe('invite codes', function () {
     expect(scopes.teamIds.has('tem_hawks')).equals(true)
     const membership = await db
       .selectFrom('memberships')
-      .select(['is_spectator', 'role'])
+      .select(['role', 'is_player'])
       .where('user_id', '=', user.id)
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
-    expect(membership?.is_spectator).equals(true)
-    expect(membership?.role).equals('member')
+    // A plain member, as every invite makes at every level.
+    expect(membership).deep.equals({ role: 'member', is_player: false })
 
     // And it is recorded as the redemption it was, rather than only counted.
     const redemption = await db
@@ -434,11 +434,11 @@ describe('invite codes', function () {
 
     const membership = await db
       .selectFrom('memberships')
-      .select(['is_spectator'])
+      .select(['role'])
       .where('user_id', '=', parentId)
       .where('team_id', '=', 'tem_ravens')
       .executeTakeFirst()
-    expect(membership?.is_spectator).equals(true)
+    expect(membership?.role).equals('member')
   })
 
   it('lets a league invite carry seasons the league does not have yet', async function () {
@@ -471,6 +471,14 @@ describe('invite codes', function () {
     expect(made.status).equals(201)
     const joined = await ask('/join/league26/redeem', COACH, 'POST', {})
     expect(joined.status).equals(200)
+    // A member of the league, the same kind of member a team invite makes.
+    const row = await db
+      .selectFrom('league_members')
+      .select(['role'])
+      .where('user_id', '=', coachId)
+      .where('league_id', '=', 'lea_npll')
+      .executeTakeFirst()
+    expect(row?.role).equals('member')
 
     // Nothing to see yet: the league has no seasons.
     const before = await visibleScopes(db, coachId, false)

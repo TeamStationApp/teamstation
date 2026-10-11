@@ -409,11 +409,11 @@ describe('the manage page', function () {
 
     const membership = await db
       .selectFrom('memberships')
-      .select(['is_spectator'])
+      .select(['role'])
       .where('user_id', '=', parentId)
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
-    expect(membership?.is_spectator).equals(true)
+    expect(membership?.role).equals('member')
   })
 
   it('posts an invitation to an address nobody here holds', async function () {
@@ -458,11 +458,11 @@ describe('the manage page', function () {
     // something they cannot watch, which is nobody's intention.
     const membership = await db
       .selectFrom('season_members')
-      .select(['id'])
+      .select(['role'])
       .where('user_id', '=', coachId)
       .where('season_id', '=', 'sea_spring')
       .executeTakeFirst()
-    expect(membership == null).equals(false)
+    expect(membership?.role).equals('member')
 
     const back = await ask(
       `/manage/season/sea_spring/people/${coachId}/role`,
@@ -697,11 +697,11 @@ describe('the manage page', function () {
     // And able to see what they keep score of.
     const joined = await db
       .selectFrom('league_members')
-      .select(['id'])
+      .select(['role'])
       .where('user_id', '=', ghostId)
       .where('league_id', '=', 'lea_npll')
       .executeTakeFirst()
-    expect(joined == null).equals(false)
+    expect(joined?.role).equals('member')
 
     const season = await ask(
       `/manage/season/sea_spring/people/${ghostId}/roles`,
