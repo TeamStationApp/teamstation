@@ -25,6 +25,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { makeId } from '../common/ids'
 import { posterSecond } from '../server/media/posters'
 import { type GuardianFixture, guardianFixture } from '../test/guardianFixture'
 import type { BrowserSession } from '../test/refinementsMaestro.e2e'
@@ -46,6 +47,21 @@ interface Run {
   ) => ApiLog
   /** A signed-out maestro-d web session at the screenshot viewport. */
   browser: (device: string) => Promise<BrowserSession>
+  /**
+   * A web session signed in as `user` with an e-mailed code, the way a person
+   * signs in, at the screenshot viewport.
+   */
+  signIn: (device: string, user: number) => Promise<BrowserSession>
+  /**
+   * Saves what the session shows as `name` in the artifacts, once the page
+   * has stopped loading. With `fit`, the viewport grows (same width) to the
+   * page's scrolled height first, so a long page is in one picture.
+   */
+  shot: (
+    session: BrowserSession,
+    name: string,
+    options?: { fit?: boolean }
+  ) => Promise<void>
 }
 
 type ApiLog = (
@@ -57,7 +73,8 @@ type ApiLog = (
 
 const stages: Record<string, (run: Run) => Promise<void>> = {
   apiRoles,
-  api
+  api,
+  roster
 }
 
 /**
@@ -285,6 +302,241 @@ function nonMemberSummary(route: string, body: any): unknown {
   return body
 }
 
+/**
+ * The roster in six sections and the Assistant switch: the admin opens the
+ * team's roster, then a coach's roles, and turns on Scorekeeper, which holds
+ * Songkeeper on. Spectators holds a member of the team, then a member of its
+ * league and one of its season, each pilled with the level; Followers holds
+ * the two who follow the team.
+ */
+async function roster(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  // Somebody on the team who neither plays nor helps: Hank Moss joins the
+  // Hawks with no role.
+  await f.h.db
+    .insertInto('memberships')
+    .values({
+      id: makeId('membership'),
+      user_id: people.oneTeam,
+      team_id: f.teamA,
+      role: 'member',
+      is_player: false
+    })
+    .execute()
+  // A member of Demo Regular and one of Demo League A, each a member of the
+  // Hawks through it, and a second follower beside Grace Hill.
+  const adult = async (
+    id: number,
+    first: string,
+    last: string
+  ): Promise<void> => {
+    await f.h.db
+      .insertInto('users')
+      .values({
+        id,
+        legacyId: `usr_guardian_${id}`,
+        display_name: `${first} ${last}`,
+        first_name: first,
+        last_name: last
+      })
+      .execute()
+  }
+  await adult(270, 'Sadie', 'Lake')
+  await f.h.db
+    .insertInto('season_members')
+    .values({ id: makeId('seasonMember'), user_id: 270, season_id: f.seasonA })
+    .execute()
+  await adult(271, 'Leo', 'Grant')
+  await f.h.db
+    .insertInto('league_members')
+    .values({ id: makeId('leagueMember'), user_id: 271, league_id: f.leagueA })
+    .execute()
+  await adult(272, 'Fern', 'Ash')
+  await f.h.db
+    .insertInto('follows')
+    .values({ user_id: 272, group_type: 'team', group_id: f.teamA })
+    .execute()
+
+  const admin = await run.signIn('roster-admin', people.admin)
+  await admin.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}?tab=team` })
+  const { contains } = await import('../test/refinementsMaestro.e2e')
+  await contains(admin.page, 'FOLLOWERS')
+
+  // No `??` or `?.` inside a callback the browser runs: Sucrase compiles
+  // them to helpers the browser does not have.
+  const page =
+    (await admin.page.evaluate(() => document.body.textContent)) ?? ''
+  const headings = [
+    'ADMINS',
+    'STAFF',
+    'PLAYERS',
+    'FAMILY MEMBERS',
+    'SPECTATORS',
+    'FOLLOWERS'
+  ].map(heading => ({ heading, at: page.indexOf(heading) }))
+  for (const { heading, at } of headings) expect(at, heading).gte(0)
+  expect(headings.map(({ at }) => at)).deep.equals(
+    headings.map(({ at }) => at).sort((a, b) => a - b)
+  )
+  expect(page).not.includes('COACHES')
+  expect(page).not.includes('OTHER MEMBERS')
+  // Each row's text, by its name, and whether it is a button: the row around
+  // the name's own text.
+  const rows = (
+    await admin.page.evaluate(() =>
+      [...document.querySelectorAll('div, span')]
+        .filter(node => node.children.length === 0)
+        .map(node => {
+          const found = node.parentElement
+          const row = found === null ? null : found.parentElement
+          return {
+            name: node.textContent,
+            text: row === null ? '' : row.textContent,
+            button: row !== null && row.getAttribute('role') === 'button'
+          }
+        })
+    )
+  ).map(({ name, text, button }) => ({
+    name: name ?? '',
+    text: text ?? '',
+    button
+  }))
+  const found = (name: string): { text: string; button: boolean } => {
+    const match = rows.find(each => each.name === name)
+    expect(match, name).not.equals(undefined)
+    return match!
+  }
+  const row = (name: string): string => found(name).text
+  expect(row('Mike T')).includes('Season coach')
+  expect(row('Babe R')).includes('League admin')
+  expect(row('Owen P')).includes('Assistant')
+  expect(row('Nora Q')).includes('Scorekeeper')
+  expect(row('Ichiro')).includes('Coach')
+  expect(row('Ichiro')).not.includes('Season')
+  expect(row('Avery S')).includes('SS · 2B')
+  expect(row('Avery S')).includes('#7')
+  expect(row('Tim R')).not.includes('#')
+  expect(row('Hank M')).not.includes('#')
+  expect(row('Sadie L')).includes('Season spectator')
+  expect(row('Leo G')).includes('League spectator')
+  // The team's own spectator and the followers carry no pill.
+  for (const name of ['Hank M', 'Grace H', 'Fern A'])
+    expect(row(name), name).not.match(/Season|League/)
+  // Only a player's row opens anything, and only it has a chevron: staff,
+  // family, spectators and followers have no page.
+  for (const name of [
+    'Babe R',
+    'Mike T',
+    'Owen P',
+    'Nora Q',
+    'Ichiro',
+    'Tim R',
+    'Hank M',
+    'Leo G',
+    'Sadie L',
+    'Fern A',
+    'Grace H'
+  ]) {
+    expect(found(name).button, name).equals(false)
+    expect(row(name), name).not.includes('chevron_right')
+  }
+  for (const name of ['Avery S', 'Ben C', 'Cody D', 'Drew E', 'Eli F']) {
+    expect(found(name).button, name).equals(true)
+    expect(row(name), name).includes('chevron_right')
+  }
+  // In its section's order: the team's own staff, then the season's coach.
+  expect(page.indexOf('Owen P')).lessThan(page.indexOf('Mike T'))
+  expect(page.indexOf('Mike T')).lessThan(page.indexOf('PLAYERS'))
+  expect(page.indexOf('Tim R')).greaterThan(page.indexOf('FAMILY MEMBERS'))
+  // The team's own spectator, then the league's and the season's by name,
+  // then the followers by name.
+  expect(page.indexOf('Hank M')).greaterThan(page.indexOf('SPECTATORS'))
+  expect(page.indexOf('Hank M')).lessThan(page.indexOf('Leo G'))
+  expect(page.indexOf('Leo G')).lessThan(page.indexOf('Sadie L'))
+  expect(page.indexOf('Sadie L')).lessThan(page.indexOf('FOLLOWERS'))
+  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Fern A'))
+  expect(page.indexOf('Fern A')).lessThan(page.indexOf('Grace H'))
+  await run.shot(admin, 'roster-after.png', { fit: true })
+
+  await admin.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}/manage` })
+  await contains(admin.page, 'Ichiro')
+  await admin.m.scrollUntilVisible({
+    element: { css: '[aria-label="Roles for Ichiro"]' },
+    centerElement: true,
+    timeout: 15000
+  })
+  await admin.m.tapOn({
+    css: '[aria-label="Roles for Ichiro"]',
+    timeout: 15000
+  })
+  await contains(admin.page, 'Same as a coach')
+  const switches = async (): Promise<
+    Record<string, { checked: boolean; disabled: boolean }>
+  > =>
+    await admin.page.evaluate(() =>
+      Object.fromEntries(
+        [
+          'Team admin',
+          'Coach',
+          'Assistant',
+          'Scorekeeper',
+          'Songkeeper',
+          'Videographer'
+        ].map(label => {
+          const input = document.querySelector<HTMLInputElement>(
+            `input[aria-label="${label}"]`
+          )
+          return [
+            label,
+            input === null
+              ? { checked: false, disabled: true }
+              : { checked: input.checked, disabled: input.disabled }
+          ]
+        })
+      )
+    )
+  const before = await switches()
+  expect(before.Coach).deep.equals({ checked: true, disabled: false })
+  expect(before.Assistant).deep.equals({ checked: false, disabled: false })
+  expect(before.Songkeeper).deep.equals({ checked: false, disabled: false })
+
+  await admin.m.tapOn({
+    css: 'input[aria-label="Scorekeeper"]',
+    timeout: 15000
+  })
+  await contains(admin.page, 'Scorekeepers can do this')
+  const after = await switches()
+  expect(after.Scorekeeper).deep.equals({ checked: true, disabled: false })
+  expect(after.Songkeeper).deep.equals({ checked: true, disabled: true })
+  await run.shot(admin, 'roles-modal-after.png')
+
+  // Save sends what was set, not what Scorekeeper holds on.
+  const { tap } = await import('../test/refinementsMaestro.e2e')
+  await tap(admin.m, 'Save')
+  await admin.page.waitForFunction(
+    () => document.querySelector('input[aria-label="Scorekeeper"]') == null,
+    { timeout: 15000 }
+  )
+  let held: string[] = []
+  for (let tries = 0; tries < 50; tries++) {
+    held = (
+      await f.h.db
+        .selectFrom('scope_roles')
+        .select('role')
+        .where('user_id', '=', people.teamCoach)
+        .where('scope_type', '=', 'team')
+        .where('scope_id', '=', f.teamA)
+        .execute()
+    )
+      .map(({ role }) => role)
+      .sort()
+    if (held.includes('scorekeeper')) break
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  expect(held).deep.equals(['coach', 'scorekeeper'])
+}
+
 async function main(): Promise<void> {
   const artifacts = process.env.TS_GUARDIAN_ARTIFACTS
   if (artifacts == null || artifacts === '')
@@ -387,6 +639,65 @@ async function runStage(
       )
       sessions.push(session)
       return session
+    },
+    signIn: async (device, user) => {
+      const { contains, fill, tap } =
+        await import('../test/refinementsMaestro.e2e')
+      const email = f.emails[user]
+      if (email == null) throw new Error(`User ${user} has no sign-in address`)
+      const session = await run.browser(device)
+      await f.h.resetLimits()
+      await session.m.openBrowser({ url: `${f.h.origin}/sign-in` })
+      await fill(session.m, 'E-mail address', email)
+      await tap(session.m, 'Send me a sign-in code')
+      await contains(session.page, 'six-digit code')
+      const code = f.h.mail.get(email)
+      if (code == null) throw new Error(`No sign-in code for ${email}`)
+      await fill(session.m, 'Sign-in code', code)
+      await tap(session.m, 'Sign in')
+      await session.page.waitForFunction(
+        () => !location.pathname.startsWith('/sign-in'),
+        { timeout: 20000 }
+      )
+      await settle(session)
+      return session
+    },
+    shot: async (session, name, options = {}) => {
+      const { capture } = await import('../test/refinementsMaestro.e2e')
+      await settle(session)
+      if (options.fit === true) {
+        // The page scrolls inside the app, not the window: the tallest
+        // scrolled box is how tall the page would be.
+        const height = await session.page.evaluate(() =>
+          Math.max(
+            innerHeight,
+            ...[...document.querySelectorAll('*')].map(node => {
+              const style = getComputedStyle(node)
+              return /(auto|scroll)/.test(style.overflowY)
+                ? node.scrollHeight + (innerHeight - node.clientHeight)
+                : 0
+            })
+          )
+        )
+        await session.page.setViewport({
+          width: WIDTH,
+          height: Math.min(height, 3 * HEIGHT),
+          deviceScaleFactor: 1
+        })
+        await settle(session)
+        await writeFile(
+          join(artifacts, name),
+          await session.page.screenshot({ type: 'png' })
+        )
+        await session.page.setViewport({
+          width: WIDTH,
+          height: HEIGHT,
+          deviceScaleFactor: 1
+        })
+      } else {
+        await capture(session.m, artifacts, name)
+      }
+      console.log(`captured ${join(artifacts, name)}`)
     }
   }
   try {
@@ -400,6 +711,25 @@ async function runStage(
     await f.h.close()
     if (profiles != null) await rm(profiles, { recursive: true, force: true })
   }
+}
+
+/** Waits until nothing says Loading and the network has gone quiet. */
+async function settle(session: BrowserSession): Promise<void> {
+  await session.page
+    .waitForFunction(
+      () => {
+        const text = document.body.textContent
+        // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+        return text === null || !text.includes('Loading')
+      },
+      { timeout: 20000 }
+    )
+    .catch(() => {
+      console.log(`NOTE: still "Loading" at ${session.page.url()}`)
+    })
+  await session.page
+    .waitForNetworkIdle({ idleTime: 750, timeout: 10000 })
+    .catch(() => undefined)
 }
 
 /**

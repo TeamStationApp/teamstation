@@ -32,8 +32,10 @@ export interface RolesModalProps {
  * here, because "scorekeeper" on its own does not say whose games. An
  * administrator already holds every flag, so with Admin on the flags show on
  * and fixed rather than inviting somebody to turn off what admin gives
- * anyway; a flag set on a level above shows the same way, naming that level.
- * Save sends the switches this level holds itself and nothing inherited.
+ * anyway; Songkeeper shows the same way under Scorekeeper, which includes
+ * it, and a flag set on a level above names that level. Save sends the
+ * switches this level holds itself and nothing shown on only because of
+ * another.
  *
  * The page they are on decides the level, and nothing here can reach
  * another: a team's page sets team roles and no others.
@@ -57,6 +59,10 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
 
   const adminAbove = inherited.admin
   const isAdmin = admin || adminAbove != null
+  // A scorekeeper keeps the songs too, so Songkeeper shows on and fixed while
+  // Scorekeeper is, whether set here or above.
+  const isScorekeeper =
+    flags.includes('scorekeeper') || inherited.scorekeeper != null
   const changed =
     admin !== held.includes('admin') ||
     ROLE_FLAGS.some(flag => flags.includes(flag) !== held.includes(flag))
@@ -83,16 +89,19 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
     },
     ...ROLE_FLAGS.map(flag => {
       const above = inherited[flag]
+      const byScorekeeper = flag === 'songkeeper' && isScorekeeper
       return {
         role: flag,
         label: flagLabel(flag),
         detail: sprintf(flagDetail(flag), scopeName),
-        on: isAdmin || above != null || flags.includes(flag),
+        on: isAdmin || byScorekeeper || above != null || flags.includes(flag),
         fixedBy: isAdmin
           ? lstrings.role_admin_all
-          : above == null
-            ? undefined
-            : sprintf(lstrings.role_from, above),
+          : byScorekeeper
+            ? lstrings.role_scorekeeper_all
+            : above == null
+              ? undefined
+              : sprintf(lstrings.role_from, above),
         onChange: (next: boolean) => {
           setFlags(now =>
             ROLE_FLAGS.filter(item =>

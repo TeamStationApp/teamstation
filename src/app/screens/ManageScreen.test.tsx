@@ -40,9 +40,10 @@ function person(
 }
 
 /**
- * The Hawks' page: S keeps songs, H coaches, V films, K keeps score from the
- * league, the manager runs a team inside nothing, and A is an admin of the
- * season above. One account has no address, and one person is invited.
+ * The Hawks' page: S keeps songs, H coaches and assists, V films, K keeps
+ * score from the league, the manager runs a team inside nothing, and A is an
+ * admin of the season above. One account has no address, and one person is
+ * invited.
  */
 function hawksPage(): ManagePage {
   return {
@@ -73,7 +74,7 @@ function hawksPage(): ManagePage {
             kind: 'team',
             id: 'tem_hawks',
             name: 'Hawks',
-            roles: ['coach', 'songkeeper']
+            roles: ['coach', 'assistant', 'songkeeper']
           }
         ]
       }),
@@ -233,7 +234,7 @@ describe('the manage page, with role flags', function () {
     await mount()
     const text = document.body.textContent ?? ''
     expect(text).includes('Songkeeper')
-    expect(text).includes('Coach · Songkeeper')
+    expect(text).includes('Coach · Assistant · Songkeeper')
     expect(text).includes('Scorekeeper · from Spring league')
     expect(text).includes('Season admin · from Spring 2026')
     expect(text).includes('Team manager · Hawks')
@@ -254,13 +255,17 @@ describe('the manage page, with role flags', function () {
       'input[aria-label="Songkeeper"]'
     )!
     expect(coach.checked).equals(true)
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Assistant"]')!
+        .checked
+    ).equals(true)
     expect(songs.checked).equals(true)
     await act(async () => {
       songs.click()
     })
     await press(buttonsNamed('Save').at(-1)!)
     expect(calls.roles).deep.equals([
-      { userId: 2, admin: false, flags: ['coach'] }
+      { userId: 2, admin: false, flags: ['coach', 'assistant'] }
     ])
   })
 
@@ -273,6 +278,13 @@ describe('the manage page, with role flags', function () {
     expect(keeper.checked).equals(true)
     expect(keeper.disabled).equals(true)
     expect(document.body.textContent).includes('From Spring league')
+    // Keeping score from above keeps the songs here too.
+    const songs = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Songkeeper"]'
+    )!
+    expect(songs.checked).equals(true)
+    expect(songs.disabled).equals(true)
+    expect(document.body.textContent).includes('Scorekeepers can do this')
     // Cancel closes it without saving anything.
     await press(buttonsNamed('Cancel').at(-1)!)
     expect(document.querySelector('input[aria-label="Scorekeeper"]')).equals(

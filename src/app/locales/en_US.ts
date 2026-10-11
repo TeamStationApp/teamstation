@@ -444,13 +444,15 @@ export const enUs = {
   role_assistant_detail:
     'Same as a coach: edits the players\u2019 jerseys, positions, bats and throws in %s, and sees their full names.',
   role_scorekeeper: 'Scorekeeper',
-  role_scorekeeper_detail: 'Scores the games of %s.',
+  role_scorekeeper_detail:
+    'Scores the games of %s, sets walk-up songs and DJs them.',
   role_songkeeper: 'Songkeeper',
   role_songkeeper_detail: 'Sets walk-up songs and DJs the games of %s.',
   role_videographer: 'Videographer',
   role_videographer_detail: 'Films and streams the games of %s.',
   role_from: 'From %s',
   role_admin_all: 'Admins can do all of this',
+  role_scorekeeper_all: 'Scorekeepers can do this',
   role_save: 'Save',
   role_cancel: 'Cancel',
   manage_no_address_header: 'No address on file',
