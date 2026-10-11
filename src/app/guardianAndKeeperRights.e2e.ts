@@ -79,6 +79,7 @@ const stages: Record<string, (run: Run) => Promise<void>> = {
   apiRoles,
   api,
   roster,
+  people,
   player,
   guardian,
   follower,
@@ -311,9 +312,10 @@ function nonMemberSummary(route: string, body: any): unknown {
 }
 
 /**
- * The roster in six sections and the Assistant switch: the admin opens the
- * team's roster, then a coach's roles, and turns on Scorekeeper, which holds
- * Songkeeper on. Spectators holds a member of the team, then a member of its
+ * The roster in six sections, and a coach's roles from their profile: the
+ * admin opens the team's roster, where every row opens (a player's page,
+ * anybody else's profile), then Ichiro's profile, and adds Scorekeeper there
+ * at once. Spectators holds a member of the team, then a member of its
  * league and one of its season, each pilled with the level; Followers holds
  * the two who follow the team.
  */
@@ -431,8 +433,8 @@ async function roster(run: Run): Promise<void> {
   // The team's own spectator and the followers carry no pill.
   for (const name of ['Hank M', 'Grace H', 'Fern A'])
     expect(row(name), name).not.match(/Season|League/)
-  // Only a player's row opens anything, and only it has a chevron: staff,
-  // family, spectators and followers have no page.
+  // For the team's admin every row opens, with a chevron: a player's page,
+  // and staff, family, spectators and followers their profile.
   for (const name of [
     'Babe R',
     'Mike T',
@@ -444,12 +446,13 @@ async function roster(run: Run): Promise<void> {
     'Leo G',
     'Sadie L',
     'Fern A',
-    'Grace H'
+    'Grace H',
+    'Avery S',
+    'Ben C',
+    'Cody D',
+    'Drew E',
+    'Eli F'
   ]) {
-    expect(found(name).button, name).equals(false)
-    expect(row(name), name).not.includes('chevron_right')
-  }
-  for (const name of ['Avery S', 'Ben C', 'Cody D', 'Drew E', 'Eli F']) {
     expect(found(name).button, name).equals(true)
     expect(row(name), name).includes('chevron_right')
   }
@@ -492,65 +495,45 @@ async function roster(run: Run): Promise<void> {
     deviceScaleFactor: 1
   })
 
-  await admin.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}/manage` })
+  // Ichiro's row opens his profile from the team, where his team roles
+  // change at once.
+  await admin.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}?tab=team` })
   await contains(admin.page, 'Ichiro')
-  await admin.m.scrollUntilVisible({
-    element: { css: '[aria-label="Roles for Ichiro"]' },
-    centerElement: true,
-    timeout: 15000
-  })
-  await admin.m.tapOn({
-    css: '[aria-label="Roles for Ichiro"]',
-    timeout: 15000
-  })
-  await contains(admin.page, 'Same as a coach')
-  const switches = async (): Promise<
-    Record<string, { checked: boolean; disabled: boolean }>
-  > =>
-    await admin.page.evaluate(() =>
-      Object.fromEntries(
-        [
-          'Team admin',
-          'Coach',
-          'Assistant',
-          'Scorekeeper',
-          'Songkeeper',
-          'Videographer'
-        ].map(label => {
-          const input = document.querySelector<HTMLInputElement>(
-            `input[aria-label="${label}"]`
-          )
-          return [
-            label,
-            input === null
-              ? { checked: false, disabled: true }
-              : { checked: input.checked, disabled: input.disabled }
-          ]
-        })
-      )
+  await admin.page.evaluate(() => {
+    const name = [...document.querySelectorAll('div, span')].find(
+      node => node.children.length === 0 && node.textContent === 'Ichiro'
     )
-  const before = await switches()
-  expect(before.Coach).deep.equals({ checked: true, disabled: false })
-  expect(before.Assistant).deep.equals({ checked: false, disabled: false })
-  expect(before.Songkeeper).deep.equals({ checked: false, disabled: false })
-
-  await admin.m.tapOn({
-    css: 'input[aria-label="Scorekeeper"]',
-    timeout: 15000
+    if (name === undefined) throw new Error('No Ichiro')
+    name.scrollIntoView({ block: 'center' })
   })
-  await contains(admin.page, 'Scorekeepers can do this')
-  const after = await switches()
-  expect(after.Scorekeeper).deep.equals({ checked: true, disabled: false })
-  expect(after.Songkeeper).deep.equals({ checked: true, disabled: true })
-  await run.shot(admin, 'roles-modal-after.png')
-
-  // Save sends what was set, not what Scorekeeper holds on.
-  const { tap } = await import('../test/refinementsMaestro.e2e')
-  await tap(admin.m, 'Save')
+  await admin.m.tapOn({ text: 'Ichiro', timeout: 15000 })
+  await contains(admin.page, 'Team · Demo Hawks')
+  expect(new URL(admin.page.url()).pathname).equals(
+    `/teams/${f.teamA}/people/${people.teamCoach}`
+  )
+  expect(await heldRows(admin, 'team')).deep.include({
+    coach: 'Remove',
+    scorekeeper: 'Add',
+    songkeeper: 'Add',
+    admin: 'Add',
+    follower: 'Not following'
+  })
+  await pressRole(admin, 'team', 'scorekeeper')
   await admin.page.waitForFunction(
-    () => document.querySelector('input[aria-label="Scorekeeper"]') == null,
+    () => {
+      const row = document.querySelector(
+        '[data-testid="role-team-scorekeeper"]'
+      )
+      const words = row === null ? null : row.textContent
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+      return words !== null && words.includes('Remove')
+    },
     { timeout: 15000 }
   )
+  // The rows that used to be the roles sheet, after Scorekeeper was added:
+  // the sheet is gone, and this is where a coach's roles change now.
+  await scrollTo(admin, '[data-testid="roles-team"]')
+  await run.shot(admin, 'roles-modal-after.png')
   let held: string[] = []
   for (let tries = 0; tries < 50; tries++) {
     held = (
@@ -568,6 +551,288 @@ async function roster(run: Run): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 200))
   }
   expect(held).deep.equals(['coach', 'scorekeeper'])
+}
+
+/**
+ * The person profile in Chromium, and the people API behind it.
+ *
+ * The admin adds Grace Hill, who only follows the Hawks, as their Coach from
+ * her profile and takes it away again; Ichiro, their coach, opens Tim
+ * Raines's profile, with Avery under "Parent/Guardian of", and has no Admin
+ * buttons; the admin opens Tim from Demo Regular, where the season's roles
+ * change and the league's are for reading; a player who can sign in has
+ * Team roles at the bottom of Settings, where one who cannot has none; and
+ * the admin takes the first off the team from below them, back to a roster
+ * without him. Then, by the API alone: an add by address that applies at once, the
+ * notification it leaves, leaving, a coach refused Admin, and the season's
+ * people.
+ */
+async function people(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  const { contains } = await import('../test/refinementsMaestro.e2e')
+  const [, ben, cody] = f.players
+  // Ben can sign in; Cody cannot.
+  await f.h.db
+    .updateTable('users')
+    .set({ login_enabled: true })
+    .where('id', '=', ben.id)
+    .execute()
+  await f.h.db
+    .insertInto('user_emails')
+    .values({
+      id: 'email_people_ben',
+      user_id: ben.id,
+      email: 'ben@example.com',
+      is_primary: true,
+      verified_at: new Date(),
+      source: 'manual'
+    })
+    .execute()
+  const roleRows = async (userId: number): Promise<string[]> =>
+    (
+      await f.h.db
+        .selectFrom('scope_roles')
+        .select('role')
+        .where('user_id', '=', userId)
+        .where('scope_type', '=', 'team')
+        .where('scope_id', '=', f.teamA)
+        .execute()
+    )
+      .map(({ role }) => role)
+      .sort()
+  const until = async (check: () => Promise<boolean>): Promise<void> => {
+    for (let tries = 0; tries < 50; tries++) {
+      if (await check()) return
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    throw new Error('Never happened')
+  }
+
+  // The admin adds Grace as Coach from her profile, and takes it away.
+  const admin = await run.signIn('people-admin', people.admin)
+  await admin.m.openBrowser({
+    url: `${f.h.origin}/teams/${f.teamA}/people/${people.follower}`
+  })
+  await contains(admin.page, 'Grace Hill')
+  await contains(admin.page, 'Team · Demo Hawks')
+  expect(await heldRows(admin, 'team')).deep.include({
+    admin: 'Add',
+    coach: 'Add',
+    member: 'Add',
+    follower: 'Following'
+  })
+  await pressRole(admin, 'team', 'coach')
+  await until(async () => (await roleRows(people.follower)).includes('coach'))
+  await admin.page.waitForFunction(
+    () => {
+      const row = document.querySelector('[data-testid="role-team-member"]')
+      const words = row === null ? null : row.textContent
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+      return words !== null && words.includes('Remove')
+    },
+    { timeout: 15000 }
+  )
+  expect(await heldRows(admin, 'team')).deep.include({
+    coach: 'Remove',
+    member: 'Remove'
+  })
+  await pressRole(admin, 'team', 'coach')
+  await until(async () => (await roleRows(people.follower)).length === 0)
+
+  // Ichiro, the team's coach, opens Tim Raines: Avery under Parent/Guardian
+  // of, his roles here changeable, Admin not.
+  const coach = await run.signIn('people-coach', people.teamCoach)
+  await coach.m.openBrowser({
+    url: `${f.h.origin}/teams/${f.teamA}/people/${people.guardian}`
+  })
+  await contains(coach.page, 'Tim Raines')
+  await contains(coach.page, 'PARENT/GUARDIAN OF')
+  await contains(coach.page, 'Avery S')
+  const coachView = await heldRows(coach, 'team')
+  expect(coachView.admin).equals('—')
+  expect(coachView.coach).equals('Add')
+  for (const level of ['season', 'league'])
+    expect(
+      Object.values(await heldRows(coach, level)).some(
+        value => value === 'Add' || value === 'Remove'
+      ),
+      level
+    ).equals(false)
+  await run.shot(coach, 'person-profile-team.png', { fit: true })
+  // Avery's row opens Avery, on the Hawks.
+  await coach.m.tapOn({ text: 'Avery S', timeout: 15000 })
+  await coach.page.waitForFunction(
+    () => location.pathname.startsWith('/players/'),
+    { timeout: 15000 }
+  )
+  expect(new URL(coach.page.url()).searchParams.get('onTeam')).equals(f.teamA)
+
+  // The same person from the season: its roles change, the league's don't.
+  await admin.m.openBrowser({
+    url: `${f.h.origin}/seasons/${f.seasonA}/people/${people.guardian}`
+  })
+  await contains(admin.page, 'Season · Demo Regular')
+  await contains(admin.page, 'Avery S')
+  const page =
+    (await admin.page.evaluate(() => document.body.textContent)) ?? ''
+  expect(page).includes('SEASON ROLES')
+  expect(page).includes('LEAGUE ROLES')
+  expect(page).not.includes('TEAM ROLES')
+  expect((await heldRows(admin, 'season')).admin).equals('Add')
+  expect((await heldRows(admin, 'league')).admin).equals('—')
+  await run.shot(admin, 'person-profile-season.png', { fit: true })
+
+  // A player who can sign in has Team roles at the bottom of Settings.
+  await admin.m.openBrowser({
+    url: `${f.h.origin}/players/${ben.id}?tab=settings&onTeam=${f.teamA}`
+  })
+  await contains(admin.page, 'TEAM ROLES')
+  await scrollTo(admin, '[data-testid="playerTeamRoles"]')
+  await pressRole(admin, 'team', 'songkeeper')
+  await until(async () => (await roleRows(ben.id)).includes('songkeeper'))
+  await admin.page.waitForFunction(
+    () => {
+      const row = document.querySelector('[data-testid="role-team-songkeeper"]')
+      const words = row === null ? null : row.textContent
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+      return words !== null && words.includes('Remove')
+    },
+    { timeout: 15000 }
+  )
+  await run.shot(admin, 'player-roles-settings.png', { fit: true })
+  // One who cannot sign in has none.
+  await admin.m.openBrowser({
+    url: `${f.h.origin}/players/${cody.id}?tab=settings&onTeam=${f.teamA}`
+  })
+  await contains(admin.page, 'JERSEY NUMBER')
+  await settle(admin)
+  expect(
+    (await admin.page.evaluate(() => document.body.textContent)) ?? ''
+  ).not.includes('TEAM ROLES')
+
+  // The admin takes Ben, who can sign in and is a songkeeper now, off the
+  // Hawks from the very bottom of his Settings: after the sheet, the roster,
+  // without him, and every team role gone with him.
+  await admin.m.openBrowser({
+    url: `${f.h.origin}/players/${ben.id}?tab=settings&onTeam=${f.teamA}`
+  })
+  await contains(admin.page, 'TEAM ROLES')
+  await settle(admin)
+  await scrollTap(admin, 'Remove from Demo Hawks')
+  await contains(
+    admin.page,
+    'Ben C leaves Demo Hawks: off the roster, and every role they hold on it.'
+  )
+  await admin.m.tapOn({ css: '[aria-label="Remove Ben C"]', timeout: 15000 })
+  await admin.page.waitForFunction(
+    teamId => location.pathname === '/teams/' + teamId,
+    { timeout: 15000 },
+    f.teamA
+  )
+  const onHawks = async (userId: number): Promise<boolean> =>
+    (await f.h.db
+      .selectFrom('memberships')
+      .select('id')
+      .where('team_id', '=', f.teamA)
+      .where('user_id', '=', userId)
+      .executeTakeFirst()) != null
+  await until(async () => !(await onHawks(ben.id)))
+  expect(await roleRows(ben.id)).deep.equals([])
+  await contains(admin.page, 'Removed Ben C from Demo Hawks')
+  await contains(admin.page, 'Avery S')
+  const rosterNames = await admin.page.evaluate(() => {
+    const roster = document.querySelector('[data-testid="teamTabContent"]')
+    if (roster === null) throw new Error('No roster')
+    return [...roster.querySelectorAll('div, span')]
+      .filter(node => node.children.length === 0)
+      .map(node => String(node.textContent))
+  })
+  expect(rosterNames).includes('Avery S')
+  expect(rosterNames).includes('Cody D')
+  expect(rosterNames).not.includes('Ben C')
+  await run.shot(admin, 'player-remove-from-team.png', { fit: true })
+
+  // By the API: adding an account by address applies at once, tells them,
+  // and they can leave; a coach is refused Admin; the season's people.
+  const api = run.api('api-people.log', (route, body) => {
+    if (route.endsWith('/people') && Array.isArray(body?.people))
+      return body.people.map(
+        (person: any) =>
+          `${person.section} ${person.shortName}${person.inheritedFrom == null ? '' : ` (${person.inheritedFrom.level} ${person.inheritedFrom.role})`}`
+      )
+    if (route.startsWith('/me/notifications') && Array.isArray(body?.items))
+      return body.items.map((item: any) => ({
+        type: item.type,
+        title: item.title,
+        viewed: item.viewed,
+        leave: item.leave
+      }))
+    return body
+  })
+  await run.note(
+    'api-people.log',
+    'The admin adds Hank Moss, who has an account, as Scorekeeper of Demo Hawks by his address: no invitation.'
+  )
+  const added = await api(
+    'POST',
+    `/manage/team/${f.teamA}/people`,
+    people.admin,
+    {
+      email: f.emails[people.oneTeam],
+      flags: ['scorekeeper'],
+      idempotencyKey: 'people-stage-add-hank'
+    }
+  )
+  expect(added.status).equals(201)
+  expect(added.body.added).equals(true)
+  expect(await roleRows(people.oneTeam)).deep.equals(['scorekeeper'])
+  const told = await api('GET', '/me/notifications', people.oneTeam)
+  expect(told.body.hasPending).equals(true)
+  const grant = told.body.items.find((item: any) => item.type === 'grant')
+  expect(grant.title).equals('Babe Ruth added you as Scorekeeper of Demo Hawks')
+  expect(grant.leave).deep.equals({
+    kind: 'team',
+    id: f.teamA,
+    name: 'Demo Hawks'
+  })
+  await run.note('api-people.log', 'Hank leaves the Hawks himself.')
+  const left = await api('DELETE', `/me/groups/team/${f.teamA}`, people.oneTeam)
+  expect(left.body).deep.equals({ removed: true })
+  expect(await roleRows(people.oneTeam)).deep.equals([])
+  await run.note(
+    'api-people.log',
+    'Ichiro, coach of the Hawks, may give Grace Hill any role but Admin.'
+  )
+  const refused = await api(
+    'PUT',
+    `/manage/team/${f.teamA}/people/${people.follower}/roles/admin`,
+    people.teamCoach,
+    {}
+  )
+  expect(refused.status).equals(403)
+  const given = await api(
+    'PUT',
+    `/manage/team/${f.teamA}/people/${people.follower}/roles/videographer`,
+    people.teamCoach,
+    {}
+  )
+  expect(given.body).deep.equals({
+    userId: people.follower,
+    roles: ['videographer'],
+    member: true
+  })
+  await run.note('api-people.log', 'Grace steps down as videographer.')
+  const down = await api(
+    'DELETE',
+    `/me/groups/team/${f.teamA}/roles/videographer`,
+    people.follower
+  )
+  expect(down.body.roles).deep.equals([])
+  await run.note('api-people.log', "Demo Regular's people, by section.")
+  const season = await api('GET', `/seasons/${f.seasonA}/people`, people.admin)
+  expect(season.status).equals(200)
+  expect(season.body.manages).equals(true)
 }
 
 /**
@@ -2207,6 +2472,62 @@ async function runStage(
     await f.h.close()
     if (profiles != null) await rm(profiles, { recursive: true, force: true })
   }
+}
+
+/**
+ * What each row of a person's roles at `level` offers: its button's word
+ * (`Add`, `Remove`) or, with none, its status (`Yes`, `—`, `Following`).
+ */
+async function heldRows(
+  session: BrowserSession,
+  level: string
+): Promise<Record<string, string>> {
+  // No `??` or `?.` in here: see `roster`.
+  return await session.page.evaluate(level => {
+    const rows = [
+      ...document.querySelectorAll(`[data-testid^="role-${level}-"]`)
+    ]
+    return Object.fromEntries(
+      rows.map(row => {
+        const id = row.getAttribute('data-testid')
+        const button = row.querySelector('[role="button"]')
+        const label = row.children.length > 1 ? row.children[1] : null
+        const shown =
+          button !== null
+            ? button.textContent
+            : label === null
+              ? ''
+              : label.textContent
+        /* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have. */
+        return [
+          (id === null ? '' : id).slice(`role-${level}-`.length),
+          shown === null ? '' : shown
+        ]
+        /* eslint-enable @typescript-eslint/prefer-nullish-coalescing */
+      })
+    )
+  }, level)
+}
+
+/** Scrolls the element `css` names to the middle of the screen. */
+async function scrollTo(session: BrowserSession, css: string): Promise<void> {
+  await session.page.evaluate(css => {
+    const node = document.querySelector(css)
+    if (node === null) throw new Error(`Nothing at ${css}`)
+    node.scrollIntoView({ block: 'center' })
+  }, css)
+  await settle(session)
+}
+
+/** Presses the button of one role's row, scrolled clear of the bottom bar. */
+async function pressRole(
+  session: BrowserSession,
+  level: string,
+  role: string
+): Promise<void> {
+  const css = `[data-testid="role-${level}-${role}"] [role="button"]`
+  await scrollTo(session, css)
+  await session.m.tapOn({ css, timeout: 15000 })
 }
 
 /**
