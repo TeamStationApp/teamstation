@@ -1123,6 +1123,17 @@ describe('the chat engine (U12)', function () {
         payload: ChatMessage[]
       ) => Promise<void>
 
+      listSnapshot?: (
+        rows: Awaited<ReturnType<TeamStationClient['chatConversations']>>
+      ) => Awaited<ReturnType<TeamStationClient['chatConversations']>>
+
+      async chatConversations(): ReturnType<
+        TeamStationClient['chatConversations']
+      > {
+        const real = await super.chatConversations()
+        return this.listSnapshot?.(real) ?? real
+      }
+
       messagesError?: (id: string, error: unknown) => Promise<void>
       beforePins?: (id: string) => Promise<void>
       pinsError?: (id: string, error: unknown) => Promise<void>
@@ -1793,6 +1804,137 @@ describe('the chat engine (U12)', function () {
           viewer.engine.stop()
         }
       })
+
+    it('qa4: resolves a newer advertised encrypted post when the list event revision lags, without activating or reading', async function () {
+      const a = await device('A')
+      const room = await freshRoom()
+      let latest: { id: string; body: string } | undefined
+      for (let seq = 1; seq <= 8; seq += 1)
+        latest = (await a.engine.sendText(
+          room,
+          `Advertised encrypted post ${seq}`
+        ))!
+      for (const lag of [7, 0]) {
+        const { viewer, client } = await observer()
+        try {
+          const cursor = await client.observeRead(room)
+          client.listSnapshot = rows =>
+            rows.map(row => (row.id === room ? { ...row, lastSeq: lag } : row))
+          await viewer.engine.refresh()
+          expect(
+            viewer.engine.conversations().find(row => row.id === room)
+              ?.lastPostSeq
+          ).equals(8)
+          const start = client.queries.length
+          await viewer.engine.loadPreview(room, false)
+          expect(
+            viewer.engine
+              .view(room)!
+              .messages.find(row => row.id === latest!.id)?.body
+          ).equals(latest!.body)
+          expect(
+            viewer.engine.conversations().find(row => row.id === room)?.preview
+          ).equals(latest!.body)
+          expect(
+            client.queries
+              .slice(start)
+              .filter(query => query.id === room)
+              .every(query => query.page.before === 9)
+          ).equals(true)
+          const cached = client.queries.length
+          await viewer.engine.loadPreview(room, false)
+          expect(client.queries.length).equals(cached)
+          await listOnly(viewer, client, new Map([[room, cursor]]))
+        } finally {
+          viewer.engine.stop()
+        }
+      }
+    })
+
+    it('qa4: invalidates an advertised post identity at the same bounded revision and leaves an unresolved target explicitly retryable', async function () {
+      const a = await device('A')
+      const room = await freshRoom()
+      const first = (await a.engine.sendText(
+        room,
+        'First advertised encrypted post'
+      ))!
+      const latest = (await a.engine.sendText(
+        room,
+        'Latest advertised encrypted post'
+      ))!
+      await a.engine.react(room, first.id, '👍')
+      const { viewer, client } = await observer()
+      let advertised = first.id
+      try {
+        const cursor = await client.observeRead(room)
+        client.listSnapshot = rows =>
+          rows.map(row =>
+            row.id === room
+              ? {
+                  ...row,
+                  lastPostId: advertised,
+                  lastPostSeq: advertised === first.id ? 1 : 2
+                }
+              : row
+          )
+        await viewer.engine.refresh()
+        await viewer.engine.loadPreview(room, false)
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)?.preview
+        ).equals(latest.body)
+        advertised = latest.id
+        await viewer.engine.refresh()
+        const before = client.queries.length
+        await viewer.engine.loadPreview(room, false)
+        expect(client.queries.length).greaterThan(before)
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)?.preview
+        ).equals(latest.body)
+        const withheld = (await a.engine.sendText(
+          room,
+          'Recovered advertised target'
+        ))!
+        advertised = withheld.id
+        client.listSnapshot = undefined
+        await viewer.engine.refresh()
+        client.afterMessages = async (id, _page, payload) => {
+          if (id === room)
+            payload.splice(
+              0,
+              payload.length,
+              ...payload.filter(row => row.id !== withheld.id)
+            )
+        }
+        let rejected: unknown
+        try {
+          await viewer.engine.loadPreview(room, false)
+        } catch (error) {
+          rejected = error
+        }
+        expect(rejected).instanceOf(ChatEngineError)
+        expect((rejected as ChatEngineError).code).equals('target')
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)
+            ?.previewFailed
+        ).equals(true)
+        const quiet = client.queries.length
+        await viewer.engine.loadPreview(room, false)
+        expect(client.queries.length).equals(quiet)
+        client.afterMessages = undefined
+        await viewer.engine.loadPreview(room, true)
+        expect(
+          viewer.engine.view(room)!.messages.find(row => row.id === withheld.id)
+            ?.body
+        ).equals(withheld.body)
+        expect(
+          viewer.engine.conversations().find(row => row.id === room)
+            ?.previewFailed
+        ).equals(false)
+        await listOnly(viewer, client, new Map([[room, cursor]]))
+      } finally {
+        viewer.engine.stop()
+      }
+    })
 
     it('review4: exposes one quiet preview failure and explicitly retries real encrypted content without activation or reading', async function () {
       const a = await device('A')

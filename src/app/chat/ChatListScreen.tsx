@@ -115,6 +115,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const anchor = useRef(props.initialAnchor)
   const anchorOwned = useRef(props.initialAnchor != null)
   const currentOffset = useRef(props.initialOffset ?? 0)
+  const userPosition = useRef(false)
+  const explicitTop = useRef(false)
   const acknowledgedOffset = useRef<
     | {
         offset: number
@@ -205,6 +207,10 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     if (!liveData() || !restored.current) return
     const offset = currentOffset.current
     scrollOwner.current.onOffset?.(offset)
+    if (explicitTop.current && offset === 0) {
+      scrollOwner.current.onAnchor?.(undefined)
+      return
+    }
     const candidates = [...positions.current].filter(
       ([, p]) =>
         p.data === dataKey &&
@@ -245,15 +251,20 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       .catch(() => undefined)
   }
   measureRows.current = measureRow
-  const verifyZeroDistance = (offset: number, final: boolean): boolean => {
+  const completeContent = (): boolean => {
     const geometry = listGeometry.current
     const tail = measuredTail.current
-    const complete =
-      chats?.length === 0 ||
-      (tail != null &&
-        tail.data === dataKey &&
-        tail.version === layoutVersion.current &&
-        Math.abs(tail.end - geometry.content) <= 1)
+    return (
+      geometry.data === dataKey &&
+      (chats?.length === 0 ||
+        (tail != null &&
+          tail.data === dataKey &&
+          tail.version === layoutVersion.current &&
+          Math.abs(tail.end - geometry.content) <= 1))
+    )
+  }
+  const verifyZeroDistance = (offset: number, final: boolean): boolean => {
+    const geometry = listGeometry.current
     // Complete current content shorter than the actual viewport has only one
     // reachable normalized offset. A widget already at zero emits no event.
     return (
@@ -264,11 +275,21 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       geometry.height > 0 &&
       geometry.content > 0 &&
       geometry.content <= geometry.height &&
-      complete
+      completeContent()
     )
   }
   const finishRestoration = (offset: number): void => {
     currentOffset.current = offset
+    restoreOffset.current = offset
+    const saved = anchor.current
+    const position = saved == null ? undefined : positions.current.get(saved.id)
+    if (
+      saved != null &&
+      position != null &&
+      position.data === dataKey &&
+      position.version === layoutVersion.current
+    )
+      anchor.current = { id: saved.id, relativeY: position.y - offset }
     restored.current = true
     setFastRestore(false)
     savePosition()
@@ -445,18 +466,18 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           }
           const target = Math.max(0, position.y - saved.relativeY)
           restoreOffset.current = target
-          // A mounted tail is not proof that its preceding content callback
-          // has measured the same complete content coordinates.
-          if (target > Math.max(0, listGeometry.current.content - height)) {
-            const available = Math.max(0, listGeometry.current.content - height)
-            requestOffset(available)
-            return
-          }
           positions.current.set(saved.id, {
             ...position,
             data: dataKey,
             version
           })
+          // A mounted tail is not proof that its preceding content callback
+          // has measured the same complete content coordinates.
+          if (target > Math.max(0, listGeometry.current.content - height)) {
+            const available = Math.max(0, listGeometry.current.content - height)
+            requestOffset(available, completeContent())
+            return
+          }
           requestOffset(target, true)
         })
         .catch(() => undefined)
@@ -468,12 +489,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           }
         })
     }
-    const tail = measuredTail.current
-    const complete =
-      tail != null &&
-      tail.data === dataKey &&
-      tail.version === layoutVersion.current &&
-      Math.abs(tail.end - content) <= 1
+    const complete = completeContent()
     if (
       content < height + restoreOffset.current &&
       chats.length > 0 &&
@@ -509,6 +525,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     anchorOwned.current = false
     anchor.current = undefined
     gestureGeneration.current += 1
+    userPosition.current = true
   }
   const rememberOffset = (event: {
     nativeEvent: { contentOffset: { y: number } }
@@ -516,6 +533,15 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     if (!liveData()) return
     const offset = Math.max(0, event.nativeEvent.contentOffset.y)
     currentOffset.current = offset
+    if (userPosition.current) {
+      // A delivered user scroll can choose the absolute top. Intent without
+      // movement and programmatic acknowledgements keep their boundary anchor.
+      explicitTop.current = offset === 0
+      if (explicitTop.current) {
+        anchor.current = undefined
+        anchorOwned.current = false
+      }
+    }
     acknowledgedOffset.current = {
       offset,
       data: dataKey,
@@ -529,8 +555,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       requested.current != null &&
       Math.abs(offset - requested.current) <= 1
     ) {
-      restored.current = true
-      setFastRestore(false)
+      finishRestoration(offset)
     }
     if (
       !restored.current &&
