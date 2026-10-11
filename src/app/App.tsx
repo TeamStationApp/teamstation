@@ -961,6 +961,32 @@ function Shell(props: AppProps): React.ReactElement {
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
   }
+  /**
+   * A player just taken off a team from their Settings: back to that team's
+   * roster, the step below when it is the team, otherwise in the player's
+   * place, so Back does not return to a page they are no longer on.
+   */
+  const backToRoster = (teamId: string, name: string): void => {
+    const below = stack[stack.length - 2]
+    if (below?.name === 'team' && below.team.id === teamId) {
+      popRoute()
+      setStacks(current => ({
+        ...current,
+        [tab]: [...current[tab].slice(0, -2), { ...below, tab: 'team' }]
+      }))
+    } else {
+      replace({
+        name: 'team',
+        team: asTeamSummary({
+          id: teamId,
+          name,
+          shortName: null,
+          logoPath: null
+        }),
+        tab: 'team'
+      })
+    }
+  }
   const openSeasonParticipant = (team: TeamSummary): void => {
     push(seasonParticipantDestination(team))
   }
@@ -1646,6 +1672,11 @@ function Shell(props: AppProps): React.ReactElement {
             at: atSec,
             autoPlay: true
           })
+        }}
+        onRemovedFromTeam={(teamId, name, notice) => {
+          setSuccessNotice({ id: Date.now(), message: notice })
+          backToRoster(teamId, name)
+          refreshRoles()
         }}
       />
     ) : top.name === 'walkUpSong' ? (

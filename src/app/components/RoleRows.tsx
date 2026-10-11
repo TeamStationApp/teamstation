@@ -17,6 +17,12 @@ export interface RoleRowsProps {
   /** Whether they can hold a role at all: an account that signs in. */
   canHoldRoles: boolean
   viewer: { manages: boolean; admin: boolean }
+  /**
+   * A player's own rows, on their Settings: while they are on the team, the
+   * Member row reads Player with no button, as a player's place on the team
+   * is the roster's to change.
+   */
+  player?: boolean
   busy?: boolean
   onAdd: (role: RoleRowKind) => void
   onRemove: (role: RoleRowKind) => void
@@ -44,7 +50,15 @@ const ROWS: ReadonlyArray<RoleRowKind | 'follower'> = [
  * does not manage, reads the rows only.
  */
 export function RoleRows(props: RoleRowsProps): React.ReactElement {
-  const { section, canHoldRoles, viewer, busy = false, onAdd, onRemove } = props
+  const {
+    section,
+    canHoldRoles,
+    viewer,
+    player = false,
+    busy = false,
+    onAdd,
+    onRemove
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const holdsAdmin = section.roles.includes('admin')
@@ -62,8 +76,12 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
           row === 'follower' || row === 'member' || row === 'admin'
             ? undefined
             : implied.get(row)
+        // Read as Player only while they are on the team; anybody else's
+        // Member row is the usual one.
+        const playerRow = player && row === 'member' && section.member
         const changeable =
           impliedBy == null &&
+          !playerRow &&
           section.editable &&
           viewer.manages &&
           (row !== 'admin' || viewer.admin) &&
@@ -92,17 +110,23 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
               />
             ) : (
               <Text
-                style={held || impliedBy != null ? styles.held : styles.notHeld}
+                style={
+                  held || impliedBy != null || playerRow
+                    ? styles.held
+                    : styles.notHeld
+                }
               >
                 {impliedBy != null
                   ? sprintf(lstrings.profile_with, labelOf(impliedBy))
-                  : row === 'follower'
-                    ? held
-                      ? lstrings.profile_following
-                      : lstrings.profile_not_following
-                    : held
-                      ? lstrings.profile_held
-                      : lstrings.profile_not_held}
+                  : playerRow
+                    ? lstrings.profile_player
+                    : row === 'follower'
+                      ? held
+                        ? lstrings.profile_following
+                        : lstrings.profile_not_following
+                      : held
+                        ? lstrings.profile_held
+                        : lstrings.profile_not_held}
               </Text>
             )}
           </View>

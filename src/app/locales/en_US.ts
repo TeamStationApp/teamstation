@@ -492,10 +492,18 @@ export const enUs = {
   profile_held: 'Yes',
   profile_not_held: '\u2014',
   profile_with: 'With %s',
+  profile_player: 'Player',
   profile_following: 'Following',
   profile_not_following: 'Not following',
   profile_refused: 'You can\u2019t open this person here.',
   player_team_roles: 'Team roles',
+  player_remove_from_team: 'Remove from %s',
+  player_remove_title: 'Remove %1$s from %2$s?',
+  player_remove_confirm: 'Remove %s',
+  player_remove_detail:
+    '%1$s leaves %2$s: off the roster, and every role they hold on it.',
+  player_removed: 'Removed %1$s from %2$s',
+  player_remove_unchanged: '%1$s is not on %2$s. Nothing was changed.',
   people_none: 'Nobody here yet.',
 
   // Coming in through an invite

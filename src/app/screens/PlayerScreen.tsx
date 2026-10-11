@@ -35,7 +35,9 @@ import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
 import { WalkUpTab } from '../walkup/WalkUpTab'
 import { battingLine, exactDateTime } from './format'
 import { GuardianInvite, GuardianRequest } from './PlayerGuardians'
+import { PlayerRemoveFromTeam } from './PlayerRemoveFromTeam'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
+import { PlayerTeamRoles } from './PlayerTeamRoles'
 import { PlayerTeamsTab } from './PlayerTeamsTab'
 import { battingColumns, pitchingColumns, playerStats } from './statColumns'
 
@@ -103,6 +105,11 @@ export interface PlayerScreenProps {
   onVideoFilter?: (filter: StatFilter) => void
   /** A row of the Teams tab. */
   onOpenTeam?: (teamId: string, name: string) => void
+  /**
+   * The team's administrator took the player off `forTeam` from Settings:
+   * back to that team's roster, saying so with `notice`.
+   */
+  onRemovedFromTeam?: (teamId: string, teamName: string, notice: string) => void
   /** Opens the game's video at the moment of one of their highlights. */
   onOpenMoment?: (
     gameId: string,
@@ -158,6 +165,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onVideoFilter,
     onOpenMoment,
     onOpenTeam,
+    onRemovedFromTeam,
     forTeam,
     roles,
     viewer,
@@ -288,6 +296,18 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     !coachesTeam(roles, forTeam) &&
     !player.teams.some(team => team.current && coachesTeam(roles, team.teamId))
   const walkUpShown = canKeepSongs === true
+  // Taking the player off `forTeam` is for its administrators (an owner's or
+  // manager's membership counts, as `GET /me/roles` says) and a site
+  // administrator, whether or not the player can sign in; the server decides
+  // again. Named once the player is in, and only while they play on it now:
+  // a team they have left has nobody to take off.
+  const removesFromTeam =
+    forTeam != null &&
+    (viewer?.isAdmin === true ||
+      (roles?.teams[forTeam] ?? []).includes('admin'))
+  const teamName = player?.teams.find(
+    team => team.teamId === forTeam && team.current
+  )?.teamName
   const tabs = [
     ...TABS,
     ...(walkUpShown ? [WALKUP_TAB] : []),
@@ -343,8 +363,9 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     tab === 'settings' && rosterManager === true && !privateNameDenied
       ? (privateName ?? publicName ?? title ?? '')
       : (publicName ?? (privateNameDenied ? '' : title) ?? '')
-  // What a guardian invitation or request names the player by: the short
-  // name, even where a roster manager's header shows the whole one.
+  // What a guardian invitation or request, or taking them off the team,
+  // names the player by: the short name, even where a roster manager's header
+  // shows the whole one.
   const shortShown = publicName ?? (privateNameDenied ? '' : title) ?? ''
   const { headerHeight } = useHeaderSlot()
   const handoff = useHandoff(headerHeight)
@@ -687,6 +708,31 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
               playerName={shortShown}
             />
           )}
+          {
+            // The player's own roles on the team, for its staff.
+            forTeam != null && coachesTeam(roles, forTeam) && (
+              <PlayerTeamRoles
+                client={client}
+                teamId={forTeam}
+                userId={player?.userId ?? Number(userId)}
+              />
+            )
+          }
+          {
+            // Last: taking them off the team, for its administrators alone.
+            forTeam != null && removesFromTeam && teamName != null && (
+              <PlayerRemoveFromTeam
+                client={client}
+                teamId={forTeam}
+                teamName={teamName}
+                userId={player?.userId ?? Number(userId)}
+                shortName={shortShown}
+                onRemoved={notice => {
+                  onRemovedFromTeam?.(forTeam, teamName, notice)
+                }}
+              />
+            )
+          }
         </View>
       )}
 

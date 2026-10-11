@@ -6,7 +6,13 @@ import { Button } from './Button'
 
 export interface ChoiceSheetProps {
   title: string
-  choices: Array<{ label: string; detail?: string; onPress: () => void }>
+  choices: Array<{
+    label: string
+    detail?: string
+    /** Takes something away: its label in the danger colour. */
+    destructive?: boolean
+    onPress: () => void
+  }>
   onClose: () => void
 }
 
@@ -38,7 +44,14 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
                 pressed && styles.pressed
               ]}
             >
-              <Text style={styles.label}>{choice.label}</Text>
+              <Text
+                style={[
+                  styles.label,
+                  choice.destructive === true && styles.destructive
+                ]}
+              >
+                {choice.label}
+              </Text>
               {choice.detail != null && (
                 <Text style={styles.detail}>{choice.detail}</Text>
               )}
@@ -93,6 +106,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '600',
     color: theme.primaryTextColor
   },
+  destructive: { color: theme.dangerColor },
   detail: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.8125),

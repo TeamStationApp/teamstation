@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import {
+  asPersonProfile,
   asPlayerDetail,
   asRosterEntry,
   type MyRoles,
@@ -922,34 +923,260 @@ describe('a player’s Settings tab', function () {
   })
 })
 
+describe('taking a player off the team from Settings', function () {
+  function removeClient(
+    asked: unknown[],
+    options: {
+      canHoldRoles?: boolean
+      refuse?: string
+      teams?: PlayerTeam[]
+      removed?: boolean
+    } = {}
+  ): TeamStationClient {
+    return Object.assign(
+      playerClient([], [], { teams: options.teams ?? [hawks] }),
+      {
+        personProfile: async () =>
+          asPersonProfile({
+            context: { kind: 'team', id: 't1', name: 'Hawks' },
+            person: {
+              userId: 7,
+              shortName: 'Jordan P',
+              fullName: 'Jordan Pujols',
+              avatarUrl: null,
+              canHoldRoles: options.canHoldRoles ?? true
+            },
+            guardianOf: [],
+            sections: [
+              {
+                level: 'team',
+                groups: [{ id: 't1', name: 'Hawks' }],
+                roles: ['scorekeeper'],
+                member: true,
+                follower: false,
+                editable: true
+              }
+            ],
+            viewer: { manages: true, admin: true }
+          }),
+        removePerson: async (kind: string, id: string, userId: number) => {
+          asked.push(['remove', kind, id, userId])
+          if (options.refuse != null)
+            throw new HttpError('conflict', options.refuse)
+          return { removed: options.removed ?? true }
+        }
+      }
+    )
+  }
+  const removeButton = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>(
+      '[data-testid="playerRemoveFromTeam"] [role="button"]'
+    )
+
+  it('is last on Settings for the team’s administrator, whether or not the player can sign in', async function () {
+    for (const canHoldRoles of [true, false]) {
+      await render(
+        <PlayerScreen
+          client={removeClient([], { canHoldRoles })}
+          userId="7"
+          forTeam="t1"
+          initialTab="settings"
+          roles={roles({ t1: ['admin'] })}
+        />
+      )
+      expect(removeButton()?.textContent, String(canHoldRoles)).equals(
+        'Remove from Hawks'
+      )
+      // Below the Team roles, which only a player who can sign in has.
+      expect(text().endsWith('Remove from Hawks'), String(canHoldRoles)).equals(
+        true
+      )
+      expect(text().includes('TEAM ROLES')).equals(canHoldRoles)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('is not there for a coach, an assistant, a guardian, or without the team', async function () {
+    for (const props of [
+      { forTeam: 't1', roles: roles({ t1: ['coach'] }) },
+      { forTeam: 't1', roles: roles({ t1: ['assistant', 'scorekeeper'] }) },
+      { forTeam: 't1', roles: roles({}, [7]) },
+      // An administrator of another team.
+      { forTeam: 't1', roles: roles({ t1: ['coach'], tem_other: ['admin'] }) },
+      { forTeam: undefined, roles: roles({ t1: ['admin'] }) }
+    ]) {
+      await render(
+        <PlayerScreen
+          client={removeClient([])}
+          userId="7"
+          initialTab="settings"
+          {...props}
+        />
+      )
+      expect(selectedTab(), JSON.stringify(props)).equals('Settings')
+      expect(removeButton(), JSON.stringify(props)).equals(null)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('is not there for a team the player has left', async function () {
+    await render(
+      <PlayerScreen
+        client={removeClient([], { teams: [{ ...hawks, current: false }] })}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={roles({ t1: ['admin'] })}
+      />
+    )
+    expect(selectedTab()).equals('Settings')
+    expect(removeButton()).equals(null)
+    expect(text()).not.includes('Remove from Hawks')
+  })
+
+  it('says nothing was changed, and stays, when the server took nobody off', async function () {
+    const asked: unknown[] = []
+    const removed: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={removeClient(asked, { removed: false })}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={roles({ t1: ['admin'] })}
+        onRemovedFromTeam={() => {
+          removed.push('gone')
+        }}
+      />
+    )
+    await press('Remove from Hawks')
+    await press('Remove Jordan P')
+    expect(asked).deep.equals([['remove', 'team', 't1', 7]])
+    expect(removed).deep.equals([])
+    expect(text()).not.includes('Removed Jordan P from Hawks')
+    expect(
+      document.querySelector(
+        '[data-testid="playerRemoveFromTeam"] [role="alert"]'
+      )?.textContent
+    ).equals('Jordan P is not on Hawks. Nothing was changed.')
+    expect(removeButton()?.getAttribute('aria-disabled')).not.equals('true')
+  })
+
+  it('asks first, then takes them off through the whole-person route and says so', async function () {
+    const asked: unknown[] = []
+    const removed: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={removeClient(asked)}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={roles({ t1: ['admin'] })}
+        onRemovedFromTeam={(teamId, teamName, notice) => {
+          removed.push([teamId, teamName, notice])
+        }}
+      />
+    )
+    await press('Remove from Hawks')
+    expect(text()).includes('Remove Jordan P from Hawks?')
+    expect(text()).includes(
+      'Jordan P leaves Hawks: off the roster, and every role they hold on it.'
+    )
+    // Cancel takes nothing away.
+    await press('Cancel')
+    expect(asked).deep.equals([])
+    expect(text()).not.includes('Remove Jordan P from Hawks?')
+    await press('Remove from Hawks')
+    await press('Remove Jordan P')
+    expect(asked).deep.equals([['remove', 'team', 't1', 7]])
+    expect(removed).deep.equals([
+      ['t1', 'Hawks', 'Removed Jordan P from Hawks']
+    ])
+  })
+
+  it('shows the server’s refusal and stays', async function () {
+    const asked: unknown[] = []
+    const removed: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={removeClient(asked, {
+          refuse:
+            'Add another active direct administrator before removing the last one'
+        })}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={roles({ t1: ['admin'] })}
+        onRemovedFromTeam={() => {
+          removed.push('gone')
+        }}
+      />
+    )
+    await press('Remove from Hawks')
+    await press('Remove Jordan P')
+    expect(asked).length(1)
+    expect(removed).deep.equals([])
+    expect(
+      document.querySelector(
+        '[data-testid="playerRemoveFromTeam"] [role="alert"]'
+      )?.textContent
+    ).equals(
+      'Add another active direct administrator before removing the last one'
+    )
+    expect(removeButton()?.getAttribute('aria-disabled')).not.equals('true')
+  })
+
+  it('goes back to the team’s roster through the app, with a confirmation', async function () {
+    const asked: string[] = []
+    fixtureFetch({ t1: ['admin'] }, [], asked)
+    await open('/players/7', 'tab=settings&onTeam=t1')
+    expect(selectedTab()).equals('Settings')
+    await press('Remove from Hawks')
+    await press('Remove Jordan P')
+    await act(async () => {
+      await delay(50)
+    })
+    expect(asked).include('DELETE /api/v1/manage/team/t1/people/7')
+    expect(routePath(currentRoute())).equals('/teams/t1?tab=team')
+    expect(text()).includes('Removed Jordan P from Hawks')
+  })
+})
+
 /** The app, answering from fixtures, with the roles given and every URL asked. */
 function fixtureFetch(
   roles: Record<string, string[]>,
   guardianOf: number[] = [],
   asked: string[] = []
 ): void {
-  globalThis.fetch = async input => {
+  globalThis.fetch = async (input, init) => {
     const url =
       typeof input === 'string'
         ? input
         : input instanceof URL
           ? input.href
           : input.url
-    asked.push(url)
+    const method = init?.method ?? 'GET'
+    asked.push(method === 'GET' ? url : `${method} ${url}`)
     const path = url.split('?')[0]
-    const data = path.endsWith('/auth/me')
-      ? { id: 100, displayName: 'Coach', isAdmin: false }
-      : path.endsWith('/me/roles')
-        ? { teams: roles, guardianOf }
-        : path.endsWith('/players/7')
-          ? { userId: 7, name: 'Jordan P', teams: [hawks] }
-          : path.endsWith('/players/7/highlights')
-            ? { highlights: [], nextBefore: null, withoutVideo: 0 }
-            : path.endsWith('/players/7/stats')
-              ? stats
-              : path.endsWith('/teams/t1/roster')
-                ? [{ ...jordan, userId: 7 }]
-                : []
+    const data = path.endsWith('/manage/team/t1/people/7')
+      ? { removed: true }
+      : path.endsWith('/auth/me')
+        ? { id: 100, displayName: 'Coach', isAdmin: false }
+        : path.endsWith('/me/roles')
+          ? { teams: roles, guardianOf }
+          : path.endsWith('/players/7')
+            ? { userId: 7, name: 'Jordan P', teams: [hawks] }
+            : path.endsWith('/players/7/highlights')
+              ? { highlights: [], nextBefore: null, withoutVideo: 0 }
+              : path.endsWith('/players/7/stats')
+                ? stats
+                : path.endsWith('/teams/t1/roster')
+                  ? [{ ...jordan, userId: 7 }]
+                  : []
     return new Response(JSON.stringify(data), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
@@ -1444,5 +1671,181 @@ describe('asking to be a player’s guardian', function () {
     fixtureFetch({})
     await open('/players/7')
     expect(requestButton()?.textContent).equals('Request to be a guardian')
+  })
+})
+
+describe('a player’s Team roles on Settings', function () {
+  function rolesClient(
+    canHoldRoles: boolean,
+    asked: unknown[],
+    admin = false,
+    given: Role[] = ['scorekeeper'],
+    member = true
+  ): TeamStationClient {
+    let held: Role[] = given
+    return Object.assign(playerClient(), {
+      personProfile: async (kind: string, id: string, userId: number) => {
+        asked.push(['profile', kind, id, userId])
+        return asPersonProfile({
+          context: { kind: 'team', id: 't1', name: 'Hawks' },
+          person: {
+            userId: 7,
+            shortName: 'Jordan P',
+            fullName: 'Jordan Pujols',
+            avatarUrl: null,
+            canHoldRoles
+          },
+          guardianOf: [],
+          sections: [
+            {
+              level: 'team',
+              groups: [{ id: 't1', name: 'Hawks' }],
+              roles: held,
+              member,
+              follower: false,
+              editable: true
+            },
+            {
+              level: 'season',
+              groups: [{ id: 's1', name: 'Spring 2026' }],
+              roles: [],
+              member: false,
+              follower: false,
+              editable: false
+            }
+          ],
+          viewer: { manages: true, admin }
+        })
+      },
+      addRole: async (kind: string, id: string, userId: number, role: Role) => {
+        asked.push(['add', kind, id, userId, role])
+        held = [...held, role]
+        return { userId, roles: held, member: true }
+      }
+    })
+  }
+
+  it('lists the team’s roles at the very bottom for a coach, with Add and Remove, team level only', async function () {
+    const asked: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={rolesClient(true, asked)}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={coach}
+      />
+    )
+    expect(asked[0]).deep.equals(['profile', 'team', 't1', 7])
+    const section = document.querySelector('[data-testid="playerTeamRoles"]')
+    expect(section).not.equals(null)
+    // Last on the tab, after the player's own settings.
+    expect(text().lastIndexOf('TEAM ROLES')).greaterThan(
+      text().indexOf('Jersey')
+    )
+    expect(text()).not.includes('SEASON ROLES')
+    // A coach changes everything but Admin.
+    expect(
+      section!.querySelector('[data-testid="role-team-admin"] [role="button"]')
+    ).equals(null)
+    expect(
+      section!.querySelector(
+        '[data-testid="role-team-scorekeeper"] [role="button"]'
+      )?.textContent
+    ).equals('Remove')
+    // Songkeeper comes with Scorekeeper; nothing to add.
+    const songkeeper = section!.querySelector(
+      '[data-testid="role-team-songkeeper"]'
+    )
+    expect(songkeeper?.querySelector('[role="button"]')).equals(null)
+    expect(songkeeper?.textContent).includes('With Scorekeeper')
+    // Their place on the team is the roster's: Member reads Player.
+    const member = section!.querySelector('[data-testid="role-team-member"]')
+    expect(member?.querySelector('[role="button"]')).equals(null)
+    expect(member?.textContent).equals('MemberPlayer')
+    await press('Add Assistant')
+    expect(asked).deep.include(['add', 'team', 't1', 7, 'assistant'])
+    expect(
+      section!.querySelector(
+        '[data-testid="role-team-assistant"] [role="button"]'
+      )?.textContent
+    ).equals('Remove')
+  })
+
+  it('reads Member as Player for the team’s administrator too, and every staff role with Admin', async function () {
+    const asked: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={rolesClient(true, asked, true, ['admin'])}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={roles({ t1: ['admin'] })}
+      />
+    )
+    const section = document.querySelector('[data-testid="playerTeamRoles"]')
+    expect(
+      section!.querySelector('[data-testid="role-team-admin"] [role="button"]')
+        ?.textContent
+    ).equals('Remove')
+    for (const role of ['coach', 'assistant', 'scorekeeper', 'songkeeper']) {
+      const row = section!.querySelector(`[data-testid="role-team-${role}"]`)
+      expect(row?.querySelector('[role="button"]'), role).equals(null)
+      expect(row?.textContent, role).includes('With Admin')
+    }
+    const member = section!.querySelector('[data-testid="role-team-member"]')
+    expect(member?.querySelector('[role="button"]')).equals(null)
+    expect(member?.textContent).includes('Player')
+  })
+
+  it('reads the usual Member row for somebody not on the team now', async function () {
+    await render(
+      <PlayerScreen
+        client={rolesClient(true, [], false, [], false)}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={coach}
+      />
+    )
+    const member = document.querySelector(
+      '[data-testid="playerTeamRoles"] [data-testid="role-team-member"]'
+    )
+    expect(member?.textContent).not.includes('Player')
+    expect(member?.querySelector('[role="button"]')?.textContent).equals('Add')
+  })
+
+  it('shows no roles for a player who cannot sign in, nor to anybody but the team’s staff', async function () {
+    const asked: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={rolesClient(false, asked)}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={coach}
+      />
+    )
+    expect(asked).length(1)
+    expect(document.querySelector('[data-testid="playerTeamRoles"]')).equals(
+      null
+    )
+    await act(async () => {
+      root?.unmount()
+    })
+    // A guardian sees the child's Settings, and not their roles.
+    const guardian: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={rolesClient(true, guardian)}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={roles({}, [7])}
+      />
+    )
+    expect(selectedTab()).equals('Settings')
+    expect(guardian).deep.equals([])
+    expect(text()).not.includes('TEAM ROLES')
   })
 })
