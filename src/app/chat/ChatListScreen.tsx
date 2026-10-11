@@ -236,11 +236,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const savePosition = (): void => {
     if (!liveData() || !restored.current) return
     const offset = currentOffset.current
-    scrollOwner.current.onOffset?.(offset)
-    if (explicitTop.current && offset === 0) {
+    if (explicitTop.current) {
+      scrollOwner.current.onOffset?.(0)
       scrollOwner.current.onAnchor?.(undefined)
       return
     }
+    scrollOwner.current.onOffset?.(offset)
     const candidates = [...positions.current].filter(
       ([, p]) =>
         p.data === dataKey &&

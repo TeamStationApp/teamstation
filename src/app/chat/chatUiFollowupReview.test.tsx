@@ -4802,3 +4802,130 @@ describe('qa4 review5 independent touch stream', function () {
     }
   })
 })
+
+describe('native deliberate-top late coordinate persistence', function () {
+  it('keeps the chosen top through stationary zero then an unowned positive coordinate and remount', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await act(async () => {
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({
+        nativeEvent: { contentOffset: { y: 120 } }
+      })
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({ nativeEvent: { contentOffset: { y: 0 } } })
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1), 'The genuine terminal chose zero').equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+    // An unowned offset event follows the completed native input.
+    await pending.scroll(52)
+    await act(async () => {
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(40)
+    })
+    expect(
+      pending.offsets.at(-1),
+      'Unowned positive coordinate cannot replace the deliberate top'
+    ).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+    await unmount()
+    const returning = await returningList(
+      true,
+      pending.offsets.at(-1),
+      pending.anchors.at(-1)
+    )
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_0', 160)
+    await returning.content(1800)
+    await returning.scroll(returning.moves.at(-1)!)
+    expect(returning.moves).deep.equals([0])
+    expect(returning.node.scrollTop).equals(0)
+  })
+})
+
+describe('native deliberate-top ownership', function () {
+  it('ingests the unowned coordinate without treating its unchanged native terminal as new movement', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await pending.scroll(52)
+    await act(async () => {
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({ nativeEvent: { contentOffset: { y: 52 } } })
+      await wait()
+    })
+    // If raw 52 had been discarded internally, this same-coordinate terminal
+    // would appear to move from zero and incorrectly retire the top choice.
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+  })
+
+  it('lets a genuine new positive native gesture replace the deliberate top', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await pending.scroll(52)
+    await act(async () => {
+      nativeListStart(pending.node)
+      pending.node.scrollTop = 120
+      nativeListEnd(pending.node)({
+        nativeEvent: { contentOffset: { y: 120 } }
+      })
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(40)
+    })
+    expect(pending.offsets.at(-1)).equals(120)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_0',
+      relativeY: -16
+    })
+  })
+
+  it('accepts positive momentum with the genuine preceding native release scope', async function () {
+    const pending = await returningList(true, 120)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(120)
+    await act(async () => {
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({
+        nativeEvent: { contentOffset: { y: 0 }, velocity: { y: 2 } }
+      })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+    await act(async () => {
+      nativeListStart(pending.node, true)
+      pending.node.scrollTop = 80
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 80 } } })
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(40)
+    })
+    expect(pending.offsets.at(-1)).equals(80)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_0',
+      relativeY: 24
+    })
+  })
+})
