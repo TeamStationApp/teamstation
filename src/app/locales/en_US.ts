@@ -267,6 +267,10 @@ export const enUs = {
   walkup_setup_done: 'Done',
   walkup_setup_settings: 'Go to Settings',
   walkup_setup_close: 'Close',
+  walkup_not_downloaded:
+    'Some walk-up songs still need to be downloaded. Make sure your Apple Music settings are configured properly.',
+  walkup_not_downloaded_settings: 'Go to Settings',
+  walkup_not_downloaded_ignore: 'Ignore',
   walkup_length: '%s s',
   walkup_earlier: '1 s earlier',
   walkup_later: '1 s later',

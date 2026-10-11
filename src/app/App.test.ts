@@ -88,9 +88,16 @@ describe('DJ Game in the shell', function () {
     expect(phone).greaterThan(0)
     expect(web).greaterThan(phone)
     expect(source.slice(phone, web)).contains('<DjGameScreen')
+    // A new game is a new instance, so its walk-up songs are got ready too.
+    expect(source.slice(phone, web)).contains('key={top.gameId}')
     const next = source.indexOf(') : top.name', web)
     expect(source.slice(web, next)).contains('<GameScreen')
     expect(source.slice(web, next)).not.contains('<DjGameScreen')
+  })
+
+  it('mounts DJ Game and scoring afresh for each game', function () {
+    expect(source).match(/<DjGameScreen[^>]*?key=\{top\.gameId\}/)
+    expect(source).match(/<ScoringScreen\s+key=\{top\.gameId\}/)
   })
 
   it('is not immersive: the header and the tabs stay', function () {

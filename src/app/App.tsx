@@ -1403,6 +1403,9 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'djGame' && walkUpMusic.djSupported ? (
       <DjGameScreen
+        // One instance per game: its walk-up songs are got ready once per
+        // visit, and another game is another visit.
+        key={top.gameId}
         client={client}
         gameId={top.gameId}
         socket={gameSocket}
@@ -1469,6 +1472,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreGame' ? (
       <ScoringScreen
+        key={top.gameId}
         userId={session?.user.id}
         client={client}
         source={scoringSource}

@@ -19,6 +19,7 @@ import {
   type DjSocket
 } from './DjGameScreen'
 import type { PlaybackState, WalkUpMusic } from './walkUpMusicTypes'
+import type { ReadinessStore } from './walkUpReadiness'
 
 /**
  * U29: DJ Game — the roster editor's team pill, the list and its notes, and
@@ -231,6 +232,12 @@ function fakeMusic(): WalkUpMusic & { played: string[]; stops: number[] } {
   }
 }
 
+/** A device that has seen the walkthrough and the notice: neither opens. */
+const ALREADY_SHOWN: ReadinessStore = {
+  read: async () => ({ onboarded: true, promptShown: true }),
+  write: async () => undefined
+}
+
 async function render(
   props: Partial<DjGameScreenProps> & { client: TeamStationClient }
 ): Promise<void> {
@@ -240,7 +247,12 @@ async function render(
   await act(async () => {
     root?.render(
       <ThemeProvider>
-        <DjGameScreen gameId="g1" music={fakeMusic()} {...props} />
+        <DjGameScreen
+          gameId="g1"
+          music={fakeMusic()}
+          readiness={ALREADY_SHOWN}
+          {...props}
+        />
       </ThemeProvider>
     )
     await delay(30)
@@ -616,6 +628,74 @@ describe('DJ Game on the socket (U29)', function () {
       document.dispatchEvent(touch('mouseup'))
     })
     expect(names()[0]).includes('Pinch')
+  })
+})
+
+describe('DJ Game getting the songs onto the phone', function () {
+  const apple = (providerId: string): WalkUpSong => ({
+    ...walk,
+    provider: 'appleMusic',
+    providerId
+  })
+
+  it('prepares both teams’ Apple Music songs once, from the first read', async function () {
+    const asked: string[][] = []
+    const music = {
+      ...fakeMusic(),
+      prepareOffline: async (ids: string[]) => {
+        asked.push(ids)
+        return null
+      }
+    }
+    const first = game(
+      {
+        batters: [
+          { userId: 9, name: 'Otto', walkUpSong: apple('111') },
+          { userId: 8, name: 'Olga', walkUpSong: walk }
+        ]
+      },
+      {
+        batters: [
+          { userId: 1, name: 'Tom A', walkUpSong: apple('222') },
+          { userId: 2, name: 'Bea B', walkUpSong: apple('111') },
+          { userId: 3, name: 'Cal C', walkUpSong: null }
+        ]
+      }
+    )
+    const socket = new FakeSocket()
+    await render({ client: djClient([first]), music, socket })
+    expect(asked).deep.equals([['111', '222']])
+    await socket.emit('g1', {
+      type: 'change',
+      gameId: 'g1',
+      kind: 'walkUpSong',
+      at: '',
+      data: { teamId: 'tem_t', userId: 3, song: apple('333') }
+    })
+    expect(asked).deep.equals([['111', '222']])
+  })
+
+  it('opens the walkthrough on this device’s first visit', async function () {
+    const written: unknown[] = []
+    await render({
+      client: djClient([game()]),
+      readiness: {
+        read: async () => ({ onboarded: false, promptShown: false }),
+        write: async value => {
+          written.push(value)
+        }
+      }
+    })
+    expect(document.body.textContent).includes(
+      'TeamStation DJ, enable the following'
+    )
+    await press('Close')
+    expect(written).deep.equals([{ onboarded: true, promptShown: false }])
+    // Gone before the shared teardown, which other suites' hooks may follow.
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
   })
 })
 

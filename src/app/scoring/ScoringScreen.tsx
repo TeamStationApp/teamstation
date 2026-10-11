@@ -44,6 +44,12 @@ import {
 } from '../walkup/useWalkUpNote'
 import { WalkUpControl } from '../walkup/WalkUpControl'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
+import {
+  appleMusicIds,
+  type ReadinessStore,
+  useWalkUpReadiness
+} from '../walkup/walkUpReadiness'
+import { WalkUpReadinessModals } from '../walkup/WalkUpReadinessModals'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
 import {
@@ -136,11 +142,33 @@ export interface ScoringScreenProps {
   ) => Promise<string | null>
   /** Whether an Apple Music clip fades on the phone's volume. */
   fadeAppleMusic?: boolean
+  /** Where this device remembers what it has said about offline songs. */
+  readiness?: ReadinessStore
 }
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
   const [rosters, setRosters] = useState<WalkUpRosters>({})
+  const music = props.music ?? NO_WALK_UP_MUSIC
+  // Both teams' Apple Music walk-up songs, once the game and its rosters
+  // are read: they go into the phone's library on the way in.
+  const walkUpIds = useMemo(
+    () =>
+      opened == null
+        ? null
+        : appleMusicIds(
+            Object.values(rosters).flatMap(roster =>
+              roster.map(entry => entry.walkUpSong)
+            )
+          ),
+    [opened, rosters]
+  )
+  const [overlay, setOverlay] = useState(false)
+  const readiness = useWalkUpReadiness(music, walkUpIds, {
+    screen: 'scoring',
+    blocked: overlay,
+    store: props.readiness
+  })
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
   const surface = useFieldSurface()
@@ -218,20 +246,25 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       </View>
     )
   return (
-    <ScoringPanel
-      key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}`}
-      game={opened}
-      client={props.client}
-      gameId={props.gameId}
-      persistent={source.persistent === true}
-      source={source}
-      onExit={props.onExit}
-      userId={String(props.userId ?? 'local-scorer')}
-      rosters={rosters}
-      music={props.music ?? NO_WALK_UP_MUSIC}
-      resolveSong={props.resolveSong}
-      fadeAppleMusic={props.fadeAppleMusic}
-    />
+    <>
+      <ScoringPanel
+        key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}`}
+        game={opened}
+        client={props.client}
+        gameId={props.gameId}
+        persistent={source.persistent === true}
+        source={source}
+        onExit={props.onExit}
+        userId={String(props.userId ?? 'local-scorer')}
+        rosters={rosters}
+        music={music}
+        resolveSong={props.resolveSong}
+        fadeAppleMusic={props.fadeAppleMusic}
+        onOverlay={setOverlay}
+        walkUpOpen={readiness.covering}
+      />
+      <WalkUpReadinessModals readiness={readiness} />
+    </>
   )
 }
 interface SaveStatus {
@@ -301,6 +334,14 @@ function ScoringPanel(props: {
   music: WalkUpMusic
   resolveSong?: ScoringScreenProps['resolveSong']
   fadeAppleMusic?: boolean
+  /** Whether one of the panel's own modals is up, which holds any other. */
+  onOverlay?: (open: boolean) => void
+  /**
+   * The walk-up walkthrough or notice is up over the panel: the clock and
+   * any replay pause, and a dictation question waits, since iOS shows one
+   * modal at a time.
+   */
+  walkUpOpen?: boolean
 }): React.ReactElement {
   const theme = useTheme()
   // A ball in play saved without its result cannot be shown, because the
@@ -555,6 +596,26 @@ function ScoringPanel(props: {
       tagTarget == null,
     dispatch
   )
+  // A sheet, the defensive roster, the tag history and its editor, the More
+  // menu, the outcome picker, the dictation question, the tiebreaker's
+  // setup and runner sheets, and the runner-reason and error-credit sheets
+  // are each a Modal on iOS, which presents one at a time.
+  const overlaid =
+    sheet != null ||
+    defensiveOpen ||
+    historyActive ||
+    tagTarget != null ||
+    moreOpen ||
+    outcomeMenu ||
+    tiebreaker.mode === 'settings' ||
+    typeof tiebreaker.mode === 'number' ||
+    state.dictationQuestion != null ||
+    state.phase === 'runnerReason' ||
+    state.phase === 'errorCredit'
+  const { onOverlay } = props
+  useEffect(() => {
+    onOverlay?.(overlaid)
+  }, [onOverlay, overlaid])
   const pauseClock = useScoringClock(
     state,
     menu ||
@@ -566,7 +627,8 @@ function ScoringPanel(props: {
       moreOpen ||
       tiebreaker.active ||
       gestureActive ||
-      state.presentation != null,
+      state.presentation != null ||
+      props.walkUpOpen === true,
     dispatch
   )
   const setGesture = useCallback(
@@ -797,7 +859,7 @@ function ScoringPanel(props: {
     session,
     log: state.log,
     problem: state.dictation?.problem,
-    question: state.dictationQuestion,
+    question: props.walkUpOpen === true ? undefined : state.dictationQuestion,
     played,
     onAnswer: answer => {
       if (
@@ -1350,7 +1412,12 @@ function ScoringPanel(props: {
         onLandingPreview: setLandingPreview,
         presentation: state.presentation,
         presentationPaused:
-          menu || sheet != null || outcomeMenu || moreOpen || tiebreaker.active,
+          menu ||
+          sheet != null ||
+          outcomeMenu ||
+          moreOpen ||
+          tiebreaker.active ||
+          props.walkUpOpen === true,
         onPresentationContact: (id, generation) => {
           dispatch({ type: 'PRESENTATION_CONTACT', id, generation })
         },
