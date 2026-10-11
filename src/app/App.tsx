@@ -904,6 +904,7 @@ function Shell(props: AppProps): React.ReactElement {
             key={route.token}
             client={client}
             token={route.token}
+            server={route.server}
             onSignedIn={rememberSession}
             onSignInAgain={linkSpent => {
               const destination: Route = { name: 'signIn' }

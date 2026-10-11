@@ -9,6 +9,7 @@ import type {
 } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
+import { signInRequest } from '../platform/signInRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface JoinScreenProps {
@@ -93,6 +94,7 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
   const sendCode = (): void => {
     run(async () => {
       const wait = await client.requestInviteCode(code, {
+        ...signInRequest,
         email: email.trim(),
         displayName: name.trim() === '' ? undefined : name.trim()
       })

@@ -677,7 +677,14 @@ instead` is below the fold, so the flow scrolls to it.
   emulator and is not a thing to put on a phone somebody else owns; iOS has no
   `DEVELOPMENT_TEAM` at all. Both want Paul's accounts, and the App Links and
   universal links below want the same two facts.
-- **Universal links and App Links are not live.** The custom `teamstation://`
-  scheme works on both platforms and the `https://` intent filters are
-  declared; Apple's `apple-app-site-association` needs a team ID and Android's
-  `assetlinks.json` needs the release signing fingerprint.
+- **Sign-in links open the app on its own link host.** A build whose
+  `clientConfig.json` names an `appOrigin` sends it with every sign-in request,
+  and the server mails `<appOrigin>/signin/<token>?server=<itself>`. The build
+  claims only `/signin/` on that host: iOS through `TeamStation.entitlements`
+  (`applinks:$(TS_APP_LINK_HOST)`, signed in only when the xcconfig names it),
+  Android through `android/app/src/appLinks/AndroidManifest.xml`, merged only
+  when there is a host. The server answers that host's
+  `apple-app-site-association` and `assetlinks.json` from its own config. The
+  app spends a link only for its own server, or one whose OpenID issuer is
+  `<server>/oauth`; otherwise it says whose link it is. The custom
+  `teamstation://` scheme works as before.

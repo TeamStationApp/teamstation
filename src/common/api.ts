@@ -1217,6 +1217,13 @@ export class TeamStationClient {
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
   private passwordPreparation?: Promise<ClientPasswordCosts>
+  /**
+   * The sign-in request this client asked for last. An installed app that
+   * spends its link (with a device name) is the one polling for it, and says
+   * so, so the poll is not approved too. A browser spending a link names
+   * nothing: the request it finishes may be waiting in another tab.
+   */
+  private askedSignIn?: string
   token: string | undefined
 
   constructor(options: ClientOptions) {
@@ -1423,12 +1430,58 @@ export class TeamStationClient {
     email: string,
     options: SignInRequestOptions = {}
   ): Promise<SignInWait> {
-    return await this.request('POST', '/auth/email-code', asSignInWait, {
+    const wait = await this.request('POST', '/auth/email-code', asSignInWait, {
       email,
       origin: options.origin ?? 'web',
       next: options.next,
       appOrigin: options.appOrigin
     })
+    this.askedSignIn = wait.requestId
+    return wait
+  }
+
+  /**
+   * The origin of the server this client talks to: its base URL without the
+   * API path, or the page's own origin when the base URL is a path, as it is
+   * on the web.
+   */
+  serverOrigin(): string {
+    const match = /^(https?:\/\/[^/]+)/i.exec(this.baseUrl)
+    if (match != null) return match[1].toLowerCase()
+    return (
+      (globalThis as { location?: { origin?: string } }).location?.origin ?? ''
+    )
+  }
+
+  /**
+   * The server's OpenID issuer, `<its public origin>/oauth`: how an app finds
+   * out what its server calls itself, which is not always the address the app
+   * was built to talk to. Null when the server answered without one (a server
+   * with OAuth off has no discovery, and so vouches for no other name);
+   * undefined when it could not be asked: no answer, or a 5xx.
+   */
+  async issuer(): Promise<string | null | undefined> {
+    let response: Response
+    try {
+      response = await this.doFetch(
+        `${this.serverOrigin()}/oauth/.well-known/openid-configuration`,
+        { method: 'GET', headers: { accept: 'application/json' } }
+      )
+    } catch {
+      return undefined
+    }
+    if (response.status >= 500) return undefined
+    if (!response.ok) return null
+    try {
+      const body: unknown = await response.json()
+      const issuer =
+        body != null && typeof body === 'object' && 'issuer' in body
+          ? body.issuer
+          : undefined
+      return typeof issuer === 'string' ? issuer : null
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -1440,9 +1493,11 @@ export class TeamStationClient {
   async signInWithLink(token: string, deviceName?: string): Promise<Session> {
     const session = await this.request('POST', '/auth/link/verify', asSession, {
       token,
-      deviceName
+      deviceName,
+      requestId: deviceName == null ? undefined : this.askedSignIn
     })
     this.token = session.token
+    this.askedSignIn = undefined
     return session
   }
 
@@ -2399,12 +2454,14 @@ export class TeamStationClient {
     code: string,
     options: { email: string; displayName?: string } & SignInRequestOptions
   ): Promise<SignInWait> {
-    return await this.request(
+    const wait = await this.request(
       'POST',
       `/join/${encodeURIComponent(code)}/email-code`,
       asSignInWait,
       { ...options, origin: options.origin ?? 'web' }
     )
+    this.askedSignIn = wait.requestId
+    return wait
   }
 
   /** Everything the page behind the gear needs, in one call. */

@@ -37,3 +37,18 @@ if (
 
 export const apiBaseUrl: string =
   configured ?? `${httpOrigin(PRIMARY_HOST)}/api/v1`
+
+/**
+ * The app's own link host, which its sign-in links are mailed to and which its
+ * operating system opens them from: `appOrigin` in the build's gitignored
+ * `clientConfig.json`, inlined by `babel.config.js`. Undefined in a build
+ * without one, which asks for ordinary web sign-in links.
+ */
+export const appOrigin: string | undefined = appOriginOf(
+  process.env.TS_APP_ORIGIN
+)
+
+/** The link host a build inlined, or undefined for none or an empty one. */
+export function appOriginOf(inlined: string | undefined): string | undefined {
+  return inlined == null || inlined === '' ? undefined : inlined
+}

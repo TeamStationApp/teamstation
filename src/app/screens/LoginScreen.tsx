@@ -3,6 +3,7 @@ import { Platform, Text, View } from 'react-native'
 
 import type { Session, SignInWait, TeamStationClient } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
+import { signInRequest } from '../platform/signInRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface LoginScreenProps {
@@ -69,9 +70,7 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
 
   const sendCode = (): void => {
     run(async () => {
-      const wait = await client.requestEmailCode(email.trim(), {
-        origin: 'web'
-      })
+      const wait = await client.requestEmailCode(email.trim(), signInRequest)
       waiting.current = wait
       setCodeSent(true)
     })
