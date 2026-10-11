@@ -746,6 +746,7 @@ describe('api client', function () {
       ingestStatus: 'ok',
       ingestMessage: null,
       linescore: JSON.parse(JSON.stringify(linescore)),
+      nonMemberView: false,
       videos: []
     })
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
@@ -934,6 +935,7 @@ describe('api client', function () {
       awayScore: null,
       ingestStatus: 'none',
       ingestMessage: null,
+      nonMemberView: false,
       videos: []
     }
     const flagged = stubFetch(200, {

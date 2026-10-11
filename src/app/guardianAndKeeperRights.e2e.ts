@@ -25,6 +25,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { posterSecond } from '../server/media/posters'
 import { type GuardianFixture, guardianFixture } from '../test/guardianFixture'
 import type { BrowserSession } from '../test/refinementsMaestro.e2e'
 
@@ -55,7 +56,8 @@ type ApiLog = (
 ) => Promise<{ status: number; body: any }>
 
 const stages: Record<string, (run: Run) => Promise<void>> = {
-  apiRoles
+  apiRoles,
+  api
 }
 
 /**
@@ -115,6 +117,172 @@ async function apiRoles(run: Run): Promise<void> {
   ])
   const admin = await api('GET', '/me/roles', people.admin)
   expect(admin.body.teams[f.teamA]).includes('assistant')
+}
+
+/**
+ * The non-member view through the API: a follower, somebody signed in who
+ * follows nothing, nobody signed in, and a member each read every route the
+ * non-member view touches. The two signed in who are not members read the
+ * same answers, following or not. Long answers are cut to the fields that
+ * show what is given and what is withheld.
+ */
+async function api(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  const [game] = f.games
+  // The Hawks compete in Demo Regular, so the season has a table.
+  await f.h.db
+    .insertInto('season_teams')
+    .values({ season_id: f.seasonA, team_id: f.teamA, joined_at: new Date() })
+    .execute()
+  await f.h.db
+    .updateTable('games')
+    .set({
+      linescore: JSON.stringify({
+        away: { runs: [1, 0, 2], r: 3, h: 6, e: 2, bb: 1, k: 4, hr: 0, hbp: 1 },
+        home: { runs: [2, 1, 3], r: 6, h: 9, e: 0, bb: 3, k: 2, hr: 1, hbp: 0 }
+      })
+    })
+    .where('id', '=', game.id)
+    .execute()
+  await f.h.db
+    .updateTable('users')
+    .set({ avatar_path: 'avatars/avery' })
+    .where('id', '=', f.players[0].id)
+    .execute()
+
+  const call = run.api('api-follower.log', nonMemberSummary)
+  const routes = [
+    `/teams/${f.teamA}`,
+    `/teams/${f.teamA}/roster`,
+    `/teams/${f.teamA}/games`,
+    `/teams/${f.teamA}/stats`,
+    `/teams/${f.teamA}/stats?kind=pitching`,
+    `/seasons/${f.seasonA}/standings`,
+    `/games/${game.id}`,
+    `/games/${game.id}/box-score`,
+    `/videos/${game.videoId}/highlights`,
+    `/videos/${game.videoId}/playback`,
+    // A second whose still the fixture keeps, so a member's answer is the still.
+    `/videos/${game.videoId}/still?t=${posterSecond(7200)}`
+  ]
+  const expected: Record<string, number[]> = {
+    // follower, stranger, nobody, member
+    [routes[0]]: [200, 200, 200, 200],
+    [routes[1]]: [200, 200, 401, 200],
+    [routes[2]]: [200, 200, 401, 200],
+    [routes[3]]: [403, 403, 401, 200],
+    [routes[4]]: [403, 403, 401, 200],
+    [routes[5]]: [200, 200, 401, 200],
+    [routes[6]]: [200, 200, 401, 200],
+    [routes[7]]: [403, 403, 401, 200],
+    [routes[8]]: [200, 200, 401, 200],
+    [routes[9]]: [403, 403, 401, 200],
+    [routes[10]]: [403, 403, 401, 200]
+  }
+  const users = [people.follower, people.oneTeam, null, people.teamCoach]
+  for (const [at, user] of users.entries()) {
+    for (const route of routes) {
+      const answer = await call('GET', route, user)
+      expect(answer.status, `${route} as ${user}`).equals(expected[route][at])
+      if (answer.status === 403)
+        expect(answer.body).deep.equals({
+          code: 'membersOnly',
+          message: 'You need to be a member of one of the teams to see this.'
+        })
+      // The follower and the stranger, the two signed in who are not members.
+      const outside = at < 2
+      if (route === routes[0]) expect(answer.body.nonMemberView).equals(outside)
+      if (route === routes[6] && answer.status === 200) {
+        expect(answer.body.nonMemberView).equals(outside)
+        expect(answer.body.linescore.home.h).equals(outside ? null : 9)
+      }
+      if (route === routes[1] && answer.status === 200) {
+        const avery = (
+          answer.body as Array<{ userId: number; avatarUrl: string | null }>
+        ).find(row => row.userId === f.players[0].id)
+        expect(avery?.avatarUrl == null).equals(outside)
+      }
+    }
+  }
+}
+
+/**
+ * What the non-member log keeps of an answer: the fields that show what a
+ * non-member is given and what is withheld, not every row in full.
+ */
+function nonMemberSummary(route: string, body: any): unknown {
+  if (body == null || typeof body !== 'object') return body
+  if (/^\/teams\/[^/]+$/.test(route))
+    return {
+      group: { id: body.group?.id, name: body.group?.name },
+      canViewPrivate: body.canViewPrivate,
+      canManage: body.canManage,
+      nonMemberView: body.nonMemberView,
+      '…': 'parents, children, staff and games left out'
+    }
+  if (route.endsWith('/roster'))
+    return (body as any[]).map(row => ({
+      shortName: row.shortName,
+      section: row.section,
+      jersey: row.jersey,
+      avatarUrl: row.avatarUrl == null ? null : '<signed picture URL>'
+    }))
+  if (route.endsWith('/games'))
+    return (body as any[]).map(row => ({
+      id: row.id,
+      homeTeamName: row.homeTeamName,
+      awayTeamName: row.awayTeamName,
+      homeScore: row.homeScore,
+      awayScore: row.awayScore,
+      videoCount: row.videoCount,
+      posterUrl: row.posterUrl == null ? null : '<signed poster URL>'
+    }))
+  if (route.endsWith('/standings'))
+    return (body as any[]).map(row => ({
+      teamName: row.teamName,
+      w: row.w,
+      l: row.l
+    }))
+  if (/^\/games\/[^/]+$/.test(route))
+    return {
+      id: body.id,
+      homeTeamName: body.homeTeamName,
+      awayTeamName: body.awayTeamName,
+      homeScore: body.homeScore,
+      awayScore: body.awayScore,
+      homeRecord: body.homeRecord,
+      awayRecord: body.awayRecord,
+      homeLogoUrl: body.homeLogoUrl,
+      awayLogoUrl: body.awayLogoUrl,
+      canScore: body.canScore,
+      canDj: body.canDj,
+      nonMemberView: body.nonMemberView,
+      linescore: body.linescore,
+      videos: (body.videos as any[]).map(video => ({
+        id: video.id,
+        posterUrl: video.posterUrl == null ? null : '<signed poster URL>'
+      }))
+    }
+  if (route.endsWith('/box-score'))
+    return {
+      batting: `${body.batting.length} lines`,
+      pitching: `${body.pitching.length} lines`,
+      stats: body.stats
+    }
+  if (route.endsWith('/stats') || route.includes('/stats?'))
+    return Array.isArray(body) ? `${body.length} lines` : body
+  if (route.endsWith('/highlights'))
+    return {
+      withheld: body.withheld,
+      highlights: (body.highlights as any[]).map(highlight => ({
+        title: highlight.title,
+        stillUrl: highlight.stillUrl.replace(/\?t=.*$/, '?t=<token>')
+      }))
+    }
+  if (route.endsWith('/playback'))
+    return { ...body, url: body.url == null ? null : '<signed playlist URL>' }
+  return body
 }
 
 async function main(): Promise<void> {

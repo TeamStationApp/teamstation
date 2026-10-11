@@ -333,16 +333,17 @@ describe('private socket access follows approved game revisions', function () {
               .executeTakeFirstOrThrow()
           ).status
         ).equals('accepted')
+        // The old opponent reads the game now only in the non-member view.
+        const outside = await f.h.request(
+          'GET',
+          `/games/${published.gameId}`,
+          undefined,
+          106
+        )
+        expect(outside.status).equals(200)
         expect(
-          (
-            await f.h.request(
-              'GET',
-              `/games/${published.gameId}`,
-              undefined,
-              106
-            )
-          ).status
-        ).equals(404)
+          ((await outside.json()) as { nonMemberView: boolean }).nonMemberView
+        ).equals(true)
         const controlFrom = currentViewer.length
         await socket.fanout.deliver(
           JSON.stringify({ game: published.gameId, kind: 'lineups' })

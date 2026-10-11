@@ -11,6 +11,7 @@ import { GroupSettingsScreen } from './GroupSettingsScreen'
 
 let root: Root | undefined
 const detail = asGroupDetail({
+  nonMemberView: false,
   group: {
     kind: 'team',
     id: 'canonical',

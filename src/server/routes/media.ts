@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { type Response, Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  membersOnly,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { VIDEO_FILE } from '../media/ffmpeg'
@@ -79,9 +84,11 @@ export function mediaRoutes(
         ])
         .where('videos.id', '=', videoId)
         .executeTakeFirst()
-      // 404 rather than 403 throughout, so existence never leaks.
+      // A video that is not there, or hidden, is 404. Anybody else signed in
+      // reads its game, as a member or in the non-member view, and so is
+      // told the video is for members when they are not one.
       if (video == null || video.hidden) throw notFound()
-      if (!canSeeGame(scopes, video)) throw notFound()
+      if (!canSeeGame(scopes, video)) throw membersOnly()
 
       const location = await locateVideo({
         mediaRoot,
@@ -151,7 +158,10 @@ export function mediaRoutes(
         .where('videos.id', '=', videoId)
         .executeTakeFirst()
       if (video == null || video.hidden) throw notFound()
-      if (!canSeeGame(scopes, video)) throw notFound()
+      // A non-member has each highlight's signed still from the list; a
+      // frame of their own choosing is part of the video, which is for
+      // members.
+      if (!canSeeGame(scopes, video)) throw membersOnly()
 
       await redirectToStill(res, video.storage, videoId, atSec)
     })
@@ -171,11 +181,19 @@ export function mediaRoutes(
       const videoId = pathParam(req.params.videoId)
       const match = /^(\d{1,6})\.jpg$/.exec(pathParam(req.params.file))
       if (match == null) throw notFound()
-      if (!verifyQueryToken(mediaSecret, stillSubject(videoId), req.query.t)) {
+      const atSec = Number(match[1])
+      // The token names the second it was minted for, so a URL opens only the
+      // frame it was handed out for, not any other second of the video.
+      if (
+        !verifyQueryToken(
+          mediaSecret,
+          stillSubject(videoId, atSec),
+          req.query.t
+        )
+      ) {
         res.status(403).end()
         return
       }
-      const atSec = Number(match[1])
       if (!spaceConfigured(space)) throw notFound()
       if (await stillInSpace(space, videoId, atSec)) {
         sendStillRedirect(res, videoId, atSec)

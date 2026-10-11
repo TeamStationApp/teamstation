@@ -75,6 +75,7 @@ const group = asPublicGroup({
   locality: null
 })
 const detail = asGroupDetail({
+  nonMemberView: false,
   group,
   parents: [],
   children: [],

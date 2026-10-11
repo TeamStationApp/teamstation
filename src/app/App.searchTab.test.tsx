@@ -34,6 +34,7 @@ describe('the Search tab', () => {
     proto.discoverGroups = async () => [league]
     proto.group = async () =>
       asGroupDetail({
+        nonMemberView: false,
         group: league,
         parents: [],
         children: [],

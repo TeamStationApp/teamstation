@@ -183,11 +183,16 @@ export function statsRoutes(
       if (season == null) throw notFound()
 
       // A season's table is visible to anyone in it, or to anyone the season
-      // or its league has opened itself up to.
-      const inSeason = teams.some(row => scopes.teamIds.has(row.team_id))
-      if (!inSeason && !scopes.seasonIds.has(seasonId) && !scopes.isAdmin) {
+      // or its league has opened itself up to, and to anybody else signed in
+      // once a team plays in it: every team's page is open to them in the
+      // non-member view, and shows where the team stands. A season with no
+      // team in it has no team page to show it on.
+      if (
+        teams.length === 0 &&
+        !scopes.seasonIds.has(seasonId) &&
+        !scopes.isAdmin
+      )
         throw notFound()
-      }
 
       const asked = req.query.includeExhibitions
       if (asked !== undefined && asked !== 'true' && asked !== 'false')

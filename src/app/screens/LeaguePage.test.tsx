@@ -77,6 +77,7 @@ const team = (id: string, name: string, external = false): PublicGroup =>
     external
   })
 const detail = asGroupDetail({
+  nonMemberView: false,
   group: league,
   parents: [],
   children: [

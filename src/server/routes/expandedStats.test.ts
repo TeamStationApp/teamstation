@@ -116,9 +116,11 @@ describe('expanded statistics routes', function () {
         await ask('/teams/tem_home/stats?kind=pitching&seasonId=sea_missing')
       ).json()
     ).deep.equals([])
+    // Signed in and not a member: the non-member view, whose figures are
+    // kept for members.
     expect(
       (await ask('/teams/tem_home/stats?kind=pitching', 'stranger')).status
-    ).equals(404)
+    ).equals(403)
     expect(
       (await ask('/teams/tem_home/stats?kind=pitching', 'none')).status
     ).equals(401)

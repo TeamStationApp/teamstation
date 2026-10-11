@@ -15,6 +15,7 @@ import type { ScoringEvent, ScoringState } from './scoringTypes'
 export function modalRendererFixture(kind: string): ScoringState {
   const session = createDevelopmentSession(
     asGameDetail({
+      nonMemberView: false,
       id: 'modal-preview',
       awayTeamId: 'away',
       homeTeamId: 'home',

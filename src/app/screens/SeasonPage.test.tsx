@@ -71,6 +71,7 @@ const team = (id: string, name: string): PublicGroup =>
     }
   })
 const detail = asGroupDetail({
+  nonMemberView: false,
   group: season,
   parents: [],
   children: [team('team_hawks', 'Demo Hawks')],

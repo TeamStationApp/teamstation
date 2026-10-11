@@ -351,10 +351,12 @@ describe('scoped pending schedules and request-local authority', function () {
       await f.h.request('GET', `/teams/${placeholder}`, undefined, 101)
     ).json()
     expect(profile).includes({ canManage: true, canViewPrivate: false })
+    // Keeping the placeholder is not being a member of it: what is kept for
+    // members is refused.
     expect(
-      (await f.h.request('GET', `/teams/${placeholder}/games`, undefined, 101))
+      (await f.h.request('GET', `/teams/${placeholder}/stats`, undefined, 101))
         .status
-    ).equals(404)
+    ).equals(403)
     await f.h.db
       .insertInto('memberships')
       .values({

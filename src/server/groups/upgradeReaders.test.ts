@@ -150,11 +150,13 @@ describe('upgraded ownership reads and current competition projections', functio
         (await h.request('GET', '/teams/tem_account/roster', undefined, 102))
           .status
       ).equals(200)
+      // Not made a member by the cutover: what is kept for members is
+      // refused them.
       if (ambiguous)
         expect(
-          (await h.request('GET', '/teams/tem_account/roster', undefined, 103))
+          (await h.request('GET', '/teams/tem_account/stats', undefined, 103))
             .status
-        ).equals(404)
+        ).equals(403)
     })
 
   it('never expands a visiting roster with host spectators and removes inactive membership from all current selectors while preserving games', async () => {

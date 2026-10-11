@@ -64,6 +64,7 @@ describe('team settings browser history', () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
     const detail = asGroupDetail({
+      nonMemberView: false,
       group: {
         kind: 'team',
         id: 'canonical',

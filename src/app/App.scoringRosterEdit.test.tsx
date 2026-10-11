@@ -400,13 +400,16 @@ describe('actual App scoring player Settings return', function () {
       }
     )
   })
-  it('keeps own-team editing when the opponent roster is inaccessible', async function () {
+  it('keeps own-team editing when the opponent roster is read without private names', async function () {
     await withScoringApp(async fixture => {
       await fixture.roles(['scorekeeper'], 'team', ['away'])
       await openEditor()
+      // Anybody signed in reads another team's roster, short names only, so
+      // the opponent's is there without the right to manage it.
       expect(
         fixture.trace.some(
-          line => line.includes('/teams/home/roster') && line.includes('-> 404')
+          line =>
+            line.includes('/teams/home/roster ') && line.includes('-> 200')
         )
       ).equals(true)
       expect(

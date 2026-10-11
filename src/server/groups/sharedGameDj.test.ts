@@ -50,10 +50,24 @@ describe('raw guest game DJ fallback privacy', function () {
     )
     expect(accepted.status).equals(200)
     gameId = ((await accepted.json()) as { gameId: string }).gameId
+    // The host's administrator is not a member of the guest team: its roster
+    // is theirs only in the non-member view, every name and no face.
+    const outside = await f.h.request(
+      'GET',
+      `/teams/${f.teamB}/roster`,
+      undefined,
+      101
+    )
+    expect(outside.status).equals(200)
     expect(
-      (await f.h.request('GET', `/teams/${f.teamB}/roster`, undefined, 101))
+      ((await outside.json()) as Array<{ avatarUrl: string | null }>).every(
+        row => row.avatarUrl === null
+      )
+    ).equals(true)
+    expect(
+      (await f.h.request('GET', `/teams/${f.teamB}/stats`, undefined, 101))
         .status
-    ).equals(404)
+    ).equals(403)
   })
   afterEach(async () => {
     await f?.h.close()

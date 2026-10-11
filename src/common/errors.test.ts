@@ -7,6 +7,7 @@ import {
   errorStatus,
   forbidden,
   HttpError,
+  membersOnly,
   notFound,
   toApiError
 } from './errors'
@@ -53,6 +54,17 @@ describe('errors', function () {
 
   it('hides a forbidden resource behind the not-found wording', function () {
     expect(forbidden().message).equals(notFound().message)
+  })
+
+  it('tells a non-member a part is for members, with a 403', function () {
+    const error = membersOnly()
+    expect(error.status).equals(403)
+    expect(errorStatus.membersOnly).equals(403)
+    expect(asApiError(error.toApiError())).deep.equals({
+      code: 'membersOnly',
+      message: 'You need to be a member of one of the teams to see this.',
+      details: undefined
+    })
   })
 
   it('carries the right status', function () {

@@ -12,6 +12,7 @@ import { ScoringSession } from '../common/scoring/session'
 import { setupOf } from '../common/scoring/state'
 
 const game = asGameDetail({
+  nonMemberView: false,
   id: 'font-fit',
   awayTeamId: 'away',
   homeTeamId: 'home',

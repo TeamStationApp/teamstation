@@ -88,6 +88,7 @@ function api(): TeamStationClient {
   client.ownGroups = async () => [season]
   client.group = async ref =>
     asGroupDetail({
+      nonMemberView: false,
       group: ref.kind === 'season' ? season : ref.id === away.id ? away : team,
       parents: [],
       children: [],
@@ -162,6 +163,7 @@ describe('game scheduling interface recovery', () => {
     client.group = async ref =>
       ref.kind === 'season'
         ? asGroupDetail({
+            nonMemberView: false,
             group: ref.id === foreign.id ? foreign : season,
             parents: [],
             children: [],
@@ -218,6 +220,7 @@ describe('game scheduling interface recovery', () => {
     client.group = async ref =>
       ref.id === foreign.id
         ? asGroupDetail({
+            nonMemberView: false,
             group: foreign,
             parents: [],
             children: [],

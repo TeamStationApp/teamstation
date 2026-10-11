@@ -67,6 +67,13 @@ export const asGroupDetail = asObject({
     []
   ),
   canViewPrivate: asOptional(asBoolean, false),
+  /**
+   * Anybody signed in who is not a member of this team, following it or
+   * not: the team page shows names without pictures, the schedule and each
+   * game's score, and says the figures and the video are for members. False
+   * for members, for nobody signed in, and on every season and league.
+   */
+  nonMemberView: asBoolean,
   canManage: asBoolean
 })
 export type GroupDetail = ReturnType<typeof asGroupDetail>

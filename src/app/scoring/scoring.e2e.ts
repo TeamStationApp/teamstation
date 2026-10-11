@@ -20,6 +20,7 @@ import { initialHitTarget } from '../field/trajectoryGuide'
 import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const game = asGameDetail({
+  nonMemberView: false,
   id: 'g1',
   awayTeamId: 'away',
   homeTeamId: 'home',

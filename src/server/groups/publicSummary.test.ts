@@ -159,6 +159,52 @@ describe('limited public organization profiles', function () {
         .execute()
     }
   })
+  it('marks a team page as the non-member view for anybody signed in who is not a member, following it or not', async () => {
+    const view = async (
+      path: string,
+      userId: number | null
+    ): Promise<{ nonMemberView: boolean; canViewPrivate: boolean }> =>
+      (await (await f.h.request('GET', path, undefined, userId)).json()) as {
+        nonMemberView: boolean
+        canViewPrivate: boolean
+      }
+    // Nobody signed in reads the public page.
+    expect((await view(`/teams/${f.teamA}`, null)).nonMemberView).equals(false)
+    // Signed in and following nothing: the non-member view already.
+    const unfollowed = await view(`/teams/${f.teamA}`, 103)
+    expect(unfollowed.canViewPrivate).equals(false)
+    expect(unfollowed.nonMemberView).equals(true)
+    await f.h.db
+      .insertInto('follows')
+      .values([
+        { user_id: 103, group_type: 'team', group_id: f.teamA },
+        { user_id: 103, group_type: 'season', group_id: f.seasonA },
+        { user_id: 101, group_type: 'team', group_id: f.teamA }
+      ])
+      .execute()
+    try {
+      // Following it changes nothing.
+      const followed = await view(`/teams/${f.teamA}`, 103)
+      expect(followed.canViewPrivate).equals(false)
+      expect(followed.nonMemberView).equals(true)
+      // A season or a league page is the same for everybody.
+      expect((await view(`/seasons/${f.seasonA}`, 103)).nonMemberView).equals(
+        false
+      )
+      expect((await view(`/leagues/${f.leagueA}`, 103)).nonMemberView).equals(
+        false
+      )
+      // A member who follows their own team reads it as a member.
+      const own = await view(`/teams/${f.teamA}`, 101)
+      expect(own.canViewPrivate).equals(true)
+      expect(own.nonMemberView).equals(false)
+    } finally {
+      await f.h.db
+        .deleteFrom('follows')
+        .where('user_id', 'in', [101, 103])
+        .execute()
+    }
+  })
   it('includes aggregate results and parent context without private play events or stats', async () => {
     await f.h.db
       .insertInto('games')

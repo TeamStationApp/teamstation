@@ -54,6 +54,7 @@ const game = {
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
+  nonMemberView: false,
   videos: []
 }
 const roster = (

@@ -293,6 +293,12 @@ export const asGameDetail = asObject({
     asNullable(asObject({ open: asBoolean, mayOverride: asBoolean })),
     null
   ),
+  /**
+   * Whether this caller is signed in and a member of neither team: `linescore`
+   * then carries each side's runs alone, `canScore` and `canDj` are false,
+   * and the box score and playback answer `membersOnly`. False for members.
+   */
+  nonMemberView: asBoolean,
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>

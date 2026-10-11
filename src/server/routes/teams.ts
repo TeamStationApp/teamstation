@@ -2,7 +2,12 @@ import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
 import { asCreateTeamBody } from '../../common/createTeam'
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  membersOnly,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { scoreboardOpen } from '../../common/scoreboard'
 import {
@@ -13,6 +18,7 @@ import {
   canScore,
   canSeeGame,
   canSeeTeam,
+  nonMemberTeam,
   roleScopes,
   type VisibleScopes,
   visibleScopes
@@ -78,8 +84,13 @@ function kindAsked(asked: unknown): TeamKindAsked {
  * The watch path: teams, then that team's games newest first, then one game
  * with its videos and the highlights underneath them.
  *
- * Anything the caller may not see answers **404**, never 403, so that probing
- * cannot reveal that a team, game or video exists.
+ * Anybody signed in who is a member of neither side reads the **non-member
+ * view** (`nonMemberTeam`, or for a game `canSeeGame` false), following the
+ * team or not: the team's roster without pictures, its schedule, and each
+ * game's score, innings and highlights. The figures, the box score and the
+ * video itself answer 403 `membersOnly`, since the team and the game are no
+ * secret from them. A team, game or video that is not there answers 404.
+ * Signed out, the public page is all there is.
  *
  * `store` is the scoreboard's, which a game's answer asks whether its board
  * is open. Without one, or with Redis away, the game says `scoreboard: null`
@@ -392,12 +403,17 @@ export function teamRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeTeam(scopes, teamId)) throw notFound()
+      const outside = await nonMemberTeam(db, actor, scopes, teamId)
+      if (!outside && !canSeeTeam(scopes, teamId)) throw notFound()
 
       const rows = await scheduleOf(db, media, {
         teamId,
         actor,
-        visible: scopes
+        // A non-member sees this team's games as if it were their only team,
+        // and nothing their own scopes would add.
+        visible: outside
+          ? { teamIds: new Set([teamId]), seasonIds: new Set(), isAdmin: false }
+          : scopes
       })
       res.json(
         rows.map(({ homeLogoPath, awayLogoPath, ...row }) => ({
@@ -425,15 +441,14 @@ export function teamRoutes(
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) throw notFound()
-      if (
-        !canSeeGame(scopes, {
-          homeTeamId: game.home_team_id,
-          awayTeamId: game.away_team_id,
-          seasonId: game.season_id
-        })
-      ) {
-        throw notFound()
+      const scope = {
+        homeTeamId: game.home_team_id,
+        awayTeamId: game.away_team_id,
+        seasonId: game.season_id
       }
+      // Anybody signed in reads the game: a member of either side or its
+      // season as a member, anybody else in the non-member view.
+      const nonMemberView = !canSeeGame(scopes, scope)
 
       const videos = await db
         .selectFrom('videos')
@@ -552,14 +567,22 @@ export function teamRoutes(
         homeRecord: recordOf(game.home_team_id),
         awayLogoUrl: logoOf(game.away_team_id),
         homeLogoUrl: logoOf(game.home_team_id),
-        linescore: game.linescore,
+        // A non-member reads the runs, by inning and in all, and none of the
+        // totals the box score is made of.
+        linescore: nonMemberView
+          ? withoutTotals(game.linescore)
+          : game.linescore,
         fenceDistanceFt: Number(game.resolved_fence_distance_ft),
         canScore:
-          canScore(roles, game.home_team_id) ||
-          canScore(roles, game.away_team_id),
+          !nonMemberView &&
+          (canScore(roles, game.home_team_id) ||
+            canScore(roles, game.away_team_id)),
         canDj:
-          canKeepSongs(roles, game.home_team_id) ||
-          canKeepSongs(roles, game.away_team_id),
+          !nonMemberView &&
+          (canKeepSongs(roles, game.home_team_id) ||
+            canKeepSongs(roles, game.away_team_id)),
+        // Whether this is the non-member view, so the app draws it as one.
+        nonMemberView,
         scoreboard: await scoreboardOf(store, mayOverride, {
           startAt: new Date(game.start_at).getTime(),
           status: game.status,
@@ -594,7 +617,6 @@ export function teamRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const videoId = pathParam(req.params.videoId)
-      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const video = await db
         .selectFrom('videos')
@@ -606,15 +628,16 @@ export function teamRoutes(
           'videos.start_at as startAt',
           'videos.sync_offset_sec as syncOffsetSec',
           'videos.duration_sec as durationSec',
-          'games.home_team_id as homeTeamId',
-          'games.away_team_id as awayTeamId',
-          'games.season_id as seasonId',
+          'videos.hidden as hidden',
           'games.ingest_status as ingestStatus'
         ])
         .where('videos.id', '=', videoId)
         .executeTakeFirst()
-      if (video == null) throw notFound()
-      if (!canSeeGame(scopes, video)) throw notFound()
+      // Anybody signed in reads any game's highlights and their stills, a
+      // member as part of the game and anybody else in the non-member view;
+      // the video they seek into is for members. A video that is not there,
+      // or hidden, is 404, as it is for playback.
+      if (video == null || video.hidden) throw notFound()
 
       // A game whose plays did not add up is not offered as highlights until a
       // manager has accepted it: a wrong seek is worse than none.
@@ -704,9 +727,16 @@ export function teamRoutes(
         if (!canManageRoster(roles, teamId)) throw notFound()
       }
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeTeam(scopes, teamId)) throw notFound()
-
-      res.json(await teamRoster(db, media.space, teamId, fullNames === 'true'))
+      if (canSeeTeam(scopes, teamId)) {
+        res.json(
+          await teamRoster(db, media.space, teamId, fullNames === 'true')
+        )
+        return
+      }
+      if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
+      // A non-member reads every name, and no face.
+      const roster = await teamRoster(db, media.space, teamId)
+      res.json(roster.map(entry => ({ ...entry, avatarUrl: null })))
     })
   )
 
@@ -726,7 +756,10 @@ export function teamRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeTeam(scopes, teamId)) throw notFound()
+      if (!canSeeTeam(scopes, teamId)) {
+        if (await nonMemberTeam(db, actor, scopes, teamId)) throw membersOnly()
+        throw notFound()
+      }
 
       const seasonId =
         typeof req.query.seasonId === 'string' ? req.query.seasonId : undefined
@@ -777,15 +810,14 @@ export function teamRoutes(
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) throw notFound()
-      if (
-        !canSeeGame(scopes, {
-          homeTeamId: game.home_team_id,
-          awayTeamId: game.away_team_id,
-          seasonId: game.season_id
-        })
-      ) {
-        throw notFound()
+      const scope = {
+        homeTeamId: game.home_team_id,
+        awayTeamId: game.away_team_id,
+        seasonId: game.season_id
       }
+      // Anybody signed in reads the game, so it is no secret: the lines are
+      // for members.
+      if (!canSeeGame(scopes, scope)) throw membersOnly()
 
       const rows = await statRows(db, { gameId })
       const names = shortNames(
@@ -851,6 +883,19 @@ async function scoreboardOf(
     mayOverride: mayScore
   }
 }
+
+/**
+ * A stored line score as a non-member reads it: each side's runs by inning and
+ * in all, with its hits, errors, walks, strikeouts, home runs and hit batters
+ * left null, as a game whose plays cannot say them reads.
+ */
+function withoutTotals(linescore: unknown): unknown {
+  if (linescore == null) return null
+  const { away, home } = linescore as { away: object; home: object }
+  return { away: { ...away, ...WITHHELD }, home: { ...home, ...WITHHELD } }
+}
+
+const WITHHELD = { h: null, e: null, bb: null, k: null, hr: null, hbp: null }
 
 /**
  * Express 5 types a path parameter as `string | string[]`, because a route can

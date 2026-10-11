@@ -27,6 +27,7 @@ const detail = (patch: Partial<GroupDetail> = {}): GroupDetail =>
     games: [],
     staff: [],
     canViewPrivate: false,
+    nonMemberView: false,
     canManage: false,
     ...patch
   })

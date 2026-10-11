@@ -13,7 +13,7 @@ import type {
   PublicGroup
 } from '../../common/publicGroups'
 import { publicStaffName } from '../../common/publicStaffName'
-import { givenRolesOnTeam, visibleScopes } from '../access'
+import { givenRolesOnTeam, nonMemberTeam, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
@@ -474,9 +474,16 @@ export async function groupDetail(
     visible != null &&
     (visible.isAdmin ||
       (ref.kind === 'team' ? visible.teamIds : visible.seasonIds).has(ref.id))
+  // Anybody signed in who is not a member reads a team in the non-member
+  // view; a season or league page is the same for everybody.
+  const nonMemberView =
+    ref.kind === 'team' &&
+    visible != null &&
+    (await nonMemberTeam(db, actor, visible, ref.id))
   return {
     group,
     canViewPrivate,
+    nonMemberView,
     parents: await load(parentRefs),
     children: await load(childRefs),
     participatingSeasons: await load(participationRefs),

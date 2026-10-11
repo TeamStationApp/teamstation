@@ -855,6 +855,28 @@ export function canSeeTeam(scopes: VisibleScopes, teamId: string): boolean {
   return scopes.isAdmin || scopes.teamIds.has(teamId)
 }
 
+/**
+ * Whether this caller reads a team in the non-member view: signed in, unable
+ * to see the team as a member does, and the team still there under its own
+ * name (not merged into another). Following it makes no difference. A member
+ * never is; signed out, nobody is, and keeps the public page.
+ */
+export async function nonMemberTeam(
+  db: Kysely<Database>,
+  actor: { userId: number } | null | undefined,
+  scopes: VisibleScopes,
+  teamId: string
+): Promise<boolean> {
+  if (actor == null || canSeeTeam(scopes, teamId)) return false
+  const team = await db
+    .selectFrom('teams')
+    .select('id')
+    .where('id', '=', teamId)
+    .where('merged_into', 'is', null)
+    .executeTakeFirst()
+  return team != null
+}
+
 /** A team a person played for, in the season they played for it. */
 export interface PlayedFor {
   teamId: string

@@ -433,7 +433,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           'Public minimal group profile with optional current management capability',
         parameters: [parameter('id')],
         description:
-          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media.',
+          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league.',
         responses
       }
     }

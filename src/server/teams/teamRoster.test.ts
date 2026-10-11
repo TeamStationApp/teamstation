@@ -48,7 +48,7 @@ describe('scoring roster HTTP contract', function () {
   const video = makeId('video')
   const child = 1
   const coach = 2
-  const follower = 3
+  const seasonMember = 3
   const outsider = 4
   before(async function () {
     attachInt8Parser()
@@ -99,8 +99,8 @@ describe('scoring roster HTTP contract', function () {
           throws: null
         },
         {
-          id: follower,
-          legacyId: 'usr_follower',
+          id: seasonMember,
+          legacyId: 'usr_season_member',
           display_name: 'Frank Fan',
           bats: 'left',
           throws: 'right'
@@ -131,16 +131,14 @@ describe('scoring roster HTTP contract', function () {
       .insertInto('season_members')
       .values([
         {
-          id: 'membership-follower',
+          id: 'membership-season-member',
           season_id: season,
-          user_id: follower,
-          role: 'spectator'
+          user_id: seasonMember
         },
         {
           id: 'membership-child',
           season_id: season,
-          user_id: child,
-          role: 'spectator'
+          user_id: child
         }
       ])
       .execute()
@@ -246,7 +244,7 @@ describe('scoring roster HTTP contract', function () {
     if (created) await admin.query(`drop database "${name}"`)
     await admin?.end()
   })
-  it('returns handedness and exact ids only for actual team members, the manager first', async function () {
+  it('returns handedness and exact ids for the team\u2019s members and its season\u2019s, the manager first', async function () {
     const response = await fetch(address, {
       headers: { 'x-test-user': String(coach) }
     })
@@ -254,7 +252,13 @@ describe('scoring roster HTTP contract', function () {
     const raw: unknown = await response.json()
     if (!Array.isArray(raw)) throw new Error('Expected roster array')
     const roster = raw.map(asRosterEntry)
-    expect(roster.map(row => row.section)).deep.equals(['admin', 'player'])
+    expect(roster.map(row => row.section)).deep.equals([
+      'admin',
+      'player',
+      'spectator'
+    ])
+    // A player who is a member of the season too is a player.
+    expect(roster[1].inheritedFrom).equals(null)
     expect(roster[1]).includes({
       userId: child,
       shortName: 'Jordan K',
@@ -264,13 +268,42 @@ describe('scoring roster HTTP contract', function () {
       isPlayer: true
     })
     expect(roster[1].positions).deep.equals(['P', 'SS'])
-    expect(roster.some(row => row.userId === follower)).equals(false)
-    expect(roster[0]).includes({ bats: null, throws: null })
-    const followerResponse = await fetch(address, {
-      headers: { 'x-test-user': String(follower) }
+    // A member of the season is a member of its teams, with no place on them.
+    expect(roster[2]).includes({
+      userId: seasonMember,
+      shortName: 'Frank F',
+      bats: 'left',
+      throws: 'right',
+      isPlayer: false,
+      role: 'member',
+      jersey: null
     })
-    // Viewing season games does not grant access to a team's private roster.
-    expect(followerResponse.status).equals(404)
+    expect(roster[2].inheritedFrom).deep.equals({
+      level: 'season',
+      role: 'member'
+    })
+    expect(roster[0]).includes({ bats: null, throws: null })
+    // They read the roster as a member does; somebody in neither the team
+    // nor its season reads the same people in the non-member view, every
+    // name and no face.
+    const asMember = await fetch(address, {
+      headers: { 'x-test-user': String(seasonMember) }
+    })
+    expect(asMember.status).equals(200)
+    expect(
+      ((await asMember.json()) as unknown[]).map(asRosterEntry)
+    ).deep.equals(roster)
+    const outsideResponse = await fetch(address, {
+      headers: { 'x-test-user': String(outsider) }
+    })
+    expect(outsideResponse.status).equals(200)
+    const outside = ((await outsideResponse.json()) as unknown[]).map(
+      asRosterEntry
+    )
+    expect(outside.map(row => row.userId)).deep.equals(
+      roster.map(row => row.userId)
+    )
+    expect(outside.every(row => row.avatarUrl === null)).equals(true)
   })
   it('includes private names only for players in an authorized management read', async function () {
     const response = await fetch(address + '?includeFullNames=true', {
@@ -328,20 +361,24 @@ describe('scoring roster HTTP contract', function () {
       await get(`/videos/${video}/highlights`)
     )
     expect(highlights.highlights).is.an('array')
-    for (const path of [
-      `/games/${game}`,
-      `/games/${game}/box-score`,
-      `/teams/${team}/games`,
-      `/teams/${team}/stats`,
-      `/videos/${video}/highlights`
-    ]) {
+    // Somebody signed in who is not a member reads the non-member view: the
+    // game, the schedule and the highlights, and 403 for what is kept for
+    // members.
+    for (const [path, status] of [
+      [`/games/${game}`, 200],
+      [`/games/${game}/box-score`, 403],
+      [`/teams/${team}/games`, 200],
+      [`/teams/${team}/stats`, 403],
+      [`/videos/${video}/highlights`, 200]
+    ] as const) {
       expect(
         (
           await fetch(origin + path, {
             headers: { 'x-test-user': String(outsider) }
           })
-        ).status
-      ).equals(404)
+        ).status,
+        path
+      ).equals(status)
     }
   })
   it('carries each player\u2019s walk-up song on this team, and no other team\u2019s', async function () {
@@ -407,7 +444,7 @@ describe('scoring roster HTTP contract', function () {
       endMs: 25000
     })
     expect(byUser.get(coach)).equals(null)
-    expect(byUser.get(follower)).equals(undefined)
+    expect(byUser.get(seasonMember)).equals(null)
     const there = await read(`/teams/${opponent}/roster`)
     if (!Array.isArray(there)) throw new Error('Expected roster array')
     const theirs = there.map(asRosterEntry)
@@ -417,11 +454,23 @@ describe('scoring roster HTTP contract', function () {
       title: 'Walkup Fixture'
     })
   })
-  it('preserves authorization and does not reveal a hidden team roster', async function () {
+  it('refuses nobody signed in, and shows an outsider names without faces, or 404 for a team that is not there', async function () {
     expect((await fetch(address)).status).equals(401)
+    const outside = await fetch(address, {
+      headers: { 'x-test-user': String(outsider) }
+    })
+    expect(outside.status).equals(200)
     expect(
-      (await fetch(address, { headers: { 'x-test-user': String(outsider) } }))
-        .status
+      ((await outside.json()) as unknown[])
+        .map(asRosterEntry)
+        .every(row => row.avatarUrl === null)
+    ).equals(true)
+    expect(
+      (
+        await fetch(address.replace(`/teams/${team}/`, '/teams/tem_missing/'), {
+          headers: { 'x-test-user': String(outsider) }
+        })
+      ).status
     ).equals(404)
   })
 })

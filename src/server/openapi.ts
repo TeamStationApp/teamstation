@@ -1165,6 +1165,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'tooLarge',
                 'unsupportedMedia',
                 'rateLimited',
+                'membersOnly',
                 'internal',
                 'unavailable'
               ]
@@ -2618,7 +2619,9 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A team's games, newest first",
           description:
             'Answers 404 rather than 403 for a team the caller may not see, ' +
-            'so that probing cannot reveal which teams exist.',
+            'so that probing cannot reveal which teams exist. Anybody signed ' +
+            'in who is not a member of the team (the non-member view) reads ' +
+            'its games too, with their video counts, posters and logos.',
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {
@@ -3295,7 +3298,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`scoreboard` is `{ open, mayOverride }`: ' +
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +
-            'scoreboard store cannot be asked.',
+            'scoreboard store cannot be asked. `nonMemberView` is true for ' +
+            'anybody signed in who is a member of neither team: ' +
+            'that caller reads the game, its records, logos and videos with ' +
+            'their posters, but each `linescore` side carries `runs` and `r` ' +
+            'alone (`h`, `e`, `bb`, `k`, `hr` and `hbp` are null), and ' +
+            '`canScore` and `canDj` are false. False for members.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -3829,7 +3837,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`built` when the lines match the plays, `incomplete` when a ' +
             'required Gumbo field is missing (with `detail` naming the play ' +
             'and field), or `failed` after a build threw. A game with no ' +
-            'lines yet has empty `batting` and `pitching`.',
+            'lines yet has empty `batting` and `pitching`. Anybody signed in ' +
+            'who is a member of neither team is answered 403 `membersOnly`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -3838,6 +3847,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'A line per batter and pitcher, with rates, and `stats` for ' +
                 "the builder's status"
             },
+            403: errorResponse,
             404: errorResponse
           }
         }
@@ -3851,7 +3861,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             're-synced video fixes them all at once. A highlight is a ' +
             'timestamp into the full video, never a separate clip. When the ' +
             "game's plays did not add up to its imported line score, " +
-            '`withheld` is `scoreMismatch` and the list is empty.',
+            '`withheld` is `scoreMismatch` and the list is empty. Anybody ' +
+            'signed in who is a member of neither team reads the list and ' +
+            'its stills too.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -4240,15 +4252,19 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/teams/{teamId}/roster': {
         get: {
           summary:
-            'Everybody on a team: administrators, staff, players, family and other members',
+            'Everybody on a team: administrators, staff, players, family, spectators and followers',
           description:
-            'Every member of the team, everybody given a role on the team, ' +
-            'its seasons or its league, and every guardian of one of its ' +
-            'players, each once, in the first `section` that fits: admin, ' +
-            'staff, player, family, other. Within a section the team’s ' +
-            'own people come first, then those given their role above it ' +
-            '(`inheritedFrom`), each by name. Following a team does not ' +
-            'list anybody. ' +
+            'Every member of the team, every member of its seasons and its ' +
+            'league, everybody given a role on the team, its seasons or its ' +
+            'league, every guardian of one of its players, and everybody ' +
+            'who follows it (or a team merged into it) from an account that ' +
+            'is open and not disabled, each once, in the first `section` ' +
+            'that fits: admin, staff, player, family, spectator, follower. ' +
+            'Within a section the team\u2019s own people come first, then ' +
+            'those given their place above it (`inheritedFrom`), each by ' +
+            'name. Anybody signed in who is not a member of the team (the ' +
+            'non-member view) reads the same roster, followers included, ' +
+            'with `avatarUrl` null on every entry. ' +
             'Names default to a first name and last initial. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
             'coach, assistant, scorekeeper or admin on this team or its parents. Others get 404. ' +
@@ -4497,6 +4513,10 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/teams/{teamId}/stats': {
         get: {
           summary: "A team's batting or pitching",
+          description:
+            'For members. Anybody else signed in is answered 403 ' +
+            '`membersOnly`; a team that is not there (or merged into ' +
+            'another), 404.',
           security: [{ bearer: [] }],
           parameters: [
             teamIdParam,
@@ -4518,6 +4538,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           ],
           responses: {
             200: { description: 'A row per player' },
+            403: errorResponse,
             404: errorResponse
           }
         }
@@ -5618,6 +5639,11 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/seasons/{seasonId}/standings': {
         get: {
           summary: "A season's table",
+          description:
+            'For anybody in the season or a season or league that opened ' +
+            'itself to them, and for anybody else signed in once a team is ' +
+            'active in it (each team page shows its place); a season with ' +
+            'no active team answers them 404.',
           security: [{ bearer: [] }],
           parameters: [
             {

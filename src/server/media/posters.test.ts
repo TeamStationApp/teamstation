@@ -19,19 +19,26 @@ describe('a game poster', function () {
     expect(
       verifyQueryToken(
         'secret',
-        stillSubject('vid_1'),
+        stillSubject('vid_1', 150),
         token,
         Date.UTC(2026, 9, 2)
       )
     ).equals(true)
-    expect(
-      verifyQueryToken(
-        'secret',
-        stillSubject('vid_2'),
-        token,
-        Date.UTC(2026, 9, 2)
-      )
-    ).equals(false)
+    // Good for that one frame only: not another second, not another video.
+    for (const [videoId, atSec] of [
+      ['vid_1', 151],
+      ['vid_1', 0],
+      ['vid_2', 150]
+    ] as const)
+      expect(
+        verifyQueryToken(
+          'secret',
+          stillSubject(videoId, atSec),
+          token,
+          Date.UTC(2026, 9, 2)
+        ),
+        `${videoId} at ${atSec}`
+      ).equals(false)
     expect(stillKey('vid_1', 150.4)).equals('videos/vid_1/stills/150.jpg')
   })
 

@@ -364,6 +364,7 @@ async function setWidth(width: number): Promise<void> {
 describe('the season screen', function () {
   const privateDetail = (): GroupDetail =>
     asGroupDetail({
+      nonMemberView: false,
       group: asPublicGroup({
         id: 'sea_spring',
         kind: 'season',
@@ -540,6 +541,7 @@ describe('the season screen', function () {
       pendingRequestId: null
     }
     const publicDetail = asGroupDetail({
+      nonMemberView: false,
       group: asPublicGroup({
         id: 'sea_spring',
         kind: 'season',
@@ -598,6 +600,7 @@ describe('the season screen', function () {
   for (const pendingRequestId of ['req_visiting_team', null]) {
     it(`keeps visiting-team season request access scoped when private collection access is absent (${pendingRequestId == null ? 'informational' : 'authorized request'})`, async function () {
       const publicDetail = asGroupDetail({
+        nonMemberView: false,
         group: asPublicGroup({
           id: 'sea_spring',
           kind: 'season',
@@ -822,6 +825,7 @@ describe('the season screen', function () {
 
   it('does not request private collections for a public visitor, including a private tab link', async function () {
     const publicDetail = asGroupDetail({
+      nonMemberView: false,
       group: asPublicGroup({
         id: 'sea_spring',
         kind: 'season',
@@ -861,6 +865,7 @@ describe('the season screen', function () {
     })
     const before = [...calls.loads]
     const publicDetail = asGroupDetail({
+      nonMemberView: false,
       group: asPublicGroup({
         id: 'sea_spring',
         kind: 'season',
@@ -962,6 +967,7 @@ describe('the season screen', function () {
 
   it('shows loaded games and recording counts on a Home-linked season with a thin public summary', async function () {
     const publicDetail = asGroupDetail({
+      nonMemberView: false,
       group: asPublicGroup({
         id: 'sea_spring',
         kind: 'season',

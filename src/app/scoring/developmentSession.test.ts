@@ -17,6 +17,7 @@ import {
 import { startingSetup } from './developmentSession'
 
 const game = asGameDetail({
+  nonMemberView: false,
   id: 'g1',
   awayTeamId: 'away',
   homeTeamId: 'home',
