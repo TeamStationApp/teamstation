@@ -168,22 +168,6 @@ await writeFile(
 await copyFile('src/app/web/favicon.ico', 'dist/favicon.ico')
 await copyFile('src/app/web/favicon.png', 'dist/favicon.png')
 
-/**
- * The two files Apple and Google fetch to decide whether a link may open the
- * app. They are built rather than placed on the server: a deploy replaces the
- * build wholesale, so a hand-placed copy is one deploy from gone.
- */
-async function copyWellKnown() {
-  await mkdir('dist/.well-known', { recursive: true })
-  for (const name of ['apple-app-site-association', 'assetlinks.json']) {
-    await copyFile(
-      `src/app/web/.well-known/${name}`,
-      `dist/.well-known/${name}`
-    )
-  }
-}
-await copyWellKnown()
-
 if (serve) {
   await writeFile('dist/index.html', template)
   const ctx = await context(options)

@@ -40,6 +40,7 @@ import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
+import { appLinkRoutes } from './routes/appLinks'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { devMediaRoutes } from './routes/devMedia'
@@ -557,6 +558,11 @@ function runWorker(): void {
   if (serverConfig.serveMediaLocally) {
     app.use(devMediaRoutes(serverConfig.mediaDir, mediaSecret))
   }
+
+  // The apps' link hosts: their verification files and the sign-in link a
+  // browser without the app opens. Not under /api/v1: Apple and Google ask for
+  // these paths at the root of each host.
+  app.use(appLinkRoutes({ appLinks: serverConfig.appLinks, publicUrl }))
 
   app.use(notFoundHandler)
   app.use(errorHandler)
