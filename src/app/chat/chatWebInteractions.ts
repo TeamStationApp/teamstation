@@ -76,10 +76,32 @@ export function bindComposerKeys(
   }
 }
 /** RNW's scroll-begin callback also fires for programmatic focus scrolling. */
-export function bindUserScroll(view: unknown, read: () => void): () => void {
+const scrollDispatches = new WeakMap<HTMLElement, { owner: object }>()
+function scrollElement(view: unknown): HTMLElement | undefined {
   const node = view as { getScrollableNode?: () => unknown } | null
   const element = node?.getScrollableNode?.() ?? view
-  if (!(element instanceof HTMLElement)) return () => {}
+  return element instanceof HTMLElement ? element : undefined
+}
+
+/** RNW's ending onScroll runs outside the originating DOM event dispatch. */
+export function isScrollEventDispatch(view: unknown): boolean {
+  const element = scrollElement(view)
+  return element != null && scrollDispatches.has(element)
+}
+
+export function bindUserScroll(view: unknown, read: () => void): () => void {
+  const element = scrollElement(view)
+  if (element == null) return () => {}
+  const owner = {}
+  const scroll = (event: Event): void => {
+    if (event.target !== element) return
+    const dispatch = { owner }
+    scrollDispatches.set(element, dispatch)
+    queueMicrotask(() => {
+      if (scrollDispatches.get(element) === dispatch)
+        scrollDispatches.delete(element)
+    })
+  }
   const key = (event: KeyboardEvent): void => {
     if (
       [
@@ -137,6 +159,7 @@ export function bindUserScroll(view: unknown, read: () => void): () => void {
     scrollbarHeld = false
   }
   const doc = element.ownerDocument
+  element.addEventListener('scroll', scroll, true)
   element.addEventListener('pointerdown', start)
   element.addEventListener('mousedown', start)
   doc.addEventListener('pointerup', finish)
@@ -147,6 +170,9 @@ export function bindUserScroll(view: unknown, read: () => void): () => void {
   element.addEventListener('touchmove', read, { passive: true })
   element.addEventListener('keydown', key)
   return () => {
+    element.removeEventListener('scroll', scroll, true)
+    if (scrollDispatches.get(element)?.owner === owner)
+      scrollDispatches.delete(element)
     element.removeEventListener('pointerdown', start)
     element.removeEventListener('mousedown', start)
     doc.removeEventListener('pointerup', finish)
