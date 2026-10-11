@@ -5492,3 +5492,145 @@ describe('list navigation engine context ownership', function () {
     await next
   })
 })
+
+async function responsiveWorkspaceList(): Promise<{
+  node: HTMLElement
+  host: HTMLElement
+  state: ChatWorkspaceState
+}> {
+  const engine = new ReviewEngine()
+  engine.views = new Map(
+    Array.from({ length: 8 }, (_, index) => {
+      const conversation = chat({
+        id: `cnv_return_${index}`,
+        title: `Solstice ${index} Members`
+      })
+      return [conversation.id, view({ conversation, messages: [original()] })]
+    })
+  )
+  const state = newChatWorkspaceState()
+  await workspace(engine, state, 'cnv_return_0')
+  const host = document.querySelector<HTMLElement>(
+    '[data-testid="chat-workspace"]'
+  )!
+  await layout(host, 1200, 500)
+  const node = document.querySelector<HTMLElement>(
+    '[data-testid="chat-conversation-list"]'
+  )!
+  expect(node, 'Actual workspace list scroll view').not.equals(null)
+  const content = node.firstElementChild as HTMLElement
+  Object.defineProperties(node, {
+    scrollHeight: { configurable: true, value: 1800 },
+    clientHeight: { configurable: true, value: 400 }
+  })
+  node.scroll = options => {
+    node.scrollTop = (options as ScrollToOptions).top ?? 0
+  }
+  await layout(node, 320, 400)
+  setListRowMeasurement('cnv_return_0', 104, 120)
+  await layout(content, 320, 1800)
+  measureListWindowFromDom(node)
+  await act(async () => {
+    node.scrollTop = 0
+    node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    await wait(150)
+    node.scrollTop = 120
+    node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    await wait(150)
+  })
+  return { node, host, state }
+}
+
+describe('responsive list position before a pane hide', function () {
+  it('captures keyboard-selected list geometry on the actual Workspace layout boundary before Members and return', async function () {
+    const { node, host, state } = await responsiveWorkspaceList()
+    expect(node.scrollTop).equals(120)
+    expect(
+      state.listOffset,
+      'Raw unowned input has not replaced the remembered top yet'
+    ).equals(0)
+    await layout(host, 640, 500)
+    await act(async () => {
+      await wait(40)
+    })
+    expect(
+      document.querySelector<HTMLElement>('[data-testid="chat-list-pane"]')!
+        .style.display
+    ).equals('none')
+    expect(
+      state.listOffset,
+      'Still-visible measurement must precede the hide'
+    ).equals(120)
+    const saved = state.listAnchor
+    expect(saved).deep.equals({ id: 'cnv_return_0', relativeY: -16 })
+    await unmount()
+    // Members removes the workspace; Back restores its persisted list reading.
+    const returning = await returningList(true, state.listOffset, saved)
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_0', 104, 120)
+    await returning.content(1800)
+    await returning.scroll(returning.moves.at(-1)!)
+    expect(returning.node.scrollTop).equals(120)
+  })
+
+  it('keeps the newest layout when a pending hide measurement finishes after widening', async function () {
+    const { node, host } = await responsiveWorkspaceList()
+    const held = holdViewportMeasurement(node)
+    try {
+      await layout(host, 640, 500)
+      await held.entered
+      await layout(host, 1200, 500)
+      await act(async () => {
+        held.release()
+        await wait(40)
+      })
+      expect(
+        document.querySelector<HTMLElement>('[data-testid="chat-list-pane"]')!
+          .style.display
+      ).equals('flex')
+    } finally {
+      held.restore()
+    }
+  })
+
+  it('rejects a disposed resize capture without publishing its old position', async function () {
+    const { node, host, state } = await responsiveWorkspaceList()
+    const held = holdViewportMeasurement(node)
+    try {
+      await layout(host, 640, 500)
+      await held.entered
+      await unmount()
+      await act(async () => {
+        held.release()
+        await wait(40)
+      })
+      expect(document.querySelector('[data-testid="chat-workspace"]')).equals(
+        null
+      )
+      expect(state.listOffset).equals(0)
+      expect(state.listAnchor).equals(undefined)
+    } finally {
+      held.restore()
+    }
+  })
+
+  it('continues the resize with the previous position after the bounded measurement failure', async function () {
+    const { node, host, state } = await responsiveWorkspaceList()
+    const held = holdViewportMeasurement(node)
+    try {
+      await layout(host, 640, 500)
+      await held.entered
+      await act(async () => {
+        await wait(140)
+      })
+      expect(
+        document.querySelector<HTMLElement>('[data-testid="chat-list-pane"]')!
+          .style.display
+      ).equals('none')
+      expect(state.listOffset).equals(0)
+      expect(state.listAnchor).equals(undefined)
+    } finally {
+      held.restore()
+    }
+  })
+})
