@@ -4125,12 +4125,136 @@ describe('qa4 review2 actual RNW scroll lifetime', function () {
     })
 })
 
-describe('qa4 review2 DOM dispatch ownership', function () {
-  it('scopes nested and overlapping dispatches to the exact resolved element and removes only its own binding', async function () {
-    const candidate: unknown = Reflect.get(WebScroll, 'isScrollEventDispatch')
+describe('qa4 review3 DOM-owned reading position', function () {
+  it('retains one held gutter drag across RNW inactivity and resumes to the absolute top', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(1800)
+    await pending.scroll(240)
+    pending.node.getBoundingClientRect = () =>
+      new window.DOMRect(0, 0, 320, 400)
+    Object.defineProperties(pending.node, {
+      clientWidth: { configurable: true, value: 304 },
+      offsetWidth: { configurable: true, value: 320 },
+      offsetHeight: { configurable: true, value: 400 },
+      clientLeft: { configurable: true, value: 0 },
+      clientTop: { configurable: true, value: 0 }
+    })
+    await act(async () => {
+      pending.node.dispatchEvent(
+        new window.MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          clientX: 319,
+          clientY: 200
+        })
+      )
+    })
+    await pending.scroll(160)
+    // pending.scroll includes the installed RNW inactivity callback while held.
+    await pending.scroll(0)
+    await act(async () => {
+      document.dispatchEvent(
+        new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+      )
+      await wait(40)
+    })
+    expect(pending.anchors.at(-1)).equals(undefined)
+    await unmount()
+    const returning = await returningList(true, 0, pending.anchors.at(-1))
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_3', 334)
+    await returning.content(1800)
+    expect(returning.moves).deep.equals([0])
+  })
+
+  it('retires a wheel input with no bottom movement before a later automatic clamp and preserves its relative return', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(700)
+    await pending.scroll(240)
+    await act(async () => {
+      pending.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 60 })
+      )
+    })
+    await pending.scroll(300)
+    await act(async () => {
+      pending.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 60 })
+      )
+      await wait(40)
+    })
+    Object.defineProperty(pending.node, 'clientHeight', {
+      configurable: true,
+      value: 800
+    })
+    await layout(pending.node, 320, 800)
+    await act(async () => {
+      renderedRowLayout('cnv_return_3')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait()
+    })
+    await pending.scroll(0)
+    const saved = pending.anchors.at(-1)
+    expect(saved).deep.equals({ id: 'cnv_return_3', relativeY: 270 })
+    await unmount()
+    const returning = await returningList(true, 0, saved)
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_3', 334)
+    await returning.content(1800)
+    expect(returning.moves.at(-1)).equals(64)
+  })
+
+  it('rejects hidden and replaced-data input ownership before a delayed zero event', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(1800)
+    await pending.scroll(240)
+    await act(async () => {
+      pending.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: -240 })
+      )
+    })
+    await pending.hide()
+    const before = [...pending.offsets]
+    await pending.scroll(0)
+    expect(pending.offsets).deep.equals(before)
+    await pending.show()
+    await pending.scroll(240)
+    await act(async () => {
+      pending.node.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: -240 })
+      )
+    })
+    await pending.reorder()
+    await pending.scroll(0)
+    expect(
+      pending.anchors.at(-1),
+      'An obsolete input must not choose explicit top'
+    ).not.equals(undefined)
+  })
+})
+
+describe('qa4 review3 scoped web input frames', function () {
+  it('tracks delayed moving frames, retires an idle frame, ignores child scrolls, cancels programmatic movement and disposes only its binding', async function () {
+    const candidate: unknown = Reflect.get(WebScroll, 'cancelUserScroll')
     const nativeCandidate: unknown = Reflect.get(
       NativeScroll,
-      'isScrollEventDispatch'
+      'cancelUserScroll'
     )
     if (
       typeof candidate !== 'function' ||
@@ -4139,58 +4263,85 @@ describe('qa4 review2 DOM dispatch ownership', function () {
       this.skip()
       return
     }
-    const marker = candidate as (view: unknown) => boolean
-    const nativeMarker = nativeCandidate as (view: unknown) => boolean
+    const cancel = candidate as (view: unknown) => void
+    const nativeCancel = nativeCandidate as (view: unknown) => void
     const element = document.createElement('div')
     const child = document.createElement('div')
     element.append(child)
     document.body.append(element)
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1800 }
+    })
     const view = { getScrollableNode: () => element }
-    const stop = WebScroll.bindUserScroll(view, () => {})
-    let nested = false
-    let overlap = false
-    let first = true
-    const inspect = (event: Event): void => {
-      if (event.target === child) {
-        nested = marker(view)
-        return
+    const positions: number[] = []
+    let reads = 0
+    const stop = WebScroll.bindUserScroll(
+      view,
+      () => {
+        reads += 1
+      },
+      top => {
+        positions.push(top)
       }
-      expect(marker(view)).equals(true)
-      if (first) {
-        first = false
-        queueMicrotask(() => {
-          overlap = marker(view)
-        })
-        element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
-      }
-    }
-    element.addEventListener('scroll', inspect)
+    )
     try {
-      child.dispatchEvent(new window.Event('scroll', { bubbles: true }))
-      expect(nested).equals(false)
-      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
-      await Promise.resolve()
-      expect(
-        overlap,
-        'An older microtask cannot clear the newer dispatch'
-      ).equals(true)
-      await Promise.resolve()
-      expect(marker(view)).equals(false)
-      const another = WebScroll.bindUserScroll(view, () => {})
-      const stopEarlier = (): void => {
-        stop()
-        expect(marker(view)).equals(true)
-        another()
-        expect(marker(view)).equals(false)
+      element.scrollTop = 240
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', { bubbles: true, key: 'Home' })
+      )
+      for (const top of [160, 80, 0]) {
+        element.scrollTop = top
+        element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        await new Promise<void>(resolve =>
+          window.requestAnimationFrame(() => {
+            resolve()
+          })
+        )
       }
-      element.addEventListener('scroll', stopEarlier, { once: true })
+      expect(positions).deep.equals([160, 80, 0])
+      await new Promise<void>(resolve =>
+        window.requestAnimationFrame(() => {
+          resolve()
+        })
+      )
+      element.scrollTop = 100
       element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
-      expect(nativeMarker(view)).equals(false)
+      expect(positions).deep.equals([160, 80, 0])
+      element.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 100 })
+      )
+      child.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([160, 80, 0])
+      cancel(view)
+      element.scrollTop = 0
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([160, 80, 0])
+      const another = WebScroll.bindUserScroll(
+        view,
+        () => {
+          reads += 1
+        },
+        top => {
+          positions.push(top)
+        }
+      )
+      element.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 100 })
+      )
+      stop()
+      nativeCancel(view)
+      element.scrollTop = 100
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions.at(-1)).equals(100)
+      another()
+      element.scrollTop = 200
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions.at(-1)).equals(100)
+      expect(reads).greaterThan(0)
     } finally {
       stop()
-      element.removeEventListener('scroll', inspect)
       element.remove()
     }
-    expect(marker(view)).equals(false)
   })
 })
