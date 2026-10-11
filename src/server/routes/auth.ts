@@ -6,6 +6,7 @@ import { asAccountEmail } from '../../common/accountSettings'
 import { asSession } from '../../common/api'
 import { badRequest, unauthorized, unavailable } from '../../common/errors'
 import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
+import { allowedAppOrigin } from '../appLinks/appOrigin'
 import {
   asSignInOrigin,
   claimApprovedRequest,
@@ -52,11 +53,23 @@ const asCodeRequest = asObject({
    */
   origin: asOptional(asSignInOrigin, 'web'),
   /** Where they were going before they were asked to sign in. */
-  next: asOptional(asString)
+  next: asOptional(asString),
+  /**
+   * The link host of the app asking, so the e-mail's link opens that app.
+   * Must be one of the server's configured apps.
+   */
+  appOrigin: asOptional(asString)
 })
 
 const asLinkLogin = asObject({
-  token: asString
+  token: asString,
+  /** Set by a device spending its own link, and it is what it will be called. */
+  deviceName: asOptional(asString),
+  /**
+   * The sign-in request the spender is itself polling for, when it asked for
+   * this link: that request is not approved a second time.
+   */
+  requestId: asOptional(asString)
 })
 
 const asRequestClaim = asObject({
@@ -101,6 +114,8 @@ export interface AuthOptions {
   space?: SpaceSettings
   /** Decides whether the session cookie may be marked `Secure`. */
   publicUrl?: string
+  /** The link hosts of the apps this server signs in (`appLinks.apps`). */
+  appOrigins?: readonly string[]
 }
 
 /**
@@ -334,6 +349,10 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
     '/auth/email-code',
     withAsync(async (req, res) => {
       const body = cleanBody(asCodeRequest, req.body)
+      const appOrigin = allowedAppOrigin(
+        body.appOrigin,
+        options.appOrigins ?? []
+      )
       const email = body.email.trim().toLowerCase()
       const rules = rulesFor(
         LIMITS.codeByAddress,
@@ -350,13 +369,14 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       // Email ownership is established by verification, never by requesting a code.
       const request = await createEmailCode(db, email, 'login', {
         origin: body.origin,
-        next: body.next
+        next: body.next,
+        appOrigin
       })
       try {
         await options.sendCode(
           email,
           request.code,
-          signInLink(options.publicUrl, request.token)
+          signInLink(options.publicUrl, request.token, appOrigin)
         )
       } catch {
         await db
@@ -445,7 +465,9 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       )
       await checkLimits(db, rules)
 
-      const claim = await claimSignInLink(db, body.token)
+      const claim = await claimSignInLink(db, body.token, {
+        asker: body.requestId
+      })
       const user =
         claim == null ? null : await userForSignIn(claim.email, claim)
       if (claim == null || user == null) {
@@ -453,7 +475,12 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         throw unauthorized('That link is no longer good')
       }
 
-      const session = await createSession(db, user.id, req.header('user-agent'))
+      const session = await createSession(
+        db,
+        user.id,
+        req.header('user-agent'),
+        sessionOptionsFor(body.deviceName)
+      )
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
         asSession({

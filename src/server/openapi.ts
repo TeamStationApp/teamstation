@@ -2085,7 +2085,29 @@ export function openApiDocument(version: string): OpenApiDocument {
                 schema: {
                   type: 'object',
                   required: ['email'],
-                  properties: { email: { type: 'string' } }
+                  properties: {
+                    email: { type: 'string' },
+                    origin: {
+                      type: 'string',
+                      enum: ['web', 'ios', 'android'],
+                      default: 'web'
+                    },
+                    next: {
+                      type: 'string',
+                      description: 'Where to go once signed in'
+                    },
+                    appOrigin: {
+                      type: 'string',
+                      description:
+                        'The link host of the app asking (an origin such as ' +
+                        '`https://app1.example.test`), so the link in the ' +
+                        'e-mail opens that app and names this server in ' +
+                        '`server`. Must be one of the apps this server is ' +
+                        'configured to sign in; any other value is refused ' +
+                        'with 400. Absent on the web, where the link stays ' +
+                        'on this server.'
+                    }
+                  }
                 }
               }
             }
@@ -4304,9 +4326,21 @@ export function openApiDocument(version: string): OpenApiDocument {
                     },
                     origin: {
                       type: 'string',
-                      enum: ['web', 'ios', 'android']
+                      enum: ['web', 'ios', 'android'],
+                      default: 'web'
                     },
-                    next: { type: 'string' }
+                    next: { type: 'string' },
+                    appOrigin: {
+                      type: 'string',
+                      description:
+                        'The link host of the app asking (an origin such as ' +
+                        '`https://app1.example.test`), so the link in the ' +
+                        'e-mail opens that app and names this server in ' +
+                        '`server`. Must be one of the apps this server is ' +
+                        'configured to sign in; any other value is refused ' +
+                        'with 400. Absent on the web, where the link stays ' +
+                        'on this server.'
+                    }
                   }
                 }
               }
@@ -5035,7 +5069,23 @@ export function openApiDocument(version: string): OpenApiDocument {
                 schema: {
                   type: 'object',
                   required: ['token'],
-                  properties: { token: { type: 'string' } }
+                  properties: {
+                    token: { type: 'string' },
+                    deviceName: {
+                      type: 'string',
+                      description:
+                        'Set by a device spending its own link: the session ' +
+                        'is named for it and lasts 180 days, as a device ' +
+                        'session from a typed code does'
+                    },
+                    requestId: {
+                      type: 'string',
+                      description:
+                        'The sign-in request the spender is itself polling ' +
+                        'for. When it is this link’s, the poll is not ' +
+                        'approved as well, so the spender gets one session'
+                    }
+                  }
                 }
               }
             }

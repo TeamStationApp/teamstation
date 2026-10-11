@@ -976,4 +976,65 @@ describe('api client', function () {
       '/auth/me'
     ])
   })
+
+  it('asks for a sign-in with the platform and the app that should open the link', async function () {
+    const wait = { requestId: 'emc_1', clientSecret: 'secret' }
+    const { fetch, calls } = stubFetch(202, wait)
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch
+    })
+    await client.requestEmailCode('alex.lee@example.com', {
+      origin: 'ios',
+      appOrigin: 'https://app1.example.test'
+    })
+    expect(JSON.parse(calls[0].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'ios',
+      appOrigin: 'https://app1.example.test'
+    })
+    await client.requestEmailCode('alex.lee@example.com')
+    expect(JSON.parse(calls[1].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'web'
+    })
+    await client.requestInviteCode('join1', {
+      email: 'alex.lee@example.com',
+      origin: 'android',
+      appOrigin: 'https://app1.example.test'
+    })
+    expect(calls[2].url).equals(
+      'https://example.test/api/v1/join/join1/email-code'
+    )
+    expect(JSON.parse(calls[2].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'android',
+      appOrigin: 'https://app1.example.test'
+    })
+    await client.requestInviteCode('join1', { email: 'alex.lee@example.com' })
+    expect(JSON.parse(calls[3].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'web'
+    })
+  })
+
+  it('names the device spending a link, and only when there is one', async function () {
+    const session = {
+      token: 'tok_abc',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: { id: 1, displayName: 'Robin', isAdmin: false }
+    }
+    const { fetch, calls } = stubFetch(200, session)
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch
+    })
+    await client.signInWithLink('tok_link', 'Bench iPad')
+    expect(JSON.parse(calls[0].body ?? '')).deep.equals({
+      token: 'tok_link',
+      deviceName: 'Bench iPad'
+    })
+    await client.signInWithLink('tok_link')
+    expect(JSON.parse(calls[1].body ?? '')).deep.equals({ token: 'tok_link' })
+  })
 })

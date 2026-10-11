@@ -62,6 +62,28 @@ describe('sign-in link', function () {
     expect(invites).not.contains('teamstation://')
   })
 
+  it('sends a sign-in asked for in an app to that app’s own host', function () {
+    // The app's operating system opens only the host it verified, so the link
+    // goes there, and names the server that issued it: the app spends it
+    // against its own server, and the host sends a browser to this one.
+    expect(
+      signInLink('https://gs.example/', 'tok123', 'https://app1.example.test')
+    ).equals(
+      'https://app1.example.test/signin/tok123?server=https%3A%2F%2Fgs.example'
+    )
+    expect(routes).contains(
+      'signInLink(options.publicUrl, request.token, appOrigin)'
+    )
+    expect(invites).contains(
+      'signInLink(options.publicUrl, request.token, appOrigin)'
+    )
+    // Checked before anything is counted or looked up.
+    const ask = routes.slice(routes.indexOf("'/auth/email-code',"))
+    expect(ask.indexOf('allowedAppOrigin(')).lessThan(
+      ask.indexOf('checkLimits(')
+    )
+  })
+
   it('prints the address as text beside the button', function () {
     // Some clients eat buttons, and a sign-in that cannot be reached is worse
     // than an ugly one.

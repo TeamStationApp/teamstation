@@ -869,6 +869,19 @@ export const asSignInWait = asObject({
 })
 export type SignInWait = ReturnType<typeof asSignInWait>
 
+/** Where a sign-in is asked for, and where its e-mailed link should open. */
+export interface SignInRequestOptions {
+  /** The platform asking. The web when absent. */
+  origin?: 'web' | 'ios' | 'android'
+  /** Where to go once signed in. */
+  next?: string
+  /**
+   * The link host of the app asking, so the e-mailed link opens it. Only an
+   * installed app sends it; the server refuses a host it does not sign in.
+   */
+  appOrigin?: string
+}
+
 /**
  * Either a session, or `ready: false` — waiting is the ordinary answer here
  * and not a failure, so it is a shape rather than a status code.
@@ -1408,19 +1421,26 @@ export class TeamStationClient {
    */
   async requestEmailCode(
     email: string,
-    options: { origin?: 'web' | 'ios' | 'android'; next?: string } = {}
+    options: SignInRequestOptions = {}
   ): Promise<SignInWait> {
     return await this.request('POST', '/auth/email-code', asSignInWait, {
       email,
       origin: options.origin ?? 'web',
-      next: options.next
+      next: options.next,
+      appOrigin: options.appOrigin
     })
   }
 
-  /** Spend the link from the e-mail. Never happens on a bare page load. */
-  async signInWithLink(token: string): Promise<Session> {
+  /**
+   * Spend the link from the e-mail. Never happens on a bare page load.
+   *
+   * A device names itself, as it does when it types the code, and gets the
+   * long-lived, named session a device does.
+   */
+  async signInWithLink(token: string, deviceName?: string): Promise<Session> {
     const session = await this.request('POST', '/auth/link/verify', asSession, {
-      token
+      token,
+      deviceName
     })
     this.token = session.token
     return session
@@ -2377,13 +2397,13 @@ export class TeamStationClient {
    */
   async requestInviteCode(
     code: string,
-    options: { email: string; displayName?: string; next?: string }
+    options: { email: string; displayName?: string } & SignInRequestOptions
   ): Promise<SignInWait> {
     return await this.request(
       'POST',
       `/join/${encodeURIComponent(code)}/email-code`,
       asSignInWait,
-      { ...options, origin: 'web' }
+      { ...options, origin: options.origin ?? 'web' }
     )
   }
 

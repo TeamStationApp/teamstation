@@ -155,6 +155,9 @@ function resolveMediaSecret(): string {
   return generated
 }
 
+/** The link hosts of the apps this server signs in through their own links. */
+const appOrigins = serverConfig.appLinks.apps.map(app => app.origin)
+
 /**
  * Delivers a sign-in code.
  *
@@ -466,10 +469,11 @@ function runWorker(): void {
       passwordParameterSecret: serverConfig.sessionSecret,
       sendCode,
       space: serverConfig.space,
-      publicUrl
+      publicUrl,
+      appOrigins
     })
   )
-  app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl }))
+  app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl, appOrigins }))
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use(
     '/api/v1',
