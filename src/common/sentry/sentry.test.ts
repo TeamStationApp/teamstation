@@ -294,6 +294,7 @@ describe('sentry environment', function () {
   const cases: Array<[string | undefined, string]> = [
     ['app.teamstation.app', 'production'],
     ['APP.teamstation.app:443', 'production'],
+    ['web.teamstation.app', 'production'],
     ['develop3.example.test', 'develop3'],
     ['localhost', 'development'],
     ['localhost:9100', 'development'],

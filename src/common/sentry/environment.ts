@@ -1,8 +1,8 @@
-import { PRIMARY_HOST } from '../primaryUrl'
+import { PRIMARY_HOST, WEB_HOST } from '../primaryUrl'
 
 /**
  * Which Sentry environment an event belongs to, from the host of the server
- * the build talks to: `production` for the product host, a development
+ * the build talks to: `production` for either product host, a development
  * seat's own name for one of its hosts (`develop2`), and `development` for
  * anything local — localhost, an IP address, or no host at all.
  */
@@ -12,7 +12,7 @@ export function sentryEnvironment(host: string | undefined): string {
     return 'development'
   if (/^[\d.]+$/.test(name) || name.includes(':') || name.startsWith('['))
     return 'development'
-  if (name === PRIMARY_HOST) return 'production'
+  if (name === PRIMARY_HOST || name === WEB_HOST) return 'production'
   return name.split('.')[0]
 }
 

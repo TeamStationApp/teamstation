@@ -73,7 +73,12 @@ import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
 import { startScoreboard } from './scoreboard/scoreboardService'
-import { primaryHost, publicUrl, serverConfig } from './serverConfig'
+import {
+  eventControlIssuerOf,
+  primaryHost,
+  publicUrl,
+  serverConfig
+} from './serverConfig'
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
 import {
@@ -500,7 +505,7 @@ function runWorker(): void {
     '/api/v1',
     deviceEventControlRoutes(db, {
       secret: serverConfig.deviceEventControlSecret,
-      issuer: publicUrl
+      issuer: eventControlIssuerOf(serverConfig, publicUrl)
     })
   )
   app.use(
