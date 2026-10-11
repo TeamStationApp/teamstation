@@ -16,6 +16,7 @@ import * as NativeScroll from './chatWebInteractions.native'
 import { ChatWorkspace } from './ChatWorkspace'
 import {
   type ChatDraft,
+  ChatListNavigationCapture,
   type ChatWorkspaceState,
   emptyChatDraft,
   newChatWorkspaceState
@@ -792,6 +793,8 @@ async function returningList(
   moves: number[]
   offsets: number[]
   anchors: Array<{ id: string; relativeY: number } | undefined>
+  capture: () => Promise<void>
+  captureAvailable: () => boolean
   populate: (count: number) => Promise<void>
   refreshMetadata: () => Promise<void>
   reorder: (id?: string) => Promise<void>
@@ -808,10 +811,18 @@ async function returningList(
   const offsets: number[] = []
   const anchors: Array<{ id: string; relativeY: number } | undefined> = []
   let rows: ConversationListItem[] = []
+  let capture: (() => Promise<void>) | undefined
+  const registerCapture = (read: () => Promise<void>): (() => void) => {
+    capture = read
+    return () => {
+      if (capture === read) capture = undefined
+    }
+  }
   await render(
     <ChatListScreen
       engine={engine}
       embedded
+      registerPositionCapture={registerCapture}
       initialOffset={initialOffset}
       initialAnchor={initialAnchor}
       onOffset={offset => offsets.push(offset)}
@@ -843,6 +854,10 @@ async function returningList(
     moves,
     offsets,
     anchors,
+    capture: async () => {
+      await capture?.()
+    },
+    captureAvailable: () => capture != null,
     populate: async count => {
       await act(async () => {
         rows = Array.from({ length: count }, (_, index) =>
@@ -900,6 +915,7 @@ async function returningList(
           embedded
           narrow
           selectedVisible
+          registerPositionCapture={registerCapture}
           initialOffset={initialOffset}
           initialAnchor={initialAnchor}
           onOffset={offset => offsets.push(offset)}
@@ -917,6 +933,7 @@ async function returningList(
           embedded
           narrow
           selectedVisible={false}
+          registerPositionCapture={registerCapture}
           initialOffset={initialOffset}
           initialAnchor={initialAnchor}
           onOffset={offset => offsets.push(offset)}
@@ -4824,7 +4841,13 @@ describe('native deliberate-top late coordinate persistence', function () {
     expect(pending.offsets.at(-1), 'The genuine terminal chose zero').equals(0)
     expect(pending.anchors.at(-1)).equals(undefined)
     // An unowned offset event follows the completed native input.
-    await pending.scroll(52)
+    await act(async () => {
+      const callbacks = renderedListCallbacks(
+        pending.node
+      ) as ListLayoutCallbacks & { onScroll: (event: NativeListEvent) => void }
+      callbacks.onScroll({ nativeEvent: { contentOffset: { y: 52 } } })
+      await wait()
+    })
     await act(async () => {
       renderedRowLayout('cnv_return_0')({
         nativeEvent: { layout: { height: 67 } }
@@ -4858,7 +4881,13 @@ describe('native deliberate-top ownership', function () {
     setListRowMeasurement('cnv_return_0', 104)
     await pending.content(1800)
     await pending.scroll(0)
-    await pending.scroll(52)
+    await act(async () => {
+      const callbacks = renderedListCallbacks(
+        pending.node
+      ) as ListLayoutCallbacks & { onScroll: (event: NativeListEvent) => void }
+      callbacks.onScroll({ nativeEvent: { contentOffset: { y: 52 } } })
+      await wait()
+    })
     await act(async () => {
       nativeListStart(pending.node)
       nativeListEnd(pending.node)({ nativeEvent: { contentOffset: { y: 52 } } })
@@ -4876,7 +4905,13 @@ describe('native deliberate-top ownership', function () {
     setListRowMeasurement('cnv_return_0', 104)
     await pending.content(1800)
     await pending.scroll(0)
-    await pending.scroll(52)
+    await act(async () => {
+      const callbacks = renderedListCallbacks(
+        pending.node
+      ) as ListLayoutCallbacks & { onScroll: (event: NativeListEvent) => void }
+      callbacks.onScroll({ nativeEvent: { contentOffset: { y: 52 } } })
+      await wait()
+    })
     await act(async () => {
       nativeListStart(pending.node)
       pending.node.scrollTop = 120
@@ -5138,5 +5173,322 @@ describe('android non-drag momentum ownership guards', function () {
     await returning.content(1800)
     await returning.scroll(returning.moves.at(-1)!)
     expect(returning.moves).deep.equals([64])
+  })
+})
+
+function measureListWindowFromDom(node: HTMLElement): void {
+  const content = node.firstElementChild as HTMLElement
+  const rect = (y: number, height: number): DOMRect =>
+    new window.DOMRect(0, y, 320, height)
+  node.getBoundingClientRect = () => rect(100, node.clientHeight)
+  content.getBoundingClientRect = () =>
+    rect(100 - node.scrollTop, node.scrollHeight)
+  for (const row of document.querySelectorAll<HTMLElement>(
+    '[data-testid^="chat-conversation-cnv_return_"]'
+  )) {
+    const wrapper = row.parentElement!
+    wrapper.getBoundingClientRect = () =>
+      rect(100 + wrapper.offsetTop - node.scrollTop, wrapper.offsetHeight)
+  }
+}
+
+describe('measured native position before navigation', function () {
+  it('keeps the physically displayed top when a stale raw coordinate says52', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    measureListWindowFromDom(pending.node)
+    await act(async () => {
+      const callbacks = renderedListCallbacks(
+        pending.node
+      ) as ListLayoutCallbacks & { onScroll: (event: NativeListEvent) => void }
+      callbacks.onScroll({ nativeEvent: { contentOffset: { y: 52 } } })
+      await pending.capture()
+    })
+    expect(pending.node.scrollTop).equals(0)
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+  })
+  for (const [input, offset] of [
+    ['keyboard paging', 120],
+    ['accessibility scrolling', 180]
+  ] as const)
+    it(`captures actual ${input} from ordinary scroll only before a changed-prefix return`, async function () {
+      const pending = await returningList(true, 0)
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_0', 104, 120)
+      await pending.content(1800)
+      await pending.scroll(0)
+      measureListWindowFromDom(pending.node)
+      await pending.scroll(offset)
+      await act(async () => {
+        await pending.capture()
+      })
+      expect(
+        pending.offsets.at(-1),
+        'Measured displayed position overrides the remembered top'
+      ).equals(offset)
+      const saved = pending.anchors.at(-1)
+      expect(saved).deep.equals({ id: 'cnv_return_0', relativeY: 104 - offset })
+      await unmount()
+      const returning = await returningList(true, pending.offsets.at(-1), saved)
+      await returning.populate(8)
+      setListRowMeasurement('cnv_return_0', 160, 120)
+      await returning.content(1800)
+      await returning.scroll(returning.moves.at(-1)!)
+      expect(returning.moves).deep.equals([offset + 56])
+    })
+})
+
+describe('managed list navigation measurement ordering', function () {
+  it('measures before push/pop/tab/route changes and preserves rapid order and complete draft context', async function () {
+    const nav = new ChatListNavigationCapture()
+    const measured = deferred<undefined>()
+    const state = newChatWorkspaceState()
+    state.selectedId = 'cnv_return_0'
+    const picked: PickedFile = {
+      fileName: 'practice.png',
+      contentType: 'image/png',
+      bytes: new Uint8Array([1, 2, 3])
+    }
+    const draft = {
+      ...emptyChatDraft(),
+      text: 'Unsent caption',
+      replyTo: message(),
+      picked: [picked]
+    }
+    state.drafts.set(state.selectedId, draft)
+    const ordered: string[] = []
+    let reads = 0
+    nav.attach(async () => {
+      reads++
+      await measured.promise
+      state.listOffset = 120
+    })
+    const pending = ['push', 'pop', 'tab', 'route'].map(async kind => {
+      await nav.navigate(() => {
+        expect(state.listOffset).equals(120)
+        ordered.push(kind)
+      })
+    })
+    expect(ordered).deep.equals([])
+    measured.resolve(undefined)
+    await Promise.all(pending)
+    expect(ordered).deep.equals(['push', 'pop', 'tab', 'route'])
+    expect(reads).equals(1)
+    expect(state.selectedId).equals('cnv_return_0')
+    expect(state.drafts.get(state.selectedId)).equals(draft)
+    expect(draft.picked[0]).equals(picked)
+    expect(draft.replyTo).equals(state.drafts.get(state.selectedId)?.replyTo)
+    expect(draft.text).equals('Unsent caption')
+  })
+
+  it('continues disposed-owner navigation in order without publishing its stale measurement', async function () {
+    const nav = new ChatListNavigationCapture()
+    const old = deferred<undefined>()
+    const stop = nav.attach(async () => {
+      await old.promise
+    })
+    let stale = false
+    const previous = nav.navigate(() => {
+      stale = true
+    })
+    stop()
+    let current = false
+    nav.attach(async () => {})
+    const next = nav.navigate(() => {
+      current = true
+    })
+    old.resolve(undefined)
+    await Promise.all([previous, next])
+    expect(stale).equals(true)
+    expect(current).equals(true)
+    const failure = new Error('Navigation action failed')
+    let actual: unknown
+    try {
+      await nav.navigate(() => {
+        throw failure
+      })
+    } catch (error) {
+      actual = error
+    }
+    expect(actual).equals(failure)
+  })
+
+  it('continues navigation with the previous position when the public measurement callback times out', async function () {
+    const list = await returningList(true, 0)
+    await list.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await list.content(1800)
+    await list.scroll(0)
+    measureListWindowFromDom(list.node)
+    await list.scroll(120)
+    const node = list.node as HTMLElement & {
+      measureInWindow: (callback: () => void) => void
+    }
+    const original = node.measureInWindow
+    node.measureInWindow = () => {}
+    const nav = new ChatListNavigationCapture()
+    nav.attach(list.capture)
+    let left = false
+    try {
+      await act(async () => {
+        await nav.navigate(() => {
+          left = true
+        })
+      })
+    } finally {
+      node.measureInWindow = original
+    }
+    expect(left).equals(true)
+    expect(list.offsets.at(-1)).equals(0)
+    expect(list.anchors.at(-1)).equals(undefined)
+  })
+})
+
+function holdViewportMeasurement(node: HTMLElement): {
+  entered: Promise<void>
+  release: () => void
+  restore: () => void
+} {
+  type Read = (
+    callback: (x: number, y: number, width: number, height: number) => void
+  ) => void
+  const measured = node as HTMLElement & { measureInWindow: Read }
+  const descriptor = Object.getOwnPropertyDescriptor(
+    measured,
+    'measureInWindow'
+  )!
+  const entered = deferred<undefined>()
+  let callback: Parameters<Read>[0] | undefined
+  Object.defineProperty(measured, 'measureInWindow', {
+    configurable: true,
+    get: () => (next: Parameters<Read>[0]) => {
+      callback = next
+      entered.resolve(undefined)
+    },
+    set: () => {}
+  })
+  return {
+    entered: entered.promise,
+    release: () => {
+      const b = node.getBoundingClientRect()
+      callback?.(b.x, b.y, b.width, b.height)
+    },
+    restore: () =>
+      Object.defineProperty(measured, 'measureInWindow', descriptor)
+  }
+}
+
+describe('managed list measurement freshness', function () {
+  for (const changed of [
+    'layout',
+    'data',
+    'visibility',
+    'gesture generation',
+    'unmount and replacement'
+  ])
+    it(`rejects a native-window callback after ${changed} while retaining the previous saved position`, async function () {
+      const pending = await returningList(true, 0)
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_0', 104)
+      await pending.content(1800)
+      await pending.scroll(0)
+      measureListWindowFromDom(pending.node)
+      await pending.scroll(120)
+      const held = holdViewportMeasurement(pending.node)
+      try {
+        const capture = pending.capture()
+        await held.entered
+        // Commit the changed rendered owner before completing this callback.
+        // An enclosing async act would defer that change until capture settles.
+        if (changed === 'layout') {
+          await pending.content(1856)
+          expect(pending.node.scrollHeight).equals(1856)
+        } else if (changed === 'data') {
+          await pending.reorder()
+          expect(
+            document
+              .querySelector('[data-testid^="chat-conversation-cnv_return_"]')
+              ?.getAttribute('data-testid')
+          ).equals('chat-conversation-cnv_return_3')
+        } else if (changed === 'visibility') {
+          await pending.hide()
+          expect(
+            pending.captureAvailable(),
+            'The committed invisible owner disposed its public capture registration'
+          ).equals(false)
+        } else if (changed === 'gesture generation') {
+          await act(async () => {
+            nativeListStart(pending.node)
+          })
+        } else {
+          await unmount()
+          await render(<ReactNative.View testID="replacement-native-owner" />)
+          expect(pending.node.isConnected).equals(false)
+          expect(
+            document.querySelector('[data-testid="replacement-native-owner"]')
+          ).not.equals(null)
+        }
+        await act(async () => {
+          held.release()
+          await capture
+        })
+      } finally {
+        held.restore()
+      }
+      expect(pending.offsets.at(-1)).equals(0)
+      expect(pending.anchors.at(-1)).equals(undefined)
+    })
+
+  it('preserves a meaningful supplied zero-relative anchor through capture and changed-prefix return', async function () {
+    const pending = await returningList(true, 0, {
+      id: 'cnv_return_0',
+      relativeY: 105
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 105)
+    await pending.content(1800)
+    await pending.scroll(0)
+    measureListWindowFromDom(pending.node)
+    await act(async () => {
+      await pending.capture()
+    })
+    const saved = pending.anchors.at(-1)
+    expect(saved).deep.equals({ id: 'cnv_return_0', relativeY: 105 })
+    await unmount()
+    const returning = await returningList(true, 0, saved)
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_0', 169)
+    await returning.content(1800)
+    await returning.scroll(returning.moves.at(-1)!)
+    expect(returning.moves).deep.equals([64])
+  })
+})
+
+describe('list navigation engine context ownership', function () {
+  it('cancels only a destroyed engine context and keeps subsequent active navigation synchronous without a reader', async function () {
+    const nav = new ChatListNavigationCapture()
+    const pending = deferred<undefined>()
+    nav.attach(async () => {
+      await pending.promise
+    })
+    let old = false
+    const previous = nav.navigate(() => {
+      old = true
+    })
+    nav.setContextActive(false)
+    pending.resolve(undefined)
+    await previous
+    expect(old).equals(false)
+    nav.setContextActive(true)
+    let current = false
+    const next = nav.navigate(() => {
+      current = true
+    })
+    expect(current).equals(true)
+    await next
   })
 })

@@ -181,3 +181,83 @@ export function chatDraftOwner(
   owners.set(state, { engine, userId, owner })
   return owner
 }
+
+/** Measure the still-visible list before its managed navigation changes state. */
+export class ChatListNavigationCapture {
+  private owner: object | undefined
+  private read: (() => Promise<void>) | undefined
+  private running = false
+  private active = true
+  private contextRevision = 0
+  private readonly queued: Array<{
+    owner: object | undefined
+    context: number
+    change: () => void
+    done: () => void
+    fail: (error: unknown) => void
+  }> = []
+
+  constructor(readonly context?: object) {}
+
+  attach(read: () => Promise<void>): () => void {
+    const owner = {}
+    this.owner = owner
+    this.read = read
+    return () => {
+      if (this.owner !== owner) return
+      this.owner = undefined
+      this.read = undefined
+    }
+  }
+
+  setContextActive(active: boolean): void {
+    if (this.active && !active) {
+      this.contextRevision += 1
+      this.owner = undefined
+      this.read = undefined
+    }
+    this.active = active
+  }
+
+  async navigate(change: () => void): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      this.queued.push({
+        owner: this.owner,
+        context: this.contextRevision,
+        change,
+        done: resolve,
+        fail: reject
+      })
+      if (!this.running)
+        this.drain().catch((error: unknown) => {
+          console.error(error)
+        })
+    })
+  }
+
+  private async drain(): Promise<void> {
+    this.running = true
+    while (this.queued.length > 0) {
+      const owner = this.queued[0].owner
+      if (owner === this.owner && this.read != null) {
+        // A failed capture retains the previous position; navigation still works.
+        try {
+          await this.read()
+        } catch {}
+      }
+      const batch = []
+      while (this.queued.length > 0 && this.queued[0].owner === owner)
+        batch.push(this.queued.shift()!)
+      for (const request of batch) {
+        try {
+          if (this.active && request.context === this.contextRevision)
+            request.change()
+          request.done()
+        } catch (error) {
+          request.fail(error)
+        }
+      }
+    }
+    this.running = false
+  }
+}

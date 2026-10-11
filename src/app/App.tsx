@@ -23,7 +23,10 @@ import { ChatMembersScreen } from './chat/ChatMembersScreen'
 import { hasUnread } from './chat/chatModel'
 import { ChatOverlayHost } from './chat/ChatOverlayHost'
 import { ChatWorkspace } from './chat/ChatWorkspace'
-import { newChatWorkspaceState } from './chat/chatWorkspaceModel'
+import {
+  ChatListNavigationCapture,
+  newChatWorkspaceState
+} from './chat/chatWorkspaceModel'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { leaveChat } from './chat/engine/links'
 import { keyStore } from './chat/keyStore'
@@ -318,6 +321,8 @@ function Shell(props: AppProps): React.ReactElement {
    * screen stays where it was. A browser never had the problem, because
    * following a link there is a navigation.
    */
+  const navigationState = useRef({ tab, filters })
+  navigationState.current = { tab, filters }
   const [route, setRoute] = useState<Route>(() => currentRoute())
   // The address the app was opened on decides what is on the stack, so a link
   // to a game opens that game rather than the screen behind it.
@@ -378,6 +383,16 @@ function Shell(props: AppProps): React.ReactElement {
     [client, gameSocket, signedInAs]
   )
   const chatWorkspaceState = useMemo(newChatWorkspaceState, [chatEngine])
+  const chatListNavigation = useMemo(
+    () => new ChatListNavigationCapture(chatEngine),
+    [chatEngine]
+  )
+  useEffect(() => {
+    chatListNavigation.setContextActive(true)
+    return () => {
+      chatListNavigation.setContextActive(false)
+    }
+  }, [chatListNavigation])
   /**
    * The chat list as last read, for the Chat tab's unread dot and the links
    * to a team's, season's or league's chats. Read once at sign-in (no keys
@@ -585,45 +600,79 @@ function Shell(props: AppProps): React.ReactElement {
     inPlace.current = false
   }, [joining, session, tab, top, filters, route.name])
 
-  const goToRoute = useCallback((route: Route): void => {
-    setRoute(route)
-    setJoining(route.name === 'join' ? route.code : undefined)
-    const next = tabOf(route)
-    setTab(next)
-    setStacks(current => ({
-      ...current,
-      [next]: stackFor(route)[next] ?? []
-    }))
-    // The shell writes the address from these filters. Leaving them stale
-    // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
-    // would open Upcoming.
-    setFilters(current => filtersForRoute(current, route))
-  }, [])
+  const goToRoute = useCallback(
+    (route: Route): void => {
+      chatListNavigation
+        .navigate(() => {
+          setRoute(route)
+          setJoining(route.name === 'join' ? route.code : undefined)
+          const next = tabOf(route)
+          const nextFilters = filtersForRoute(
+            navigationState.current.filters,
+            route
+          )
+          navigationState.current = { tab: next, filters: nextFilters }
+          setTab(next)
+          setStacks(current => ({
+            ...current,
+            [next]: stackFor(route)[next] ?? []
+          }))
+          // The shell writes the address from these filters. Leaving them stale
+          // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
+          // would open Upcoming.
+          setFilters(nextFilters)
+        })
+        .catch(reportNavigationError)
+    },
+    [chatListNavigation]
+  )
   useBrowserBack(goToRoute)
 
   /** The tab, or — pressed on the tab you are already on — a step out of it. */
   const selectTab = (next: NavTabId): void => {
-    setTab(next)
-    setStacks(current => stacksAfterTabPress(current, tab, next))
-    if (session == null || props.fieldPreview === true) {
-      if (next === tab) return
-      const destination = routeOf(next, undefined, filters)
-      setRoute(destination)
-      setJoining(undefined)
-      showRoute(destination)
-    }
+    chatListNavigation
+      .navigate(() => {
+        const previous = navigationState.current
+        navigationState.current = { ...previous, tab: next }
+        setTab(next)
+        setStacks(current => stacksAfterTabPress(current, previous.tab, next))
+        if (session == null || props.fieldPreview === true) {
+          if (next === previous.tab) return
+          const destination = routeOf(next, undefined, previous.filters)
+          setRoute(destination)
+          setJoining(undefined)
+          showRoute(destination)
+        }
+      })
+      .catch(reportNavigationError)
   }
 
   const push = (next: Pushed): void => {
-    setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
+    chatListNavigation
+      .navigate(() => {
+        const currentTab = navigationState.current.tab
+        setStacks(current => ({
+          ...current,
+          [currentTab]: [...current[currentTab], next]
+        }))
+      })
+      .catch(reportNavigationError)
   }
   const pop = (): void => {
     // The address goes back with the screen. On the web the browser owns the
     // history and this does nothing; on a phone the two are kept by hand, and
     // a chevron that left a step behind would make the next press of the
     // system Back button appear to do nothing.
-    popRoute()
-    setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
+    chatListNavigation
+      .navigate(() => {
+        popRoute()
+        const currentTab = navigationState.current.tab
+        setStacks(current => ({
+          ...current,
+          [currentTab]: current[currentTab].slice(0, -1)
+        }))
+      })
+      .catch(reportNavigationError)
   }
 
   const openGame = (
@@ -982,6 +1031,7 @@ function Shell(props: AppProps): React.ReactElement {
           engine={chatEngine!}
           userId={session?.user.id ?? 0}
           state={chatWorkspaceState}
+          listNavigation={chatListNavigation}
           conversationId={
             top?.name === 'conversation' ? top.conversationId : undefined
           }
@@ -1805,3 +1855,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     zIndex: 4
   }
 }))
+
+function reportNavigationError(error: unknown): void {
+  console.error(error)
+}
