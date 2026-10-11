@@ -8,14 +8,18 @@ import {
   type RosterEntry,
   type TeamStationClient
 } from '../../common/api'
-import type { PlayerSettings } from '../../common/playerSettings'
+import type {
+  PersonSettings,
+  PlayerSettings
+} from '../../common/playerSettings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { changesOf, PlayerSettingsTab } from './PlayerSettingsTab'
 
 /**
- * The form a coach edits a player with: it starts from the roster, offers
- * Save only once something differs, sends only what differs, and keeps a
- * refusal on the screen.
+ * The form a coach or a guardian edits a player with: on a team, the jersey
+ * and positions from the roster; away from one, how they bat and throw from
+ * the player. It offers Save only once something differs, sends only what
+ * differs, and keeps a refusal on the screen.
  */
 let root: Root | undefined
 
@@ -79,7 +83,7 @@ const jordan = asRosterEntry({
 })
 
 interface Saved {
-  teamId: string
+  teamId: string | null
   userId: string
   settings: PlayerSettings
 }
@@ -93,6 +97,16 @@ function settingsClient(
     roster: async () => {
       if (roster instanceof Error) throw roster
       return roster
+    },
+    player: async () => {
+      if (roster instanceof Error) throw roster
+      return { userId: 7, name: 'Jordan P', bats: 'right', throws: null }
+    },
+    setPlayerBatsThrows: async (userId: string, settings: PersonSettings) => {
+      saves.push({ teamId: null, userId, settings })
+      const result = answer?.(settings)
+      if (result instanceof Error) throw result
+      return { userId: 7, bats: 'right', throws: null, ...settings }
     },
     setPlayerSettings: async (
       teamId: string,
@@ -282,14 +296,15 @@ describe('a player’s settings form', function () {
     expect((labelled('Jersey number') as HTMLInputElement).value).equals('4')
     expect(checked('CF')).equals(true)
     expect(checked('SS')).equals(false)
-    expect(checked('Bats Right')).equals(true)
-    expect(checked('Throws Right')).equals(true)
+    // How they bat and throw is the player's, not the team's: not here.
+    expect(document.querySelector('[aria-label="Bats Right"]')).equals(null)
+    expect(document.querySelector('[aria-label="Throws Right"]')).equals(null)
     expect(saveDisabled()).equals(true)
   })
 
   it('offers Save only after a change, and sends only what changed', async function () {
     const saves: Saved[] = []
-    const saved: RosterEntry[] = []
+    const saved: unknown[] = []
     await render(
       <PlayerSettingsTab
         client={settingsClient([jordan], saves)}
@@ -301,34 +316,90 @@ describe('a player’s settings form', function () {
       />
     )
     // A change undone is no change.
-    await press('Bats Left')
+    await press('SS')
     expect(saveDisabled()).equals(false)
-    await press('Bats Right')
+    await press('SS')
     expect(saveDisabled()).equals(true)
 
     await type('Jersey number', '12')
     await press('SS')
     await press('2B')
     await press('CF')
-    await press('Bats Left')
     expect(saveDisabled()).equals(false)
     await press('Save')
     expect(saves).deep.equals([
       {
         teamId: 't1',
         userId: '7',
-        settings: { jersey: '12', positions: ['2B', 'SS'], bats: 'left' }
+        settings: { jersey: '12', positions: ['2B', 'SS'] }
       }
     ])
-    expect(saved.map(entry => entry.jersey)).deep.equals(['12'])
+    expect(saved).has.length(1)
     expect(text()).includes('Saved.')
     expect(saveDisabled()).equals(true)
     expect(checked('SS')).equals(true)
-    expect(checked('Bats Left')).equals(true)
+    expect((labelled('Jersey number') as HTMLInputElement).value).equals('12')
 
     // The next change clears the note.
-    await press('Throws Left')
+    await press('P')
     expect(text()).not.includes('Saved.')
+  })
+
+  it('edits how they bat and throw away from a team, and nothing else', async function () {
+    const saves: Saved[] = []
+    const saved: unknown[] = []
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([], saves)}
+        userId="7"
+        onSaved={entry => {
+          saved.push(entry)
+        }}
+      />
+    )
+    expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
+    expect(document.querySelector('[aria-label="CF"]')).equals(null)
+    expect(checked('Bats Right')).equals(true)
+    expect(checked('Throws Right')).equals(false)
+    expect(saveDisabled()).equals(true)
+
+    await press('Bats Left')
+    await press('Throws Left')
+    await press('Save')
+    expect(saves).deep.equals([
+      {
+        teamId: null,
+        userId: '7',
+        settings: { bats: 'left', throws: 'left' }
+      }
+    ])
+    expect(saved).deep.equals([{ bats: 'left', throws: 'left' }])
+    expect(text()).includes('Saved.')
+    expect(checked('Bats Left')).equals(true)
+    expect(saveDisabled()).equals(true)
+  })
+
+  it('keeps a refusal away from a team on the form', async function () {
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([], [], () => new Error(''))}
+        userId="7"
+      />
+    )
+    await press('Throws Right')
+    await press('Save')
+    expect(text()).includes('Cannot save these settings')
+    expect(checked('Throws Right')).equals(true)
+    await act(async () => {
+      root?.unmount()
+    })
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient(new Error('offline'), [])}
+        userId="7"
+      />
+    )
+    expect(text()).includes('Cannot load this player')
   })
 
   it('keeps an error on the form, with what was typed', async function () {

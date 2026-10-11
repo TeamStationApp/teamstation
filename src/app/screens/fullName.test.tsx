@@ -326,9 +326,9 @@ describe('a player’s whole name is never shown', function () {
     expect(text()).includes('#12')
     await press('Jordan P')
     expect(opened).deep.equals([7])
-    // The team goes twice: as the Stats filter, and as the team the page was
-    // opened for, which a coach's Settings tab edits the player on.
-    expect(froms).deep.equals([{ teamId: 'tem_hawks', onTeam: 'tem_hawks' }])
+    // The team goes as the one the page was opened for: both of the player's
+    // filters start on it, and a coach's Settings tab edits the player on it.
+    expect(froms).deep.equals([{ onTeam: 'tem_hawks' }])
     for (const tab of ['Videos', 'Schedule', 'Stats']) await press(tab)
     expect(text()).includes('Jordan P')
   })

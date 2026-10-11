@@ -86,10 +86,10 @@ export interface TeamScreenProps {
     options?: GameListOpenOptions
   ) => void
   /**
-   * A name on the roster. The team travels with it, so the player's stats open
-   * on this team rather than on a career total nobody asked for, and again as
-   * `onTeam`, the team the page was opened for, which a coach's Settings tab
-   * edits the player on.
+   * A name on the roster. The team travels with it as `onTeam`, the team the
+   * page was opened for: the player's videos and stats open narrowed to it
+   * rather than to a career total nobody asked for, and a coach's Settings
+   * tab edits the player on it.
    */
   onOpenPlayer?: (
     userId: number,
@@ -553,10 +553,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                                     onOpenPlayer(
                                       person.userId,
                                       person.shortName,
-                                      {
-                                        teamId: team.id,
-                                        onTeam: team.id
-                                      }
+                                      { onTeam: team.id }
                                     )
                                   }
                             }

@@ -27,6 +27,7 @@ import { expect } from 'chai'
 
 import { makeId } from '../common/ids'
 import { posterSecond } from '../server/media/posters'
+import { stillKey } from '../server/media/stills'
 import { type GuardianFixture, guardianFixture } from '../test/guardianFixture'
 import type { BrowserSession } from '../test/refinementsMaestro.e2e'
 
@@ -74,7 +75,8 @@ type ApiLog = (
 const stages: Record<string, (run: Run) => Promise<void>> = {
   apiRoles,
   api,
-  roster
+  roster,
+  player
 }
 
 /**
@@ -535,6 +537,298 @@ async function roster(run: Run): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 200))
   }
   expect(held).deep.equals(['coach', 'scorekeeper'])
+}
+
+/**
+ * The Player screen opened from a team: the team's coach opens a player from
+ * the roster and finds Videos and Stats narrowed to that team, a filter pill
+ * over the videos, a Teams tab, and Settings holding only the jersey and
+ * positions. The player's guardian reads the Teams tab with every team the
+ * child plays on, newest first.
+ */
+async function player(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  const [avery] = f.players
+  const db = f.h.db
+  const { contains } = await import('../test/refinementsMaestro.e2e')
+
+  // A season on each of Avery's teams, so the Teams tab has an order to
+  // show: Demo Regular is this year's, Demo Playoffs (the Comets') next
+  // year's.
+  await db
+    .updateTable('seasons')
+    .set({ year: 2026 })
+    .where('id', '=', f.seasonA)
+    .execute()
+  await db
+    .insertInto('season_teams')
+    .values({
+      season_id: f.playoffs,
+      team_id: f.secondTeam,
+      joined_at: new Date()
+    })
+    .execute()
+  // A Hawks game outside any season, with one highlight of Avery's, so a
+  // season narrows the Hawks' videos. Stat lines for Avery in all three, so
+  // the filter has Demo Regular to offer.
+  const extra = {
+    id: 'guardian-game-3',
+    videoId: 'vid_guardian_3',
+    startAt: new Date('2026-10-03T18:00:00Z')
+  }
+  await db
+    .insertInto('games')
+    .values({
+      id: extra.id,
+      home_team_id: f.teamA,
+      away_team_id: f.standaloneTeam,
+      season_id: null,
+      start_at: extra.startAt,
+      venue: 'Demo Field',
+      status: 'final',
+      home_score: 4,
+      away_score: 1,
+      timezone: 'UTC'
+    })
+    .execute()
+  await db
+    .insertInto('videos')
+    .values({
+      id: extra.videoId,
+      game_id: extra.id,
+      kind: 'program',
+      title: 'Demo game video',
+      storage: 'spaces',
+      status: 'ready',
+      start_at: extra.startAt,
+      duration_sec: 7200
+    })
+    .execute()
+  const at = new Date(extra.startAt.getTime() + 30 * 60_000).toISOString()
+  await db
+    .insertInto('events')
+    .values({
+      id: 'evt_guardian_guardian-game-3_0',
+      gameId: extra.id,
+      startTime: at,
+      battingTeamId: f.teamA,
+      gumbo: {
+        about: {
+          atBatIndex: 0,
+          inning: 1,
+          halfInning: 'bottom',
+          isScoringPlay: false,
+          startTime: at
+        },
+        result: { eventType: 'double', awayScore: 0, homeScore: 0 },
+        credits: [
+          {
+            eventType: 'double',
+            label: 'Double: Avery S',
+            teamId: f.teamA,
+            creditUserId: avery.id,
+            credit: { name: 'Avery S', role: 'batter', position: null }
+          }
+        ]
+      }
+    })
+    .execute()
+  for (const gameId of [...f.games.map(game => game.id), extra.id])
+    await db
+      .insertInto('game_player_stats')
+      .values({
+        id: makeId('gamePlayerStats'),
+        game_id: gameId,
+        user_id: avery.id,
+        team_id: f.teamA,
+        pa: 4,
+        ab: 4,
+        h: 1,
+        singles: 1
+      })
+      .execute()
+  // The new video's stills, as the fixture keeps the others'.
+  const still = f.h.objects.get(
+    `/${f.h.space.bucket}/${stillKey(f.games[0].videoId, posterSecond(7200))}`
+  )
+  if (still == null) throw new Error('The fixture kept no poster')
+  f.h.objects.set(
+    `/${f.h.space.bucket}/${stillKey(extra.videoId, posterSecond(7200))}`,
+    still
+  )
+  const answer = await f.h.request(
+    'GET',
+    `/videos/${extra.videoId}/highlights`,
+    undefined,
+    people.siteAdmin
+  )
+  const { highlights } = (await answer.json()) as {
+    highlights: Array<{ stillUrl: string }>
+  }
+  expect(highlights).has.length(1)
+  for (const highlight of highlights) {
+    const second = /\/stills\/(\d+)\.jpg/.exec(highlight.stillUrl)
+    if (second == null) throw new Error(`No still in ${highlight.stillUrl}`)
+    f.h.objects.set(
+      `/${f.h.space.bucket}/${stillKey(extra.videoId, Number(second[1]))}`,
+      still
+    )
+  }
+
+  /** The tab labels in the bar, in order. */
+  const tabNames = async (session: BrowserSession): Promise<string[]> =>
+    (
+      await session.page.evaluate(() =>
+        [
+          ...document.querySelectorAll(
+            '[aria-label="Player sections"] [role="tab"]'
+          )
+        ].map(node => node.textContent)
+      )
+    ).map(name => name ?? '')
+  /** The highlight rows' labels: `Demo Hawks Double, <when>`. */
+  const highlightRows = async (session: BrowserSession): Promise<string[]> =>
+    (
+      await session.page.evaluate(() =>
+        [
+          ...document.querySelectorAll(
+            '[role="button"][aria-label^="Demo Hawks "]'
+          )
+        ].map(node => node.getAttribute('aria-label'))
+      )
+    ).map(label => label ?? '')
+  /** The Teams tab's rows, top to bottom, as their text reads. */
+  const teamRows = async (session: BrowserSession): Promise<string[]> =>
+    (
+      await session.page.evaluate(() =>
+        [...document.querySelectorAll('[role="button"]')]
+          .map(node => node.textContent)
+          .filter(text => text !== null && /^D(H|C)Demo /.test(text))
+      )
+    ).map(text => text ?? '')
+  const pill = async (session: BrowserSession): Promise<string> =>
+    (await session.page.evaluate(() => {
+      const node = document.querySelector('[aria-label="Filter videos"]')
+      return node === null ? null : node.textContent
+    })) ?? ''
+
+  // The coach opens Avery from the roster.
+  const coach = await run.signIn('player-coach', people.teamCoach)
+  await coach.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}?tab=team` })
+  await contains(coach.page, 'PLAYERS')
+  await coach.m.tapOn({ css: '[aria-label^="Avery S"]', timeout: 15000 })
+  await coach.page.waitForSelector('[aria-label="Filter videos"]', {
+    timeout: 20000
+  })
+  await contains(coach.page, 'Home run')
+  const opened = new URL(coach.page.url())
+  expect(opened.pathname).equals(`/players/${avery.id}`)
+  expect(opened.search).equals(`?onTeam=${f.teamA}`)
+  expect(await tabNames(coach)).deep.equals([
+    'Videos',
+    'Stats',
+    'Teams',
+    'Settings'
+  ])
+  // Narrowed to the Hawks: the pill says so, and every row is a Hawks play,
+  // the season's four and the game outside it.
+  expect(await pill(coach)).includes('Demo Hawks')
+  const hawks = await highlightRows(coach)
+  expect(hawks).has.length(5)
+  expect(hawks.filter(label => label.includes('Oct 3, 2026'))).has.length(1)
+  await run.shot(coach, 'player-team-after.png')
+
+  // A season narrows the list to its games.
+  await coach.m.tapOn({ css: '[aria-label="Filter videos"]', timeout: 15000 })
+  await contains(coach.page, 'Which games?')
+  // The choice reads "Demo Regular" over its year, so it is found by its
+  // text rather than by an accessible name of its own.
+  await coach.page.evaluate(() => {
+    const choice = [...document.querySelectorAll('[role="radio"]')].find(
+      node => {
+        const text = node.textContent
+        // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+        return text !== null && text.startsWith('Demo Regular')
+      }
+    )
+    if (choice === undefined) throw new Error('No Demo Regular choice')
+    ;(choice as HTMLElement).click()
+  })
+  await coach.m.tapOn({ text: 'Show these', role: 'button', timeout: 15000 })
+  await coach.page.waitForFunction(
+    () =>
+      document.querySelectorAll('[role="button"][aria-label^="Demo Hawks "]')
+        .length === 4,
+    { timeout: 20000 }
+  )
+  const regular = await highlightRows(coach)
+  expect(regular).has.length(4)
+  expect(regular.filter(label => label.includes('Oct 3, 2026'))).deep.equals([])
+  expect(await pill(coach)).includes('Demo Regular')
+  expect(new URL(coach.page.url()).searchParams.get('vseason')).equals(
+    f.seasonA
+  )
+
+  // Teams: only the teams the coach can see, each once with Avery's number
+  // there; the game outside any season adds no second Hawks row.
+  await coach.m.tapOn({ text: 'Teams', role: 'tab', timeout: 15000 })
+  await contains(coach.page, 'Demo Regular')
+  expect(await teamRows(coach)).deep.equals([
+    'DHDemo HawksDemo Regular · SS · 2B#7chevron_right'
+  ])
+  expect(new URL(coach.page.url()).searchParams.get('tab')).equals('teams')
+
+  // Settings beside the team: the name a roster manager may correct, the
+  // jersey and positions, and no hands.
+  await coach.m.tapOn({ text: 'Settings', role: 'tab', timeout: 15000 })
+  await coach.page.waitForSelector('input[aria-label="Jersey number"]', {
+    timeout: 20000
+  })
+  // No `??` or `?.` in here: see `roster`.
+  const form = await coach.page.evaluate(() => ({
+    name: [
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="First name"]'
+      )!.value,
+      document.querySelector<HTMLInputElement>('input[aria-label="Last name"]')!
+        .value
+    ],
+    jersey: document.querySelector<HTMLInputElement>(
+      'input[aria-label="Jersey number"]'
+    )!.value,
+    on: [...document.querySelectorAll('[role="checkbox"]')]
+      .filter(node => node.getAttribute('aria-checked') === 'true')
+      .map(node => node.getAttribute('aria-label')),
+    hands: document.querySelectorAll('[role="radio"]').length,
+    text: document.body.textContent
+  }))
+  expect(form.name).deep.equals(['Avery', 'Stone'])
+  expect(form.jersey).equals('7')
+  expect(form.on).deep.equals(['2B', 'SS'])
+  expect(form.hands).equals(0)
+  expect(form.text).not.includes('BATS')
+  expect(form.text).not.includes('THROWS')
+  await run.shot(coach, 'player-settings-team-after.png')
+
+  // The guardian sees every team Avery plays on, newest season first.
+  const guardian = await run.signIn('player-guardian', people.guardian)
+  await guardian.m.openBrowser({
+    url: `${f.h.origin}/players/${avery.id}?tab=teams&onTeam=${f.teamA}`
+  })
+  await contains(guardian.page, 'Demo Comets')
+  expect(await tabNames(guardian)).deep.equals([
+    'Videos',
+    'Stats',
+    'Walk-up',
+    'Teams',
+    'Settings'
+  ])
+  expect(await teamRows(guardian)).deep.equals([
+    'DCDemo CometsDemo Playoffs · P#9chevron_right',
+    'DHDemo HawksDemo Regular · SS · 2B#7chevron_right'
+  ])
+  await run.shot(guardian, 'player-teams-tab.png')
 }
 
 async function main(): Promise<void> {

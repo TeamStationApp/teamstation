@@ -57,7 +57,7 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
-import type { PlayerSettings } from './playerSettings'
+import type { PersonSettings, PlayerSettings } from './playerSettings'
 import {
   asGroupDetail,
   asPublicGroup,
@@ -617,6 +617,14 @@ export const asPlayerDetail = asObject({
   teams: asArray(asPlayerTeam)
 })
 export type PlayerDetail = ReturnType<typeof asPlayerDetail>
+
+/** How a player bats and throws, as `PUT /players/:userId/settings` stored it. */
+export const asPersonSettingsAnswer = asObject({
+  userId: asUserId,
+  bats: asBats,
+  throws: asThrows
+})
+export type PersonSettingsAnswer = ReturnType<typeof asPersonSettingsAnswer>
 
 /**
  * One highlight of one player, for their own page.
@@ -2327,6 +2335,22 @@ export class TeamStationClient {
       'PUT',
       `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/settings`,
       asRosterEntry,
+      settings
+    )
+  }
+
+  /**
+   * How a player bats and throws, away from any team: for a guardian of the
+   * player, or a coach of a team they play on. Only the fields sent change.
+   */
+  async setPlayerBatsThrows(
+    userId: number | string,
+    settings: PersonSettings
+  ): Promise<PersonSettingsAnswer> {
+    return await this.request(
+      'PUT',
+      `/players/${encodeURIComponent(userId)}/settings`,
+      asPersonSettingsAnswer,
       settings
     )
   }

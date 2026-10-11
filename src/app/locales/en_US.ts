@@ -211,8 +211,16 @@ export const enUs = {
   player_filter_unknown: 'a filter that no longer exists',
   player_games: '%s games',
   player_one_game: '1 game',
+  /** The pill above a player's videos that opens the filter. */
+  player_videos_filter: 'Filter videos',
+  player_videos_filter_empty: 'No highlights under this filter.',
 
-  // A player's settings, for a coach of the team the page was opened for
+  // Every team a player has played for
+  player_teams: 'Teams',
+  player_teams_empty: 'Not on any team yet.',
+
+  // A player's settings: on the team the page was opened for, their jersey
+  // and positions; away from any team, how they bat and throw
   player_settings: 'Settings',
   player_settings_first_name: 'First name',
   player_settings_last_name: 'Last name',

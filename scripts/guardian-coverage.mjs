@@ -38,7 +38,10 @@ const appSuites = [
   'src/app/screens/fullName.test.tsx',
   'src/app/screens/teamSchedule.test.tsx',
   'src/app/screens/teamRoster.test.tsx',
-  'src/app/screens/ManageScreen.test.tsx'
+  'src/app/screens/ManageScreen.test.tsx',
+  'src/app/screens/PlayerScreen.test.tsx',
+  'src/app/screens/PlayerSettingsTab.test.tsx',
+  'src/app/App.teamRoutes.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

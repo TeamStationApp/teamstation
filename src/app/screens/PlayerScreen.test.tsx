@@ -6,22 +6,31 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   asPlayerDetail,
   asRosterEntry,
+  type MyRoles,
+  type PlayerHighlights,
   type PlayerStats,
+  type PlayerTeam,
   type TeamStationClient
 } from '../../common/api'
-import type { PlayerSettings } from '../../common/playerSettings'
+import type {
+  PersonSettings,
+  PlayerSettings
+} from '../../common/playerSettings'
+import type { Role } from '../../common/roles'
 import { App } from '../App'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { PlayerScreen, type PlayerTab } from './PlayerScreen'
 
 /**
- * The Settings tab: offered with the team the page was opened for and a
- * coach's right on it, and never otherwise — on the web and on a phone
- * alike, because both draw this screen. The Stats filter is a different
- * team and never moves it.
+ * The tabs and filters of a player's page. Opened from a team, both filters
+ * start on it and Settings is that team's jersey and positions, for its
+ * coaching staff or the player's guardian; opened from anywhere else, the
+ * page is a career and Settings is how they bat and throw. Teams is always
+ * there. On the web and on a phone alike, because both draw this screen.
  */
 let root: Root | undefined
 const originalFetch = globalThis.fetch
@@ -67,21 +76,32 @@ const tabNames = (): string[] =>
       '[aria-label="Player sections"] [role="tab"]'
     )
   ].map(node => node.textContent ?? '')
+/** Each tab pill's side padding, which a strip of five draws narrower. */
+const tabSides = (): string[] =>
+  [
+    ...document.querySelectorAll<HTMLElement>(
+      '[aria-label="Player sections"] [role="tab"] > div'
+    )
+  ].map(node => getComputedStyle(node).paddingLeft)
+const px = (rem: number): string => `${tsBallpark.rem(rem)}px`
 /**
  * Which tab's content is on the screen. PillTabs says which is selected only
  * through `accessibilityState`, which the web build does not render, so the
  * page is read instead.
  */
 const selectedTab = (): string | undefined =>
-  document.querySelector('[aria-label="Jersey number"]') != null
+  document.querySelector('[aria-label="Jersey number"]') != null ||
+  document.querySelector('[aria-label="Bats Right"]') != null
     ? 'Settings'
-    : (document.body.textContent ?? '').includes('Set walk-up songs in')
+    : text().includes('Set walk-up songs in')
       ? 'Walk-up'
-      : (document.body.textContent ?? '').includes('No highlights')
+      : document.querySelector('[aria-label="Filter videos"]') != null
         ? 'Videos'
-        : (document.body.textContent ?? '').includes('Filter')
-          ? 'Stats'
-          : undefined
+        : text().includes('Not on any team yet') || text().includes('#')
+          ? 'Teams'
+          : text().includes('3 games')
+            ? 'Stats'
+            : undefined
 const text = (): string => document.body.textContent ?? ''
 
 async function typeName(label: string, value: string): Promise<void> {
@@ -96,6 +116,12 @@ async function typeName(label: string, value: string): Promise<void> {
     field.dispatchEvent(new window.Event('input', { bubbles: true }))
   })
 }
+
+const roles = (
+  teams: Record<string, Role[]>,
+  guardianOf: number[] = []
+): MyRoles => ({ teams, guardianOf })
+const coach = roles({ t1: ['coach'] })
 
 const jordan = asRosterEntry({
   userId: 7,
@@ -118,15 +144,53 @@ const stats: PlayerStats = {
   batting: null,
   pitching: null,
   options: {
-    seasons: [],
-    teams: [{ teamId: 'tem_other', name: 'Owls' }],
-    years: []
+    seasons: [{ seasonId: 's1', name: 'Spring 2026', year: 2026 }],
+    teams: [
+      { teamId: 't1', name: 'Hawks' },
+      { teamId: 'tem_other', name: 'Owls' }
+    ],
+    years: [2026]
   }
 }
 
+const hawks: PlayerTeam = {
+  teamId: 't1',
+  teamName: 'Hawks',
+  seasonId: 's1',
+  seasonName: 'Spring 2026',
+  seasonYear: 2026,
+  jersey: '4',
+  positions: ['CF', 'LF'],
+  current: true,
+  logoUrl: null
+}
+const owls: PlayerTeam = {
+  teamId: 'tem_other',
+  teamName: 'Owls',
+  seasonId: null,
+  seasonName: null,
+  seasonYear: null,
+  jersey: null,
+  positions: [],
+  current: true,
+  logoUrl: null
+}
+/** The Owls, once the player has left them: only their stats are there. */
+const owlsLeft: PlayerTeam = { ...owls, current: false }
+
+interface Asked {
+  highlights: unknown[]
+  stats: unknown[]
+}
+
 function playerClient(
-  saves: Array<{ teamId: string; settings: PlayerSettings }> = [],
-  rosters: string[] = []
+  saves: Array<{ teamId: string | null; settings: PlayerSettings }> = [],
+  rosters: string[] = [],
+  options: {
+    teams?: PlayerTeam[]
+    asked?: Asked
+    pages?: (asked: Record<string, unknown>) => PlayerHighlights
+  } = {}
 ): TeamStationClient {
   return {
     player: async () =>
@@ -135,14 +199,25 @@ function playerClient(
         name: 'Jordan P',
         bats: 'right',
         throws: 'right',
-        teams: []
+        teams: options.teams ?? []
       }),
-    playerHighlights: async () => ({
-      highlights: [],
-      nextBefore: null,
-      withoutVideo: 0
-    }),
-    playerStats: async () => stats,
+    playerHighlights: async (
+      _userId: string,
+      asked: Record<string, unknown>
+    ) => {
+      options.asked?.highlights.push(asked)
+      return (
+        options.pages?.(asked) ?? {
+          highlights: [],
+          nextBefore: null,
+          withoutVideo: 0
+        }
+      )
+    },
+    playerStats: async (_userId: string, filter: unknown) => {
+      options.asked?.stats.push(filter)
+      return stats
+    },
     roster: async (teamId: string) => {
       rosters.push(teamId)
       return [jordan]
@@ -154,6 +229,10 @@ function playerClient(
     ) => {
       saves.push({ teamId, settings })
       return { ...jordan, ...settings }
+    },
+    setPlayerBatsThrows: async (_userId: string, settings: PersonSettings) => {
+      saves.push({ teamId: null, settings })
+      return { userId: 7, bats: 'right', throws: 'right', ...settings }
     }
   } as unknown as TeamStationClient
 }
@@ -164,6 +243,331 @@ afterEach(async function () {
   })
   root = undefined
   globalThis.fetch = originalFetch
+})
+
+describe('a player’s tabs', function () {
+  it('reads Videos, Stats, Walk-up, Teams, Settings beside a team', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient()}
+        userId="7"
+        forTeam="t1"
+        roles={roles({ t1: ['coach', 'songkeeper'] })}
+      />
+    )
+    expect(tabNames()).deep.equals([
+      'Videos',
+      'Stats',
+      'Walk-up',
+      'Teams',
+      'Settings'
+    ])
+    // Five fit a phone side by side only with narrower pills.
+    expect(tabSides()).deep.equals(Array(5).fill(px(tsBallpark.spaceSmRem)))
+  })
+
+  it('offers Teams to anybody, and Settings and Walk-up to nobody else', async function () {
+    for (const props of [
+      { forTeam: undefined, roles: undefined },
+      { forTeam: undefined, roles: roles({}) },
+      { forTeam: 't1', roles: roles({ t1: ['videographer'] }) },
+      { forTeam: 't1', roles: undefined },
+      // A guardian of somebody else.
+      { forTeam: 't1', roles: roles({}, [8]) }
+    ]) {
+      await render(
+        <PlayerScreen client={playerClient()} userId="7" {...props} />
+      )
+      expect(tabNames(), JSON.stringify(props)).deep.equals([
+        'Videos',
+        'Stats',
+        'Teams'
+      ])
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('offers Settings from Home to a coach of any of the player’s teams', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { teams: [hawks, owls] })}
+        userId="7"
+        roles={roles({ tem_other: ['assistant'] })}
+      />
+    )
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
+    expect(tabSides()).deep.equals(Array(4).fill(px(tsBallpark.spaceMdRem)))
+    await act(async () => {
+      root?.unmount()
+    })
+    // Coaching a team the player is not on is no right over the player.
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { teams: [hawks] })}
+        userId="7"
+        roles={roles({ tem_other: ['coach'] })}
+      />
+    )
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+  })
+
+  it('offers no Settings from Home to a coach of a team the player has left', async function () {
+    // The Owls are still among their teams, for the stats played there.
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { teams: [hawks, owlsLeft] })}
+        userId="7"
+        roles={roles({ tem_other: ['coach'] })}
+      />
+    )
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+    await press('Teams')
+    expect(text()).includes('Owls')
+  })
+
+  it('gives a guardian Settings and Walk-up for their own child', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient()}
+        userId="7"
+        forTeam="t1"
+        roles={roles({}, [7])}
+      />
+    )
+    expect(tabNames()).deep.equals([
+      'Videos',
+      'Stats',
+      'Walk-up',
+      'Teams',
+      'Settings'
+    ])
+    await press('Settings')
+    expect(document.querySelector('[aria-label="Jersey number"]')).not.equals(
+      null
+    )
+    await act(async () => {
+      root?.unmount()
+    })
+    // From Home: Settings, and no Walk-up without a team for the song.
+    await render(
+      <PlayerScreen client={playerClient()} userId="7" roles={roles({}, [7])} />
+    )
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
+  })
+
+  it('knows a guardian by the row the player is now, from an address made before a merge', async function () {
+    // The address names row 3, since closed into 7, which the server answers
+    // as; the guardian's roles name the child by 7.
+    await render(
+      <PlayerScreen
+        client={playerClient()}
+        userId="3"
+        forTeam="t1"
+        roles={roles({}, [7])}
+      />
+    )
+    expect(tabNames()).deep.equals([
+      'Videos',
+      'Stats',
+      'Walk-up',
+      'Teams',
+      'Settings'
+    ])
+  })
+})
+
+describe('a player’s filters', function () {
+  it('start both tabs on the team the page was opened for', async function () {
+    const asked: Asked = { highlights: [], stats: [] }
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { asked })}
+        userId="7"
+        forTeam="t1"
+      />
+    )
+    expect(asked.highlights).deep.equals([{ before: undefined, teamId: 't1' }])
+    expect(asked.stats).deep.equals([{ teamId: 't1' }])
+    // The pill says what the list is narrowed to.
+    expect(find('Filter videos')?.textContent).equals('filter_altHawks')
+  })
+
+  it('start on a career from anywhere else', async function () {
+    const asked: Asked = { highlights: [], stats: [] }
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { asked })}
+        userId="7"
+        initialFilter={{}}
+        initialVideoFilter={{}}
+      />
+    )
+    expect(asked.highlights).deep.equals([{ before: undefined }])
+    expect(asked.stats).deep.equals([{}])
+    expect(find('Filter videos')?.textContent).equals('filter_altCareer')
+  })
+
+  it('start on what the address or the tap asked for, over the team', async function () {
+    const asked: Asked = { highlights: [], stats: [] }
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { asked })}
+        userId="7"
+        forTeam="t1"
+        // A box score: the game's season and side.
+        initialFilter={{ seasonId: 's1', teamId: 't1' }}
+        initialVideoFilter={{ year: 2026 }}
+      />
+    )
+    expect(asked.highlights).deep.equals([{ before: undefined, year: 2026 }])
+    expect(asked.stats).deep.equals([{ seasonId: 's1', teamId: 't1' }])
+  })
+
+  it('narrows Videos from the pill, and pages through what it narrowed to', async function () {
+    const asked: Asked = { highlights: [], stats: [] }
+    const chosen: unknown[] = []
+    const highlight = (id: string): PlayerHighlights['highlights'][number] => ({
+      eventId: id,
+      gameId: 'g1',
+      videoId: 'v1',
+      teamId: 't1',
+      teamName: 'Hawks',
+      outcome: `Single ${id}`,
+      title: `Single ${id}`,
+      playAt: '2026-04-01T18:00:00Z',
+      startOffsetSec: 60,
+      playOffsetSec: 62,
+      stillUrl: '/still.jpg'
+    })
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          asked,
+          pages: request =>
+            request.seasonId == null
+              ? { highlights: [], nextBefore: null, withoutVideo: 0 }
+              : request.before == null
+                ? {
+                    highlights: [highlight('e1')],
+                    nextBefore: 'c1',
+                    withoutVideo: 0
+                  }
+                : {
+                    highlights: [highlight('e2')],
+                    nextBefore: null,
+                    withoutVideo: 0
+                  }
+        })}
+        userId="7"
+        forTeam="t1"
+        onVideoFilter={filter => {
+          chosen.push(filter)
+        }}
+      />
+    )
+    expect(text()).includes('No highlights under this filter.')
+    await press('Filter videos')
+    await press('Spring 2026')
+    await press('Show these')
+    expect(chosen).deep.equals([{ seasonId: 's1' }])
+    expect(find('Filter videos')?.textContent).equals('filter_altSpring 2026')
+    expect(text()).includes('Single e1')
+    await press('Show more')
+    expect(asked.highlights).deep.equals([
+      { before: undefined, teamId: 't1' },
+      { before: undefined, seasonId: 's1' },
+      { before: 'c1', seasonId: 's1' }
+    ])
+    expect(text()).includes('Single e1')
+    expect(text()).includes('Single e2')
+    // The Stats tab keeps its own filter.
+    expect(asked.stats).deep.equals([{ teamId: 't1' }])
+  })
+
+  it('clears an empty Videos filter back to a career', async function () {
+    const asked: Asked = { highlights: [], stats: [] }
+    const chosen: unknown[] = []
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { asked })}
+        userId="7"
+        forTeam="t1"
+        onVideoFilter={filter => {
+          chosen.push(filter)
+        }}
+      />
+    )
+    await press('Show every game')
+    expect(chosen).deep.equals([{}])
+    expect(asked.highlights).deep.equals([
+      { before: undefined, teamId: 't1' },
+      { before: undefined }
+    ])
+    expect(text()).includes('No highlights of this player yet.')
+  })
+})
+
+describe('a player’s Teams tab', function () {
+  it('lists each team and season with the number and positions worn there', async function () {
+    const opened: Array<[string, string]> = []
+    const tabs: PlayerTab[] = []
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], { teams: [hawks, owls] })}
+        userId="7"
+        onTab={tab => {
+          tabs.push(tab)
+        }}
+        onOpenTeam={(teamId, name) => {
+          opened.push([teamId, name])
+        }}
+      />
+    )
+    await press('Teams')
+    expect(tabs).deep.equals(['teams'])
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].filter(node => /Hawks|Owls/.test(node.textContent ?? ''))
+    expect(rows.map(row => row.textContent)).deep.equals([
+      'HHawksSpring 2026 · CF · LF#4chevron_right',
+      'OOwlschevron_right'
+    ])
+    await act(async () => {
+      rows[1].click()
+      await delay(20)
+    })
+    expect(opened).deep.equals([['tem_other', 'Owls']])
+  })
+
+  it('draws each team’s logo, and its initials when it has none', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          teams: [{ ...hawks, logoUrl: 'https://img.example/hawks.png' }, owls]
+        })}
+        userId="7"
+        initialTab="teams"
+        onOpenTeam={() => {}}
+      />
+    )
+    expect(
+      document.querySelector('img[src="https://img.example/hawks.png"]')
+    ).not.equals(null)
+    expect(document.querySelectorAll('img')).length(1)
+    const owlsRow = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => (node.textContent ?? '').includes('Owls'))
+    expect(owlsRow?.textContent).equals('OOwlschevron_right')
+  })
+
+  it('says so when there are none', async function () {
+    await render(
+      <PlayerScreen client={playerClient()} userId="7" initialTab="teams" />
+    )
+    expect(text()).includes('Not on any team yet.')
+  })
 })
 
 describe('a player’s Settings tab', function () {
@@ -188,17 +592,17 @@ describe('a player’s Settings tab', function () {
             })
           : asPlayerDetail({ userId: 7, name: 'Paul G', teams: [] })
       client.roster = async () => [entry]
-      client.setPlayerSettings = async () => ({ ...entry, bats: 'left' })
+      client.setPlayerSettings = async () => ({ ...entry, jersey: '9' })
       await render(
         <PlayerScreen
           client={client}
           userId="7"
           forTeam="t1"
-          canManageRoster
+          roles={coach}
           initialTab="settings"
         />
       )
-      await press('Bats Left')
+      await typeName('Jersey number', '9')
       await press('Save')
       expect(text()).includes('Paul Goldschmidt')
       await press('Videos')
@@ -245,7 +649,7 @@ describe('a player’s Settings tab', function () {
         client={client}
         userId="7"
         forTeam="t1"
-        canManageRoster
+        roles={coach}
         initialTab="settings"
       />
     )
@@ -287,7 +691,7 @@ describe('a player’s Settings tab', function () {
         client={client}
         userId="7"
         forTeam="t1"
-        canManageRoster
+        roles={coach}
         initialTab="settings"
       />
     )
@@ -334,7 +738,7 @@ describe('a player’s Settings tab', function () {
         client={client}
         userId="7"
         forTeam="t1"
-        canManageRoster
+        roles={coach}
         initialTab="settings"
       />
     )
@@ -381,7 +785,7 @@ describe('a player’s Settings tab', function () {
         client={client}
         userId="7"
         forTeam="t1"
-        canManageRoster
+        roles={coach}
         initialTab="settings"
         onSettingsSaved={() => {
           saved = true
@@ -389,69 +793,80 @@ describe('a player’s Settings tab', function () {
       />
     )
     expect(text()).includes('Mookie Betts')
-    await press('Bats Left')
+    await press('SS')
     await press('Save')
     expect(saved).equals(true)
     await press('Videos')
     expect(text()).includes('Jordan P').and.not.includes('Mookie Betts')
   })
-  it('shows for a coach of the team the page was opened for, and saves to it', async function () {
-    const saves: Array<{ teamId: string; settings: PlayerSettings }> = []
+  it('edits the jersey and positions on the team the page was opened for', async function () {
+    const saves: Array<{ teamId: string | null; settings: PlayerSettings }> = []
     const tabs: PlayerTab[] = []
     await render(
       <PlayerScreen
         client={playerClient(saves)}
         userId="7"
         forTeam="t1"
-        canManageRoster
+        roles={coach}
         onTab={tab => {
           tabs.push(tab)
         }}
       />
     )
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
     await press('Settings')
     expect(tabs).deep.equals(['settings'])
     expect(selectedTab()).equals('Settings')
+    expect(document.querySelector('[aria-label="Bats Right"]')).equals(null)
+    await press('SS')
+    await press('Save')
+    expect(saves).deep.equals([
+      { teamId: 't1', settings: { positions: ['SS', 'CF'] } }
+    ])
+  })
+
+  it('edits how they bat and throw from anywhere else', async function () {
+    const saves: Array<{ teamId: string | null; settings: PlayerSettings }> = []
+    await render(
+      <PlayerScreen
+        client={playerClient(saves)}
+        userId="7"
+        initialTab="settings"
+        roles={roles({}, [7])}
+      />
+    )
+    expect(selectedTab()).equals('Settings')
+    expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
     await press('Bats Left')
     await press('Save')
-    expect(saves).deep.equals([{ teamId: 't1', settings: { bats: 'left' } }])
+    expect(saves).deep.equals([{ teamId: null, settings: { bats: 'left' } }])
     // The card above says how they bat, and says it right away.
     expect(text()).includes('B: L')
   })
 
-  it('is not there without the team, or without the right to coach it', async function () {
+  it('sends an address that asks for it without the right back to Videos', async function () {
     for (const props of [
-      { forTeam: undefined, canManageRoster: true },
-      { forTeam: 't1', canManageRoster: false },
-      { forTeam: 't1', canManageRoster: undefined }
+      { forTeam: 't1', roles: roles({ t1: ['songkeeper', 'videographer'] }) },
+      { forTeam: undefined, roles: roles({}) }
     ]) {
+      const tabs: Array<[PlayerTab, boolean | undefined]> = []
       await render(
-        <PlayerScreen client={playerClient()} userId="7" {...props} />
+        <PlayerScreen
+          client={playerClient()}
+          userId="7"
+          initialTab="settings"
+          {...props}
+          onTab={(tab, correcting) => {
+            tabs.push([tab, correcting])
+          }}
+        />
       )
-      expect(tabNames(), JSON.stringify(props)).deep.equals(['Videos', 'Stats'])
+      expect(selectedTab(), JSON.stringify(props)).equals('Videos')
+      expect(tabs).deep.equals([['videos', true]])
       await act(async () => {
         root?.unmount()
       })
     }
-  })
-
-  it('sends an address that asks for it without the right back to Videos', async function () {
-    const tabs: Array<[PlayerTab, boolean | undefined]> = []
-    await render(
-      <PlayerScreen
-        client={playerClient()}
-        userId="7"
-        initialTab="settings"
-        forTeam="t1"
-        canManageRoster={false}
-        onTab={(tab, correcting) => {
-          tabs.push([tab, correcting])
-        }}
-      />
-    )
-    expect(selectedTab()).equals('Videos')
-    expect(tabs).deep.equals([['videos', true]])
   })
 
   it('waits for the roles before correcting the address', async function () {
@@ -483,7 +898,7 @@ describe('a player’s Settings tab', function () {
         initialTab="stats"
         initialFilter={{ teamId: 't1' }}
         forTeam="t1"
-        canManageRoster
+        roles={coach}
         onFilter={filter => {
           filters.push(filter)
         }}
@@ -492,50 +907,65 @@ describe('a player’s Settings tab', function () {
     await press('Filter')
     await press('Owls')
     await press('Show these')
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
     await press('Show every game')
     expect(filters).deep.equals([{ teamId: 'tem_other' }, {}])
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
     await press('Settings')
-    expect(rosters).deep.equals(['t1', 't1'])
+    // The roster of the team the page was opened for, and no other: for the
+    // form, and for the whole name a roster manager reads in the header.
+    expect(rosters.length).greaterThan(0)
+    expect(new Set(rosters)).deep.equals(new Set(['t1']))
   })
 })
 
-describe('a player’s Settings address, through the app', function () {
-  function fixtureFetch(roles: Record<string, string[]>): void {
-    globalThis.fetch = async input => {
-      const path = (
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url
-      ).split('?')[0]
-      const data = path.endsWith('/auth/me')
-        ? { id: 100, displayName: 'Coach', isAdmin: false }
-        : path.endsWith('/me/roles')
-          ? { teams: roles }
-          : path.endsWith('/players/7')
-            ? { userId: 7, name: 'Jordan P', teams: [] }
-            : path.endsWith('/players/7/highlights')
-              ? { highlights: [], nextBefore: null, withoutVideo: 0 }
+/** The app, answering from fixtures, with the roles given and every URL asked. */
+function fixtureFetch(
+  roles: Record<string, string[]>,
+  guardianOf: number[] = [],
+  asked: string[] = []
+): void {
+  globalThis.fetch = async input => {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url
+    asked.push(url)
+    const path = url.split('?')[0]
+    const data = path.endsWith('/auth/me')
+      ? { id: 100, displayName: 'Coach', isAdmin: false }
+      : path.endsWith('/me/roles')
+        ? { teams: roles, guardianOf }
+        : path.endsWith('/players/7')
+          ? { userId: 7, name: 'Jordan P', teams: [hawks] }
+          : path.endsWith('/players/7/highlights')
+            ? { highlights: [], nextBefore: null, withoutVideo: 0 }
+            : path.endsWith('/players/7/stats')
+              ? stats
               : path.endsWith('/teams/t1/roster')
                 ? [{ ...jordan, userId: 7 }]
                 : []
-      return new Response(JSON.stringify(data), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      })
-    }
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
   }
+}
 
+async function open(path: string, search = ''): Promise<void> {
+  showRoute(parseRoute(path, search), true)
+  await render(<App />)
+  await act(async () => {
+    await delay(50)
+  })
+}
+
+describe('a player’s Settings address, through the app', function () {
   it('opens Settings for a coach of the team, and keeps it on the address', async function () {
     fixtureFetch({ t1: ['coach'] })
-    showRoute(parseRoute('/players/7', 'tab=settings&onTeam=t1'), true)
-    await render(<App />)
-    await act(async () => {
-      await delay(50)
-    })
+    await open('/players/7', 'tab=settings&onTeam=t1')
     expect(selectedTab()).equals('Settings')
     expect(routePath(currentRoute())).equals(
       '/players/7?tab=settings&onTeam=t1'
@@ -546,19 +976,51 @@ describe('a player’s Settings address, through the app', function () {
 
   it('opens Videos for anybody else, and says so on the address', async function () {
     fixtureFetch({ t1: ['videographer'] })
-    showRoute(parseRoute('/players/7', 'tab=settings&onTeam=t1'), true)
-    await render(<App />)
-    await act(async () => {
-      await delay(50)
-    })
+    await open('/players/7', 'tab=settings&onTeam=t1')
     expect(selectedTab()).equals('Videos')
-    expect(tabNames()).deep.equals(['Videos', 'Stats'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
     expect(routePath(currentRoute())).equals('/players/7?onTeam=t1')
+  })
+
+  it('opens a guardian’s Settings with no team, for how the child bats', async function () {
+    fixtureFetch({}, [7])
+    await open('/players/7', 'tab=settings')
+    expect(selectedTab()).equals('Settings')
+    expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
+    expect(routePath(currentRoute())).equals('/players/7?tab=settings')
+  })
+})
+
+describe('a player’s Teams and Videos addresses, through the app', function () {
+  it('reopens Teams, and opens a team from it', async function () {
+    fixtureFetch({})
+    await open('/players/7', 'tab=teams')
+    expect(selectedTab()).equals('Teams')
+    expect(routePath(currentRoute())).equals('/players/7?tab=teams')
+    await press('Hawks')
+    expect(routePath(currentRoute())).equals('/teams/t1')
+  })
+
+  it('reads the Videos filter from the address, and writes the one chosen', async function () {
+    const asked: string[] = []
+    fixtureFetch({}, [], asked)
+    await open('/players/7', 'vseason=s1&onTeam=t1')
+    expect(
+      asked.filter(url => url.includes('/players/7/highlights'))
+    ).deep.equals(['/api/v1/players/7/highlights?seasonId=s1'])
+    expect(find('Filter videos')?.textContent).equals('filter_altSpring 2026')
+    await press('Filter videos')
+    await press('2026')
+    await press('Show these')
+    expect(routePath(currentRoute())).equals('/players/7?vyear=2026&onTeam=t1')
+    expect(asked.filter(url => url.includes('/highlights')).at(-1)).equals(
+      '/api/v1/players/7/highlights?year=2026'
+    )
   })
 })
 
 describe('a player’s Walk-up tab', function () {
-  it('shows for a keeper of the team’s songs, before Settings', async function () {
+  it('shows for a keeper of the team’s songs, before Teams', async function () {
     const tabs: PlayerTab[] = []
     const rosters: string[] = []
     await render(
@@ -566,31 +1028,18 @@ describe('a player’s Walk-up tab', function () {
         client={playerClient([], rosters)}
         userId="7"
         forTeam="t1"
-        walkUp={{ canEdit: true }}
+        roles={roles({ t1: ['songkeeper'] })}
         onTab={tab => {
           tabs.push(tab)
         }}
       />
     )
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
     await press('Walk-up')
     expect(tabs).deep.equals(['walkup'])
     expect(selectedTab()).equals('Walk-up')
     expect(rosters).deep.equals(['t1'])
     expect(text()).includes('No walk-up song yet')
-    await act(async () => {
-      root?.unmount()
-    })
-    await render(
-      <PlayerScreen
-        client={playerClient()}
-        userId="7"
-        forTeam="t1"
-        canManageRoster
-        walkUp={{ canEdit: true }}
-      />
-    )
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Settings'])
   })
 
   it('titles the picker with the loaded player’s name, even from a link', async function () {
@@ -616,29 +1065,36 @@ describe('a player’s Walk-up tab', function () {
         initialTab="walkup"
         forTeam="t1"
         music={music}
+        roles={roles({ t1: ['scorekeeper'] })}
         walkUp={{
-          canEdit: true,
           onPick: (song, playerName) => {
             picked.push([song, playerName])
           }
         }}
       />
     )
-    await press('Set')
+    // A scorekeeper has Settings too, so `Set` is pressed by its whole label.
+    const set = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Set')
+    expect(set).not.equals(undefined)
+    await act(async () => {
+      set!.click()
+      await delay(20)
+    })
     expect(picked).deep.equals([[null, 'Jordan P']])
   })
 
   it('is not there without the team, or without the right to its songs', async function () {
     for (const props of [
-      { forTeam: undefined, walkUp: { canEdit: true } },
-      { forTeam: 't1', walkUp: { canEdit: false } },
-      { forTeam: 't1', walkUp: { canEdit: undefined } },
-      { forTeam: 't1', walkUp: undefined }
+      { forTeam: undefined, roles: roles({ t1: ['songkeeper'] }) },
+      { forTeam: 't1', roles: roles({ t1: ['coach'] }) },
+      { forTeam: 't1', roles: undefined }
     ]) {
       await render(
         <PlayerScreen client={playerClient()} userId="7" {...props} />
       )
-      expect(tabNames(), JSON.stringify(props)).deep.equals(['Videos', 'Stats'])
+      expect(tabNames(), JSON.stringify(props)).not.includes('Walk-up')
       await act(async () => {
         root?.unmount()
       })
@@ -653,8 +1109,7 @@ describe('a player’s Walk-up tab', function () {
         userId="7"
         initialTab="walkup"
         forTeam="t1"
-        canManageRoster
-        walkUp={{ canEdit: false }}
+        roles={coach}
         onTab={(tab, correcting) => {
           tabs.push([tab, correcting])
         }}
@@ -672,7 +1127,6 @@ describe('a player’s Walk-up tab', function () {
         userId="7"
         initialTab="walkup"
         forTeam="t1"
-        walkUp={{}}
         onTab={tab => {
           tabs.push(tab)
         }}
@@ -684,42 +1138,11 @@ describe('a player’s Walk-up tab', function () {
 })
 
 describe('a player’s Walk-up address, through the app', function () {
-  function fixtureFetch(roles: Record<string, string[]>): void {
-    globalThis.fetch = async input => {
-      const path = (
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url
-      ).split('?')[0]
-      const data = path.endsWith('/auth/me')
-        ? { id: 101, displayName: 'Songs', isAdmin: false }
-        : path.endsWith('/me/roles')
-          ? { teams: roles }
-          : path.endsWith('/players/7')
-            ? { userId: 7, name: 'Jordan P', teams: [] }
-            : path.endsWith('/players/7/highlights')
-              ? { highlights: [], nextBefore: null, withoutVideo: 0 }
-              : path.endsWith('/teams/t1/roster')
-                ? [{ ...jordan, userId: 7 }]
-                : []
-      return new Response(JSON.stringify(data), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      })
-    }
-  }
-
   it('opens Walk-up for a songkeeper, with the short name and nothing to edit it', async function () {
     fixtureFetch({ t1: ['songkeeper'] })
-    showRoute(parseRoute('/players/7', 'tab=walkup&onTeam=t1'), true)
-    await render(<App />)
-    await act(async () => {
-      await delay(50)
-    })
+    await open('/players/7', 'tab=walkup&onTeam=t1')
     expect(selectedTab()).equals('Walk-up')
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
     expect(routePath(currentRoute())).equals('/players/7?tab=walkup&onTeam=t1')
     expect(text()).includes('Jordan P')
     expect(document.querySelector('input')).equals(null)
@@ -727,13 +1150,9 @@ describe('a player’s Walk-up address, through the app', function () {
 
   it('opens Videos for anybody else, and says so on the address', async function () {
     fixtureFetch({ t1: ['coach'] })
-    showRoute(parseRoute('/players/7', 'tab=walkup&onTeam=t1'), true)
-    await render(<App />)
-    await act(async () => {
-      await delay(50)
-    })
+    await open('/players/7', 'tab=walkup&onTeam=t1')
     expect(selectedTab()).equals('Videos')
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
     expect(routePath(currentRoute())).equals('/players/7?onTeam=t1')
   })
 })

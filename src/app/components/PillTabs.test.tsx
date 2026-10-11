@@ -85,6 +85,45 @@ describe('PillTabs', function () {
     )
   })
 
+  it('draws a dense strip’s pills with narrower sides and gaps, as tall as any', async function () {
+    const sides = async (dense: boolean): Promise<string[]> => {
+      const container = await render(
+        <PillTabs
+          dense={dense}
+          tabs={TABS}
+          selected="past"
+          onSelect={() => undefined}
+        />
+      )
+      const { content } = strip(container)
+      const row = content.firstElementChild as HTMLElement
+      const pill = row.querySelector<HTMLElement>('[role="tab"] > div')!
+      const style = getComputedStyle(pill)
+      const drawn = [
+        style.paddingLeft,
+        style.minHeight,
+        getComputedStyle(row).gap
+      ]
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+      return drawn
+    }
+    const rem = (value: number): string => `${tsBallpark.rem(value)}px`
+    expect(await sides(false)).deep.equals([
+      rem(tsBallpark.spaceMdRem),
+      rem(2.25),
+      rem(tsBallpark.spaceSmRem)
+    ])
+    expect(await sides(true)).deep.equals([
+      rem(tsBallpark.spaceSmRem),
+      rem(2.25),
+      rem(tsBallpark.spaceXsRem)
+    ])
+  })
+
   it('keeps its own small inset where nothing pads it', async function () {
     const container = await render(pills)
     const { list, content } = strip(container)

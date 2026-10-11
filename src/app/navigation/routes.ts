@@ -90,25 +90,31 @@ export type Route =
   | { name: 'account' }
   | { name: 'team'; teamId: string; tab?: string }
   /**
-   * One player, and what the Stats tab is narrowed to.
+   * One player, and what their Stats and Videos tabs are narrowed to.
    *
-   * The filter is on the address like everything else, so a parent can send
-   * somebody a link to one child's spring rather than to a career total. Only
-   * the Stats tab has a filter, so the three narrowing parameters are written
-   * only beside `tab=stats`.
+   * The filters are on the address like everything else, so a parent can send
+   * somebody a link to one child's spring rather than to a career total. Each
+   * tab has its own, written only beside that tab: `season`/`team`/`year`
+   * beside `tab=stats`, `vseason`/`vteam`/`vyear` on Videos, the tab a bare
+   * address opens on.
    *
    * `onTeam` is something else: the team the page was opened for — the roster
-   * row or the box-score side that was tapped. It is on every tab, the filter
-   * never changes it, and it is what the Settings and Walk-up tabs edit the
-   * player on, so `settings` and `walkup` are only tabs at all beside it.
+   * row or the box-score side that was tapped. It is on every tab, the filters
+   * never change it, and it is what the Walk-up tab edits the player on, so
+   * `walkup` is only a tab at all beside it. Settings edits that team's jersey
+   * and positions beside it, and how they bat and throw without it; Teams
+   * reads the same either way.
    */
   | {
       name: 'player'
       userId: string
-      tab?: 'videos' | 'stats' | 'settings' | 'walkup'
+      tab?: 'videos' | 'stats' | 'teams' | 'settings' | 'walkup'
       seasonId?: string
       teamId?: string
       year?: number
+      videoSeasonId?: string
+      videoTeamId?: string
+      videoYear?: number
       onTeam?: string
     }
   | { name: 'season'; seasonId: string; tab?: string; when?: When }
@@ -176,6 +182,19 @@ const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
 function whenOf(raw: string | null, fallback: When): When {
   return raw != null && WHENS.has(raw) ? (raw as When) : fallback
+}
+
+/** A filter's year, or nothing for anything that is not one. */
+function yearOf(raw: string | null): number | undefined {
+  const year = Number(raw)
+  return Number.isInteger(year) && year > 1900 ? year : undefined
+}
+
+/** Only the fields that are set, so a bare address reads back bare. */
+function present<T extends object>(fields: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined)
+  ) as Partial<T>
 }
 
 /** `/games/g1?video=v1&t=734` → the game, the video, and where in it. */
@@ -312,28 +331,36 @@ export function parseRoute(path: string, search = ''): Route {
       if (id == null) return { name: 'home' }
       const onTeam = query.get('onTeam') ?? undefined
       const asked = query.get('tab')
-      // Settings and Walk-up edit the player on the team the page was opened
-      // for, so without one there is nothing for them to edit, and the page
-      // opens on its first tab instead.
+      // Walk-up edits the player's song on the team the page was opened for,
+      // so without one there is nothing for it to edit, and the page opens on
+      // its first tab instead. Settings and Teams mean something either way.
       const tab =
-        asked === 'stats'
-          ? 'stats'
-          : (asked === 'settings' || asked === 'walkup') && onTeam != null
+        asked === 'stats' || asked === 'teams' || asked === 'settings'
+          ? asked
+          : asked === 'walkup' && onTeam != null
             ? asked
             : 'videos'
       const on = onTeam == null ? {} : { onTeam }
-      if (tab === 'videos') return { name: 'player', userId: id, ...on }
-      if (tab === 'settings' || tab === 'walkup') {
-        return { name: 'player', userId: id, tab, ...on }
+      if (tab === 'videos') {
+        return {
+          name: 'player',
+          userId: id,
+          ...present({
+            videoSeasonId: query.get('vseason') ?? undefined,
+            videoTeamId: query.get('vteam') ?? undefined,
+            videoYear: yearOf(query.get('vyear'))
+          }),
+          ...on
+        }
       }
-      const year = Number(query.get('year'))
+      if (tab !== 'stats') return { name: 'player', userId: id, tab, ...on }
       return {
         name: 'player',
         userId: id,
         tab,
         seasonId: query.get('season') ?? undefined,
         teamId: query.get('team') ?? undefined,
-        year: Number.isInteger(year) && year > 1900 ? year : undefined,
+        year: yearOf(query.get('year')),
         ...on
       }
     }
@@ -506,19 +533,22 @@ export function routePath(route: Route): string {
         : `/seasons/${route.seasonId}?${bits.join('&')}`
     }
     case 'player': {
-      // Videos is the tab a bare address opens on, and it has no filter: the
-      // narrowing belongs to Stats, so it is written only where it is read.
-      // The team the page was opened for is written on every tab.
+      // Videos is the tab a bare address opens on. Each tab's filter is
+      // written only beside that tab, where it is read; the team the page was
+      // opened for is written on every tab.
       const query = new URLSearchParams()
-      if (route.tab === 'stats') {
+      if (route.tab == null || route.tab === 'videos') {
+        if (route.videoSeasonId != null) {
+          query.set('vseason', route.videoSeasonId)
+        }
+        if (route.videoTeamId != null) query.set('vteam', route.videoTeamId)
+        if (route.videoYear != null) query.set('vyear', String(route.videoYear))
+      } else if (route.tab === 'stats') {
         query.set('tab', 'stats')
         if (route.seasonId != null) query.set('season', route.seasonId)
         if (route.teamId != null) query.set('team', route.teamId)
         if (route.year != null) query.set('year', String(route.year))
-      } else if (
-        (route.tab === 'settings' || route.tab === 'walkup') &&
-        route.onTeam != null
-      ) {
+      } else if (route.tab !== 'walkup' || route.onTeam != null) {
         query.set('tab', route.tab)
       }
       if (route.onTeam != null) query.set('onTeam', route.onTeam)

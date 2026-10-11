@@ -13,7 +13,7 @@ import {
 import { asTeamSummary } from '../common/api'
 import { GameSocket } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
-import { keepsSongs, managesRoster } from '../common/roles'
+import { managesRoster } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import {
@@ -165,22 +165,26 @@ type Pushed =
     }
   | { name: 'account' }
   /**
-   * One player, and what their stats are narrowed to.
+   * One player, and what their stats and videos are narrowed to.
    *
    * The narrowing arrives with the tap — a box score knows the season and the
-   * side, a roster knows the team — and is written straight to the address, so
-   * a link reproduces what the reader was looking at. It is a default they can
-   * change, not a lock.
+   * side — and is written straight to the address, so a link reproduces what
+   * the reader was looking at. It is a default they can change, not a lock.
+   * A roster hands over only the team it was opened for, which the screen
+   * narrows both tabs to unless something else was asked for.
    */
   | {
       name: 'player'
       userId: string
       /** The name the tapped row showed, so the header has one immediately. */
       title: string
-      tab?: 'videos' | 'stats' | 'settings' | 'walkup'
+      tab?: 'videos' | 'stats' | 'teams' | 'settings' | 'walkup'
       seasonId?: string
       teamId?: string
       year?: number
+      videoSeasonId?: string
+      videoTeamId?: string
+      videoYear?: number
       /** The team the page was opened for, which Settings and Walk-up edit. */
       onTeam?: string
     }
@@ -881,6 +885,32 @@ function Shell(props: AppProps): React.ReactElement {
       }
     })
   }
+  /** The Videos filter, on the address, put back in place as Stats' is. */
+  const setPlayerVideoFilter = (next: {
+    seasonId?: string
+    teamId?: string
+    year?: number
+  }): void => {
+    inPlace.current = true
+    setStacks(current => {
+      const held = current[tab]
+      const last = held[held.length - 1]
+      if (last?.name !== 'player') return current
+      return {
+        ...current,
+        [tab]: [
+          ...held.slice(0, -1),
+          {
+            ...last,
+            tab: 'videos' as const,
+            videoSeasonId: next.seasonId,
+            videoTeamId: next.teamId,
+            videoYear: next.year
+          }
+        ]
+      }
+    })
+  }
 
   /**
    * Leaving the invitation for the thing it was an invitation to.
@@ -1529,6 +1559,11 @@ function Shell(props: AppProps): React.ReactElement {
           teamId: top.teamId,
           year: top.year
         }}
+        initialVideoFilter={{
+          seasonId: top.videoSeasonId,
+          teamId: top.videoTeamId,
+          year: top.videoYear
+        }}
         onTab={setTopTab}
         forTeam={top.onTeam}
         onSettingsSaved={() => {
@@ -1541,20 +1576,8 @@ function Shell(props: AppProps): React.ReactElement {
           )
             scoringRefresh.current?.()
         }}
-        canManageRoster={
-          top.onTeam == null
-            ? false
-            : myRoles == null
-              ? undefined
-              : managesRoster(myRoles, top.onTeam)
-        }
+        roles={myRoles}
         walkUp={{
-          canEdit:
-            top.onTeam == null
-              ? false
-              : myRoles == null
-                ? undefined
-                : keepsSongs(myRoles, top.onTeam),
           resolve: resolveWalkUp,
           onPick:
             top.onTeam == null || !walkUpMusic.available
@@ -1572,6 +1595,17 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         music={walkUpMusic}
         onFilter={setPlayerFilter}
+        onVideoFilter={setPlayerVideoFilter}
+        onOpenTeam={(teamId, name) => {
+          openTeam(
+            asTeamSummary({
+              id: teamId,
+              name,
+              shortName: null,
+              logoPath: null
+            })
+          )
+        }}
         onOpenMoment={(gameId, videoId, atSec, title) => {
           push({
             name: 'game',
@@ -2021,6 +2055,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
           seasonId: route.seasonId,
           teamId: route.teamId,
           year: route.year,
+          videoSeasonId: route.videoSeasonId,
+          videoTeamId: route.videoTeamId,
+          videoYear: route.videoYear,
           onTeam: route.onTeam
         }
       ]
@@ -2090,6 +2127,9 @@ function routeOf(
         seasonId: top.seasonId,
         teamId: top.teamId,
         year: top.year,
+        videoSeasonId: top.videoSeasonId,
+        videoTeamId: top.videoTeamId,
+        videoYear: top.videoYear,
         onTeam: top.onTeam
       }
     }

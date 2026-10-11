@@ -2,13 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
+  MyRoles,
   PlayerDetail,
   PlayerHighlight,
   PlayerStats,
+  PlayerTeam,
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
 import { rosterFullName, shortName } from '../../common/names'
+import { keepsSongs, managesRoster } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
@@ -32,6 +35,7 @@ import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
 import { WalkUpTab } from '../walkup/WalkUpTab'
 import { battingLine, exactDateTime } from './format'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
+import { PlayerTeamsTab } from './PlayerTeamsTab'
 import { battingColumns, pitchingColumns, playerStats } from './statColumns'
 
 export interface PlayerScreenProps {
@@ -44,27 +48,27 @@ export interface PlayerScreenProps {
   onTab?: (tab: PlayerTab, correcting?: boolean) => void
   /**
    * The team the page was opened for, the address's `onTeam`: the roster
-   * row or the box-score side that was tapped. The Settings tab edits the
-   * player on it. The Stats filter is a different thing and never changes
+   * row or the box-score side that was tapped. Both filters start on it, and
+   * the Settings and Walk-up tabs edit the player on it. Without one the page
+   * is the player's whole career, opened from Home. The filters never change
    * it.
    */
   forTeam?: string
   /**
-   * Whether the viewer manages the roster of `forTeam`, from GET /me/roles:
-   * coach, scorekeeper or admin. Undefined
-   * while that is still being asked, so an address that opens on Settings is
-   * not sent back to Videos before the answer is in.
+   * The viewer's roles, from `GET /me/roles`, which decide whether Settings
+   * and Walk-up are offered: Settings to a guardian of the player, or to
+   * whoever manages the roster of `forTeam` — a coach, assistant,
+   * scorekeeper or admin of it (`managesRoster`; of any team the player
+   * plays on, without one); Walk-up beside `forTeam` to a guardian or a
+   * keeper of its songs. Undefined while that is still being asked, so an
+   * address that opens on either is not sent back to Videos before the
+   * answer is in.
    */
-  canManageRoster?: boolean
+  roles?: MyRoles
+  /** After Settings saves the player on `forTeam`, their roster entry. */
   onSettingsSaved?: (entry: RosterEntry) => void
-  /**
-   * The Walk-up tab. `canEdit` is whether the viewer keeps `forTeam`'s
-   * walk-up songs — a songkeeper of it or its admin — from `GET /me/roles`,
-   * and undefined while that is still being asked, as `canManageRoster` is. The song
-   * itself is read from `forTeam`'s roster by the tab.
-   */
+  /** The Walk-up tab. The song itself is read from `forTeam`'s roster. */
   walkUp?: {
-    canEdit?: boolean
     /** Finds the song on this phone, for Preview. */
     resolve?: (song: WalkUpSong) => Promise<string | null>
     /**
@@ -81,12 +85,18 @@ export interface PlayerScreenProps {
    * What the Stats tab opens narrowed to, from the address.
    *
    * A reader who tapped a name in a box score is asking about that season, not
-   * about a career, so the game they came from sets this. From anywhere with no
-   * game behind it, nothing is set and the answer is a career.
+   * about a career, so the game they came from sets this. With nothing set,
+   * the tab opens on `forTeam`, or on a career without one.
    */
   initialFilter?: StatFilter
   /** So the address follows the filter, and a link can be sent. */
   onFilter?: (filter: StatFilter) => void
+  /** What the Videos tab opens narrowed to, from the address, as above. */
+  initialVideoFilter?: StatFilter
+  /** So the address follows the Videos filter. */
+  onVideoFilter?: (filter: StatFilter) => void
+  /** A row of the Teams tab. */
+  onOpenTeam?: (teamId: string, name: string) => void
   /** Opens the game's video at the moment of one of their highlights. */
   onOpenMoment?: (
     gameId: string,
@@ -96,7 +106,7 @@ export interface PlayerScreenProps {
   ) => void
 }
 
-export type PlayerTab = 'videos' | 'stats' | 'settings' | 'walkup'
+export type PlayerTab = 'videos' | 'stats' | 'teams' | 'settings' | 'walkup'
 
 const TABS: Array<{ id: PlayerTab; label: string }> = [
   { id: 'videos', label: lstrings.player_videos },
@@ -105,6 +115,10 @@ const TABS: Array<{ id: PlayerTab; label: string }> = [
 const WALKUP_TAB = {
   id: 'walkup' as const,
   label: lstrings.player_walkup
+}
+const TEAMS_TAB = {
+  id: 'teams' as const,
+  label: lstrings.player_teams
 }
 const SETTINGS_TAB = {
   id: 'settings' as const,
@@ -132,21 +146,31 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     title,
     initialTab,
     initialFilter,
+    initialVideoFilter,
     onTab,
     onFilter,
+    onVideoFilter,
     onOpenMoment,
+    onOpenTeam,
     forTeam,
-    canManageRoster,
+    roles,
     walkUp,
     music = webMusic
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
-  const [player, setPlayer] = useState<PlayerDetail | undefined>(undefined)
   const savedPlayer = useRef<
     { userId: string; entry: RosterEntry; profileName: string } | undefined
   >(undefined)
+  // Whether the viewer manages `forTeam`'s roster, and so may read the
+  // player's whole name from it: undefined while their roles are asked.
+  const rosterManager =
+    forTeam == null
+      ? false
+      : roles == null
+        ? undefined
+        : managesRoster(roles, forTeam)
   const [privateName, setPrivateName] = useState<string>()
   const [privateNameDenied, setPrivateNameDenied] = useState(false)
   const privateNameGeneration = useRef(0)
@@ -155,7 +179,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     const generation = ++privateNameGeneration.current
     setPrivateName(undefined)
     setPrivateNameDenied(false)
-    if (canManageRoster === true && forTeam != null) {
+    if (rosterManager === true && forTeam != null) {
       client
         .roster(forTeam, { includeFullNames: true })
         .then(rows => {
@@ -180,7 +204,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, userId, forTeam, canManageRoster])
+  }, [client, userId, forTeam, rosterManager])
   const [tab, setTab] = useState<PlayerTab>(initialTab ?? 'videos')
   /**
    * The address is allowed to change this, not only to start it.
@@ -198,24 +222,52 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     setTab(initialTab ?? 'videos')
   }, [initialTab])
 
-  // Settings is offered to a coach of the team the page was opened for, and
-  // Walk-up to a keeper of its songs, on the web and on a phone alike, and
-  // to nobody else. An address that asks for either without that right opens
-  // on Videos, and says so, once the answer to "do they hold it?" is in.
-  const canKeepSongs = walkUp?.canEdit
-  const settingsShown = forTeam != null && canManageRoster === true
-  const settingsPending =
-    forTeam != null && canManageRoster == null && tab === 'settings'
-  const walkUpShown = forTeam != null && canKeepSongs === true
+  const [player, setPlayer] = useState<PlayerDetail | undefined>(undefined)
+
+  // Settings is offered to a guardian of the player, and to whoever manages
+  // the roster of the team the page was opened for (of any team the player
+  // plays on now, opened from anywhere else: not one they have left, as the
+  // server decides it); Walk-up, beside a team, to a guardian or a keeper of
+  // its songs. On the web and on a phone alike, and to nobody else. An
+  // address that asks for either without that right opens on Videos, and
+  // says so, once the answer to "do they hold it?" is in; until then an
+  // address that asks for Settings shows it loading.
+  // `guardianOf` names each child by the row they sign in as, which is the
+  // loaded player's; an address made before a merge names a closed row, so
+  // the route's id stands in only until the player is in.
+  const guardian =
+    roles == null
+      ? undefined
+      : roles.guardianOf.includes(player?.userId ?? Number(userId))
+  const canManage =
+    roles == null
+      ? undefined
+      : guardian === true ||
+        (forTeam != null
+          ? managesRoster(roles, forTeam)
+          : player == null
+            ? undefined
+            : player.teams.some(
+                team => team.current && managesRoster(roles, team.teamId)
+              ))
+  const canKeepSongs =
+    forTeam == null
+      ? false
+      : roles == null
+        ? undefined
+        : guardian === true || keepsSongs(roles, forTeam)
+  const settingsShown = canManage === true
+  const settingsPending = canManage == null && tab === 'settings'
+  const walkUpShown = canKeepSongs === true
   const tabs = [
     ...TABS,
     ...(walkUpShown ? [WALKUP_TAB] : []),
+    TEAMS_TAB,
     ...(settingsShown || settingsPending ? [SETTINGS_TAB] : [])
   ]
   const refused =
-    forTeam != null &&
-    ((tab === 'settings' && canManageRoster === false) ||
-      (tab === 'walkup' && canKeepSongs === false))
+    (tab === 'settings' && canManage === false) ||
+    (tab === 'walkup' && canKeepSongs === false)
   useEffect(() => {
     if (!refused) return
     setTab('videos')
@@ -235,10 +287,19 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   /** The page being asked for. Undefined is the first one. */
   const [before, setBefore] = useState<string | undefined>(undefined)
   const [stats, setStats] = useState<PlayerStats | undefined>(undefined)
-  const [filter, setFilter] = useState<StatFilter>(initialFilter ?? {})
-  const narrowed =
-    filter.seasonId != null || filter.teamId != null || filter.year != null
-  const [filtering, setFiltering] = useState(false)
+  // Each tab keeps a filter of its own, starting from what the address or
+  // the tap asked for, else the team the page was opened for, else a career.
+  const [filter, setFilter] = useState<StatFilter>(() =>
+    startingFilter(initialFilter, forTeam)
+  )
+  const [videoFilter, setVideoFilter] = useState<StatFilter>(() =>
+    startingFilter(initialVideoFilter, forTeam)
+  )
+  const narrowed = isNarrowed(filter)
+  /** Which tab's filter the sheet is open for. */
+  const [filtering, setFiltering] = useState<'stats' | 'videos' | undefined>(
+    undefined
+  )
   const [loadingStats, setLoadingStats] = useState(true)
 
   // The name slides up into the header as the card goes under it, the way a
@@ -250,7 +311,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       ? savedPlayer.current.profileName
       : player?.name
   const shown =
-    tab === 'settings' && canManageRoster === true && !privateNameDenied
+    tab === 'settings' && rosterManager === true && !privateNameDenied
       ? (privateName ?? publicName ?? title ?? '')
       : (publicName ?? (privateNameDenied ? '' : title) ?? '')
   const { headerHeight } = useHeaderSlot()
@@ -296,8 +357,9 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     setBefore(undefined)
     setStats(undefined)
     setError(undefined)
-    setFilter({})
-  }, [userId])
+    setFilter(startingFilter(undefined, forTeam))
+    setVideoFilter(startingFilter(undefined, forTeam))
+  }, [userId, forTeam])
 
   useEffect(() => {
     let cancelled = false
@@ -332,13 +394,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     }
   }, [client, userId])
 
-  // Their highlights, a page at a time. Every play they are credited on,
-  // across every game and every team — the Videos tab is never filtered.
+  // Their highlights, a page at a time: every play they are credited on in
+  // the games the Videos filter is on. A new filter starts again from the
+  // first page, which `before` is set back to alongside it.
   useEffect(() => {
     let cancelled = false
     setLoadingVideos(true)
     client
-      .playerHighlights(userId, { before })
+      .playerHighlights(userId, { before, ...videoFilter })
       .then(page => {
         if (cancelled) return
         // Appended rather than replaced: `Show more` is another page of the
@@ -359,7 +422,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, userId, before])
+  }, [client, userId, before, videoFilter])
 
   // Their figures, for whichever games the filter is on. Asked for again when
   // the filter changes rather than added up here: the arithmetic has one home,
@@ -384,6 +447,11 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   }, [client, userId, filter])
 
   const handedness = player == null ? undefined : battingLine(player)
+  const applyVideoFilter = (next: StatFilter): void => {
+    setVideoFilter(next)
+    setBefore(undefined)
+    onVideoFilter?.(next)
+  }
 
   return (
     <Screen onScroll={handoff.handleScroll}>
@@ -417,6 +485,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           onTab?.(next)
         }}
         size="compact"
+        dense={tabs.length >= 5}
         accessibilityLabel={lstrings.player_sections}
       />
 
@@ -424,6 +493,22 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
       {shownTab === 'videos' && (
         <View style={styles.section}>
+          <View style={styles.pillRow}>
+            <Button
+              label={
+                stats == null && player == null
+                  ? lstrings.player_filter
+                  : filterName(stats, videoFilter, player?.teams)
+              }
+              accessibilityLabel={lstrings.player_videos_filter}
+              icon="filter_alt"
+              kind="secondary"
+              compact
+              onPress={() => {
+                setFiltering('videos')
+              }}
+            />
+          </View>
           {loadingVideos && highlights.length === 0 && (
             <Card>
               <Text style={styles.muted}>{lstrings.player_loading}</Text>
@@ -434,8 +519,19 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
               <Text style={styles.muted}>
                 {withoutVideo > 0
                   ? lstrings.player_videos_none_recorded
-                  : lstrings.player_videos_empty}
+                  : isNarrowed(videoFilter)
+                    ? lstrings.player_videos_filter_empty
+                    : lstrings.player_videos_empty}
               </Text>
+              {isNarrowed(videoFilter) && (
+                <Button
+                  label={lstrings.player_filter_clear}
+                  kind="secondary"
+                  onPress={() => {
+                    applyVideoFilter({})
+                  }}
+                />
+              )}
             </Card>
           )}
           {highlights.map(highlight => (
@@ -488,7 +584,13 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
         </View>
       )}
 
-      {shownTab === 'settings' && forTeam != null && (
+      {shownTab === 'teams' && (
+        <View style={styles.section}>
+          <PlayerTeamsTab teams={player?.teams} onOpenTeam={onOpenTeam} />
+        </View>
+      )}
+
+      {shownTab === 'settings' && (
         <View style={styles.section}>
           {settingsPending ? (
             <Text style={styles.muted}>{lstrings.common_loading}</Text>
@@ -497,7 +599,17 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
               client={client}
               teamId={forTeam}
               userId={userId}
-              onSaved={entry => {
+              fullNames={rosterManager === true}
+              onSaved={(hands, entry) => {
+                if (entry == null) {
+                  // How they bat and throw is on the card above; keep it true.
+                  setPlayer(held =>
+                    held == null
+                      ? held
+                      : { ...held, bats: hands.bats, throws: hands.throws }
+                  )
+                  return
+                }
                 // A roster may extend surnames to resolve collisions. The
                 // ordinary player page always uses its own abbreviated name.
                 const profileName =
@@ -533,12 +645,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       {shownTab === 'stats' && (
         <View style={styles.section}>
           <View style={styles.filterRow}>
-            <Text style={styles.scope}>{scopeOf(stats, filter)}</Text>
+            <Text style={styles.scope}>
+              {scopeOf(stats, filter, player?.teams)}
+            </Text>
             <Button
               label={lstrings.player_filter}
               kind="secondary"
               onPress={() => {
-                setFiltering(true)
+                setFiltering('stats')
               }}
             />
           </View>
@@ -609,17 +723,21 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
         </View>
       )}
 
-      {filtering && stats != null && (
+      {filtering != null && stats != null && (
         <StatFilterModal
           options={stats.options}
-          filter={filter}
+          filter={filtering === 'videos' ? videoFilter : filter}
           onApply={next => {
-            setFiltering(false)
+            setFiltering(undefined)
+            if (filtering === 'videos') {
+              applyVideoFilter(next)
+              return
+            }
             setFilter(next)
             onFilter?.(next)
           }}
           onClose={() => {
-            setFiltering(false)
+            setFiltering(undefined)
           }}
         />
       )}
@@ -627,32 +745,69 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   )
 }
 
+/**
+ * Where a tab's filter starts: what the address or the tap asked for wins;
+ * otherwise the team the page was opened for; otherwise a career.
+ */
+function startingFilter(
+  asked: StatFilter | undefined,
+  forTeam: string | undefined
+): StatFilter {
+  if (asked != null && isNarrowed(asked)) return asked
+  return forTeam == null ? {} : { teamId: forTeam }
+}
+
+function isNarrowed(filter: StatFilter): boolean {
+  return filter.seasonId != null || filter.teamId != null || filter.year != null
+}
+
 /** `12 games · Spring 2026`, or just the games for a career. */
-function scopeOf(stats: PlayerStats | undefined, filter: StatFilter): string {
+function scopeOf(
+  stats: PlayerStats | undefined,
+  filter: StatFilter,
+  teams?: PlayerTeam[]
+): string {
+  const named = filterName(stats, filter, teams)
+  if (stats == null) return named
   const games =
-    stats == null
-      ? ''
-      : stats.games === 1
-        ? lstrings.player_one_game
-        : sprintf(lstrings.player_games, String(stats.games))
-  // A season renamed or re-imported since the link was sent is a filter with
-  // no name left. Saying so beats `12 games · ` with nothing after it.
-  const named =
-    filter.seasonId != null
-      ? (stats?.options.seasons.find(
-          season => season.seasonId === filter.seasonId
-        )?.name ?? lstrings.player_filter_unknown)
-      : filter.teamId != null
-        ? (stats?.options.teams.find(team => team.teamId === filter.teamId)
-            ?.name ?? lstrings.player_filter_unknown)
-        : filter.year != null
-          ? String(filter.year)
-          : lstrings.player_filter_career
-  if (games === '') return named
+    stats.games === 1
+      ? lstrings.player_one_game
+      : sprintf(lstrings.player_games, String(stats.games))
   return sprintf(lstrings.player_stats_scope, games, named)
 }
 
+/**
+ * `Spring 2026`, `Hawks`, `2025`, or `Career`. A team or season the player
+ * has no figures for yet is named from their teams instead.
+ */
+function filterName(
+  stats: PlayerStats | undefined,
+  filter: StatFilter,
+  teams: PlayerTeam[] = []
+): string {
+  // A season renamed or re-imported since the link was sent is a filter with
+  // no name left. Saying so beats `12 games · ` with nothing after it.
+  return filter.seasonId != null
+    ? (stats?.options.seasons.find(
+        season => season.seasonId === filter.seasonId
+      )?.name ??
+        teams.find(team => team.seasonId === filter.seasonId)?.seasonName ??
+        lstrings.player_filter_unknown)
+    : filter.teamId != null
+      ? (stats?.options.teams.find(team => team.teamId === filter.teamId)
+          ?.name ??
+        teams.find(team => team.teamId === filter.teamId)?.teamName ??
+        lstrings.player_filter_unknown)
+      : filter.year != null
+        ? String(filter.year)
+        : lstrings.player_filter_career
+}
+
 const getStyles = cacheStyles((theme: Theme) => ({
+  pillRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end'
+  },
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
