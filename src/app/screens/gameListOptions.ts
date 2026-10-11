@@ -11,7 +11,9 @@ export function gameListOptions(
     pendingRequestId?: string | null
     videoCount?: number
   },
-  mode: 'schedule' | 'videos'
+  mode: 'schedule' | 'videos',
+  /** A non-member's game never plays: the video is kept for members. */
+  nonMemberView = false
 ): GameListOpenOptions | undefined {
   if (game.pendingApproval === true && mode === 'schedule') {
     return game.pendingRequestId == null
@@ -21,5 +23,5 @@ export function gameListOptions(
   // Unpublished projected events have no recordings. A Videos control opens
   // the retained published recording even while a scheduling change is pending.
   if (mode === 'videos' && (game.videoCount ?? 0) === 0) return undefined
-  return { autoPlay: (game.videoCount ?? 0) > 0 }
+  return { autoPlay: !nonMemberView && (game.videoCount ?? 0) > 0 }
 }

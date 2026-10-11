@@ -119,10 +119,26 @@ export const enUs = {
   game_score_game: 'Score Game',
   /** The title of the simplified scoreboard, the 1.0 override dashboard. */
   game_override_scoreboard: 'Override Scoreboard',
-  game_no_video: 'No video for this game.',
+  /** The Videos tab of a game nothing was recorded of, in place of a player. */
+  game_no_video: 'No videos.',
   game_video_unavailable: 'This video is not available right now.',
   /** Marks a video in the picker whose file is no longer on the server. */
   game_video_gone_suffix: '(unavailable)',
+  /**
+   * Where somebody signed in who is not a member meets what is kept for
+   * members on a team page: the batting and pitching, and the team's videos.
+   * The server's own `membersOnly` words.
+   */
+  members_only: 'You need to be a member of one of the teams to see this.',
+  /**
+   * A game's Videos tab for a non-member, in place of a player, and again
+   * on tapping one of its highlights.
+   */
+  game_videos_members_only:
+    "You need to be a member of one of the teams to watch this game's videos.",
+  /** Under a non-member's line score, in place of each side's lines. */
+  box_score_members_only:
+    'You need to be a member of one of these teams to see individual player stats.',
 
   // Four angles at once
   angles_open: 'All angles',

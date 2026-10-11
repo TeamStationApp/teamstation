@@ -74,8 +74,18 @@ import { chronological, gamesFor, nextGameIndex } from './whenFilter'
 export interface TeamScreenProps {
   client: TeamStationClient
   team: TeamSummary
-  /** Public projection supplied only when private team access is absent. */
+  /**
+   * The public projection, for somebody not signed in: nobody signed in
+   * reads anything else of a team.
+   */
   publicDetail?: GroupDetail
+  /**
+   * Somebody signed in who is not a member, following the team or not: the
+   * members' page less what is kept for members. No batting or pitching, no
+   * video library, and no player pages, which answer them `404`. The
+   * schedule carries the thumbnails the Videos tab would have.
+   */
+  nonMemberView?: boolean
   /** Revalidate private collections when the access adapter refreshes. */
   refreshRevision?: number
   /** The gear in the card's corner, for somebody who administers this team. */
@@ -151,6 +161,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     onTab,
     onManage,
     publicDetail,
+    nonMemberView = false,
     refreshRevision
   } = props
   const theme = useTheme()
@@ -227,11 +238,17 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       setGames(loadedGames)
 
       const seasonId = loadedGames.find(game => game.seasonId != null)?.seasonId
+      // A non-member is refused the figures, so they are not asked for.
+      const noRows = Promise.resolve([])
       const [loadedRoster, loadedBatting, loadedPitching, standings] =
         await Promise.all([
           client.roster(team.id),
-          client.teamStats(team.id, seasonId ?? undefined),
-          client.teamPitchingStats(team.id, seasonId ?? undefined),
+          nonMemberView
+            ? noRows
+            : client.teamStats(team.id, seasonId ?? undefined),
+          nonMemberView
+            ? noRows
+            : client.teamPitchingStats(team.id, seasonId ?? undefined),
           seasonId == null
             ? Promise.resolve<StandingsRow[]>([])
             : client.standings(seasonId).catch((error: unknown) => {
@@ -279,8 +296,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, team.id, publicDetail, refreshRevision])
+  }, [client, team.id, publicDetail, nonMemberView, refreshRevision])
 
+  const follows = onManage == null && (publicDetail != null || nonMemberView)
   const withVideo = games.filter(game => game.videoCount > 0)
   // The same rule as the schedule and the season page, not a fourth copy of
   // it. Counting the unscored ones made a February fixture nobody ever scored
@@ -345,52 +363,62 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 </Text>
               )}
             </View>
-            {place != null && <Badge label={placeLabel(place)} tone="honour" />}
             {/*
-              Somebody who neither runs this team nor belongs to it sees the
-              public page; where an administrator has the gear, they can
-              follow. In the row rather than the corner, so a long name wraps
-              beside it instead of running underneath.
+              The right-hand column: the place at the top, and at the bottom
+              the gear for an administrator or, for somebody who neither runs
+              this team nor belongs to it (the public page, or a non-member's),
+              Follow. Laid out rather than floated, so the gear can never be
+              drawn over the place, at any width or text size; and in the row
+              rather than under it, so a long name wraps beside the column
+              instead of running underneath. Follow alone sits level with the
+              name, as it always has.
             */}
-            {onManage == null && publicDetail != null && (
-              <FollowButton
-                client={client}
-                group={{ kind: 'team', id: team.id }}
-                name={team.name}
-              />
+            {(place != null || follows || onManage != null) && (
+              <View
+                testID="team-card-end"
+                style={[
+                  styles.identityEnd,
+                  place == null && onManage == null && styles.identityEndLevel
+                ]}
+              >
+                {place != null && (
+                  <Badge label={placeLabel(place)} tone="honour" />
+                )}
+                {follows && (
+                  <FollowButton
+                    client={client}
+                    group={{ kind: 'team', id: team.id }}
+                    name={team.name}
+                  />
+                )}
+                {onManage != null && (
+                  <View testID="team-card-gear" style={styles.gear}>
+                    {publicDetail == null ? (
+                      <ManageGear
+                        client={client}
+                        scopeType="team"
+                        scopeId={team.id}
+                        onPress={onManage}
+                      />
+                    ) : (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Team settings"
+                        onPress={onManage}
+                        style={styles.publicGear}
+                      >
+                        <Icon
+                          name="settings"
+                          size={1.25}
+                          color={theme.secondaryTextColor}
+                        />
+                      </Pressable>
+                    )}
+                  </View>
+                )}
+              </View>
             )}
           </View>
-          {/*
-          The bottom right corner, floated rather than laid out: in the flow
-          it pushed the card taller and left a band of empty space under the
-          content, which reads as the page having lost its rhythm. The place
-          pill keeps the top right, and the two never share a corner.
-        */}
-          {onManage != null && (
-            <View style={styles.gearCorner}>
-              {publicDetail == null ? (
-                <ManageGear
-                  client={client}
-                  scopeType="team"
-                  scopeId={team.id}
-                  onPress={onManage}
-                />
-              ) : (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Team settings"
-                  onPress={onManage}
-                  style={styles.publicGear}
-                >
-                  <Icon
-                    name="settings"
-                    size={1.25}
-                    color={theme.secondaryTextColor}
-                  />
-                </Pressable>
-              )}
-            </View>
-          )}
         </Card>
       </Band>
 
@@ -425,11 +453,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
       {publicDetail != null && (
-        <PublicTeamContent
-          detail={publicDetail}
-          tab={tab}
-          onOpenGame={onOpenGame}
-        />
+        <PublicTeamContent detail={publicDetail} tab={tab} />
       )}
 
       {/*
@@ -445,7 +469,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           onLayout={pinned.content.handleLayout}
           style={styles.tabContent}
         >
-          {tab === 'videos' && (
+          {tab === 'videos' && nonMemberView && <MembersOnly />}
+
+          {tab === 'videos' && !nonMemberView && (
             <View style={styles.section}>
               <SectionHeader
                 title="Game video library"
@@ -491,11 +517,23 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                       index === next ? pinned.nextRow.handleLayout : undefined
                     }
                   >
-                    <ScheduleCard
-                      game={game}
-                      teamId={team.id}
-                      onOpen={onOpenGame}
-                    />
+                    {nonMemberView ? (
+                      // A non-member's only way to the videos' thumbnails:
+                      // the library itself is kept for members.
+                      <GameCard
+                        game={game}
+                        mode="schedule"
+                        teamId={team.id}
+                        nonMemberView
+                        onOpen={onOpenGame}
+                      />
+                    ) : (
+                      <ScheduleCard
+                        game={game}
+                        teamId={team.id}
+                        onOpen={onOpenGame}
+                      />
+                    )}
                   </View>
                 ))
               )}
@@ -546,8 +584,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                             onPress={
                               // Only a player has a page to open: anybody
                               // else here, staff and family who do not play,
-                              // would answer `404`.
-                              onOpenPlayer == null || !person.isPlayer
+                              // would answer `404`, as a player's page does
+                              // to a non-member.
+                              onOpenPlayer == null ||
+                              !person.isPlayer ||
+                              nonMemberView
                                 ? undefined
                                 : () => {
                                     onOpenPlayer(
@@ -574,26 +615,36 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 <StatGrid stats={seasonStats(standing)} columns={2} />
               </Card>
 
-              <SectionHeader
-                title="Batting"
-                note={`${batting.length} players`}
-              />
-              {batting.length === 0 ? (
-                <Empty text="No plays have been ingested for this team yet." />
+              {/*
+                A non-member sees how the team is doing, and not how each player
+                is: the batting and pitching are kept for members.
+              */}
+              {nonMemberView ? (
+                <MembersOnly />
               ) : (
-                <Card flush>
-                  <StatsTable rows={batting} columns={battingColumns} />
-                </Card>
-              )}
-              {pitching.length > 0 && (
                 <>
                   <SectionHeader
-                    title="Pitching"
-                    note={`${pitching.length} players`}
+                    title="Batting"
+                    note={`${batting.length} players`}
                   />
-                  <Card flush>
-                    <StatsTable rows={pitching} columns={pitchingColumns} />
-                  </Card>
+                  {batting.length === 0 ? (
+                    <Empty text="No plays have been ingested for this team yet." />
+                  ) : (
+                    <Card flush>
+                      <StatsTable rows={batting} columns={battingColumns} />
+                    </Card>
+                  )}
+                  {pitching.length > 0 && (
+                    <>
+                      <SectionHeader
+                        title="Pitching"
+                        note={`${pitching.length} players`}
+                      />
+                      <Card flush>
+                        <StatsTable rows={pitching} columns={pitchingColumns} />
+                      </Card>
+                    </>
+                  )}
                 </>
               )}
             </View>
@@ -706,10 +757,11 @@ function GameCard(props: {
   game: GameSummary
   mode: 'schedule' | 'videos'
   teamId: string
+  nonMemberView?: boolean
   onOpen: (gameId: string, title: string, options?: GameListOpenOptions) => void
 }): React.ReactElement {
-  const { game, teamId, onOpen, mode } = props
-  const options = gameListOptions(game, mode)
+  const { game, teamId, onOpen, mode, nonMemberView } = props
+  const options = gameListOptions(game, mode, nonMemberView)
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
   const result = resultFor(game, teamId)
@@ -860,6 +912,20 @@ function StatsTable<T extends { userId: number; shortName?: string }>(props: {
   )
 }
 
+/**
+ * What a non-member is told in place of the team's videos and its players'
+ * figures: the page's own text colour on the page, read rather than skimmed
+ * past as a hint, the way the game page says it.
+ */
+function MembersOnly(): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return (
+    <Text accessibilityRole="alert" style={styles.notice}>
+      {lstrings.members_only}
+    </Text>
+  )
+}
+
 function Empty(props: { text: string }): React.ReactElement {
   const styles = getStyles(useTheme())
   return (
@@ -970,11 +1036,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem)
   },
-  gearCorner: {
-    position: 'absolute',
-    right: theme.rem(theme.spaceMdRem),
-    bottom: theme.rem(theme.spaceMdRem)
-  },
   crest: {
     width: theme.rem(3.25),
     height: theme.rem(3.25),
@@ -996,6 +1057,21 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: theme.containerBackgroundColor
+  },
+  // As tall as the row, the place pinned to its top and the gear or Follow
+  // to its bottom.
+  identityEnd: {
+    alignSelf: 'stretch',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: theme.rem(theme.spaceXsRem)
+  },
+  identityEndLevel: {
+    alignSelf: 'center'
+  },
+  // The bottom corner, with or without a place above it.
+  gear: {
+    marginTop: 'auto'
   },
   identityText: {
     flex: 1,
@@ -1060,6 +1136,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.875),
     fontWeight: '600',
     color: theme.primaryTextColor
+  },
+  notice: {
+    color: theme.primaryTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(1),
+    lineHeight: theme.rem(1.4),
+    textAlign: 'center' as const,
+    paddingVertical: theme.rem(1)
   },
   muted: {
     fontFamily: theme.regularTextFont,

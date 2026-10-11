@@ -332,4 +332,49 @@ describe('a player’s whole name is never shown', function () {
     for (const tab of ['Videos', 'Schedule', 'Stats']) await press(tab)
     expect(text()).includes('Jordan P')
   })
+
+  it('is not on a non-member’s roster either, whose rows open nothing', async function () {
+    const opened: number[] = []
+    const client = {
+      teamGames: async () => [],
+      roster: async () => [jordan],
+      standings: async () => [],
+      follows: async () => []
+    } as unknown as TeamStationClient
+    await render(
+      <TeamScreen
+        client={client}
+        team={{
+          id: 'tem_hawks',
+          name: 'Hawks',
+          shortName: null,
+          logoPath: null,
+          logoUrl: null,
+          record: null,
+          seasonCategory: 'unscheduled',
+          canViewPrivate: false,
+          kind: 'full'
+        }}
+        nonMemberView
+        initialTab="team"
+        onOpenGame={() => undefined}
+        onOpenPlayer={userId => {
+          opened.push(userId)
+        }}
+      />
+    )
+    expect(text()).includes('Jordan P')
+    expect(text()).includes('SS · 2B')
+    expect(text()).not.includes('Pujols')
+    // A player's page answers a non-member `404`, so the row is not a button
+    // and carries no chevron.
+    const row = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Jordan P'
+    )
+    expect(row).not.equals(undefined)
+    expect(row!.closest('[role="button"]')).equals(null)
+    expect(text()).not.includes('chevron_right')
+    row!.click()
+    expect(opened).deep.equals([])
+  })
 })

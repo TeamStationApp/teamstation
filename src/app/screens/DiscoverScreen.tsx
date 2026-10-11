@@ -131,7 +131,7 @@ export function DiscoverScreen({
         </View>
         <Text style={styles.hint}>
           {follow
-            ? 'Follow leagues, seasons and teams to keep them on your Home. Following shows their public profile: location, parent organizations, schedules and results.'
+            ? 'Follow leagues, seasons and teams to keep them on your Home. A team opens on its own page, followed or not: its schedule, results and roster, with videos and player stats for its members.'
             : 'Find leagues, seasons and teams. Public profiles show location, parent organizations, schedules and results.'}
         </Text>
         <View style={styles.tabs}>

@@ -43,7 +43,14 @@ const appSuites = [
   'src/app/screens/PlayerSettingsTab.test.tsx',
   'src/app/App.teamRoutes.test.tsx',
   'src/app/screens/NotificationsScreen.test.tsx',
-  'src/app/screens/groupCreation.test.tsx'
+  'src/app/screens/groupCreation.test.tsx',
+  'src/app/screens/TeamPage.test.tsx',
+  'src/app/screens/teamNonMember.test.tsx',
+  'src/app/screens/BoxScore.test.tsx',
+  'src/app/components/GameHeroCard.test.tsx',
+  'src/app/screens/PublicTeamContent.test.tsx',
+  'src/app/screens/expandedStats.test.tsx',
+  'src/app/scoring/scoringEntry.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

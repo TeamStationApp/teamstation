@@ -80,7 +80,8 @@ const stages: Record<string, (run: Run) => Promise<void>> = {
   api,
   roster,
   player,
-  guardian
+  guardian,
+  follower
 }
 
 /**
@@ -464,6 +465,31 @@ async function roster(run: Run): Promise<void> {
   expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Fern A'))
   expect(page.indexOf('Fern A')).lessThan(page.indexOf('Grace H'))
   await run.shot(admin, 'roster-after.png', { fit: true })
+  // The place and the gear share the card's right-hand column without
+  // touching, and "Demo Hawks" keeps its words whole, on this phone and on a
+  // narrow one.
+  expect(await cardColumn(admin, WIDTH)).deep.equals({
+    parts: ['1st Place', 'settings'],
+    overlaps: [],
+    brokenWords: []
+  })
+  expect(await cardColumn(admin, 320)).deep.equals({
+    parts: ['1st Place', 'settings'],
+    overlaps: [],
+    brokenWords: []
+  })
+  await writeFile(
+    join(run.artifacts, 'roster-header-narrow.png'),
+    await admin.page.screenshot({
+      type: 'png',
+      clip: { x: 0, y: 0, width: 320, height: 240 }
+    })
+  )
+  await admin.page.setViewport({
+    width: WIDTH,
+    height: HEIGHT,
+    deviceScaleFactor: 1
+  })
 
   await admin.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}/manage` })
   await contains(admin.page, 'Ichiro')
@@ -1348,6 +1374,431 @@ async function guardian(run: Run): Promise<void> {
   ])
 }
 
+/**
+ * The non-member view in the app. Grace Hill follows Demo Hawks and belongs
+ * to neither team: she reads every name on the roster without a photo, the
+ * season's performance, the schedule with its thumbnails, and on a game the
+ * score, the records, the line score and the highlights' pictures. The rest
+ * says it is for members, in the page's own text colour on the page, with no
+ * empty player box, and the app never asks for what the server keeps for
+ * members. A game nothing was recorded of says "No videos." with no player
+ * box. Hank Moss, who follows nothing here, opens the Hawks from Search and
+ * gets the same page, bar the Follow button.
+ */
+async function follower(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  const [game] = f.games
+  const { contains, fill, tap } = await import('../test/refinementsMaestro.e2e')
+  const membersOnly = 'You need to be a member of one of the teams to see this.'
+  const videosMembersOnly =
+    "You need to be a member of one of the teams to watch this game's videos."
+  const boxMembersOnly =
+    'You need to be a member of one of these teams to see individual player stats.'
+  // As the `api` stage: the Hawks compete in Demo Regular, so the season has
+  // a table and the games records; the first game has its innings and its
+  // totals; and Avery has a photo, which a non-member is not sent.
+  await f.h.db
+    .insertInto('season_teams')
+    .values({ season_id: f.seasonA, team_id: f.teamA, joined_at: new Date() })
+    .execute()
+  await f.h.db
+    .updateTable('games')
+    .set({
+      linescore: JSON.stringify({
+        away: { runs: [1, 0, 2], r: 3, h: 6, e: 2, bb: 1, k: 4, hr: 0, hbp: 1 },
+        home: { runs: [2, 1, 3], r: 6, h: 9, e: 0, bb: 3, k: 2, hr: 1, hbp: 0 }
+      })
+    })
+    .where('id', '=', game.id)
+    .execute()
+  await f.h.db
+    .updateTable('users')
+    .set({ avatar_path: 'avatars/avery' })
+    .where('id', '=', f.players[0].id)
+    .execute()
+
+  const grace = await run.signIn('follower', people.follower)
+  // Every request the page makes from here on, to show what it never asks.
+  const requests: string[] = []
+  grace.page.on('request', request => {
+    requests.push(
+      new URL(request.url()).pathname + new URL(request.url()).search
+    )
+  })
+  const text = async (): Promise<string> =>
+    (await grace.page.evaluate(() => document.body.textContent)) ?? ''
+  const tab = async (name: string): Promise<void> => {
+    await grace.m.tapOn({ text: name, role: 'tab', timeout: 15000 })
+    await settle(grace)
+  }
+  /** Stills shown on the page that have loaded, by their signed paths. */
+  const loadedStills = async (): Promise<string[]> =>
+    await grace.page.evaluate(() =>
+      [...document.querySelectorAll('img')]
+        .filter(
+          image =>
+            image.src.includes('/stills/') &&
+            image.complete &&
+            image.naturalWidth > 0
+        )
+        .map(image => new URL(image.src).pathname)
+    )
+  /**
+   * A notice's text colour and the colour painted behind it: the page's own
+   * text on the page's own background, not a hint's grey, nor anything on a
+   * player's black.
+   */
+  const readable = async (
+    session: BrowserSession,
+    words: string
+  ): Promise<void> => {
+    const seen = await session.page.evaluate(words => {
+      const node = [...document.querySelectorAll('[role="alert"]')].find(
+        item => item.textContent === words
+      )
+      if (node === undefined) throw new Error(`No notice: ${words}`)
+      let paint: Element | null = node
+      let background = ''
+      while (paint !== null && background === '') {
+        const painted = getComputedStyle(paint).backgroundColor
+        if (painted !== 'rgba(0, 0, 0, 0)' && painted !== 'transparent')
+          background = painted
+        paint = paint.parentElement
+      }
+      return { color: getComputedStyle(node).color, background }
+    }, words)
+    expect(seen, words).deep.equals({
+      color: 'rgb(26, 33, 22)',
+      background: 'rgb(245, 247, 241)'
+    })
+  }
+  /** Whether the player's box, which is black, is anywhere on the page. */
+  const playerBox = async (session: BrowserSession): Promise<boolean> =>
+    await session.page.evaluate(() =>
+      [...document.querySelectorAll('div')].some(
+        node => getComputedStyle(node).backgroundColor === 'rgb(0, 0, 0)'
+      )
+    )
+  /** The bottom of a scrolled element, centred so no bar is over it. */
+  const centre = async (css: string): Promise<void> => {
+    await grace.page.evaluate(css => {
+      const node = document.querySelector(css)
+      if (node === null) throw new Error(`Nothing at ${css}`)
+      node.scrollIntoView({ block: 'center' })
+    }, css)
+  }
+
+  // The team: the members' page, every name, no photo, and no name opens.
+  await grace.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}?tab=team` })
+  await contains(grace.page, 'PLAYERS')
+  const roster = await text()
+  for (const name of [
+    'Babe R',
+    'Ichiro',
+    'Nora Q',
+    'Owen P',
+    'Mike T',
+    'Avery S',
+    'Ben C',
+    'Cody D',
+    'Drew E',
+    'Eli F',
+    'Tim R'
+  ])
+    expect(roster, name).includes(name)
+  for (const heading of ['ADMINS', 'STAFF', 'PLAYERS', 'FAMILY MEMBERS'])
+    expect(roster, heading).includes(heading)
+  // Initials in every circle, and no picture of anybody.
+  expect(roster).includes('ASAvery S')
+  const pictures = await grace.page.evaluate(() =>
+    [...document.querySelectorAll('img')].map(image => image.src)
+  )
+  expect(pictures.filter(src => src.includes('avatar'))).deep.equals([])
+  // A player's page answers a non-member 404, so a name is not a button.
+  expect(
+    await grace.page.evaluate(
+      () =>
+        document.querySelectorAll('[role="button"][aria-label^="Avery S"]')
+          .length
+    )
+  ).equals(0)
+  expect(roster).not.includes('chevron_right')
+  expect(roster).includes('Following')
+  expect(roster).not.includes('Team membership is required')
+  await run.shot(grace, 'follower-team-after.png', { fit: true })
+  for (const width of [WIDTH, 320])
+    expect(await cardColumn(grace, width), `${width} wide`).deep.equals({
+      parts: ['1st Place', 'Following'],
+      overlaps: [],
+      brokenWords: []
+    })
+  await grace.page.setViewport({
+    width: WIDTH,
+    height: HEIGHT,
+    deviceScaleFactor: 1
+  })
+
+  // Stats: the season's performance, and the players' figures kept back.
+  await tab('Stats')
+  await contains(grace.page, 'SEASON PERFORMANCE')
+  await contains(grace.page, membersOnly)
+  await readable(grace, membersOnly)
+  const stats = await text()
+  expect(stats).includes('2–0')
+  expect(stats).not.includes('BATTING')
+  expect(stats).not.includes('PITCHING')
+
+  // Videos: the library is kept for members.
+  await tab('Videos')
+  await contains(grace.page, membersOnly)
+  await readable(grace, membersOnly)
+  expect(await text()).not.includes('GAME VIDEO LIBRARY')
+
+  // Schedule: each game with its count and its thumbnail.
+  await tab('Schedule')
+  const card = `[role="button"][aria-label^="Demo Hawks vs Demo Visitors"]`
+  await grace.page.waitForSelector(card, { timeout: 20000 })
+  const schedule = await grace.page.evaluate(() =>
+    [...document.querySelectorAll('[role="button"][aria-label]')]
+      .map(node => node.getAttribute('aria-label'))
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+      .filter(label => label !== null && label.includes(' video'))
+  )
+  expect(schedule).has.length(2)
+  for (const label of schedule) expect(label).includes('1 video')
+  await grace.page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('img')].filter(
+        image =>
+          image.src.includes('/stills/') &&
+          image.complete &&
+          image.naturalWidth > 0
+      ).length >= 2,
+    { timeout: 20000 }
+  )
+  const posters = await loadedStills()
+  expect(posters.some(path => path.includes(game.videoId))).equals(true)
+  await run.shot(grace, 'follower-schedule.png', { fit: true })
+
+  // A game: the score and the records, and nothing counted under them.
+  await centre(card)
+  await grace.m.tapOn({ css: card, timeout: 15000 })
+  await grace.page.waitForFunction(
+    gameId => location.pathname === `/games/${gameId}`,
+    { timeout: 20000 },
+    game.id
+  )
+  await contains(grace.page, 'Highlights')
+  await contains(grace.page, videosMembersOnly)
+  await settle(grace)
+  const hero = await grace.page.evaluate(() => {
+    // The card: the smallest block holding both sides' notes.
+    const blocks = [...document.querySelectorAll('div')].filter(node => {
+      const words = node.textContent
+      return (
+        words !== null &&
+        words.includes('Away · 0–1') &&
+        words.includes('Home · 2–0')
+      )
+    })
+    const row = blocks[blocks.length - 1]
+    const card = row.parentElement
+    if (card === null) throw new Error('No card')
+    return {
+      text: card.textContent,
+      ruled: [...card.children].filter(
+        child => getComputedStyle(child).borderTopWidth === '1px'
+      ).length
+    }
+  })
+  for (const words of ['Demo Visitors', 'Demo Hawks', '3', '6', 'FINAL'])
+    expect(hero.text, words).includes(words)
+  expect(hero.text).not.includes(' BB')
+  expect(hero.text).not.includes('Def:')
+  expect(hero.ruled).equals(0)
+  expect(await grace.page.$('video')).equals(null)
+  await run.shot(grace, 'follower-game-after.png')
+
+  // Videos: the message where the video would be, readable and with no
+  // empty player box, above the highlights, whose pictures load.
+  expect(await playerBox(grace)).equals(false)
+  await readable(grace, videosMembersOnly)
+  const watch = await text()
+  const firstPlay = watch.indexOf('Avery S')
+  expect(firstPlay).greaterThan(0)
+  expect(watch.indexOf(videosMembersOnly)).lessThan(firstPlay)
+  expect(watch).not.includes('All angles')
+  await grace.page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('img')].filter(
+        image =>
+          image.src.includes('/stills/') &&
+          image.complete &&
+          image.naturalWidth > 0
+      ).length >= 2,
+    { timeout: 20000 }
+  )
+  const stills = await loadedStills()
+  expect(stills.every(path => path.includes(game.videoId))).equals(true)
+  // With no player box the card, the message and the list fit the screen
+  // together, so nothing is scrolled.
+  await run.shot(grace, 'follower-videos.png')
+
+  // A highlight seeks nothing and links nothing; the message above says why,
+  // and says it again under the highlight tapped, where they are looking.
+  const play = await grace.page.evaluate(() => {
+    const node = [...document.querySelectorAll('[tabindex="0"]')].find(item => {
+      const words = item.textContent
+      return (
+        words !== null &&
+        words.includes('Avery S') &&
+        item.querySelector('img') !== null
+      )
+    })
+    if (node === undefined) throw new Error('No highlight')
+    node.scrollIntoView({ block: 'center' })
+    return node.textContent
+  })
+  expect(play).includes('Avery S')
+  await grace.page.evaluate(() => {
+    const node = [...document.querySelectorAll('[tabindex="0"]')].find(item => {
+      const words = item.textContent
+      return (
+        words !== null &&
+        words.includes('Avery S') &&
+        item.querySelector('img') !== null
+      )
+    })
+    ;(node as HTMLElement).click()
+  })
+  await settle(grace)
+  expect(
+    await grace.page.evaluate(() =>
+      [...document.querySelectorAll('[role="alert"]')].map(
+        node => node.textContent
+      )
+    )
+  ).deep.equals([videosMembersOnly, videosMembersOnly])
+  expect(
+    await grace.page.evaluate(() => {
+      const repeated = document.querySelector(
+        '[data-testid="highlightMembersOnly"]'
+      )
+      const tapped = repeated === null ? null : repeated.parentElement
+      const words = tapped === null ? null : tapped.textContent
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+      return words !== null && words.includes('Avery S')
+    })
+  ).equals(true)
+  expect(new URL(grace.page.url()).searchParams.get('t')).equals(null)
+  expect(await grace.page.$('video')).equals(null)
+  expect(await playerBox(grace)).equals(false)
+  await run.shot(grace, 'follower-highlight.png')
+
+  // Box score: the innings and the runs, then the message.
+  await grace.page.evaluate(() => {
+    window.scrollTo(0, 0)
+  })
+  await tab('Box score')
+  await contains(grace.page, boxMembersOnly)
+  await readable(grace, boxMembersOnly)
+  const box = await text()
+  const innings = box.indexOf('Demo Visitors1023')
+  expect(innings, 'away line: 1 0 2 then 3').greaterThan(0)
+  expect(box.indexOf('Demo Hawks2136')).greaterThan(innings)
+  expect(box.indexOf(boxMembersOnly)).greaterThan(innings)
+  expect(box).not.includes('Batting —')
+  expect(box).not.includes('Pitching —')
+  await run.shot(grace, 'follower-boxscore.png')
+
+  // Nothing kept for members was asked for: no player stats, no box score,
+  // no video and no still by the second.
+  const asked = requests.filter(path => path.startsWith('/api/'))
+  expect(asked.some(path => path.includes(`/games/${game.id}`))).equals(true)
+  expect(asked.some(path => path.includes('/highlights'))).equals(true)
+  expect(
+    asked.filter(path =>
+      /\/teams\/[^/]+\/stats|\/box-score|\/playback|\/still\?|\/players\//.test(
+        path
+      )
+    )
+  ).deep.equals([])
+
+  // Hank follows nothing here and opens the Hawks from Search: the same page
+  // Grace reads, bar the Follow button.
+  const hank = await run.signIn('follower-search', people.oneTeam)
+  await hank.m.openBrowser({ url: `${f.h.origin}/discover` })
+  await tap(hank.m, 'Teams')
+  await fill(hank.m, 'Search by name or city', 'Demo Hawks')
+  // Two teams are called that here; the Hawks are the one in Demo League A,
+  // whose row is named with its city.
+  const hawks = '[role="button"][aria-label^="Open Demo Hawks, Demo City"]'
+  await hank.page.waitForSelector(hawks, { timeout: 20000 })
+  await hank.m.tapOn({ css: hawks, timeout: 15000 })
+  await hank.page.waitForFunction(
+    teamId => location.pathname.includes(teamId),
+    { timeout: 20000 },
+    f.teamA
+  )
+  await hank.m.tapOn({ text: 'Team', role: 'tab', timeout: 15000 })
+  await contains(hank.page, 'PLAYERS')
+  await settle(hank)
+  const found =
+    (await hank.page.evaluate(() => document.body.textContent)) ?? ''
+  for (const name of ['Babe R', 'Ichiro', 'Avery S', 'Tim R'])
+    expect(found, name).includes(name)
+  for (const heading of ['ADMINS', 'STAFF', 'PLAYERS', 'FAMILY MEMBERS'])
+    expect(found, heading).includes(heading)
+  expect(found).includes('ASAvery S')
+  expect(found).not.includes('Team membership is required')
+  expect(found).not.includes('Standalone team')
+  expect(
+    (
+      await hank.page.evaluate(() =>
+        [...document.querySelectorAll('img')].map(image => image.src)
+      )
+    ).filter(src => src.includes('avatar'))
+  ).deep.equals([])
+  expect(
+    await hank.page.$('[aria-label="Follow Demo Hawks"]'),
+    'Follow, not Following'
+  ).not.equals(null)
+  await run.shot(hank, 'discover-team.png', { fit: true })
+  await hank.m.tapOn({ text: 'Stats', role: 'tab', timeout: 15000 })
+  await contains(hank.page, 'SEASON PERFORMANCE')
+  await contains(hank.page, membersOnly)
+  await readable(hank, membersOnly)
+
+  // A game nothing was recorded of: "No videos.", and no player box. Added
+  // last, so the team's record on every page above is the two games'.
+  const unrecorded = 'guardian-game-unrecorded'
+  await f.h.db
+    .insertInto('games')
+    .values({
+      id: unrecorded,
+      home_team_id: f.teamA,
+      away_team_id: f.standaloneTeam,
+      season_id: f.seasonA,
+      start_at: new Date('2026-09-27T18:00:00Z'),
+      venue: 'Demo Field',
+      status: 'final',
+      home_score: 4,
+      away_score: 4,
+      timezone: 'UTC'
+    })
+    .execute()
+  await grace.m.openBrowser({ url: `${f.h.origin}/games/${unrecorded}` })
+  await contains(grace.page, 'No videos.')
+  await settle(grace)
+  await readable(grace, 'No videos.')
+  expect(await playerBox(grace)).equals(false)
+  expect(await grace.page.$('video')).equals(null)
+  expect(await text()).not.includes(videosMembersOnly)
+  expect(await text()).not.includes('Highlights')
+  await run.shot(grace, 'game-no-videos.png')
+}
+
 async function main(): Promise<void> {
   const artifacts = process.env.TS_GUARDIAN_ARTIFACTS
   if (artifacts == null || artifacts === '')
@@ -1543,6 +1994,72 @@ async function scrollTap(session: BrowserSession, text: string): Promise<void> {
     button.scrollIntoView({ block: 'center' })
   }, text)
   await tap(session.m, text)
+}
+
+/**
+ * The team card's right-hand column at this width: what it holds, top to
+ * bottom; which of those, and the team's name, overlap; and which words of
+ * the name are broken across lines.
+ */
+async function cardColumn(
+  session: BrowserSession,
+  width: number
+): Promise<{ parts: string[]; overlaps: string[]; brokenWords: string[] }> {
+  await session.page.setViewport({
+    width,
+    height: HEIGHT,
+    deviceScaleFactor: 1
+  })
+  await settle(session)
+  // No `??` or `?.` in here: see `roster`.
+  return await session.page.evaluate(() => {
+    const end = document.querySelector('[data-testid="team-card-end"]')
+    if (end === null) throw new Error('No team card column')
+    const name = [...document.querySelectorAll('div')].find(
+      node =>
+        node.children.length === 0 &&
+        node.textContent === 'Demo Hawks' &&
+        node.getBoundingClientRect().top < end.getBoundingClientRect().bottom
+    )
+    if (name === undefined) throw new Error('No team name')
+    const boxes = [
+      { label: 'name', rect: name.getBoundingClientRect() },
+      ...[...end.children].map(child => ({
+        // An element's text is never null; only a document's is.
+        label: String(child.textContent),
+        rect: child.getBoundingClientRect()
+      }))
+    ]
+    const overlaps: string[] = []
+    boxes.forEach((a, i) => {
+      for (const b of boxes.slice(i + 1)) {
+        const x =
+          Math.min(a.rect.right, b.rect.right) -
+          Math.max(a.rect.left, b.rect.left)
+        const y =
+          Math.min(a.rect.bottom, b.rect.bottom) -
+          Math.max(a.rect.top, b.rect.top)
+        if (x > 0 && y > 0) overlaps.push(`${a.label} / ${b.label}`)
+      }
+    })
+    const text = name.firstChild
+    const brokenWords: string[] = []
+    if (text !== null) {
+      let at = 0
+      for (const word of 'Demo Hawks'.split(' ')) {
+        const range = document.createRange()
+        range.setStart(text, at)
+        range.setEnd(text, at + word.length)
+        if (range.getClientRects().length > 1) brokenWords.push(word)
+        at += word.length + 1
+      }
+    }
+    return {
+      parts: boxes.slice(1).map(box => box.label),
+      overlaps,
+      brokenWords
+    }
+  })
 }
 
 /** Waits until nothing says Loading and the network has gone quiet. */
