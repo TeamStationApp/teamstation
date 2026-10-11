@@ -182,10 +182,18 @@ export function chatDraftOwner(
   return owner
 }
 
+export type ChatListCaptureResult = 'accepted' | 'stale' | 'unavailable'
+export type ChatListPositionCapture = () =>
+  Promise<ChatListCaptureResult> | Promise<void>
+
 /** Measure the still-visible list before its managed navigation changes state. */
 export class ChatListNavigationCapture {
   private owner: object | undefined
-  private read: (() => Promise<void>) | undefined
+  private read: ChatListPositionCapture | undefined
+  private captureFlight:
+    | { owner: object; context: number; work: Promise<ChatListCaptureResult> }
+    | undefined
+
   private running = false
   private active = true
   private contextRevision = 0
@@ -199,7 +207,7 @@ export class ChatListNavigationCapture {
 
   constructor(readonly context?: object) {}
 
-  attach(read: () => Promise<void>): () => void {
+  attach(read: ChatListPositionCapture): () => void {
     const owner = {}
     this.owner = owner
     this.read = read
@@ -217,6 +225,48 @@ export class ChatListNavigationCapture {
       this.read = undefined
     }
     this.active = active
+  }
+
+  hasReader(): boolean {
+    return this.active && this.read != null
+  }
+
+  async capture(): Promise<ChatListCaptureResult> {
+    const owner = this.owner
+    const read = this.read
+    const context = this.contextRevision
+    if (!this.active || owner == null || read == null) return 'unavailable'
+    if (
+      this.captureFlight?.owner === owner &&
+      this.captureFlight.context === context
+    )
+      return await this.captureFlight.work
+    const current = (): boolean =>
+      this.active &&
+      this.owner === owner &&
+      this.read === read &&
+      this.contextRevision === context
+    const work = async (): Promise<ChatListCaptureResult> => {
+      for (let pass = 0; pass < 2; pass++) {
+        if (!current()) return 'unavailable'
+        let result: ChatListCaptureResult | undefined
+        try {
+          result = (await read()) ?? undefined
+        } catch {
+          return 'unavailable'
+        }
+        if (!current()) return 'unavailable'
+        if (result !== 'stale') return result ?? 'accepted'
+      }
+      return 'stale'
+    }
+    const flight = { owner, context, work: work() }
+    this.captureFlight = flight
+    try {
+      return await flight.work
+    } finally {
+      if (this.captureFlight === flight) this.captureFlight = undefined
+    }
   }
 
   async navigate(change: () => void): Promise<void> {
@@ -242,7 +292,7 @@ export class ChatListNavigationCapture {
       if (owner === this.owner && this.read != null) {
         // A failed capture retains the previous position; navigation still works.
         try {
-          await this.read()
+          await this.capture()
         } catch {}
       }
       const batch = []
