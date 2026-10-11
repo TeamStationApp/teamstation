@@ -46,7 +46,9 @@ struct DirectorApp: App {
           advertisementBrowser: CompositeAdvertisementBrowser([
             AWXServiceBrowser(),
             RTSPServiceBrowser()
-          ])
+          ]),
+          // Control and identity come from asking each camera; Bonjour only finds them sooner.
+          probeControl: { await RTSPControlProbe().probe($0) }
         )
       }
     ))

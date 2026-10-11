@@ -1129,7 +1129,8 @@ public final class AppEnvironment {
 
   // MARK: - Cameraman control
 
-  /// The Bonjour record for the camera on a row, when discovery has one.
+  /// What the camera on a row says about itself: its own answer to discovery's control probe, or
+  /// its Bonjour record while the probe has not answered yet.
   public func cameraAdvertisement(for id: SourceID) -> CameraAdvertisement? {
     guard let endpoint = endpoint(for: id) else { return nil }
     return pairedAdvertisement(for: endpoint)
@@ -1159,8 +1160,9 @@ public final class AppEnvironment {
     return pairedAdvertisement(for: endpoint)
   }
 
-  /// A TS Cameraman that advertises `control=params/1`, so the tile gets its controls. An older
-  /// build without the verbs, or a NearStream, gets nothing rather than a screen that cannot connect.
+  /// A TS Cameraman that answered the control probe with its UUID and `params/1`, so the tile gets
+  /// its controls whether or not its Bonjour record ever reached this network. A camera without the
+  /// verbs, or a NearStream, gets nothing rather than a screen that cannot connect.
   public func isCameramanControllable(sourceIndex: Int) -> Bool {
     guard let pipeline = router.pipeline(at: sourceIndex) else { return false }
     return controlAdvertisement(for: pipeline.sourceID)?.isControllable == true
@@ -1460,7 +1462,7 @@ public final class AppEnvironment {
 
   // MARK: - Linking
 
-  /// Rows the picker may offer as `video`'s control: Cameramen that advertise the parameter
+  /// Rows the picker may offer as `video`'s control: Cameramen that answer with the parameter
   /// vocabulary and are not already spoken for.
   public func linkCandidates(for video: SourceID) -> [SourceSelection] {
     SourceSelectionRules.linkCandidates(for: video, in: selections) { candidate in

@@ -16,6 +16,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// Called when reconnecting to the same address has repeatedly failed, so the camera has probably
   /// moved and its identity needs re-resolving against a fresh scan.
   public typealias RelocationHandler = @Sendable (SourceID) -> Void
+  /// Called when a session plays again after one that played before: the stream reconnected, so
+  /// what answers at the address may have restarted and is asked about itself again.
+  public typealias ReconnectHandler = @Sendable () -> Void
 
   public let sourceID: SourceID
   public let displayName: String
@@ -35,6 +38,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private let configuration: RTSPSession.Configuration
   private let clock: DirectorClock
   private let onNeedsRelocation: RelocationHandler?
+  private let onReconnected: ReconnectHandler?
+  /// Sessions that reached `PLAY` since `start`; a second one is a reconnect.
+  private var playedSessions = 0
   private let coordinator: PlayoutCoordinator?
 
   /// No completed picture for this long means the session is dead even though the socket is open —
@@ -183,7 +189,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     configuration: RTSPSession.Configuration,
     clock: DirectorClock = SystemClock(),
     coordinator: PlayoutCoordinator? = nil,
-    onNeedsRelocation: RelocationHandler? = nil
+    onNeedsRelocation: RelocationHandler? = nil,
+    onReconnected: ReconnectHandler? = nil
   ) {
     self.sourceID = sourceID
     self.displayName = displayName
@@ -191,6 +198,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     self.clock = clock
     self.coordinator = coordinator
     self.onNeedsRelocation = onNeedsRelocation
+    self.onReconnected = onReconnected
     playout = PlayoutController(
       seedMilliseconds: coordinator?.seedMilliseconds(for: sourceID) ?? Self.defaultSeedMilliseconds
     )
@@ -286,6 +294,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     running = true
     self.sinks = sinks
     failedAttempts = 0
+    playedSessions = 0
     lock.unlock()
 
     connect()
@@ -390,6 +399,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   func handle(_ event: RTSPSession.Event) {
     switch event {
     case let .playing(description, channels):
+      lock.lock()
+      playedSessions += 1
+      let reconnected = playedSessions > 1
+      lock.unlock()
+      if reconnected { onReconnected?() }
       if let cname = description.streamCNAME, !cname.isEmpty {
         lock.lock()
         if let previous = lastStreamCNAME, previous != cname {
