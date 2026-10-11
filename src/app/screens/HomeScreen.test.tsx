@@ -10,9 +10,14 @@ import type {
   SeasonGame,
   SeasonSummary,
   TeamStationClient,
-  TeamSummary
+  TeamSummary,
+  UserMatch
 } from '../../common/api'
-import { asSeasonGame, asTeamSummary } from '../../common/api'
+import { asSeasonGame, asTeamSummary, asUserMatch } from '../../common/api'
+import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import { App } from '../App'
+import { parseRoute, routePath } from '../navigation/routes'
+import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { HomeScreen } from './HomeScreen'
 
@@ -194,7 +199,29 @@ function playback(videoId: string, url: string | null): Playback {
   }
 }
 
+function guarded(
+  userId: number,
+  shortName: string,
+  avatarUrl: string | null = null
+): UserMatch {
+  return asUserMatch({ userId, externalIds: [], shortName, avatarUrl })
+}
+
+function league(id: string, name: string): PublicGroup {
+  return asPublicGroup({
+    id,
+    kind: 'league',
+    name,
+    imageUrl: null,
+    locality: null
+  })
+}
+
 interface Setup {
+  /** The players this person guards; given, Home can open a player. */
+  players?: () => Promise<UserMatch[]>
+  /** Their own leagues, seasons and teams; given, Home can open a group. */
+  groups?: () => Promise<PublicGroup[]>
   teams?: () => Promise<TeamSummary[]>
   seasons?: () => Promise<SeasonSummary[]>
   recent?: () => Promise<SeasonGame | null>
@@ -207,6 +234,8 @@ interface Calls {
   teams: TeamSummary[]
   seasons: SeasonSummary[]
   games: Array<{ gameId: string; title: string; options?: unknown }>
+  players: unknown[][]
+  guardedAsked: number
   playbacks: string[]
   details: string[]
 }
@@ -216,10 +245,18 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     teams: [],
     seasons: [],
     games: [],
+    players: [],
+    guardedAsked: 0,
     playbacks: [],
     details: []
   }
   const client = {
+    guardedPlayers: async () => {
+      calls.guardedAsked++
+      return await (setup.players ?? (async () => []))()
+    },
+    ownGroups: setup.groups ?? (async () => []),
+    follows: async () => [],
     teams: setup.teams ?? (async () => []),
     seasons: setup.seasons ?? (async () => []),
     recentGame: setup.recent ?? (async () => null),
@@ -251,6 +288,14 @@ async function mount(setup: Setup = {}): Promise<Calls> {
           onOpenSeason={opened => calls.seasons.push(opened)}
           onOpenGame={(gameId, title, options) =>
             calls.games.push({ gameId, title, options })
+          }
+          onOpenGroup={setup.groups == null ? undefined : () => undefined}
+          onOpenPlayer={
+            setup.players == null
+              ? undefined
+              : (...args) => {
+                  calls.players.push(args)
+                }
           }
         />
       </ThemeProvider>
@@ -625,5 +670,292 @@ describe('the home screen', function () {
     })
     root = undefined
     expect(clock.running()).equals(0)
+  })
+})
+
+/** What each large card says under its title. */
+const CARD_WORDS = {
+  'Create League': 'Create an organization that runs multiple seasons',
+  'Create Season': 'Create a season or tournament with a game schedule',
+  'Create Team': 'A team is a collection of coaches, staff, and players'
+}
+
+/**
+ * The large card to create `title`: the one control with that name, with its
+ * description in it, so never a small button beside it.
+ */
+function largeCard(title: keyof typeof CARD_WORDS): HTMLElement {
+  const found = [
+    ...document.querySelectorAll<HTMLElement>('[role="button"]')
+  ].filter(
+    node =>
+      node.getAttribute('aria-label') === title ||
+      (node.textContent ?? '').startsWith(title)
+  )
+  expect(found, title).has.lengthOf(1)
+  expect(found[0].textContent).includes(CARD_WORDS[title])
+  return found[0]
+}
+
+describe('the home screen’s players', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  it('lists Your Players above Your teams, and opens a player with no team', async function () {
+    const calls = await mount({
+      players: async () => [
+        guarded(7, 'Jordan P', 'https://img.example/jordan.jpg'),
+        guarded(8, 'Avery S')
+      ],
+      teams: async () => [team('tem_hawks', 'Alta Hawks')]
+    })
+    const page = text()
+    expect(page).includes('YOUR PLAYERS')
+    expect(page.indexOf('YOUR PLAYERS')).lessThan(page.indexOf('YOUR TEAMS'))
+    expect(page.indexOf('Avery S')).lessThan(page.indexOf('Alta Hawks'))
+    // In the order the server sorted them, the picture where there is one.
+    expect(page.indexOf('Jordan P')).lessThan(page.indexOf('Avery S'))
+    expect(
+      document.querySelector('img[src="https://img.example/jordan.jpg"]')
+    ).not.equals(null)
+    labelled('Avery S')
+
+    await press(labelled('Jordan P'))
+    await press(labelled('Avery S'))
+    // A name and nothing else: no team, so the page opens on the career.
+    expect(calls.players).deep.equals([
+      [7, 'Jordan P'],
+      [8, 'Avery S']
+    ])
+    expect(calls.teams).deep.equals([])
+  })
+
+  it('hides Your Players when there are none, or they cannot be read', async function () {
+    const none = await mount({
+      players: async () => [],
+      teams: async () => [team('tem_hawks', 'Alta Hawks')]
+    })
+    expect(none.guardedAsked).equals(1)
+    expect(text()).includes('YOUR TEAMS')
+    expect(text()).not.includes('YOUR PLAYERS')
+    await act(async () => {
+      root?.unmount()
+    })
+
+    await mount({
+      players: async () => {
+        throw new Error('offline')
+      },
+      teams: async () => [team('tem_hawks', 'Alta Hawks')]
+    })
+    expect(text()).includes('Alta Hawks')
+    expect(text()).not.includes('YOUR PLAYERS')
+    expect(text()).not.includes('offline')
+    await act(async () => {
+      root?.unmount()
+    })
+
+    // A Home that cannot open a player does not ask for them.
+    const unasked = await mount({
+      teams: async () => [team('tem_hawks', 'Alta Hawks')]
+    })
+    expect(unasked.guardedAsked).equals(0)
+  })
+
+  it('reads nothing again when the shell hands over a new way to open a player', async function () {
+    const asked = { teams: 0, guarded: 0, recent: 0 }
+    const opened: string[] = []
+    const client = {
+      guardedPlayers: async () => {
+        asked.guarded++
+        return [guarded(7, 'Jordan P')]
+      },
+      ownGroups: async () => [],
+      follows: async () => [],
+      teams: async () => {
+        asked.teams++
+        return [team('tem_hawks', 'Alta Hawks')]
+      },
+      seasons: async () => [],
+      recentGame: async () => {
+        asked.recent++
+        return null
+      },
+      liveNow: async () => []
+    } as unknown as TeamStationClient
+    const home = (which: string): React.ReactElement => (
+      <ThemeProvider>
+        <HomeScreen
+          client={client}
+          onCreateGroup={() => undefined}
+          onOpenTeam={() => undefined}
+          onOpenSeason={() => undefined}
+          onOpenGame={() => undefined}
+          onOpenPlayer={() => {
+            opened.push(which)
+          }}
+        />
+      </ThemeProvider>
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(home('first'))
+      await delay(10)
+    })
+    for (const which of ['second', 'third'])
+      await act(async () => {
+        root!.render(home(which))
+        await delay(10)
+      })
+    expect(asked).deep.equals({ teams: 1, guarded: 1, recent: 1 })
+    // The newest one is the one a tap uses.
+    await press(labelled('Jordan P'))
+    expect(opened).deep.equals(['third'])
+  })
+})
+
+describe('the home screen’s create cards', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  it('leads with all three large cards when there is nothing at all', async function () {
+    await mount({
+      groups: async () => [],
+      recent: async () => recentGame({ videoCount: 0 })
+    })
+    const page = text()
+    for (const title of [
+      'Create League',
+      'Create Season',
+      'Create Team'
+    ] as const)
+      expect(page.indexOf(CARD_WORDS[title])).lessThan(
+        page.indexOf('RECENT GAME')
+      )
+    largeCard('Create League')
+    largeCard('Create Season')
+    largeCard('Create Team')
+  })
+
+  it('shows two missing kinds as large cards at the bottom', async function () {
+    await mount({
+      players: async () => [guarded(7, 'Jordan P')],
+      groups: async () => [],
+      teams: async () => [team('tem_rookies', 'Demo Rookies')]
+    })
+    const page = text()
+    largeCard('Create League')
+    largeCard('Create Season')
+    // The kind there is keeps its own Create beside its title.
+    expect(labelled('Create Team').textContent).equals('Create Team')
+    expect(page.indexOf('YOUR PLAYERS')).lessThan(page.indexOf('YOUR TEAMS'))
+    expect(page.indexOf('Demo Rookies')).lessThan(
+      page.indexOf(CARD_WORDS['Create League'])
+    )
+    expect(page.indexOf(CARD_WORDS['Create League'])).lessThan(
+      page.indexOf(CARD_WORDS['Create Season'])
+    )
+    expect(
+      page
+        .trim()
+        .endsWith(
+          'Spring 2027, Fall 2026, or 2026 Labor Day Classic. Seasons can be standalone or managed by a league.'
+        )
+    ).equals(true)
+    expect(page).not.includes(CARD_WORDS['Create Team'])
+  })
+
+  it('shows one missing kind as a large card at the bottom', async function () {
+    await mount({
+      groups: async () => [league('lea_demo', 'Demo League')],
+      seasons: async () => [season('sea_spring', 'Demo Spring')]
+    })
+    const page = text()
+    largeCard('Create Team')
+    expect(page.indexOf('YOUR LEAGUES')).lessThan(
+      page.indexOf(CARD_WORDS['Create Team'])
+    )
+    expect(
+      page.trim().endsWith('its parent seasons, or its parent league.')
+    ).equals(true)
+    expect(page).not.includes(CARD_WORDS['Create League'])
+    expect(page).not.includes(CARD_WORDS['Create Season'])
+    await act(async () => {
+      root?.unmount()
+    })
+
+    // A league missing, after the teams and the seasons.
+    await mount({
+      groups: async () => [],
+      teams: async () => [team('tem_rookies', 'Demo Rookies')],
+      seasons: async () => [season('sea_spring', 'Demo Spring')]
+    })
+    largeCard('Create League')
+    expect(text().indexOf('Demo Spring')).lessThan(
+      text().indexOf(CARD_WORDS['Create League'])
+    )
+    expect(text()).not.includes(CARD_WORDS['Create Season'])
+  })
+})
+
+describe('a player opened from Home, through the app', function () {
+  const originalFetch = globalThis.fetch
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    globalThis.fetch = originalFetch
+  })
+
+  it('opens the player’s page with no team on the address', async function () {
+    globalThis.fetch = async input => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      const path = url.split('?')[0]
+      const data = path.endsWith('/auth/me')
+        ? { id: 100, displayName: 'Demo Guardian', isAdmin: false }
+        : path.endsWith('/me/roles')
+          ? { teams: {}, guardianOf: [7] }
+          : url.endsWith('/users?guardedBy=me')
+            ? [{ userId: 7, externalIds: [], shortName: 'Jordan P' }]
+            : path.endsWith('/players/7')
+              ? { userId: 7, name: 'Jordan P', teams: [] }
+              : path.endsWith('/players/7/highlights')
+                ? { highlights: [], nextBefore: null, withoutVideo: 0 }
+                : []
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    showRoute(parseRoute('/', ''), true)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(<App />)
+      await delay(50)
+    })
+    expect(text()).includes('YOUR PLAYERS')
+    await press(labelled('Jordan P'))
+    await act(async () => {
+      await delay(50)
+    })
+    expect(routePath(currentRoute())).equals('/players/7')
   })
 })

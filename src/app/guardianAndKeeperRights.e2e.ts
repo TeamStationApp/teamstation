@@ -81,7 +81,8 @@ const stages: Record<string, (run: Run) => Promise<void>> = {
   roster,
   player,
   guardian,
-  follower
+  follower,
+  home
 }
 
 /**
@@ -1797,6 +1798,236 @@ async function follower(run: Run): Promise<void> {
   expect(await text()).not.includes(videosMembersOnly)
   expect(await text()).not.includes('Highlights')
   await run.shot(grace, 'game-no-videos.png')
+}
+
+/**
+ * Home. The guardian finds Avery under "Your Players", above "Your teams",
+ * and a large card for each kind they have nothing in under the team
+ * (`home-after.png`). Opened from there, Avery's page is his whole career,
+ * its Teams tab still has the Comets he has left, and its Settings are how he
+ * bats and throws, which the guardian saves. Hank Moss, with one team and
+ * nothing else, gets a large card for each of the other two kinds under his
+ * team (`home-one-team.png`, beside `home-before.png`).
+ */
+async function home(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  const [avery] = f.players
+  const db = f.h.db
+  const { contains } = await import('../test/refinementsMaestro.e2e')
+
+  // A Comets game Avery played, so the team stays on his page after he
+  // leaves it, and a stat line on each team for the career to add up.
+  const comets = {
+    id: 'guardian-game-comets',
+    startAt: new Date('2026-09-27T18:00:00Z')
+  }
+  await db
+    .insertInto('games')
+    .values({
+      id: comets.id,
+      home_team_id: f.secondTeam,
+      away_team_id: f.standaloneTeam,
+      season_id: f.playoffs,
+      start_at: comets.startAt,
+      venue: 'Demo Field',
+      status: 'final',
+      home_score: 4,
+      away_score: 1,
+      timezone: 'UTC'
+    })
+    .execute()
+  for (const [gameId, teamId, ab, h] of [
+    [f.games[0].id, f.teamA, 4, 2],
+    [comets.id, f.secondTeam, 3, 1]
+  ] as const)
+    await db
+      .insertInto('game_player_stats')
+      .values({
+        id: makeId('gamePlayerStats'),
+        game_id: gameId,
+        user_id: avery.id,
+        team_id: teamId,
+        pa: ab,
+        ab,
+        h,
+        singles: h
+      })
+      .execute()
+  // Avery leaves the Comets.
+  const removed = await f.h.request(
+    'DELETE',
+    `/manage/team/${f.secondTeam}/people/${avery.id}`,
+    undefined,
+    people.admin
+  )
+  expect(removed.status).equals(200)
+
+  /** The section titles and row labels, top to bottom. */
+  const page = async (session: BrowserSession): Promise<string> =>
+    (await session.page.evaluate(() => document.body.textContent)) ?? ''
+  /** Each control named `title`, with the words in it. */
+  const controls = async (
+    session: BrowserSession,
+    title: string
+  ): Promise<string[]> =>
+    (
+      await session.page.evaluate(
+        title =>
+          [...document.querySelectorAll('[role="button"]')]
+            .filter(node => node.getAttribute('aria-label') === title)
+            .map(node => node.textContent),
+        title
+      )
+    ).map(text => text ?? '')
+  const tabNames = async (session: BrowserSession): Promise<string[]> =>
+    (
+      await session.page.evaluate(() =>
+        [
+          ...document.querySelectorAll(
+            '[aria-label="Player sections"] [role="tab"]'
+          )
+        ].map(node => node.textContent)
+      )
+    ).map(name => name ?? '')
+
+  // The guardian's Home: Avery above the team he plays on.
+  const guardian = await run.signIn('home-guardian', people.guardian)
+  await guardian.m.openBrowser({ url: `${f.h.origin}/` })
+  await contains(guardian.page, 'YOUR PLAYERS')
+  const guardianHome = await page(guardian)
+  /** Where each of `words` is, after the one before it. */
+  const inOrder = (text: string, words: string[]): number[] => {
+    const at: number[] = []
+    for (const word of words) at.push(text.indexOf(word, at.at(-1) ?? 0))
+    return at
+  }
+  const guardianOrder = inOrder(guardianHome, [
+    'YOUR PLAYERS',
+    'Avery S',
+    'YOUR TEAMS',
+    'Demo Hawks',
+    'Create League',
+    'Create an organization',
+    'Create Season',
+    'Create a season or tournament'
+  ])
+  expect(guardianOrder.every(at => at >= 0)).equals(true)
+  // The Comets went with Avery; the kinds the guardian has nothing in are
+  // large cards under the team.
+  expect(guardianHome).not.includes('Demo Comets')
+  expect((await controls(guardian, 'Create League'))[0]).includes(
+    'Create an organization'
+  )
+  expect((await controls(guardian, 'Create Season'))[0]).includes(
+    'Create a season or tournament'
+  )
+  await run.shot(guardian, 'home-after.png', { fit: true })
+
+  // Opened from Home, Avery's page has no team: his whole career.
+  await guardian.m.tapOn({ css: '[aria-label="Avery S"]', timeout: 15000 })
+  await guardian.page.waitForSelector('[aria-label="Filter videos"]', {
+    timeout: 20000
+  })
+  const opened = new URL(guardian.page.url())
+  expect(opened.pathname).equals(`/players/${avery.id}`)
+  expect(opened.search).equals('')
+  expect(await tabNames(guardian)).deep.equals([
+    'Videos',
+    'Stats',
+    'Teams',
+    'Settings'
+  ])
+  await guardian.m.tapOn({ text: 'Stats', role: 'tab', timeout: 15000 })
+  await contains(guardian.page, 'Career')
+  await settle(guardian)
+  const stats = await page(guardian)
+  // Both teams' games: the Hawks' 4 at-bats and the Comets' 3.
+  expect(stats).includes('2 games · Career')
+  expect(stats).includes('PA7AB7H3AVG.429')
+
+  // Teams: the Comets he has left are still on his page.
+  await guardian.m.tapOn({ text: 'Teams', role: 'tab', timeout: 15000 })
+  await contains(guardian.page, 'Demo Comets')
+  const teamRows = (
+    await guardian.page.evaluate(() =>
+      [...document.querySelectorAll('[role="button"]')]
+        .map(node => node.textContent)
+        .filter(text => text !== null && /^D(H|C)Demo /.test(text))
+    )
+  ).map(text => text ?? '')
+  expect(teamRows).deep.equals([
+    'DCDemo CometsDemo Playoffschevron_right',
+    'DHDemo HawksDemo Regular · SS · 2B#7chevron_right'
+  ])
+
+  // Settings from Home: how he bats and throws, nothing about a team.
+  await guardian.m.tapOn({ text: 'Settings', role: 'tab', timeout: 15000 })
+  await guardian.page.waitForSelector('[aria-label="Bats Switch"]', {
+    timeout: 20000
+  })
+  // No `??` or `?.` in here: see `roster`.
+  const form = await guardian.page.evaluate(() => ({
+    jersey: document.querySelectorAll('input[aria-label="Jersey number"]')
+      .length,
+    positions: document.querySelectorAll('[role="checkbox"]').length,
+    radios: [...document.querySelectorAll('[role="radio"]')].map(node =>
+      node.getAttribute('aria-label')
+    )
+  }))
+  expect(form.jersey).equals(0)
+  expect(form.positions).equals(0)
+  expect(form.radios).deep.equals([
+    'Bats Right',
+    'Bats Left',
+    'Bats Switch',
+    'Throws Right',
+    'Throws Left'
+  ])
+  expect(new URL(guardian.page.url()).searchParams.get('tab')).equals(
+    'settings'
+  )
+  await guardian.m.tapOn({ css: '[aria-label="Bats Switch"]', timeout: 15000 })
+  await guardian.m.tapOn({ css: '[aria-label="Throws Left"]', timeout: 15000 })
+  await scrollTap(guardian, 'Save')
+  await contains(guardian.page, 'Saved.')
+  const hands = await db
+    .selectFrom('users')
+    .select(['bats', 'throws', 'bats_source'])
+    .where('id', '=', avery.id)
+    .executeTakeFirstOrThrow()
+  expect(hands).deep.equals({
+    bats: 'switch',
+    throws: 'left',
+    bats_source: 'manual'
+  })
+  await run.shot(guardian, 'guardian-settings-home.png')
+
+  // Hank Moss runs one team and nothing else: a large card for a league
+  // and one for a season, under it.
+  const hank = await run.signIn('home-one-team', people.oneTeam)
+  await hank.m.openBrowser({ url: `${f.h.origin}/` })
+  await contains(hank.page, 'YOUR TEAMS')
+  await contains(hank.page, 'Create Season')
+  const hankHome = await page(hank)
+  expect(hankHome).not.includes('YOUR PLAYERS')
+  expect(
+    inOrder(hankHome, [
+      'YOUR TEAMS',
+      'Demo Rookies',
+      'Create League',
+      'Create Season'
+    ]).every(at => at >= 0)
+  ).equals(true)
+  const league = await controls(hank, 'Create League')
+  const season = await controls(hank, 'Create Season')
+  expect(league).has.length(1)
+  expect(league[0]).includes('Create an organization')
+  expect(season).has.length(1)
+  expect(season[0]).includes('Create a season or tournament')
+  // The team he has keeps its own Create beside its title.
+  expect(await controls(hank, 'Create Team')).deep.equals(['Create Team'])
+  await run.shot(hank, 'home-one-team.png', { fit: true })
 }
 
 async function main(): Promise<void> {

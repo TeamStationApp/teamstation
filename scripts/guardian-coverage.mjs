@@ -50,7 +50,12 @@ const appSuites = [
   'src/app/components/GameHeroCard.test.tsx',
   'src/app/screens/PublicTeamContent.test.tsx',
   'src/app/screens/expandedStats.test.tsx',
-  'src/app/scoring/scoringEntry.test.tsx'
+  'src/app/scoring/scoringEntry.test.tsx',
+  'src/app/screens/HomeScreen.test.tsx',
+  'src/app/screens/HomeScreen.recentGame.test.tsx',
+  'src/app/screens/heroFollow.test.tsx',
+  'src/app/screens/creationUi.test.tsx',
+  'src/app/screens/homeAddCreate.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

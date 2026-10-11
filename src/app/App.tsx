@@ -955,22 +955,26 @@ function Shell(props: AppProps): React.ReactElement {
    * than a default the screen applies later — a default applied on mount is
    * what strips a filter somebody actually asked for.
    */
-  const openPlayer = (
-    userId: number,
-    title: string,
-    from: { seasonId?: string; teamId?: string; onTeam?: string } = {}
-  ): void => {
-    const narrowed = from.seasonId != null || from.teamId != null
-    push({
-      name: 'player',
-      userId: String(userId),
-      title,
-      tab: narrowed ? 'stats' : undefined,
-      seasonId: from.seasonId,
-      teamId: from.teamId,
-      onTeam: from.onTeam
-    })
-  }
+  const openPlayer = useCallback(
+    (
+      userId: number,
+      title: string,
+      from: { seasonId?: string; teamId?: string; onTeam?: string } = {}
+    ): void => {
+      const narrowed = from.seasonId != null || from.teamId != null
+      const next: Pushed = {
+        name: 'player',
+        userId: String(userId),
+        title,
+        tab: narrowed ? 'stats' : undefined,
+        seasonId: from.seasonId,
+        teamId: from.teamId,
+        onTeam: from.onTeam
+      }
+      setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
+    },
+    [tab]
+  )
   /** The gear on a team, season or league card. */
   const openManage = (
     scopeKind: 'league' | 'season' | 'team',
@@ -1273,6 +1277,7 @@ function Shell(props: AppProps): React.ReactElement {
             push({ name: 'createGroup', kind })
           }}
           onOpenGroup={openGroup}
+          onOpenPlayer={openPlayer}
         />
       ) : tab === 'search' ? (
         <DiscoverScreen

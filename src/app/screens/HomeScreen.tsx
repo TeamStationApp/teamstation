@@ -6,7 +6,8 @@ import type {
   SeasonGame,
   SeasonSummary,
   TeamStationClient,
-  TeamSummary
+  TeamSummary,
+  UserMatch
 } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
@@ -40,21 +41,28 @@ export interface HomeScreenProps {
   ) => void
   onCreateGroup?: (kind: GroupKind) => void
   onOpenGroup?: (ref: GroupRef) => void
+  /**
+   * A player the person is a guardian of, opened with no team: their whole
+   * career rather than one team's part of it.
+   */
+  onOpenPlayer?: (userId: number, title: string) => void
 }
 
 /**
- * The first screen: the last game played, the teams you belong to, and the
- * seasons you may watch.
+ * The first screen: the last game played, the players you are a guardian of,
+ * the teams you belong to, and the seasons you may watch.
  *
  * Teams above seasons, on Paul's instruction. Being *on* a team is a stronger
  * thing than being allowed to watch a season, and the person opening this app
  * is usually looking for one child's team — so the teams are the first thing
- * under the thumb, and the seasons are there for the wider wander.
+ * under the thumb, and the seasons are there for the wider wander. That
+ * child, for a guardian, is "Your Players", just above the teams.
  */
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
   const styles = getStyles(useTheme())
 
+  const [players, setPlayers] = useState<UserMatch[]>([])
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [groups, setGroups] = useState<PublicGroup[]>([])
   const [followed, setFollowed] = useState<PublicGroup[]>([])
@@ -140,10 +148,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     }
   }, [client])
 
+  // Whether Home can open a player at all, not which function opens one: the
+  // shell hands over a new one whenever it renders, and that is no reason to
+  // read everything again.
+  const opensPlayers = props.onOpenPlayer != null
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
-      const [loadedTeams, loadedSeasons, ownGroups, follows] =
+      const [loadedTeams, loadedSeasons, ownGroups, follows, guarded] =
         await Promise.all([
           client.teams(),
           client.seasons(),
@@ -151,9 +163,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
           // Following is a nicety: Home still opens when it cannot be read.
           props.onOpenGroup == null
             ? Promise.resolve([])
-            : client.follows().catch(() => [])
+            : client.follows().catch(() => []),
+          // So is the list of the players one guards: Home opens without it.
+          opensPlayers
+            ? client.guardedPlayers().catch(() => [])
+            : Promise.resolve([])
         ])
       if (cancelled) return
+      setPlayers(guarded)
       setTeams(loadedTeams)
       setSeasons(loadedSeasons)
       setGroups(ownGroups)
@@ -178,7 +195,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, props.onOpenGroup])
+  }, [client, props.onOpenGroup, opensPlayers])
 
   if (loading) {
     return (
@@ -262,6 +279,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       }}
     />
   )
+  // Nothing at all: the cards lead. Otherwise each kind still missing has
+  // its card below everything the person already has.
   const showEmptyHero = canCreate && missingKinds.length === 3
   const descriptions: Record<GroupKind, string> = {
     league:
@@ -438,6 +457,30 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         </View>
       )}
 
+      {players.length > 0 && (
+        <View style={styles.section}>
+          <SectionHeader title="Your Players" />
+          <Card>
+            {players.map((player, index) => {
+              const name = player.shortName ?? String(player.userId)
+              return (
+                <View key={player.userId}>
+                  {index > 0 && <View style={styles.divider} />}
+                  <ListRow
+                    title={name}
+                    emblem={initialsOf(name)}
+                    emblemUri={player.avatarUrl}
+                    onPress={() => {
+                      props.onOpenPlayer?.(player.userId, name)
+                    }}
+                  />
+                </View>
+              )
+            })}
+          </Card>
+        </View>
+      )}
+
       {counts.team > 0 && (
         <View style={styles.section}>
           <SectionHeader title="Your teams" actions={sectionActions('team')} />
@@ -497,28 +540,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
           </Card>
         </View>
       )}
-      {canCreate &&
-        !showEmptyHero &&
-        missingKinds.length > 0 &&
-        (counts.team === 0 ? (
-          creationCards(missingKinds)
-        ) : (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            {missingKinds.flatMap(kind =>
-              sectionActions(kind).map(action => (
-                <Button
-                  key={`${kind}:${action.label}`}
-                  compact
-                  kind="secondary"
-                  label={action.label}
-                  onPress={() => {
-                    action.onPress()
-                  }}
-                />
-              ))
-            )}
-          </View>
-        ))}
       {counts.league > 0 && (
         <View style={styles.section}>
           <SectionHeader
@@ -543,6 +564,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
           </Card>
         </View>
       )}
+      {canCreate &&
+        !showEmptyHero &&
+        missingKinds.length > 0 &&
+        creationCards(missingKinds)}
     </Screen>
   )
 }
