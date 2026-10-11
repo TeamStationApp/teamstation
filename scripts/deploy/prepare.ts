@@ -87,20 +87,25 @@ export async function prepare(context: BuildContext): Promise<string> {
   const env = buildEnvironment(context)
   writeClientConfig(context, directory)
   if (target.kind === 'react-native') {
-    if (!existsSync(path.join(directory, 'package-lock.json')))
+    const packages =
+      target.dependencies == null
+        ? directory
+        : path.resolve(context.source, target.dependencies)
+    noSymlinks(packages)
+    if (!existsSync(path.join(packages, 'package-lock.json')))
       throw new Error('A locked JavaScript dependency graph is required')
-    const marker = path.join(directory, '.deploy-dependencies')
-    const fingerprint = dependencyInputs(directory)
+    const marker = path.join(packages, '.deploy-dependencies')
+    const fingerprint = dependencyInputs(packages)
     noSymlinks(marker)
     if (
-      !existsSync(path.join(directory, 'node_modules')) ||
+      !existsSync(path.join(packages, 'node_modules')) ||
       !existsSync(marker) ||
       readFileSync(marker, 'utf8') !== fingerprint
     ) {
       await processes.run({
         file: settings.tools.socket,
         args: ['npm', 'ci'],
-        cwd: directory,
+        cwd: packages,
         env,
         capture: false
       })
