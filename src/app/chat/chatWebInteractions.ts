@@ -96,82 +96,213 @@ export function bindUserScroll(
   const element = scrollElement(view)
   const win = element?.ownerDocument.defaultView
   if (element == null || win == null) return () => {}
+  const supportsEnd = Reflect.has(element, 'onscrollend')
   let live = true
   let scrollbarHeld = false
-  let generation = 0
-  let frame: number | undefined
+  let touchHeld = false
+  let touchY: number | undefined
   let pending:
-    | { last: number; frameOffset: number; height: number; content: number }
+    | {
+        last: number
+        height: number
+        content: number
+        direction: number
+        target?: number
+        input?: Event
+        owned: boolean
+      }
     | undefined
   const offset = (): number => Math.max(0, element.scrollTop)
+  const maximum = (): number =>
+    Math.max(0, element.scrollHeight - element.clientHeight)
   const retire = (): void => {
-    generation += 1
     pending = undefined
-    if (frame != null) win.cancelAnimationFrame(frame)
-    frame = undefined
   }
   const cancel = (): void => {
     scrollbarHeld = false
+    touchHeld = false
+    touchY = undefined
     retire()
   }
-  scrollCancels.set(element, cancel)
-  const observeFrame = (): void => {
-    const current = generation
-    frame = win.requestAnimationFrame(() => {
-      if (!live || current !== generation || pending == null) return
-      frame = undefined
-      const top = offset()
+  scrollCancels.set(element, retire)
+  const allowed = (event: Event): boolean => {
+    const target = event.target
+    if (!(target instanceof HTMLElement) || !element.contains(target))
+      return false
+    let node: HTMLElement = target
+    while (node !== element) {
       if (
-        pending.height !== element.clientHeight ||
-        pending.content !== element.scrollHeight ||
-        top === pending.frameOffset
-      ) {
-        retire()
-        return
-      }
-      pending.frameOffset = top
-      observeFrame()
-    })
+        node.matches(
+          'input, textarea, select, button, [contenteditable], [role="slider"], [role="combobox"], [role="listbox"]'
+        )
+      )
+        return false
+      const style = win.getComputedStyle(node)
+      if (
+        node.scrollHeight > node.clientHeight &&
+        (style.overflowY === 'auto' || style.overflowY === 'scroll')
+      )
+        return false
+      if (node.parentElement == null) return false
+      node = node.parentElement
+    }
+    return true
   }
-  const begin = (): void => {
+  const arm = (
+    input: Event,
+    direction: number,
+    target?: number,
+    owned = false
+  ): void => {
     retire()
+    if (!live || (input.defaultPrevented && !owned)) return
+    read()
     const top = offset()
+    if (
+      (direction === 0 && !scrollbarHeld) ||
+      (direction < 0 && top === 0) ||
+      (direction > 0 && top >= maximum())
+    )
+      return
     pending = {
       last: top,
-      frameOffset: top,
       height: element.clientHeight,
-      content: element.scrollHeight
+      content: element.scrollHeight,
+      direction,
+      target,
+      input,
+      owned
     }
-    read()
-    if (!scrollbarHeld) observeFrame()
+  }
+  const deliver = (): void => {
+    if (pending == null) return
+    const top = offset()
+    if (top === pending.last) return
+    if (
+      !scrollbarHeld &&
+      !touchHeld &&
+      pending.direction !== 0 &&
+      (top - pending.last) * pending.direction < 0
+    ) {
+      retire()
+      return
+    }
+    pending.last = top
+    position?.(top)
+    if (
+      !scrollbarHeld &&
+      !touchHeld &&
+      pending.target != null &&
+      (pending.direction < 0 ? top <= pending.target : top >= pending.target)
+    )
+      retire()
+  }
+  const direct = (event: Event, delta: number): void => {
+    if (event.defaultPrevented) {
+      retire()
+      return
+    }
+    if (delta === 0) {
+      retire()
+      read()
+      return
+    }
+    const before = offset()
+    const target = Math.min(maximum(), Math.max(0, before + delta))
+    event.preventDefault()
+    arm(event, Math.sign(delta), target, true)
+    if (pending != null) {
+      // This is the application's finite legacy step, not an inferred UA step.
+      element.scrollTop = target
+      deliver()
+    }
+    retire()
   }
   const scroll = (event: Event): void => {
-    if (event.target !== element || pending == null) return
+    if (!live || event.target !== element) return
+    if (pending == null) {
+      if (scrollbarHeld) arm(event, 0)
+      return
+    }
+    if (pending.input?.defaultPrevented === true && !pending.owned) {
+      retire()
+      return
+    }
     if (
       pending.height !== element.clientHeight ||
       pending.content !== element.scrollHeight
     ) {
-      cancel()
+      if (scrollbarHeld) arm(event, 0)
+      else retire()
       return
     }
-    const top = offset()
-    if (top === pending.last) return
-    pending.last = top
-    position?.(top)
+    deliver()
+  }
+  const end = (event: Event): void => {
+    if (event.target !== element || scrollbarHeld || touchHeld) return
+    retire()
   }
   const key = (event: KeyboardEvent): void => {
+    if (event.ctrlKey || event.metaKey || event.altKey || !allowed(event))
+      return
+    const up =
+      ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ||
+      (event.key === ' ' && event.shiftKey)
+    const down =
+      ['ArrowDown', 'PageDown', 'End'].includes(event.key) ||
+      (event.key === ' ' && !event.shiftKey)
+    if (!up && !down) return
+    const target =
+      event.key === 'Home' ? 0 : event.key === 'End' ? maximum() : undefined
     if (
-      [
-        'ArrowUp',
-        'ArrowDown',
-        'PageUp',
-        'PageDown',
-        'Home',
-        'End',
-        ' '
-      ].includes(event.key)
-    )
-      begin()
+      !supportsEnd &&
+      target == null &&
+      position != null &&
+      event.target === element
+    ) {
+      const step = event.key.startsWith('Arrow') ? 40 : element.clientHeight
+      direct(event, up ? -step : step)
+    } else if (supportsEnd || target != null || position == null)
+      arm(event, up ? -1 : 1, target)
+    else read()
+  }
+  const wheel = (event: WheelEvent): void => {
+    if (event.ctrlKey || event.metaKey || event.altKey || !allowed(event))
+      return
+    if (!supportsEnd && position != null) {
+      // Legacy line units use current CSS line height, or the app's40px step.
+      const line = Number.parseFloat(win.getComputedStyle(element).lineHeight)
+      const unit =
+        event.deltaMode === 1
+          ? Number.isFinite(line)
+            ? line
+            : 40
+          : event.deltaMode === 2
+            ? element.clientHeight
+            : 1
+      direct(event, event.deltaY * unit)
+    } else arm(event, Math.sign(event.deltaY))
+  }
+  const touchStart = (event: TouchEvent): void => {
+    touchY = event.touches?.[0]?.clientY
+    touchHeld = touchY != null
+  }
+  const touchMove = (event: TouchEvent): void => {
+    if (!allowed(event)) return
+    const next = event.touches?.[0]?.clientY
+    if (next == null || touchY == null) {
+      read()
+      return
+    }
+    const delta = touchY - next
+    touchY = next
+    arm(event, Math.sign(delta))
+  }
+  const touchEnd = (): void => {
+    touchHeld = false
+    touchY = undefined
+    // Legacy inertia remains observable as offsets, without inferred ownership.
+    if (!supportsEnd) retire()
   }
   // Bare content presses cannot own a native scrollbar's movement.
   const start = (event: MouseEvent): void => {
@@ -208,39 +339,54 @@ export function bindUserScroll(
         (event.clientY >= bottom && event.clientY < innerBottom))
     if (!vertical && !horizontal) return
     scrollbarHeld = true
-    begin()
+    arm(event, 0)
   }
   const finish = (): void => {
     if (!scrollbarHeld) return
     scrollbarHeld = false
-    // The final movement may be delivered at the next rendering opportunity.
-    if (pending != null) observeFrame()
+    if (!supportsEnd) retire()
+  }
+  const focus = (event: Event): void => {
+    if (event.target !== element) retire()
   }
   const doc = element.ownerDocument
   element.addEventListener('scroll', scroll, true)
+  element.addEventListener('scrollend', end)
+  element.addEventListener('focusin', focus)
   element.addEventListener('pointerdown', start)
   element.addEventListener('mousedown', start)
   doc.addEventListener('pointerup', finish)
   doc.addEventListener('mouseup', finish)
   doc.addEventListener('pointercancel', cancel)
   win.addEventListener('blur', cancel)
-  element.addEventListener('wheel', begin, { passive: true })
-  element.addEventListener('touchmove', begin, { passive: true })
-  element.addEventListener('keydown', key)
+  const inputTarget = position != null ? win : element
+  inputTarget.addEventListener('wheel', wheel as EventListener, {
+    passive: false
+  })
+  element.addEventListener('touchstart', touchStart, { passive: true })
+  element.addEventListener('touchmove', touchMove, { passive: true })
+  element.addEventListener('touchend', touchEnd)
+  element.addEventListener('touchcancel', cancel)
+  inputTarget.addEventListener('keydown', key as EventListener)
   return () => {
     live = false
     cancel()
-    if (scrollCancels.get(element) === cancel) scrollCancels.delete(element)
+    if (scrollCancels.get(element) === retire) scrollCancels.delete(element)
     element.removeEventListener('scroll', scroll, true)
+    element.removeEventListener('scrollend', end)
+    element.removeEventListener('focusin', focus)
     element.removeEventListener('pointerdown', start)
     element.removeEventListener('mousedown', start)
     doc.removeEventListener('pointerup', finish)
     doc.removeEventListener('mouseup', finish)
     doc.removeEventListener('pointercancel', cancel)
     win.removeEventListener('blur', cancel)
-    element.removeEventListener('wheel', begin)
-    element.removeEventListener('touchmove', begin)
-    element.removeEventListener('keydown', key)
+    inputTarget.removeEventListener('wheel', wheel as EventListener)
+    element.removeEventListener('touchstart', touchStart)
+    element.removeEventListener('touchmove', touchMove)
+    element.removeEventListener('touchend', touchEnd)
+    element.removeEventListener('touchcancel', cancel)
+    inputTarget.removeEventListener('keydown', key as EventListener)
   }
 }
 export function bindMessageHover(

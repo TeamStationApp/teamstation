@@ -125,9 +125,16 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const anchor = useRef(props.initialAnchor)
   const anchorOwned = useRef(props.initialAnchor != null)
   const currentOffset = useRef(props.initialOffset ?? 0)
-  const userPosition = useRef<{ native: boolean; moved: boolean } | undefined>(
-    undefined
-  )
+  const userPosition = useRef<
+    | {
+        native: boolean
+        moved: boolean
+        data: string | undefined
+        visibility: number
+        generation: number
+      }
+    | undefined
+  >(undefined)
   const pendingMomentum = useRef<
     | {
         data: string | undefined
@@ -556,7 +563,15 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     anchorOwned.current = false
     anchor.current = undefined
     gestureGeneration.current += 1
-    userPosition.current = native ? { native, moved: false } : undefined
+    userPosition.current = native
+      ? {
+          native,
+          moved: false,
+          data: dataKey,
+          visibility: visibilityVersion,
+          generation: gestureGeneration.current
+        }
+      : undefined
     pendingMomentum.current = undefined
   }
   const rememberOffset = (
@@ -567,7 +582,18 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   ): void => {
     if (!liveData()) return
     const offset = Math.max(0, event.nativeEvent.contentOffset.y)
-    const gesture = userPosition.current
+    const active = userPosition.current
+    const gesture =
+      active != null &&
+      active.data === dataKey &&
+      active.visibility === visibilityVersion &&
+      active.generation === gestureGeneration.current
+        ? active
+        : undefined
+    if (active != null && gesture == null) {
+      userPosition.current = undefined
+      pendingMomentum.current = undefined
+    }
     if (gesture != null) {
       gesture.moved ||= offset !== currentOffset.current
       // A delivered movement can choose the absolute top. A native drag at
@@ -646,10 +672,18 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       return
     // The DOM adapter delivers only actual movement from a current input.
     // Classify it inside this callback, without sharing dispatch lifetime.
-    userPosition.current = { native: false, moved: true }
+    userPosition.current = {
+      native: false,
+      moved: true,
+      data: dataKey,
+      visibility: visibilityVersion,
+      generation: gestureGeneration.current
+    }
     rememberOffset({ nativeEvent: { contentOffset: { y: offset } } }, 'web')
   }
   useEffect(() => {
+    userPosition.current = undefined
+    pendingMomentum.current = undefined
     webOwner.current = undefined
     cancelUserScroll(list.current)
   }, [dataKey, listVisible])
@@ -799,7 +833,13 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
             preceding.visibility === visibilityVersion &&
             preceding.generation === gestureGeneration.current
           )
-            userPosition.current = { native: true, moved: preceding.moved }
+            userPosition.current = {
+              native: true,
+              moved: preceding.moved,
+              data: dataKey,
+              visibility: visibilityVersion,
+              generation: gestureGeneration.current
+            }
         }}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
