@@ -76,13 +76,15 @@ if [ -n "$COVERAGE" ]; then
     cd "$TOP"
     # Every changed line of the logic this app's tests reach: the shared core, the shared
     # control screen's logic and the app's own UI package (the scoreboard desk and the Director
-    # override receiver among them). SettingsView is SwiftUI layout; the decisions it shows are
-    # made in ScoreboardSnapshot and ScoreboardDesk, which are measured. EventControl is measured
+    # override receiver among them). SettingsView and SignInLinkToast are SwiftUI layout; the
+    # decisions they show are made in ScoreboardSnapshot, ScoreboardDesk and AppEnvironment, which
+    # are measured. EventControl is measured
     # by its own package tests, never here.
     node "$TOP/scripts/swift-changed-line-coverage.cjs" \
       --xcresult "$CAMERAMAN_DERIVED_DATA/TestResults.xcresult" \
       --derived-data "$CAMERAMAN_DERIVED_DATA" \
       --exclude mobile/apps/common/CameramanControlUI/Sources/CameramanControlUI/SettingsView.swift \
+      --exclude mobile/apps/tsCameraman/Packages/CameramanUI/Sources/CameramanUI/SignInLinkToast.swift \
       mobile/apps/common/CameramanCore \
       mobile/apps/common/CameramanControlUI \
       mobile/apps/tsCameraman/Packages/CameramanUI

@@ -28,6 +28,7 @@ public struct RootView: View {
         }
       }
     }
+    .overlay(alignment: .top) { SignInLinkToast(message: environment.linkMessage) }
     .onChange(of: environment.isShowingSettings) { _, showing in
       InterfaceOrientation.setSettingsVisible(showing)
     }

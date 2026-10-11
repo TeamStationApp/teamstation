@@ -8,6 +8,7 @@ import CameramanTestHarness
 import EventControl
 import Observation
 import os
+import TeamStationKit
 import SwiftUI
 
 /// Wiring for the whole app, injected by the app target so the UI package owns no globals.
@@ -143,7 +144,13 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     self.settingsStore = settingsStore
     let preference = BroadcastPreference(store: broadcastStore)
     self.broadcastPreference = preference
-    let desk = ScoreboardDesk(store: broadcastStore, origin: "ios", http: scoreboardHTTP, openSocket: scoreboardSockets)
+    let desk = ScoreboardDesk(
+      store: broadcastStore,
+      origin: "ios",
+      appOrigin: AppServer.appOrigin,
+      http: scoreboardHTTP,
+      openSocket: scoreboardSockets
+    )
     self.scoreboardDesk = desk
     self.scoreboard = desk.snapshot
     self.eventOverride = EventOverrideController(
@@ -259,6 +266,32 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       Task { @MainActor in
         self?.thermalState = ProcessLoad.thermalStateName()
       }
+    }
+  }
+
+  /// A web address the operating system handed the app: a sign-in link from the e-mail, on this
+  /// app's own link host. The desk signs in with it and says how that went in its status line,
+  /// which only the TeamStation sheet shows, so the outcome is also put over whatever screen is up
+  /// as `linkMessage`.
+  public func handleSignInLink(_ url: URL) {
+    guard url.scheme?.lowercased() == "https" else { return }
+    Task { showLinkMessage(await scoreboardDesk.signIn(link: url).message) }
+  }
+
+  /// What the last sign-in link did, for a few seconds after it did it; nil otherwise.
+  public private(set) var linkMessage: String?
+  /// How long `linkMessage` stays up.
+  var linkMessageDuration: Duration = .seconds(6)
+  @ObservationIgnored private var linkMessageExpiry: Task<Void, Never>?
+
+  func showLinkMessage(_ message: String?) {
+    guard let message else { return }
+    linkMessage = message
+    linkMessageExpiry?.cancel()
+    linkMessageExpiry = Task { [weak self, duration = linkMessageDuration] in
+      try? await Task.sleep(for: duration)
+      guard !Task.isCancelled else { return }
+      self?.linkMessage = nil
     }
   }
 

@@ -201,6 +201,10 @@ function derivedDataCounts(dir, run) {
     .split('\n')
     .filter(bundle => bundle !== '')
     .map(bundle => join(bundle, basename(bundle).replace(/\.[^.]+$/, '')))
+    // A vendored binary framework (Sentry's) ships for several architectures, which llvm-cov
+    // refuses without an -arch, and holds none of this repository's code. What the build compiled
+    // here is for the one simulator architecture.
+    .filter(binary => run('lipo', ['-archs', binary]).trim().split(/\s+/).length === 1)
   const [first, ...rest] = binaries
   const lcov = run('xcrun', [
     'llvm-cov',

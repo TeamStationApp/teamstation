@@ -45,6 +45,9 @@ packages:
   # The device event-control protocol: a Director on the local network setting the scoreboard event.
   EventControl:
     path: ../common/EventControl
+  # Sign-in links: what a link handed to the app means, shared with TS Director.
+  TeamStationKit:
+    path: ../common/TeamStationKit
   # Test target only. Packetizers are round-tripped through the shared DirectorRTSP depacketizers
   # in mobile/apps/common. This compiles that package; it never builds or launches the Director app.
   DirectorRTSP:
@@ -64,6 +67,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.cameraman
         PRODUCT_NAME: TS Cameraman
         INFOPLIST_FILE: App/Info.plist
+        # Empty unless the build's clientConfig.xcconfig names a link host; see App/Cameraman.entitlements.
+        CODE_SIGN_ENTITLEMENTS: $(TS_APP_ENTITLEMENTS)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CURRENT_PROJECT_VERSION: "1"
         MARKETING_VERSION: "1.0"
@@ -91,6 +96,8 @@ targets:
         product: CameramanTestHarness
       - package: EventControl
         product: EventControl
+      - package: TeamStationKit
+        product: TeamStationKit
 
   CameramanUnitTests:
     type: bundle.unit-test
@@ -123,6 +130,8 @@ targets:
         product: DirectorRTSP
       - package: DirectorSources
         product: DirectorSources
+      - package: TeamStationKit
+        product: TeamStationKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.cameraman.unittests

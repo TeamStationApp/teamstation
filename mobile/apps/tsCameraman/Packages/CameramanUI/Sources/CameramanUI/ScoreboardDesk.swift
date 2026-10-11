@@ -1,6 +1,7 @@
 import CameramanCore
 import Foundation
 import os
+import TeamStationKit
 
 struct ScoreboardWireError: LocalizedError {
   var message: String
@@ -66,6 +67,9 @@ public final class ScoreboardDesk {
 
   private let store: SettingsStore
   private let origin: String
+  /// This app's own link host, which its sign-in links are mailed to and opened from. Nil in a
+  /// build without one, which asks for web links.
+  private let appOrigin: URL?
   private let deviceName: String
   private let http: ScoreboardHTTP
   private let openSocket: ScoreboardSocketOpener
@@ -106,6 +110,7 @@ public final class ScoreboardDesk {
   public init(
     store: SettingsStore,
     origin: String = "ios",
+    appOrigin: URL? = nil,
     deviceName: String = "TS Cameraman",
     session: URLSession = .shared,
     http: ScoreboardHTTP? = nil,
@@ -114,6 +119,7 @@ public final class ScoreboardDesk {
   ) {
     self.store = store
     self.origin = origin
+    self.appOrigin = appOrigin
     self.deviceName = deviceName
     self.http = http ?? { request in try await session.data(for: request) }
     self.openSocket = openSocket ?? { request in URLSessionScoreboardSocket(session: session, request: request) }
@@ -178,12 +184,9 @@ public final class ScoreboardDesk {
       status = "Sending a code"
       publish()
       do {
-        _ = try await call(
-          method: "POST",
-          path: "auth/email-code",
-          body: ["email": trimmed, "origin": origin],
-          token: nil
-        )
+        var body: [String: Any] = ["email": trimmed, "origin": origin]
+        if let appOrigin { body["appOrigin"] = TeamStationAccountScope.origin(of: appOrigin) }
+        _ = try await call(method: "POST", path: "auth/email-code", body: body, token: nil)
         awaitingCode = true
         status = "Check your email for a code"
       } catch {
@@ -211,32 +214,104 @@ public final class ScoreboardDesk {
           body: ["email": trimmedEmail, "code": trimmedCode, "deviceName": deviceName],
           token: nil
         )
-        guard
-          let object = json as? [String: Any],
-          let token = object["token"] as? String,
-          let user = object["user"] as? [String: Any]
-        else {
-          throw ScoreboardWireError(message: "The server's answer was not understood")
-        }
-        saved.token = token
-        saved.displayName = user["displayName"] as? String ?? ""
-        saved.email = (user["email"] as? String)?.isEmpty == false
-          ? (user["email"] as? String ?? trimmedEmail)
-          : trimmedEmail
-        // Empty when the server leaves it out; `refreshIdentity` then asks `auth/me`.
-        saved.userId = ScoreboardTarget.decimalUserId(user["id"]) ?? ""
-        awaitingCode = false
-        status = "Signed in"
-        persist()
-        accountGeneration += 1
-        publish()
-        onAccountChange?()
+        try adopt(json, email: trimmedEmail)
         return
       } catch {
         status = error.localizedDescription
       }
       publish()
     }
+  }
+
+  /// Keeps the session a sign-in answered with, and tells the app the login changed.
+  private func adopt(_ json: Any, email: String) throws {
+    guard
+      let object = json as? [String: Any],
+      let token = object["token"] as? String,
+      let user = object["user"] as? [String: Any]
+    else {
+      throw ScoreboardWireError(message: "The server's answer was not understood")
+    }
+    saved.token = token
+    saved.displayName = user["displayName"] as? String ?? ""
+    saved.email = (user["email"] as? String)?.isEmpty == false
+      ? (user["email"] as? String ?? email)
+      : email
+    // Empty when the server leaves it out; `refreshIdentity` then asks `auth/me`.
+    saved.userId = ScoreboardTarget.decimalUserId(user["id"]) ?? ""
+    awaitingCode = false
+    status = "Signed in"
+    persist()
+    accountGeneration += 1
+    publish()
+    onAccountChange?()
+  }
+
+  /// Signs in with a link the operating system handed the app: a `/signin/<token>` address on this
+  /// app's own link host. The token goes only to this app's account server, when the link names it
+  /// or none, or names another name the server reports as its own OpenID issuer; a link another
+  /// server issued is never sent anywhere. The outcome is also left in the status line.
+  @discardableResult
+  public func signIn(link: URL) async -> SignInLinkOutcome {
+    let own = ScoreboardTarget.httpOrigin(saved.accountServer)
+    let token: String
+    switch SignInLink.read(link, appOrigin: appOrigin, serverOrigin: own) {
+    case .notSignIn:
+      return .notSignIn
+    case let .spend(spendable):
+      token = spendable
+    case let .confirm(spendable, server):
+      let named: String?
+      let asked: Bool
+      do {
+        named = try await issuer()
+        asked = true
+      } catch {
+        named = nil
+        asked = false
+      }
+      guard named == "\(server)/oauth" else {
+        let outcome: SignInLinkOutcome = asked
+          ? .wrongServer(server: server, own: own)
+          : .unreachable(own: own)
+        status = outcome.message ?? ""
+        publish()
+        return outcome
+      }
+      token = spendable
+    }
+    do {
+      let json = try await call(
+        method: "POST",
+        path: "auth/link/verify",
+        body: ["token": token, "deviceName": deviceName],
+        token: nil
+      )
+      try adopt(json, email: "")
+      return .signedIn(displayName: saved.displayName)
+    } catch {
+      status = error.localizedDescription
+      publish()
+      return .failed(error.localizedDescription)
+    }
+  }
+
+  /// The account server's OpenID issuer, `<its public origin>/oauth`. Nil when the server answered
+  /// without one (with OAuth off it vouches for no other name); throws when it could not be asked:
+  /// no answer, or a 5xx.
+  private func issuer() async throws -> String? {
+    let origin = ScoreboardTarget.httpOrigin(saved.accountServer)
+    guard let url = URL(string: origin + "/oauth/.well-known/openid-configuration") else { return nil }
+    var request = URLRequest(url: url)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    let (data, response) = try await http(request)
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    if status == 0 || status >= 500 { throw URLError(.badServerResponse) }
+    guard
+      status == 200,
+      let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    return body["issuer"] as? String
   }
 
   public func signOut() {
