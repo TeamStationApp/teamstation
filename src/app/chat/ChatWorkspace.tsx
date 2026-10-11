@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
 import { Screen } from '../components'
@@ -43,9 +43,26 @@ function WorkspaceContent(
   props: ChatWorkspaceProps & { draftOwner: ChatDraftOwner }
 ): React.ReactElement {
   const { draftOwner } = props
+  const positionCapture = useRef<(() => Promise<void>) | undefined>(undefined)
+  const widthRevision = useRef(0)
+  const live = useRef(true)
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+      widthRevision.current += 1
+    }
+  }, [])
   const registerPositionCapture = useCallback(
-    (read: () => Promise<void>): (() => void) =>
-      props.listNavigation?.attach(read) ?? (() => {}),
+    (read: () => Promise<void>): (() => void) => {
+      positionCapture.current = read
+      const detach = props.listNavigation?.attach(read)
+      return () => {
+        if (positionCapture.current === read)
+          positionCapture.current = undefined
+        detach?.()
+      }
+    },
     [props.listNavigation]
   )
   const theme = useTheme()
@@ -80,8 +97,22 @@ function WorkspaceContent(
     >
       <View
         onLayout={event => {
-          if (event.nativeEvent.layout.width > 0)
-            setUsableWidth(event.nativeEvent.layout.width)
+          const width = event.nativeEvent.layout.width
+          if (!Number.isFinite(width) || width <= 0) return
+          const revision = ++widthRevision.current
+          const read = positionCapture.current
+          const applyWidth = (): void => {
+            if (live.current && widthRevision.current === revision)
+              setUsableWidth(width)
+          }
+          if (
+            wide &&
+            width < CHAT_WIDE_WIDTH &&
+            props.conversationId != null &&
+            read != null
+          ) {
+            read().then(applyWidth, applyWidth)
+          } else applyWidth()
         }}
         style={{
           flex: 1,
