@@ -453,6 +453,23 @@ export async function archive(
       },
       signing.directory
     )
+    // The team and the app link host, from the clientConfig.json `prepare`
+    // wrote. The script is this tool's own, found beside it, because the app
+    // being built may come from another repository.
+    const xcconfig = (
+      await context.processes.run({
+        file: context.settings.tools.node,
+        args: [
+          path.join(__dirname, '../clientConfig.mjs'),
+          directory,
+          ...(context.target.entitlements == null
+            ? []
+            : ['--entitlements', context.target.entitlements])
+        ],
+        cwd: directory,
+        env
+      })
+    ).trim()
     const destination = path.join(
       directory,
       '.deploy',
@@ -471,6 +488,8 @@ export async function archive(
         : ['-workspace', path.join(directory, context.target.workspace)]),
       '-scheme',
       context.target.scheme!,
+      '-xcconfig',
+      xcconfig,
       '-configuration',
       'Release',
       '-destination',

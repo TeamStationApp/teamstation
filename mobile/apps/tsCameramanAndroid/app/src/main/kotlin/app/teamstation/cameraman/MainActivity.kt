@@ -39,12 +39,15 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.teamstation.cameraman.core.ActivityPresence
 import app.teamstation.cameraman.engine.AppEnvironment
 import app.teamstation.cameraman.harness.ControlChannel
+import app.teamstation.cameraman.scoreboard.spendSignInIntent
 import app.teamstation.cameraman.sentry.SentrySetup
 import app.teamstation.cameraman.service.CameramanService
 import app.teamstation.cameraman.ui.RootScreen
+import app.teamstation.cameraman.ui.SignInLinkToast
 import app.teamstation.cameraman.ui.theme.CameramanTheme
 
 /**
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
             val local = binder as? CameramanService.LocalBinder
             environment = local?.environment
             handleControlIntent(intent)
+            handleSignInIntent(intent)
             // Left before the bind finished. The service may already have decided to stay because
             // the activity was still visible when it started.
             if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
@@ -170,6 +174,9 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         RootScreen(current)
+                        // A sign-in link's outcome, over whichever screen is up.
+                        val scoreboard by current.scoreboard.state.collectAsStateWithLifecycle()
+                        SignInLinkToast(scoreboard.linkMessage, Modifier.align(Alignment.TopCenter))
                     }
                 }
             }
@@ -209,6 +216,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleControlIntent(intent)
+        handleSignInIntent(intent)
     }
 
     override fun onDestroy() {
@@ -253,6 +261,16 @@ class MainActivity : ComponentActivity() {
         val current = environment ?: return
         if (!current.launch.isUITest) return
         ControlChannel.command(data.toString())?.let { current.handle(it) }
+    }
+
+    /**
+     * A sign-in link from the e-mail: Android opens the app with an `ACTION_VIEW` https intent for
+     * its own link host, and the desk spends it and says how that went. Handled once the service
+     * is bound, which is also where an intent that launched the app is picked up.
+     */
+    private fun handleSignInIntent(intent: Intent?) {
+        val current = environment ?: return
+        spendSignInIntent(intent, current.scoreboard::signIn)
     }
 
     private fun requiredPermissions(): List<String> = listOf(

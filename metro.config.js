@@ -2,6 +2,8 @@ const path = require('path')
 
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
 
+const { appOrigin } = require('./scripts/appOrigin.cjs')
+
 /**
  * Metro bundles `src/app/` and `src/common/` — the same sources the web
  * build uses. Its project root is the repository root, because that is where
@@ -38,8 +40,11 @@ const expoStandIn = path.resolve(
 const strayModules = path.resolve(__dirname, 'src', 'node_modules') + path.sep
 const repositoryOrigin = path.join(__dirname, 'package.json')
 const config = {
+  // Everything Babel inlines that can change between builds of the same
+  // source, so a new value is a new transform rather than a cached old one.
   cacheVersion: JSON.stringify([
     process.env.TS_API_BASE_URL ?? 'production',
+    appOrigin(),
     process.env.TS_CREATION_NATIVE_LOCATION_FAILURE ?? 'provider'
   ]),
   resolver: {

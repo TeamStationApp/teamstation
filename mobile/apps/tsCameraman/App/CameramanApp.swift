@@ -62,6 +62,11 @@ struct CameramanApp: App {
           // also what makes an unattended device run survive to the end.
           UIApplication.shared.isIdleTimerDisabled = true
         }
+        // A sign-in link from the e-mail, on this app's own link host.
+        .onOpenURL { url in environment.handleSignInLink(url) }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+          if let url = activity.webpageURL { environment.handleSignInLink(url) }
+        }
     }
     .onChange(of: scenePhase) { _, phase in
       // `isIdleTimerDisabled` stops the screen locking *itself*, but a side-button press, the app

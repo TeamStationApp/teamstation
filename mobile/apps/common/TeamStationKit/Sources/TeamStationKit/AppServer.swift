@@ -44,6 +44,20 @@ public enum AppServer {
     return url
   }()
 
+  /// `TSAppLinkHost` in the bundle: the app's own link host, from the build's
+  /// clientConfig.xcconfig. A bare host, because an xcconfig reads `//` as a
+  /// comment.
+  static let appLinkKey = "TSAppLinkHost"
+
+  /// The app's own link host as an origin, or nil for a build without one.
+  public static var appOrigin: URL? { appOrigin(in: .main) }
+
+  static func appOrigin(in bundle: Bundle) -> URL? {
+    let host = asHost(bundle.object(forInfoDictionaryKey: appLinkKey) as? String ?? "")
+    guard !host.isEmpty else { return nil }
+    return URL(string: "https://\(host)")
+  }
+
   /// The host a particular bundle names, or the one in the source. Separate
   /// from `host` so a test can ask about a bundle that is not the app's.
   static func host(in bundle: Bundle) -> String {

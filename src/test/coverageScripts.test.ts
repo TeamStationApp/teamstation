@@ -415,8 +415,11 @@ function swiftCheck(
     if (file === 'find')
       return [
         `${reports}/DD/Build/Products/Debug-iphonesimulator/TS Director.app`,
-        `${reports}/DD/Build/Products/Debug-iphonesimulator/PackageFrameworks/Tally_1_PackageProduct.framework`
+        `${reports}/DD/Build/Products/Debug-iphonesimulator/PackageFrameworks/Tally_1_PackageProduct.framework`,
+        `${reports}/DD/Build/Products/Debug-iphonesimulator/Vendored.framework`
       ].join('\n')
+    // A vendored binary framework ships for two architectures; what the build compiled, for one.
+    if (file === 'lipo') return args[1].endsWith('Vendored') ? 'x86_64 arm64\n' : 'arm64\n'
     return ''
   }
   const code = swift.main(argv, {
@@ -577,6 +580,8 @@ describe('the Swift changed-line coverage', function () {
       'Changed executable line coverage: 7/7 (100.00%)'
     )
     expect(run.calls.filter(call => call.includes('--file'))).deep.equals([])
+    // The vendored universal binary is asked about and left out, which llvm-cov needs.
+    expect(run.calls.filter(call => call[0] === 'lipo')).has.lengthOf(3)
     const exported = run.calls.find(call => call[1] === 'llvm-cov')
     expect(exported).deep.equals([
       'xcrun',

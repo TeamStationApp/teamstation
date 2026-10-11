@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.time.ZoneId
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -50,7 +51,12 @@ internal data class ScoreboardUiState(
     /** A Director holds the event: the row is grayed and the picker and every other edit are off. */
     val eventLocked: Boolean = false,
     /** A problem with event control worth a line, such as both ports being taken. */
-    val overrideStatus: String = ""
+    val overrideStatus: String = "",
+    /**
+     * What the last sign-in link did, for [ScoreboardDesk.LINK_MESSAGE_MS] after it did it; empty
+     * otherwise. The status line says it too, but only Settings shows that.
+     */
+    val linkMessage: String = ""
 )
 
 /**
@@ -71,6 +77,8 @@ internal class ScoreboardDesk(
     liveSocket: ScoreboardPublisher? = null,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val origin: String = "android",
+    /** This app's own link host, where its sign-in links are mailed; empty in a build without one. */
+    private val appOrigin: String = BuildConfig.TS_APP_ORIGIN,
     private val deviceName: String = "TS Cameraman",
     private val accountOrigin: String = ScoreboardTarget.accountOrigin(BuildConfig.TS_PRIMARY_HOST),
     private val eventControl: EventControlHost? = null,
@@ -93,6 +101,8 @@ internal class ScoreboardDesk(
     private var upcoming: List<ScoreboardEventRow> = emptyList()
     private var pickerStatus = ""
     private var status = ""
+    private var linkMessage = ""
+    private var linkMessageJob: Job? = null
     private var reconnectJob: Job? = null
     private var pitchGeneration = 0
     private var pitchHold: Job? = null
@@ -197,7 +207,7 @@ internal class ScoreboardDesk(
             publish()
             try {
                 withContext(io) {
-                    account.startSignIn(saved.accountServer, trimmed, origin)
+                    account.startSignIn(saved.accountServer, trimmed, origin, appOrigin.ifEmpty { null })
                 }
                 awaitingCode = true
                 status = "Check your email for a code"
@@ -242,6 +252,75 @@ internal class ScoreboardDesk(
             } catch (error: Exception) {
                 status = error.message ?: "Could not sign in"
             }
+            publish()
+        }
+    }
+
+    /**
+     * Signs in with a link Android handed the app: a `/signin/<token>` address on this app's own
+     * link host. The token goes only to the account server, when the link names it or none, or names
+     * another name the server reports as its own OpenID issuer; a link another server issued is
+     * never sent anywhere. The outcome is left in the status line. False for any other address.
+     */
+    fun signIn(link: String): Boolean {
+        val own = ScoreboardTarget.httpOrigin(saved.accountServer).trimEnd('/')
+        val read = SignInLink.read(link, appOrigin, own)
+        if (read is SignInLink.NotSignIn) return false
+        scope.launch {
+            status = "Signing in"
+            publish()
+            try {
+                val token = when (read) {
+                    is SignInLink.Spend -> read.token
+                    is SignInLink.Confirm -> {
+                        // Null: the server answered without an issuer, so it vouches for no other
+                        // name. An IOException: it could not be asked, which says nothing either way.
+                        val issuer = try {
+                            withContext(io) { account.issuer(saved.accountServer) }
+                        } catch (error: IOException) {
+                            status = SignInLink.unreachable(own)
+                            showLinkMessage(status)
+                            publish()
+                            return@launch
+                        }
+                        if (issuer != "${read.server}/oauth") {
+                            status = SignInLink.wrongServer(read.server, own)
+                            showLinkMessage(status)
+                            publish()
+                            return@launch
+                        }
+                        read.token
+                    }
+                    SignInLink.NotSignIn -> return@launch
+                }
+                val signedIn = withContext(io) { account.signInWithLink(saved.accountServer, token, deviceName) }
+                saved = saved.copy(
+                    token = signedIn.token,
+                    displayName = signedIn.displayName,
+                    email = signedIn.email,
+                    userId = signedIn.userId
+                )
+                awaitingCode = false
+                status = "Signed in to TeamStation as ${signedIn.displayName}"
+                persist()
+                syncEventControl()
+                if (saved.userId.isEmpty()) refreshIdentity()
+            } catch (error: Exception) {
+                status = error.message ?: "Could not sign in"
+            }
+            showLinkMessage(status)
+            publish()
+        }
+        return true
+    }
+
+    /** Puts a link's outcome over whatever screen is up, and takes it down again. */
+    private fun showLinkMessage(message: String) {
+        linkMessage = message
+        linkMessageJob?.cancel()
+        linkMessageJob = scope.launch {
+            delay(LINK_MESSAGE_MS)
+            linkMessage = ""
             publish()
         }
     }
@@ -483,7 +562,13 @@ internal class ScoreboardDesk(
             overrideToggleEnabled = eventControl != null && saved.token.isNotEmpty(),
             overrideHost = held?.ownerHost.orEmpty(),
             eventLocked = held != null,
-            overrideStatus = control.status
+            overrideStatus = control.status,
+            linkMessage = linkMessage
         )
+    }
+
+    internal companion object {
+        /** How long a sign-in link's outcome stays over the screen. */
+        const val LINK_MESSAGE_MS = 6_000L
     }
 }

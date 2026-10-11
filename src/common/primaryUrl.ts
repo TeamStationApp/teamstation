@@ -28,6 +28,14 @@
 export const PRIMARY_HOST = 'app.teamstation.app'
 
 /**
+ * The site's public web address. Production's server names it as its own
+ * public URL, so the site, its sign-in links and everything a browser opens
+ * live there, while `PRIMARY_HOST` keeps answering the API for every app
+ * already installed against it. Both are production.
+ */
+export const WEB_HOST = 'web.teamstation.app'
+
+/**
  * An address as it is written down: a host, optionally with a port, and
  * nothing else. `app.teamstation.app`, `127.0.0.1:9100`, `[::1]:9100`.
  */

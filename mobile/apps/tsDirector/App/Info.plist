@@ -14,6 +14,8 @@
   -->
   <key>TSPrimaryHost</key>
   <string>$(TS_PRIMARY_HOST)</string>
+  <key>TSAppLinkHost</key>
+  <string>$(TS_APP_LINK_HOST)</string>
   <!-- Where crashes are reported, from TS_SENTRY_DSN; empty reports nothing. -->
   <key>TSSentryDsn</key>
   <string>$(TS_SENTRY_DSN)</string>

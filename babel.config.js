@@ -9,8 +9,10 @@
  * Reanimated runs on the UI thread, and it has to see them after every other
  * transform has had its turn.
  */
+const { appOrigin } = require('./scripts/appOrigin.cjs')
 const { bundleBuildInfo } = require('./scripts/build-info.cjs')
 process.env.TS_BUILD_INFO = bundleBuildInfo()
+process.env.TS_APP_ORIGIN = appOrigin()
 
 module.exports = {
   presets: ['module:@react-native/babel-preset'],
@@ -26,6 +28,7 @@ module.exports = {
       {
         include: [
           'TS_API_BASE_URL',
+          'TS_APP_ORIGIN',
           'TS_BUILD_INFO',
           'TS_CREATION_NATIVE_LOCATION_FAILURE',
           'TS_SENTRY_DSN'

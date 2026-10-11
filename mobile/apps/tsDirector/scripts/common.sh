@@ -20,7 +20,8 @@ export DIRECTOR_SCHEME="${DIRECTOR_SCHEME:-Director}"
 export DIRECTOR_PROJECT="$DIRECTOR_ROOT/Director.xcodeproj"
 export DIRECTOR_DERIVED_DATA="${DIRECTOR_DERIVED_DATA:-$DIRECTOR_ROOT/DerivedData}"
 export DIRECTOR_BUNDLE_ID="${DIRECTOR_BUNDLE_ID:-app.teamstation.director}"
-export DIRECTOR_TEAM_ID="${DIRECTOR_TEAM_ID:-G5LQ7MERPK}"
+# The team that signs this app: the one in clientConfig.json unless the caller names another.
+export DIRECTOR_TEAM_ID="${DIRECTOR_TEAM_ID:-$(node "$DIRECTOR_ROOT/../../../scripts/clientConfig.mjs" "$DIRECTOR_ROOT" --team)}"
 
 log() { printf '\033[1;36m▸\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
@@ -28,6 +29,16 @@ fail() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 require() {
   command -v "$1" >/dev/null 2>&1 || fail "$1 is required but not installed"
+}
+
+# The deployment's own settings for this app, from its gitignored clientConfig.json, which
+# appLinks.mjs client writes: the team that signs it and the link host its sign-in links open it
+# from. client_xcconfig turns them into the xcconfig every xcodebuild here passes with -xcconfig,
+# and stops a build that has no clientConfig.json.
+client_xcconfig() {
+  CLIENT_XCCONFIG="$(node "$DIRECTOR_ROOT/../../../scripts/clientConfig.mjs" "$DIRECTOR_ROOT" --entitlements App/Director.entitlements)" \
+    || fail "no clientConfig.json in $DIRECTOR_ROOT"
+  export CLIENT_XCCONFIG
 }
 
 # Callers pass the target. The same simulator name exists under several runtimes, and more than

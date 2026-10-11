@@ -62,19 +62,6 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="teamstation" />
         </intent-filter>
-
-        <!--
-          And the site's own addresses, which is what people actually paste to
-          each other. `autoVerify` only takes effect once the server answers
-          `/.well-known/assetlinks.json` with this app's signing fingerprint;
-          until then Android offers a chooser, which still works.
-        -->
-        <intent-filter android:autoVerify="true">
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.DEFAULT" />
-            <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" android:host="app.teamstation.app" />
-        </intent-filter>
       </activity>
     </application>
 </manifest>

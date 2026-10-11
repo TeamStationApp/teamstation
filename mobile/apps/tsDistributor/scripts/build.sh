@@ -5,6 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcodegen
 require xcodebuild
+client_xcconfig
 
 cd "$DISTRIBUTOR_ROOT"
 xcodegen generate --quiet
@@ -18,6 +19,7 @@ set +e
 xcodebuild build \
   -project "$DISTRIBUTOR_PROJECT" \
   -scheme "$DISTRIBUTOR_SCHEME" \
+  -xcconfig "$CLIENT_XCCONFIG" \
   -configuration "$CONFIGURATION" \
   -destination "platform=macOS" \
   -derivedDataPath "$DISTRIBUTOR_DERIVED_DATA" \

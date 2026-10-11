@@ -57,12 +57,30 @@ react {
     autolinkLibrariesWithApp()
 }
 
-// Babel inlines TS_API_BASE_URL, TS_SENTRY_DSN and TS_BUILD_INFO into the bundle
-// (babel.config.js), but none of them is one of the bundle task's inputs,
-// so Gradle called a bundle made for another value up to date and packed it
-// again. Declared here, a new value rebuilds the bundle and the same value
-// does not.
+/**
+ * The app's link host, from the build's gitignored clientConfig.json at the
+ * repository root: `appOrigin` without its scheme, or empty without one.
+ * Babel inlines the same value into the bundle (scripts/appOrigin.cjs).
+ */
+def clientConfigFile = file("../../clientConfig.json")
+// An explicit TS_APP_ORIGIN wins even when empty, as in appOrigin.cjs: an empty
+// value is a build with no link host, not a missing one.
+def appOriginEnv = System.getenv("TS_APP_ORIGIN")
+def appOriginValue = appOriginEnv != null ? appOriginEnv : (
+    clientConfigFile.exists()
+        ? (new groovy.json.JsonSlurper().parse(clientConfigFile).appOrigin ?: "")
+        : ""
+)
+def appLinkHost = appOriginValue ? new URI(appOriginValue).host : ""
+
+// Babel inlines TS_API_BASE_URL, TS_SENTRY_DSN, TS_BUILD_INFO and TS_APP_ORIGIN
+// into the bundle (babel.config.js), but none of them is one of the bundle
+// task's inputs, so Gradle called a bundle made for another value up to date
+// and packed it again. Declared here, a new value rebuilds the bundle and the
+// same value does not. The app origin is declared by its value, not as the
+// file, because a build without a clientConfig.json has no file to declare.
 tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
+    inputs.property("TS_APP_ORIGIN", appOriginValue)
     inputs.property("TS_API_BASE_URL", providers.environmentVariable("TS_API_BASE_URL").orElse(""))
     inputs.property("TS_SENTRY_DSN", providers.environmentVariable("TS_SENTRY_DSN").orElse(""))
     inputs.property("TS_BUILD_INFO", providers.environmentVariable("TS_BUILD_INFO").orElse(""))
@@ -98,6 +116,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        manifestPlaceholders += [appLinkHost: appLinkHost]
     }
     signingConfigs {
         debug {
@@ -118,6 +137,15 @@ android {
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
+    }
+}
+
+// The sign-in link filter for the app's link host, added to every variant's
+// manifests only when the build has one, so a build without config claims no
+// https address at all.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        if (appLinkHost) variant.sources.manifests.addStaticManifestFile("src/appLinks/AndroidManifest.xml")
     }
 }
 

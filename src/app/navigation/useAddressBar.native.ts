@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { BackHandler, Linking, Platform } from 'react-native'
 
+import { appOrigin } from '../native/config'
 import { routeOfUrl } from './deepLink'
 import { makeHistory } from './history'
 import type { Route } from './routes'
@@ -41,7 +42,7 @@ const history = makeHistory()
  * mounts the app at all — and what it found is put here.
  */
 export function seedRoute(url: string | null | undefined): void {
-  history.seed(url == null ? { name: 'home' } : routeOfUrl(url))
+  history.seed(url == null ? { name: 'home' } : routeOfUrl(url, { appOrigin }))
 }
 
 /** Where the app currently is. */
@@ -87,7 +88,7 @@ export function popRoute(): void {
 export function useBrowserBack(onRoute: (route: Route) => void): void {
   useEffect(() => {
     const opened = (event: { url: string }): void => {
-      const route = routeOfUrl(event.url)
+      const route = routeOfUrl(event.url, { appOrigin })
       history.show(route)
       onRoute(route)
     }

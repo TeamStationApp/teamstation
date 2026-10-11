@@ -6,6 +6,7 @@ import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import type { RequestTerms } from '../../common/notifications'
 import { adminScopes } from '../access'
+import { allowedAppOrigin } from '../appLinks/appOrigin'
 import { asSignInOrigin, createEmailCode, signInLink } from '../auth/emailCodes'
 import {
   checkLimits,
@@ -68,7 +69,9 @@ const asJoinRequest = asObject({
   /** What the account will be called, when the invite is making one. */
   displayName: asOptional(asString),
   origin: asOptional(asSignInOrigin, 'web'),
-  next: asOptional(asString)
+  next: asOptional(asString),
+  /** The link host of the app asking, as on an ordinary sign-in. */
+  appOrigin: asOptional(asString)
 })
 
 /**
@@ -90,6 +93,8 @@ export interface InviteRouteOptions {
   sendCode: (email: string, code: string, link?: string) => Promise<void>
   /** Where this site lives, for the address in the e-mail. */
   publicUrl?: string
+  /** The link hosts of the apps this server signs in (`appLinks.apps`). */
+  appOrigins?: readonly string[]
 }
 
 export function inviteRoutes(
@@ -296,6 +301,10 @@ export function inviteRoutes(
     withAsync(async (req, res) => {
       const code = pathParam(req.params.code)
       const body = cleanBody(asJoinRequest, req.body)
+      const appOrigin = allowedAppOrigin(
+        body.appOrigin,
+        options.appOrigins ?? []
+      )
       const email = body.email.trim().toLowerCase()
       if (!email.includes('@')) throw badRequest('That is not an address')
 
@@ -319,12 +328,13 @@ export function inviteRoutes(
         // Back to the invite, so the screen can say what they have joined.
         next: body.next ?? `/i/${invite.code}`,
         inviteId: invite.id,
-        displayName: body.displayName
+        displayName: body.displayName,
+        appOrigin
       })
       await options.sendCode(
         email,
         request.code,
-        signInLink(options.publicUrl, request.token)
+        signInLink(options.publicUrl, request.token, appOrigin)
       )
       res.status(202).json({
         sent: true,

@@ -869,6 +869,19 @@ export const asSignInWait = asObject({
 })
 export type SignInWait = ReturnType<typeof asSignInWait>
 
+/** Where a sign-in is asked for, and where its e-mailed link should open. */
+export interface SignInRequestOptions {
+  /** The platform asking. The web when absent. */
+  origin?: 'web' | 'ios' | 'android'
+  /** Where to go once signed in. */
+  next?: string
+  /**
+   * The link host of the app asking, so the e-mailed link opens it. Only an
+   * installed app sends it; the server refuses a host it does not sign in.
+   */
+  appOrigin?: string
+}
+
 /**
  * Either a session, or `ready: false` — waiting is the ordinary answer here
  * and not a failure, so it is a shape rather than a status code.
@@ -1204,6 +1217,13 @@ export class TeamStationClient {
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
   private passwordPreparation?: Promise<ClientPasswordCosts>
+  /**
+   * The sign-in request this client asked for last. An installed app that
+   * spends its link (with a device name) is the one polling for it, and says
+   * so, so the poll is not approved too. A browser spending a link names
+   * nothing: the request it finishes may be waiting in another tab.
+   */
+  private askedSignIn?: string
   token: string | undefined
 
   constructor(options: ClientOptions) {
@@ -1408,21 +1428,76 @@ export class TeamStationClient {
    */
   async requestEmailCode(
     email: string,
-    options: { origin?: 'web' | 'ios' | 'android'; next?: string } = {}
+    options: SignInRequestOptions = {}
   ): Promise<SignInWait> {
-    return await this.request('POST', '/auth/email-code', asSignInWait, {
+    const wait = await this.request('POST', '/auth/email-code', asSignInWait, {
       email,
       origin: options.origin ?? 'web',
-      next: options.next
+      next: options.next,
+      appOrigin: options.appOrigin
     })
+    this.askedSignIn = wait.requestId
+    return wait
   }
 
-  /** Spend the link from the e-mail. Never happens on a bare page load. */
-  async signInWithLink(token: string): Promise<Session> {
+  /**
+   * The origin of the server this client talks to: its base URL without the
+   * API path, or the page's own origin when the base URL is a path, as it is
+   * on the web.
+   */
+  serverOrigin(): string {
+    const match = /^(https?:\/\/[^/]+)/i.exec(this.baseUrl)
+    if (match != null) return match[1].toLowerCase()
+    return (
+      (globalThis as { location?: { origin?: string } }).location?.origin ?? ''
+    )
+  }
+
+  /**
+   * The server's OpenID issuer, `<its public origin>/oauth`: how an app finds
+   * out what its server calls itself, which is not always the address the app
+   * was built to talk to. Null when the server answered without one (a server
+   * with OAuth off has no discovery, and so vouches for no other name);
+   * undefined when it could not be asked: no answer, or a 5xx.
+   */
+  async issuer(): Promise<string | null | undefined> {
+    let response: Response
+    try {
+      response = await this.doFetch(
+        `${this.serverOrigin()}/oauth/.well-known/openid-configuration`,
+        { method: 'GET', headers: { accept: 'application/json' } }
+      )
+    } catch {
+      return undefined
+    }
+    if (response.status >= 500) return undefined
+    if (!response.ok) return null
+    try {
+      const body: unknown = await response.json()
+      const issuer =
+        body != null && typeof body === 'object' && 'issuer' in body
+          ? body.issuer
+          : undefined
+      return typeof issuer === 'string' ? issuer : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Spend the link from the e-mail. Never happens on a bare page load.
+   *
+   * A device names itself, as it does when it types the code, and gets the
+   * long-lived, named session a device does.
+   */
+  async signInWithLink(token: string, deviceName?: string): Promise<Session> {
     const session = await this.request('POST', '/auth/link/verify', asSession, {
-      token
+      token,
+      deviceName,
+      requestId: deviceName == null ? undefined : this.askedSignIn
     })
     this.token = session.token
+    this.askedSignIn = undefined
     return session
   }
 
@@ -2377,14 +2452,16 @@ export class TeamStationClient {
    */
   async requestInviteCode(
     code: string,
-    options: { email: string; displayName?: string; next?: string }
+    options: { email: string; displayName?: string } & SignInRequestOptions
   ): Promise<SignInWait> {
-    return await this.request(
+    const wait = await this.request(
       'POST',
       `/join/${encodeURIComponent(code)}/email-code`,
       asSignInWait,
-      { ...options, origin: 'web' }
+      { ...options, origin: options.origin ?? 'web' }
     )
+    this.askedSignIn = wait.requestId
+    return wait
   }
 
   /** Everything the page behind the gear needs, in one call. */

@@ -19,11 +19,15 @@ import { parseRoute, type Route } from './routes'
  * is a path segment and not a host — `teamstation://games/g1` and
  * `https://app.teamstation.app/games/g1` both have to come out as `/games/g1`.
  */
-export function routeOfUrl(url: string): Route {
+export function routeOfUrl(
+  url: string,
+  options: { appOrigin?: string } = {}
+): Route {
   const [address, search = ''] = stripFragment(url).split('?')
 
   const scheme = address.indexOf('://')
   let path = address
+  let host: string | undefined
   if (scheme >= 0) {
     const rest = address.slice(scheme + 3)
     const slash = rest.indexOf('/')
@@ -31,6 +35,8 @@ export function routeOfUrl(url: string): Route {
     // normalise and `HTTPS://Teamstation.co/games/g1` would otherwise fall
     // into the wrong branch and resolve to the home screen.
     const protocol = address.slice(0, scheme).toLowerCase()
+    if (protocol === 'https' || protocol === 'http')
+      host = (slash < 0 ? rest : rest.slice(0, slash)).toLowerCase()
     path =
       protocol === 'https' || protocol === 'http'
         ? // An http address' first segment is the host, and belongs to nobody.
@@ -41,7 +47,24 @@ export function routeOfUrl(url: string): Route {
           `/${rest}`
   }
 
-  return parseRoute(path.startsWith('/') ? path : `/${path}`, search)
+  const route = parseRoute(path.startsWith('/') ? path : `/${path}`, search)
+  // A sign-in link is this app's only from this app's own link host: the one
+  // its operating system verified, and the one its server mails links to. One
+  // from anywhere else is never spent here; the form is offered instead.
+  if (
+    route.name === 'signInLink' &&
+    host != null &&
+    options.appOrigin != null &&
+    host !== hostOfOrigin(options.appOrigin)
+  )
+    return { name: 'signIn' }
+  return route
+}
+
+/** `https://app1.example.test` → `app1.example.test`, split by hand as above. */
+function hostOfOrigin(origin: string): string {
+  const scheme = origin.indexOf('://')
+  return (scheme < 0 ? origin : origin.slice(scheme + 3)).toLowerCase()
 }
 
 /** The part after `#` addresses nothing this app knows about. */

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The entitlements of a build with no app link host: none. The target
+	  defaults TS_APP_ENTITLEMENTS to this file, and clientConfig.xcconfig
+	  replaces it with TeamStation.entitlements only when clientConfig.json
+	  names an appOrigin. It is never empty, because Expo's configure phase
+	  lists the entitlements file as an input, and an empty name makes that
+	  input the ios/ directory, a dependency cycle.
+	-->
+</dict>
+</plist>

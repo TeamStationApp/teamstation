@@ -15,6 +15,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
@@ -53,7 +54,8 @@ internal data class ScoreboardEventLists(
  * control, who the token belongs to and that account's control key.
  */
 internal interface ScoreboardAccount {
-    fun startSignIn(server: String, email: String, origin: String): ScoreboardSignInStarted
+    /** `appOrigin` is the app's own link host, where the mailed link goes; null for a web link. */
+    fun startSignIn(server: String, email: String, origin: String, appOrigin: String?): ScoreboardSignInStarted
     fun completeSignIn(
         server: String,
         email: String,
@@ -61,6 +63,16 @@ internal interface ScoreboardAccount {
         deviceName: String
     ): ScoreboardSignedIn
     fun events(server: String, token: String, zone: ZoneId): ScoreboardEventLists
+
+    /** `POST auth/link/verify`: spends a sign-in link's token for this named device. */
+    fun signInWithLink(server: String, token: String, deviceName: String): ScoreboardSignedIn
+
+    /**
+     * The server's OpenID issuer, `<its public origin>/oauth`. Null when the server answered without
+     * one (with OAuth off it vouches for no other name); throws [java.io.IOException] when it could
+     * not be asked: no answer, or a 5xx.
+     */
+    fun issuer(server: String): String?
 
     /** `GET auth/me`: the canonical user ID, in decimal, of the account [token] belongs to. */
     fun me(server: String, token: String): String
@@ -104,14 +116,12 @@ internal class OkHttpScoreboardAccount(
     override fun startSignIn(
         server: String,
         email: String,
-        origin: String
+        origin: String,
+        appOrigin: String?
     ): ScoreboardSignInStarted {
-        val body = post(
-            server,
-            "auth/email-code",
-            null,
-            JSONObject().put("email", email).put("origin", origin)
-        )
+        val request = JSONObject().put("email", email).put("origin", origin)
+        if (!appOrigin.isNullOrEmpty()) request.put("appOrigin", appOrigin)
+        val body = post(server, "auth/email-code", null, request)
         return ScoreboardSignInStarted(
             requestId = body.getString("requestId"),
             clientSecret = body.getString("clientSecret")
@@ -137,6 +147,32 @@ internal class OkHttpScoreboardAccount(
             email = user.optString("email").ifEmpty { email },
             userId = decimalUserId(user.opt("id"))
         )
+    }
+
+    override fun signInWithLink(server: String, token: String, deviceName: String): ScoreboardSignedIn {
+        val body = post(
+            server,
+            "auth/link/verify",
+            null,
+            JSONObject().put("token", token).put("deviceName", deviceName)
+        )
+        val user = body.getJSONObject("user")
+        return ScoreboardSignedIn(
+            token = body.getString("token"),
+            displayName = user.optString("displayName"),
+            email = user.optString("email"),
+            userId = decimalUserId(user.opt("id"))
+        )
+    }
+
+    override fun issuer(server: String): String? {
+        val url = ScoreboardTarget.httpOrigin(server).trimEnd('/') + "/oauth/.well-known/openid-configuration"
+        client.newCall(Request.Builder().url(url).header("Accept", "application/json").build()).execute().use { response ->
+            if (response.code >= 500) throw IOException("$url answered ${response.code}")
+            if (response.code != 200) return null
+            return runCatching { JSONObject(response.body?.string().orEmpty()).optString("issuer") }
+                .getOrNull()?.ifEmpty { null }
+        }
     }
 
     override fun me(server: String, token: String): String {

@@ -40,6 +40,7 @@ import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
+import { appLinkRoutes } from './routes/appLinks'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { devMediaRoutes } from './routes/devMedia'
@@ -73,7 +74,12 @@ import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
 import { startScoreboard } from './scoreboard/scoreboardService'
-import { primaryHost, publicUrl, serverConfig } from './serverConfig'
+import {
+  eventControlIssuerOf,
+  primaryHost,
+  publicUrl,
+  serverConfig
+} from './serverConfig'
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
 import {
@@ -149,6 +155,9 @@ function resolveMediaSecret(): string {
   process.env[MEDIA_SECRET_ENV] = generated
   return generated
 }
+
+/** The link hosts of the apps this server signs in through their own links. */
+const appOrigins = serverConfig.appLinks.apps.map(app => app.origin)
 
 /**
  * Delivers a sign-in code.
@@ -461,10 +470,11 @@ function runWorker(): void {
       passwordParameterSecret: serverConfig.sessionSecret,
       sendCode,
       space: serverConfig.space,
-      publicUrl
+      publicUrl,
+      appOrigins
     })
   )
-  app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl }))
+  app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl, appOrigins }))
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use(
     '/api/v1',
@@ -500,7 +510,7 @@ function runWorker(): void {
     '/api/v1',
     deviceEventControlRoutes(db, {
       secret: serverConfig.deviceEventControlSecret,
-      issuer: publicUrl
+      issuer: eventControlIssuerOf(serverConfig, publicUrl)
     })
   )
   app.use(
@@ -548,6 +558,11 @@ function runWorker(): void {
   if (serverConfig.serveMediaLocally) {
     app.use(devMediaRoutes(serverConfig.mediaDir, mediaSecret))
   }
+
+  // The apps' link hosts: their verification files and the sign-in link a
+  // browser without the app opens. Not under /api/v1: Apple and Google ask for
+  // these paths at the root of each host.
+  app.use(appLinkRoutes({ appLinks: serverConfig.appLinks, publicUrl }))
 
   app.use(notFoundHandler)
   app.use(errorHandler)

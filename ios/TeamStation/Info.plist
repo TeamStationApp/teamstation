@@ -37,6 +37,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- The app's own link host, from clientConfig.json; empty without one. The JS reads the same
+	     value inlined by babel.config.js as TS_APP_ORIGIN. -->
+	<key>TSAppLinkHost</key>
+	<string>$(TS_APP_LINK_HOST)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

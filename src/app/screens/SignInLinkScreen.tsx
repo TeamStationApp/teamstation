@@ -4,11 +4,23 @@ import { ActivityIndicator, Text, View } from 'react-native'
 import type { Session, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { Button, Card, Screen } from '../components'
+import { linkDeviceName } from '../platform/signInRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface SignInLinkScreenProps {
   client: TeamStationClient
   token: string
+  /**
+   * The origin of the server that issued the link, when the link names one:
+   * a link mailed to this app's own link host does. Absent, the link is this
+   * server's.
+   */
+  server?: string
+  /**
+   * The name the link's session is kept under, as a device's is: the
+   * installed app's. Absent on the web, which keeps a browser session.
+   */
+  deviceName?: string
   onSignedIn: (session: Session) => void
   /**
    * The ordinary sign-in form. `linkSpent` when the server refused the link,
@@ -20,6 +32,8 @@ export interface SignInLinkScreenProps {
 
 type Failure =
   | { kind: 'refused' }
+  /** Issued by another server than the one this app signs in to. */
+  | { kind: 'wrongServer'; server: string; own: string }
   /** `retry` is false where asking again at once cannot help: a rate limit. */
   | { kind: 'failed'; message: string; retry: boolean }
 
@@ -37,40 +51,83 @@ type Failure =
 const attempts = new Map<string, Promise<Failure | undefined>>()
 const deliverTo = new Map<string, (session: Session) => void>()
 
+/**
+ * Whether a link that names `server` was issued by the server this client
+ * signs in to. The same server can be reached by more than one name — an app
+ * built against the API's address gets links naming the site's — so a name
+ * that differs is checked against the server's own OpenID issuer, which is
+ * `<its public origin>/oauth`. A token is never sent to a server that did not
+ * issue it. A server that answers with no issuer vouches for no other name.
+ * Undefined when the server could not be asked, which says nothing about whose
+ * link it is.
+ */
+export async function linkIsOurs(
+  client: TeamStationClient,
+  server: string | undefined
+): Promise<boolean | undefined> {
+  if (server == null || server === client.serverOrigin()) return true
+  const issuer = await client.issuer()
+  return issuer === undefined ? undefined : issuer === `${server}/oauth`
+}
+
 async function spend(
   client: TeamStationClient,
-  token: string
+  token: string,
+  server: string | undefined,
+  deviceName: string | undefined
 ): Promise<Failure | undefined> {
   const known = attempts.get(token)
   if (known != null) return await known
-  const attempt = client.signInWithLink(token).then(
-    (session): Failure | undefined => {
-      attempts.delete(token)
-      try {
-        deliverTo.get(token)?.(session)
-        return undefined
-      } catch (error: unknown) {
+  const attempt = linkIsOurs(client, server)
+    .then(async ours => {
+      if (ours === undefined) {
+        // Retried, not a refusal: the next try may reach the server.
+        throw new Error(
+          `Couldn’t reach ${client.serverOrigin()} to check this link. Try again.`
+        )
+      }
+      if (!ours) {
+        throw Object.assign(new Error('wrong server'), { wrongServer: true })
+      }
+      return await client.signInWithLink(token, deviceName)
+    })
+    .then(
+      (session): Failure | undefined => {
+        attempts.delete(token)
+        try {
+          deliverTo.get(token)?.(session)
+          return undefined
+        } catch (error: unknown) {
+          return {
+            kind: 'failed',
+            message:
+              error instanceof Error ? error.message : 'Something went wrong',
+            retry: false
+          }
+        }
+      },
+      (error: unknown): Failure => {
+        if (error instanceof HttpError && error.code === 'unauthorized') {
+          return { kind: 'refused' }
+        }
+        if (
+          server != null &&
+          error instanceof Error &&
+          'wrongServer' in error
+        ) {
+          // Not cached: a discovery that failed this time may answer the next.
+          attempts.delete(token)
+          return { kind: 'wrongServer', server, own: client.serverOrigin() }
+        }
+        attempts.delete(token)
         return {
           kind: 'failed',
           message:
             error instanceof Error ? error.message : 'Something went wrong',
-          retry: false
+          retry: !(error instanceof HttpError && error.code === 'rateLimited')
         }
       }
-    },
-    (error: unknown): Failure => {
-      if (error instanceof HttpError && error.code === 'unauthorized') {
-        return { kind: 'refused' }
-      }
-      attempts.delete(token)
-      return {
-        kind: 'failed',
-        message:
-          error instanceof Error ? error.message : 'Something went wrong',
-        retry: !(error instanceof HttpError && error.code === 'rateLimited')
-      }
-    }
-  )
+    )
   attempts.set(token, attempt)
   return await attempt
 }
@@ -96,7 +153,14 @@ async function spend(
 export function SignInLinkScreen(
   props: SignInLinkScreenProps
 ): React.ReactElement {
-  const { client, token, onSignedIn, onSignInAgain } = props
+  const {
+    client,
+    token,
+    server,
+    deviceName = linkDeviceName,
+    onSignedIn,
+    onSignInAgain
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [failure, setFailure] = useState<Failure | undefined>(undefined)
@@ -109,12 +173,12 @@ export function SignInLinkScreen(
 
   const signIn = useCallback((): void => {
     setFailure(undefined)
-    spend(client, token)
+    spend(client, token, server, deviceName)
       .then(next => {
         if (mounted.current) setFailure(next)
       })
       .catch(() => undefined)
-  }, [client, token])
+  }, [client, token, server, deviceName])
 
   useEffect(() => {
     mounted.current = true
@@ -140,6 +204,20 @@ export function SignInLinkScreen(
               <Button
                 kind="text"
                 label="Sign in another way"
+                onPress={() => {
+                  onSignInAgain(false)
+                }}
+              />
+            </>
+          ) : failure.kind === 'wrongServer' ? (
+            <>
+              <Text style={styles.title}>This link is for another server</Text>
+              <Text style={styles.error}>
+                {`This link is for ${failure.server}. This app signs in to ${failure.own}.`}
+              </Text>
+              <Button
+                label="Sign in"
+                testID="signInLinkSignIn"
                 onPress={() => {
                   onSignInAgain(false)
                 }}

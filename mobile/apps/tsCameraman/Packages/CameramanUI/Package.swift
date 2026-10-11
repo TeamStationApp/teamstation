@@ -12,6 +12,7 @@ let package = Package(
     .package(path: "../../common/CameramanCore"),
     .package(path: "../../common/CameramanControlUI"),
     .package(path: "../../../common/EventControl"),
+    .package(path: "../../../common/TeamStationKit"),
     .package(path: "../CameramanCapture"),
     .package(path: "../CameramanEncode"),
     .package(path: "../CameramanRTSP"),
@@ -28,7 +29,8 @@ let package = Package(
         "CameramanEncode",
         "CameramanRTSP",
         "CameramanTestHarness",
-        "EventControl"
+        "EventControl",
+        "TeamStationKit"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )

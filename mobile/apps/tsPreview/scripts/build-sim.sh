@@ -3,6 +3,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcodebuild
+client_xcconfig
 [ -d "$PREVIEW_PROJECT" ] || fail "run 'socket npm run bootstrap' first"
 
 CONFIGURATION="${CONFIGURATION:-Debug}"
@@ -16,6 +17,7 @@ set +e
 xcodebuild build \
   -project "$PREVIEW_PROJECT" \
   -scheme "$PREVIEW_SCHEME" \
+  -xcconfig "$CLIENT_XCCONFIG" \
   -configuration "$CONFIGURATION" \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$PREVIEW_DERIVED_DATA" \

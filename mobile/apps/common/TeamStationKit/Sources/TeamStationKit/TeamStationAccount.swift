@@ -56,6 +56,10 @@ public final class TeamStationAccount: TeamStationEventService {
   /// Where TeamStation is. Changed only in Settings, and only by Paul.
   public var serverURL: URL
 
+  /// This app's own link host, which its sign-in links are mailed to and
+  /// opened from. Nil in a build without one, which asks for web links.
+  public let appOrigin: URL?
+
   private let keychain: KeychainStore
   private let deviceName: String
   private let session: URLSession
@@ -63,10 +67,12 @@ public final class TeamStationAccount: TeamStationEventService {
   public init(
     serverURL: URL,
     deviceName: String,
+    appOrigin: URL? = nil,
     keychain: KeychainStore = KeychainStore(service: "app.teamstation.director"),
     session: URLSession = .shared
   ) {
     self.serverURL = serverURL
+    self.appOrigin = appOrigin
     self.deviceName = deviceName
     self.keychain = keychain
     self.session = session
@@ -234,8 +240,57 @@ public final class TeamStationAccount: TeamStationEventService {
    * here.
    */
   public func startSignIn(email: String) async throws {
-    waiting = try await client.startSignIn(email: email)
+    waiting = try await client.startSignIn(
+      email: email,
+      appOrigin: appOrigin.map { TeamStationAccountScope.origin(of: $0) }
+    )
     lastError = nil
+  }
+
+  /**
+   * Signs in with a link the operating system handed the app.
+   *
+   * Only a `/signin/<token>` link on this app's own link host is one. Its
+   * token is spent against this app's server when the link names that server
+   * or none, or names another name the server reports as its own OpenID
+   * issuer. A link from any other server is never sent anywhere.
+   */
+  public func signIn(link: URL) async -> SignInLinkOutcome {
+    let own = TeamStationAccountScope.origin(of: serverURL)
+    let token: String
+    switch SignInLink.read(link, appOrigin: appOrigin, serverOrigin: own) {
+    case .notSignIn:
+      return .notSignIn
+    case let .spend(spendable):
+      token = spendable
+    case let .confirm(spendable, server):
+      let issuer: String?
+      do {
+        issuer = try await client.issuer()
+      } catch {
+        let outcome = SignInLinkOutcome.unreachable(own: own)
+        lastError = outcome.message
+        return outcome
+      }
+      guard issuer == "\(server)/oauth" else {
+        return .wrongServer(server: server, own: own)
+      }
+      token = spendable
+    }
+    do {
+      let session = try await client.signInWithLink(
+        token: token,
+        deviceName: deviceName,
+        requestId: waiting?.requestId
+      )
+      waiting = nil
+      adopt(session)
+      return .signedIn(displayName: session.user.displayName)
+    } catch {
+      let why = error.localizedDescription
+      lastError = why
+      return .failed(why)
+    }
   }
 
   public func completeSignIn(email: String, code: String) async throws {

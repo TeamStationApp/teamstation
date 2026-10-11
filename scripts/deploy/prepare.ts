@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import path from 'node:path'
 
 import { dependencyInputs } from './dependencyInputs'
@@ -6,6 +12,7 @@ import type { BuildContext } from './runner'
 import { nativeNumber } from './runner'
 import { sentryBuildEnvironment } from './sentry'
 import { noSymlinks } from './state'
+import { httpsOrigin } from './validation'
 
 export function buildEnvironment(context: BuildContext): NodeJS.ProcessEnv {
   const { target, settings } = context
@@ -36,10 +43,49 @@ export function appDirectory(context: BuildContext): string {
     throw new Error('Selected app is absent from this branch')
   return directory
 }
+/**
+ * The app's `clientConfig.json`: what this deployment decides about the app and
+ * the repository does not name.
+ *
+ * `appOrigin`, the app's link host, comes from the file Mason injects and names
+ * in `TS_CLIENT_CONFIG_FILE`; it is a file of its own rather than a deploy
+ * setting so that the commits that do not read it build exactly as they did.
+ * `appleTeamId` is the team the deploy settings already sign this platform
+ * with. A build with neither has no file, and a stale one is removed.
+ */
+export function writeClientConfig(
+  context: BuildContext,
+  directory: string,
+  injected: string | undefined = process.env.TS_CLIENT_CONFIG_FILE
+): void {
+  const file = path.join(directory, 'clientConfig.json')
+  noSymlinks(file)
+  const out: { appOrigin?: string; appleTeamId?: string } = {}
+  if (injected != null && injected !== '') {
+    const raw: unknown = JSON.parse(
+      readFileSync(path.resolve(injected), 'utf8')
+    )
+    const appOrigin =
+      raw != null && typeof raw === 'object' && 'appOrigin' in raw
+        ? raw.appOrigin
+        : undefined
+    out.appOrigin = httpsOrigin(appOrigin)
+  }
+  const apple =
+    context.settings.apps[context.target.app][context.target.platform]?.apple
+  if (apple != null) out.appleTeamId = apple.teamId
+  if (Object.keys(out).length === 0) {
+    rmSync(file, { force: true })
+    return
+  }
+  writeFileSync(file, JSON.stringify(out, null, 2) + '\n', { mode: 0o600 })
+}
+
 export async function prepare(context: BuildContext): Promise<string> {
   const directory = appDirectory(context)
   const { processes, settings, target } = context
   const env = buildEnvironment(context)
+  writeClientConfig(context, directory)
   if (target.kind === 'react-native') {
     if (!existsSync(path.join(directory, 'package-lock.json')))
       throw new Error('A locked JavaScript dependency graph is required')

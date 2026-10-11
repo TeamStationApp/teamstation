@@ -30,6 +30,8 @@ export interface ButtonProps {
   /** Drawn before the label. */
   icon?: IconName
   style?: StyleProp<ViewStyle>
+  /** For a device test that must tell this button from text that reads the same. */
+  testID?: string
 }
 
 /**
@@ -61,7 +63,8 @@ export function Button(props: ButtonProps): React.ReactElement {
     busyLabel,
     block = false,
     icon,
-    style
+    style,
+    testID
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -72,6 +75,7 @@ export function Button(props: ButtonProps): React.ReactElement {
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: inert, busy }}
+      testID={testID}
       aria-busy={busy}
       disabled={inert}
       onPress={onPress}

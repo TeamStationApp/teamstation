@@ -16,6 +16,7 @@ import {
   httpOrigin,
   PRIMARY_HOST
 } from '../common/primaryUrl'
+import { asAppLinksConfig, asOrigin } from './appLinks/config'
 import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
@@ -154,6 +155,32 @@ export const asServerConfig = asObject({
    * device receives, would give it away.
    */
   deviceEventControlSecret: asOptional(asString, ''),
+
+  /**
+   * The issuer device event control derives each account's key from, where
+   * that is not `publicUrl`.
+   *
+   * Devices cache their key per server and pair on the LAN only with peers
+   * that name the same issuer, so the key must not change when the
+   * deployment's public address does. A deployment that moves its address
+   * names the old origin here and every key it ever handed out stays good.
+   * Absent is `publicUrl`.
+   */
+  eventControlIssuer: asOptional(asOrigin),
+
+  /**
+   * The apps this server signs in through their own link hosts, and the other
+   * servers those hosts may send a browser to (`src/server/appLinks/`).
+   *
+   * A sign-in request names its app's link host as `appOrigin`; one that is not
+   * listed here is refused. The hosts listed here are answered with the app's
+   * verification files and `GET /signin/:token`. Absent is no apps, which
+   * refuses every `appOrigin` and leaves sign-in links on `publicUrl`.
+   */
+  appLinks: asOptional(asAppLinksConfig, () => ({
+    knownServers: [],
+    apps: []
+  })),
 
   /**
    * What this deployment is called, where that is not `PRIMARY_HOST`.
@@ -330,6 +357,17 @@ export const primaryAuthority: Authority =
 
 /** The same name with the scheme it implies: the origin links are built on. */
 export const publicUrl: string = httpOrigin(primaryAuthority)
+
+/**
+ * The issuer device event control keys are derived from: the configured
+ * `eventControlIssuer`, or else the public origin.
+ */
+export function eventControlIssuerOf(
+  config: Pick<ServerConfig, 'eventControlIssuer'>,
+  origin: string
+): string {
+  return config.eventControlIssuer ?? origin
+}
 
 /** The same name again with no port, which is what a stream URL names. */
 export const primaryHost: string = hostOf(primaryAuthority)

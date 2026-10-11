@@ -976,4 +976,156 @@ describe('api client', function () {
       '/auth/me'
     ])
   })
+
+  it('asks for a sign-in with the platform and the app that should open the link', async function () {
+    const wait = { requestId: 'emc_1', clientSecret: 'secret' }
+    const { fetch, calls } = stubFetch(202, wait)
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch
+    })
+    await client.requestEmailCode('alex.lee@example.com', {
+      origin: 'ios',
+      appOrigin: 'https://app1.example.test'
+    })
+    expect(JSON.parse(calls[0].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'ios',
+      appOrigin: 'https://app1.example.test'
+    })
+    await client.requestEmailCode('alex.lee@example.com')
+    expect(JSON.parse(calls[1].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'web'
+    })
+    await client.requestInviteCode('join1', {
+      email: 'alex.lee@example.com',
+      origin: 'android',
+      appOrigin: 'https://app1.example.test'
+    })
+    expect(calls[2].url).equals(
+      'https://example.test/api/v1/join/join1/email-code'
+    )
+    expect(JSON.parse(calls[2].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'android',
+      appOrigin: 'https://app1.example.test'
+    })
+    await client.requestInviteCode('join1', { email: 'alex.lee@example.com' })
+    expect(JSON.parse(calls[3].body ?? '')).deep.equals({
+      email: 'alex.lee@example.com',
+      origin: 'web'
+    })
+  })
+
+  it('names the device spending a link, and only when there is one', async function () {
+    const session = {
+      token: 'tok_abc',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: { id: 1, displayName: 'Robin', isAdmin: false }
+    }
+    const { fetch, calls } = stubFetch(200, session)
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch
+    })
+    await client.signInWithLink('tok_link', 'Bench iPad')
+    expect(JSON.parse(calls[0].body ?? '')).deep.equals({
+      token: 'tok_link',
+      deviceName: 'Bench iPad'
+    })
+    await client.signInWithLink('tok_link')
+    expect(JSON.parse(calls[1].body ?? '')).deep.equals({ token: 'tok_link' })
+  })
+
+  it('names the sign-in it is waiting on when an installed app spends its link, once', async function () {
+    const answers = [
+      { requestId: 'emc_asked', clientSecret: 's', sent: true },
+      {
+        token: 'tok',
+        expiresAt: '2026-11-01T00:00:00.000Z',
+        user: { id: 1, displayName: 'Robin', isAdmin: false }
+      },
+      { requestId: 'emc_asked', clientSecret: 's', sent: true },
+      {
+        token: 'tok',
+        expiresAt: '2026-11-01T00:00:00.000Z',
+        user: { id: 1, displayName: 'Robin', isAdmin: false }
+      },
+      {
+        token: 'tok',
+        expiresAt: '2026-11-01T00:00:00.000Z',
+        user: { id: 1, displayName: 'Robin', isAdmin: false }
+      }
+    ]
+    const bodies: unknown[] = []
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: async (_url, init) => {
+        bodies.push(
+          JSON.parse(typeof init?.body === 'string' ? init.body : '{}')
+        )
+        return new Response(JSON.stringify(answers.shift()), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+    })
+    await client.requestEmailCode('robin@example.test')
+    // A browser spending it names nothing; the request may be waiting in another tab.
+    await client.signInWithLink('tok_link')
+    expect(bodies[1]).deep.equals({ token: 'tok_link' })
+    await client.requestEmailCode('robin@example.test')
+    await client.signInWithLink('tok_link', 'Bench iPad')
+    expect(bodies[3]).deep.equals({
+      token: 'tok_link',
+      deviceName: 'Bench iPad',
+      requestId: 'emc_asked'
+    })
+    await client.signInWithLink('tok_link', 'Bench iPad')
+    expect(bodies[4]).deep.equals({
+      token: 'tok_link',
+      deviceName: 'Bench iPad'
+    })
+  })
+
+  it('names its server’s origin and asks it for its OpenID issuer', async function () {
+    const { fetch, calls } = stubFetch(200, {
+      issuer: 'https://web.example.test/oauth'
+    })
+    const client = new TeamStationClient({
+      baseUrl: 'https://API.example.test/api/v1/',
+      fetch
+    })
+    expect(client.serverOrigin()).equals('https://api.example.test')
+    expect(await client.issuer()).equals('https://web.example.test/oauth')
+    expect(calls[0].url).equals(
+      'https://api.example.test/oauth/.well-known/openid-configuration'
+    )
+    // Answered without one: null. Not answered (a 5xx): undefined.
+    for (const [status, body, expected] of [
+      [404, {}, null],
+      [200, { issuer: 7 }, null],
+      [200, 'not json', null],
+      [502, {}, undefined]
+    ] as const) {
+      const answer = stubFetch(status, body)
+      expect(
+        await new TeamStationClient({
+          baseUrl: 'https://api.example.test/api/v1',
+          fetch: answer.fetch
+        }).issuer()
+      ).equals(expected)
+    }
+    const offline = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async () => {
+        throw new TypeError('Load failed')
+      }
+    })
+    expect(offline.serverOrigin()).equals(
+      (globalThis as { location?: { origin?: string } }).location?.origin ?? ''
+    )
+    expect(await offline.issuer()).equals(undefined)
+  })
 })

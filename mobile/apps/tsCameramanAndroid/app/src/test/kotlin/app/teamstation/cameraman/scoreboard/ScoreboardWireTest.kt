@@ -14,7 +14,9 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.Buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -116,6 +118,63 @@ class ScoreboardWireTest {
             fail("offline")
         } catch (error: EventControlFetchException) {
             assertEquals(EventControlFetchFailure.Offline, error.failure)
+        }
+    }
+
+    private fun Request.json(): String = Buffer().also { body!!.writeTo(it) }.readUtf8()
+
+    @Test
+    fun `a sign-in asked for in the app names the app's own link host`() {
+        val ok = Server { 202 to """{"sent":true,"requestId":"emc_1","clientSecret":"s"}""" }
+        val account = OkHttpScoreboardAccount(ok.client)
+        account.startSignIn(server, "griffey@example.test", "android", "https://cameraman.example.test")
+        account.startSignIn(server, "griffey@example.test", "android", null)
+        account.startSignIn(server, "griffey@example.test", "android", "")
+        assertEquals("https://app.example.test/api/v1/auth/email-code", ok.requests[0].url.toString())
+        assertTrue(ok.requests[0].json().contains(""""appOrigin":"https:\/\/cameraman.example.test""""))
+        assertTrue(ok.requests.drop(1).none { it.json().contains("appOrigin") })
+    }
+
+    @Test
+    fun `a link is spent for this named device`() {
+        val ok = Server { 200 to """{"token":"session","user":{"id":1001,"displayName":"Ken Griffey","email":"griffey@example.test"}}""" }
+        val signedIn = OkHttpScoreboardAccount(ok.client).signInWithLink(server, "tok", "TS Cameraman")
+        assertEquals(ScoreboardSignedIn("session", "Ken Griffey", "griffey@example.test", "1001"), signedIn)
+        assertEquals("https://app.example.test/api/v1/auth/link/verify", ok.requests.single().url.toString())
+        val body = ok.requests.single().json()
+        assertTrue(body.contains(""""token":"tok""""))
+        assertTrue(body.contains(""""deviceName":"TS Cameraman""""))
+
+        val spent = Server { 401 to """{"code":"unauthorized","message":"That link is no longer good"}""" }
+        try {
+            OkHttpScoreboardAccount(spent.client).signInWithLink(server, "tok", "TS Cameraman")
+            fail("a spent link")
+        } catch (error: ScoreboardWireException) {
+            assertEquals(401, error.status)
+        }
+    }
+
+    @Test
+    fun `the issuer comes from the server's OpenID discovery, or not at all`() {
+        val ok = Server { 200 to """{"issuer":"https://web.example.test/oauth"}""" }
+        assertEquals("https://web.example.test/oauth", OkHttpScoreboardAccount(ok.client).issuer(server))
+        assertEquals("https://app.example.test/oauth/.well-known/openid-configuration", ok.requests.single().url.toString())
+
+        // Answered without one (OAuth off): null.
+        assertNull(OkHttpScoreboardAccount(Server { 404 to "{}" }.client).issuer(server))
+        assertNull(OkHttpScoreboardAccount(Server { 200 to "{}" }.client).issuer(server))
+        assertNull(OkHttpScoreboardAccount(Server { 200 to "not json" }.client).issuer(server))
+        // Not asked at all: thrown.
+        for (unreachable in listOf(
+            Server { 503 to "{}" }.client,
+            OkHttpClient.Builder().addInterceptor(Interceptor { throw IOException("no route") }).build()
+        )) {
+            try {
+                OkHttpScoreboardAccount(unreachable).issuer(server)
+                fail("unreachable")
+            } catch (error: IOException) {
+                // Expected.
+            }
         }
     }
 

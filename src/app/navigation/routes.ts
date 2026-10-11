@@ -158,8 +158,19 @@ export type Route =
    * the token once it is running, which is what keeps a mail scanner — which
    * follows links and runs no scripts — from burning a sign-in before it is
    * read.
+   *
+   * `server` is the origin of the server that issued it, which a link mailed
+   * to an app's own link host names: the app spends it only against that
+   * server. Absent on the web, where the link is the server's own.
    */
-  | { name: 'signInLink'; token: string }
+  | { name: 'signInLink'; token: string; server?: string }
+
+/** A sign-in link's route, with the issuing server only when the link names one. */
+function signInLinkRoute(token: string, server: string | null): Route {
+  return server == null || server === ''
+    ? { name: 'signInLink', token }
+    : { name: 'signInLink', token, server }
+}
 
 const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
@@ -296,7 +307,7 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'join', code: parts[2] }
     case 'signin':
       if (id == null) return { name: 'signIn' }
-      return { name: 'signInLink', token: id }
+      return signInLinkRoute(id, query.get('server'))
     case 'players': {
       if (id == null) return { name: 'home' }
       const onTeam = query.get('onTeam') ?? undefined
@@ -472,7 +483,9 @@ export function routePath(route: Route): string {
     case 'account':
       return '/account'
     case 'signInLink':
-      return `/signin/${route.token}`
+      return route.server == null
+        ? `/signin/${route.token}`
+        : `/signin/${route.token}?server=${encodeURIComponent(route.server)}`
     case 'team':
       return route.tab == null || route.tab === 'videos'
         ? `/teams/${route.teamId}`

@@ -462,17 +462,23 @@ because they were written down as facts once already:
 
 ## Installing on a real iPhone
 
-Signing needs nothing set up: the Mac has one team, **`G5LQ7MERPK`**, and its
-`iOS Team Provisioning Profile: *` is a wildcard that already covers
-`app.teamstation.app` and already lists the phones. So the team is the only
-thing the build has to be told.
+The team that signs the app is not written in this repository. It comes from a
+gitignored `clientConfig.json` at the root, `{ "appOrigin", "appleTeamId" }`,
+which the deployment repository writes (`appLinks.mjs client app <file>`; with
+`--no-app-origin` for a build that talks to a server without app links).
+`scripts/clientConfig.mjs` turns it into the `clientConfig.xcconfig` the build
+takes: `DEVELOPMENT_TEAM`, the app link host, and the entitlements that claim it.
+Xcode needs to be signed in to that team's Apple account; automatic signing does
+the rest.
 
 ```sh
+node scripts/clientConfig.mjs . --entitlements TeamStation/TeamStation.entitlements
 cd ios
 xcodebuild -workspace TeamStation.xcworkspace -scheme TeamStation \
+  -xcconfig ../clientConfig.xcconfig \
   -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
-  -derivedDataPath build-device \
-  DEVELOPMENT_TEAM=G5LQ7MERPK CODE_SIGN_STYLE=Automatic
+  -derivedDataPath build-device -allowProvisioningUpdates \
+  CODE_SIGN_STYLE=Automatic
 
 xcrun devicectl device install app --device <device-id> \
   build-device/Build/Products/Release-iphoneos/TeamStation.app
@@ -481,6 +487,21 @@ xcrun devicectl device install app --device <device-id> \
 `xcrun devicectl list devices` gives the id. Build **Release**, not Debug: the
 JS is bundled into the app, so it needs neither Metro nor this Mac, and
 `app/native/config.ts` defaults a device build to production.
+
+The native apps under `mobile/apps` work the same way: each app directory has
+its own `clientConfig.json`, and its `scripts/common.sh` turns it into the
+`clientConfig.xcconfig` its build scripts pass. NDIProbe, a target in
+Director's project with no build script of its own, takes Director's:
+
+```sh
+node scripts/clientConfig.mjs mobile/apps/tsDirector
+xcodebuild -project mobile/apps/tsDirector/Director.xcodeproj -scheme NDIProbe \
+  -xcconfig mobile/apps/tsDirector/clientConfig.xcconfig \
+  -sdk iphoneos -destination 'generic/platform=iOS' -allowProvisioningUpdates
+```
+
+It gets the team and claims no link host: only the app targets map
+`TS_APP_ENTITLEMENTS`.
 
 `generic/platform=iOS` rather than the phone's own id, because pinning the id
 fails outright the moment the phone is off the network — and a build that
@@ -547,6 +568,15 @@ TS_SERVE_PORT=8090 TS_API_BASE_URL=http://127.0.0.1:9100/api/v1 npm run start.we
   handset, and `app/native/config.ts` refuses one. Build with the Mac's LAN
   address and set `listenHost` to `0.0.0.0` so the simulator can reach it:
   `TS_API_BASE_URL=http://<lan-ip>:9100/api/v1 xcodebuild …`
+- **Sign-in links on a local server.** A build with an `appOrigin` asks for
+  links on the app's own host, and a server whose `serverConfig.json` has no
+  `appLinks` answers that request 400. Either build with
+  `appLinks.mjs client <app> --no-app-origin`, so the app asks for ordinary
+  web links, or give the local server the apps' link hosts with
+  `appLinks.mjs serverConfig <in> <out> --origin http://<lan-ip>:9100` (both in
+  the deployment repository). The second also sets the server's public origin
+  and CORS; it pins no event-control issuer for a fresh local config, which
+  has issued no keys under another origin.
 - **The dev database has none of the fixtures** the flows expect:
   the flows' sign-in, its password, and the invite code
   the clipboard check reads. Add them to the dev database rather than editing
@@ -647,7 +677,14 @@ instead` is below the fold, so the flow scrolls to it.
   emulator and is not a thing to put on a phone somebody else owns; iOS has no
   `DEVELOPMENT_TEAM` at all. Both want Paul's accounts, and the App Links and
   universal links below want the same two facts.
-- **Universal links and App Links are not live.** The custom `teamstation://`
-  scheme works on both platforms and the `https://` intent filters are
-  declared; Apple's `apple-app-site-association` needs a team ID and Android's
-  `assetlinks.json` needs the release signing fingerprint.
+- **Sign-in links open the app on its own link host.** A build whose
+  `clientConfig.json` names an `appOrigin` sends it with every sign-in request,
+  and the server mails `<appOrigin>/signin/<token>?server=<itself>`. The build
+  claims only `/signin/` on that host: iOS through `TeamStation.entitlements`
+  (`applinks:$(TS_APP_LINK_HOST)`, signed in only when the xcconfig names it),
+  Android through `android/app/src/appLinks/AndroidManifest.xml`, merged only
+  when there is a host. The server answers that host's
+  `apple-app-site-association` and `assetlinks.json` from its own config. The
+  app spends a link only for its own server, or one whose OpenID issuer is
+  `<server>/oauth`; otherwise it says whose link it is. The custom
+  `teamstation://` scheme works as before.

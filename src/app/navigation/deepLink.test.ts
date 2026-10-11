@@ -47,6 +47,40 @@ describe('routeOfUrl', function () {
     ).deep.equals({ name: 'signInLink', token: 'tok123' })
   })
 
+  it('keeps the server an app link names, and takes it only from the app’s own host', function () {
+    const link =
+      'https://app1.example.test/signin/T?server=https%3A%2F%2Fseat.example.test'
+    expect(
+      routeOfUrl(link, { appOrigin: 'https://app1.example.test' })
+    ).deep.equals({
+      name: 'signInLink',
+      token: 'T',
+      server: 'https://seat.example.test'
+    })
+    expect(
+      routeOfUrl('https://APP1.example.test/signin/T', {
+        appOrigin: 'https://app1.example.test'
+      })
+    ).deep.equals({ name: 'signInLink', token: 'T' })
+    // Another host's sign-in link is not this app's to spend.
+    expect(
+      routeOfUrl('https://other.example.test/signin/T', {
+        appOrigin: 'https://app1.example.test'
+      })
+    ).deep.equals({ name: 'signIn' })
+    // Other paths, and the app's own scheme, are read as they always were.
+    expect(
+      routeOfUrl('https://other.example.test/games/g1', {
+        appOrigin: 'https://app1.example.test'
+      }).name
+    ).equals('game')
+    expect(
+      routeOfUrl('teamstation://signin/T', {
+        appOrigin: 'https://app1.example.test'
+      })
+    ).deep.equals({ name: 'signInLink', token: 'T' })
+  })
+
   it('takes an invite link in either form', function () {
     expect(routeOfUrl('https://app.teamstation.app/i/demo2026')).deep.equals({
       name: 'join',

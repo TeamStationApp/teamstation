@@ -2089,8 +2089,22 @@ public final class AppEnvironment {
   private func makeAccount() -> TeamStationAccount {
     TeamStationAccount(
       serverURL: AppServer.url,
-      deviceName: UIDevice.current.name
+      deviceName: UIDevice.current.name,
+      appOrigin: AppServer.appOrigin
     )
+  }
+
+  /// A web address the operating system handed Director: a sign-in link from
+  /// the e-mail, on Director's own link host. Signs in with it, and says how
+  /// that went in the status toast. `false` for any other address.
+  @discardableResult
+  public func handleSignInLink(_ url: URL) -> Bool {
+    guard url.scheme?.lowercased() == "https" else { return false }
+    Task { @MainActor in
+      let outcome = await teamStation.signIn(link: url)
+      if let message = outcome.message { statusMessage = message }
+    }
+    return true
   }
 
   /// Where the Stream button publishes.

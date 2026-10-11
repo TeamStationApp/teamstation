@@ -4,6 +4,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcodebuild
+client_xcconfig
 require xcrun
 [ -d "$PREVIEW_PROJECT" ] || fail "run 'socket npm run bootstrap' first"
 
@@ -29,6 +30,7 @@ build() {
   xcodebuild build \
     -project "$PREVIEW_PROJECT" \
     -scheme "$PREVIEW_SCHEME" \
+    -xcconfig "$CLIENT_XCCONFIG" \
     -configuration "$CONFIGURATION" \
     -destination "$1" \
     -derivedDataPath "$PREVIEW_DERIVED_DATA" \

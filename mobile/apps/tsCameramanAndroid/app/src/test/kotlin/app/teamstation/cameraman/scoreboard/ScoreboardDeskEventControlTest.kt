@@ -98,7 +98,10 @@ class ScoreboardDeskEventControlTest {
         var key: () -> String = { EventControlFixtures.credentials("one").toJson() }
         val keyTokens = ArrayList<String>()
 
-        override fun startSignIn(server: String, email: String, origin: String) = ScoreboardSignInStarted("r", "s")
+        override fun startSignIn(server: String, email: String, origin: String, appOrigin: String?) =
+            ScoreboardSignInStarted("r", "s")
+        override fun signInWithLink(server: String, token: String, deviceName: String) = signedIn
+        override fun issuer(server: String): String? = null
         override fun completeSignIn(server: String, email: String, code: String, deviceName: String) = signedIn
         override fun events(server: String, token: String, zone: ZoneId): ScoreboardEventLists {
             eventCalls += 1

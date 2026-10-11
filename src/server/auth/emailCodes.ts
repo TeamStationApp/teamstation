@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
@@ -41,6 +41,11 @@ export async function createEmailCode(
     origin?: SignInOrigin
     next?: string | null
     /**
+     * The link host of the app that asked, which the e-mail's link names so
+     * the app opens it. Checked against the server's configured apps first.
+     */
+    appOrigin?: string | null
+    /**
      * An invite this sign-in carries, which is what lets it make an account.
      * Whichever door the person comes back through finds it on the row.
      */
@@ -77,6 +82,7 @@ export async function createEmailCode(
       client_secret_hash: hashEmailCode(clientSecret),
       origin: options.origin ?? 'web',
       next_path: options.next ?? null,
+      app_origin: options.appOrigin ?? null,
       invite_id: options.inviteId ?? null,
       display_name: options.displayName ?? null,
       purpose,
@@ -95,13 +101,20 @@ export async function createEmailCode(
  * cannot open on a laptop is a dead end. With the app installed the operating
  * system hands this same address to it; without, it opens the browser, which
  * is the right answer in both cases.
+ *
+ * A sign-in asked for in an app goes to that app's own link host, which its
+ * operating system has verified, with the issuing server named in `server`:
+ * the app spends the token against its own server, and the link host sends a
+ * browser that has no app to `server`'s web sign-in.
  */
 export function signInLink(
   publicUrl: string | undefined,
-  token: string
+  token: string,
+  appOrigin: string | null = null
 ): string {
   const base = (publicUrl ?? '').replace(/\/$/, '')
-  return `${base}/signin/${token}`
+  if (appOrigin == null) return `${base}/signin/${token}`
+  return `${appOrigin}/signin/${token}?server=${encodeURIComponent(base)}`
 }
 
 export interface LinkClaim {
@@ -123,14 +136,23 @@ export interface LinkClaim {
  */
 export async function claimSignInLink(
   db: Kysely<Database>,
-  token: string
+  token: string,
+  { asker }: { asker?: string } = {}
 ): Promise<LinkClaim | null> {
   // One statement, so whichever claim updates the row spent the link: two
   // racing — two tabs, or a link and its code — cannot both find it unspent.
+  // It also finishes the sign-in the asking client is polling for, unless the
+  // spender is that client: `asker` is the request it is waiting on, and when
+  // that is this link's, it already has its session from this claim, and its
+  // poll must not get a second one.
   const now = new Date()
+  const approvedAt =
+    asker == null
+      ? now
+      : sql<Date | null>`case when id = ${asker} then null else ${now}::timestamptz end`
   const row = await db
     .updateTable('email_codes')
-    .set({ consumed_at: now, approved_at: now })
+    .set({ consumed_at: now, approved_at: approvedAt })
     .where('token_hash', '=', hashEmailCode(token.trim()))
     .where('purpose', '=', 'login')
     .where('consumed_at', 'is', null)

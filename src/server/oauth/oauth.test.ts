@@ -373,6 +373,17 @@ describe('OAuth provider and native approval over HTTPS', function () {
     expect(resumed.status).equals(303)
     return new URL(resumed.headers.get('location')!)
   }
+  it('names its public origin plus /oauth as the issuer', async () => {
+    // The apps read this issuer to tell a link from their own server that
+    // names the server by its other address, so the form is a contract.
+    const discovery = await fetcher(
+      `${origin}/oauth/.well-known/openid-configuration`
+    )
+    expect(discovery.status).equals(200)
+    const body = (await discovery.json()) as { issuer: string }
+    expect(body.issuer).equals(`${origin}/oauth`)
+  })
+
   it('issues a standards-client authorization code and verified identity after human approval', async () => {
     const flow = await start()
     flow.browser.cookies.set('ts_session', session.token)

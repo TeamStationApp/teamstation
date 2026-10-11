@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
 import { flatten, maestroBin, maestroClient } from '../../../test/maestroD'
 
@@ -211,7 +213,14 @@ async function main(): Promise<void> {
 
   const { MaestroD } = maestroClient()
   const connection = await MaestroD.connect({ name: daemon, spawn: false, bin })
-  const teamId = process.env.MAESTRO_D_TEAM_ID ?? 'G5LQ7MERPK'
+  // The team that signs Director, from its gitignored clientConfig.json.
+  const teamId =
+    process.env.MAESTRO_D_TEAM_ID ??
+    (
+      JSON.parse(
+        readFileSync(path.join(__dirname, '..', 'clientConfig.json'), 'utf8')
+      ) as { appleTeamId?: string }
+    ).appleTeamId
   const attached = await connection.attach({
     device,
     platform: 'ios',

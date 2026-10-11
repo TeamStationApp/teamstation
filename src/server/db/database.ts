@@ -518,6 +518,8 @@ export interface EmailCodesTable {
   origin: Generated<'web' | 'ios' | 'android'>
   /** Where the person was going before they were asked to sign in. */
   next_path: string | null
+  /** The link host of the app the sign-in was asked for in; null on the web. */
+  app_origin: string | null
   /** Held by the machine that asked, so it can finish a sign-in done elsewhere. */
   client_secret_hash: string | null
   approved_at: Timestamp | null
