@@ -4249,8 +4249,8 @@ describe('qa4 review3 DOM-owned reading position', function () {
   })
 })
 
-describe('qa4 review3 scoped web input frames', function () {
-  it('tracks delayed moving frames, retires an idle frame, ignores child scrolls, cancels programmatic movement and disposes only its binding', async function () {
+describe('qa4 review3 scoped web input completion', function () {
+  it('tracks delayed moving frames through scrollend, ignores child scrolls, cancels programmatic movement and disposes only its binding', async function () {
     const candidate: unknown = Reflect.get(WebScroll, 'cancelUserScroll')
     const nativeCandidate: unknown = Reflect.get(
       NativeScroll,
@@ -4300,11 +4300,7 @@ describe('qa4 review3 scoped web input frames', function () {
         )
       }
       expect(positions).deep.equals([160, 80, 0])
-      await new Promise<void>(resolve =>
-        window.requestAnimationFrame(() => {
-          resolve()
-        })
-      )
+      element.dispatchEvent(new window.Event('scrollend'))
       element.scrollTop = 100
       element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
       expect(positions).deep.equals([160, 80, 0])
@@ -4338,8 +4334,360 @@ describe('qa4 review3 scoped web input frames', function () {
       element.scrollTop = 200
       element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
       expect(positions.at(-1)).equals(100)
-      expect(reads).greaterThan(0)
+      const readOnly = WebScroll.bindUserScroll(view, () => {
+        reads += 1
+      })
+      const beforeStationary = reads
+      element.dispatchEvent(new window.Event('touchmove'))
+      element.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 0 }))
+      expect(reads).equals(beforeStationary + 2)
+      readOnly()
+      element.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 0 }))
+      expect(reads).equals(beforeStationary + 2)
     } finally {
+      stop()
+      element.remove()
+    }
+  })
+})
+
+describe('qa4 review4 native ownership across hidden return', function () {
+  for (const hiddenEnd of [true, false])
+    it(`preserves a row-relative clamp after native terminal ${hiddenEnd ? 'while hidden' : 'before hide'}`, async function () {
+      const pending = await returningList(true, 240, {
+        id: 'cnv_return_3',
+        relativeY: 30
+      })
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_3', 270)
+      await pending.content(1800)
+      await pending.scroll(240)
+      await act(async () => {
+        nativeListStart(pending.node)
+      })
+      const end = nativeListEnd(pending.node)
+      if (!hiddenEnd)
+        await act(async () => {
+          end({ nativeEvent: { contentOffset: { y: 240 } } })
+          await wait()
+        })
+      await pending.hide()
+      if (hiddenEnd)
+        await act(async () => {
+          end({ nativeEvent: { contentOffset: { y: 0 } } })
+          await wait()
+        })
+      await pending.show()
+      Object.defineProperty(pending.node, 'clientHeight', {
+        configurable: true,
+        value: 2000
+      })
+      await layout(pending.node, 320, 2000)
+      await act(async () => {
+        renderedRowLayout('cnv_return_3')({
+          nativeEvent: { layout: { height: 67 } }
+        })
+        await wait()
+      })
+      await pending.scroll(0)
+      const saved = pending.anchors.at(-1)
+      expect(saved).deep.equals({ id: 'cnv_return_3', relativeY: 270 })
+      await unmount()
+      const returning = await returningList(true, 0, saved)
+      await returning.populate(8)
+      setListRowMeasurement('cnv_return_3', 334)
+      await returning.content(1800)
+      expect(returning.moves.at(-1)).equals(64)
+    })
+})
+
+describe('qa4 review4 held geometry rebase', function () {
+  it('rejects a geometry-induced coordinate, keeps the physical hold, and accepts subsequent movement to zero', function () {
+    const element = document.createElement('div')
+    document.body.append(element)
+    let content = 1800
+    element.scrollTop = 240
+    element.getBoundingClientRect = () => new window.DOMRect(0, 0, 320, 400)
+    Object.defineProperties(element, {
+      clientHeight: { value: 400, configurable: true },
+      clientWidth: { value: 304, configurable: true },
+      offsetWidth: { value: 320, configurable: true },
+      offsetHeight: { value: 400, configurable: true },
+      scrollHeight: { get: () => content, configurable: true },
+      clientTop: { value: 0, configurable: true },
+      clientLeft: { value: 0, configurable: true }
+    })
+    const positions: number[] = []
+    const stop = WebScroll.bindUserScroll(
+      element,
+      () => {},
+      top => {
+        positions.push(top)
+      }
+    )
+    try {
+      element.dispatchEvent(
+        new window.MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          clientX: 319,
+          clientY: 200
+        })
+      )
+      element.scrollTop = 160
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      content = 1900
+      element.scrollTop = 100
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([160])
+      element.scrollTop = 0
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([160, 0])
+      document.dispatchEvent(
+        new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+      )
+    } finally {
+      stop()
+      element.remove()
+    }
+  })
+})
+
+function scrollEndSupport(present: boolean): () => void {
+  const prototype = window.HTMLElement.prototype
+  const original = Object.getOwnPropertyDescriptor(prototype, 'onscrollend')
+  if (present)
+    Object.defineProperty(prototype, 'onscrollend', {
+      configurable: true,
+      value: null
+    })
+  else Reflect.deleteProperty(prototype, 'onscrollend')
+  return () => {
+    if (original != null)
+      Object.defineProperty(prototype, 'onscrollend', original)
+    else Reflect.deleteProperty(prototype, 'onscrollend')
+  }
+}
+
+describe('qa4 review4 delayed and finite web input', function () {
+  for (const modern of [true, false])
+    it(`accepts delayed Home after an unchanged initial RAF (${modern ? 'scrollend present' : 'legacy target'}) and retires completed motion`, async function () {
+      const element = document.createElement('div')
+      document.body.append(element)
+      const restoreEnd = scrollEndSupport(modern)
+      expect('onscrollend' in element).equals(modern)
+      Object.defineProperties(element, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 1800 }
+      })
+      element.scrollTop = 240
+      const positions: number[] = []
+      const stop = WebScroll.bindUserScroll(
+        element,
+        () => {},
+        top => {
+          positions.push(top)
+        }
+      )
+      try {
+        element.dispatchEvent(
+          new window.KeyboardEvent('keydown', { bubbles: true, key: 'Home' })
+        )
+        await new Promise<void>(resolve =>
+          window.requestAnimationFrame(() => {
+            resolve()
+          })
+        )
+        expect(positions).deep.equals([])
+        for (const top of [160, 0]) {
+          element.scrollTop = top
+          element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        }
+        expect(positions).deep.equals([160, 0])
+        element.dispatchEvent(new window.Event('scrollend'))
+        element.scrollTop = 100
+        element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        expect(positions).deep.equals([160, 0])
+      } finally {
+        stop()
+        restoreEnd()
+        element.remove()
+      }
+    })
+
+  it('uses a finite legacy arrow/page and normalized wheel destination without taking canceled, modified, editable or nested input', function () {
+    const element = document.createElement('div')
+    const editable = document.createElement('input')
+    const nested = document.createElement('div')
+    nested.style.overflowY = 'auto'
+    element.append(editable, nested)
+    document.body.append(element)
+    const restoreEnd = scrollEndSupport(false)
+    expect('onscrollend' in element).equals(false)
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1800 }
+    })
+    Object.defineProperties(nested, {
+      clientHeight: { configurable: true, value: 50 },
+      scrollHeight: { configurable: true, value: 200 }
+    })
+    const commands: number[] = []
+    let top = 240
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value
+        commands.push(value)
+      }
+    })
+    const positions: number[] = []
+    const stop = WebScroll.bindUserScroll(
+      element,
+      () => {},
+      top => {
+        positions.push(top)
+      }
+    )
+    try {
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'ArrowUp'
+        })
+      )
+      expect(commands.at(-1)).equals(200)
+      expect(positions).deep.equals([200])
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'PageUp'
+        })
+      )
+      expect(positions.at(-1)).equals(0)
+      const count = commands.length
+      const prevent = (event: Event): void => {
+        event.preventDefault()
+      }
+      document.addEventListener('keydown', prevent)
+      try {
+        element.dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'ArrowDown'
+          })
+        )
+        expect(commands.length).equals(count)
+      } finally {
+        document.removeEventListener('keydown', prevent)
+      }
+      const canceled = new window.KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'ArrowDown'
+      })
+      canceled.preventDefault()
+      element.dispatchEvent(canceled)
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: 'ArrowDown'
+        })
+      )
+      editable.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'ArrowDown'
+        })
+      )
+      nested.dispatchEvent(
+        new window.WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          deltaY: 100
+        })
+      )
+      expect(commands.length).equals(count)
+      element.dispatchEvent(
+        new window.WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          deltaY: 100
+        })
+      )
+      expect(positions.at(-1)).equals(100)
+      expect(commands.at(-1)).equals(100)
+      stop()
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'ArrowDown'
+        })
+      )
+      expect(commands.length).equals(count + 1)
+    } finally {
+      stop()
+      restoreEnd()
+      element.remove()
+    }
+  })
+
+  it('retires modern canceled input and accepts only exact scrollend without treating a held pause as completion', function () {
+    const element = document.createElement('div')
+    const child = document.createElement('div')
+    element.append(child)
+    document.body.append(element)
+    Object.defineProperties(element, {
+      onscrollend: { configurable: true, value: null },
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1800 }
+    })
+    element.scrollTop = 240
+    const positions: number[] = []
+    const stop = WebScroll.bindUserScroll(
+      element,
+      () => {},
+      top => {
+        positions.push(top)
+      }
+    )
+    const prevent = (event: Event): void => {
+      event.preventDefault()
+    }
+    document.addEventListener('keydown', prevent)
+    try {
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'Home'
+        })
+      )
+      element.scrollTop = 160
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([])
+      document.removeEventListener('keydown', prevent)
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' })
+      )
+      child.dispatchEvent(new window.Event('scrollend', { bubbles: true }))
+      element.scrollTop = 80
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([80])
+      element.dispatchEvent(new window.Event('scrollend'))
+      element.scrollTop = 0
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(positions).deep.equals([80])
+    } finally {
+      document.removeEventListener('keydown', prevent)
       stop()
       element.remove()
     }
