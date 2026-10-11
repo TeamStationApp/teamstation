@@ -95,6 +95,7 @@ class FakeCameramanModel {
     const m = this.mapping()
     const pairs = [
       ['device.name', this.name], ['device.cname', this.cname], ['device.model', this.model],
+      ['control.version', 'params/1'],
       ['system.thermal', this.thermal], ['system.status', this.status],
       ['system.battery', String(this.battery)], ['system.battery.charging', String(this.charging)],
       ['videoSource.position', this.position],

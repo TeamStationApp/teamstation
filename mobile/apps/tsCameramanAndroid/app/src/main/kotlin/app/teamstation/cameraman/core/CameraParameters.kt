@@ -173,6 +173,13 @@ object CameraParameterName {
     const val deviceName = "device.name"
     const val deviceCNAME = "device.cname"
     const val deviceModel = "device.model"
+    /**
+     * The parameter vocabulary this phone speaks, [CameraParameters.controlVersion]. Read-only. A
+     * client asks for it, with `device.cname`, to decide whether to offer controls, so the answer
+     * does not depend on the NSD TXT `control` key ever reaching it. A phone that predates the name
+     * answers it `451` and speaks `params/1`.
+     */
+    const val controlVersion = "control.version"
     const val systemThermal = "system.thermal"
     const val systemStatus = "system.status"
     /** Percent 0…100, or empty when the phone cannot read its battery (an emulator). */
@@ -259,8 +266,8 @@ object CameraParameterName {
      * names are recognised by shape.
      */
     val fixed: List<String> = listOf(
-        deviceName, deviceCNAME, deviceModel, systemThermal, systemStatus, systemBattery,
-        systemBatteryCharging,
+        deviceName, deviceCNAME, deviceModel, controlVersion, systemThermal, systemStatus,
+        systemBattery, systemBatteryCharging,
         sourcePosition, sourceDeviceType,
         zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
         zoomSoftwareStartDevice,
@@ -403,6 +410,7 @@ object CameraParameters {
         set.set(CameraParameterName.deviceName, snapshot.name)
         set.set(CameraParameterName.deviceCNAME, snapshot.cname)
         set.set(CameraParameterName.deviceModel, snapshot.model)
+        set.set(CameraParameterName.controlVersion, controlVersion)
         set.set(CameraParameterName.systemThermal, snapshot.thermalName)
         set.set(CameraParameterName.systemStatus, snapshot.status)
         set.set(CameraParameterName.systemBattery, snapshot.battery?.percent?.toString() ?: "")

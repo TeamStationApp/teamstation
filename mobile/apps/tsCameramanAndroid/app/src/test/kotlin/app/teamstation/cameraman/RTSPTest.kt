@@ -829,6 +829,19 @@ class RTSPParameterInteropTest {
     }
 
     @Test
+    fun `Director's control probe reads the identity, then the control version`() {
+        val phone = Phone(CameraParametersTest.snapshot())
+        val identity = exchange(phone, directorRequest("GET_PARAMETER", "device.cname\r\ndevice.name\r\n"))
+        assertEquals(200, identity.statusCode)
+        assertEquals(CameraParametersTest.snapshot().cname, decode(identity.body)["device.cname"])
+        assertEquals("Third Base", decode(identity.body)["device.name"])
+
+        val version = exchange(phone, directorRequest("GET_PARAMETER", "control.version\r\n"))
+        assertEquals(200, version.statusCode)
+        assertEquals("params/1", decode(version.body)["control.version"])
+    }
+
+    @Test
     fun `Director writes a zoom and reads the clamped value back`() {
         val phone = Phone(CameraParametersTest.snapshot())
         val reply = exchange(phone, directorRequest("SET_PARAMETER", "ptz.zoom: 12\r\n"))
