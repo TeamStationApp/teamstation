@@ -3633,3 +3633,156 @@ describe('review4 quiet preview recovery', function () {
     expect(engine.sent).deep.equals([])
   })
 })
+
+describe('qa4 accepted list boundaries', function () {
+  it('finishes a complete surviving-anchor clamp at the acknowledged relative position without restoring the obsolete target after growth', async function () {
+    const pending = await returningList(true, 610, {
+      id: 'cnv_return_1',
+      relativeY: 20
+    })
+    await pending.populate(2)
+    setListRowMeasurement('cnv_return_1', 630, 90)
+    await pending.content(720)
+    await act(async () => {
+      renderedRowLayout('cnv_return_1')({
+        nativeEvent: { layout: { height: 90 } }
+      })
+      await wait(40)
+    })
+    expect(pending.moves.at(-1)).equals(320)
+    expect(pending.offsets).deep.equals([])
+    await pending.scroll(320)
+    expect(pending.offsets.at(-1)).equals(320)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_1',
+      relativeY: 310
+    })
+    setListRowMeasurement('cnv_return_1', 630, 490)
+    await pending.content(1120)
+    await act(async () => {
+      await wait(40)
+    })
+    expect(pending.moves).not.contains(610)
+    expect(pending.moves.at(-1)).equals(320)
+    // A genuine later prefix change still preserves this accepted reader.
+    setListRowMeasurement('cnv_return_1', 670, 490)
+    await pending.content(1160)
+    await act(async () => {
+      await wait(40)
+    })
+    expect(pending.moves.at(-1)).equals(360)
+  })
+
+  it('does not finalize a surviving-anchor clamp before the current tail is complete', async function () {
+    const pending = await returningList(true, 610, {
+      id: 'cnv_return_1',
+      relativeY: 20
+    })
+    await pending.populate(2)
+    setListRowMeasurement('cnv_return_1', 630, 80)
+    await pending.content(720)
+    await act(async () => {
+      await wait(40)
+    })
+    await pending.scroll(320)
+    expect(pending.offsets).deep.equals([])
+    setListRowMeasurement('cnv_return_1', 630, 90)
+    await act(async () => {
+      renderedRowLayout('cnv_return_1')({
+        nativeEvent: { layout: { height: 90 } }
+      })
+      await wait(40)
+    })
+    expect(
+      pending.moves,
+      'Promote the genuine previous ACK without a second scroll'
+    ).deep.equals([320])
+    expect(pending.offsets.at(-1)).equals(320)
+  })
+
+  it('persists an actual user terminal zero through delayed row measurements and a changed action header on remount', async function () {
+    const pending = await returningList(true, 0)
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 104)
+    await pending.content(1800)
+    await pending.scroll(0)
+    await act(async () => {
+      pending.node.dispatchEvent(
+        new window.WheelEvent('wheel', {
+          bubbles: true,
+          deltaY: 100
+        })
+      )
+    })
+    await pending.scroll(100)
+    await act(async () => {
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(40)
+    })
+    expect(pending.anchors.at(-1)).not.equals(undefined)
+    const end = renderedListCallbacks(pending.node) as ListLayoutCallbacks & {
+      onScrollEndDrag: (event: {
+        nativeEvent: { contentOffset: { y: number } }
+      }) => void
+    }
+    await act(async () => {
+      pending.node.scrollTop = 0
+      end.onScrollEndDrag({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(
+      pending.anchors.at(-1),
+      'The user chose the action header at the absolute top'
+    ).equals(undefined)
+    await act(async () => {
+      setListRowMeasurement('cnv_return_0', 160)
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait()
+    })
+    expect(
+      pending.anchors.at(-1),
+      'A delayed row callback cannot replace the explicit top'
+    ).equals(undefined)
+    await unmount()
+    const returning = await returningList(
+      true,
+      pending.offsets.at(-1),
+      pending.anchors.at(-1)
+    )
+    await returning.populate(8)
+    setListRowMeasurement('cnv_return_0', 160)
+    await returning.content(1800)
+    await returning.scroll(0)
+    expect(returning.moves).deep.equals([0])
+    expect(returning.node.scrollTop).equals(0)
+  })
+
+  it('does not accept a stale hidden terminal zero as a new user reading position', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(1800)
+    await pending.scroll(240)
+    const saved = pending.anchors.at(-1)
+    const end = renderedListCallbacks(pending.node) as ListLayoutCallbacks & {
+      onMomentumScrollEnd: (event: {
+        nativeEvent: { contentOffset: { y: number } }
+      }) => void
+    }
+    await pending.hide()
+    await act(async () => {
+      end.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(240)
+    expect(pending.anchors.at(-1)).deep.equals(saved)
+  })
+})

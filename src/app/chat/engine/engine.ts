@@ -515,10 +515,12 @@ export class ChatEngine {
    */
   async loadPreview(conversationId: string, retry = true): Promise<void> {
     const state = this.memory.state(conversationId)
-    if (state == null || state.summary.lastSeq === 0 || this.status !== 'ready')
-      return
+    if (state == null || this.status !== 'ready') return
+    const advertisedRevision = (): number =>
+      Math.max(state.summary.lastSeq, state.summary.lastPostSeq ?? 0)
+    if (advertisedRevision() === 0) return
     const previewVersion = (): string =>
-      `${state.summary.lastSeq}:${this.item(state).locked}:${this.item(state).unverified}`
+      `${advertisedRevision()}:${state.summary.lastPostId ?? ''}:${state.summary.lastPostSeq ?? 0}:${this.item(state).locked}:${this.item(state).unverified}`
     const version = previewVersion()
     const cached = this.previewVersions.get(conversationId)
     if (
@@ -554,7 +556,7 @@ export class ChatEngine {
           await syncMembers(this.ctx, conversationId)
           await syncLog(this.ctx, conversationId)
           await syncEpochs(this.ctx, conversationId)
-          const through = state.summary.lastSeq
+          const through = advertisedRevision()
           const lastPostId = state.summary.lastPostId
           syncedVersion = previewVersion()
           await syncMessages(this.ctx, conversationId, through)
@@ -569,6 +571,16 @@ export class ChatEngine {
             ) {
               await loadEarlier(this.ctx, conversationId)
             }
+          if (
+            lastPostId != null &&
+            ![...state.envelopes.values()].some(
+              message => message.id === lastPostId
+            )
+          )
+            throw new ChatEngineError(
+              'target',
+              'The advertised message is unavailable'
+            )
           if (syncedVersion === previewVersion()) break
         }
       })
