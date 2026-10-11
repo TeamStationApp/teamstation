@@ -625,7 +625,7 @@ function Shell(props: AppProps): React.ReactElement {
   useBrowserBack(goFromAddress)
 
   const captureChatLeave = (change: () => void): void => {
-    if (tab !== 'chat') {
+    if (!chatListNavigation.hasReader()) {
       change()
       return
     }

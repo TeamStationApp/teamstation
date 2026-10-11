@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
 import { Screen } from '../components'
@@ -10,7 +10,9 @@ import {
   CHAT_WIDE_WIDTH,
   type ChatDraftOwner,
   chatDraftOwner,
-  type ChatListNavigationCapture,
+  type ChatListCaptureResult,
+  ChatListNavigationCapture,
+  type ChatListPositionCapture,
   type ChatWorkspaceState,
   emptyChatDraft
 } from './chatWorkspaceModel'
@@ -43,7 +45,9 @@ function WorkspaceContent(
   props: ChatWorkspaceProps & { draftOwner: ChatDraftOwner }
 ): React.ReactElement {
   const { draftOwner } = props
-  const positionCapture = useRef<(() => Promise<void>) | undefined>(undefined)
+  const localNavigation = useMemo(() => new ChatListNavigationCapture(), [])
+  const navigation = props.listNavigation ?? localNavigation
+  const positionCapture = useRef<ChatListPositionCapture | undefined>(undefined)
   const widthRevision = useRef(0)
   const live = useRef(true)
   useEffect(() => {
@@ -54,16 +58,16 @@ function WorkspaceContent(
     }
   }, [])
   const registerPositionCapture = useCallback(
-    (read: () => Promise<void>): (() => void) => {
+    (read: ChatListPositionCapture): (() => void) => {
       positionCapture.current = read
-      const detach = props.listNavigation?.attach(read)
+      const detach = navigation.attach(read)
       return () => {
         if (positionCapture.current === read)
           positionCapture.current = undefined
         detach?.()
       }
     },
-    [props.listNavigation]
+    [navigation]
   )
   const theme = useTheme()
   const windowWidth = useWindowDimensions().width
@@ -111,7 +115,13 @@ function WorkspaceContent(
             props.conversationId != null &&
             read != null
           ) {
-            read().then(applyWidth, applyWidth)
+            const finish = (result: ChatListCaptureResult): void => {
+              if (result !== 'stale' && positionCapture.current === read)
+                applyWidth()
+            }
+            navigation.capture().then(finish, () => {
+              finish('unavailable')
+            })
           } else applyWidth()
         }}
         style={{

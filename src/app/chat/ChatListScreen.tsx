@@ -29,7 +29,11 @@ import {
   cancelUserScroll,
   immediatePressProps
 } from './chatWebInteractions'
-import { CHAT_WIDE_WIDTH } from './chatWorkspaceModel'
+import {
+  CHAT_WIDE_WIDTH,
+  type ChatListCaptureResult,
+  type ChatListPositionCapture
+} from './chatWorkspaceModel'
 import { ConversationMenu } from './ConversationMenu'
 import type { ConversationListItem } from './engine/engine'
 import type { ChatScreenEngine } from './screenEngine'
@@ -50,7 +54,7 @@ export interface ChatListScreenProps {
   initialAnchor?: { id: string; relativeY: number }
   onOffset?: (offset: number) => void
   onAnchor?: (anchor: { id: string; relativeY: number } | undefined) => void
-  registerPositionCapture?: (capture: () => Promise<void>) => () => void
+  registerPositionCapture?: (capture: ChatListPositionCapture) => () => void
 }
 type Row =
   | { type: 'heading'; key: string; title: string }
@@ -259,10 +263,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         relativeY: first[1].y - offset
       })
   }
-  const navigationCapture = useRef<() => Promise<void>>(async () => {})
+  const navigationCapture = useRef<() => Promise<ChatListCaptureResult>>(
+    async () => 'unavailable'
+  )
   const captureSequence = useRef(0)
   navigationCapture.current = async () => {
-    if (!liveData() || !restored.current) return
+    if (!liveData() || !restored.current) return 'unavailable'
     const sequence = ++captureSequence.current
     const version = layoutVersion.current
     const generation = gestureGeneration.current
@@ -270,14 +276,17 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     const responder = list.current?.getScrollResponder()
     const content = responder?.getInnerViewRef()
     const viewport = responder?.getNativeScrollRef()
-    const current = (): boolean =>
+    const currentOwner = (): boolean =>
       liveData() &&
       sequence === captureSequence.current &&
-      version === layoutVersion.current &&
       generation === gestureGeneration.current &&
       rawOffset === currentOffset.current &&
       content === list.current?.getScrollResponder()?.getInnerViewRef() &&
       viewport === list.current?.getScrollResponder()?.getNativeScrollRef()
+    const current = (): boolean =>
+      currentOwner() && version === layoutVersion.current
+    const superseded = (): ChatListCaptureResult =>
+      currentOwner() ? 'stale' : 'unavailable'
     interface Bounds {
       y: number
       width: number
@@ -324,7 +333,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       measure(content),
       measure(viewport)
     ])
-    if (!current() || contentBounds == null || viewportBounds == null) return
+    if (contentBounds == null || viewportBounds == null) return 'unavailable'
+    if (!current()) return superseded()
     const offset = Math.max(0, viewportBounds.y - contentBounds.y)
     const atChosenTop = explicitTop.current && offset === 0
     let saved: { id: string; relativeY: number } | undefined
@@ -336,7 +346,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           bounds: await measure(row)
         }))
       )
-      if (!current()) return
+      if (!current()) return superseded()
       const visibleRows = measured.filter(
         value =>
           value.bounds != null &&
@@ -346,10 +356,10 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
       )
       visibleRows.sort((a, b) => a.bounds!.y - b.bounds!.y)
       const first = visibleRows[0]
-      if (first == null) return
+      if (first == null) return 'unavailable'
       saved = { id: first.id, relativeY: first.bounds!.y - viewportBounds.y }
     }
-    if (!current()) return
+    if (!current()) return superseded()
     currentOffset.current = offset
     restoreOffset.current = offset
     if (offset > 0) explicitTop.current = false
@@ -357,11 +367,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     anchorOwned.current = false
     scrollOwner.current.onOffset?.(offset)
     scrollOwner.current.onAnchor?.(saved)
+    return 'accepted'
   }
   useEffect(() => {
     if (!listVisible) return
     const stop = registerPositionCapture?.(async () => {
-      await navigationCapture.current()
+      return await navigationCapture.current()
     })
     return () => {
       captureSequence.current += 1
