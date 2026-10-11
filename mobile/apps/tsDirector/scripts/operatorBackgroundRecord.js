@@ -13,7 +13,17 @@ const path = require('node:path')
 
 const ROOT = path.resolve(__dirname, '..')
 const RUNNER = path.join(os.homedir(), '.maestro-runner', 'bin', 'maestro-runner')
-const TEAM_ID = process.env.DIRECTOR_TEAM_ID ?? 'G5LQ7MERPK'
+/** The team that signs this app: its clientConfig.json's, checked by scripts/clientConfig.mjs; empty when there is none. */
+function clientTeam() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(ROOT, '..', '..', '..', 'scripts', 'clientConfig.mjs'), ROOT, '--team'],
+    { encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(result.stderr.trim() || 'clientConfig.mjs --team failed')
+  return result.stdout.trim()
+}
+const TEAM_ID = process.env.DIRECTOR_TEAM_ID || clientTeam()
 
 function fail(message) {
   process.stderr.write(`${message}\n`)

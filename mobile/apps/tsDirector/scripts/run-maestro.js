@@ -26,7 +26,17 @@ const RUNNER = path.join(
   'bin',
   'maestro-runner'
 )
-const TEAM_ID = process.env.DIRECTOR_TEAM_ID ?? 'G5LQ7MERPK'
+/** The team that signs this app: its clientConfig.json's, checked by scripts/clientConfig.mjs; empty when there is none. */
+function clientTeam() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(ROOT, '..', '..', '..', 'scripts', 'clientConfig.mjs'), ROOT, '--team'],
+    { encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(result.stderr.trim() || 'clientConfig.mjs --team failed')
+  return result.stdout.trim()
+}
+const TEAM_ID = process.env.DIRECTOR_TEAM_ID || clientTeam()
 
 // Product-behavior set from docs/operator-test-vectors.md. Characterization flows stay out so a
 // regression pass finishes in one sitting.

@@ -20,7 +20,17 @@ const FLOW_DIR = path.join(ROOT, 'maestro', 'flows')
 const REPORT_DIR = path.join(ROOT, 'maestro', 'reports')
 const RUNNER = path.join(os.homedir(), '.maestro-runner', 'bin', 'maestro-runner')
 
-const TEAM_ID = process.env.CAMERAMAN_TEAM_ID ?? 'G5LQ7MERPK'
+/** The team that signs this app: its clientConfig.json's, checked by scripts/clientConfig.mjs; empty when there is none. */
+function clientTeam() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(ROOT, '..', '..', '..', 'scripts', 'clientConfig.mjs'), ROOT, '--team'],
+    { encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(result.stderr.trim() || 'clientConfig.mjs --team failed')
+  return result.stdout.trim()
+}
+const TEAM_ID = process.env.CAMERAMAN_TEAM_ID || clientTeam()
 const DEVICE_UDID = process.env.CAMERAMAN_DEVICE_UDID ?? '22222222-2222222222222222'
 
 // Flows that need a real lens. Named so --sim can refuse them with a reason rather than letting

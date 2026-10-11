@@ -78,7 +78,7 @@
     "deploy": "node -r sucrase/register scripts/deploy.ts",
     "signing:import": "node -r sucrase/register scripts/deploy/signing.ts",
     "test:deploy": "mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
-    "coverage.deploy": "c8 --all --include 'scripts/deploy.ts' --include 'scripts/deploy/**/*.ts' --exclude '**/*.test.ts' --report-dir coverage/deploy --reporter text --reporter json --reporter lcov --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
+    "coverage.deploy": "c8 --all --include 'scripts/deploy.ts' --include 'scripts/deploy/**/*.ts' --include 'scripts/clientConfig.mjs' --exclude '**/*.test.ts' --report-dir coverage/deploy --reporter text --reporter json --reporter lcov --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
     "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts",
     "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'",
     "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts",

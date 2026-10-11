@@ -2,7 +2,12 @@
 lib/
 dist/
 /serverConfig.json
+# A deployment's settings for an app build (team, link host) and the xcconfig
+# made from them; never committed.
 /clientConfig.json
+/clientConfig.xcconfig
+/mobile/apps/*/clientConfig.json
+/mobile/apps/*/clientConfig.xcconfig
 
 # Package managers:
 node_modules/

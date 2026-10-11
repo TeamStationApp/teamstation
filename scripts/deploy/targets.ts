@@ -8,6 +8,11 @@ export interface Target {
   scheme?: string
   workspace?: string
   harvester?: boolean
+  /**
+   * The app target's entitlements, relative to the Xcode project's directory:
+   * what `TS_APP_ENTITLEMENTS` names when the build has an app link host.
+   */
+  entitlements?: string
 }
 const targets: Target[] = [
   {
@@ -16,7 +21,8 @@ const targets: Target[] = [
     path: '.',
     kind: 'react-native',
     scheme: 'TeamStation',
-    workspace: 'ios/TeamStation.xcworkspace'
+    workspace: 'ios/TeamStation.xcworkspace',
+    entitlements: 'TeamStation/TeamStation.entitlements'
   },
   {
     app: 'app.teamstation.app',
@@ -29,7 +35,8 @@ const targets: Target[] = [
     platform: 'ios',
     path: 'mobile/apps/tsCameraman',
     kind: 'swift',
-    scheme: 'Cameraman'
+    scheme: 'Cameraman',
+    entitlements: 'App/Cameraman.entitlements'
   },
   {
     app: 'app.teamstation.cameraman',
@@ -42,7 +49,8 @@ const targets: Target[] = [
     platform: 'ios',
     path: 'mobile/apps/tsDirector',
     kind: 'swift',
-    scheme: 'Director'
+    scheme: 'Director',
+    entitlements: 'App/Director.entitlements'
   },
   {
     app: 'app.teamstation.preview',

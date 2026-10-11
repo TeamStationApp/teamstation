@@ -99,10 +99,13 @@ verification as part of the work — not an optional follow-up.
 
 After the code change, run **as much of the testing that already exists** as the change can affect:
 
-1. `DIRECTOR_DEVICE_UDID=<udid> ./scripts/build-sim.sh` (simulator) or `build-device.sh`
+1. Once per checkout, a `clientConfig.json` in `mobile/apps/tsDirector/` (gitignored: the signing
+   team and the app link host, from the deployment repository's `appLinks.mjs client director`);
+   every Director build and test script stops without it
+2. `DIRECTOR_DEVICE_UDID=<udid> ./scripts/build-sim.sh` (simulator) or `build-device.sh`
    (hardware) so there is an `.app` to test
-2. `DIRECTOR_SIMULATOR_UDID=<udid> ./scripts/test-unit.sh` when Swift logic changed
-3. The maestro-d TypeScript tests that cover the product/UI/pipeline area you changed (see
+3. `DIRECTOR_SIMULATOR_UDID=<udid> ./scripts/test-unit.sh` when Swift logic changed
+4. The maestro-d TypeScript tests that cover the product/UI/pipeline area you changed (see
    **UI and device tests** below)
 
 Quote the line that names the UDID. Fix failures before handing back.

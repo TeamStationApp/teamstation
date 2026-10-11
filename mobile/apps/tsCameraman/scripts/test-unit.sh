@@ -4,6 +4,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcodebuild
+client_xcconfig
 [ -d "$CAMERAMAN_PROJECT" ] || fail "run 'socket npm run bootstrap' first"
 
 # The project lists test files individually, so a newly added test file compiles into nothing and
@@ -35,6 +36,7 @@ set +e
 xcodebuild test \
   -project "$CAMERAMAN_PROJECT" \
   -scheme "$CAMERAMAN_SCHEME" \
+  -xcconfig "$CLIENT_XCCONFIG" \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$CAMERAMAN_DERIVED_DATA" \
   -resultBundlePath "$CAMERAMAN_DERIVED_DATA/TestResults.xcresult" \

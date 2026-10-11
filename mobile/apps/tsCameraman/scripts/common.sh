@@ -11,7 +11,8 @@ export CAMERAMAN_DERIVED_DATA="${CAMERAMAN_DERIVED_DATA:-$CAMERAMAN_ROOT/Derived
 # Closest high-end iPhone simulator installed on this machine.
 export CAMERAMAN_SIMULATOR="${CAMERAMAN_SIMULATOR:-iPhone 16 Pro}"
 export CAMERAMAN_BUNDLE_ID="${CAMERAMAN_BUNDLE_ID:-app.teamstation.cameraman}"
-export CAMERAMAN_TEAM_ID="${CAMERAMAN_TEAM_ID:-G5LQ7MERPK}"
+# The team that signs this app: the one in clientConfig.json unless the caller names another.
+export CAMERAMAN_TEAM_ID="${CAMERAMAN_TEAM_ID:-$(node "$CAMERAMAN_ROOT/../../../scripts/clientConfig.mjs" "$CAMERAMAN_ROOT" --team)}"
 
 # Whichever iPhone is plugged in, rather than a name in a script. The fallback is the iPhone 13 Pro
 # every capability number in docs/capabilities.md was measured on; an iPhone 17 Pro has a different
@@ -43,6 +44,16 @@ fail() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 require() {
   command -v "$1" >/dev/null 2>&1 || fail "$1 is required but not installed"
+}
+
+# The deployment's own settings for this app, from its gitignored clientConfig.json, which
+# appLinks.mjs client writes: the team that signs it and the link host its sign-in links open it
+# from. client_xcconfig turns them into the xcconfig every xcodebuild here passes with -xcconfig,
+# and stops a build that has no clientConfig.json.
+client_xcconfig() {
+  CLIENT_XCCONFIG="$(node "$CAMERAMAN_ROOT/../../../scripts/clientConfig.mjs" "$CAMERAMAN_ROOT" --entitlements App/Cameraman.entitlements)" \
+    || fail "no clientConfig.json in $CAMERAMAN_ROOT"
+  export CLIENT_XCCONFIG
 }
 
 # The same simulator name exists under several installed runtimes, which makes a name-based

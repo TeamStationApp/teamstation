@@ -14,7 +14,6 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     # iPhone only. An iPad runs it scaled, which is acceptable; a stretched layout is not a target.
     TARGETED_DEVICE_FAMILY: "1"
-    DEVELOPMENT_TEAM: G5LQ7MERPK
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO

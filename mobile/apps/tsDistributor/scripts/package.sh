@@ -11,6 +11,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcodegen
 require xcodebuild
+client_xcconfig
 require hdiutil
 cd "$DISTRIBUTOR_ROOT"
 
@@ -21,7 +22,7 @@ LOG="$DISTRIBUTOR_ROOT/DerivedData/package.log"
 mkdir -p "$DISTRIBUTOR_ROOT/DerivedData" "$OUT"
 xcodegen generate >/dev/null
 log "Building TS Distributor (Release), build $BUILD"
-if ! xcodebuild -project Distributor.xcodeproj -scheme Distributor -configuration Release \
+if ! xcodebuild -project Distributor.xcodeproj -scheme Distributor -xcconfig "$CLIENT_XCCONFIG" -configuration Release \
   -derivedDataPath "$DISTRIBUTOR_ROOT/DerivedData" CURRENT_PROJECT_VERSION="$BUILD" build >"$LOG" 2>&1; then
   grep -E "error:" "$LOG" | head -20 || tail -30 "$LOG"
   fail "build failed; full log at $LOG"

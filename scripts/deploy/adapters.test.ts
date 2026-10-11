@@ -102,6 +102,8 @@ async function fake(command: Command): Promise<string> {
         ? profile.entitlements
         : info()
     )
+  if (command.args[0]?.endsWith('clientConfig.mjs'))
+    return path.join(command.args[1], 'clientConfig.xcconfig') + '\n'
   if (command.file === 'xcrun') return 'arm64'
   if (
     command.file === 'codesign' &&
@@ -642,6 +644,22 @@ describe('Native build and signing adapters', () => {
       calls.some(c => c.file === 'bundle' && c.args.includes('--deployment'))
     )
     assert(calls.some(c => c.args.includes('generic/platform=iOS')))
+    // The team and link host reach the archive through the app's xcconfig,
+    // written by this tool's own script with the target's entitlements.
+    const written = calls.find(c =>
+      c.args[0]?.endsWith(path.join('scripts', 'clientConfig.mjs'))
+    )
+    assert.deepEqual(written?.args.slice(2), [
+      '--entitlements',
+      'TeamStation/TeamStation.entitlements'
+    ])
+    const archived = calls.find(
+      c => c.file === 'xcodebuild' && c.args[0] === 'archive'
+    )!
+    assert.equal(
+      archived.args[archived.args.indexOf('-xcconfig') + 1],
+      path.join(context.source, 'clientConfig.xcconfig')
+    )
     assert(
       calls.some(c =>
         c.args.includes('OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo')
