@@ -247,7 +247,9 @@ async function mount(setup: Setup = {}): Promise<Calls> {
       return { canInvite: setup.canManage ?? true, invites: [] }
     },
     // A public visitor's Follow asks what they follow; nothing here.
-    follows: async () => []
+    follows: async () => [],
+    // Whether the People tab shows; App.teamRoutes.test.tsx covers it.
+    group: async () => ({ canSeePeople: false })
   } as unknown as TeamStationClient
   calls.client = client
   const host = document.createElement('div')
@@ -263,7 +265,7 @@ async function mount(setup: Setup = {}): Promise<Calls> {
             calls.games.push({ gameId, title, options })
           }
           onOpenTeam={opened => calls.teams.push(opened)}
-          onManage={
+          onSettings={
             setup.manage === true
               ? () => {
                   calls.managed++
@@ -1140,10 +1142,10 @@ describe('the season screen', function () {
     expect(picture!.getAttribute('src')).equals('https://img.example/s.png')
   })
 
-  it('offers the manage gear only to an administrator who was given onManage', async function () {
+  it('offers the settings gear only to an administrator who was given onSettings', async function () {
     const calls = await mount({ manage: true })
     expect(calls.invites).deep.equals(['season sea_spring'])
-    await press(labelled('Manage'))
+    await press(labelled('Season settings'))
     expect(calls.managed).equals(1)
     await act(async () => {
       root?.unmount()
@@ -1151,15 +1153,19 @@ describe('the season screen', function () {
 
     const without = await mount()
     expect(without.invites).deep.equals([])
-    expect(document.querySelector('[aria-label="Manage"]')).equals(null)
+    expect(document.querySelector('[aria-label="Season settings"]')).equals(
+      null
+    )
     await act(async () => {
       root?.unmount()
     })
 
-    // Given onManage, but the server says this person may not.
+    // Given onSettings, but the server says this person may not.
     const refused = await mount({ manage: true, canManage: false })
     expect(refused.invites).deep.equals(['season sea_spring'])
-    expect(document.querySelector('[aria-label="Manage"]')).equals(null)
+    expect(document.querySelector('[aria-label="Season settings"]')).equals(
+      null
+    )
   })
 
   it('opens on the schedule, past games first, with the filter beneath the sections', async function () {

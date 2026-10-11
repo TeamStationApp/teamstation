@@ -3,7 +3,12 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { asSessionUser, TeamStationClient } from '../common/api'
+import {
+  asPersonProfile,
+  asRosterEntry,
+  asSessionUser,
+  TeamStationClient
+} from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { App, stackFor } from './App'
 
@@ -218,6 +223,314 @@ describe('team settings browser history', () => {
     } finally {
       Object.defineProperties(proto, originals)
       window.history.replaceState(null, '', '/')
+    }
+  })
+})
+
+describe('a person’s profile, through the app', () => {
+  it('opens from the roster for the team’s coach at its own address, titled with their name, and the old manage address opens Settings', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const detail = asGroupDetail({
+      nonMemberView: false,
+      group: {
+        kind: 'team',
+        id: 'canonical',
+        name: 'Demo Hawks',
+        imageUrl: null,
+        locality: null
+      },
+      parents: [],
+      children: [],
+      participatingSeasons: [],
+      competingTeams: [],
+      games: [],
+      staff: [],
+      canViewPrivate: true,
+      canManage: false,
+      canManagePeople: true
+    })
+    const asked: unknown[] = []
+    proto.whoAmI = async () =>
+      asSessionUser({ id: 1, displayName: 'Demo Coach', isAdmin: false })
+    proto.myRoles = async () => ({
+      teams: { canonical: ['coach'] },
+      guardianOf: []
+    })
+    proto.hasNotifications = async () => false
+    proto.group = async () => detail
+    proto.gameProposals = async () => []
+    proto.teamGames = async () => []
+    proto.teamStats = async () => []
+    proto.teamPitchingStats = async () => []
+    proto.roster = async () => [
+      asRosterEntry({
+        userId: 203,
+        shortName: 'Pat Y',
+        jersey: null,
+        positions: [],
+        isPlayer: false,
+        role: 'member',
+        section: 'family',
+        staffRoles: [],
+        inheritedFrom: null
+      })
+    ]
+    proto.personProfile = async (kind, id, userId) => {
+      asked.push([kind, id, userId])
+      return asPersonProfile({
+        context: { kind: 'team', id: 'canonical', name: 'Demo Hawks' },
+        person: {
+          userId: 203,
+          shortName: 'Pat Y',
+          fullName: 'Pat Young',
+          avatarUrl: null,
+          canHoldRoles: true
+        },
+        guardianOf: [],
+        sections: [],
+        viewer: { manages: true, admin: false }
+      })
+    }
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      window.history.replaceState(null, '', '/teams/alias?tab=team')
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      const row = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.textContent?.includes('Pat Y') === true)
+      expect(row).not.equals(undefined)
+      await act(async () => {
+        row!.click()
+      })
+      await settle()
+      expect(asked).deep.equals([['team', 'canonical', 203]])
+      expect(window.location.pathname).equals('/teams/canonical/people/203')
+      expect(document.body.textContent).includes('Pat Young')
+      expect(document.body.textContent).includes('Team · Demo Hawks')
+      await act(async () => {
+        root.unmount()
+      })
+
+      const again = createRoot(host)
+      window.history.replaceState(null, '', '/teams/canonical/manage')
+      await act(async () => {
+        again.render(<App />)
+      })
+      await settle()
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      await act(async () => {
+        again.unmount()
+      })
+    } finally {
+      host.remove()
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  })
+})
+
+describe('roles given by somebody else, through the app', () => {
+  it('reads the signed-in person’s roles again when the inbox opens', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    let reads = 0
+    proto.whoAmI = async () =>
+      asSessionUser({ id: 1, displayName: 'Demo Member', isAdmin: false })
+    proto.myRoles = async () => {
+      reads++
+      return { teams: {}, guardianOf: [] }
+    }
+    proto.hasNotifications = async () => true
+    proto.notifications = async () => ({
+      items: [],
+      hasPending: false,
+      nextCursor: null
+    })
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      window.history.replaceState(null, '', '/')
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      const before = reads
+      expect(before).greaterThan(0)
+      const bell = document.querySelector<HTMLElement>(
+        '[aria-label="Notifications"]'
+      )
+      expect(bell).not.equals(null)
+      await act(async () => {
+        bell!.click()
+      })
+      await settle()
+      expect(window.location.pathname).equals('/notifications')
+      expect(reads).equals(before + 1)
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  })
+})
+
+describe('a season’s and a league’s People tab, however the page is opened', () => {
+  const people = [
+    asRosterEntry({
+      userId: 203,
+      shortName: 'Pat Y',
+      jersey: null,
+      positions: [],
+      isPlayer: false,
+      role: 'member',
+      section: 'spectator',
+      staffRoles: [],
+      inheritedFrom: null
+    })
+  ]
+  const detailOf = (
+    kind: 'season' | 'league',
+    canSeePeople: boolean
+  ): ReturnType<typeof asGroupDetail> =>
+    asGroupDetail({
+      nonMemberView: false,
+      group: {
+        kind,
+        id: kind === 'season' ? 'sea_spring' : 'lea_demo',
+        name: kind === 'season' ? 'Demo Regular' : 'Demo League',
+        imageUrl: null,
+        locality: null
+      },
+      parents: [],
+      children: [],
+      participatingSeasons: [],
+      competingTeams: [],
+      games: [],
+      staff: [],
+      canViewPrivate: true,
+      canManage: false,
+      canManagePeople: false,
+      canSeePeople
+    })
+
+  /** Opens `path` in the app as a signed-in member, and answers the tabs. */
+  async function open(
+    path: string,
+    canSeePeople: boolean
+  ): Promise<{ tabs: string[]; asked: unknown[]; done: () => Promise<void> }> {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const asked: unknown[] = []
+    proto.whoAmI = async () =>
+      asSessionUser({ id: 1, displayName: 'Demo Member', isAdmin: false })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.hasNotifications = async () => false
+    proto.seasons = async () => [
+      {
+        id: 'sea_spring',
+        leagueId: null,
+        name: 'Demo Regular',
+        year: 2026,
+        term: null,
+        ageGroup: null,
+        teams: 0,
+        games: 0,
+        videos: 0,
+        logoUrl: null
+      }
+    ]
+    proto.group = async ref => {
+      asked.push(['group', ref.kind, ref.id])
+      return detailOf(ref.kind === 'league' ? 'league' : 'season', canSeePeople)
+    }
+    proto.seasonGames = async () => []
+    proto.seasonTeams = async () => []
+    proto.standings = async () => []
+    proto.seasonStats = async seasonId => ({
+      seasonId,
+      batting: [],
+      pitching: []
+    })
+    proto.gameProposals = async () => []
+    proto.levelPeople = async (kind, id) => {
+      asked.push(['people', kind, id])
+      return { people, manages: false, admin: false }
+    }
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    window.history.replaceState(null, '', path)
+    await act(async () => {
+      root.render(<App />)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 80))
+    })
+    const tabs = [
+      ...document.querySelectorAll<HTMLElement>('[role="tab"]')
+    ].map(node => node.textContent ?? '')
+    return {
+      tabs,
+      asked,
+      done: async () => {
+        await act(async () => {
+          root.unmount()
+        })
+        host.remove()
+        Object.defineProperties(proto, originals)
+        window.history.replaceState(null, '', '/')
+      }
+    }
+  }
+
+  it('shows the season’s People at its own address, as Home opens it, for whoever the server lets read them', async () => {
+    const seen = await open('/seasons/sea_spring?tab=people', true)
+    try {
+      expect(seen.tabs).includes('People')
+      expect(seen.asked).deep.include(['group', 'season', 'sea_spring'])
+      // The address asked for People, and People is what opened.
+      expect(seen.asked).deep.include(['people', 'season', 'sea_spring'])
+      expect(document.body.textContent).includes('Pat Y')
+      expect(window.location.search).includes('tab=people')
+    } finally {
+      await seen.done()
+    }
+    const unseen = await open('/seasons/sea_spring?tab=people', false)
+    try {
+      expect(unseen.tabs).not.includes('People')
+      expect(unseen.asked).not.deep.include(['people', 'season', 'sea_spring'])
+      expect(window.location.search).not.includes('tab=people')
+    } finally {
+      await unseen.done()
+    }
+  })
+
+  it('shows the same tab on the season’s group page', async () => {
+    const seen = await open('/groups/season/sea_spring', true)
+    try {
+      expect(seen.tabs).includes('People')
+    } finally {
+      await seen.done()
     }
   })
 })

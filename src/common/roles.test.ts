@@ -5,6 +5,8 @@ import {
   asRoleFlags,
   asRoles,
   coachesTeam,
+  IMPLIED_ROLES,
+  impliedRoles,
   keepsSongs,
   managesRoster,
   ROLE_FLAGS,
@@ -119,5 +121,34 @@ describe('keeping a team’s walk-up songs, from GET /me/roles', function () {
     expect(keepsSongs(roles, 'tem_other')).equals(false)
     expect(keepsSongs(roles, undefined)).equals(false)
     expect(keepsSongs(undefined, 'tem_songs')).equals(false)
+  })
+})
+
+/**
+ * What a role brings with it at its own level, the one table `roleScopes`
+ * widens by and a person's profile reads its "With Admin" rows from.
+ */
+describe('the roles a role brings with it', function () {
+  it('gives an administrator every flag and a scorekeeper Songkeeper, nothing else', function () {
+    expect(IMPLIED_ROLES.admin).deep.equals(ROLE_FLAGS)
+    expect(IMPLIED_ROLES.scorekeeper).deep.equals(['songkeeper'])
+    for (const flag of [
+      'coach',
+      'assistant',
+      'songkeeper',
+      'videographer'
+    ] as const)
+      expect(IMPLIED_ROLES[flag], flag).deep.equals([])
+  })
+
+  it('names the first role in order that brings each, whether or not it was given too', function () {
+    expect([...impliedRoles([])]).deep.equals([])
+    expect([...impliedRoles(['coach', 'songkeeper'])]).deep.equals([])
+    expect([...impliedRoles(['scorekeeper', 'songkeeper'])]).deep.equals([
+      ['songkeeper', 'scorekeeper']
+    ])
+    expect([...impliedRoles(['admin', 'scorekeeper'])]).deep.equals(
+      ROLE_FLAGS.map(flag => [flag, 'admin'])
+    )
   })
 })

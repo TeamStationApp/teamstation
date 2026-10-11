@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { TeamStationClient } from '../../common/api'
+import { asRosterEntry, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import type { ParentAction, ParentPreview } from '../../common/groupLinks'
 import {
@@ -109,7 +109,9 @@ const detail = asGroupDetail({
     }
   ],
   canManage: true,
-  canViewPrivate: true
+  canViewPrivate: true,
+  canManagePeople: true,
+  canSeePeople: true
 })
 
 function render(
@@ -252,7 +254,12 @@ describe('the league page', () => {
   })
   it('keeps the relationship and hides management from a visitor', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
-    api.group = async () => ({ ...detail, canManage: false })
+    api.group = async () => ({
+      ...detail,
+      canManage: false,
+      canManagePeople: false,
+      canSeePeople: false
+    })
     await mount(render(api, []))
     expect(button('People')).equals(undefined)
     expect(button('Add season')).equals(undefined)
@@ -260,5 +267,75 @@ describe('the league page', () => {
     await press('Teams')
     expect(button('Create team')).equals(undefined)
     expect(button('More for Demo Hawks')).equals(undefined)
+  })
+})
+
+describe('a league’s People tab', () => {
+  it('lists its people and opens a player’s page and anybody else’s profile', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    api.levelPeople = async (kind, id) => {
+      expect([kind, id]).deep.equals(['league', league.id])
+      return {
+        people: [
+          asRosterEntry({
+            userId: 201,
+            shortName: 'Avery S',
+            jersey: null,
+            positions: [],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          }),
+          asRosterEntry({
+            userId: 271,
+            shortName: 'Leo G',
+            jersey: null,
+            positions: [],
+            isPlayer: false,
+            role: 'member',
+            section: 'spectator',
+            staffRoles: [],
+            inheritedFrom: null
+          })
+        ],
+        manages: true,
+        admin: true
+      }
+    }
+    const players: unknown[] = []
+    const persons: unknown[] = []
+    await mount(
+      <GroupScreen
+        client={api}
+        groupRef={{ kind: 'league', id: league.id }}
+        initialTab="people"
+        onOpen={() => {}}
+        onCreate={() => {}}
+        onSettings={() => {}}
+        onLink={() => {}}
+        onPrivate={() => {}}
+        onOpenPlayer={(userId, name) => {
+          players.push([userId, name])
+        }}
+        onOpenPerson={(group, userId) => {
+          persons.push([group, userId])
+        }}
+      />
+    )
+    for (const name of ['Avery S', 'Leo G']) {
+      const row = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.textContent?.includes(name) === true)
+      expect(row, name).not.equals(undefined)
+      await act(async () => {
+        row!.click()
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+    }
+    expect(players).deep.equals([[201, 'Avery S']])
+    expect(persons).deep.equals([[{ kind: 'league', id: league.id }, 271]])
   })
 })

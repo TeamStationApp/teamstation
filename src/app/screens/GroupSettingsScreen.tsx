@@ -14,6 +14,7 @@ import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GroupGameSchedule } from './GroupGameSchedule'
+import { GroupPeopleSettings } from './GroupPeopleSettings'
 import type { GroupLinkChoice } from './GroupScreen'
 import {
   TeamSettingsActions,
@@ -28,7 +29,6 @@ export function GroupSettingsScreen({
   onChanged,
   onRequest,
   onCancel,
-  onManage,
   onCreateGame,
   onCreateExternal,
   onPromote
@@ -40,7 +40,6 @@ export function GroupSettingsScreen({
   onChanged?: () => void
   onRequest?: (id: string) => void
   onCancel?: () => void
-  onManage?: TeamSettingsActionsProps['onManage']
   onCreateGame?: TeamSettingsActionsProps['onCreateGame']
   onCreateExternal?: TeamSettingsActionsProps['onCreateExternal']
   onPromote?: TeamSettingsActionsProps['onPromote']
@@ -233,11 +232,23 @@ export function GroupSettingsScreen({
               detail={detail}
               disabled={busy}
               onLink={onLink}
-              onManage={onManage}
               onCreateGame={onCreateGame}
               onCreateExternal={onCreateExternal}
               onPromote={onPromote}
             />
+            {
+              // A placeholder team has no people of its own: its custodian
+              // keeps it, and promoting it is how somebody is added.
+              !detail.group.external && (
+                <GroupPeopleSettings
+                  client={client}
+                  scopeKind={detail.group.kind}
+                  scopeId={detail.group.id}
+                  onOpenRequest={onRequest}
+                  onChanged={onChanged}
+                />
+              )
+            }
             {detail.group.kind === 'team' && onRequest != null && (
               <GroupGameSchedule
                 client={client}

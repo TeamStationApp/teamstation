@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { TeamStationClient } from '../../common/api'
+import { asManagePage, TeamStationClient } from '../../common/api'
 import { asGameScheduleProposal } from '../../common/gameApprovals'
 import { asGroupDetail } from '../../common/publicGroups'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -196,4 +196,199 @@ describe('team settings management and pending saves', () => {
       expect(saved).equals(leaves ? 0 : 1)
       expect(navigated).equals(0)
     })
+})
+
+async function typeAddress(value: string): Promise<void> {
+  const input = document.querySelector<HTMLInputElement>(
+    'input[aria-label="E-mail address"]'
+  )
+  expect(input).not.equals(null)
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(input, value)
+    input!.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 10))
+  })
+}
+
+describe('a group’s people in its Settings', () => {
+  function people(kind: 'team' | 'season' | 'league'): {
+    client: TeamStationClient
+    calls: unknown[]
+  } {
+    const calls: unknown[] = []
+    const client = api()
+    client.group = async () => ({
+      ...detail,
+      group: { ...detail.group, kind, id: `${kind}_one` }
+    })
+    let pending = true
+    client.managePage = async (asked, id) => {
+      calls.push(['page', asked, id])
+      return asManagePage({
+        scope: { kind, id, name: `Demo ${kind}` },
+        tree: { leagues: [], seasons: [], teams: [] },
+        people: [
+          {
+            userId: 301,
+            displayName: 'Nolan Quiet',
+            emails: [],
+            teams: kind === 'team' ? [{ id, name: 'x', role: 'member' }] : [],
+            seasons:
+              kind === 'season' ? [{ id, name: 'x', role: 'member' }] : [],
+            leagues:
+              kind === 'league' ? [{ id, name: 'x', role: 'member' }] : [],
+            adminOf: [],
+            createdAt: '2026-01-01T00:00:00Z',
+            lastSignInAt: null,
+            lastSeenAt: null
+          },
+          {
+            userId: 302,
+            displayName: 'Pat Young',
+            emails: ['pat@example.com'],
+            teams: [],
+            seasons: [],
+            leagues: [],
+            adminOf: [],
+            createdAt: '2026-01-01T00:00:00Z',
+            lastSignInAt: null,
+            lastSeenAt: null
+          }
+        ],
+        pending: pending
+          ? [
+              {
+                inviteId: 'inv_one',
+                email: 'newcomer@example.com',
+                code: 'abc',
+                invitedAt: '2026-10-01T00:00:00Z',
+                requestId: 'req_one'
+              }
+            ]
+          : [],
+        invites: []
+      })
+    }
+    client.invites = async () => ({ canInvite: true, invites: [] })
+    client.addPerson = async (asked, id, email, options) => {
+      calls.push(['add', asked, id, email, options?.admin, options?.flags])
+      pending = false
+      return email.startsWith('pat')
+        ? {
+            added: true,
+            person: { userId: 302, displayName: 'Pat Young', email },
+            invited: undefined
+          }
+        : {
+            added: false,
+            person: undefined,
+            invited: {
+              inviteId: 'inv_two',
+              email,
+              code: 'def',
+              invitedAt: '2026-10-02T00:00:00Z',
+              requestId: 'req_two'
+            }
+          }
+    }
+    client.removePerson = async (asked, id, userId) => {
+      calls.push(['remove', asked, id, userId])
+      return { removed: true }
+    }
+    return { client, calls }
+  }
+
+  for (const kind of ['team', 'season', 'league'] as const)
+    it(`adds somebody by address, lists the invitations waiting and the people with no address, for a ${kind}`, async () => {
+      const { client, calls } = people(kind)
+      const opened: string[] = []
+      await mount(
+        <GroupSettingsScreen
+          client={client}
+          groupRef={{ kind, id: `${kind}_one` }}
+          onLink={() => undefined}
+          onSaved={() => undefined}
+          onRequest={id => {
+            opened.push(id)
+          }}
+        />
+      )
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+      const text = (): string => document.body.textContent ?? ''
+      expect(text()).includes('ADD SOMEBODY')
+      expect(text()).includes('INVITATIONS WAITING')
+      expect(text()).includes('newcomer@example.com')
+      expect(text()).includes('NO ADDRESS ON FILE')
+      expect(text()).includes('Nolan Quiet')
+      // Somebody with an address is managed from the people list instead.
+      expect(text()).not.includes('Pat Young')
+      expect(text()).includes('INVITE PEOPLE')
+      await press('Open')
+      expect(opened).deep.equals(['req_one'])
+
+      // Roles chosen for the add, then an account added at once.
+      await press('Choose roles')
+      await act(async () => {
+        document
+          .querySelector<HTMLInputElement>('input[aria-label="Coach"]')!
+          .click()
+      })
+      await press('Save')
+      expect(text()).includes('Adds them as: Coach.')
+      await typeAddress('pat@example.com')
+      await press('Add')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+      expect(text()).includes('Pat Young has been added.')
+      expect(calls).deep.include([
+        'add',
+        kind,
+        `${kind}_one`,
+        'pat@example.com',
+        false,
+        ['coach']
+      ])
+      expect(text()).not.includes('INVITATIONS WAITING')
+
+      await press('Remove Nolan Quiet')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+      expect(calls).deep.include(['remove', kind, `${kind}_one`, 301])
+    })
+
+  it('says an invitation went to an address nobody holds, and opens it', async () => {
+    const { client } = people('team')
+    const opened: string[] = []
+    await mount(
+      <GroupSettingsScreen
+        client={client}
+        groupRef={{ kind: 'team', id: 'team_one' }}
+        onLink={() => undefined}
+        onSaved={() => undefined}
+        onRequest={id => {
+          opened.push(id)
+        }}
+      />
+    )
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await typeAddress('later@example.com')
+    await press('Add')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(document.body.textContent).includes(
+      'An invitation is on its way to later@example.com.'
+    )
+    await press('Open sent invitation')
+    expect(opened).deep.equals(['req_two'])
+  })
 })

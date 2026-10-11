@@ -22,7 +22,7 @@ export function TeamPage({
   ...presentation
 }: Omit<
   TeamScreenProps,
-  'team' | 'onManage' | 'publicDetail' | 'nonMemberView'
+  'team' | 'onManage' | 'publicDetail' | 'nonMemberView' | 'managesPeople'
 > & {
   client: TeamStationClient
   id: string
@@ -105,6 +105,7 @@ export function TeamPage({
       refreshRevision={refreshRevision}
       publicDetail={full ? undefined : detail}
       nonMemberView={detail.nonMemberView}
+      managesPeople={detail.canManagePeople === true}
       onManage={
         detail.canManage && onSettings != null
           ? () => {

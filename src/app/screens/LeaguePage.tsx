@@ -23,7 +23,7 @@ import { ChoiceSheet } from '../components/ChoiceSheet'
 import { StickySectionLayout } from '../components/StickySectionLayout'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
-import { ManageScreen } from './ManageScreen'
+import { LevelPeopleTab } from './LevelPeopleTab'
 import { useBreakParent } from './useBreakParent'
 
 export interface LeaguePageProps {
@@ -38,7 +38,10 @@ export interface LeaguePageProps {
   onSettings: (group: GroupRef) => void
   onLink: (choice: GroupLinkChoice) => void
   onCreateExternal?: (custodian: GroupRef) => void
-  onOpenRequest?: (id: string) => void
+  /** A player on the People tab, opened on their page. */
+  onOpenPlayer?: (userId: number, name: string) => void
+  /** Anybody else on the People tab, as their profile. */
+  onOpenPerson?: (userId: number, name: string) => void
   /** Called after a relationship is broken, to load the page again. */
   onChanged: () => void
   initialTab?: string
@@ -48,7 +51,8 @@ export interface LeaguePageProps {
 type TabId = 'seasons' | 'teams' | 'people'
 
 /**
- * A league: its seasons, its teams and its people, one tab each.
+ * A league: its seasons, its teams and its people, one tab each; the people
+ * for its members and role holders.
  *
  * No schedule: a league outlives many seasons, and their games belong on the
  * season pages. Every season and team here is a child of the league, shown as
@@ -63,7 +67,10 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
   const tabs = [
     { id: 'seasons' as const, label: 'Seasons' },
     { id: 'teams' as const, label: 'Teams' },
-    ...(detail.canManage ? [{ id: 'people' as const, label: 'People' }] : [])
+    // Its members and role holders read the league's people.
+    ...(detail.canSeePeople === true
+      ? [{ id: 'people' as const, label: 'People' }]
+      : [])
   ]
   const allowedTab = (id?: string): TabId =>
     tabs.some(item => item.id === id) ? (id as TabId) : 'seasons'
@@ -74,7 +81,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // Tab validity changes when management rights do.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab, detail.canManage])
+  }, [initialTab, detail.canSeePeople])
   const chooseTab = (next: TabId): void => {
     setTab(next)
     onTab?.(next)
@@ -323,14 +330,13 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
           ))}
         </View>
       )}
-      {tab === 'people' && detail.canManage && (
-        <ManageScreen
-          embedded
+      {tab === 'people' && detail.canSeePeople === true && (
+        <LevelPeopleTab
           client={client}
-          scopeKind="league"
-          scopeId={group.id}
-          onOpenRequest={props.onOpenRequest}
-          onChanged={props.onChanged}
+          kind="league"
+          id={group.id}
+          onOpenPlayer={props.onOpenPlayer}
+          onOpenPerson={props.onOpenPerson}
         />
       )}
       {breaker.sheet}

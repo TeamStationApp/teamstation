@@ -79,7 +79,6 @@ import { GroupSettingsScreen } from './screens/GroupSettingsScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
 import { LoginScreen } from './screens/LoginScreen'
-import { ManageScreen } from './screens/ManageScreen'
 import { NodeAdministrationScreen } from './screens/NodeAdministrationScreen'
 import {
   NotificationDetailScreen,
@@ -87,6 +86,7 @@ import {
 } from './screens/NotificationsScreen'
 import { OAuthScreen } from './screens/OAuthScreen'
 import { OnboardingScreen } from './screens/OnboardingScreen'
+import { PersonProfileScreen } from './screens/PersonProfileScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
@@ -199,12 +199,17 @@ type Pushed =
       playerName: string
       song: WalkUpSong | null
     }
-  /** The page behind the gear on a team, season or league card. */
+  /**
+   * Somebody on a team's, season's or league's people list, as that level
+   * sees them: the profile its administrators, coaches and assistants manage
+   * their roles from.
+   */
   | {
-      name: 'manage'
-      scopeKind: 'league' | 'season' | 'team'
-      scopeId: string
-      /** What it is called, once the page has said so. */
+      name: 'person'
+      kind: 'league' | 'season' | 'team'
+      id: string
+      userId: string
+      /** Their name, once the page has said it. */
       title?: string
     }
 
@@ -589,6 +594,19 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
+
+  // Somebody else's grant reaches this person in the inbox with nothing to
+  // accept, so what they may do is read again whenever the inbox, or one of
+  // its notifications, opens: a role just given shows at once.
+  const inboxOpened =
+    top?.name === 'notifications'
+      ? 'inbox'
+      : top?.name === 'notification'
+        ? top.id
+        : undefined
+  useEffect(() => {
+    if (inboxOpened != null) refreshRoles()
+  }, [inboxOpened, refreshRoles])
 
   // Where the open player page's walk-up song is on this phone. One function
   // per page, not per render: the tab asks again whenever it changes.
@@ -975,12 +993,19 @@ function Shell(props: AppProps): React.ReactElement {
     },
     [tab]
   )
-  /** The gear on a team, season or league card. */
-  const openManage = (
-    scopeKind: 'league' | 'season' | 'team',
-    scopeId: string
+  /** Somebody on a people list, as the level it was opened from sees them. */
+  const openPerson = (
+    group: { kind: 'league' | 'season' | 'team'; id: string },
+    userId: number,
+    title: string
   ): void => {
-    push({ name: 'manage', scopeKind, scopeId })
+    push({
+      name: 'person',
+      kind: group.kind,
+      id: group.id,
+      userId: String(userId),
+      title
+    })
   }
   const openSeason = (season: SeasonSummary): void => {
     push({ name: 'season', season })
@@ -1347,6 +1372,7 @@ function Shell(props: AppProps): React.ReactElement {
         onOpen={openGroup}
         onOpenTeam={openSeasonParticipant}
         onOpenPlayer={openPlayer}
+        onOpenPerson={openPerson}
         onCreate={(kind, parent) => {
           push({ name: 'createGroup', kind, parent })
         }}
@@ -1412,9 +1438,6 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'notification', id })
         }}
         onCancel={pop}
-        onManage={group => {
-          openManage(group.kind, group.id)
-        }}
         onCreateGame={group => {
           if (group.kind === 'team')
             push({ name: 'createGame', kind: 'team', id: group.id })
@@ -1648,6 +1671,9 @@ function Shell(props: AppProps): React.ReactElement {
         team={top.team}
         onOpenGame={openGame}
         onOpenPlayer={openPlayer}
+        onOpenPerson={(userId, name, teamId) => {
+          openPerson({ kind: 'team', id: teamId }, userId, name)
+        }}
         onSettings={id => {
           push({
             name: 'groupSettings',
@@ -1665,8 +1691,9 @@ function Shell(props: AppProps): React.ReactElement {
         season={top.season}
         onOpenGame={openGame}
         onOpenTeam={openSeasonParticipant}
-        onManage={() => {
-          openManage('season', top.season.id)
+        onOpenPlayer={openPlayer}
+        onOpenPerson={(userId, name) => {
+          openPerson({ kind: 'season', id: top.season.id }, userId, name)
         }}
         onSettings={() => {
           push({ name: 'groupSettings', kind: 'season', id: top.season.id })
@@ -1686,20 +1713,20 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
-    ) : top.name === 'manage' ? (
-      <ManageScreen
+    ) : top.name === 'person' ? (
+      <PersonProfileScreen
+        key={`${top.kind}:${top.id}:${top.userId}`}
         client={client}
+        kind={top.kind}
+        id={top.id}
+        userId={Number(top.userId)}
+        onOpenPlayer={openPlayer}
         onChanged={refreshRoles}
-        onOpenRequest={id => {
-          push({ name: 'notification', id })
-        }}
-        scopeKind={top.scopeKind}
-        scopeId={top.scopeId}
         onTitle={title => {
           setStacks(current => {
             const held = current[tab]
             const last = held[held.length - 1]
-            if (last?.name !== 'manage' || last.title === title) return current
+            if (last?.name !== 'person' || last.title === title) return current
             return {
               ...current,
               [tab]: [...held.slice(0, -1), { ...last, title }]
@@ -2071,17 +2098,7 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
       ]
     }
   }
-  if (route.name === 'manage') {
-    return {
-      [tab]: [
-        {
-          name: 'manage',
-          scopeKind: route.scopeKind,
-          scopeId: route.scopeId
-        }
-      ]
-    }
-  }
+  if (route.name === 'person') return { [tab]: [{ ...route }] }
   return {}
 }
 
@@ -2141,11 +2158,12 @@ function routeOf(
         onTeam: top.onTeam
       }
     }
-    if (top.name === 'manage') {
+    if (top.name === 'person') {
       return {
-        name: 'manage',
-        scopeKind: top.scopeKind,
-        scopeId: top.scopeId
+        name: 'person',
+        kind: top.kind,
+        id: top.id,
+        userId: top.userId
       }
     }
     // The picker has no address of its own: it is a step on the player's
@@ -2199,11 +2217,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'scoreboardOverride') {
       return lstrings.game_override_scoreboard
     }
-    if (top.name === 'manage') {
-      return top.title == null
-        ? lstrings.manage_open
-        : sprintf(lstrings.manage_title, top.title)
-    }
+    if (top.name === 'person') return top.title
     return undefined
   }
   if (tab === 'home') return 'Your Home'

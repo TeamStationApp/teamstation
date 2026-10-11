@@ -197,3 +197,82 @@ describe('guardian notifications', function () {
     expect(roles()).equals(before + 1)
   })
 })
+
+describe('a notification that somebody added you', function () {
+  const grant: Notification = {
+    id: 'aud_grant',
+    requestId: 'aud_grant',
+    type: 'grant',
+    title: 'Dana Lee added you as Coach of Demo Hawks',
+    description:
+      "You are a member of Demo Hawks now. If you don't want to be, leave it here.",
+    sentAt: '2026-10-06T12:00:00Z',
+    expiresAt: '2026-10-06T12:00:00Z',
+    status: 'accepted',
+    canAct: false,
+    canWithdraw: false,
+    canResend: false,
+    viewed: false,
+    leave: { kind: 'team', id: 'tem_hawks', name: 'Demo Hawks' }
+  }
+
+  it('lists it as new, then added once opened', async function () {
+    const client = {
+      notifications: async () => ({
+        items: [
+          grant,
+          { ...grant, id: 'aud_old', requestId: 'aud_old', viewed: true }
+        ],
+        hasPending: true,
+        nextCursor: null
+      })
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    expect(text()).includes(grant.title)
+    expect(text()).includes('New')
+    expect(text()).includes('Added')
+    expect(text()).not.includes('Needs your approval')
+  })
+
+  it('leaves the team from the notification, and stops offering to', async function () {
+    let current = grant
+    const left: Array<[string, string]> = []
+    let changed = 0
+    let fail = true
+    const client = {
+      notification: async () => current,
+      viewNotification: async () => {},
+      leaveGroup: async (kind: string, id: string) => {
+        if (fail) {
+          fail = false
+          throw new Error('The last direct administrator stays')
+        }
+        left.push([kind, id])
+        current = { ...current, leave: null }
+        return { removed: true }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationDetailScreen
+        client={client}
+        id={grant.requestId}
+        onChanged={() => {
+          changed++
+        }}
+      />
+    )
+    expect(text()).includes(grant.title)
+    expect(text()).includes('Added')
+    expect(text()).not.includes('Accept invitation')
+    await press('Leave Demo Hawks')
+    expect(text()).includes('The last direct administrator stays')
+    expect(changed).equals(0)
+    await press('Leave Demo Hawks')
+    expect(left).deep.equals([['team', 'tem_hawks']])
+    expect(text()).includes('You left Demo Hawks.')
+    expect(text()).not.includes('Leave Demo Hawks')
+    expect(changed).equals(1)
+  })
+})

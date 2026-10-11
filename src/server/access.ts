@@ -7,7 +7,7 @@ import {
   type SqlBool
 } from 'kysely'
 
-import { type Role, ROLE_FLAGS, ROLES } from '../common/roles'
+import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { type OnePerson, onePerson } from './admin/people'
 import type { Database } from './db/database'
 
@@ -50,9 +50,11 @@ export interface VisibleScopes {
  */
 async function guardedPeople(
   db: Kysely<Database>,
-  userId: number
+  userId: number,
+  /** The asker as `onePerson` read them, when the caller already has it. */
+  known?: OnePerson
 ): Promise<OnePerson[]> {
-  const actor = await onePerson(db, userId)
+  const actor = known ?? (await onePerson(db, userId))
   const links = await db
     .selectFrom('user_links')
     .select(['related_user_id'])
@@ -318,11 +320,11 @@ export interface AdminScopes {
 export async function visibleScopes(
   db: Kysely<Database>,
   userId: number,
-  isAdmin: boolean
+  _isAdmin: boolean
 ): Promise<VisibleScopes> {
   const user = await db
     .selectFrom('users')
-    .select(['disabled_at', 'merged_into'])
+    .select(['is_admin', 'disabled_at', 'merged_into'])
     .where('id', '=', userId)
     .executeTakeFirst()
   if (user == null || user.disabled_at != null || user.merged_into != null)
@@ -356,7 +358,13 @@ export async function visibleScopes(
     .select(['league_id'])
     .where('user_id', 'in', actor.userIds)
     .execute()
-  const { member } = await inheritScopes(db, {
+
+  // Only actual memberships and true management roles supply private scopes.
+  // Competition links never widen a member's access, even when a host opens
+  // itself. The roles are carried down in the same pass as the membership,
+  // as `roleScopes` carries them.
+  const { member, ...roles } = await inheritScopes(db, {
+    ...(await directRoles(db, userId)),
     member: {
       leagueIds: new Set(leagueMemberships.map(row => row.league_id)),
       seasonIds: new Set(seasonMemberships.map(row => row.season_id)),
@@ -370,16 +378,14 @@ export async function visibleScopes(
   // as the child does: read from the child's memberships now, never written
   // down, so leaving a team takes it away again unless the guardian belongs
   // to it themselves.
-  const guarded = await guardedPeople(db, userId)
+  const guarded = await guardedPeople(db, userId, actor)
   const guardedIds = new Set(guarded.map(child => child.userId))
   const childRows = guarded.flatMap(child => child.userIds)
   for (const teamId of await teamsPlayedOnNow(db, childRows))
     teamIds.add(teamId)
 
-  // Only actual memberships and true management roles supply private scopes.
-  // Competition links never widen a member's access, even when a host opens
-  // itself.
-  const roles = await roleScopes(db, userId, isAdmin)
+  // Every role's sets, unioned. The implied roles are not added first: they
+  // only copy their givers' sets, which this union already holds.
   for (const role of ROLES) {
     for (const teamId of roles[role].teamIds) teamIds.add(teamId)
     memberSeasonIds.push(...roles[role].seasonIds)
@@ -387,7 +393,7 @@ export async function visibleScopes(
   return {
     teamIds,
     seasonIds: new Set(memberSeasonIds),
-    isAdmin: roles.isAdmin,
+    isAdmin: user.is_admin,
     guardedIds
   }
 }
@@ -525,9 +531,9 @@ export async function teamsUnder(
  *
  * The `scope_roles` rows, plus a team's owner or manager as that team's
  * administrator, so there is one place to look rather than two. Then each
- * role is carried downwards, the administrator's sets are added to every
- * flag's, and the scorekeeper's to the songkeeper's: a scorekeeper holds
- * everything a songkeeper does, never the other way round.
+ * role is carried downwards, and each role's sets are added to those of the
+ * roles it brings with it (`IMPLIED_ROLES`): the administrator's to every
+ * flag's, and the scorekeeper's to the songkeeper's.
  *
  * These are the roles a person may **use**. The roles they were **given**,
  * which is what a list of staff shows, are `givenRolesOnTeam`.
@@ -537,17 +543,35 @@ export async function roleScopes(
   userId: number,
   _isAdmin: boolean
 ): Promise<RoleScopes> {
-  const direct = Object.fromEntries(
-    ROLES.map(role => [role, emptyScopes()])
-  ) as Record<Role, ScopeSet>
   const user = await db
     .selectFrom('users')
     .select(['is_admin', 'disabled_at', 'merged_into'])
     .where('id', '=', userId)
     .executeTakeFirst()
   if (user == null || user.disabled_at != null || user.merged_into != null)
-    return { ...direct, isAdmin: false }
+    return { ...noRoles(), isAdmin: false }
 
+  const inherited = await inheritScopes(db, await directRoles(db, userId))
+  addImpliedRoles(inherited)
+  return { ...inherited, isAdmin: user.is_admin }
+}
+
+function noRoles(): Record<Role, ScopeSet> {
+  return Object.fromEntries(ROLES.map(role => [role, emptyScopes()])) as Record<
+    Role,
+    ScopeSet
+  >
+}
+
+/**
+ * Where this person was given each role, before it is carried down: the
+ * `scope_roles` rows, and a team's owner or manager as its administrator.
+ */
+async function directRoles(
+  db: Kysely<Database>,
+  userId: number
+): Promise<Record<Role, ScopeSet>> {
+  const direct = noRoles()
   const rows = await db
     .selectFrom('scope_roles')
     .select(['scope_type', 'scope_id', 'role'])
@@ -567,18 +591,21 @@ export async function roleScopes(
     .where('role', 'in', ['owner', 'manager'])
     .execute()
   for (const row of owned) direct.admin.teamIds.add(row.team_id)
+  return direct
+}
 
-  const inherited = await inheritScopes(db, direct)
-  for (const flag of ROLE_FLAGS) {
+/**
+ * Adds each role's sets, once carried down, to those of the roles it brings
+ * with it (`IMPLIED_ROLES`), in place.
+ */
+function addImpliedRoles(inherited: Record<Role, ScopeSet>): void {
+  for (const [flag, giver] of ROLES.flatMap(giver =>
+    IMPLIED_ROLES[giver].map(flag => [flag, giver] as const)
+  )) {
     for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const) {
-      for (const id of inherited.admin[key]) inherited[flag][key].add(id)
+      for (const id of inherited[giver][key]) inherited[flag][key].add(id)
     }
   }
-  for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const) {
-    for (const id of inherited.scorekeeper[key])
-      inherited.songkeeper[key].add(id)
-  }
-  return { ...inherited, isAdmin: user.is_admin }
 }
 
 /**

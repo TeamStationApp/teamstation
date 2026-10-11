@@ -34,6 +34,43 @@ export type Role = 'admin' | RoleFlag
 /** Every role, administrator first, in the order the app lists them. */
 export const ROLES: readonly Role[] = ['admin', ...ROLE_FLAGS]
 
+/**
+ * What holding a role at a level also gives at that level: an administrator
+ * holds every flag, and a scorekeeper everything a songkeeper does, never the
+ * other way round. `roleScopes` widens what a person may use by this, and a
+ * person's profile shows the roles it covers as included rather than offer
+ * them again.
+ */
+export const IMPLIED_ROLES: Readonly<Record<Role, readonly RoleFlag[]>> = {
+  admin: ROLE_FLAGS,
+  coach: [],
+  assistant: [],
+  scorekeeper: ['songkeeper'],
+  songkeeper: [],
+  videographer: []
+}
+
+/**
+ * The roles these given roles bring with them at the same level, each with
+ * the role that brings it: the first in `ROLES` order, so an administrator
+ * who is also a scorekeeper holds Songkeeper with Admin. A role brought by
+ * another is listed whether or not it was also given.
+ */
+export function impliedRoles(given: readonly Role[]): Map<RoleFlag, Role> {
+  const implied = new Map<RoleFlag, Role>()
+  for (const giver of ROLES) {
+    if (!given.includes(giver)) continue
+    const reached = [...IMPLIED_ROLES[giver]]
+    while (reached.length > 0) {
+      const flag = reached.shift()!
+      if (flag === giver || implied.has(flag)) continue
+      implied.set(flag, giver)
+      reached.push(...IMPLIED_ROLES[flag])
+    }
+  }
+  return implied
+}
+
 export const asRoleFlag: Cleaner<RoleFlag> = asLiteral(...ROLE_FLAGS)
 export const asRole: Cleaner<Role> = asLiteral('admin', ...ROLE_FLAGS)
 

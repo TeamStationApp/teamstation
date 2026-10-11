@@ -13,7 +13,6 @@ import type {
   GameSummary,
   PitchingRow,
   RosterEntry,
-  RosterSection,
   StandingsRow,
   TeamStationClient,
   TeamSummary
@@ -24,13 +23,11 @@ import {
   Badge,
   Card,
   Emblem,
-  flagLabel,
   GameRow,
   HANDOFF_RAMP,
   HandoffView,
   Icon,
   initialsOf,
-  ListRow,
   ManageGear,
   PillTabs,
   ScheduleRow,
@@ -49,8 +46,12 @@ import {
   WideTable
 } from '../components'
 import { FollowButton } from '../components/FollowButton'
-import type { StringKey } from '../locales/en_US'
-import { lstrings, sprintf, videoCountLabel } from '../locales/strings'
+import {
+  inheritedPill,
+  PeopleList,
+  peopleSubtitle
+} from '../components/PeopleList'
+import { lstrings, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -106,6 +107,17 @@ export interface TeamScreenProps {
     name: string,
     from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
+  /**
+   * Somebody on the roster who is not a player, opened as their person
+   * profile from this team (its canonical id): offered only with
+   * `managesPeople`.
+   */
+  onOpenPerson?: (userId: number, name: string, teamId: string) => void
+  /**
+   * The viewer administers, coaches or assists this team: every row of the
+   * roster opens, a player's page or anybody else's profile.
+   */
+  managesPeople?: boolean
   /** Which section to open on, from the address. */
   initialTab?: string
   /**
@@ -157,6 +169,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     team,
     onOpenGame,
     onOpenPlayer,
+    onOpenPerson,
+    managesPeople = false,
     initialTab,
     onTab,
     onManage,
@@ -545,66 +559,26 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               {roster.length === 0 && (
                 <Empty text="Nobody has been added to this team yet." />
               )}
-              {/*
-            Admins, staff, players, family, spectators and followers. The
-            server decides who is in which section; this only draws them in
-            order.
-          */}
-              {ROSTER_SECTIONS.map(([section, heading]) => {
-                const people = roster.filter(
-                  person => person.section === section
-                )
-                if (people.length === 0) return null
-                return (
-                  <View key={section} style={styles.section}>
-                    <SectionHeader
-                      title={lstrings[heading]}
-                      note={String(people.length)}
-                    />
-                    <Card>
-                      {people.map((person, index) => (
-                        <View key={person.userId}>
-                          {index > 0 && <View style={styles.divider} />}
-                          <ListRow
-                            title={person.shortName}
-                            subtitle={rosterSubtitle(person)}
-                            emblem={initialsOf(person.shortName)}
-                            emblemUri={person.avatarUrl}
-                            emblemShape="circle"
-                            badgeLabel={inheritedPill(person)}
-                            badgeTone="neutral"
-                            trailing={
-                              // An empty string is not a jersey number. Without
-                              // this the row reads as a bare `#`.
-                              person.jersey == null ||
-                              person.jersey.trim() === ''
-                                ? undefined
-                                : `#${person.jersey.trim()}`
-                            }
-                            onPress={
-                              // Only a player has a page to open: anybody
-                              // else here, staff and family who do not play,
-                              // would answer `404`, as a player's page does
-                              // to a non-member.
-                              onOpenPlayer == null ||
-                              !person.isPlayer ||
-                              nonMemberView
-                                ? undefined
-                                : () => {
-                                    onOpenPlayer(
-                                      person.userId,
-                                      person.shortName,
-                                      { onTeam: team.id }
-                                    )
-                                  }
-                            }
-                          />
-                        </View>
-                      ))}
-                    </Card>
-                  </View>
-                )
-              })}
+              <PeopleList
+                people={roster}
+                onOpen={person => {
+                  // A player has a page, for anybody who may see it: a
+                  // non-member is answered `404` there, so their rows open
+                  // nothing. Anybody else opens their profile, for the
+                  // team's administrators, coaches and assistants.
+                  if (person.isPlayer && !nonMemberView && onOpenPlayer != null)
+                    return () => {
+                      onOpenPlayer(person.userId, person.shortName, {
+                        onTeam: team.id
+                      })
+                    }
+                  if (managesPeople && onOpenPerson != null)
+                    return () => {
+                      onOpenPerson(person.userId, person.shortName, team.id)
+                    }
+                  return undefined
+                }}
+              />
             </>
           )}
 
@@ -698,44 +672,9 @@ function Band(props: {
   )
 }
 
-/** The roster's sections, in order, each with its heading. */
-const ROSTER_SECTIONS: ReadonlyArray<readonly [RosterSection, StringKey]> = [
-  ['admin', 'roster_admins'],
-  ['staff', 'roster_staff'],
-  ['player', 'roster_players'],
-  ['family', 'roster_family'],
-  ['spectator', 'roster_spectators'],
-  ['follower', 'roster_followers']
-]
-
-/**
- * The line under a roster name: a player's positions, and for an admin or
- * staff the roles they hold, `Coach · Scorekeeper`.
- */
-export function rosterSubtitle(person: RosterEntry): string | undefined {
-  const parts =
-    person.section === 'admin' || person.section === 'staff'
-      ? person.staffRoles.map(flagLabel)
-      : person.positions
-  return parts.length > 0 ? parts.join(' · ') : undefined
-}
-
-/**
- * The pill on somebody given their place by a season or league above the
- * team, naming the highest one: `Season coach`, `League admin`, and for a
- * member of the season or league `Season spectator`.
- */
-export function inheritedPill(person: RosterEntry): string | undefined {
-  const from = person.inheritedFrom
-  if (from == null) return undefined
-  return sprintf(
-    lstrings.roster_inherited_pill,
-    from.level === 'league'
-      ? lstrings.roster_level_league
-      : lstrings.roster_level_season,
-    lstrings[`roster_role_${from.role}`]
-  )
-}
+/** The line under a roster name; see `peopleSubtitle`. */
+export const rosterSubtitle = peopleSubtitle
+export { inheritedPill }
 
 /** `1st Place`, `2nd Place`, `11th Place`. */
 function placeLabel(place: number): string {

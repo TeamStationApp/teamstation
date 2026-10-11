@@ -21,15 +21,6 @@ export interface RolesModalProps {
    */
   inherited?: Partial<Record<Role, string>>
   busy?: boolean
-  /**
-   * A line under the title saying what Save does when it is not a plain
-   * change, such as an invitation the roles wait on.
-   */
-  notice?: string
-  /** What Save says, when it does more than save. */
-  saveLabel?: string
-  /** Why the last Save did not happen, shown where the person is looking. */
-  error?: string
   onSave: (roles: { admin: boolean; flags: RoleFlag[] }) => void
   onClose: () => void
 }
@@ -57,9 +48,6 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
     held,
     inherited = {},
     busy,
-    notice,
-    saveLabel = lstrings.role_save,
-    error,
     onSave,
     onClose
   } = props
@@ -143,7 +131,6 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
           <Text style={styles.detail}>
             {sprintf(lstrings.role_scope, scopeName)}
           </Text>
-          {notice != null && <Text style={styles.notice}>{notice}</Text>}
 
           {rows.map(row => (
             <View key={row.role} style={styles.choice}>
@@ -165,9 +152,8 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
             </View>
           ))}
 
-          {error != null && <Text style={styles.error}>{error}</Text>}
           <Button
-            label={saveLabel}
+            label={lstrings.role_save}
             busy={busy}
             disabled={!changed}
             onPress={() => {
@@ -241,18 +227,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.8125),
     color: theme.secondaryTextColor
-  },
-  notice: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.8125),
-    fontWeight: '600',
-    color: theme.primaryTextColor
-  },
-  error: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.8125),
-    fontWeight: '600',
-    color: theme.warningColor
   },
   fixed: {
     fontFamily: theme.semiBoldTextFont,

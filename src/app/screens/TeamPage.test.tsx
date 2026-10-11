@@ -443,7 +443,6 @@ describe('gear-only team actions', () => {
       <TeamSettingsActions
         detail={detail({ canManage: true })}
         onLink={v => seen.push(v)}
-        onManage={v => seen.push(v)}
         onCreateGame={v => seen.push(v)}
         onCreateExternal={v => seen.push(v)}
         onPromote={v => seen.push(v)}
@@ -452,10 +451,11 @@ describe('gear-only team actions', () => {
     for (const label of [
       'Join a Season',
       'Create Game',
-      'Create placeholder team',
-      'Manage people and roles'
+      'Create placeholder team'
     ])
       await press(label)
+    // People are added from Settings and managed from the roster now.
+    expect(document.body.textContent).not.includes('Manage people')
     expect(seen).deep.equals([
       {
         subject: { kind: 'team', id: 'canonical' },
@@ -463,7 +463,7 @@ describe('gear-only team actions', () => {
         relationship: 'participation',
         direction: 'parents'
       },
-      ...Array(3).fill({ kind: 'team', id: 'canonical' })
+      ...Array(2).fill({ kind: 'team', id: 'canonical' })
     ])
   })
   it('offers placeholder promotion with custody and hides unavailable/unauthorized actions', async () => {

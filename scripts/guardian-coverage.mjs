@@ -38,7 +38,6 @@ const appSuites = [
   'src/app/screens/fullName.test.tsx',
   'src/app/screens/teamSchedule.test.tsx',
   'src/app/screens/teamRoster.test.tsx',
-  'src/app/screens/ManageScreen.test.tsx',
   'src/app/screens/PlayerScreen.test.tsx',
   'src/app/screens/PlayerSettingsTab.test.tsx',
   'src/app/App.teamRoutes.test.tsx',
@@ -55,7 +54,12 @@ const appSuites = [
   'src/app/screens/HomeScreen.recentGame.test.tsx',
   'src/app/screens/heroFollow.test.tsx',
   'src/app/screens/creationUi.test.tsx',
-  'src/app/screens/homeAddCreate.test.tsx'
+  'src/app/screens/homeAddCreate.test.tsx',
+  'src/app/screens/PersonProfileScreen.test.tsx',
+  'src/app/screens/GroupSettingsScreen.test.tsx',
+  'src/app/screens/SeasonPage.test.tsx',
+  'src/app/screens/LeaguePage.test.tsx',
+  'src/app/screens/SeasonScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

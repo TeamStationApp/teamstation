@@ -120,10 +120,16 @@ export type Route =
   | { name: 'season'; seasonId: string; tab?: string; when?: When }
   | { name: 'league'; leagueId: string }
   /**
-   * The page behind the gear on a team, season or league card: who can see
-   * this, who may change it, and the invite links that let more people in.
+   * Somebody on a team's, season's or league's people list, as that level
+   * sees them: `/teams/:id/people/:userId` and the same for a season or a
+   * league.
    */
-  | { name: 'manage'; scopeKind: 'league' | 'season' | 'team'; scopeId: string }
+  | {
+      name: 'person'
+      kind: 'league' | 'season' | 'team'
+      id: string
+      userId: string
+    }
   | {
       name: 'game'
       gameId: string
@@ -195,6 +201,25 @@ function present<T extends object>(fields: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(fields).filter(([, value]) => value !== undefined)
   ) as Partial<T>
+}
+
+/**
+ * `/teams/:id/people/:userId`, a person's profile from that team (or season,
+ * or league). The page that used to be at `/teams/:id/manage` is gone: its
+ * address opens the group's Settings, where adding people now is. Anything
+ * else under a group opens the group.
+ */
+function peopleRoute(
+  kind: 'league' | 'season' | 'team',
+  id: string,
+  parts: string[]
+): Route {
+  if (parts[2] === 'people' && parts[3] != null && parts[3] !== '')
+    return { name: 'person', kind, id, userId: parts[3] }
+  if (parts[2] === 'manage') return { name: 'groupSettings', kind, id }
+  if (kind === 'team') return { name: 'team', teamId: id }
+  if (kind === 'season') return { name: 'season', seasonId: id }
+  return { name: 'league', leagueId: id }
 }
 
 /** `/games/g1?video=v1&t=734` → the game, the video, and where in it. */
@@ -366,15 +391,11 @@ export function parseRoute(path: string, search = ''): Route {
     }
     case 'teams':
       if (id == null) return { name: 'home' }
-      if (parts[2] === 'manage') {
-        return { name: 'manage', scopeKind: 'team', scopeId: id }
-      }
+      if (parts[2] != null) return peopleRoute('team', id, parts)
       return { name: 'team', teamId: id, tab: query.get('tab') ?? undefined }
     case 'seasons':
       if (id == null) return { name: 'home' }
-      if (parts[2] === 'manage') {
-        return { name: 'manage', scopeKind: 'season', scopeId: id }
-      }
+      if (parts[2] != null) return peopleRoute('season', id, parts)
       return {
         name: 'season',
         seasonId: id,
@@ -386,9 +407,7 @@ export function parseRoute(path: string, search = ''): Route {
       }
     case 'leagues':
       if (id == null) return { name: 'home' }
-      if (parts[2] === 'manage') {
-        return { name: 'manage', scopeKind: 'league', scopeId: id }
-      }
+      if (parts[2] != null) return peopleRoute('league', id, parts)
       return { name: 'league', leagueId: id }
     case 'games': {
       if (id == null) return { name: 'home' }
@@ -559,8 +578,8 @@ export function routePath(route: Route): string {
     }
     case 'league':
       return `/leagues/${route.leagueId}`
-    case 'manage':
-      return `/${route.scopeKind}s/${route.scopeId}/manage`
+    case 'person':
+      return `/${route.kind}s/${route.id}/people/${route.userId}`
     case 'game': {
       if (route.tab === 'score') return `/games/${route.gameId}/score-game`
       const query = new URLSearchParams()

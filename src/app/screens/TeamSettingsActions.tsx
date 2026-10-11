@@ -11,7 +11,6 @@ export interface TeamSettingsActionsProps {
   detail: GroupDetail
   disabled?: boolean
   onLink: (choice: GroupLinkChoice) => void
-  onManage?: (group: GroupRef) => void
   onCreateGame?: (group: GroupRef) => void
   onCreateExternal?: (custodian: GroupRef) => void
   onPromote?: (group: GroupRef) => void
@@ -21,7 +20,6 @@ export function TeamSettingsActions({
   detail,
   disabled = false,
   onLink,
-  onManage,
   onCreateGame,
   onCreateExternal,
   onPromote
@@ -68,16 +66,6 @@ export function TeamSettingsActions({
           kind="secondary"
           onPress={() => {
             onCreateExternal(ref)
-          }}
-        />
-      )}
-      {!detail.group.external && onManage != null && (
-        <Button
-          label="Manage people and roles"
-          disabled={disabled}
-          kind="secondary"
-          onPress={() => {
-            onManage(ref)
           }}
         />
       )}

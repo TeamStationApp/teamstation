@@ -6,6 +6,7 @@ import type { LevelPeople, PersonProfile, RosterEntry } from '../../common/api'
 import { makeId } from '../../common/ids'
 import type { GroupDetail } from '../../common/publicGroups'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { canKeepSongs, roleScopes } from '../access'
 import { createSession } from '../auth/sessions'
 import { rolesAt } from '../invites/people'
 
@@ -432,6 +433,60 @@ describe('people at a team, a season and a league', function () {
       expect((await role('DELETE', PLAYER, 'member', MEMBER)).status).equals(
         404
       )
+    })
+
+    it('takes Songkeeper away with Scorekeeper unless it was given as well', async () => {
+      const KEEPER = 208
+      const db = f.h.db
+      await db
+        .insertInto('users')
+        .values({
+          id: KEEPER,
+          legacyId: `usr_people_${KEEPER}`,
+          display_name: 'Kim Keeper',
+          first_name: 'Kim',
+          last_name: 'Keeper',
+          login_enabled: true
+        })
+        .execute()
+      await db
+        .insertInto('user_emails')
+        .values({
+          id: makeId('userEmail'),
+          user_id: KEEPER,
+          email: `people${KEEPER}@example.com`,
+          is_primary: true,
+          verified_at: new Date()
+        })
+        .execute()
+      await db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: KEEPER,
+          team_id: f.teamA,
+          role: 'member',
+          is_player: false
+        })
+        .execute()
+      const keepsSongs = async (): Promise<boolean> =>
+        canKeepSongs(await roleScopes(db, KEEPER, false), f.teamA)
+      expect(
+        (await role('PUT', KEEPER, 'scorekeeper', COACH)).body.roles
+      ).deep.equals(['scorekeeper'])
+      expect(await keepsSongs()).equals(true)
+      expect(
+        (await role('DELETE', KEEPER, 'scorekeeper', COACH)).body.roles
+      ).deep.equals([])
+      expect(await keepsSongs()).equals(false)
+      // Given both, Songkeeper outlasts Scorekeeper.
+      await role('PUT', KEEPER, 'songkeeper', COACH)
+      await role('PUT', KEEPER, 'scorekeeper', COACH)
+      expect(
+        (await role('DELETE', KEEPER, 'scorekeeper', COACH)).body.roles
+      ).deep.equals(['songkeeper'])
+      expect(await keepsSongs()).equals(true)
+      expect((await role('DELETE', KEEPER, 'member', COACH)).status).equals(200)
     })
   })
 

@@ -9,6 +9,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { LevelPeopleTab } from './LevelPeopleTab'
 import { inheritedPill, TeamScreen } from './TeamScreen'
 
 /**
@@ -65,7 +66,7 @@ const everybody: RosterEntry[] = [
     jersey: '7',
     positions: ['SS', '2B']
   }),
-  entry(106, 'Tim R', { section: 'family' }),
+  entry(106, 'Tim R', { section: 'family', guardianOf: ['Avery S'] }),
   entry(208, 'Hank M', { section: 'spectator' }),
   entry(250, 'Lou L', {
     section: 'spectator',
@@ -78,7 +79,10 @@ const everybody: RosterEntry[] = [
   entry(207, 'Grace H', { section: 'follower' })
 ]
 
-async function render(roster: RosterEntry[]): Promise<number[]> {
+async function render(
+  roster: RosterEntry[],
+  manager?: { people: number[] }
+): Promise<number[]> {
   const opened: number[] = []
   const client = {
     teamGames: async () => [],
@@ -110,6 +114,11 @@ async function render(roster: RosterEntry[]): Promise<number[]> {
           onOpenGame={() => undefined}
           onOpenPlayer={userId => {
             opened.push(userId)
+          }}
+          managesPeople={manager != null}
+          onOpenPerson={(userId, _name, teamId) => {
+            expect(teamId).equals('tem_hawks')
+            manager?.people.push(userId)
           }}
         />
       </ThemeProvider>
@@ -202,10 +211,10 @@ describe('a team’s roster in sections', function () {
     expect(row('Ichiro')).includes('Coach')
     expect(row('Avery S')).includes('SS · 2B')
     expect(row('Avery S')).includes('#7')
-    // A plain admin and family have nothing under the name: initials, name,
-    // and the pill if any.
+    // A plain admin has nothing under the name: initials, name, and the pill
+    // if any. A family member has the players here they guard.
     expect(row('Babe R')).equals('BRBabe RLeague admin')
-    expect(row('Tim R')).equals('TRTim R')
+    expect(row('Tim R')).equals('TRTim RParent/guardian of Avery S')
     // A player's row opens the player.
     await act(async () => {
       rowNode('Avery S').click()
@@ -275,5 +284,117 @@ describe('a team’s roster in sections', function () {
     )
     expect(pill({ level: 'season', role: 'member' })).equals('Season spectator')
     expect(pill({ level: 'league', role: 'member' })).equals('League spectator')
+  })
+
+  it('opens every row for the team’s administrators, coaches and assistants: a player’s page, anybody else’s profile', async function () {
+    const people: number[] = []
+    const opened = await render(everybody, { people })
+    const pressable = everybody.filter(
+      person => rowNode(person.shortName).getAttribute('role') === 'button'
+    )
+    expect(pressable).length(everybody.length)
+    for (const name of ['Avery S', 'Tim R', 'Babe R', 'Lou L', 'Grace H'])
+      await act(async () => {
+        rowNode(name).click()
+        await delay(10)
+      })
+    expect(opened).deep.equals([201])
+    expect(people).deep.equals([106, 101, 250, 207])
+  })
+})
+
+describe('a season’s and a league’s People tab', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  async function tab(
+    kind: 'season' | 'league',
+    manages: boolean,
+    answer?: RosterEntry[]
+  ): Promise<{ players: unknown[]; people: number[] }> {
+    const players: unknown[] = []
+    const people: number[] = []
+    const client = {
+      levelPeople: async (asked: string, id: string) => {
+        if (answer == null) throw new Error('People could not load here')
+        expect([asked, id]).deep.equals([kind, 'lvl_one'])
+        return { people: answer, manages, admin: false }
+      }
+    } as unknown as TeamStationClient
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <LevelPeopleTab
+            client={client}
+            kind={kind}
+            id="lvl_one"
+            onOpenPlayer={(userId, name, from) => {
+              players.push([userId, name, from])
+            }}
+            onOpenPerson={userId => {
+              people.push(userId)
+            }}
+          />
+        </ThemeProvider>
+      )
+      await delay(10)
+    })
+    return { players, people }
+  }
+
+  const levelPeople = [
+    entry(101, 'Babe R', { section: 'admin' }),
+    entry(201, 'Avery S', {
+      section: 'player',
+      isPlayer: true,
+      teamNames: ['Demo Hawks', 'Demo Owls']
+    }),
+    entry(106, 'Tim R', { section: 'family' }),
+    entry(250, 'Lou L', {
+      section: 'spectator',
+      inheritedFrom: { level: 'league', role: 'member' }
+    })
+  ]
+
+  it('lists the season’s people in sections, a player with their teams, and opens them for a manager', async function () {
+    const { players, people } = await tab('season', true, levelPeople)
+    expect(headings().filter(at => at >= 0)).length(4)
+    expect(row('Avery S')).includes('Demo Hawks · Demo Owls')
+    expect(row('Lou L')).includes('League spectator')
+    for (const name of ['Avery S', 'Tim R', 'Babe R'])
+      await act(async () => {
+        rowNode(name).click()
+        await delay(10)
+      })
+    expect(players).deep.equals([[201, 'Avery S', { seasonId: 'lvl_one' }]])
+    expect(people).deep.equals([106, 101])
+  })
+
+  it('opens only players for anybody else, and says so when nobody or nothing is there', async function () {
+    const { players, people } = await tab('league', false, levelPeople)
+    expect(rowNode('Tim R').getAttribute('role')).not.equals('button')
+    await act(async () => {
+      rowNode('Avery S').click()
+      await delay(10)
+    })
+    expect(players).deep.equals([[201, 'Avery S', undefined]])
+    expect(people).deep.equals([])
+    await act(async () => {
+      root?.unmount()
+    })
+    await tab('league', false, [])
+    expect(text()).includes('Nobody here yet.')
+    await act(async () => {
+      root?.unmount()
+    })
+    await tab('season', false)
+    expect(text()).includes('People could not load here')
   })
 })
