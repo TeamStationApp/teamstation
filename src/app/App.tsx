@@ -1577,6 +1577,9 @@ function Shell(props: AppProps): React.ReactElement {
             scoringRefresh.current?.()
         }}
         roles={myRoles}
+        viewer={
+          signedInAs == null ? undefined : { userId: signedInAs, isAdmin }
+        }
         walkUp={{
           resolve: resolveWalkUp,
           onPick:

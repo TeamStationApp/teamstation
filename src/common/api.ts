@@ -611,6 +611,13 @@ export const asPlayerDetail = asObject({
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
+  /**
+   * How the viewer may invite a guardian of this person: `guardian`, as one
+   * of their guardians, with no sending team; `team`, from a team the viewer
+   * coaches that the person plays on, while they have no guardian; `null`,
+   * not at all.
+   */
+  guardianInviteAs: asOptional(asNullable(asLiteral('guardian', 'team')), null),
   avatarUrl: asOptional(asNullable(asString), null),
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),

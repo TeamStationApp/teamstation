@@ -11,7 +11,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { rosterFullName, shortName } from '../../common/names'
-import { keepsSongs, managesRoster } from '../../common/roles'
+import { coachesTeam, keepsSongs, managesRoster } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
@@ -34,6 +34,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
 import { WalkUpTab } from '../walkup/WalkUpTab'
 import { battingLine, exactDateTime } from './format'
+import { GuardianInvite, GuardianRequest } from './PlayerGuardians'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
 import { PlayerTeamsTab } from './PlayerTeamsTab'
 import { battingColumns, pitchingColumns, playerStats } from './statColumns'
@@ -67,6 +68,11 @@ export interface PlayerScreenProps {
   roles?: MyRoles
   /** After Settings saves the player on `forTeam`, their roster entry. */
   onSettingsSaved?: (entry: RosterEntry) => void
+  /**
+   * Who is signed in, if anybody. Somebody who is not the player and has no
+   * say over them yet is offered "Request to be a guardian".
+   */
+  viewer?: { userId: number; isAdmin: boolean }
   /** The Walk-up tab. The song itself is read from `forTeam`'s roster. */
   walkUp?: {
     /** Finds the song on this phone, for Preview. */
@@ -154,6 +160,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onOpenTeam,
     forTeam,
     roles,
+    viewer,
     walkUp,
     music = webMusic
   } = props
@@ -258,6 +265,28 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
         : guardian === true || keepsSongs(roles, forTeam)
   const settingsShown = canManage === true
   const settingsPending = canManage == null && tab === 'settings'
+  // Who may invite a guardian is the server's to say, since it turns on
+  // whether the player has one yet: a guardian invites another from Settings
+  // wherever it opens, in their own name; a team's admin, coach or assistant
+  // invites from that team's Settings, only while the player has none.
+  const inviteAs = player?.guardianInviteAs ?? null
+  const invitesGuardians =
+    inviteAs === 'guardian' ||
+    (inviteAs === 'team' && forTeam != null && coachesTeam(roles, forTeam))
+  // Anybody else signed in who can see the player — not the player,
+  // not a guardian, and with no say over them on any team they play on now
+  // (a coach of one they left has none) — may ask to be one, once the player
+  // and the viewer's roles are both known.
+  const asksToGuard =
+    viewer != null &&
+    !viewer.isAdmin &&
+    roles != null &&
+    player != null &&
+    guardian === false &&
+    viewer.userId !== player.userId &&
+    viewer.userId !== Number(userId) &&
+    !coachesTeam(roles, forTeam) &&
+    !player.teams.some(team => team.current && coachesTeam(roles, team.teamId))
   const walkUpShown = canKeepSongs === true
   const tabs = [
     ...TABS,
@@ -314,6 +343,9 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     tab === 'settings' && rosterManager === true && !privateNameDenied
       ? (privateName ?? publicName ?? title ?? '')
       : (publicName ?? (privateNameDenied ? '' : title) ?? '')
+  // What a guardian invitation or request names the player by: the short
+  // name, even where a roster manager's header shows the whole one.
+  const shortShown = publicName ?? (privateNameDenied ? '' : title) ?? ''
   const { headerHeight } = useHeaderSlot()
   const handoff = useHandoff(headerHeight)
   const progress = handoff.progress
@@ -472,6 +504,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
             */}
             {handedness != null && (
               <Text style={styles.playerMeta}>{handedness}</Text>
+            )}
+            {asksToGuard && (
+              <GuardianRequest
+                client={client}
+                playerUserId={player.userId}
+                playerName={shortShown}
+                viewerId={viewer.userId}
+              />
             )}
           </View>
         </View>
@@ -637,6 +677,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                       }
                 )
               }}
+            />
+          )}
+          {!settingsPending && invitesGuardians && (
+            <GuardianInvite
+              client={client}
+              teamId={inviteAs === 'team' ? forTeam : undefined}
+              playerUserId={player?.userId ?? Number(userId)}
+              playerName={shortShown}
             />
           )}
         </View>

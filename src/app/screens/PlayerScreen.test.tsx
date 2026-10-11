@@ -12,6 +12,7 @@ import {
   type PlayerTeam,
   type TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import type {
   PersonSettings,
   PlayerSettings
@@ -190,6 +191,7 @@ function playerClient(
     teams?: PlayerTeam[]
     asked?: Asked
     pages?: (asked: Record<string, unknown>) => PlayerHighlights
+    inviteAs?: 'guardian' | 'team' | null
   } = {}
 ): TeamStationClient {
   return {
@@ -199,7 +201,8 @@ function playerClient(
         name: 'Jordan P',
         bats: 'right',
         throws: 'right',
-        teams: options.teams ?? []
+        teams: options.teams ?? [],
+        guardianInviteAs: options.inviteAs ?? null
       }),
     playerHighlights: async (
       _userId: string,
@@ -1154,5 +1157,292 @@ describe('a player’s Walk-up address, through the app', function () {
     expect(selectedTab()).equals('Videos')
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
     expect(routePath(currentRoute())).equals('/players/7?onTeam=t1')
+  })
+})
+
+/** What the page sent to `POST /relationship-requests`. */
+type Sent = Array<Record<string, unknown>>
+
+/**
+ * The player's client, with invitations answered by `answer`, and the
+ * viewer invited to invite a guardian as `inviteAs` says.
+ */
+function guardianClient(
+  sent: Sent,
+  answer: (body: Record<string, unknown>) => Promise<unknown> = async () => ({
+    id: 'req_1',
+    status: 'pending'
+  }),
+  teams: PlayerTeam[] = [hawks],
+  inviteAs: 'guardian' | 'team' | null = 'team'
+): TeamStationClient {
+  const client = playerClient([], [], { teams, inviteAs })
+  client.inviteRelationship = (async (body: Record<string, unknown>) => {
+    sent.push(body)
+    return await answer(body)
+  }) as unknown as TeamStationClient['inviteRelationship']
+  return client
+}
+
+async function typeInto(label: string, value: string): Promise<void> {
+  const input = document.querySelector<HTMLInputElement>(
+    `input[aria-label="${label}"]`
+  )
+  expect(input, label).not.equals(null)
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(input, value)
+    input!.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await delay(10)
+  })
+}
+
+const stranger = { userId: 100, isAdmin: false }
+const requestButton = (): HTMLElement | undefined =>
+  find('Request to be a guardian') ?? find('Guardian request sent')
+
+describe('inviting a guardian from a player’s Settings', function () {
+  it('is offered to a guardian anywhere, and beside the team to its staff while the server allows it', async function () {
+    for (const [props, inviteAs, shown] of [
+      [{ forTeam: 't1', roles: roles({ t1: ['coach'] }) }, 'team', true],
+      [{ forTeam: 't1', roles: roles({ t1: ['assistant'] }) }, 'team', true],
+      [{ forTeam: 't1', roles: roles({ t1: ['admin'] }) }, 'team', true],
+      // Once the player has a guardian, the staff invite nobody.
+      [{ forTeam: 't1', roles: roles({ t1: ['coach'] }) }, null, false],
+      // From Home there is no team to send it from.
+      [{ forTeam: undefined, roles: roles({ t1: ['coach'] }) }, 'team', false],
+      // A guardian invites another beside a team and from Home alike.
+      [{ forTeam: 't1', roles: roles({}, [7]) }, 'guardian', true],
+      [{ forTeam: undefined, roles: roles({}, [7]) }, 'guardian', true]
+    ] as const) {
+      const about = JSON.stringify({ ...props, inviteAs })
+      await render(
+        <PlayerScreen
+          client={guardianClient([], undefined, [hawks], inviteAs)}
+          userId="7"
+          initialTab="settings"
+          {...props}
+        />
+      )
+      expect(selectedTab(), about).equals('Settings')
+      expect(text().includes('Invite a guardian'), about).equals(shown)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('sends the team’s invitation, retries under the same key and confirms', async function () {
+    const sent: Sent = []
+    let fail = true
+    await render(
+      <PlayerScreen
+        client={guardianClient(sent, async () => {
+          if (fail) throw new Error('Network request failed')
+          return { id: 'req_1', status: 'pending' }
+        })}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={coach}
+      />
+    )
+    expect(text()).includes(
+      'A guardian sees every team Jordan P plays on and manages their number'
+    )
+    await typeInto('E-mail address', ' Parent@Example.com ')
+    await press('Send invitation')
+    expect(text()).includes('Network request failed')
+    fail = false
+    await press('Send invitation')
+    expect(sent).has.length(2)
+    const [first, second] = sent
+    expect(first).deep.include({
+      kind: 'guardian',
+      playerUserId: 7,
+      guardian: { email: 'parent@example.com' },
+      sender: { kind: 'team', id: 't1' }
+    })
+    expect(first.idempotencyKey).a('string')
+    expect(second).deep.equals(first)
+    expect(text()).includes(
+      'An invitation is on its way to Parent@Example.com.'
+    )
+    expect(text()).not.includes('Network request failed')
+    // The next invitation is a new send, with a key of its own.
+    await typeInto('E-mail address', 'other@example.com')
+    await press('Send invitation')
+    expect(sent[2].idempotencyKey).not.equals(first.idempotencyKey)
+    expect(text()).includes('An invitation is on its way to other@example.com.')
+  })
+
+  it('sends a guardian’s invitation in their own name, with no team, wherever it opens', async function () {
+    for (const forTeam of ['t1', undefined]) {
+      const sent: Sent = []
+      await render(
+        <PlayerScreen
+          client={guardianClient(sent, undefined, [hawks], 'guardian')}
+          userId="7"
+          forTeam={forTeam}
+          initialTab="settings"
+          roles={roles({}, [7])}
+        />
+      )
+      await typeInto('E-mail address', 'Second@Example.com')
+      await press('Send invitation')
+      expect(sent, String(forTeam)).has.length(1)
+      expect(sent[0]).deep.include({
+        kind: 'guardian',
+        playerUserId: 7,
+        guardian: { email: 'second@example.com' }
+      })
+      expect(sent[0]).not.has.property('sender')
+      expect(text()).includes(
+        'An invitation is on its way to Second@Example.com.'
+      )
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('sends nothing for an empty address', async function () {
+    const sent: Sent = []
+    await render(
+      <PlayerScreen
+        client={guardianClient(sent)}
+        userId="7"
+        forTeam="t1"
+        initialTab="settings"
+        roles={coach}
+      />
+    )
+    await typeInto('E-mail address', '   ')
+    await press('Send invitation')
+    expect(sent).deep.equals([])
+  })
+})
+
+describe('asking to be a player’s guardian', function () {
+  it('is offered to somebody signed in with no say over the player', async function () {
+    for (const [props, shown] of [
+      [{ viewer: stranger, roles: roles({}) }, true],
+      [{ viewer: stranger, roles: roles({ t1: ['scorekeeper'] }) }, true],
+      [{ viewer: stranger, roles: roles({}), forTeam: 't1' }, true],
+      // Signed out, or the roles not known yet.
+      [{ viewer: undefined, roles: roles({}) }, false],
+      [{ viewer: stranger, roles: undefined }, false],
+      // The player themselves, and their guardian.
+      [{ viewer: { userId: 7, isAdmin: false }, roles: roles({}) }, false],
+      [{ viewer: stranger, roles: roles({}, [7]) }, false],
+      // Their guardian from an address made before a merge, which names a
+      // row since closed into 7.
+      [{ viewer: stranger, roles: roles({}, [7]), userId: '3' }, false],
+      // Their coaches, beside the team or from Home, and a site admin.
+      [
+        { viewer: stranger, roles: roles({ t1: ['coach'] }), forTeam: 't1' },
+        false
+      ],
+      [{ viewer: stranger, roles: roles({ t1: ['assistant'] }) }, false],
+      [{ viewer: { userId: 100, isAdmin: true }, roles: roles({}) }, false]
+    ] as const) {
+      await render(
+        <PlayerScreen client={guardianClient([])} userId="7" {...props} />
+      )
+      expect(requestButton() != null, JSON.stringify(props)).equals(shown)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('is offered to a coach of a team the player has left, with no Settings', async function () {
+    await render(
+      <PlayerScreen
+        client={guardianClient([], undefined, [hawks, owlsLeft])}
+        userId="7"
+        viewer={stranger}
+        roles={roles({ tem_other: ['coach'] })}
+      />
+    )
+    expect(requestButton()?.textContent).equals('Request to be a guardian')
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+  })
+
+  it('asks in a sheet, sends the request for the viewer, and then says it is sent', async function () {
+    const sent: Sent = []
+    await render(
+      <PlayerScreen
+        client={guardianClient(sent)}
+        userId="7"
+        viewer={stranger}
+        roles={roles({})}
+      />
+    )
+    await press('Request to be a guardian')
+    expect(text()).includes('Ask to be Jordan P’s guardian?')
+    expect(text()).includes(
+      'Jordan P or a guardian of theirs decides, or a coach of one of their teams if they have no guardian.'
+    )
+    // Closing the sheet sends nothing.
+    await press('Cancel')
+    expect(sent).deep.equals([])
+    expect(text()).not.includes('Ask to be Jordan P’s guardian?')
+    await press('Request to be a guardian')
+    await press('Send request')
+    expect(sent).has.length(1)
+    expect(sent[0]).deep.include({
+      kind: 'guardian',
+      playerUserId: 7,
+      guardian: { userId: 100 }
+    })
+    expect(sent[0]).not.has.property('sender')
+    expect(sent[0].idempotencyKey).a('string')
+    const button = requestButton()
+    expect(button?.textContent).equals('Guardian request sent')
+    expect(button?.getAttribute('aria-disabled')).equals('true')
+  })
+
+  it('shows the server’s refusal, and retries under the same key', async function () {
+    const sent: Sent = []
+    const refusals = [
+      'You have 5 guardian requests waiting. Wait for an answer before asking again.',
+      'Three guardian requests were declined. You can ask again on October 13, 2026.'
+    ]
+    await render(
+      <PlayerScreen
+        client={guardianClient(sent, async () => {
+          const message = refusals.shift()
+          if (message != null) throw new HttpError('rateLimited', message)
+          return { id: 'req_1', status: 'pending' }
+        })}
+        userId="7"
+        viewer={stranger}
+        roles={roles({})}
+      />
+    )
+    await press('Request to be a guardian')
+    await press('Send request')
+    expect(text()).includes(
+      'You have 5 guardian requests waiting. Wait for an answer before asking again.'
+    )
+    expect(requestButton()?.textContent).equals('Request to be a guardian')
+    await press('Request to be a guardian')
+    await press('Send request')
+    expect(text()).includes('You can ask again on October 13, 2026.')
+    expect(text()).not.includes('You have 5 guardian requests waiting')
+    await press('Request to be a guardian')
+    await press('Send request')
+    expect(requestButton()?.textContent).equals('Guardian request sent')
+    expect(text()).not.includes('You can ask again')
+    expect(new Set(sent.map(body => body.idempotencyKey)).size).equals(1)
+  })
+
+  it('is offered through the app to the signed-in viewer', async function () {
+    fixtureFetch({})
+    await open('/players/7')
+    expect(requestButton()?.textContent).equals('Request to be a guardian')
   })
 })

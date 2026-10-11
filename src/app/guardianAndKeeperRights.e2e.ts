@@ -26,6 +26,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 
 import { makeId } from '../common/ids'
+import { createSession } from '../server/auth/sessions'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
 import { type GuardianFixture, guardianFixture } from '../test/guardianFixture'
@@ -46,6 +47,8 @@ interface Run {
     file: string,
     summarize?: (route: string, body: any) => unknown
   ) => ApiLog
+  /** A `# ` line in a log of `api`'s, for what happened between requests. */
+  note: (file: string, text: string) => Promise<void>
   /** A signed-out maestro-d web session at the screenshot viewport. */
   browser: (device: string) => Promise<BrowserSession>
   /**
@@ -76,7 +79,8 @@ const stages: Record<string, (run: Run) => Promise<void>> = {
   apiRoles,
   api,
   roster,
-  player
+  player,
+  guardian
 }
 
 /**
@@ -831,6 +835,519 @@ async function player(run: Run): Promise<void> {
   await run.shot(guardian, 'player-teams-tab.png')
 }
 
+/**
+ * Guardians in the app. The coach invites the first guardian of Cody, who
+ * has none, by address from Settings; once Cody has one, the coach's
+ * Settings offers no invitation and the API refuses the team's. Tim, Avery's
+ * guardian, invites a second guardian from Avery's Settings; the invitee
+ * accepts in their notifications, opens Avery from the team and saves the
+ * jersey and positions, and finds the walk-up song they set. Avery leaves
+ * the Comets and the guardian loses that team. A member who is a stranger to
+ * Ben asks to be his guardian and Ben, whose account signs in, approves. One
+ * user is stopped at a sixth waiting request; another, after three declined
+ * by Avery's guardian and by the coach of two players with none, is told the
+ * date they may ask again, and on that date may.
+ */
+async function guardian(run: Run): Promise<void> {
+  const { f } = run
+  const { people } = f
+  const db = f.h.db
+  const [avery, ben, cody, drew, eli] = f.players
+  const { contains, fill, tap } = await import('../test/refinementsMaestro.e2e')
+  const summarize = (route: string, body: any): unknown => {
+    if (route === '/teams')
+      return (body as any[]).map(team => ({ id: team.id, name: team.name }))
+    if (route.endsWith('/roster'))
+      return (body as any[])
+        .filter(row => row.userId === avery.id)
+        .map(row => ({
+          shortName: row.shortName,
+          jersey: row.jersey,
+          positions: row.positions
+        }))
+    if (/^\/teams\/[^/]+$/.test(route))
+      return {
+        name: body.group?.name,
+        canViewPrivate: body.canViewPrivate
+      }
+    if (route.startsWith('/me/notifications'))
+      return (body.items as any[]).map(item => ({
+        type: item.type,
+        title: item.title,
+        status: item.status
+      }))
+    return body
+  }
+  const api = run.api('api-guardian.log', summarize)
+
+  // The people this stage needs, each signing in with an address: Faye, who
+  // is invited; Gil and Ivy, members of the Hawks who ask; and Ben's own
+  // account. Hank, who runs another team, joins the Hawks without a role.
+  // Finn is a sixth Hawk, so Gil has a sixth player to ask about.
+  const signsIn = async (id: number, email: string): Promise<void> => {
+    await db
+      .updateTable('users')
+      .set({ login_enabled: true })
+      .where('id', '=', id)
+      .execute()
+    await db
+      .insertInto('user_emails')
+      .values({
+        id: `email_guardian_stage_${id}`,
+        user_id: id,
+        email,
+        is_primary: true,
+        verified_at: new Date(),
+        source: 'manual'
+      })
+      .execute()
+    f.emails[id] = email
+    f.h.tokens.set(id, (await createSession(db, id, 'guardian')).token)
+  }
+  const person = async (
+    id: number,
+    first: string,
+    last: string,
+    email: string | null
+  ): Promise<void> => {
+    await db
+      .insertInto('users')
+      .values({
+        id,
+        legacyId: `usr_guardian_stage_${id}`,
+        display_name: `${first} ${last}`,
+        first_name: first,
+        last_name: last,
+        login_enabled: false
+      })
+      .execute()
+    if (email != null) await signsIn(id, email)
+  }
+  const joinsHawks = async (
+    id: number,
+    player?: { jersey: string; positions: string[] }
+  ): Promise<void> => {
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: id,
+        team_id: f.teamA,
+        role: 'member',
+        is_player: player != null,
+        jersey: player?.jersey ?? null,
+        positions: player?.positions ?? []
+      })
+      .execute()
+  }
+  const invitee = 211
+  const asker = 212
+  const declined = 213
+  const first = 214
+  const finn = 206
+  await person(invitee, 'Faye', 'Grant', 'invitee@example.com')
+  await person(asker, 'Gil', 'Hart', 'asker@example.com')
+  await person(declined, 'Ivy', 'Jones', 'declined@example.com')
+  await person(first, 'Jade', 'Kim', 'first@example.com')
+  await person(finn, 'Finn', 'Gray', null)
+  await signsIn(ben.id, 'player@example.com')
+  for (const id of [people.oneTeam, asker, declined]) await joinsHawks(id)
+  await joinsHawks(finn, { jersey: '31', positions: ['RF'] })
+
+  /** The guardian links to a player, by guardian. */
+  const guardiansOf = async (playerId: number): Promise<number[]> =>
+    (
+      await db
+        .selectFrom('user_links')
+        .select('user_id')
+        .where('related_user_id', '=', playerId)
+        .where('kind', '=', 'guardian')
+        .orderBy('user_id')
+        .execute()
+    ).map(row => Number(row.user_id))
+  /** Guardian requests a user sent for themselves, by status. */
+  const requestsBy = async (
+    sender: number,
+    status: 'pending' | 'declined'
+  ): Promise<Array<{ id: string; player: number }>> =>
+    (
+      await db
+        .selectFrom('group_requests')
+        .select(['id', 'terms'])
+        .where('sender_id', '=', sender)
+        .where('kind', '=', 'guardian')
+        .where('status', '=', status)
+        .orderBy('sent_at')
+        .execute()
+    ).map(row => ({
+      id: row.id,
+      player: Number((row.terms as { playerUserId: number }).playerUserId)
+    }))
+  /** Opens a player of the Hawks from the team's roster. */
+  const openFromRoster = async (
+    session: BrowserSession,
+    rowLabel: string,
+    playerId: number
+  ): Promise<void> => {
+    await session.m.openBrowser({
+      url: `${f.h.origin}/teams/${f.teamA}?tab=team`
+    })
+    await contains(session.page, 'PLAYERS')
+    await session.m.scrollUntilVisible({
+      element: { css: `[aria-label^="${rowLabel}"]` },
+      centerElement: true,
+      timeout: 15000
+    })
+    await session.m.tapOn({
+      css: `[aria-label^="${rowLabel}"]`,
+      timeout: 15000
+    })
+    await session.page.waitForFunction(
+      path => location.pathname === path,
+      { timeout: 20000 },
+      `/players/${playerId}`
+    )
+    await settle(session)
+  }
+  /** Asks to be the open player's guardian through the sheet. */
+  const ask = async (session: BrowserSession, name: string): Promise<void> => {
+    await contains(session.page, 'Request to be a guardian')
+    await tap(session.m, 'Request to be a guardian')
+    await contains(session.page, `Ask to be ${name}’s guardian?`)
+    await tap(session.m, 'Send request')
+  }
+  /** The request button's label, or null when there is none. */
+  const requestLabel = async (session: BrowserSession): Promise<string> =>
+    (await session.page.evaluate(() => {
+      const button = [...document.querySelectorAll('[role="button"]')].find(
+        node =>
+          node.textContent === 'Request to be a guardian' ||
+          node.textContent === 'Guardian request sent'
+      )
+      return button === undefined ? null : button.textContent
+    })) ?? ''
+  /** Opens a player's Settings beside the Hawks, once its form is drawn. */
+  const openSettings = async (
+    session: BrowserSession,
+    playerId: number
+  ): Promise<void> => {
+    await session.m.openBrowser({
+      url: `${f.h.origin}/players/${playerId}?tab=settings&onTeam=${f.teamA}`
+    })
+    await session.page.waitForSelector('input[aria-label="Jersey number"]', {
+      timeout: 20000
+    })
+    await settle(session)
+  }
+  const bodyText = async (session: BrowserSession): Promise<string> =>
+    (await session.page.evaluate(() => document.body.textContent)) ?? ''
+
+  // The coach invites the first guardian of Cody, who has none, from his
+  // Settings beside the Hawks. Jade accepts.
+  const coach = await run.signIn('guardian-coach', people.teamCoach)
+  await openSettings(coach, cody.id)
+  await contains(coach.page, 'Invite a guardian')
+  await fill(coach.m, 'E-mail address', 'first@example.com')
+  await scrollTap(coach, 'Send invitation')
+  await contains(
+    coach.page,
+    'An invitation is on its way to first@example.com.'
+  )
+  const invited = await requestsBy(people.teamCoach, 'pending')
+  expect(invited.map(row => row.player)).deep.equals([cody.id])
+  expect(f.h.invitations.get('first@example.com')).deep.include({
+    playerName: 'Cody D',
+    teamName: 'Demo Hawks'
+  })
+  const sent = await api('GET', '/me/notifications?sent=1', people.teamCoach)
+  expect(sent.body.items.map((item: any) => item.title)).deep.equals([
+    'Be a guardian of Cody D'
+  ])
+  const jade = await api(
+    'POST',
+    `/relationship-requests/${invited[0].id}/accept`,
+    first,
+    { idempotencyKey: 'guardian-stage-first-accept' }
+  )
+  expect(jade.body.status).equals('accepted')
+  expect(await guardiansOf(cody.id)).deep.equals([first])
+
+  // Cody has a guardian now: the coach's Settings for him, as for Avery,
+  // offers no invitation, and the team's is refused.
+  for (const p of [cody, avery]) {
+    await openSettings(coach, p.id)
+    expect(await bodyText(coach), p.first).not.includes('Invite a guardian')
+  }
+  const refused = await api(
+    'POST',
+    '/relationship-requests',
+    people.teamCoach,
+    {
+      kind: 'guardian',
+      playerUserId: cody.id,
+      guardian: { email: 'second.parent@example.com' },
+      sender: { kind: 'team', id: f.teamA },
+      idempotencyKey: 'guardian-stage-coach-again'
+    }
+  )
+  expect(refused.status).equals(403)
+  expect(refused.body.message).equals(
+    'Cody D has a guardian already. Ask them to invite another guardian.'
+  )
+
+  // Tim, Avery's guardian, invites Faye from Avery's Settings beside the
+  // Hawks, in his own name.
+  const tim = await run.signIn('guardian-tim', people.guardian)
+  await openSettings(tim, avery.id)
+  await contains(tim.page, 'Invite a guardian')
+  await fill(tim.m, 'E-mail address', 'invitee@example.com')
+  await scrollTap(tim, 'Send invitation')
+  await contains(
+    tim.page,
+    'An invitation is on its way to invitee@example.com.'
+  )
+  const byTim = await requestsBy(people.guardian, 'pending')
+  expect(byTim.map(row => row.player)).deep.equals([avery.id])
+  const mailed = f.h.invitations.get('invitee@example.com')
+  expect(mailed).deep.include({
+    playerName: 'Avery S',
+    invitedBy: 'Tim Raines'
+  })
+  expect(mailed).not.has.property('teamName')
+  const timSent = await api('GET', '/me/notifications?sent=1', people.guardian)
+  expect(timSent.body.items.map((item: any) => item.title)).deep.equals([
+    'Be a guardian of Avery S'
+  ])
+  const beforeTeams = await api('GET', '/teams', invitee)
+  expect(beforeTeams.body).deep.equals([])
+
+  // Faye accepts in her notifications.
+  const faye = await run.signIn('guardian-invitee', invitee)
+  await faye.m.openBrowser({ url: `${f.h.origin}/notifications` })
+  await contains(faye.page, 'Be a guardian of Avery S')
+  await contains(faye.page, 'Tim Raines invited you')
+  await faye.m.tapOn({
+    css: '[aria-label="Be a guardian of Avery S"]',
+    timeout: 15000
+  })
+  await contains(faye.page, 'Accept invitation')
+  await tap(faye.m, 'Accept invitation')
+  await contains(faye.page, 'Accepted')
+  expect(await guardiansOf(avery.id)).deep.equals([people.guardian, invitee])
+  const inbox = await api('GET', '/me/notifications?history=1', invitee)
+  expect(inbox.body.items[0]).deep.include({
+    title: 'Be a guardian of Avery S',
+    status: 'accepted'
+  })
+  const roles = await api('GET', '/me/roles', invitee)
+  expect(roles.body.guardianOf).deep.equals([avery.id])
+  const teams = await api('GET', '/teams', invitee)
+  expect(teams.body.map((team: any) => team.id).sort()).deep.equals(
+    [f.teamA, f.secondTeam].sort()
+  )
+
+  // She opens Avery from the Hawks and saves his number and positions.
+  await openFromRoster(faye, 'Avery S', avery.id)
+  await faye.m.tapOn({ text: 'Settings', role: 'tab', timeout: 15000 })
+  await faye.page.waitForSelector('input[aria-label="Jersey number"]', {
+    timeout: 20000
+  })
+  // A guardian manages the child, and may invite another guardian.
+  expect(await bodyText(faye)).includes('Invite a guardian')
+  await fill(faye.m, 'Jersey number', '17')
+  await faye.m.tapOn({
+    css: '[role="checkbox"][aria-label="2B"]',
+    timeout: 15000
+  })
+  await faye.m.tapOn({
+    css: '[role="checkbox"][aria-label="CF"]',
+    timeout: 15000
+  })
+  await scrollTap(faye, 'Save')
+  await contains(faye.page, 'Saved.')
+  const saved = await db
+    .selectFrom('memberships')
+    .select(['jersey', 'positions'])
+    .where('user_id', '=', avery.id)
+    .where('team_id', '=', f.teamA)
+    .executeTakeFirstOrThrow()
+  expect(saved).deep.equals({ jersey: '17', positions: ['SS', 'CF'] })
+  await run.shot(faye, 'guardian-settings-team.png')
+  const roster = await api('GET', `/teams/${f.teamA}/roster`, invitee)
+  expect(roster.body.find((row: any) => row.userId === avery.id)).deep.include({
+    jersey: '17',
+    positions: ['SS', 'CF']
+  })
+
+  // The web app has no song picker, so the song goes in through the API as
+  // Faye; the Walk-up tab then shows it.
+  const song = await api(
+    'PUT',
+    `/teams/${f.teamA}/players/${avery.id}/walk-up-song`,
+    invitee,
+    {
+      provider: 'appleMusic',
+      providerId: '1000000002',
+      isrc: null,
+      title: 'Demo Walk-up',
+      artist: 'Demo Band',
+      album: null,
+      artworkUrl: null,
+      durationMs: 180000,
+      startMs: 30000,
+      endMs: 45000
+    }
+  )
+  expect(song.status).equals(200)
+  await faye.m.tapOn({ text: 'Walk-up', role: 'tab', timeout: 15000 })
+  await contains(faye.page, 'Demo Walk-up')
+  await contains(faye.page, 'Demo Band')
+  expect(new URL(faye.page.url()).searchParams.get('tab')).equals('walkup')
+  await run.shot(faye, 'guardian-walkup.png')
+
+  // Avery leaves the Comets, and Faye, who is there only through him, loses
+  // the team.
+  const comets = await api('GET', `/teams/${f.secondTeam}`, invitee)
+  expect(comets.body.canViewPrivate).equals(true)
+  const removed = await api(
+    'DELETE',
+    `/manage/team/${f.secondTeam}/people/${avery.id}`,
+    people.admin
+  )
+  expect(removed.status).equals(200)
+  expect(removed.body).deep.equals({ removed: true })
+  const after = await api('GET', '/teams', invitee)
+  expect(after.body.map((team: any) => team.id)).deep.equals([f.teamA])
+  const gone = await api('GET', `/teams/${f.secondTeam}`, invitee)
+  expect(gone.body.canViewPrivate).equals(false)
+
+  // Hank, a member with no say over Ben, asks to be his guardian.
+  const hank = await run.signIn('guardian-stranger', people.oneTeam)
+  await openFromRoster(hank, 'Ben C', ben.id)
+  await contains(hank.page, 'Request to be a guardian')
+  await tap(hank.m, 'Request to be a guardian')
+  await contains(hank.page, 'Ask to be Ben C’s guardian?')
+  await contains(
+    hank.page,
+    'Ben C or a guardian of theirs decides, or a coach of one of their teams if they have no guardian.'
+  )
+  await run.shot(hank, 'guardian-request-sheet.png')
+  await tap(hank.m, 'Send request')
+  await contains(hank.page, 'Guardian request sent')
+  expect(await requestLabel(hank)).equals('Guardian request sent')
+  expect(
+    await hank.page.evaluate(() => {
+      const button = [...document.querySelectorAll('[role="button"]')].find(
+        node => node.textContent === 'Guardian request sent'
+      )
+      return button === undefined ? null : button.getAttribute('aria-disabled')
+    })
+  ).equals('true')
+  await run.shot(hank, 'guardian-request.png')
+  const hanks = await requestsBy(people.oneTeam, 'pending')
+  expect(hanks.map(row => row.player)).deep.equals([ben.id])
+
+  // Ben signs in and approves.
+  const benSession = await run.signIn('guardian-player', ben.id)
+  await benSession.m.openBrowser({ url: `${f.h.origin}/notifications` })
+  const asked = "Hank Moss asks to be Ben C's guardian"
+  await contains(benSession.page, asked)
+  await benSession.m.tapOn({ css: `[aria-label="${asked}"]`, timeout: 15000 })
+  await tap(benSession.m, 'Accept invitation')
+  await contains(benSession.page, 'Accepted')
+  expect(await guardiansOf(ben.id)).deep.equals([people.oneTeam])
+  const hankRoles = await api('GET', '/me/roles', people.oneTeam)
+  expect(hankRoles.body.guardianOf).deep.equals([ben.id])
+
+  // Gil has five requests waiting; the sixth, in the app, is refused.
+  const limit =
+    'You have 5 guardian requests waiting. Wait for an answer before asking again.'
+  let retry = 0
+  const request = async (user: number, playerId: number): Promise<any> =>
+    await api('POST', '/relationship-requests', user, {
+      kind: 'guardian',
+      playerUserId: playerId,
+      guardian: { userId: user },
+      idempotencyKey: `guardian-stage-${user}-${++retry}`
+    })
+  for (const p of [avery, ben, cody, drew, eli]) {
+    const answer = await request(asker, p.id)
+    expect(answer.status, `Gil asks about ${p.first}`).equals(201)
+  }
+  const gil = await run.signIn('guardian-asker', asker)
+  await openFromRoster(gil, 'Finn G', finn)
+  await ask(gil, 'Finn G')
+  await contains(gil.page, limit)
+  expect(await requestLabel(gil)).equals('Request to be a guardian')
+  await run.shot(gil, 'guardian-limit.png')
+  const sixth = await request(asker, finn)
+  expect(sixth.status).equals(429)
+  expect(sixth.body).deep.include({ code: 'rateLimited', message: limit })
+  expect(await requestsBy(asker, 'pending')).has.length(5)
+
+  // Ivy has three requests declined, by those with a say: Tim for Avery,
+  // and the coach for Drew and Finn, who have no guardian. The fourth is
+  // refused until a week after the third decline.
+  for (const [p, decider] of [
+    [avery.id, people.guardian],
+    [drew.id, people.teamCoach],
+    [finn, people.teamCoach]
+  ] as const) {
+    const answer = await request(declined, p)
+    expect(answer.status, `Ivy asks about ${p}`).equals(201)
+    const decided = await api(
+      'POST',
+      `/relationship-requests/${answer.body.id}/decline`,
+      decider,
+      { idempotencyKey: `guardian-stage-decline-${++retry}` }
+    )
+    expect(decided.status).equals(200)
+    expect(decided.body.status).equals('declined')
+  }
+  const blocked =
+    'Three guardian requests were declined. You can ask again on October 13, 2026.'
+  const ivy = await run.signIn('guardian-declined', declined)
+  await openFromRoster(ivy, 'Eli F', eli.id)
+  await ask(ivy, 'Eli F')
+  await contains(ivy.page, blocked)
+  expect(await requestLabel(ivy)).equals('Request to be a guardian')
+  await run.shot(ivy, 'guardian-blocked.png')
+  const fourth = await request(declined, eli.id)
+  expect(fourth.status).equals(429)
+  expect(fourth.body).deep.include({ code: 'rateLimited', message: blocked })
+
+  // A week on, the request is taken.
+  f.advance(7 * 24 * 3600 * 1000)
+  await run.note(
+    'api-guardian.log',
+    'The clock moves on 7 days (604800 s), to the end of the block.'
+  )
+  const taken = await request(declined, eli.id)
+  expect(taken.status).equals(201)
+  expect(taken.body.status).equals('pending')
+  // In the app, asking again answers with the request already waiting: the
+  // block is gone and no second request is made.
+  await ivy.page.reload()
+  await settle(ivy)
+  expect(await requestLabel(ivy)).equals('Request to be a guardian')
+  await ask(ivy, 'Eli F')
+  await contains(ivy.page, 'Guardian request sent')
+  expect(await bodyText(ivy)).not.includes(
+    'Three guardian requests were declined'
+  )
+  expect(
+    (await requestsBy(declined, 'pending')).map(row => row.player)
+  ).deep.equals([eli.id])
+  const ivySent = await api('GET', '/me/notifications?sent=1', declined)
+  expect(ivySent.body.items).deep.equals([
+    {
+      ...ivySent.body.items[0],
+      title: "Ivy Jones asks to be Eli F's guardian",
+      status: 'pending'
+    }
+  ])
+}
+
 async function main(): Promise<void> {
   const artifacts = process.env.TS_GUARDIAN_ARTIFACTS
   if (artifacts == null || artifacts === '')
@@ -883,6 +1400,9 @@ async function runStage(
   const run: Run = {
     f,
     artifacts,
+    note: async (file, text) => {
+      await appendFile(await logPath(file), `# ${text}\n\n`)
+    },
     api: (file, summarize) => async (method, route, user, body) => {
       const path = await logPath(file)
       names ??= await userNames(f)
@@ -1005,6 +1525,24 @@ async function runStage(
     await f.h.close()
     if (profiles != null) await rm(profiles, { recursive: true, force: true })
   }
+}
+
+/**
+ * Taps a button by its text once it is scrolled clear of the bottom bar,
+ * which otherwise covers the last button of a long form. Maestro's
+ * `scrollUntilVisible` counts a covered button as visible, and a tap on it
+ * then never returns, timeout or not.
+ */
+async function scrollTap(session: BrowserSession, text: string): Promise<void> {
+  const { tap } = await import('../test/refinementsMaestro.e2e')
+  await session.page.evaluate(text => {
+    const button = [...document.querySelectorAll('[role="button"]')].find(
+      node => node.textContent === text
+    )
+    if (button === undefined) throw new Error(`No ${text} button`)
+    button.scrollIntoView({ block: 'center' })
+  }, text)
+  await tap(session.m, text)
 }
 
 /** Waits until nothing says Loading and the network has gone quiet. */

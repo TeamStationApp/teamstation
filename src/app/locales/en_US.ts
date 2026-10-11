@@ -237,6 +237,23 @@ export const enUs = {
   player_settings_cannot_save: 'Cannot save these settings.',
   player_settings_not_on_team: 'This player is not on this team\u2019s roster.',
 
+  // Guardians: a guardian, or a team's coaching staff while the player has
+  // none, invite one by address from Settings; anybody else who can see the
+  // player asks to be one under their name
+  player_guardian_invite: 'Invite a guardian',
+  player_guardian_invite_detail:
+    'A guardian sees every team %s plays on and manages their number, positions and walk-up song. They accept from their notifications.',
+  player_guardian_email: 'E-mail address',
+  player_guardian_send: 'Send invitation',
+  player_guardian_cannot_send: 'The invitation could not be sent. Retry.',
+  player_guardian_request: 'Request to be a guardian',
+  player_guardian_request_title: 'Ask to be %s\u2019s guardian?',
+  player_guardian_request_send: 'Send request',
+  player_guardian_request_detail:
+    '%s or a guardian of theirs decides, or a coach of one of their teams if they have no guardian. Once approved you see their teams and manage their details.',
+  player_guardian_request_sent: 'Guardian request sent',
+  player_guardian_cannot_request: 'The request could not be sent. Retry.',
+
   // A player's walk-up song, for a songkeeper of the team the page was opened for
   player_walkup: 'Walk-up',
   player_walkup_none: 'No walk-up song yet',
