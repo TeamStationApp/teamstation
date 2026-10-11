@@ -28,12 +28,14 @@ export function bindComposerKeys(
 ): () => void {
   return () => {}
 }
-export function bindUserScroll(_view: unknown, _read: () => void): () => void {
+export function bindUserScroll(
+  _view: unknown,
+  _read: () => void,
+  _position?: (offset: number) => void
+): () => void {
   return () => {}
 }
-export function isScrollEventDispatch(_view: unknown): boolean {
-  return false
-}
+export function cancelUserScroll(_view: unknown): void {}
 export function bindMessageHover(
   _view: unknown,
   _update: (visible: boolean) => void

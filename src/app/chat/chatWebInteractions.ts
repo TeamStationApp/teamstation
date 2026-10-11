@@ -76,31 +76,88 @@ export function bindComposerKeys(
   }
 }
 /** RNW's scroll-begin callback also fires for programmatic focus scrolling. */
-const scrollDispatches = new WeakMap<HTMLElement, { owner: object }>()
+const scrollCancels = new WeakMap<HTMLElement, () => void>()
 function scrollElement(view: unknown): HTMLElement | undefined {
   const node = view as { getScrollableNode?: () => unknown } | null
   const element = node?.getScrollableNode?.() ?? view
   return element instanceof HTMLElement ? element : undefined
 }
 
-/** RNW's ending onScroll runs outside the originating DOM event dispatch. */
-export function isScrollEventDispatch(view: unknown): boolean {
+export function cancelUserScroll(view: unknown): void {
   const element = scrollElement(view)
-  return element != null && scrollDispatches.has(element)
+  if (element != null) scrollCancels.get(element)?.()
 }
 
-export function bindUserScroll(view: unknown, read: () => void): () => void {
+export function bindUserScroll(
+  view: unknown,
+  read: () => void,
+  position?: (offset: number) => void
+): () => void {
   const element = scrollElement(view)
-  if (element == null) return () => {}
-  const owner = {}
-  const scroll = (event: Event): void => {
-    if (event.target !== element) return
-    const dispatch = { owner }
-    scrollDispatches.set(element, dispatch)
-    queueMicrotask(() => {
-      if (scrollDispatches.get(element) === dispatch)
-        scrollDispatches.delete(element)
+  const win = element?.ownerDocument.defaultView
+  if (element == null || win == null) return () => {}
+  let live = true
+  let scrollbarHeld = false
+  let generation = 0
+  let frame: number | undefined
+  let pending:
+    | { last: number; frameOffset: number; height: number; content: number }
+    | undefined
+  const offset = (): number => Math.max(0, element.scrollTop)
+  const retire = (): void => {
+    generation += 1
+    pending = undefined
+    if (frame != null) win.cancelAnimationFrame(frame)
+    frame = undefined
+  }
+  const cancel = (): void => {
+    scrollbarHeld = false
+    retire()
+  }
+  scrollCancels.set(element, cancel)
+  const observeFrame = (): void => {
+    const current = generation
+    frame = win.requestAnimationFrame(() => {
+      if (!live || current !== generation || pending == null) return
+      frame = undefined
+      const top = offset()
+      if (
+        pending.height !== element.clientHeight ||
+        pending.content !== element.scrollHeight ||
+        top === pending.frameOffset
+      ) {
+        retire()
+        return
+      }
+      pending.frameOffset = top
+      observeFrame()
     })
+  }
+  const begin = (): void => {
+    retire()
+    const top = offset()
+    pending = {
+      last: top,
+      frameOffset: top,
+      height: element.clientHeight,
+      content: element.scrollHeight
+    }
+    read()
+    if (!scrollbarHeld) observeFrame()
+  }
+  const scroll = (event: Event): void => {
+    if (event.target !== element || pending == null) return
+    if (
+      pending.height !== element.clientHeight ||
+      pending.content !== element.scrollHeight
+    ) {
+      cancel()
+      return
+    }
+    const top = offset()
+    if (top === pending.last) return
+    pending.last = top
+    position?.(top)
   }
   const key = (event: KeyboardEvent): void => {
     if (
@@ -114,11 +171,9 @@ export function bindUserScroll(view: unknown, read: () => void): () => void {
         ' '
       ].includes(event.key)
     )
-      read()
+      begin()
   }
-  // A native scrollbar press targets the scroll node's actual gutter.
-  // Bare content presses and descendant focus cannot cancel restoration.
-  let scrollbarHeld = false
+  // Bare content presses cannot own a native scrollbar's movement.
   const start = (event: MouseEvent): void => {
     if (event.button !== 0 || event.target !== element || scrollbarHeld) return
     const rect = element.getBoundingClientRect()
@@ -153,10 +208,13 @@ export function bindUserScroll(view: unknown, read: () => void): () => void {
         (event.clientY >= bottom && event.clientY < innerBottom))
     if (!vertical && !horizontal) return
     scrollbarHeld = true
-    read()
+    begin()
   }
   const finish = (): void => {
+    if (!scrollbarHeld) return
     scrollbarHeld = false
+    // The final movement may be delivered at the next rendering opportunity.
+    if (pending != null) observeFrame()
   }
   const doc = element.ownerDocument
   element.addEventListener('scroll', scroll, true)
@@ -164,23 +222,24 @@ export function bindUserScroll(view: unknown, read: () => void): () => void {
   element.addEventListener('mousedown', start)
   doc.addEventListener('pointerup', finish)
   doc.addEventListener('mouseup', finish)
-  doc.addEventListener('pointercancel', finish)
-  doc.defaultView?.addEventListener('blur', finish)
-  element.addEventListener('wheel', read, { passive: true })
-  element.addEventListener('touchmove', read, { passive: true })
+  doc.addEventListener('pointercancel', cancel)
+  win.addEventListener('blur', cancel)
+  element.addEventListener('wheel', begin, { passive: true })
+  element.addEventListener('touchmove', begin, { passive: true })
   element.addEventListener('keydown', key)
   return () => {
+    live = false
+    cancel()
+    if (scrollCancels.get(element) === cancel) scrollCancels.delete(element)
     element.removeEventListener('scroll', scroll, true)
-    if (scrollDispatches.get(element)?.owner === owner)
-      scrollDispatches.delete(element)
     element.removeEventListener('pointerdown', start)
     element.removeEventListener('mousedown', start)
     doc.removeEventListener('pointerup', finish)
     doc.removeEventListener('mouseup', finish)
-    doc.removeEventListener('pointercancel', finish)
-    doc.defaultView?.removeEventListener('blur', finish)
-    element.removeEventListener('wheel', read)
-    element.removeEventListener('touchmove', read)
+    doc.removeEventListener('pointercancel', cancel)
+    win.removeEventListener('blur', cancel)
+    element.removeEventListener('wheel', begin)
+    element.removeEventListener('touchmove', begin)
     element.removeEventListener('keydown', key)
   }
 }
