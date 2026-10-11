@@ -341,6 +341,11 @@ export function bindUserScroll(
     scrollbarHeld = true
     arm(event, 0)
   }
+  const pointerCancel = (): void => {
+    scrollbarHeld = false
+    // Browser panning can cancel pointer events while touch events continue.
+    if (!touchHeld) retire()
+  }
   const finish = (): void => {
     if (!scrollbarHeld) return
     scrollbarHeld = false
@@ -357,7 +362,7 @@ export function bindUserScroll(
   element.addEventListener('mousedown', start)
   doc.addEventListener('pointerup', finish)
   doc.addEventListener('mouseup', finish)
-  doc.addEventListener('pointercancel', cancel)
+  doc.addEventListener('pointercancel', pointerCancel)
   win.addEventListener('blur', cancel)
   const inputTarget = position != null ? win : element
   inputTarget.addEventListener('wheel', wheel as EventListener, {
@@ -379,7 +384,7 @@ export function bindUserScroll(
     element.removeEventListener('mousedown', start)
     doc.removeEventListener('pointerup', finish)
     doc.removeEventListener('mouseup', finish)
-    doc.removeEventListener('pointercancel', cancel)
+    doc.removeEventListener('pointercancel', pointerCancel)
     win.removeEventListener('blur', cancel)
     inputTarget.removeEventListener('wheel', wheel as EventListener)
     element.removeEventListener('touchstart', touchStart)
