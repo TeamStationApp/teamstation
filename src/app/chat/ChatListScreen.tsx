@@ -823,7 +823,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         onMomentumScrollEnd={event => {
           rememberOffset(event, 'momentum')
         }}
-        onMomentumScrollBegin={() => {
+        onMomentumScrollBegin={event => {
           if (!liveData()) return
           const preceding = pendingMomentum.current
           pendingMomentum.current = undefined
@@ -833,7 +833,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
             preceding.data === dataKey &&
             preceding.visibility === visibilityVersion &&
             preceding.generation === gestureGeneration.current
-          )
+          ) {
             userPosition.current = {
               native: true,
               moved: preceding.moved,
@@ -841,6 +841,25 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
               visibility: visibilityVersion,
               generation: gestureGeneration.current
             }
+            return
+          }
+          if (preceding != null) return
+          const offset = event?.nativeEvent?.contentOffset?.y
+          if (
+            Platform.OS === 'android' &&
+            restored.current &&
+            offset != null &&
+            Number.isFinite(offset)
+          ) {
+            // Android hardware-wheel input starts momentum without a drag.
+            // Its scroll coordinate can arrive before this lifecycle event.
+            const moved =
+              Math.max(0, offset) !== currentOffset.current ||
+              (explicitTop.current && offset > 0)
+            userScrolled(true)
+            if (userPosition.current != null) userPosition.current.moved = moved
+            rememberOffset(event)
+          }
         }}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
