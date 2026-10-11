@@ -9,6 +9,12 @@ export interface Target {
   workspace?: string
   harvester?: boolean
   /**
+   * The directory holding a React Native app's locked dependency graph,
+   * relative to the source: a workspace root above the app. The app's own
+   * directory when absent.
+   */
+  dependencies?: string
+  /**
    * The app target's entitlements, relative to the Xcode project's directory:
    * what `TS_APP_ENTITLEMENTS` names when the build has an app link host.
    */
@@ -74,6 +80,13 @@ const targets: Target[] = [
     scheme: 'GcScraper',
     workspace: 'ios/GcScraper.xcworkspace',
     harvester: true
+  },
+  {
+    app: 'app.teamstation.watcher',
+    platform: 'android',
+    path: 'watcher/apps/tsWatcher',
+    kind: 'react-native',
+    dependencies: 'watcher'
   }
 ]
 export function target(app: string, platform: Platform): Target {

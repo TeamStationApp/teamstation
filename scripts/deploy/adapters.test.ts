@@ -276,6 +276,22 @@ describe('Native build and signing adapters', () => {
     context.target = { ...context.target, harvester: true }
     await prepare(context)
     assert(calls.some(c => c.args.includes('build.harvester')))
+    const watcher = target('app.teamstation.watcher', 'android')
+    const packages = path.join(context.source, 'watcher')
+    context.target = watcher
+    context.settings.apps[watcher.app] = context.settings.apps[app]
+    mkdirSync(path.join(context.source, watcher.path), { recursive: true })
+    await assert.rejects(prepare(context), /locked/)
+    file(path.join(packages, 'package-lock.json'), '{}')
+    await prepare(context)
+    assert.equal(calls.at(-1)?.cwd, packages)
+    assert(existsSync(path.join(packages, '.deploy-dependencies')))
+    assert(
+      !existsSync(
+        path.join(context.source, watcher.path, '.deploy-dependencies')
+      )
+    )
+    context.target = target(app, 'ios')
     delete context.settings.apps[app].apiOrigin
     assert.equal(buildEnvironment(context).TS_API_BASE_URL, undefined)
     for (const id of [
