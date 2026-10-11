@@ -157,8 +157,7 @@ export async function mergeTeams(
     await sql`update memberships target set
       role = case when target.role = 'owner' or source.role = 'owner' then 'owner'
         when target.role = 'manager' or source.role = 'manager' then 'manager' else 'member' end,
-      is_player = target.is_player or source.is_player,
-      is_spectator = target.is_spectator or source.is_spectator
+      is_player = target.is_player or source.is_player
       from memberships source where target.team_id = ${intoTeamId} and source.team_id = ${fromTeamId} and target.user_id = source.user_id`.execute(
       trx
     )

@@ -187,8 +187,7 @@ async function main(): Promise<void> {
           id: makeId('membership'),
           user_id: viewerId,
           team_id: homeTeamId,
-          role: 'member',
-          is_spectator: true
+          role: 'member'
         })
         .execute()
       return { games, roster, viewerId }

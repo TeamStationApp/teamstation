@@ -532,7 +532,6 @@ describe('a team’s people by external id', function () {
   ): Promise<
     | {
         is_player: boolean
-        is_spectator: boolean
         jersey: string | null
         role: string
       }
@@ -540,7 +539,7 @@ describe('a team’s people by external id', function () {
   > =>
     await database()
       .selectFrom('memberships')
-      .select(['is_player', 'is_spectator', 'jersey', 'role'])
+      .select(['is_player', 'jersey', 'role'])
       .where('team_id', '=', teamId)
       .where('user_id', '=', userId)
       .executeTakeFirst()
@@ -869,7 +868,7 @@ describe('a team’s people by external id', function () {
       ]).deep.equals(before)
     })
 
-    it('makes a spectator who holds the id a player, filling a jersey only where none was', async function () {
+    it('makes a member who holds the id a player, filling a jersey only where none was', async function () {
       const team = await newTeam('Spectators')
       const watcher = await existingUser('spectator-1')
       const numbered = await existingUser('spectator-2')
@@ -879,14 +878,12 @@ describe('a team’s people by external id', function () {
           {
             id: makeId('membership'),
             user_id: watcher,
-            team_id: team,
-            is_spectator: true
+            team_id: team
           },
           {
             id: makeId('membership'),
             user_id: numbered,
             team_id: team,
-            is_spectator: true,
             jersey: '5'
           }
         ])
@@ -1538,7 +1535,6 @@ describe('a team’s people by external id', function () {
         kind: 'member'
       })
       expect(await membershipOf(teamId, row.userId)).deep.include({
-        is_spectator: true,
         is_player: false,
         role: 'member'
       })
@@ -1697,7 +1693,7 @@ describe('a team’s people by external id', function () {
       ])
     })
 
-    it('gives a parent who is also staff their links, coach and scorekeeper, and a spectator membership', async function () {
+    it('gives a parent who is also staff their links, coach and scorekeeper, and a membership', async function () {
       const { teamId } = await teamWithPlayers('Coach parents', 'cp', 1)
       const answer = await adults(teamId, [
         {
@@ -1719,9 +1715,7 @@ describe('a team’s people by external id', function () {
         'coach',
         'scorekeeper'
       ])
-      expect((await membershipOf(teamId, row.userId))?.is_spectator).equals(
-        true
-      )
+      expect((await membershipOf(teamId, row.userId))?.role).equals('member')
     })
 
     it('finds the user holding the address when nobody holds the id, and records the id on them', async function () {
@@ -1978,9 +1972,9 @@ describe('a team’s people by external id', function () {
         'songkeeper'
       ])
       const staffOnly = first.body.results[1].userId
-      // Staff who guard nobody are not spectators.
+      // Staff who guard nobody are members too.
       expect(await membershipOf(teamId, staffOnly)).deep.include({
-        is_spectator: false,
+        is_player: false,
         role: 'member'
       })
 
@@ -2148,7 +2142,7 @@ describe('a team’s people by external id', function () {
       expect(links(third)).deep.equals([[0, 1]])
     })
 
-    it('makes a follower a spectator with no links and no roles', async function () {
+    it('makes an adult who guards nobody a member with no links and no roles', async function () {
       const teamId = await newTeam('Followers')
       const answer = await adults(teamId, [
         { firstName: 'Fan', externalId: ext('follower-1', 'member') }
@@ -2161,26 +2155,26 @@ describe('a team’s people by external id', function () {
         rolesAdded: []
       })
       expect(await membershipOf(teamId, row.userId)).deep.include({
-        is_spectator: true,
-        is_player: false
+        is_player: false,
+        role: 'member'
       })
       expect(await linksOf(row.userId)).deep.equals([])
       expect(await rolesOf(row.userId, teamId)).deep.equals([])
     })
 
-    it('keeps a player a player, and makes them a spectator too', async function () {
+    it('keeps a player a player, changing nothing', async function () {
       const { teamId, players } = await teamWithPlayers('Both', 'both', 1)
       const answer = await adults(teamId, [
         { firstName: 'Kid1', externalId: ext('both-1') }
       ])
       expect(answer.body.results[0]).deep.include({
-        result: 'matched',
+        result: 'unchanged',
         userId: players[0],
         joined: false
       })
       expect(await membershipOf(teamId, players[0])).deep.include({
         is_player: true,
-        is_spectator: true
+        role: 'member'
       })
     })
 

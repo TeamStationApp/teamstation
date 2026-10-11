@@ -257,7 +257,7 @@ describe('the manage page', function () {
         id: 'smb_parent',
         user_id: parentId,
         season_id: 'sea_spring',
-        role: 'spectator',
+        role: 'member',
         source: 'peertube'
       })
       .execute()
@@ -990,7 +990,7 @@ describe('the manage page', function () {
         id: 'smb_watcher',
         user_id: watcherId,
         season_id: 'sea_spring',
-        role: 'spectator',
+        role: 'member',
         source: 'peertube'
       })
       .execute()

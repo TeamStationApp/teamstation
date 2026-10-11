@@ -251,8 +251,7 @@ describe('personal group invitations and accepted role grants', function () {
         id: makeId('membership'),
         team_id: f.teamA,
         user_id: 106,
-        role: 'member',
-        is_spectator: true
+        role: 'member'
       })
       .execute()
     const personal = await invite()

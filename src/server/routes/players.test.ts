@@ -263,7 +263,7 @@ describe('a player, and who may change their name', function () {
         id: makeId('leagueMember'),
         user_id: leagueCoachId,
         league_id: leagueId,
-        role: 'spectator',
+        role: 'member',
         source: 'manual'
       })
       .execute()

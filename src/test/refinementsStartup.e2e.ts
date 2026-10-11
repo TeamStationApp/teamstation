@@ -125,7 +125,7 @@ async function startupSmoke(): Promise<void> {
         id: 'smb_startup',
         season_id: 'sea_startup',
         user_id: 101,
-        role: 'spectator',
+        role: 'member',
         source: 'manual'
       })
       .execute()

@@ -164,28 +164,28 @@ export interface TeamsTable {
 }
 
 /**
- * Belonging to a season without being on a team in it. A season member sees
- * every team in the season; being on a team is separate and stronger.
+ * Belonging to a season without being on a team in it: the same member a
+ * team has, of every team in the season (056oneMemberKind).
  */
 export interface SeasonMembersTable {
   id: string
   user_id: number
   season_id: string
-  role: Generated<'spectator' | 'member'>
+  role: Generated<'member'>
   source: Generated<'peertube' | 'import' | 'manual'>
   joined_at: Timestamp
 }
 
 /**
  * Belonging to a **league**, which is how a league-scoped invite means
- * anything: a league member sees every season of it, including the ones it
- * does not have yet.
+ * anything: the same member a team has, of every team in the league and in
+ * its seasons, including the ones it does not have yet.
  */
 export interface LeagueMembersTable {
   id: string
   user_id: number
   league_id: string
-  role: Generated<'spectator' | 'member'>
+  role: Generated<'member'>
   source: Generated<'peertube' | 'import' | 'manual'>
   joined_at: Timestamp
 }
@@ -203,7 +203,6 @@ export interface MembershipsTable {
   team_id: string
   role: Generated<'owner' | 'manager' | 'member'>
   is_player: Generated<boolean>
-  is_spectator: Generated<boolean>
   jersey: string | null
   positions: Generated<string[]>
   joined_at: Timestamp

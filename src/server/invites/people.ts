@@ -33,7 +33,7 @@ export interface ScopeTree {
 export interface Grant {
   id: string
   name: string
-  /** `owner`, `manager` or `member` for a team; `spectator` or `member` above. */
+  /** `owner`, `manager` or `member` for a team; `member` above. */
   role: string
 }
 

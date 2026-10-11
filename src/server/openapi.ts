@@ -2637,7 +2637,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'each in its own transaction, so one refused row stops nothing.\n\n' +
             '**Who may call:** a signed-in human administrator of the team, ' +
             'directly or through a true management parent, or a node admin. A plain ' +
-            'member, parent or spectator gets 403; a team the caller can ' +
+            'member or parent gets 403; a team the caller can ' +
             'neither see nor administer gets 404. A season or league admin ' +
             'must administer both proposed participating teams ' +
             'to publish a mutating row immediately; the hosting season is no additional consent side. Otherwise the row is ' +
@@ -3097,10 +3097,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'at all. Otherwise it is left off and the row says ' +
             '`emailNotAttached`. Held by somebody else, it stays there and ' +
             'the row says `emailHeldElsewhere`.\n\n' +
-            '**What a row gains:** a membership of the team when they have ' +
-            'none, as a `member` and a spectator unless they are staff who ' +
-            'guard nobody (an existing membership only gains the spectator ' +
-            'flag, and its role is never raised); a guardian link, which ' +
+            '**What a row gains:** a membership of the team as a `member` ' +
+            'when they have none (an existing membership is left as it is, ' +
+            'and its role is never raised); a guardian link, which ' +
             'may manage, to each `guardianOf` player of this team (an id ' +
             'naming no player here is counted in `guardiansMissing`); and, ' +
             'for staff, the `coach` and `scorekeeper` roles on the team. ' +

@@ -287,8 +287,8 @@ export function manageRoutes(
    * Somebody who may be given a role here: an account that has not been
    * merged into another. They must also already be in this level — a member
    * of it or holding a role on it (`connected`, 409 otherwise). Somebody the
-   * page lists only through a level above, such as a season's spectator on
-   * one of its teams, gets roles here through an invitation they accept,
+   * page lists only through a level above, such as a season's member on one
+   * of its teams, gets roles here through an invitation they accept,
    * which is what the app sends for them instead.
    */
   const mustBePerson = async (userId: number): Promise<void> => {

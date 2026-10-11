@@ -186,8 +186,8 @@ async function addAdult(
     if (attached === 'notAttached') emailNotAttached = true
   }
 
-  const joined = await joinTeam(trx, teamId, userId, row)
-  if (joined.gained) gained = true
+  const joined = await joinTeam(trx, teamId, userId)
+  if (joined) gained = true
   const links = await linkGuardian(trx, teamId, userId, row.guardianOf, linking)
   const rolesAdded = row.staff
     ? await addStaffRoles(trx, teamId, userId, caller.userId)
@@ -202,7 +202,7 @@ async function addAdult(
     index,
     result,
     userId,
-    joined: joined.joined,
+    joined,
     guardianLinks: links.made,
     guardiansMissing: links.missing,
     guardiansRefused: links.refused,
@@ -290,46 +290,27 @@ function isAddressTaken(error: unknown): boolean {
 }
 
 /**
- * A membership of the team if they have none: a `member`, and a spectator
- * unless they are staff who guard nobody. An existing one only gains the
- * spectator flag; nothing is unset, and its role is never raised.
+ * A membership of the team, as a `member`, if they have none. An existing one
+ * is left as it is: its role is never raised.
  */
 async function joinTeam(
   trx: Transaction<Database>,
   teamId: string,
-  userId: number,
-  row: TeamAdultRow
-): Promise<{ joined: boolean; gained: boolean }> {
-  const spectator = !(row.staff && row.guardianOf.length === 0)
-  const membership = await trx
-    .selectFrom('memberships')
-    .select(['id', 'is_spectator'])
-    .where('user_id', '=', userId)
-    .where('team_id', '=', teamId)
+  userId: number
+): Promise<boolean> {
+  const made = await trx
+    .insertInto('memberships')
+    .values({
+      id: makeId('membership'),
+      user_id: userId,
+      team_id: teamId,
+      role: 'member',
+      joined_at: new Date()
+    })
+    .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
+    .returning('id')
     .executeTakeFirst()
-  if (membership == null) {
-    await trx
-      .insertInto('memberships')
-      .values({
-        id: makeId('membership'),
-        user_id: userId,
-        team_id: teamId,
-        role: 'member',
-        is_spectator: spectator,
-        joined_at: new Date()
-      })
-      .execute()
-    return { joined: true, gained: true }
-  }
-  if (!spectator || membership.is_spectator) {
-    return { joined: false, gained: false }
-  }
-  await trx
-    .updateTable('memberships')
-    .set({ is_spectator: true })
-    .where('id', '=', membership.id)
-    .execute()
-  return { joined: false, gained: true }
+  return made != null
 }
 
 /**

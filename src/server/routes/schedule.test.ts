@@ -201,8 +201,7 @@ describe('scheduling a team’s games over HTTP', function () {
           id: makeId('membership'),
           user_id: user('parent'),
           team_id: hawks,
-          role: 'member',
-          is_spectator: true
+          role: 'member'
         }
       ])
       .execute()
