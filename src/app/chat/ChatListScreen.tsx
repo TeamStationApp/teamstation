@@ -50,6 +50,7 @@ export interface ChatListScreenProps {
   initialAnchor?: { id: string; relativeY: number }
   onOffset?: (offset: number) => void
   onAnchor?: (anchor: { id: string; relativeY: number } | undefined) => void
+  registerPositionCapture?: (capture: () => Promise<void>) => () => void
 }
 type Row =
   | { type: 'heading'; key: string; title: string }
@@ -57,6 +58,7 @@ type Row =
 
 export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const { engine } = props
+  const { registerPositionCapture } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const shared = getChatStyles(theme)
@@ -257,6 +259,116 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         relativeY: first[1].y - offset
       })
   }
+  const navigationCapture = useRef<() => Promise<void>>(async () => {})
+  const captureSequence = useRef(0)
+  navigationCapture.current = async () => {
+    if (!liveData() || !restored.current) return
+    const sequence = ++captureSequence.current
+    const version = layoutVersion.current
+    const generation = gestureGeneration.current
+    const rawOffset = currentOffset.current
+    const responder = list.current?.getScrollResponder()
+    const content = responder?.getInnerViewRef()
+    const viewport = responder?.getNativeScrollRef()
+    const current = (): boolean =>
+      liveData() &&
+      sequence === captureSequence.current &&
+      version === layoutVersion.current &&
+      generation === gestureGeneration.current &&
+      rawOffset === currentOffset.current &&
+      content === list.current?.getScrollResponder()?.getInnerViewRef() &&
+      viewport === list.current?.getScrollResponder()?.getNativeScrollRef()
+    interface Bounds {
+      y: number
+      width: number
+      height: number
+    }
+    const measure = async (
+      node:
+        | {
+            measureInWindow: (
+              callback: (
+                x: number,
+                y: number,
+                width: number,
+                height: number
+              ) => void
+            ) => void
+          }
+        | null
+        | undefined
+    ): Promise<Bounds | undefined> =>
+      await new Promise(resolve => {
+        if (node == null || typeof node.measureInWindow !== 'function') {
+          resolve(undefined)
+          return
+        }
+        // A failed measurement falls back; elapsed time never establishes position.
+        const timeout = setTimeout(() => {
+          resolve(undefined)
+        }, 100)
+        node.measureInWindow((_x, y, width, height) => {
+          clearTimeout(timeout)
+          resolve(
+            Number.isFinite(y) &&
+              Number.isFinite(width) &&
+              Number.isFinite(height) &&
+              width > 0 &&
+              height > 0
+              ? { y, width, height }
+              : undefined
+          )
+        })
+      })
+    const [contentBounds, viewportBounds] = await Promise.all([
+      measure(content),
+      measure(viewport)
+    ])
+    if (!current() || contentBounds == null || viewportBounds == null) return
+    const offset = Math.max(0, viewportBounds.y - contentBounds.y)
+    const atChosenTop = explicitTop.current && offset === 0
+    let saved: { id: string; relativeY: number } | undefined
+    if (!atChosenTop) {
+      const measured = await Promise.all(
+        [...rowRefs.current].map(async ([id, row]) => ({
+          id,
+          row,
+          bounds: await measure(row)
+        }))
+      )
+      if (!current()) return
+      const visibleRows = measured.filter(
+        value =>
+          value.bounds != null &&
+          rowRefs.current.get(value.id) === value.row &&
+          value.bounds.y + value.bounds.height > viewportBounds.y &&
+          value.bounds.y < viewportBounds.y + viewportBounds.height
+      )
+      visibleRows.sort((a, b) => a.bounds!.y - b.bounds!.y)
+      const first = visibleRows[0]
+      if (first == null) return
+      saved = { id: first.id, relativeY: first.bounds!.y - viewportBounds.y }
+    }
+    if (!current()) return
+    currentOffset.current = offset
+    restoreOffset.current = offset
+    if (offset > 0) explicitTop.current = false
+    anchor.current = saved
+    anchorOwned.current = false
+    scrollOwner.current.onOffset?.(offset)
+    scrollOwner.current.onAnchor?.(saved)
+  }
+  useEffect(() => {
+    if (!listVisible) return
+    const stop = registerPositionCapture?.(async () => {
+      await navigationCapture.current()
+    })
+    return () => {
+      captureSequence.current += 1
+      stop?.()
+    }
+  }, [listVisible, registerPositionCapture])
+
   const measureRow = (id: string): void => {
     const version = layoutVersion.current
     const generation = gestureGeneration.current
