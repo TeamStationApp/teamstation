@@ -106,11 +106,12 @@ async function main(): Promise<void> {
     expect(b.page.url()).includes('tab=schedule')
     await contains(b.page, 'SCHEDULE')
     await tap(b.m, 'Manage')
+    // Adding people is here now, with the Manage People page gone.
+    await contains(b.page, 'ADD SOMEBODY')
     for (const label of [
       'Join a Season',
       'Create Game',
-      'Create placeholder team',
-      'Manage people and roles'
+      'Create placeholder team'
     ]) {
       await tap(b.m, label)
       expect(
@@ -159,16 +160,17 @@ async function main(): Promise<void> {
     }
     await visit(`/groups/season/${f.seasonA}?tab=teams`)
     await b.m.scrollUntilVisible({
-      element: { css: '[aria-label^="Demo Hawks,"]' },
+      element: { css: '[aria-label="Open Demo Hawks"]' },
       centerElement: true,
       timeout: 15000
     })
-    await b.m.tapOn({ css: '[aria-label^="Demo Hawks,"]', timeout: 15000 })
+    await tap(b.m, 'Open Demo Hawks')
     await shell()
     await visit(`/groups/season/${f.seasonA}`)
     await tap(b.m, 'Open Demo Hawks')
     await shell()
     await visit(`/groups/league/${f.leagueA}`)
+    await tap(b.m, 'Teams', 'tab')
     await tap(b.m, 'Open Demo Hawks')
     await shell()
     await visit('/discover')
@@ -250,7 +252,7 @@ async function main(): Promise<void> {
       'B10 finished narrow browser hero/tabs and pending schedule regression'
     )
     await visit('/')
-    await tap(b.m, 'Add Team')
+    await tap(b.m, 'Create Team')
     await fill(b.m, 'Team name', 'Demo Created Team')
     await tap(b.m, 'Continue')
     await tap(b.m, 'Enter location manually')
@@ -259,6 +261,7 @@ async function main(): Promise<void> {
     await tap(b.m, 'Confirm location')
     await tap(b.m, 'Continue')
     await tap(b.m, 'Use initials')
+    await tap(b.m, 'Continue')
     await tap(b.m, 'Create Team')
     await contains(b.page, 'Demo Created Team')
     await b.page.waitForSelector('[aria-label="Team sections"]')
