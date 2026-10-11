@@ -3760,6 +3760,30 @@ describe('qa4 accepted list boundaries', function () {
     await returning.scroll(0)
     expect(returning.moves).deep.equals([0])
     expect(returning.node.scrollTop).equals(0)
+    // Complete a measured first return, then navigate again without movement.
+    await act(async () => {
+      renderedRowLayout('cnv_return_0')({
+        nativeEvent: { layout: { height: 67 } }
+      })
+      await wait(40)
+    })
+    const measuredAnchor = returning.anchors.at(-1)
+    await unmount()
+    const second = await returningList(
+      true,
+      returning.offsets.at(-1),
+      measuredAnchor
+    )
+    await second.populate(8)
+    setListRowMeasurement('cnv_return_0', 216)
+    await second.content(1800)
+    await second.scroll(second.moves.at(-1)!)
+    expect(
+      second.moves,
+      'A measured remount must not recreate a row-relative top'
+    ).deep.equals([0])
+    expect(second.node.scrollTop).equals(0)
+    expect(measuredAnchor).equals(undefined)
   })
 
   it('does not accept a stale hidden terminal zero as a new user reading position', async function () {
@@ -3784,5 +3808,191 @@ describe('qa4 accepted list boundaries', function () {
     })
     expect(pending.offsets.at(-1)).equals(240)
     expect(pending.anchors.at(-1)).deep.equals(saved)
+  })
+})
+
+interface NativeListEvent {
+  nativeEvent: { contentOffset: { y: number }; velocity?: { y: number } }
+}
+function nativeListStart(node: HTMLElement, momentum = false): void {
+  const props = renderedListCallbacks(node) as ListLayoutCallbacks & {
+    onScrollBeginDrag: () => void
+    onMomentumScrollBegin?: () => void
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(
+    ReactNative.Platform,
+    'OS'
+  )!
+  try {
+    Object.defineProperty(ReactNative.Platform, 'OS', {
+      ...descriptor,
+      value: 'ios'
+    })
+    if (momentum) props.onMomentumScrollBegin?.()
+    else props.onScrollBeginDrag()
+  } finally {
+    Object.defineProperty(ReactNative.Platform, 'OS', descriptor)
+  }
+}
+function nativeListEnd(
+  node: HTMLElement,
+  momentum = false
+): (event: NativeListEvent) => void {
+  const props = renderedListCallbacks(node) as ListLayoutCallbacks & {
+    onScrollEndDrag: (event: NativeListEvent) => void
+    onMomentumScrollEnd: (event: NativeListEvent) => void
+  }
+  return momentum ? props.onMomentumScrollEnd : props.onScrollEndDrag
+}
+
+describe('qa4 review1 native-shaped list lifecycle', function () {
+  for (const rawZero of [0, -40])
+    it(`keeps the supplied zero boundary after begin/end without normalized movement (${rawZero})`, async function () {
+      const pending = await returningList(true, 0, {
+        id: 'cnv_return_0',
+        relativeY: 105
+      })
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_0', 105)
+      await pending.content(1800)
+      await pending.scroll(0)
+      const saved = pending.anchors.at(-1)
+      await act(async () => {
+        nativeListStart(pending.node)
+        nativeListEnd(pending.node)({
+          nativeEvent: { contentOffset: { y: rawZero } }
+        })
+        await wait()
+      })
+      expect(pending.offsets.at(-1)).equals(0)
+      expect(pending.anchors.at(-1)).deep.equals(saved)
+      await unmount()
+      const returning = await returningList(true, 0, saved)
+      await returning.populate(8)
+      setListRowMeasurement('cnv_return_0', 169)
+      await returning.content(1800)
+      await act(async () => {
+        await wait(40)
+      })
+      expect(returning.moves.at(-1)).equals(64)
+    })
+
+  it('accepts a positive-to-zero native terminal with no intermediate scroll event or velocity', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(1800)
+    await pending.scroll(240)
+    await act(async () => {
+      nativeListStart(pending.node)
+      pending.node.scrollTop = 0
+      nativeListEnd(pending.node)({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+  })
+
+  it('carries only a preceding native release into its actual momentum terminal', async function () {
+    const pending = await returningList(true, 240, {
+      id: 'cnv_return_3',
+      relativeY: 30
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_3', 270)
+    await pending.content(1800)
+    await pending.scroll(240)
+    await act(async () => {
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({
+        nativeEvent: { contentOffset: { y: 160 }, velocity: { y: -2 } }
+      })
+      nativeListStart(pending.node, true)
+      pending.node.scrollTop = 0
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(0)
+    expect(pending.anchors.at(-1)).equals(undefined)
+  })
+
+  for (const velocity of [undefined, 0])
+    it(`always ingests momentum coordinates but does not inherit closed intent without release velocity (${velocity})`, async function () {
+      const pending = await returningList(true, 240, {
+        id: 'cnv_return_3',
+        relativeY: 30
+      })
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_3', 270)
+      await pending.content(1800)
+      await pending.scroll(240)
+      await act(async () => {
+        nativeListStart(pending.node)
+        nativeListEnd(pending.node)({
+          nativeEvent: {
+            contentOffset: { y: 160 },
+            ...(velocity == null ? {} : { velocity: { y: velocity } })
+          }
+        })
+        nativeListStart(pending.node, true)
+        nativeListEnd(
+          pending.node,
+          true
+        )({ nativeEvent: { contentOffset: { y: 0 } } })
+        await wait()
+      })
+      expect(pending.offsets.at(-1)).equals(0)
+      expect(pending.anchors.at(-1)).deep.equals({
+        id: 'cnv_return_3',
+        relativeY: 270
+      })
+    })
+
+  it('rejects unsolicited programmatic momentum classification and a hidden retained terminal', async function () {
+    const pending = await returningList(true, 0, {
+      id: 'cnv_return_0',
+      relativeY: 105
+    })
+    await pending.populate(8)
+    setListRowMeasurement('cnv_return_0', 105)
+    await pending.content(1800)
+    await pending.scroll(0)
+    const saved = pending.anchors.at(-1)
+    await act(async () => {
+      nativeListStart(pending.node, true)
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 100 } } })
+      nativeListEnd(
+        pending.node,
+        true
+      )({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.anchors.at(-1)).deep.equals(saved)
+    await act(async () => {
+      nativeListStart(pending.node)
+      nativeListEnd(pending.node)({
+        nativeEvent: { contentOffset: { y: 100 }, velocity: { y: 2 } }
+      })
+      await wait()
+    })
+    const end = nativeListEnd(pending.node, true)
+    const offset = pending.offsets.at(-1)
+    const anchor = pending.anchors.at(-1)
+    await pending.hide()
+    await act(async () => {
+      end({ nativeEvent: { contentOffset: { y: 0 } } })
+      await wait()
+    })
+    expect(pending.offsets.at(-1)).equals(offset)
+    expect(pending.anchors.at(-1)).deep.equals(anchor)
   })
 })

@@ -115,8 +115,21 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const anchor = useRef(props.initialAnchor)
   const anchorOwned = useRef(props.initialAnchor != null)
   const currentOffset = useRef(props.initialOffset ?? 0)
-  const userPosition = useRef(false)
-  const explicitTop = useRef(false)
+  const userPosition = useRef<{ native: boolean; moved: boolean } | undefined>(
+    undefined
+  )
+  const pendingMomentum = useRef<
+    | {
+        data: string | undefined
+        visibility: number
+        generation: number
+        moved: boolean
+      }
+    | undefined
+  >(undefined)
+  const explicitTop = useRef(
+    (props.initialOffset ?? 0) === 0 && props.initialAnchor == null
+  )
   const acknowledgedOffset = useRef<
     | {
         offset: number
@@ -327,6 +340,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     requestedVersion.current = layoutVersion.current
     rejectedRequest.current = false
     if (final) restored.current = false
+    userPosition.current = undefined
+    pendingMomentum.current = undefined
     list.current?.scrollToOffset({ offset, animated: false })
     if (verifyZeroDistance(offset, final)) finishRestoration(offset)
   }
@@ -343,6 +358,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     setFastRestore(true)
     requestedFinal.current = false
     seeking.current = { data: dataKey, index, version: layoutVersion.current }
+    userPosition.current = undefined
+    pendingMomentum.current = undefined
     list.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 })
   }
   const revalidateGeometry = (): void => {
@@ -518,29 +535,56 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     )
   }
   restoration.current = restoreList
-  const userScrolled = (): void => {
+  const userScrolled = (native = false): void => {
     if (!scrollOwner.current.live || !scrollOwner.current.visible) return
     restored.current = true
     setFastRestore(false)
     anchorOwned.current = false
     anchor.current = undefined
     gestureGeneration.current += 1
-    userPosition.current = true
+    userPosition.current = { native, moved: false }
+    pendingMomentum.current = undefined
   }
-  const rememberOffset = (event: {
-    nativeEvent: { contentOffset: { y: number } }
-  }): void => {
+  const rememberOffset = (
+    event: {
+      nativeEvent: { contentOffset: { y: number }; velocity?: { y: number } }
+    },
+    end?: 'drag' | 'momentum'
+  ): void => {
     if (!liveData()) return
     const offset = Math.max(0, event.nativeEvent.contentOffset.y)
-    currentOffset.current = offset
-    if (userPosition.current) {
-      // A delivered user scroll can choose the absolute top. Intent without
-      // movement and programmatic acknowledgements keep their boundary anchor.
-      explicitTop.current = offset === 0
-      if (explicitTop.current) {
-        anchor.current = undefined
-        anchorOwned.current = false
+    const gesture = userPosition.current
+    if (gesture != null) {
+      gesture.moved ||= offset !== currentOffset.current
+      // A delivered movement can choose the absolute top. A native drag at
+      // the same normalized boundary does not replace its row anchor.
+      if (gesture.moved) {
+        explicitTop.current = offset === 0
+        if (explicitTop.current) {
+          anchor.current = undefined
+          anchorOwned.current = false
+        }
       }
+    }
+    currentOffset.current = offset
+    if (end != null) {
+      // Release velocity binds the following native momentum to this drag.
+      // Missing velocity never prevents recording the actual terminal offset.
+      const velocity = event.nativeEvent.velocity?.y
+      pendingMomentum.current =
+        end === 'drag' &&
+        gesture?.native === true &&
+        velocity != null &&
+        Number.isFinite(velocity) &&
+        velocity !== 0
+          ? {
+              data: dataKey,
+              visibility: visibilityVersion,
+              generation: gestureGeneration.current,
+              moved: gesture.moved
+            }
+          : undefined
+      userPosition.current = undefined
     }
     acknowledgedOffset.current = {
       offset,
@@ -572,7 +616,13 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     geometryValidation.current()
     restoration.current()
   }, [chats, dataKey, listVisible])
-  useEffect(() => bindUserScroll(list.current, userScrolled), [])
+  useEffect(
+    () =>
+      bindUserScroll(list.current, () => {
+        userScrolled()
+      }),
+    []
+  )
   const viewability = useRef({ itemVisiblePercentThreshold: 1 }).current
   const previews = useCallback(
     (ids: string[], retry = false): void => {
@@ -685,13 +735,30 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         // scheduler instead of adding a timer between restoration steps.
         updateCellsBatchingPeriod={Platform.OS === 'web' ? 0 : undefined}
         onScroll={rememberOffset}
-        onScrollEndDrag={rememberOffset}
-        onMomentumScrollEnd={rememberOffset}
+        onScrollEndDrag={event => {
+          rememberOffset(event, 'drag')
+        }}
+        onMomentumScrollEnd={event => {
+          rememberOffset(event, 'momentum')
+        }}
+        onMomentumScrollBegin={() => {
+          if (!liveData()) return
+          const preceding = pendingMomentum.current
+          pendingMomentum.current = undefined
+          if (
+            Platform.OS !== 'web' &&
+            preceding != null &&
+            preceding.data === dataKey &&
+            preceding.visibility === visibilityVersion &&
+            preceding.generation === gestureGeneration.current
+          )
+            userPosition.current = { native: true, moved: preceding.moved }
+        }}
         scrollEventThrottle={100}
         onScrollBeginDrag={() => {
           // RNW also emits this for the programmatic restoration steps.
           if (Platform.OS !== 'web' && liveData()) {
-            userScrolled()
+            userScrolled(true)
           }
         }}
         keyboardShouldPersistTaps="handled"
