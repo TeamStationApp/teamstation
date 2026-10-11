@@ -1604,6 +1604,40 @@ export function openApiDocument(version: string): OpenApiDocument {
             endMs: { type: 'integer' }
           }
         },
+        PlayerTeam: {
+          type: 'object',
+          required: [
+            'teamId',
+            'teamName',
+            'seasonId',
+            'seasonName',
+            'seasonYear',
+            'jersey',
+            'positions',
+            'current',
+            'logoUrl'
+          ],
+          description:
+            'A team a player has played for, once for each season it is in, ' +
+            'belongs to or played in. `jersey` and `positions` are their ' +
+            'membership’s, null and empty on a team they only have stats ' +
+            'for. `current` is whether they are a player on it now, under any ' +
+            'of their rows: false on a team they have left.',
+          properties: {
+            teamId: { type: 'string' },
+            teamName: { type: 'string' },
+            seasonId: { type: ['string', 'null'] },
+            seasonName: { type: ['string', 'null'] },
+            seasonYear: { type: ['integer', 'null'] },
+            jersey: { type: ['string', 'null'] },
+            positions: { type: 'array', items: { type: 'string' } },
+            current: { type: 'boolean' },
+            logoUrl: {
+              type: ['string', 'null'],
+              description: "The team's logo, a signed URL; null without one."
+            }
+          }
+        },
         RosterEntry: {
           type: 'object',
           required: [
@@ -3833,6 +3867,68 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/players/{userId}': {
+        get: {
+          summary: 'One person, for their own page',
+          description:
+            'Their short name, avatar, bats and throws, whether the caller ' +
+            'may change their name (`canEditName`), how the caller may ' +
+            'invite a guardian of them (`guardianInviteAs`), and the teams ' +
+            'they have played for that the caller may see: every one to the ' +
+            'person and their guardians. A merged row answers 303 to the ' +
+            'person it was merged into.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          responses: {
+            200: {
+              description: 'The person, with `teams` newest season first',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'name', 'teams'],
+                    properties: {
+                      userId: { type: 'integer' },
+                      name: {
+                        type: 'string',
+                        description: 'First name and last initial.'
+                      },
+                      canEditName: { type: 'boolean' },
+                      guardianInviteAs: {
+                        type: ['string', 'null'],
+                        enum: ['guardian', 'team', null],
+                        description:
+                          '`guardian`: the caller is a guardian of the person ' +
+                          'and invites another with no `sender`. `team`: the ' +
+                          'caller administers, coaches or assists a team the ' +
+                          'person plays on now, and the person has no ' +
+                          'guardian yet (a site administrator, always), so ' +
+                          'invites from that team as `sender`. `null`: the ' +
+                          'caller may not invite one.'
+                      },
+                      avatarUrl: { type: ['string', 'null'] },
+                      bats: {
+                        type: ['string', 'null'],
+                        enum: ['left', 'right', 'switch', null]
+                      },
+                      throws: {
+                        type: ['string', 'null'],
+                        enum: ['left', 'right', null]
+                      },
+                      teams: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/PlayerTeam' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            303: { description: 'A merged row: the person it was merged into' },
+            404: errorResponse
+          }
+        }
+      },
       '/players/{userId}/stats': {
         get: {
           summary: "A player's batting and pitching, narrowed as asked",
@@ -3869,6 +3965,59 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description: 'The totals, and what they can be narrowed to'
+            },
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/highlights': {
+        get: {
+          summary: 'Every highlight a player is credited on, newest first',
+          description:
+            'A page at a time: `nextBefore` is the play time to pass as ' +
+            '`before` for the next page, and `withoutVideo` counts plays on ' +
+            'the page no recording covers. `seasonId`, `teamId` and `year` ' +
+            'narrow the games the same way `/players/{userId}/stats` does, ' +
+            'before the page is cut; `teamId` is the team the player played ' +
+            'for. With none of them the answer is the career.',
+          security: [{ bearer: [] }],
+          parameters: [
+            userIdParam,
+            {
+              name: 'before',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' },
+              description: 'Only plays before this moment'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50 },
+              description: 'Page size; 20 unless set, never more than 50'
+            },
+            {
+              name: 'seasonId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only games in this season'
+            },
+            {
+              name: 'teamId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only games played for this team'
+            },
+            {
+              name: 'year',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Only games played in this calendar year'
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'Highlights, newest first, with `nextBefore` and `withoutVideo`'
             },
             404: errorResponse
           }

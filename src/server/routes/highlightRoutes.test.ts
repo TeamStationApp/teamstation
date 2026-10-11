@@ -30,7 +30,8 @@ import { teamRoutes } from './teams'
  * Both are read from the credits the stored plays carry. A player is found
  * by the user id on the credit, under any row that is them, and a game whose
  * plays nobody has credited yet still shows its plays rather than an empty
- * list.
+ * list. A player's list narrows to a season, a team or a year as their stats
+ * do.
  */
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_highlights_${Date.now()}`
@@ -51,11 +52,33 @@ const bee = mintUserId(
     id === bea.userId ||
     id === cal.userId
 )
+const dee = mintUserId(
+  id =>
+    id === admin.userId ||
+    id === ada.userId ||
+    id === bea.userId ||
+    id === cal.userId ||
+    id === bee.userId
+)
+const eve = mintUserId(
+  id =>
+    id === admin.userId ||
+    id === ada.userId ||
+    id === bea.userId ||
+    id === cal.userId ||
+    id === bee.userId ||
+    id === dee.userId
+)
 
 /** When both recordings start. Every play is some minutes after it. */
 const RECORDING = new Date('2026-05-02T18:00:00.000Z')
-const minutesIn = (minutes: number): string =>
-  new Date(RECORDING.getTime() + minutes * 60_000).toISOString()
+const minutesIn = (minutes: number, start = RECORDING): string =>
+  new Date(start.getTime() + minutes * 60_000).toISOString()
+
+/** Dee's three games, for the season, team and year filters. */
+const DEE_AWAY = new Date('2026-05-09T18:00:00.000Z')
+const DEE_SEASON = new Date('2026-06-06T18:00:00.000Z')
+const DEE_LAST_YEAR = new Date('2025-05-03T18:00:00.000Z')
 
 describe('the highlight routes', function () {
   this.timeout(60000)
@@ -70,6 +93,13 @@ describe('the highlight routes', function () {
   const creditedVideo = makeId('video')
   const oldGame = makeId('game')
   const oldVideo = makeId('video')
+  const other = makeId('team')
+  const season = makeId('season')
+  const deeGames = {
+    away: { gameId: makeId('game'), videoId: makeId('video') },
+    season: { gameId: makeId('game'), videoId: makeId('video') },
+    lastYear: { gameId: makeId('game'), videoId: makeId('video') }
+  }
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -181,6 +211,87 @@ describe('the highlight routes', function () {
     expect((await get('/players/not-a-user/highlights')).status).equals(404)
   })
 
+  describe("narrowed as the player's stats are", function () {
+    const dees = async (query = ''): Promise<string[]> => {
+      const answer = await get(`/players/${dee.userId}/highlights${query}`)
+      expect(answer.status).equals(200)
+      return eventIdsOf(answer.body)
+    }
+
+    it('answers every game with no filter', async function () {
+      expect(await dees()).deep.equals([
+        'evt_dee_season',
+        'evt_dee_away',
+        'evt_dee_last_year'
+      ])
+    })
+
+    it('narrows to a season', async function () {
+      expect(await dees(`?seasonId=${season}`)).deep.equals(['evt_dee_season'])
+    })
+
+    it('narrows to the team they played for, not a team they played against', async function () {
+      expect(await dees(`?teamId=${away}`)).deep.equals([
+        'evt_dee_season',
+        'evt_dee_away'
+      ])
+      expect(await dees(`?teamId=${other}`)).deep.equals(['evt_dee_last_year'])
+      // Home was in every one of Dee's games, and Dee never played for it.
+      expect(await dees(`?teamId=${home}`)).deep.equals([])
+    })
+
+    it('leaves a play whose credit names no team to the teams in its game', async function () {
+      const eves = async (teamId: string): Promise<string[]> =>
+        eventIdsOf(
+          (await get(`/players/${eve.userId}/highlights?teamId=${teamId}`)).body
+        )
+      expect(await eves(away)).deep.equals(['evt_eve'])
+      expect(await eves(other)).deep.equals([])
+    })
+
+    it('narrows to a calendar year', async function () {
+      expect(await dees('?year=2025')).deep.equals(['evt_dee_last_year'])
+      expect(await dees('?year=2026')).deep.equals([
+        'evt_dee_season',
+        'evt_dee_away'
+      ])
+    })
+
+    it('ignores a year that is not one, and empty values, as the stats do', async function () {
+      const career = await dees()
+      expect(await dees('?year=26')).deep.equals(career)
+      expect(await dees('?year=twenty')).deep.equals(career)
+      expect(await dees('?seasonId=&teamId=&year=')).deep.equals(career)
+    })
+
+    it('narrows before the page is cut, and pages through what is left', async function () {
+      const first = await get(
+        `/players/${dee.userId}/highlights?teamId=${away}&limit=1`
+      )
+      expect(eventIdsOf(first.body)).deep.equals(['evt_dee_season'])
+      expect(first.body.nextBefore).equals(minutesIn(10, DEE_SEASON))
+
+      const second = await get(
+        `/players/${dee.userId}/highlights?teamId=${away}&limit=1&before=${encodeURIComponent(
+          first.body.nextBefore
+        )}`
+      )
+      expect(eventIdsOf(second.body)).deep.equals(['evt_dee_away'])
+      expect(second.body.nextBefore).equals(null)
+    })
+
+    it('answers an empty page when nothing is left', async function () {
+      const answer = await get(
+        `/players/${dee.userId}/highlights?seasonId=${season}&year=2025`
+      )
+      expect(answer.body).deep.equals({
+        highlights: [],
+        nextBefore: null,
+        withoutVideo: 0
+      })
+    })
+  })
+
   it("lists a video's credited plays", async function () {
     const answer = await get(`/videos/${creditedVideo}/highlights`)
     expect(answer.status).equals(200)
@@ -214,7 +325,9 @@ describe('the highlight routes', function () {
           { made: ada, name: 'Ada Lovelace', isAdmin: false },
           { made: bea, name: 'Bea Brown', isAdmin: false },
           { made: cal, name: 'Cal Carter', isAdmin: false },
-          { made: bee, name: 'Bea B', isAdmin: false }
+          { made: bee, name: 'Bea B', isAdmin: false },
+          { made: dee, name: 'Dee Dodd', isAdmin: false },
+          { made: eve, name: 'Eve Ennis', isAdmin: false }
         ].map(person => ({
           id: person.made.userId,
           legacyId: person.made.legacyId,
@@ -239,8 +352,13 @@ describe('the highlight routes', function () {
       .insertInto('teams')
       .values([
         { id: home, name: 'Home', kind: 'full' },
-        { id: away, name: 'Away', kind: 'full' }
+        { id: away, name: 'Away', kind: 'full' },
+        { id: other, name: 'Other', kind: 'full' }
       ])
+      .execute()
+    await db
+      .insertInto('seasons')
+      .values({ id: season, name: 'Summer 2026', year: 2026 })
       .execute()
     await db
       .updateTable('users')
@@ -248,30 +366,43 @@ describe('the highlight routes', function () {
       .where('id', '=', bee.userId)
       .execute()
 
-    for (const [gameId, videoId] of [
-      [creditedGame, creditedVideo],
-      [oldGame, oldVideo]
-    ]) {
+    // Dee played for Away twice, once in a season, and for Other last year,
+    // and Home was the other side every time.
+    const games: Array<{
+      gameId: string
+      videoId: string
+      start: Date
+      seasonId?: string
+      awayTeamId?: string
+    }> = [
+      { gameId: creditedGame, videoId: creditedVideo, start: RECORDING },
+      { gameId: oldGame, videoId: oldVideo, start: RECORDING },
+      { ...deeGames.away, start: DEE_AWAY },
+      { ...deeGames.season, start: DEE_SEASON, seasonId: season },
+      { ...deeGames.lastYear, start: DEE_LAST_YEAR, awayTeamId: other }
+    ]
+    for (const game of games) {
       await db
         .insertInto('games')
         .values({
-          id: gameId,
+          id: game.gameId,
           home_team_id: home,
-          away_team_id: away,
-          start_at: RECORDING,
+          away_team_id: game.awayTeamId ?? away,
+          season_id: game.seasonId ?? null,
+          start_at: game.start,
           status: 'final'
         })
         .execute()
       await db
         .insertInto('videos')
         .values({
-          id: videoId,
-          game_id: gameId,
+          id: game.videoId,
+          game_id: game.gameId,
           kind: 'program',
           title: 'Home vs Away',
           storage: 'spaces',
           status: 'ready',
-          start_at: RECORDING,
+          start_at: game.start,
           duration_sec: 7200
         })
         .execute()
@@ -279,11 +410,12 @@ describe('the highlight routes', function () {
 
     const credit = (
       name: string,
-      creditUserId: number
+      creditUserId: number,
+      teamId: string | null = away
     ): Record<string, unknown> => ({
       eventType: 'single',
       label: `Single: ${name}`,
-      teamId: away,
+      teamId,
       creditUserId,
       credit: { name, role: 'batter', position: null }
     })
@@ -292,8 +424,42 @@ describe('the highlight routes', function () {
       gameId: string
       atBatIndex: number
       minutes: number
+      start?: Date
       credits?: unknown[]
     }> = [
+      {
+        id: 'evt_dee_away',
+        gameId: deeGames.away.gameId,
+        atBatIndex: 0,
+        minutes: 10,
+        start: DEE_AWAY,
+        credits: [credit('Dee D', dee.userId)]
+      },
+      // Credited to Eve on a team we do not know.
+      {
+        id: 'evt_eve',
+        gameId: deeGames.away.gameId,
+        atBatIndex: 1,
+        minutes: 20,
+        start: DEE_AWAY,
+        credits: [credit('Eve E', eve.userId, null)]
+      },
+      {
+        id: 'evt_dee_season',
+        gameId: deeGames.season.gameId,
+        atBatIndex: 0,
+        minutes: 10,
+        start: DEE_SEASON,
+        credits: [credit('Dee D', dee.userId)]
+      },
+      {
+        id: 'evt_dee_last_year',
+        gameId: deeGames.lastYear.gameId,
+        atBatIndex: 0,
+        minutes: 10,
+        start: DEE_LAST_YEAR,
+        credits: [credit('Dee D', dee.userId, other)]
+      },
       {
         id: 'evt_ada1',
         gameId: creditedGame,
@@ -331,7 +497,7 @@ describe('the highlight routes', function () {
         .values({
           id: play.id,
           gameId: play.gameId,
-          startTime: minutesIn(play.minutes),
+          startTime: minutesIn(play.minutes, play.start),
           battingTeamId: away,
           gumbo: {
             about: {
@@ -339,7 +505,7 @@ describe('the highlight routes', function () {
               inning: 1,
               halfInning: 'top',
               isScoringPlay: false,
-              startTime: minutesIn(play.minutes)
+              startTime: minutesIn(play.minutes, play.start)
             },
             result: { eventType: 'single', awayScore: 0, homeScore: 0 },
             ...(play.credits == null ? {} : { credits: play.credits })

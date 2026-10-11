@@ -88,6 +88,30 @@ describe('api client', function () {
     expect(mutation.calls[2].body).equals(undefined)
   })
 
+  it("narrows a player's highlights by the stats filter, and pages with it", async function () {
+    const { fetch, calls } = stubFetch(200, {
+      highlights: [],
+      nextBefore: null,
+      withoutVideo: 0
+    })
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch
+    })
+    await client.playerHighlights('7')
+    await client.playerHighlights('7', {
+      before: '2026-05-02T18:00:00.000Z',
+      limit: 5,
+      seasonId: 'season/one',
+      teamId: 'team/one',
+      year: 2026
+    })
+    expect(calls.map(call => call.url)).deep.equals([
+      'http://example.com/api/v1/players/7/highlights',
+      'http://example.com/api/v1/players/7/highlights?before=2026-05-02T18%3A00%3A00.000Z&limit=5&seasonId=season%2Fone&teamId=team%2Fone&year=2026'
+    ])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({

@@ -19,7 +19,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
-import { statRows } from '../stats/rows'
+import { playerFilterOf, statRows } from '../stats/rows'
 import { seasonParticipants } from '../stats/seasonTeams'
 
 /**
@@ -56,18 +56,7 @@ export function statsRoutes(
       const userId = userIdParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
-      const seasonId =
-        typeof req.query.seasonId === 'string' && req.query.seasonId !== ''
-          ? req.query.seasonId
-          : undefined
-      const teamId =
-        typeof req.query.teamId === 'string' && req.query.teamId !== ''
-          ? req.query.teamId
-          : undefined
-      const year =
-        typeof req.query.year === 'string' && /^\d{4}$/.test(req.query.year)
-          ? Number(req.query.year)
-          : undefined
+      const { seasonId, teamId, year } = playerFilterOf(req.query)
 
       // Every row that is this person, not every row under this id: one child
       // on five teams is five ids, and four of them are closed into the fifth.

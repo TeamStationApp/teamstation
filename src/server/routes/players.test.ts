@@ -1102,7 +1102,7 @@ describe('a player, and who may change their name', function () {
     expect(Array.isArray(roster.body)).equals(true)
   })
 
-  it('lists the teams a player has been on, with the season', async function () {
+  it('lists the teams a player has been on, with the season and their number', async function () {
     const teams = await teamsOf(db, [childId])
     expect(teams).deep.equals([
       {
@@ -1110,7 +1110,11 @@ describe('a player, and who may change their name', function () {
         teamName: 'Badgers',
         seasonId,
         seasonName: 'Spring 2026',
-        seasonYear: 2026
+        seasonYear: 2026,
+        jersey: '12',
+        positions: [],
+        current: true,
+        logoPath: null
       }
     ])
   })

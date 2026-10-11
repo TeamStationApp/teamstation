@@ -564,13 +564,21 @@ const asStoredGame = asObject({
   currentPlay: asOptional(asNullable(asCurrentPlay), null)
 })
 
-/** A team this player has played for, and in which season. */
+/**
+ * A team this player has played for, in which season, and their number and
+ * positions there: null and empty on a team they only have stats for.
+ * `current` is whether they play on it now; a team they left is false.
+ */
 export const asPlayerTeam = asObject({
   teamId: asString,
   teamName: asString,
+  logoUrl: asNullable(asString),
   seasonId: asNullable(asString),
   seasonName: asNullable(asString),
-  seasonYear: asNullable(asNumber)
+  seasonYear: asNullable(asNumber),
+  jersey: asNullable(asString),
+  positions: asArray(asString),
+  current: asBoolean
 })
 export type PlayerTeam = ReturnType<typeof asPlayerTeam>
 
@@ -581,8 +589,8 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * screen. The whole name is never part of it: it is fetched separately, by
  * `playerName`, when somebody who may change it opens the name field.
  *
- * No jersey number: a number belongs to a player *on a team*, and is drawn on
- * the team's roster and in the box score, where that context exists.
+ * No jersey number on the person: a number belongs to a player *on a team*,
+ * and travels only in a `teams` row of `PlayerDetail`, beside its team.
  */
 export const asPlayerName = asObject({
   userId: asUserId,
@@ -2365,14 +2373,26 @@ export class TeamStationClient {
     )
   }
 
-  /** Every highlight one player is credited on, newest first, a page at a time. */
+  /**
+   * Every highlight one player is credited on, newest first, a page at a
+   * time, narrowed to a season, a team or a year as `playerStats` is.
+   */
   async playerHighlights(
     userId: string,
-    options: { before?: string; limit?: number } = {}
+    options: {
+      before?: string
+      limit?: number
+      seasonId?: string
+      teamId?: string
+      year?: number
+    } = {}
   ): Promise<PlayerHighlights> {
     const query = new URLSearchParams()
     if (options.before != null) query.set('before', options.before)
     if (options.limit != null) query.set('limit', String(options.limit))
+    if (options.seasonId != null) query.set('seasonId', options.seasonId)
+    if (options.teamId != null) query.set('teamId', options.teamId)
+    if (options.year != null) query.set('year', String(options.year))
     const text = query.toString()
     return await this.request(
       'GET',

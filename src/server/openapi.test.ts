@@ -401,6 +401,48 @@ describe('the API document', function () {
     expect(users.description).includes('shortName')
   })
 
+  it("says which of a player's teams they play on now", function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    expect(schemas.PlayerTeam.required).to.include.members([
+      'jersey',
+      'positions',
+      'current'
+    ])
+    expect(schemas.PlayerTeam.properties.current).deep.equals({
+      type: 'boolean'
+    })
+    const paths = document.paths as Record<string, any>
+    expect(
+      paths['/players/{userId}'].get.responses[200].content['application/json']
+        .schema.properties.teams.items
+    ).deep.equals({ $ref: '#/components/schemas/PlayerTeam' })
+  })
+
+  it("narrows a player's highlights by the stats filter", function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const names = (route: string): string[] =>
+      paths[route].get.parameters.map(
+        (parameter: { name: string }) => parameter.name
+      )
+    expect(names('/players/{userId}/highlights')).deep.equals([
+      'userId',
+      'before',
+      'limit',
+      'seasonId',
+      'teamId',
+      'year'
+    ])
+    const filter = (route: string): unknown[] =>
+      paths[route].get.parameters.filter((parameter: { name: string }) =>
+        ['seasonId', 'teamId', 'year'].includes(parameter.name)
+      )
+    expect(filter('/players/{userId}/highlights')).deep.equals(
+      filter('/players/{userId}/stats')
+    )
+  })
+
   it('describes the box-score stats field and the events play contract', function () {
     const paths = openApiDocument('0.0.0').paths as Record<
       string,

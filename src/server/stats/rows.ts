@@ -31,6 +31,30 @@ export interface StatRowFilter {
   teamIds?: string[]
 }
 
+/** What a player's page narrows its figures and highlights to. */
+export interface PlayerFilter {
+  seasonId?: string
+  teamId?: string
+  /** The calendar year the game was played in. */
+  year?: number
+}
+
+/**
+ * The season, team and year a player's page asked for, read from the query
+ * the same way for their stats and their highlights. An empty value, and a
+ * year that is not four digits, is not a filter.
+ */
+export function playerFilterOf(query: Record<string, unknown>): PlayerFilter {
+  const { seasonId, teamId, year } = query
+  return {
+    ...(typeof seasonId === 'string' && seasonId !== '' ? { seasonId } : {}),
+    ...(typeof teamId === 'string' && teamId !== '' ? { teamId } : {}),
+    ...(typeof year === 'string' && /^\d{4}$/.test(year)
+      ? { year: Number(year) }
+      : {})
+  }
+}
+
 export interface StatRowWithGame extends StatRow {
   gameId: string
   seasonId: string | null

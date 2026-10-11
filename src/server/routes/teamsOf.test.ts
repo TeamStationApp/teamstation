@@ -144,14 +144,22 @@ describe('the teams and seasons a player has played in', function () {
         teamName: 'Badgers',
         seasonId: spring,
         seasonName: 'Spring 2026',
-        seasonYear: 2026
+        seasonYear: 2026,
+        jersey: null,
+        positions: [],
+        current: false,
+        logoPath: null
       },
       {
         teamId: comets,
         teamName: 'Comets',
         seasonId: fall,
         seasonName: 'Fall 2025',
-        seasonYear: 2025
+        seasonYear: 2025,
+        jersey: null,
+        positions: [],
+        current: false,
+        logoPath: null
       }
     ])
   })
@@ -170,7 +178,11 @@ describe('the teams and seasons a player has played in', function () {
       teamName: 'Survivor',
       seasonId: null,
       seasonName: null,
-      seasonYear: null
+      seasonYear: null,
+      jersey: null,
+      positions: [],
+      current: false,
+      logoPath: null
     })
   })
 
@@ -211,6 +223,105 @@ describe('the teams and seasons a player has played in', function () {
     expect(
       teams.filter(team => team.teamId === badgers && team.seasonId === spring)
     ).to.have.length(1)
+  })
+
+  it('carries the number and positions of each team’s membership, newest season first', async function () {
+    const now = new Date()
+    // A closed row of the child's, from an earlier import, on two teams.
+    const earlier = mint()
+    await db!
+      .insertInto('users')
+      .values({
+        id: earlier,
+        legacyId: legacies.get(earlier)!,
+        display_name: 'Jordan P',
+        merged_into: child,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    await db!
+      .updateTable('memberships')
+      .set({ jersey: '7', positions: ['SS', '2B'] })
+      .where('user_id', '=', child)
+      .where('team_id', '=', badgers)
+      .execute()
+    await db!
+      .insertInto('memberships')
+      .values([
+        // The open row's number wins on a team both rows are on.
+        {
+          id: makeId('membership'),
+          team_id: badgers,
+          user_id: earlier,
+          role: 'member',
+          is_player: true,
+          jersey: '99',
+          positions: ['P'],
+          joined_at: now
+        },
+        // And the closed row's is the child's where it is the only one.
+        {
+          id: makeId('membership'),
+          team_id: comets,
+          user_id: earlier,
+          role: 'member',
+          is_player: true,
+          jersey: '12',
+          positions: ['C'],
+          joined_at: now
+        }
+      ])
+      .execute()
+
+    const teams = await teamsOf(db!, [child, earlier])
+    expect(
+      teams.map(team => [
+        team.teamName,
+        team.seasonYear,
+        team.jersey,
+        team.positions,
+        team.current
+      ])
+    ).deep.equals([
+      ['Badgers', 2026, '7', ['SS', '2B'], true],
+      ['Spare', 2026, null, [], true],
+      // Played on now under the closed row, which is still the child.
+      ['Comets', 2025, '12', ['C'], true],
+      // Only a stat line: a team they played for, not one they are on.
+      ['Survivor', null, null, [], false]
+    ])
+  })
+
+  it('lists a team once in the season it belongs to, and not again without one', async function () {
+    // The Owls are a child of the spring season without competing in it, as
+    // a team made inside a season is; the child also played a friendly.
+    const owls = makeId('team')
+    await db!.insertInto('teams').values({ id: owls, name: 'Owls' }).execute()
+    await db!
+      .insertInto('season_team_parents')
+      .values({ season_id: spring, team_id: owls })
+      .execute()
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        team_id: owls,
+        user_id: child,
+        role: 'member',
+        is_player: true,
+        jersey: '3',
+        joined_at: new Date()
+      })
+      .execute()
+    const owlsRows = async (): Promise<unknown[]> =>
+      (await teamsOf(db!, [child]))
+        .filter(team => team.teamId === owls)
+        .map(team => [team.seasonName, team.jersey])
+    expect(await owlsRows()).deep.equals([['Spring 2026', '3']])
+    await line(owls, spring)
+    await line(owls, null)
+    expect(await owlsRows()).deep.equals([['Spring 2026', '3']])
   })
 
   it('answers nobody for no ids', async function () {
@@ -363,6 +474,85 @@ describe('a guardian reading their child’s page', function () {
     expect(teamIds(mine)).deep.equals([f.teamA, f.secondTeam].sort())
     const coach = await read(`/players/${avery}`, f.people.teamCoach)
     expect(teamIds(coach)).deep.equals([f.teamA])
+  })
+
+  it('names the child’s number and positions on each team, and none on a team left', async function () {
+    const mine = await read(`/players/${avery}`, f.people.guardian)
+    expect(
+      (
+        mine.teams as Array<{
+          teamId: string
+          jersey: string | null
+          positions: string[]
+        }>
+      ).map(team => [team.teamId, team.jersey, team.positions])
+    ).deep.equals([
+      // Played for, then left: the stat line stays, the membership is gone.
+      [f.secondTeam, null, []],
+      // The Hawks once, with the membership's number and positions.
+      [f.teamA, '7', ['SS', '2B']]
+    ])
+  })
+
+  it('says which of the child’s teams they play on now, and not one they left', async function () {
+    const current = (answer: any): Array<[string, boolean]> =>
+      (answer.teams as Array<{ teamId: string; current: boolean }>).map(
+        team => [team.teamId, team.current]
+      )
+    expect(
+      current(await read(`/players/${avery}`, f.people.guardian))
+    ).deep.equals([
+      [f.secondTeam, false],
+      [f.teamA, true]
+    ])
+    expect(
+      current(await read(`/players/${avery}`, f.people.teamCoach))
+    ).deep.equals([[f.teamA, true]])
+  })
+
+  it('gives each team its logo, signed, and no logo to a team without one', async function () {
+    const db = f.h.db
+    await db
+      .updateTable('teams')
+      .set({ logo_path: `images/team/${f.teamA}/hawks` })
+      .where('id', '=', f.teamA)
+      .execute()
+    try {
+      const mine = await read(`/players/${avery}`, f.people.guardian)
+      const logos = new Map(
+        (mine.teams as Array<{ teamId: string; logoUrl: string | null }>).map(
+          team => [team.teamId, team.logoUrl]
+        )
+      )
+      expect(logos.get(f.teamA)).to.be.a('string')
+      expect(logos.get(f.teamA)).includes(`images/team/${f.teamA}/hawks-96`)
+      expect(logos.get(f.teamA)).includes('X-Amz-Signature=')
+      expect(logos.get(f.secondTeam)).equals(null)
+      for (const team of mine.teams)
+        expect(team).not.to.have.property('logoPath')
+    } finally {
+      await db
+        .updateTable('teams')
+        .set({ logo_path: null })
+        .where('id', '=', f.teamA)
+        .execute()
+    }
+  })
+
+  it('lists the Hawks once, in the season they are a child of, to the guardian and the coach', async function () {
+    const seasons = (answer: any): Array<[string, string | null]> =>
+      (answer.teams as Array<{ teamId: string; seasonId: string | null }>).map(
+        team => [team.teamId, team.seasonId]
+      )
+    expect(
+      seasons(await read(`/players/${avery}`, f.people.teamCoach))
+    ).deep.equals([[f.teamA, f.seasonA]])
+    expect(
+      seasons(await read(`/players/${avery}`, f.people.guardian))
+    ).deep.equals([
+      [f.secondTeam, f.playoffs],
+      [f.teamA, f.seasonA]
+    ])
   })
 
   it('adds up every figure for the guardian, and the coach’s team for the coach', async function () {
