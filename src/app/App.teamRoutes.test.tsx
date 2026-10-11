@@ -533,4 +533,23 @@ describe('a season’s and a league’s People tab, however the page is opened',
       await seen.done()
     }
   })
+
+  it('shows a league’s People at either of its addresses, and not to anybody else', async () => {
+    for (const path of ['/leagues/lea_demo', '/groups/league/lea_demo']) {
+      const seen = await open(path, true)
+      try {
+        expect(seen.tabs, path).includes('People')
+        expect(seen.asked, path).deep.include(['group', 'league', 'lea_demo'])
+      } finally {
+        await seen.done()
+      }
+      const unseen = await open(path, false)
+      try {
+        expect(unseen.tabs, path).includes('Seasons')
+        expect(unseen.tabs, path).not.includes('People')
+      } finally {
+        await unseen.done()
+      }
+    }
+  })
 })

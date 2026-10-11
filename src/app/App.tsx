@@ -2130,6 +2130,10 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'person') return { [tab]: [{ ...route }] }
+  // A league's own address opens its page, the one Home and its group
+  // address open.
+  if (route.name === 'league')
+    return { [tab]: [{ name: 'group', kind: 'league', id: route.leagueId }] }
   return {}
 }
 
