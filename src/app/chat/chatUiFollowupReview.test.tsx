@@ -17,6 +17,7 @@ import { ChatWorkspace } from './ChatWorkspace'
 import {
   type ChatDraft,
   ChatListNavigationCapture,
+  type ChatListPositionCapture,
   type ChatWorkspaceState,
   emptyChatDraft,
   newChatWorkspaceState
@@ -265,7 +266,8 @@ async function workspace(
   engine: ReviewEngine,
   state: ChatWorkspaceState,
   conversationId: string | null = 'cnv_aurora',
-  userId = 1
+  userId = 1,
+  listNavigation?: ChatListNavigationCapture
 ): Promise<void> {
   await render(
     <ChatOverlayHost>
@@ -273,6 +275,7 @@ async function workspace(
         engine={engine}
         userId={userId}
         state={state}
+        listNavigation={listNavigation}
         conversationId={conversationId ?? undefined}
         onOpen={() => {}}
         onMembers={() => {}}
@@ -811,8 +814,8 @@ async function returningList(
   const offsets: number[] = []
   const anchors: Array<{ id: string; relativeY: number } | undefined> = []
   let rows: ConversationListItem[] = []
-  let capture: (() => Promise<void>) | undefined
-  const registerCapture = (read: () => Promise<void>): (() => void) => {
+  let capture: ChatListPositionCapture | undefined
+  const registerCapture = (read: ChatListPositionCapture): (() => void) => {
     capture = read
     return () => {
       if (capture === read) capture = undefined
@@ -5493,7 +5496,9 @@ describe('list navigation engine context ownership', function () {
   })
 })
 
-async function responsiveWorkspaceList(): Promise<{
+async function responsiveWorkspaceList(
+  listNavigation?: ChatListNavigationCapture
+): Promise<{
   node: HTMLElement
   host: HTMLElement
   state: ChatWorkspaceState
@@ -5509,7 +5514,7 @@ async function responsiveWorkspaceList(): Promise<{
     })
   )
   const state = newChatWorkspaceState()
-  await workspace(engine, state, 'cnv_return_0')
+  await workspace(engine, state, 'cnv_return_0', 1, listNavigation)
   const host = document.querySelector<HTMLElement>(
     '[data-testid="chat-workspace"]'
   )!
@@ -5634,3 +5639,105 @@ describe('responsive list position before a pane hide', function () {
     }
   })
 })
+
+describe('coordinated responsive list capture', function () {
+  it('remeasures current viewport geometry before hiding the keyboard-selected list', async function () {
+    const { node, host, state } = await responsiveWorkspaceList()
+    const held = holdViewportMeasurement(node)
+    try {
+      await layout(host, 640, 500)
+      await held.entered
+      Object.defineProperty(node, 'clientHeight', {
+        configurable: true,
+        value: 300
+      })
+      await layout(node, 320, 300)
+      held.restore()
+      await act(async () => {
+        held.release()
+        await wait(60)
+      })
+      expect(
+        document.querySelector<HTMLElement>('[data-testid="chat-list-pane"]')!
+          .style.display
+      ).equals('none')
+      expect(state.listOffset).equals(120)
+      expect(state.listAnchor).deep.equals({
+        id: 'cnv_return_0',
+        relativeY: -16
+      })
+    } finally {
+      held.restore()
+    }
+  })
+
+  it('shares resize and managed-navigation measurements without either retiring the other', async function () {
+    const nav = new ChatListNavigationCapture()
+    const { node, host, state } = await responsiveWorkspaceList(nav)
+    const held = holdViewportCaptureCallbacks(node)
+    let navigated = false
+    try {
+      await layout(host, 640, 500)
+      await held.entered
+      const navigation = nav.navigate(() => {
+        navigated = true
+      })
+      held.restore()
+      await act(async () => {
+        held.release(0)
+        await wait(20)
+      })
+      await act(async () => {
+        held.release(1)
+        await navigation
+        await wait(40)
+      })
+      expect(navigated).equals(true)
+      expect(state.listOffset).equals(120)
+      expect(
+        document.querySelector<HTMLElement>('[data-testid="chat-list-pane"]')!
+          .style.display
+      ).equals('none')
+      expect(state.listAnchor).deep.equals({
+        id: 'cnv_return_0',
+        relativeY: -16
+      })
+    } finally {
+      held.restore()
+    }
+  })
+})
+
+function holdViewportCaptureCallbacks(node: HTMLElement): {
+  release: (index: number) => void
+  restore: () => void
+  entered: Promise<void>
+} {
+  type Read = (
+    callback: (x: number, y: number, width: number, height: number) => void
+  ) => void
+  const measured = node as HTMLElement & { measureInWindow: Read }
+  const descriptor = Object.getOwnPropertyDescriptor(
+    measured,
+    'measureInWindow'
+  )!
+  const entered = deferred<undefined>()
+  const callbacks: Array<Parameters<Read>[0]> = []
+  Object.defineProperty(measured, 'measureInWindow', {
+    configurable: true,
+    get: () => (next: Parameters<Read>[0]) => {
+      callbacks.push(next)
+      entered.resolve(undefined)
+    },
+    set: () => {}
+  })
+  return {
+    entered: entered.promise,
+    restore: () =>
+      Object.defineProperty(measured, 'measureInWindow', descriptor),
+    release: index => {
+      const b = node.getBoundingClientRect()
+      callbacks[index]?.(b.x, b.y, b.width, b.height)
+    }
+  }
+}
