@@ -392,8 +392,6 @@ function Shell(props: AppProps): React.ReactElement {
    * screen stays where it was. A browser never had the problem, because
    * following a link there is a navigation.
    */
-  const navigationState = useRef({ tab, filters })
-  navigationState.current = { tab, filters }
   const [route, setRoute] = useState<Route>(() => currentRoute())
   // The address the app was opened on decides what is on the stack, so a link
   // to a game opens that game rather than the screen behind it.
@@ -810,18 +808,16 @@ function Shell(props: AppProps): React.ReactElement {
               return
             }
             clearScoringVisit(visit)
-            goToRoute(route, onHandled)
+            goToRoute(route)
+            onHandled?.(true)
           })
           .catch(() => onHandled?.(false))
         return
       }
-      chatListNavigation.navigate(() => {
       setSettingsVisit(++settingsVisitId.current)
       setRoute(route)
       setJoining(route.name === 'join' ? route.code : undefined)
       const next = visit?.tab ?? tabOf(route)
-      const nextFilters = filtersForRoute(navigationState.current.filters, route)
-      navigationState.current = { tab: next, filters: nextFilters }
       setTab(next)
       setStacks(current => {
         if (visit != null && isScoringPlayerReturn(route, visit))
@@ -859,16 +855,29 @@ function Shell(props: AppProps): React.ReactElement {
       // The shell writes the address from these filters. Leaving them stale
       // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
       // would open Upcoming.
-      setFilters(nextFilters)
+      setFilters(current => filtersForRoute(current, route))
       onHandled?.(true)
-      }).catch(error => {
+    },
+    [clearScoringVisit]
+  )
+  const goFromAddress = useCallback(
+    (route: Route, onHandled?: (accepted: boolean) => void): void => {
+      chatListNavigation.navigate(() => goToRoute(route, onHandled)).catch(error => {
         reportNavigationError(error)
         onHandled?.(false)
       })
     },
-    [clearScoringVisit, chatListNavigation]
+    [chatListNavigation, goToRoute]
   )
-  useBrowserBack(goToRoute)
+  useBrowserBack(goFromAddress)
+
+  const captureChatLeave = (change: () => void): void => {
+    if (tab !== 'chat') {
+      change()
+      return
+    }
+    chatListNavigation.navigate(change).catch(reportNavigationError)
+  }
 
   /** The tab, or — pressed on the tab you are already on — a step out of it. */
   const selectTab = (next: NavTabId): void => {
@@ -878,21 +887,17 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
-    chatListNavigation
-      .navigate(() => {
-        const previous = navigationState.current
-        navigationState.current = { ...previous, tab: next }
-        setTab(next)
-        setStacks(current => stacksAfterTabPress(current, previous.tab, next))
-        if (session == null || props.fieldPreview === true) {
-          if (next === previous.tab) return
-          const destination = routeOf(next, undefined, previous.filters)
-          setRoute(destination)
-          setJoining(undefined)
-          showRoute(destination)
-        }
-      })
-      .catch(reportNavigationError)
+    captureChatLeave(() => {
+      setTab(next)
+      setStacks(current => stacksAfterTabPress(current, tab, next))
+      if (session == null || props.fieldPreview === true) {
+        if (next === tab) return
+        const destination = routeOf(next, undefined, filters)
+        setRoute(destination)
+        setJoining(undefined)
+        showRoute(destination)
+      }
+    })
   }
 
   const push = (next: Pushed): void => {
@@ -902,15 +907,9 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
-    chatListNavigation
-      .navigate(() => {
-        const currentTab = navigationState.current.tab
-        setStacks(current => ({
-          ...current,
-          [currentTab]: [...current[currentTab], next]
-        }))
-      })
-      .catch(reportNavigationError)
+    captureChatLeave(() => {
+      setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
+    })
   }
   const openGroup = useCallback(
     (group: GroupRef): void => {
@@ -958,16 +957,10 @@ function Shell(props: AppProps): React.ReactElement {
     // history and this does nothing; on a phone the two are kept by hand, and
     // a chevron that left a step behind would make the next press of the
     // system Back button appear to do nothing.
-    chatListNavigation
-      .navigate(() => {
-        popRoute()
-        const currentTab = navigationState.current.tab
-        setStacks(current => ({
-          ...current,
-          [currentTab]: current[currentTab].slice(0, -1)
-        }))
-      })
-      .catch(reportNavigationError)
+    captureChatLeave(() => {
+      popRoute()
+      setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
+    })
   }
 
   const openGame = (
