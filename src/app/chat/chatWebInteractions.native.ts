@@ -31,6 +31,9 @@ export function bindComposerKeys(
 export function bindUserScroll(_view: unknown, _read: () => void): () => void {
   return () => {}
 }
+export function isScrollEventDispatch(_view: unknown): boolean {
+  return false
+}
 export function bindMessageHover(
   _view: unknown,
   _update: (visible: boolean) => void

@@ -11,6 +11,8 @@ import type { PickedFile } from './chatFileTypes'
 import { ChatListScreen } from './ChatListScreen'
 import { ChatOverlayHost } from './ChatOverlayHost'
 import { chat, member, message, view } from './chatViews.test.helpers'
+import * as WebScroll from './chatWebInteractions'
+import * as NativeScroll from './chatWebInteractions.native'
 import { ChatWorkspace } from './ChatWorkspace'
 import {
   type ChatDraft,
@@ -3728,6 +3730,8 @@ describe('qa4 accepted list boundaries', function () {
       }) => void
     }
     await act(async () => {
+      // The preceding web gesture has completed; this is a new native drag.
+      nativeListStart(pending.node)
       pending.node.scrollTop = 0
       end.onScrollEndDrag({ nativeEvent: { contentOffset: { y: 0 } } })
       await wait()
@@ -3994,5 +3998,199 @@ describe('qa4 review1 native-shaped list lifecycle', function () {
     })
     expect(pending.offsets.at(-1)).equals(offset)
     expect(pending.anchors.at(-1)).deep.equals(anchor)
+  })
+})
+
+describe('qa4 review2 actual RNW scroll lifetime', function () {
+  for (const intent of ['wheel', 'key'])
+    it(`ends completed ${intent} input through RNW onScroll before an automatic clamp and preserves the later relative return`, async function () {
+      const pending = await returningList(true, 240, {
+        id: 'cnv_return_3',
+        relativeY: 30
+      })
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_3', 270)
+      await pending.content(1800)
+      await pending.scroll(240)
+      await act(async () => {
+        pending.node.dispatchEvent(
+          intent === 'wheel'
+            ? new window.WheelEvent('wheel', { bubbles: true, deltaY: 60 })
+            : new window.KeyboardEvent('keydown', {
+                bubbles: true,
+                key: 'ArrowDown'
+              })
+        )
+      })
+      // The installed RNW adapter delivers the DOM tick and its delayed ending
+      // only through onScroll. Do not manufacture a native terminal callback.
+      await pending.scroll(300)
+      await act(async () => {
+        renderedRowLayout('cnv_return_3')({
+          nativeEvent: { layout: { height: 67 } }
+        })
+        await wait()
+      })
+      expect(pending.anchors.at(-1)).deep.equals({
+        id: 'cnv_return_3',
+        relativeY: -30
+      })
+      // Calibrate the actual longer viewport and resulting automatic zero.
+      Object.defineProperty(pending.node, 'clientHeight', {
+        configurable: true,
+        value: 2000
+      })
+      await layout(pending.node, 320, 2000)
+      await act(async () => {
+        renderedRowLayout('cnv_return_3')({
+          nativeEvent: { layout: { height: 67 } }
+        })
+        await wait()
+      })
+      await pending.scroll(0)
+      const saved = pending.anchors.at(-1)
+      expect(pending.offsets.at(-1)).equals(0)
+      await unmount()
+      const returning = await returningList(true, 0, saved)
+      await returning.populate(8)
+      setListRowMeasurement('cnv_return_3', 334)
+      await returning.content(1800)
+      await act(async () => {
+        await wait(40)
+      })
+      expect(
+        returning.moves.at(-1),
+        'Automatic clamp must retain the current row-relative reading boundary'
+      ).equals(64)
+      expect(saved).deep.equals({ id: 'cnv_return_3', relativeY: 270 })
+    })
+
+  for (const intent of ['wheel', 'key', 'gutter'])
+    it(`preserves genuine continuous ${intent} movement to top using real DOM scroll dispatch`, async function () {
+      const pending = await returningList(true, 240, {
+        id: 'cnv_return_3',
+        relativeY: 30
+      })
+      await pending.populate(8)
+      setListRowMeasurement('cnv_return_3', 270)
+      await pending.content(1800)
+      await pending.scroll(240)
+      pending.node.getBoundingClientRect = () =>
+        new window.DOMRect(0, 0, 320, 400)
+      Object.defineProperties(pending.node, {
+        clientWidth: { configurable: true, value: 304 },
+        offsetWidth: { configurable: true, value: 320 },
+        offsetHeight: { configurable: true, value: 400 },
+        clientLeft: { configurable: true, value: 0 },
+        clientTop: { configurable: true, value: 0 }
+      })
+      await act(async () => {
+        pending.node.dispatchEvent(
+          intent === 'wheel'
+            ? new window.WheelEvent('wheel', { bubbles: true, deltaY: -240 })
+            : intent === 'key'
+              ? new window.KeyboardEvent('keydown', {
+                  bubbles: true,
+                  key: 'Home'
+                })
+              : new window.MouseEvent('mousedown', {
+                  bubbles: true,
+                  button: 0,
+                  clientX: 319,
+                  clientY: 100
+                })
+        )
+        // A single gesture has multiple raw events; its final coordinate can
+        // arrive only in RNW's coalesced ending callback after the DOM dispatch.
+        for (const top of [160, 80, 0]) {
+          pending.node.scrollTop = top
+          pending.node.dispatchEvent(
+            new window.Event('scroll', { bubbles: true })
+          )
+        }
+        if (intent === 'gutter')
+          document.dispatchEvent(
+            new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+          )
+        await wait(150)
+      })
+      expect(pending.offsets.at(-1)).equals(0)
+      expect(pending.anchors.at(-1)).equals(undefined)
+      await unmount()
+      const returning = await returningList(true, 0, pending.anchors.at(-1))
+      await returning.populate(8)
+      setListRowMeasurement('cnv_return_3', 334)
+      await returning.content(1800)
+      expect(returning.moves).deep.equals([0])
+    })
+})
+
+describe('qa4 review2 DOM dispatch ownership', function () {
+  it('scopes nested and overlapping dispatches to the exact resolved element and removes only its own binding', async function () {
+    const candidate: unknown = Reflect.get(WebScroll, 'isScrollEventDispatch')
+    const nativeCandidate: unknown = Reflect.get(
+      NativeScroll,
+      'isScrollEventDispatch'
+    )
+    if (
+      typeof candidate !== 'function' ||
+      typeof nativeCandidate !== 'function'
+    ) {
+      this.skip()
+      return
+    }
+    const marker = candidate as (view: unknown) => boolean
+    const nativeMarker = nativeCandidate as (view: unknown) => boolean
+    const element = document.createElement('div')
+    const child = document.createElement('div')
+    element.append(child)
+    document.body.append(element)
+    const view = { getScrollableNode: () => element }
+    const stop = WebScroll.bindUserScroll(view, () => {})
+    let nested = false
+    let overlap = false
+    let first = true
+    const inspect = (event: Event): void => {
+      if (event.target === child) {
+        nested = marker(view)
+        return
+      }
+      expect(marker(view)).equals(true)
+      if (first) {
+        first = false
+        queueMicrotask(() => {
+          overlap = marker(view)
+        })
+        element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      }
+    }
+    element.addEventListener('scroll', inspect)
+    try {
+      child.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(nested).equals(false)
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      await Promise.resolve()
+      expect(
+        overlap,
+        'An older microtask cannot clear the newer dispatch'
+      ).equals(true)
+      await Promise.resolve()
+      expect(marker(view)).equals(false)
+      const another = WebScroll.bindUserScroll(view, () => {})
+      const stopEarlier = (): void => {
+        stop()
+        expect(marker(view)).equals(true)
+        another()
+        expect(marker(view)).equals(false)
+      }
+      element.addEventListener('scroll', stopEarlier, { once: true })
+      element.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(nativeMarker(view)).equals(false)
+    } finally {
+      stop()
+      element.removeEventListener('scroll', inspect)
+      element.remove()
+    }
+    expect(marker(view)).equals(false)
   })
 })

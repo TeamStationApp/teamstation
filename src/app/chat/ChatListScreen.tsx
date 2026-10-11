@@ -24,7 +24,11 @@ import {
   timeLabel
 } from './chatModel'
 import { getChatStyles } from './chatStyles'
-import { bindUserScroll, immediatePressProps } from './chatWebInteractions'
+import {
+  bindUserScroll,
+  immediatePressProps,
+  isScrollEventDispatch
+} from './chatWebInteractions'
 import { CHAT_WIDE_WIDTH } from './chatWorkspaceModel'
 import { ConversationMenu } from './ConversationMenu'
 import type { ConversationListItem } from './engine/engine'
@@ -549,7 +553,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     event: {
       nativeEvent: { contentOffset: { y: number }; velocity?: { y: number } }
     },
-    end?: 'drag' | 'momentum'
+    end?: 'drag' | 'momentum' | 'web'
   ): void => {
     if (!liveData()) return
     const offset = Math.max(0, event.nativeEvent.contentOffset.y)
@@ -734,7 +738,18 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         // Web batches remain bounded; queue them directly for the interaction
         // scheduler instead of adding a timer between restoration steps.
         updateCellsBatchingPeriod={Platform.OS === 'web' ? 0 : undefined}
-        onScroll={rememberOffset}
+        onScroll={event => {
+          // RNW emits its ending callback through onScroll, outside the DOM
+          // scroll dispatch. Ingest that final coordinate before closing intent.
+          rememberOffset(
+            event,
+            Platform.OS === 'web' &&
+              userPosition.current?.native === false &&
+              !isScrollEventDispatch(list.current)
+              ? 'web'
+              : undefined
+          )
+        }}
         onScrollEndDrag={event => {
           rememberOffset(event, 'drag')
         }}
