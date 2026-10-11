@@ -1,3 +1,18 @@
+import java.net.URI
+
+/**
+ * This app's own link host, from its gitignored clientConfig.json (the deployment repository's
+ * `appLinks.mjs client cameraman` writes it): `appOrigin`, or empty without one.
+ */
+val appOrigin: String = run {
+    val file = rootProject.file("clientConfig.json")
+    if (!file.exists()) return@run ""
+    @Suppress("UNCHECKED_CAST")
+    val config = groovy.json.JsonSlurper().parse(file) as Map<String, Any?>
+    (config["appOrigin"] as? String).orEmpty()
+}
+val appLinkHost: String = if (appOrigin.isEmpty()) "" else URI(appOrigin).host
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -25,6 +40,9 @@ android {
         // TS_PRIMARY_HOST=devhost3.example-ts.test and sign-in follows it.
         val primaryHost = (System.getenv("TS_PRIMARY_HOST") ?: "").trim().ifEmpty { "app.teamstation.app" }
         buildConfigField("String", "TS_PRIMARY_HOST", "\"${primaryHost.replace("\"", "")}\"")
+        // The link host sign-in links are mailed to; empty asks for ordinary web links.
+        buildConfigField("String", "TS_APP_ORIGIN", "\"${appOrigin.replace("\"", "")}\"")
+        manifestPlaceholders["appLinkHost"] = appLinkHost
 
         // Where crashes are reported; empty, the usual local build, reports nothing.
         val sentryDsn = (System.getenv("TS_SENTRY_DSN") ?: "").trim()
@@ -124,6 +142,14 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.16.1")
 }
 
+// The sign-in link filter for the app's link host, added to every variant's manifests only when
+// the build has one, so a build without config claims no https address.
+androidComponents {
+    onVariants { variant ->
+        if (appLinkHost.isNotEmpty()) variant.sources.manifests.addStaticManifestFile("src/appLinks/AndroidManifest.xml")
+    }
+}
+
 kover {
     reports {
         // The total report is the UI, radar and event-control suite's own 90% gate. The debug variant's report is
@@ -139,7 +165,9 @@ kover {
                         "app.teamstation.cameraman.ui.SpeedOverlay",
                         "app.teamstation.cameraman.ui.LoginFlow",
                         "app.teamstation.cameraman.radar.*",
-                        "app.teamstation.cameraman.eventcontrol.*"
+                        "app.teamstation.cameraman.eventcontrol.*",
+                        "app.teamstation.cameraman.scoreboard.SignInLink*",
+                        "app.teamstation.cameraman.ui.SignInLinkToastKt"
                     )
                 }
             }

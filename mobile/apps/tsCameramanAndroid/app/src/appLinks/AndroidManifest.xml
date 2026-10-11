@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Cameraman's own link host, from the build's clientConfig.json, which the
+      build merges in only when there is one. The server mails sign-in links
+      from an app to this host, and answers /.well-known/assetlinks.json there
+      with this app's signing fingerprint, so `autoVerify` hands the link to
+      the app rather than offering a chooser. Only /signin/ is claimed: every
+      other address on the host is the web site's.
+    -->
+    <application>
+        <activity android:name=".MainActivity">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${appLinkHost}"
+                    android:pathPrefix="/signin/" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
