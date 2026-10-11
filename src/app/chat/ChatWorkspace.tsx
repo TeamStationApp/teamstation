@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
 import { Screen } from '../components'
@@ -10,6 +10,7 @@ import {
   CHAT_WIDE_WIDTH,
   type ChatDraftOwner,
   chatDraftOwner,
+  type ChatListNavigationCapture,
   type ChatWorkspaceState,
   emptyChatDraft
 } from './chatWorkspaceModel'
@@ -21,6 +22,7 @@ export interface ChatWorkspaceProps {
   engine: ChatScreenEngine
   userId: number
   state: ChatWorkspaceState
+  listNavigation?: ChatListNavigationCapture
   conversationId?: string
   onOpen: (conversation: ConversationListItem) => void
   onMembers: (conversationId: string) => void
@@ -41,6 +43,11 @@ function WorkspaceContent(
   props: ChatWorkspaceProps & { draftOwner: ChatDraftOwner }
 ): React.ReactElement {
   const { draftOwner } = props
+  const registerPositionCapture = useCallback(
+    (read: () => Promise<void>): (() => void) =>
+      props.listNavigation?.attach(read) ?? (() => {}),
+    [props.listNavigation]
+  )
   const theme = useTheme()
   const windowWidth = useWindowDimensions().width
   const [usableWidth, setUsableWidth] = useState(windowWidth)
@@ -104,6 +111,7 @@ function WorkspaceContent(
             embedded
             selectedId={selected}
             selectedVisible={messagesVisible}
+            registerPositionCapture={registerPositionCapture}
             initialOffset={props.state.listOffset}
             initialAnchor={props.state.listAnchor}
             onAnchor={anchor => {
