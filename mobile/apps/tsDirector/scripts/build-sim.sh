@@ -22,7 +22,7 @@ xcodebuild build \
   -configuration "$CONFIGURATION" \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$DIRECTOR_DERIVED_DATA" \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_ALLOWED="${SIM_SIGNING:-NO}" \
   > "$LOG" 2>&1
 STATUS=$?
 set -e

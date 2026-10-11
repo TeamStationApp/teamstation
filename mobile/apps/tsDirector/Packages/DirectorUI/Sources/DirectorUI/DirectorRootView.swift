@@ -32,7 +32,14 @@ public struct DirectorRootView: View {
       }
       .task { await environment.bootstrap() }
       .onOpenURL { url in
-        _ = environment.handle(url: url)
+        // A sign-in link from the e-mail arrives as a web address on Director's own link host;
+        // everything else is the `tsdirector://` control channel, as before.
+        if !environment.handleSignInLink(url) {
+          _ = environment.handle(url: url)
+        }
+      }
+      .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+        if let url = activity.webpageURL { environment.handleSignInLink(url) }
       }
       .background {
         ProgramPictureInPictureAnchor(environment: environment)

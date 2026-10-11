@@ -45,14 +45,51 @@ public struct TeamStationClient: Sendable {
   /// must not be a way to find out who does — so a wrong address gets a
   /// request and then a code that never arrives.
   ///
-  /// `origin: ios` is recorded on the request, so the day the link can open
-  /// this app directly it lands here rather than in a browser.
-  public func startSignIn(email: String) async throws -> TeamStationSignInWait {
-    try await send(
-      "auth/email-code",
-      method: "POST",
-      body: ["email": email, "origin": "ios"]
+  /// `appOrigin`, the app's own link host, is where the mailed link goes, so
+  /// the operating system opens it in the app rather than in a browser.
+  /// Without one the link is the server's own web link.
+  public func startSignIn(
+    email: String,
+    appOrigin: String? = nil
+  ) async throws -> TeamStationSignInWait {
+    var body: [String: any Sendable] = ["email": email, "origin": "ios"]
+    if let appOrigin { body["appOrigin"] = appOrigin }
+    return try await send("auth/email-code", method: "POST", body: body)
+  }
+
+  /// Spends a sign-in link's token, naming this device so its session is the
+  /// long, named one a typed code gives.
+  /// `requestId` is the sign-in this app asked for and is polling, when it has one: the server then
+  /// does not approve that poll as well, so the app gets one session.
+  public func signInWithLink(
+    token: String,
+    deviceName: String,
+    requestId: String? = nil
+  ) async throws -> TeamStationSession {
+    var body: [String: any Sendable] = ["token": token, "deviceName": deviceName]
+    if let requestId { body["requestId"] = requestId }
+    return try await send("auth/link/verify", method: "POST", body: body)
+  }
+
+  /// The server's OpenID issuer, `<its public origin>/oauth`: what the server
+  /// calls itself, which is not always the address this app was built to talk
+  /// to. Nil when the server answered without one (with OAuth off it has no
+  /// discovery, and vouches for no other name). Throws when it could not be
+  /// asked: no answer, or a 5xx.
+  public func issuer() async throws -> String? {
+    var request = URLRequest(
+      url: baseURL.appending(path: "oauth/.well-known/openid-configuration")
     )
+    request.setValue("application/json", forHTTPHeaderField: "accept")
+    request.timeoutInterval = 20
+    let (data, response) = try await session.data(for: request)
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    if status == 0 || status >= 500 { throw URLError(.badServerResponse) }
+    guard
+      status == 200,
+      let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    return body["issuer"] as? String
   }
 
   /// Finishes a sign-in with the six-digit code.
