@@ -7,6 +7,8 @@ import {
   fitClip,
   formatLength,
   formatTenths,
+  JOG_RATE,
+  jogClip,
   msAt,
   nudge,
   placeClip,
@@ -95,5 +97,38 @@ describe('clipModel', function () {
     expect(formatTenths(0)).equals('0:00.0')
     expect(formatLength(233000)).equals('3:53')
     expect(formatLength(59600)).equals('1:00')
+  })
+
+  it('jogs the window a quarter as far as the same drag on the timeline', function () {
+    expect(JOG_RATE).equals(0.25)
+    // 40 pt of a 400 pt timeline is 18 s of a 180 s song; the wheel moves 4.5 s.
+    expect(jogClip(10000, 40, 400, 180000)).deep.equals({
+      startMs: 14500,
+      endMs: 29500
+    })
+    expect(jogClip(10000, -40, 400, 180000)).deep.equals({
+      startMs: 5500,
+      endMs: 20500
+    })
+  })
+
+  it('keeps a jog inside the song and in tenth-second steps', function () {
+    expect(jogClip(1000, -400, 400, 180000)).deep.equals({
+      startMs: 0,
+      endMs: 15000
+    })
+    expect(jogClip(160000, 4000, 400, 180000)).deep.equals({
+      startMs: 165000,
+      endMs: 180000
+    })
+    // 1 pt of 400 on a 180 s song is 112.5 ms: one step of 0.1 s.
+    expect(jogClip(10000, 1, 400, 180000).startMs).equals(10100)
+  })
+
+  it('leaves the window where it is before the timeline is laid out', function () {
+    expect(jogClip(10000, 40, 0, 180000)).deep.equals({
+      startMs: 10000,
+      endMs: 25000
+    })
   })
 })

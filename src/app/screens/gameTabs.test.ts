@@ -26,7 +26,7 @@ function gameWith(fields: Partial<GameDetail>): GameDetail {
   }
 }
 
-const music = { available: true }
+const music = { djSupported: true }
 const onDjGame = (): void => undefined
 
 function ids(pills: ReturnType<typeof gameTabs>): string[] {
@@ -128,7 +128,7 @@ describe('the pills across a game', function () {
     expect(ids(pills)).deep.equals(['boxScore', 'watch', 'score', 'dj'])
   })
 
-  it('leaves DJ Game out without music or a way to open it', function () {
+  it('leaves DJ Game out without an iPhone’s music or a way to open it', function () {
     const game = gameWith({ canScore: true, canDj: true })
     expect(ids(gameTabs({ game, onDjGame }))).deep.equals([
       'boxScore',
@@ -136,7 +136,7 @@ describe('the pills across a game', function () {
       'score'
     ])
     expect(
-      ids(gameTabs({ game, music: { available: false }, onDjGame }))
+      ids(gameTabs({ game, music: { djSupported: false }, onDjGame }))
     ).not.includes('dj')
     expect(ids(gameTabs({ game, music }))).not.includes('dj')
   })

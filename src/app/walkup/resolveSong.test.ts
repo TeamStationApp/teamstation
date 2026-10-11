@@ -53,6 +53,7 @@ function music(
   const terms: string[] = []
   return {
     available: true,
+    djSupported: false,
     providerName: 'This phone',
     access: async () => 'authorized',
     search: async term => {
@@ -63,6 +64,7 @@ function music(
     play: async () => undefined,
     stop: async () => undefined,
     onState: () => () => undefined,
+    prepareOffline: async () => null,
     terms
   }
 }

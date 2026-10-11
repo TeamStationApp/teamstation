@@ -1401,8 +1401,11 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
-    ) : top.name === 'djGame' && walkUpMusic.available ? (
+    ) : top.name === 'djGame' && walkUpMusic.djSupported ? (
       <DjGameScreen
+        // One instance per game: its walk-up songs are got ready once per
+        // visit, and another game is another visit.
+        key={top.gameId}
         client={client}
         gameId={top.gameId}
         socket={gameSocket}
@@ -1432,7 +1435,8 @@ function Shell(props: AppProps): React.ReactElement {
         }}
       />
     ) : top.name === 'djGame' ? (
-      // The web has no music to play, so its DJ Game address shows the game.
+      // DJ Game is an iPhone's: on the web and Android its address shows
+      // the game.
       <GameScreen
         client={client}
         gameId={top.gameId}
@@ -1468,6 +1472,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreGame' ? (
       <ScoringScreen
+        key={top.gameId}
         userId={session?.user.id}
         client={client}
         source={scoringSource}

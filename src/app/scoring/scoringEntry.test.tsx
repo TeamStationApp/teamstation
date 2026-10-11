@@ -172,7 +172,7 @@ describe('scoring entry on the phones', function () {
         <GameScreen
           client={client}
           gameId="g1"
-          music={{ available: true }}
+          music={{ djSupported: true }}
           onDjGame={() => undefined}
         />
       )

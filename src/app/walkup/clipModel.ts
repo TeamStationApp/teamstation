@@ -76,6 +76,30 @@ export function playFromHere(clip: Clip): Clip {
   }
 }
 
+/** The jog wheel moves the window at a quarter of the timeline's rate. */
+export const JOG_RATE = 0.25
+
+/**
+ * Where a jog of `dx` points moves a window that started at `fromStartMs`.
+ *
+ * The same drag on the timeline would move it `dx` points' worth of the
+ * song; the wheel moves it a quarter of that, in the same tenth-second
+ * steps and inside the same bounds. A timeline not yet laid out moves
+ * nothing.
+ */
+export function jogClip(
+  fromStartMs: number,
+  dx: number,
+  timelineWidth: number,
+  durationMs: number
+): Clip {
+  if (timelineWidth <= 0) return placeClip(fromStartMs, durationMs)
+  return placeClip(
+    fromStartMs + dx * (durationMs / timelineWidth) * JOG_RATE,
+    durationMs
+  )
+}
+
 /** Where a point `x` along a timeline `width` wide falls in the song. */
 export function msAt(x: number, width: number, durationMs: number): number {
   if (width <= 0) return 0

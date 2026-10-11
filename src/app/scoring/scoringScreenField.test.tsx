@@ -17,6 +17,8 @@ import { F } from '../../test/scoringGames'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
+import webMusic from '../walkup/walkUpMusic'
+import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { createDevelopmentSession } from './developmentSession'
 import type { UseDictationOptions } from './dictationTypes'
 import type { EventTagEditor } from './EventTagEditor'
@@ -159,10 +161,13 @@ function placement(entityId: string): FieldPlacement {
 let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
+type ScreenProps = React.ComponentProps<typeof ScoringScreen>
+/** Renders the screen, and returns a render with some of its props changed. */
 async function mount(
   source?: ScoringSource,
-  rosters: Record<string, RosterEntry[]> = {}
-): Promise<void> {
+  rosters: Record<string, RosterEntry[]> = {},
+  extra: Partial<ScreenProps> = {}
+): Promise<(changed: Partial<ScreenProps>) => Promise<void>> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
@@ -171,19 +176,25 @@ async function mount(
   document.body.appendChild(node)
   container = node
   root = createRoot(node)
-  await act(async () => {
-    root?.render(
-      <ThemeProvider>
-        <ScoringScreen
-          client={client}
-          gameId="g1"
-          userId={21}
-          onExit={() => undefined}
-          source={source}
-        />
-      </ThemeProvider>
-    )
-  })
+  const render = async (changed: Partial<ScreenProps>): Promise<void> => {
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            userId={21}
+            onExit={() => undefined}
+            source={source}
+            {...extra}
+            {...changed}
+          />
+        </ThemeProvider>
+      )
+    })
+  }
+  await render({})
+  return render
 }
 
 describe('scoring screen field wiring', function () {
@@ -2036,6 +2047,163 @@ describe('scoring screen field wiring', function () {
     expect(props().instruction).equals(undefined)
     expect(props().canPitch).equals(true)
   })
+  for (const [cover, title] of [
+    [
+      'defensive roster',
+      'holds the walk-up songs notice while the defensive roster is open'
+    ],
+    [
+      'tag history',
+      'holds the walk-up songs notice while the tag history is open'
+    ],
+    [
+      'tiebreaker setup',
+      'holds the walk-up songs notice while the tiebreaker setup is open'
+    ],
+    [
+      'tiebreaker runner',
+      'holds the walk-up songs notice while the tiebreaker runner roster is open'
+    ],
+    [
+      'scorer change',
+      'shows the walk-up songs notice once a new scorer’s panel replaces one with a sheet up'
+    ]
+  ] as const)
+    it(title, async function () {
+      // Each case waits out the notice's settle twice; on a loaded machine
+      // that is slow, not wrong.
+      this.timeout(30000)
+      const session = createDevelopmentSession(gameFixture, [], [])
+      for (const slot of POSITIONS)
+        session.liveData.boxscore.teams.home.defense[slot] = null
+      const prepared = freshGame(
+        session.gamePk,
+        session.gameData.teams,
+        setupOf(session)
+      )
+      const phone: WalkUpMusic = {
+        ...webMusic,
+        available: true,
+        djSupported: true,
+        prepareOffline: async ids => ({
+          authorized: true,
+          subscribed: true,
+          syncLibrary: true,
+          songs: ids.map(providerId => ({ providerId, state: 'pending' }))
+        })
+      }
+      // The tag history needs a source that saves tags, and a pitch to show.
+      const tagging = new DevelopmentScoringSource()
+      if (cover === 'tag history') {
+        const game = await tagging.open(gameFixture, [], [])
+        game.apply({ type: 'pitch', call: 'B' })
+        await game.flush()
+      }
+      const rerender = await mount(
+        cover === 'tag history' ||
+          cover === 'tiebreaker setup' ||
+          cover === 'tiebreaker runner'
+          ? tagging
+          : {
+              open: async () =>
+                ScoringSession.start(memoryStore(), 'g1', prepared)
+            },
+        {
+          [gameFixture.awayTeamId]: [
+            asRosterEntry({
+              userId: 101,
+              shortName: 'Mike T',
+              jersey: '7',
+              positions: [],
+              isPlayer: true,
+              role: 'member',
+              walkUpSong: {
+                provider: 'appleMusic',
+                providerId: '111',
+                isrc: null,
+                title: 'Centerfield',
+                artist: 'Band',
+                album: null,
+                artworkUrl: null,
+                durationMs: 90000,
+                startMs: 10000,
+                endMs: 25000
+              }
+            })
+          ]
+        },
+        {
+          music: phone,
+          readiness: {
+            read: async () => ({ onboarded: true, promptShown: false }),
+            write: async () => undefined
+          }
+        }
+      )
+      const notice = 'Some walk-up songs still need to be downloaded.'
+      const settle = async (): Promise<void> => {
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 700))
+        })
+      }
+      const press = async (label: string): Promise<void> => {
+        await step(() => {
+          document
+            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .click()
+        })
+      }
+      if (cover === 'tiebreaker setup' || cover === 'tiebreaker runner') {
+        await press('More')
+        await press('Place a Runner (Tiebreaker)')
+        expect(document.body.textContent).includes('Place runner on base')
+      }
+      if (cover === 'tiebreaker runner') {
+        // The bases on the field are no Modal; the runner roster is.
+        await press('Place runner on base')
+        await step(() =>
+          field().onBaseProjection?.({
+            width: 390,
+            height: 844,
+            bases: [
+              { x: 195, y: 580 },
+              { x: 280, y: 450 },
+              { x: 195, y: 360 },
+              { x: 110, y: 450 }
+            ]
+          })
+        )
+        await press('Place runner on 2B')
+        expect(document.body.textContent).includes('Select Runner for 2B')
+      } else if (cover === 'tiebreaker setup') {
+        // Opened above.
+      } else if (cover !== 'tag history') {
+        await step(() => field().onPlayerTap?.('empty-P'))
+        expect(document.body.textContent).includes('Create Player')
+      } else {
+        expect(props().onHistoryOpen).not.equals(undefined)
+        await step(() => props().onHistoryOpen?.())
+      }
+      await settle()
+      expect(document.body.textContent).not.includes(notice)
+      if (
+        cover === 'defensive roster' ||
+        cover === 'tiebreaker setup' ||
+        cover === 'tiebreaker runner'
+      ) {
+        await press('Cancel')
+      } else if (cover === 'scorer change') {
+        // A new scorer is a new panel: the old one goes with its sheet up.
+        await rerender({ userId: 22 })
+        expect(document.body.textContent).not.includes('Create Player')
+      } else {
+        await step(() => props().onHistoryClose?.())
+      }
+      await settle()
+      expect(document.body.textContent).includes(notice)
+      // A replay waits under the notice, as the clock does.
+      expect(field().presentationPaused).equals(true)
+    })
   for (const persistent of [false, true])
     it(`creates named and placeholder bench players through the same picker and persists them (${persistent})`, async function () {
       this.timeout(10000)

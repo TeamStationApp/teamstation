@@ -591,4 +591,103 @@ describe('scoring shell and exit', function () {
     expect(document.querySelector('[data-testid="walk-up-note"]')).equals(null)
     expect(owners).deep.equals([])
   })
+
+  it('gets both rosters’ Apple Music songs onto an iPhone, and says once when some are waiting', async function () {
+    const song = (providerId: string): unknown => ({
+      provider: 'appleMusic',
+      providerId,
+      isrc: null,
+      title: 'Centerfield',
+      artist: 'Band',
+      album: null,
+      artworkUrl: null,
+      durationMs: 90000,
+      startMs: 10000,
+      endMs: 25000
+    })
+    const roster = (base: number, ids: string[]): unknown[] =>
+      Array.from({ length: 9 }, (_, index) => ({
+        userId: base + index,
+        shortName: `P${base + index}`,
+        fullName: null,
+        avatarUrl: null,
+        jersey: String(index + 1),
+        positions: [],
+        isPlayer: true,
+        role: 'member',
+        walkUpSong: index < ids.length ? song(ids[index]) : null
+      }))
+    globalThis.fetch = async input => {
+      const path = (
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      ).split('?')[0]
+      const data = path.endsWith('/games/g1')
+        ? gameFixture
+        : path.endsWith('/teams/away/roster')
+          ? roster(100, ['111', '222'])
+          : path.endsWith('/teams/home/roster')
+            ? roster(200, ['222', '333'])
+            : []
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    const asked: string[][] = []
+    const phone: WalkUpMusic = {
+      ...webMusic,
+      available: true,
+      djSupported: true,
+      prepareOffline: async ids => {
+        asked.push(ids)
+        return {
+          authorized: true,
+          subscribed: true,
+          syncLibrary: true,
+          songs: ids.map(providerId => ({
+            providerId,
+            state: providerId === '333' ? 'pending' : 'downloaded'
+          }))
+        }
+      }
+    }
+    const written: unknown[] = []
+    await render(
+      <ScoringScreen
+        client={new TeamStationClient({ baseUrl: 'http://api.test' })}
+        gameId="g1"
+        onExit={() => undefined}
+        music={phone}
+        readiness={{
+          read: async () => ({ onboarded: false, promptShown: false }),
+          write: async value => {
+            written.push(value)
+          }
+        }}
+      />
+    )
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    // The notice waits for the screen to settle before it presents.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 700))
+    })
+    expect(asked).deep.equals([['111', '222', '333']])
+    // Scoring never opens the walkthrough by itself, only the notice.
+    expect(document.body.textContent).not.includes(
+      'TeamStation DJ, enable the following'
+    )
+    expect(document.body.textContent).includes(
+      'Some walk-up songs still need to be downloaded.'
+    )
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
 })

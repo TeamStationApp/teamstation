@@ -19,6 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
     fadeOutMs:(double)fadeOutMs
          done:(void (^)(NSString *_Nullable message))done;
 - (void)stop:(double)fadeMs done:(void (^)(void))done;
+- (void)prepareOffline:(NSArray<NSString *> *)providerIds
+                  done:(void (^)(NSDictionary<NSString *, id> *report))done;
 @end
 
 NS_ASSUME_NONNULL_END
@@ -29,6 +31,13 @@ NS_ASSUME_NONNULL_END
  * MusicKit is, since MusicKit is Swift and a TurboModule is Objective-C++.
  * `codegenConfig.ios.modulesProvider` in package.json maps the name to this
  * class.
+ *
+ * React Native makes two of these: the module JavaScript talks to, and one
+ * the generated `RCTModuleProviders` keeps for the life of the app and never
+ * connects. So `TSWalkUpMusic`, which watches the app become active and
+ * reports, is made only once JavaScript is attached — when the event emitter
+ * arrives — and a report with no emitter is dropped: calling the empty
+ * emitter throws `std::bad_function_call` and aborts the app.
  */
 @interface RCTWalkUpMusic : NativeWalkUpMusicSpecBase <NativeWalkUpMusicSpec>
 @end
@@ -39,33 +48,45 @@ NS_ASSUME_NONNULL_END
 
 RCT_EXPORT_MODULE(WalkUpMusic)
 
-- (instancetype)init
-{
-  if (self = [super init]) {
-    _music = [TSWalkUpMusic new];
-    __weak RCTWalkUpMusic *weakSelf = self;
-    _music.onState = ^(NSDictionary<NSString *, id> *state) {
-      [weakSelf emitOnWalkUpMusicState:state];
-    };
-  }
-  return self;
-}
-
 + (BOOL)requiresMainQueueSetup
 {
   return NO;
 }
 
+- (void)setEventEmitterCallback:(EventEmitterCallbackWrapper *)eventEmitterCallbackWrapper
+{
+  [super setEventEmitterCallback:eventEmitterCallbackWrapper];
+  [self music];
+}
+
+- (TSWalkUpMusic *)music
+{
+  @synchronized(self) {
+    if (_music == nil) {
+      _music = [TSWalkUpMusic new];
+      __weak RCTWalkUpMusic *weakSelf = self;
+      _music.onState = ^(NSDictionary<NSString *, id> *state) {
+        RCTWalkUpMusic *strongSelf = weakSelf;
+        if (strongSelf == nil || !strongSelf->_eventEmitterCallback) {
+          return;
+        }
+        [strongSelf emitOnWalkUpMusicState:state];
+      };
+    }
+    return _music;
+  }
+}
+
 - (void)access:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-  [_music access:^(NSString *answer) {
+  [[self music] access:^(NSString *answer) {
     resolve(answer);
   }];
 }
 
 - (void)search:(NSString *)term resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-  [_music search:term
+  [[self music] search:term
             done:^(NSArray<NSDictionary<NSString *, id> *> *results, NSString *message) {
               if (message != nil) {
                 reject(@"search", message, nil);
@@ -89,7 +110,7 @@ RCT_EXPORT_MODULE(WalkUpMusic)
       resolve:(RCTPromiseResolveBlock)resolve
        reject:(RCTPromiseRejectBlock)reject
 {
-  [_music play:handle
+  [[self music] play:handle
          startMs:startMs
            endMs:endMs
         fadeInMs:fadeInMs
@@ -105,10 +126,20 @@ RCT_EXPORT_MODULE(WalkUpMusic)
 
 - (void)stop:(double)fadeMs resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-  [_music stop:fadeMs
+  [[self music] stop:fadeMs
           done:^{
             resolve(nil);
           }];
+}
+
+- (void)prepareOffline:(NSArray *)providerIds
+               resolve:(RCTPromiseResolveBlock)resolve
+                reject:(RCTPromiseRejectBlock)reject
+{
+  [[self music] prepareOffline:providerIds
+                          done:^(NSDictionary<NSString *, id> *report) {
+                            resolve(report);
+                          }];
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

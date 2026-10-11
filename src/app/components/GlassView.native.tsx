@@ -8,6 +8,7 @@ import {
 } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { backdropOf } from './glassBackdrop'
 import type { GlassViewProps } from './glassViewProps'
 
@@ -64,9 +65,11 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     clear = false,
     fallbackFill = true,
     androidBlur = false,
+    dark = false,
     ...rest
   } = props
-  const theme = useTheme()
+  const appTheme = useTheme()
+  const theme = dark ? tsDark : appTheme
 
   // Android, asked to blur: the backdrop, blurred, under the web's tint.
   if (NativeBlur != null && androidBlur && !opaque) {

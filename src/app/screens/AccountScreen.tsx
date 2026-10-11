@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Platform, Switch, Text, View } from 'react-native'
+import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
@@ -12,6 +12,7 @@ import {
   Button,
   Card,
   Emblem,
+  Icon,
   initialsOf,
   Screen,
   SectionHeader,
@@ -22,7 +23,13 @@ import { NewPasswordFields } from '../components/NewPasswordFields'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { AppleMusicSetup } from '../walkup/AppleMusicSetup'
 import { useWalkUpPreferences } from '../walkup/walkUpPreferences'
+import {
+  markOnboarded,
+  type ReadinessStore,
+  walkUpReadiness
+} from '../walkup/walkUpReadiness'
 
 export interface AccountScreenProps {
   session: Session
@@ -31,6 +38,8 @@ export interface AccountScreenProps {
   onSignOut: () => void
   onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
+  /** Where closing the Apple Music walkthrough is remembered. */
+  readiness?: ReadinessStore
 }
 
 /** A person's identity and verified sign-in methods, all on their own account. */
@@ -41,10 +50,15 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
-    onNodeAdministration
+    onNodeAdministration,
+    readiness = walkUpReadiness
   } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const [walkUp, setWalkUp] = useWalkUpPreferences()
+  const [appleMusicSetup, setAppleMusicSetup] = useState(false)
+  // Mounted once opened, so it can slide away; never on a visit without it.
+  const [appleMusicSetupUsed, setAppleMusicSetupUsed] = useState(false)
   const [account, setAccount] = useState<AccountSettings>()
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
@@ -628,6 +642,25 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_walkup} />
           <Card style={styles.setting}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={lstrings.account_walkup_apple_music}
+              onPress={() => {
+                setAppleMusicSetupUsed(true)
+                setAppleMusicSetup(true)
+              }}
+              style={styles.settingRow}
+            >
+              <Text style={styles.settingLabel}>
+                {lstrings.account_walkup_apple_music}
+              </Text>
+              <Icon
+                name="chevron_right"
+                size={1.25}
+                color={theme.secondaryTextColor}
+              />
+            </Pressable>
+            <View style={styles.divider} />
             <View style={styles.settingRow}>
               <Text style={styles.settingLabel}>
                 {lstrings.account_walkup_fade}
@@ -644,6 +677,15 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               {lstrings.account_walkup_fade_detail}
             </Text>
           </Card>
+          {appleMusicSetupUsed && (
+            <AppleMusicSetup
+              visible={appleMusicSetup}
+              onClose={() => {
+                setAppleMusicSetup(false)
+                markOnboarded(readiness).catch(() => undefined)
+              }}
+            />
+          )}
         </View>
       )}
       <Button

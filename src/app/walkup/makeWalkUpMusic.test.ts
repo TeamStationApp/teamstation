@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import {
   asCandidate,
+  asOfflineReport,
   asPlaybackState,
   makeWalkUpMusic,
   type WalkUpClip,
@@ -13,6 +14,8 @@ import type {
   NativeSongCandidate,
   NativeWalkUpMusicState
 } from './NativeWalkUpMusic'
+import { NO_WALK_UP_MUSIC } from './useWalkUpNote'
+import webMusic from './walkUpMusic'
 import type { PlaybackState } from './walkUpMusicTypes'
 
 const raw: NativeSongCandidate = {
@@ -58,6 +61,15 @@ function fakeModule(
     stop: async fadeMs => {
       calls.push(['stop', fadeMs])
     },
+    prepareOffline: async providerIds => {
+      calls.push(['prepareOffline', providerIds])
+      return {
+        authorized: true,
+        subscribed: true,
+        syncLibrary: true,
+        songs: []
+      }
+    },
     ...overrides
   }
 }
@@ -71,6 +83,15 @@ describe('makeWalkUpMusic', function () {
     expect(
       makeWalkUpMusic(fakeModule(), { platform: 'android' }).providerName
     ).equals('This phone')
+  })
+
+  it('offers DJ Game on an iPhone only', function () {
+    expect(
+      makeWalkUpMusic(fakeModule(), { platform: 'ios' }).djSupported
+    ).equals(true)
+    expect(
+      makeWalkUpMusic(fakeModule(), { platform: 'android' }).djSupported
+    ).equals(false)
   })
 
   it('answers access from the fixed list, and unavailable otherwise', async function () {
@@ -230,6 +251,104 @@ describe('makeWalkUpMusic', function () {
     ])
   })
 
+  it('gets a game’s songs ready on an iPhone, reading each state', async function () {
+    const module = fakeModule({
+      prepareOffline: async providerIds => {
+        module.calls.push(['prepareOffline', providerIds])
+        return {
+          authorized: true,
+          subscribed: true,
+          syncLibrary: true,
+          songs: [
+            { providerId: '1', state: 'downloaded' },
+            { providerId: '2', state: 'pending' },
+            { providerId: '3', state: 'added' },
+            { providerId: '4', state: 'unavailable' },
+            { providerId: '5', state: 'sideways' }
+          ]
+        }
+      }
+    })
+    const music = makeWalkUpMusic(module, { platform: 'ios' })
+    expect(await music.prepareOffline(['1', '2', '3', '4', '5'])).deep.equals({
+      authorized: true,
+      subscribed: true,
+      syncLibrary: true,
+      songs: [
+        { providerId: '1', state: 'downloaded' },
+        { providerId: '2', state: 'pending' },
+        { providerId: '3', state: 'added' },
+        { providerId: '4', state: 'unavailable' },
+        { providerId: '5', state: 'unavailable' }
+      ]
+    })
+    expect(module.calls).deep.equals([
+      ['prepareOffline', ['1', '2', '3', '4', '5']]
+    ])
+  })
+
+  it('has nothing to get ready on Android, with no songs, or when it fails', async function () {
+    const android = fakeModule()
+    expect(
+      await makeWalkUpMusic(android, { platform: 'android' }).prepareOffline([
+        '1'
+      ])
+    ).equals(null)
+    expect(android.calls).deep.equals([])
+    const ios = fakeModule()
+    expect(
+      await makeWalkUpMusic(ios, { platform: 'ios' }).prepareOffline([])
+    ).equals(null)
+    expect(ios.calls).deep.equals([])
+    const broken = makeWalkUpMusic(
+      fakeModule({
+        prepareOffline: async () => {
+          throw new Error('MusicKit went away')
+        }
+      }),
+      { platform: 'ios' }
+    )
+    const quiet = console.log
+    console.log = () => undefined
+    try {
+      expect(await broken.prepareOffline(['1'])).equals(null)
+    } finally {
+      console.log = quiet
+    }
+  })
+
+  it('reads a report with no access as nothing granted', function () {
+    expect(
+      asOfflineReport({
+        authorized: false,
+        subscribed: false,
+        syncLibrary: false,
+        songs: []
+      })
+    ).deep.equals({
+      authorized: false,
+      subscribed: false,
+      syncLibrary: false,
+      songs: []
+    })
+  })
+
+  it('treats the offline reports as no playback state', function () {
+    expect(
+      asPlaybackState({ kind: 'offline', count: 2, added: 1, pending: 1 })
+    ).equals(null)
+    expect(
+      asPlaybackState({ kind: 'offlineSong', providerId: '1', state: 'added' })
+    ).equals(null)
+  })
+
+  it('offers neither DJ Game nor offline songs on the web or with no music', async function () {
+    for (const music of [webMusic, NO_WALK_UP_MUSIC]) {
+      expect(music.djSupported).equals(false)
+      expect(await music.prepareOffline(['1'])).equals(null)
+    }
+  })
+
   it('fills a sparse report', function () {
     expect(asPlaybackState({ kind: 'playing' })).deep.equals({
       kind: 'playing',
@@ -370,6 +489,28 @@ describe('musicLog', function () {
       handle: 'a',
       message: 'Media unavailable'
     })
+  })
+
+  it('keeps a visit’s offline summary and each song not yet on the phone', function () {
+    const { log, crumbs } = harness()
+    quietly(() => {
+      log.onReport({ kind: 'offline', count: 3, downloaded: 2, pending: 1 })
+      log.onReport({
+        kind: 'offlineSong',
+        providerId: '1',
+        state: 'downloaded'
+      })
+      log.onReport({ kind: 'offlineSong', providerId: '2', state: 'pending' })
+      log.onReport({
+        kind: 'offlineSong',
+        providerId: '3',
+        state: 'downloaded'
+      })
+    })
+    expect(crumbs.map(crumb => crumb.data)).deep.equals([
+      { kind: 'offline', count: 3, downloaded: 2, pending: 1 },
+      { kind: 'offlineSong', providerId: '2', state: 'pending' }
+    ])
   })
 
   it('writes every report to the device log', function () {

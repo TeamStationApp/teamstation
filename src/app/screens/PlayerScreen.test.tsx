@@ -352,13 +352,15 @@ describe('a player’s Walk-up tab', function () {
     // A phone's music, so the tab offers Set.
     const music: WalkUpMusic = {
       available: true,
+      djSupported: false,
       providerName: 'Files',
       access: async () => 'authorized',
       search: async () => [],
       pickFile: async () => null,
       play: async () => undefined,
       stop: async () => undefined,
-      onState: () => () => undefined
+      onState: () => () => undefined,
+      prepareOffline: async () => null
     }
     const picked: Array<[unknown, string]> = []
     // An address parsed from a link carries no title.

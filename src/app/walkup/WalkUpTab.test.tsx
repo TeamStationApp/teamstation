@@ -150,6 +150,7 @@ function fakeMusic(
   const stops: number[] = []
   return {
     available: true,
+    djSupported: false,
     providerName: 'Apple Music',
     access: async () => 'authorized',
     search: async () => [],
@@ -161,6 +162,7 @@ function fakeMusic(
     stop: async fadeMs => {
       stops.push(fadeMs)
     },
+    prepareOffline: async () => null,
     onState: listener => {
       listeners.add(listener)
       return () => {

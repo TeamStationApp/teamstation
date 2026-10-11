@@ -1,10 +1,13 @@
 import type {
+  NativeOfflineReport,
   NativeSongCandidate,
   NativeWalkUpMusicState,
   Spec
 } from './NativeWalkUpMusic'
 import type {
   MusicAccess,
+  OfflineReport,
+  OfflineState,
   PlaybackState,
   SongCandidate,
   WalkUpMusic
@@ -13,7 +16,13 @@ import type {
 /** What of the TurboModule this needs, so a test can hand in a fake. */
 export type WalkUpMusicModule = Pick<
   Spec,
-  'access' | 'search' | 'pickFile' | 'play' | 'stop' | 'onWalkUpMusicState'
+  | 'access'
+  | 'search'
+  | 'pickFile'
+  | 'play'
+  | 'stop'
+  | 'onWalkUpMusicState'
+  | 'prepareOffline'
 >
 
 export interface WalkUpMusicOptions {
@@ -70,6 +79,7 @@ export function makeWalkUpMusic(
 
   return {
     available: true,
+    djSupported: options.platform === 'ios',
     providerName: options.platform === 'ios' ? 'Apple Music' : 'This phone',
     async access() {
       const answer = await module.access().catch(() => 'unavailable')
@@ -108,7 +118,38 @@ export function makeWalkUpMusic(
       return () => {
         listeners.delete(listener)
       }
+    },
+    async prepareOffline(providerIds) {
+      if (options.platform !== 'ios' || providerIds.length === 0) return null
+      try {
+        return asOfflineReport(await module.prepareOffline(providerIds))
+      } catch (caught) {
+        console.log(`WalkUpMusic prepareOffline failed: ${String(caught)}`)
+        return null
+      }
     }
+  }
+}
+
+const OFFLINE_STATES: readonly OfflineState[] = [
+  'downloaded',
+  'pending',
+  'added',
+  'unavailable'
+]
+
+/** The native report, with any state it does not know read as unavailable. */
+export function asOfflineReport(raw: NativeOfflineReport): OfflineReport {
+  return {
+    authorized: raw.authorized,
+    subscribed: raw.subscribed,
+    syncLibrary: raw.syncLibrary,
+    songs: (raw.songs ?? []).map(song => ({
+      providerId: song.providerId,
+      state: OFFLINE_STATES.includes(song.state as OfflineState)
+        ? (song.state as OfflineState)
+        : 'unavailable'
+    }))
   }
 }
 

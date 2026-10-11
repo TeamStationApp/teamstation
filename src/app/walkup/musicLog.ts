@@ -11,7 +11,10 @@ export type MusicLogSdk = Pick<typeof defaultSdk, 'addBreadcrumb'>
  * Sentry keeps the ones that tell the story as breadcrumbs: each start, with
  * its handle, clip and fades; every report but `playing`, which comes every
  * 250 ms and would crowd out everything else; and the first `playing` of
- * each start, which shows the clip really began. A start is told apart by
+ * each start, which shows the clip really began. A visit's `offline`
+ * summary is kept, and an `offlineSong` only for a song not yet on the
+ * phone: a game's downloaded songs are counted in the summary, and a line
+ * each would crowd out the same way. A start is told apart by
  * its handle and its clip: a tick from the clip before can still arrive
  * after the next one is asked for. An `error` is kept at the
  * error level but sends no event of its own: the screen already shows it,
@@ -41,6 +44,7 @@ export function musicLog(
         if (heard || !isFrom(started, report)) return
         heard = true
       }
+      if (report.kind === 'offlineSong' && report.state === 'downloaded') return
       sdk.addBreadcrumb({
         category: 'walkUpMusic',
         level: report.kind === 'error' ? 'error' : 'info',

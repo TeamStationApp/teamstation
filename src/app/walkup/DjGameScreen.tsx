@@ -26,6 +26,12 @@ import { AT_BAT_FADE_MS } from './atBatColors'
 import { DjLineupRow, type RowSong } from './DjLineupRow'
 import { useSongPlayer } from './useSongPlayer'
 import type { WalkUpMusic } from './walkUpMusicTypes'
+import {
+  appleMusicIds,
+  type ReadinessStore,
+  useWalkUpReadiness
+} from './walkUpReadiness'
+import { WalkUpReadinessModals } from './WalkUpReadinessModals'
 
 export type DjTeamSide = 'away' | 'home'
 
@@ -65,6 +71,8 @@ export interface DjGameScreenProps {
   side?: DjTeamSide
   /** Tells the shell which side is showing, so coming back keeps it. */
   onSide?: (side: DjTeamSide) => void
+  /** Where this device remembers what it has said about offline songs. */
+  readiness?: ReadinessStore
   /** How often to read the game while the socket is down. 10 s. */
   pollMs?: number
 }
@@ -109,11 +117,20 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
     resolve,
     onEditSong,
     onSide,
-    pollMs = POLL_MS
+    pollMs = POLL_MS,
+    readiness: readinessStore
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const player = useSongPlayer(music, fadeAppleMusic)
+  // Both teams' Apple Music walk-up songs, from the first read of the game:
+  // they go into the phone's library on the way in. Later changes wait for
+  // the next visit.
+  const [walkUpIds, setWalkUpIds] = useState<string[] | null>(null)
+  const readiness = useWalkUpReadiness(music, walkUpIds, {
+    screen: 'dj',
+    store: readinessStore
+  })
   // The list runs under the floating tabs, and ends clear of them.
   const clearance =
     navClearanceAboveInset(
@@ -289,6 +306,17 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
       clearTimeout(timer)
     }
   }, [toast])
+
+  useEffect(() => {
+    if (shown == null || walkUpIds != null) return
+    setWalkUpIds(
+      appleMusicIds(
+        [...shown.away.batters, ...shown.home.batters].map(
+          batter => batter.walkUpSong
+        )
+      )
+    )
+  }, [shown, walkUpIds])
 
   // Where each song is on this phone, looked for once per song.
   const [found, setFound] = useState<Record<string, RowSong>>({})
@@ -471,6 +499,7 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
           <Text style={styles.toastText}>{toast}</Text>
         </View>
       )}
+      <WalkUpReadinessModals readiness={readiness} />
     </Screen>
   )
 }

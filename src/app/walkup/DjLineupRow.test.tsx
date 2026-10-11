@@ -214,7 +214,7 @@ describe('the DJ Game button (U30)', function () {
         onDjGame={() => {
           opened++
         }}
-        music={{ available: true }}
+        music={{ djSupported: true }}
       />
     )
     const dj = labelled('DJ Game')
@@ -241,7 +241,7 @@ describe('the DJ Game button (U30)', function () {
           client={client(true, status)}
           gameId="g1"
           onDjGame={() => undefined}
-          music={{ available: true }}
+          music={{ djSupported: true }}
         />
       )
       expect(labelled('DJ Game'), status).not.equals(null)
@@ -249,7 +249,7 @@ describe('the DJ Game button (U30)', function () {
         root?.unmount()
       })
     }
-    for (const [canDj, available] of [
+    for (const [canDj, djSupported] of [
       [false, true],
       [true, false]
     ]) {
@@ -258,10 +258,10 @@ describe('the DJ Game button (U30)', function () {
           client={client(canDj)}
           gameId="g1"
           onDjGame={() => undefined}
-          music={{ available }}
+          music={{ djSupported }}
         />
       )
-      expect(labelled('DJ Game'), `${canDj} ${available}`).equals(null)
+      expect(labelled('DJ Game'), `${canDj} ${djSupported}`).equals(null)
       await act(async () => {
         root?.unmount()
       })
