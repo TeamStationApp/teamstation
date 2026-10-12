@@ -1,0 +1,100 @@
+{
+  "frameRate" : 30,
+  "gridSlackFrames" : 1.5,
+  "steps" : [
+    {
+      "hostSeconds" : 0,
+      "onClockGrid" : false,
+      "slot" : 0,
+      "sourceSeconds" : 0
+    },
+    {
+      "hostSeconds" : 0.033,
+      "onClockGrid" : false,
+      "slot" : 1,
+      "sourceSeconds" : 0.034
+    },
+    {
+      "hostSeconds" : 0.068,
+      "onClockGrid" : false,
+      "slot" : 2,
+      "sourceSeconds" : 0.065
+    },
+    {
+      "hostSeconds" : 0.099,
+      "onClockGrid" : false,
+      "slot" : 3,
+      "sourceSeconds" : 0.101
+    },
+    {
+      "hostSeconds" : 0.115,
+      "onClockGrid" : false,
+      "sourceSeconds" : 0.11
+    },
+    {
+      "hostSeconds" : 0.13,
+      "onClockGrid" : false,
+      "slot" : 4,
+      "sourceSeconds" : 0.14
+    },
+    {
+      "hostSeconds" : 0.17,
+      "onClockGrid" : false,
+      "slot" : 5,
+      "sourceSeconds" : 0.3
+    },
+    {
+      "hostSeconds" : 0.235,
+      "onClockGrid" : false,
+      "slot" : 7,
+      "sourceSeconds" : 0.23
+    },
+    {
+      "hostSeconds" : 0.27,
+      "onClockGrid" : false,
+      "slot" : 8
+    },
+    {
+      "hostSeconds" : 1,
+      "onClockGrid" : false,
+      "slot" : 30,
+      "sourceSeconds" : 1
+    },
+    {
+      "hostSeconds" : 1.04,
+      "onClockGrid" : true,
+      "slot" : 31,
+      "sourceSeconds" : 1.033
+    },
+    {
+      "hostSeconds" : 1.14,
+      "onClockGrid" : true,
+      "slot" : 32,
+      "sourceSeconds" : 1.066
+    },
+    {
+      "hostSeconds" : 1.14,
+      "onClockGrid" : true,
+      "slot" : 33,
+      "sourceSeconds" : 1.1
+    },
+    {
+      "hostSeconds" : 1.14,
+      "onClockGrid" : true,
+      "slot" : 34,
+      "sourceSeconds" : 1.133
+    },
+    {
+      "hostSeconds" : 1.18,
+      "onClockGrid" : true,
+      "slot" : 35,
+      "sourceSeconds" : 1
+    },
+    {
+      "hostSeconds" : 1.3,
+      "onClockGrid" : false,
+      "slot" : 39,
+      "sourceSeconds" : 1.3
+    }
+  ]
+}

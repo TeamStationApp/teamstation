@@ -70,6 +70,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// The dated title that upload uses, kept so a take can name its game with
   /// no network and no list to look it up in.
   public var gameTitle: String?
+  /// The live stream this take is the local recording of; see `setLiveStreamId`.
+  public var liveStreamId: String?
 
   /// How long the take is, from what was actually written.
   ///
@@ -95,7 +97,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     encoding: TakeEncoding? = nil,
     soundChecks: [ProgramSoundCheck] = [],
     gameId: String? = nil,
-    gameTitle: String? = nil
+    gameTitle: String? = nil,
+    liveStreamId: String? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -108,6 +111,7 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.soundChecks = soundChecks
     self.gameId = gameId
     self.gameTitle = gameTitle
+    self.liveStreamId = liveStreamId
   }
 }
 
@@ -208,6 +212,10 @@ public final class ArchiveIndex: @unchecked Sendable {
     // The title that upload is given — dated, as the picker composes it — so
     // a take can say where it belongs with no network and no list.
     try? store.execute("ALTER TABLE recordings ADD COLUMN game_title TEXT;")
+    // The live stream a take is the local recording of, which only the phone writes: its upload
+    // names that stream so the server replaces exactly that angle's live copy. Null for every take
+    // TS Director records.
+    try? store.execute("ALTER TABLE recordings ADD COLUMN live_stream_id TEXT;")
     try store.execute("""
       CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -352,6 +360,14 @@ public final class ArchiveIndex: @unchecked Sendable {
     try store.execute(
       "UPDATE recordings SET ended_at = ? WHERE id = ?;",
       [ .real(wall.seconds), .integer(id) ]
+    )
+  }
+
+  /// Names the live stream a take is the local recording of, or clears it with nil.
+  public func setLiveStreamId(_ streamId: String?, for id: Int64) throws {
+    try store.execute(
+      "UPDATE recordings SET live_stream_id = ? WHERE id = ?;",
+      [ streamId.map { .text($0) } ?? .null, .integer(id) ]
     )
   }
 
@@ -640,7 +656,8 @@ public final class ArchiveIndex: @unchecked Sendable {
       SELECT r.id, r.started_at, r.ended_at, r.program_filename,
         (SELECT MAX(s.start_wall + s.duration) FROM segments s
           WHERE s.recording_id = r.id AND s.is_initialization = 0),
-        r.resume_count, r.encoding_json, r.sound_checks_json, r.game_id, r.game_title
+        r.resume_count, r.encoding_json, r.sound_checks_json, r.game_id, r.game_title,
+        r.live_stream_id
       FROM recordings r
       ORDER BY r.started_at DESC;
       """
@@ -662,7 +679,8 @@ public final class ArchiveIndex: @unchecked Sendable {
         encoding: Self.takeEncoding(row.values[6] == .null ? nil : row.string(6)),
         soundChecks: Self.soundChecks(row.values[7] == .null ? nil : row.string(7)),
         gameId: row.values[8] == .null || row.string(8).isEmpty ? nil : row.string(8),
-        gameTitle: row.values[9] == .null || row.string(9).isEmpty ? nil : row.string(9)
+        gameTitle: row.values[9] == .null || row.string(9).isEmpty ? nil : row.string(9),
+        liveStreamId: row.values[10] == .null || row.string(10).isEmpty ? nil : row.string(10)
       )
     }
   }

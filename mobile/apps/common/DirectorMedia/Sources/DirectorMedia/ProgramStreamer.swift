@@ -32,7 +32,7 @@ public final class ProgramStreamer: @unchecked Sendable {
 
   public typealias FailureHandler = @Sendable (String) -> Void
 
-  private let telemetry: PipelineTelemetry
+  private let telemetry: any MediaTelemetry
   private let converter: PixelConverter
   private let lock = NSLock()
   private var width = 1920
@@ -95,7 +95,7 @@ public final class ProgramStreamer: @unchecked Sendable {
   /// `clock` is the one the mixes and the programme tick read (the steady wall clock in the app):
   /// the stream's video stamps and its sound's epoch are both taken from it, so a step of the
   /// device's own clock neither moves one against the other nor breaks the sound into a new epoch.
-  public init(telemetry: PipelineTelemetry, converter: PixelConverter, clock: DirectorClock = SystemClock()) {
+  public init(telemetry: any MediaTelemetry, converter: PixelConverter, clock: DirectorClock = SystemClock()) {
     self.telemetry = telemetry
     self.converter = converter
     self.wallClock = clock
@@ -144,7 +144,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     return rate
   }
 
-  public func start(urlString: String, config: AppConfig, onFailure: FailureHandler?) async throws {
+  public func start(urlString: String, settings: StreamSettings, onFailure: FailureHandler?) async throws {
     let parsed = RTMPURL.parse(urlString)
     let url: RTMPURL
     switch parsed {
@@ -152,15 +152,15 @@ public final class ProgramStreamer: @unchecked Sendable {
     case let .failure(error): throw error
     }
 
-    guard beginStart(config: config, onFailure: onFailure) else { return }
+    guard beginStart(settings: settings, onFailure: onFailure) else { return }
 
     try openEncoder()
     let client = RTMPClient()
     // How far behind the socket may fall before the client sheds media: `sendBufferSeconds` of the
     // top of the stream's range, which is the most this session ever produces.
     client.configure(
-      sendBudgetBytes: RTMPClient.sendBudget(forBitrate: config.streamBitrateHigh),
-      videoCodec: Self.rtmpCodec(config.streamCodec)
+      sendBudgetBytes: RTMPClient.sendBudget(forBitrate: settings.bitrateHigh),
+      videoCodec: Self.rtmpCodec(settings.codec)
     )
     client.onFailure { [weak self] error in
       self?.handleFailure(error.description)
@@ -177,11 +177,11 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   /// NSLock cannot be taken inside an async function; these two helpers keep `start` legal.
-  private func beginStart(config: AppConfig, onFailure: FailureHandler?) -> Bool {
+  private func beginStart(settings: StreamSettings, onFailure: FailureHandler?) -> Bool {
     lock.lock()
     defer { lock.unlock() }
     if isRunning { return false }
-    applyStreamSettings(config)
+    applyStreamSettings(settings)
     self.onFailure = onFailure
     sentVideoConfig = false
     sentAudioConfig = false
@@ -204,15 +204,15 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   /// The stream group of Settings, and the keyframe interval every encoder shares.
-  private func applyStreamSettings(_ config: AppConfig) {
-    width = config.streamResolution.width
-    height = config.streamResolution.height
-    codec = Self.rtmpCodec(config.streamCodec)
-    bitrateLow = config.streamBitrateLow
-    bitrateHigh = config.streamBitrateHigh
-    bitrate = config.streamBitrateHigh
-    frameRate = max(1, config.streamFrameRate)
-    gopSeconds = config.gopSeconds
+  private func applyStreamSettings(_ settings: StreamSettings) {
+    width = settings.resolution.width
+    height = settings.resolution.height
+    codec = Self.rtmpCodec(settings.codec)
+    bitrateLow = settings.bitrateLow
+    bitrateHigh = settings.bitrateHigh
+    bitrate = settings.bitrateHigh
+    frameRate = max(1, settings.frameRate)
+    gopSeconds = settings.gopSeconds
   }
 
   static func rtmpCodec(_ codec: ProgramCodec) -> RTMPVideoCodec {
@@ -322,10 +322,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     var gopSeconds: Double
   }
 
-  func configurationForTesting(_ config: AppConfig) -> Configuration {
+  func configurationForTesting(_ settings: StreamSettings) -> Configuration {
     lock.lock()
     defer { lock.unlock() }
-    applyStreamSettings(config)
+    applyStreamSettings(settings)
     return Configuration(
       width: width,
       height: height,
@@ -555,7 +555,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     let frameSeconds = Double(CMSampleBufferGetNumSamples(frame.sampleBuffer)) / 48_000
     // The count only holds while the mix arrives without a break; after one (the publish was down,
     // and nothing was fed) the encoder starts again from this frame's own time.
-    if let expected = audioNextWall, abs(frameWall - expected) > 0.01 {
+    if Self.audioBreaks(expected: audioNextWall, at: frameWall) {
       aac.reset()
       audioInputWall = nil
     }
@@ -586,8 +586,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     let stamps = Self.audioTimestamps(count: packets.count, from: first, epoch: epoch)
     // Never at or before what already went: a restart's priming reaches back over it.
     var sendable: [(Data, UInt32)] = []
-    for (packet, stamp) in zip(packets, stamps) {
-      guard let stamp, stamp > (audioLastStamp ?? 0) || audioLastStamp == nil else { continue }
+    for (packet, stamp) in zip(packets, Self.monotonicAudioStamps(stamps, after: audioLastStamp)) {
+      guard let stamp else { continue }
       sendable.append((packet, stamp))
       audioLastStamp = stamp
     }
@@ -600,6 +600,28 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     for (packet, stamp) in sendable {
       client.sendAudio(timestampMs: stamp, tag: FLVTag.audio(packetType: 1, payload: packet))
+    }
+  }
+
+  /// How far the mix may drift from where the last frame ended before it counts as a break, after
+  /// which the encoder starts again from the next frame's own time.
+  static let audioGapResetSeconds = 0.01
+
+  /// Whether a frame of mix starting at `wall` breaks from the one before, which ended at
+  /// `expected`.
+  static func audioBreaks(expected: CFAbsoluteTime?, at wall: CFAbsoluteTime) -> Bool {
+    guard let expected else { return false }
+    return abs(wall - expected) > audioGapResetSeconds
+  }
+
+  /// The stamps that may go, in order: nil for a packet with none, and for one at or before the
+  /// last stamp sent (`after`), or the one before it in this run.
+  static func monotonicAudioStamps(_ stamps: [UInt32?], after last: UInt32?) -> [UInt32?] {
+    var last = last
+    return stamps.map { stamp in
+      guard let stamp, stamp > (last ?? 0) || last == nil else { return nil }
+      last = stamp
+      return stamp
     }
   }
 

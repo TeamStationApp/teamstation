@@ -1,6 +1,7 @@
 import CNDI
 import DirectorCore
 @testable import DirectorNDI
+@testable import DirectorMedia
 @testable import DirectorPipeline
 import DirectorSources
 import Foundation

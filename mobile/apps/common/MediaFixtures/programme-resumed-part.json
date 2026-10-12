@@ -1,0 +1,31 @@
+{
+  "cases" : [
+    {
+      "firstPictureAt" : 1302,
+      "name" : "cameras back two seconds after the resume",
+      "previousPartsSeconds" : 302,
+      "resumedAt" : 1300,
+      "takeStart" : 1000
+    },
+    {
+      "firstPictureAt" : 1331.5,
+      "name" : "cameras back half a minute after",
+      "previousPartsSeconds" : 331.5,
+      "resumedAt" : 1300,
+      "takeStart" : 1000
+    },
+    {
+      "name" : "no picture before Stop keeps the resume",
+      "previousPartsSeconds" : 300,
+      "resumedAt" : 1300,
+      "takeStart" : 1000
+    },
+    {
+      "firstPictureAt" : 995,
+      "name" : "a clock that stepped back never goes negative",
+      "previousPartsSeconds" : 0,
+      "resumedAt" : 990,
+      "takeStart" : 1000
+    }
+  ]
+}

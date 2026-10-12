@@ -32,13 +32,12 @@ import Testing
   }
 
   @Test func readsADateWithoutFractionalSeconds() throws {
-    let json = #"{"gameId":"g","url":"rtmp://x/live/k","opensAt":"2026-09-17T20:15:00Z","closesAt":null}"#
-    let claim = try TeamStationClient.decoder.decode(
-      TeamStationClaim.self,
-      from: Data(json.utf8)
-    )
-    #expect(claim.opensAt != nil)
-    #expect(claim.closesAt == nil)
+    let json = """
+    {"gameId":"g","startAt":"2026-09-17T20:15:00Z","venue":null,"homeTeamName":"Ravens",
+     "awayTeamName":"Titan","homeLogoUrl":null,"awayLogoUrl":null,"liveState":"idle"}
+    """
+    let event = try TeamStationClient.decoder.decode(TeamStationEvent.self, from: Data(json.utf8))
+    #expect(event.startAt.timeIntervalSince1970 == 1789676100)
   }
 }
 
@@ -103,33 +102,55 @@ import Testing
 
 @Suite struct ErrorTests {
   @Test func readsWhyAStreamWouldNotStart() throws {
-    // What `GET /games/{id}/live-stream` answers. The Director asks for this
-    // only when a publish failed, and shows `lastError` in place of the
-    // socket's own message.
+    // What `GET /games/{id}/live-streams` answers. The Director asks for this
+    // only when a publish failed, and shows its own row's `lastError` in place
+    // of the socket's own message.
     let json = """
     {
       "gameId": "gam_1",
-      "exists": true,
-      "state": "publishing",
-      "lastError": "This event is already being streamed"
+      "mine": [{
+        "id": "lst_1", "gameId": "gam_1", "userId": 7, "ownerName": "Mookie Betts", "slot": 1,
+        "label": "Center Field", "keyPrefix": "abcd", "state": "publishing",
+        "opensAt": "2026-09-17T20:15:00.000Z", "closesAt": null, "videoId": null,
+        "lastError": "This event is already being streamed", "status": null,
+        "deviceId": "00000000-0000-4000-8000-000000000001", "deviceModel": "iPad Pro",
+        "localRecording": "none"
+      }],
+      "others": [{
+        "id": "lst_2", "gameId": "gam_1", "label": "Home Plate", "state": "idle",
+        "lastError": null, "deviceModel": "iPhone 13 Pro"
+      }],
+      "canAdd": 3,
+      "maxCameras": 4
     }
     """
-    let stream = try TeamStationClient.decoder.decode(
-      TeamStationLiveStream.self,
+    let streams = try TeamStationClient.decoder.decode(
+      TeamStationGameStreams.self,
       from: Data(json.utf8)
     )
-    #expect(stream.state == "publishing")
-    #expect(stream.lastError == "This event is already being streamed")
+    #expect(streams.mine.first?.state == "publishing")
+    #expect(streams.mine.first?.lastError == "This event is already being streamed")
+    #expect(streams.mine.first?.deviceId == "00000000-0000-4000-8000-000000000001")
+    #expect(streams.others.first?.deviceModel == "iPhone 13 Pro")
+    #expect(streams.others.first?.deviceId == nil)
   }
 
   @Test func readsAStreamWithNothingToSay() throws {
-    let json = #"{"gameId":"gam_1","exists":true}"#
+    let json = #"{"id":"lst_1","gameId":"gam_1"}"#
     let stream = try TeamStationClient.decoder.decode(
-      TeamStationLiveStream.self,
+      TeamStationDeviceStream.self,
       from: Data(json.utf8)
     )
     #expect(stream.state == nil)
     #expect(stream.lastError == nil)
+    #expect(stream.url == nil)
+  }
+
+  @Test func saysWhatAnEndedStreamMeans() {
+    #expect(
+      TeamStationError.streamEnded.localizedDescription
+        == "This camera was ended. Start streaming again to go live."
+    )
   }
 
   @Test func prefersTheServersOwnSentence() {

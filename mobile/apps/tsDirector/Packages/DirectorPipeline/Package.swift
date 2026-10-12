@@ -9,15 +9,15 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../../../common/AdaptiveBitrate"),
-    .package(path: "../../common/DirectorCore"),
-    .package(path: "../../common/DirectorSources"),
-    .package(path: "../../../common/DirectorRTMP"),
-    .package(path: "../DirectorTestHarness")
+    .package(path: "../../../common/DirectorCore"),
+    .package(path: "../../../common/DirectorMedia"),
+    .package(path: "../../../common/DirectorSources"),
+    .package(path: "../../../common/DirectorRTMP")
   ],
   targets: [
     .target(
       name: "DirectorPipeline",
-      dependencies: [ "AdaptiveBitrate", "DirectorCore", "DirectorSources", "DirectorRTMP", "DirectorTestHarness" ],
+      dependencies: [ "AdaptiveBitrate", "DirectorCore", "DirectorMedia", "DirectorSources", "DirectorRTMP" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]
