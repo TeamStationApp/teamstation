@@ -69,6 +69,7 @@ import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
+import { reportPhoneStreamCapabilities } from '../stream/phoneStream'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
@@ -334,6 +335,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     explicitSelection.current = requestedTab != null
     setTab(requestedTab ?? 'info')
   }, [requestedTab, gameId])
+  // Whether this phone can record video, in a development build's log, until
+  // the Videos tab offers Record video from it.
+  useEffect(() => {
+    if (tab === 'watch') reportPhoneStreamCapabilities()
+  }, [tab])
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [clockNow, setClockNow] = useState(Date.now)

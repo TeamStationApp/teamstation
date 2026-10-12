@@ -10,7 +10,7 @@
   },
   "codegenConfig": {
     "name": "TeamStationWalkUpMusicSpec",
-    "type": "modules",
+    "type": "all",
     "jsSrcsDir": "src/app",
     "android": {
       "javaPackageName": "app.teamstation.app.walkup"
@@ -19,7 +19,11 @@
       "modulesProvider": {
         "WalkUpMusic": "RCTWalkUpMusic",
         "DictationMicrophone": "RCTDictationMicrophone",
-        "TSHaptics": "RCTHaptics"
+        "TSHaptics": "RCTHaptics",
+        "TSPhoneStream": "RCTPhoneStream"
+      },
+      "componentProvider": {
+        "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView"
       }
     }
   },
