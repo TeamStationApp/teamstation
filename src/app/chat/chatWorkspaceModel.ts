@@ -28,7 +28,13 @@ export function emptyChatDraft(): ChatDraft {
   return { text: '', picked: [], scrollOffset: 0 }
 }
 
-type DraftField = 'text' | 'replyTo' | 'editing'
+type DraftField = 'text' | 'replyTo' | 'editing' | 'picked'
+const samePickedFiles = (
+  before: readonly PickedFile[],
+  after: readonly PickedFile[]
+): boolean =>
+  before.length === after.length &&
+  before.every((file, index) => file === after[index])
 let nextDraftOwner = 0
 export interface ChatSubmission {
   readonly draft: ChatDraft
@@ -57,11 +63,13 @@ export class ChatDraftOwner {
     const revisions = this.revisions.get(id) ?? {
       text: 0,
       replyTo: 0,
-      editing: 0
+      editing: 0,
+      picked: 0
     }
     if (before.text !== next.text) revisions.text += 1
     if (before.replyTo?.id !== next.replyTo?.id) revisions.replyTo += 1
     if (before.editing?.id !== next.editing?.id) revisions.editing += 1
+    if (!samePickedFiles(before.picked, next.picked)) revisions.picked += 1
     this.revisions.set(id, revisions)
     this.state.drafts.set(id, next)
   }
@@ -92,7 +100,12 @@ export class ChatDraftOwner {
     const token: ChatSubmission = {
       draft: { ...this.draft(id), picked: [...this.draft(id).picked] },
       revisions: {
-        ...(this.revisions.get(id) ?? { text: 0, replyTo: 0, editing: 0 })
+        ...(this.revisions.get(id) ?? {
+          text: 0,
+          replyTo: 0,
+          editing: 0,
+          picked: 0
+        })
       }
     }
     this.pending.set(id, token)
@@ -111,27 +124,24 @@ export class ChatDraftOwner {
     const current = this.draft(id)
     const revisions = this.revisions.get(id)!
     if (success) {
-      this.write(id, {
-        ...current,
-        text:
-          revisions.text === token.revisions.text &&
-          current.text === token.draft.text
-            ? ''
-            : current.text,
-        replyTo:
-          revisions.replyTo === token.revisions.replyTo &&
-          current.replyTo?.id === token.draft.replyTo?.id
-            ? undefined
-            : current.replyTo,
-        editing:
-          revisions.editing === token.revisions.editing &&
-          current.editing?.id === token.draft.editing?.id
-            ? undefined
-            : current.editing,
-        picked: current.picked.filter(
-          file => !token.draft.picked.includes(file)
-        )
-      })
+      const unchanged =
+        revisions.text === token.revisions.text &&
+        revisions.replyTo === token.revisions.replyTo &&
+        revisions.editing === token.revisions.editing &&
+        revisions.picked === token.revisions.picked &&
+        current.text === token.draft.text &&
+        current.replyTo?.id === token.draft.replyTo?.id &&
+        current.editing?.id === token.draft.editing?.id &&
+        samePickedFiles(current.picked, token.draft.picked)
+      // A newer draft owns its whole context, including unchanged reply/files.
+      if (unchanged)
+        this.write(id, {
+          ...current,
+          text: '',
+          replyTo: undefined,
+          editing: undefined,
+          picked: []
+        })
     } else this.failures.add(id)
     this.pending.delete(id)
     this.changed(id)

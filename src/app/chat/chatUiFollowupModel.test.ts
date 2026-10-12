@@ -13,6 +13,7 @@ import {
 } from './chatModel'
 import { chat, message } from './chatViews.test.helpers'
 import {
+  type ChatDraft,
   chatDraftOwner,
   emptyChatDraft,
   newChatWorkspaceState
@@ -48,6 +49,127 @@ function file(contentType: string, fileName: string): AttachmentRef {
 }
 
 describe('chat UI follow-up model', function () {
+  const submittedContext = (): ChatDraft => ({
+    ...emptyChatDraft(),
+    text: 'Submitted caption',
+    replyTo: message({ id: 'reply-original' }),
+    editing: message({ id: 'edit-original' }),
+    picked: ['first.txt', 'second.txt'].map(fileName => ({
+      bytes: new Uint8Array([1]),
+      contentType: 'text/plain',
+      fileName
+    })),
+    scrollOffset: 80
+  })
+  const contextChanges: Array<{
+    name: string
+    change: (draft: ChatDraft) => ChatDraft
+  }> = [
+    {
+      name: 'text',
+      change: draft => ({ ...draft, text: 'New unsent caption' })
+    },
+    {
+      name: 'reply target',
+      change: draft => ({ ...draft, replyTo: message({ id: 'next-reply' }) })
+    },
+    {
+      name: 'editing target',
+      change: draft => ({ ...draft, editing: message({ id: 'next-edit' }) })
+    },
+    {
+      name: 'replacement file',
+      change: draft => ({
+        ...draft,
+        picked: [{ ...draft.picked[0] }, draft.picked[1]]
+      })
+    },
+    {
+      name: 'attachment order',
+      change: draft => ({ ...draft, picked: [...draft.picked].reverse() })
+    },
+    {
+      name: 'attachment removal',
+      change: draft => ({ ...draft, picked: draft.picked.slice(1) })
+    }
+  ]
+  for (const { name, change } of contextChanges)
+    it(`retains the entire newer sendable context when only ${name} changes before success`, function () {
+      const state = newChatWorkspaceState()
+      const owner = chatDraftOwner(state, {}, 1)
+      const submitted = submittedContext()
+      owner.write('A', submitted)
+      const token = owner.begin('A')!
+      const current = change(submitted)
+      owner.write('A', current)
+      expect(owner.finish('A', token, true)).deep.equals(current)
+      expect(owner.draft('A').replyTo).equals(current.replyTo)
+      expect(owner.draft('A').editing).equals(current.editing)
+      expect(owner.draft('A').picked[0]).equals(current.picked[0])
+      expect(owner.isSending('A')).equals(false)
+    })
+
+  it('retains the entire context after submitted attachments are removed and deliberately readded', function () {
+    const state = newChatWorkspaceState()
+    const owner = chatDraftOwner(state, {}, 1)
+    const submitted = submittedContext()
+    owner.write('A', submitted)
+    const token = owner.begin('A')!
+    owner.write('A', { ...submitted, picked: [] })
+    owner.write('A', { ...submitted, picked: [...submitted.picked] })
+    expect(owner.finish('A', token, true)).deep.equals(submitted)
+  })
+
+  it('retains unchanged reply and files beside externally supplied newer offscreen text', function () {
+    const state = newChatWorkspaceState()
+    const owner = chatDraftOwner(state, {}, 1)
+    const submitted = submittedContext()
+    owner.write('A', submitted)
+    const token = owner.begin('A')!
+    const current = { ...submitted, text: 'New offscreen caption' }
+    state.drafts.set('A', current)
+    expect(owner.finish('A', token, true)).deep.equals(current)
+  })
+
+  for (const { name, change } of contextChanges.filter(({ name }) =>
+    ['reply target', 'editing target', 'replacement file'].includes(name)
+  ))
+    it(`retains the whole context for an externally supplied offscreen ${name}`, function () {
+      const state = newChatWorkspaceState()
+      const owner = chatDraftOwner(state, {}, 1)
+      const submitted = submittedContext()
+      owner.write('A', submitted)
+      const token = owner.begin('A')!
+      const current = change(submitted)
+      state.drafts.set('A', current)
+      expect(owner.finish('A', token, true)).deep.equals(current)
+    })
+
+  it('clears the whole submitted context when only layout and an equivalent attachment array changed', function () {
+    const state = newChatWorkspaceState()
+    const owner = chatDraftOwner(state, {}, 1)
+    const submitted = submittedContext()
+    owner.write('A', submitted)
+    const token = owner.begin('A')!
+    owner.write('A', {
+      ...submitted,
+      picked: [...submitted.picked],
+      scrollOffset: 240,
+      hasScrollPosition: true,
+      followNewest: false,
+      scrollAnchor: { id: 'reading-row', relativeY: -20 }
+    })
+    expect(owner.finish('A', token, true)).deep.equals({
+      ...emptyChatDraft(),
+      replyTo: undefined,
+      editing: undefined,
+      scrollOffset: 240,
+      hasScrollPosition: true,
+      followNewest: false,
+      scrollAnchor: { id: 'reading-row', relativeY: -20 }
+    })
+  })
+
   it('reconciles offscreen submitted fields while preserving current revisions and geometry', function () {
     const state = newChatWorkspaceState()
     const engine = {}
