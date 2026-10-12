@@ -1,5 +1,6 @@
 import DirectorCore
 import DirectorExport
+import DirectorMedia
 import Foundation
 import TeamStationKit
 
@@ -104,8 +105,15 @@ public final class EventCoordinator {
    * thrown when it refuses; asked for again quietly otherwise, because a key
    * can have been rotated since and the cached one is usually still right.
    * For a typed URL: nil, and TeamStation is asked nothing.
+   *
+   * `reason` is the stream controller's: a `.redial` names the stream held,
+   * and a stream ended on TeamStation is thrown as
+   * `TeamStationError.streamEnded` rather than put back.
    */
-  public func streamURLForDial(destination: StreamDestination) async throws -> String? {
+  public func streamURLForDial(
+    destination: StreamDestination,
+    reason: LiveStreamRequestReason = .start
+  ) async throws -> String? {
     guard destination == .event else { return nil }
     guard events.chosen != nil else {
       throw EventStreamError.refused("Pick a TeamStation event in Settings first")
@@ -117,12 +125,37 @@ public final class EventCoordinator {
         )
       }
     } else {
-      await events.refreshChosen(cameraName: cameraName())
+      try await events.refreshChosen(cameraName: cameraName(), reason: reason)
     }
     guard let url = events.chosen?.streamURL else {
       throw EventStreamError.refused("Pick a TeamStation event in Settings first")
     }
     return url
+  }
+
+  /// The address for one dial of the stream controller: the event's, or the
+  /// typed URL. A stream ended on TeamStation is thrown as `StreamEndedError`,
+  /// which stops the controller redialling until the operator starts again.
+  public func streamURL(
+    for reason: StreamSessionController.DialReason,
+    destination: StreamDestination,
+    typed: String
+  ) async throws -> String {
+    do {
+      return try await streamURLForDial(
+        destination: destination,
+        reason: reason == .redial ? .redial : .start
+      ) ?? typed
+    } catch TeamStationError.streamEnded {
+      throw StreamEndedError(message: TeamStationError.streamEnded.localizedDescription)
+    }
+  }
+
+  /// The camera was renamed in Settings. The stream already held keeps its
+  /// key and its video under the new name; with none held yet, the next
+  /// request carries the name.
+  public func cameraRenamed(to name: String) async {
+    await events.renameStream(label: name)
   }
 
   /// A take has started. With an event chosen it is filed under it — which
