@@ -84,6 +84,7 @@ English conditions for every operator action: [docs/operator-test-vectors.md](do
 | `../common/DirectorCore` | Identifiers, clock, config, SQLite wrapper, paths (shared receive stack) |
 | `../common/DirectorSources` | `FrameSource` protocol, camera identity, synthetic and file sources |
 | `../common/DirectorRTSP` | RTSP client, RTP depacketizers, decoders, subnet search |
+| `../common/DirectorRTMP` | RTMP client, send ledger, FLV tags, HEVC decoder configuration (shared with the TeamStation app) |
 | `Packages/DirectorPipeline` | Pixel conversion, routing, telemetry, degradation, program encode |
 | `Packages/DirectorDVR` | Segment writer, proxy store, archive index, export, retention |
 | `Packages/DirectorUI` | SwiftUI views and `AppEnvironment`, which wires everything together |

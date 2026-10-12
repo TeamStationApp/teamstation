@@ -13,7 +13,7 @@ let package = Package(
     .package(path: "../../common/CameramanControlUI"),
     .package(path: "../../../common/EventControl"),
     .package(path: "../../../common/TeamStationKit"),
-    .package(path: "../CameramanCapture"),
+    .package(path: "../../../common/CameramanCapture"),
     .package(path: "../CameramanEncode"),
     .package(path: "../CameramanRTSP"),
     .package(path: "../CameramanTestHarness")
