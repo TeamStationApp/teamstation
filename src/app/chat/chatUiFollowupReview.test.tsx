@@ -398,6 +398,64 @@ describe('chat review persistent submission ownership', function () {
     expect(input().value).equals('')
   })
 
+  it('retains the entire newer text draft with its unchanged reply and file across routes and offscreen success', async function () {
+    const engine = new ReviewEngine()
+    const send = deferred<undefined>()
+    engine.sendWork = send.promise
+    const state = newChatWorkspaceState()
+    const target = original()
+    const attachment = prepared()
+    state.drafts.set('cnv_aurora', {
+      ...emptyChatDraft(),
+      text: 'Submitted caption',
+      replyTo: target,
+      picked: [attachment]
+    })
+    await workspace(engine, state)
+    await press('Send')
+    await type('New unsent caption')
+    assertDraft(state, 'New unsent caption', target.id, ['notes.pdf'])
+    await workspace(engine, state, 'cnv_solstice')
+    await unmount()
+    await act(async () => {
+      send.resolve(undefined)
+      await wait()
+    })
+    await workspace(engine, state)
+    assertDraft(state, 'New unsent caption', target.id, ['notes.pdf'])
+    expect(state.drafts.get('cnv_aurora')!.picked[0]).equals(attachment)
+    expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
+    expect(engine.sent).length(1)
+    expect(engine.sent[0].options).deep.equals({ quoteId: target.id })
+    expect(engine.sent[0].files[0]).equals(attachment)
+  })
+
+  it('clears the whole unchanged submitted context after width-only layout changes', async function () {
+    const engine = new ReviewEngine()
+    const send = deferred<undefined>()
+    engine.sendWork = send.promise
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', {
+      ...emptyChatDraft(),
+      text: 'Submitted caption',
+      replyTo: original(),
+      picked: [prepared()]
+    })
+    await workspace(engine, state)
+    await press('Send')
+    const node = document.querySelector<HTMLElement>(
+      '[data-testid="chat-workspace"]'
+    )!
+    await layout(node, 1200, 700)
+    await layout(node, 320, 700)
+    await act(async () => {
+      send.resolve(undefined)
+      await wait()
+    })
+    assertDraft(state, '', undefined, [])
+    expect(engine.sent).length(1)
+  })
+
   for (const success of [true, false])
     it(`preserves current text, reply and replacement files after an old ${success ? 'successful' : 'failed'} send completes across remounts`, async function () {
       const engine = new ReviewEngine()
