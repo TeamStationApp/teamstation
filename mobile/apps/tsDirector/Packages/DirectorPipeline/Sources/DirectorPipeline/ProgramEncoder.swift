@@ -91,9 +91,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Programme seconds of the last anchor written, so anchors land at a steady spacing rather
   /// than on every frame.
   private var lastAnchorSeconds: Double = -.infinity
-  /// How far behind real time the on-air picture was when it was captured, from the last live
-  /// frame that said. Carried across replays, whose frames have no capture time of their own.
-  private var contentLagSeconds: Double?
+  /// When the picture on air was captured, from the last live frame that said. Carried across
+  /// replays, whose frames have no capture time of their own.
+  private var content = ProgrammeContentWall()
   /// How often the programme records where it was in real time. Matches the movie-fragment
   /// interval, so an anchor lands about once per fragment without needing a fragment callback.
   private static let anchorIntervalSeconds: Double = 3
@@ -306,7 +306,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       lastSourceTime = nil
       lastAppendHost = nil
       lastAnchorSeconds = -.infinity
-      contentLagSeconds = nil
+      content.reset()
       pendingRecoveryFill = false
       previousPartsDuration = 0
       startedAt = wall
@@ -343,7 +343,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     lastSourceTime = nil
     lastAppendHost = nil
     lastAnchorSeconds = -.infinity
-    contentLagSeconds = nil
+    content.reset()
     pendingRecoveryFill = false
     // Everything up to the resume, for now. The part's own timeline begins with its first picture,
     // which after a crash comes only once a camera is delivering again — seconds after this, and in
@@ -580,17 +580,9 @@ public final class ProgramEncoder: @unchecked Sendable {
     lastAppendHost = nowHost
     lastSourceTime = presentationTime
     // Sampled here, where the programme's own timeline is decided, so the pair is exactly what was
-    // written rather than what a later reader infers.
-    //
-    // The wall an anchor records is when the picture was *captured*, not when it was composed. The
-    // programme is built from pictures the delay line has already held for half a second, so
-    // stamping composition time placed rec-401's programme master about 0.55 s behind the camera
-    // files it was cut from. A live frame says exactly how old it is; a replay frame does not, so
-    // it borrows the lag the last live frame measured, which keeps the timeline continuous.
-    if let captureWall, nowWall - captureWall.seconds >= 0, nowWall - captureWall.seconds < 10 {
-      contentLagSeconds = nowWall - captureWall.seconds
-    }
-    let contentWall = WallClock(seconds: nowWall - (contentLagSeconds ?? 0))
+    // written rather than what a later reader infers. The wall an anchor records is when the picture
+    // was captured; see `ProgrammeContentWall`, which the stream's wall-clock SEI reads too.
+    let contentWall = content.wall(at: nowWall, captureWall: captureWall)
     // The sound's origin comes from the same quantity the anchors publish — content wall less
     // where the picture was placed — so the master's lip sync and its placement against the take's
     // camera archives derive from one number. Ignored once settled.

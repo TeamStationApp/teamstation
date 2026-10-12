@@ -6,7 +6,7 @@ without reaching into another app's `Packages`.
 
 | Package | What it holds |
 |---------|----------------|
-| `DirectorCore` | Identifiers, clock, config, SQLite wrapper, paths |
+| `DirectorCore` | Identifiers, clock, config, SQLite wrapper, paths, the wall-clock SEI codec |
 | `DirectorExport` | The archive index (`ArchiveIndex`) and the export that stitches a recording's segments into finished files (`ExportService`, `SegmentAssembler`, `ArchiveRemux`, `RecordingExport`), plus archive retention. iOS and macOS, so the Mac stitches exactly as the iPad does. Its tests (`Tests/DirectorExportTests`) run on the Mac with `swift test`, and TS Director's iPad unit tests compile the same files |
 | `DirectorSources` | `FrameSource`, camera identity, advertisements, synthetic and file sources |
 | `DirectorRTSP` | RTSP client, RTP depacketizers, VideoToolbox decode, AWX browse, subnet probe |

@@ -91,6 +91,14 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var lastCallbackWall: CFAbsoluteTime = 0
   private var lastProgramFrameWall: CFAbsoluteTime = 0
   private var lastResetWall: CFAbsoluteTime = 0
+  /// When the picture on air was captured, read exactly as the recording's anchors read it, so a
+  /// frame's wall-clock SEI and the take's `program_anchors` put it at the same moment.
+  private var content = ProgrammeContentWall()
+  /// The content wall of every frame with the encoder, until it comes back to be sent.
+  private var frameWalls = StreamFrameWalls()
+  /// TeamStation's clock less this iPad's steady wall clock, in milliseconds, or nil when it has not
+  /// been measured. Read for every frame sent; see `setServerClockOffset`.
+  private var serverClockOffsetMs: @Sendable () -> Int? = { nil }
 
   /// `clock` is the one the mixes and the programme tick read (the steady wall clock in the app):
   /// the stream's video stamps and its sound's epoch are both taken from it, so a step of the
@@ -102,6 +110,15 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   private let wallClock: DirectorClock
+
+  /// Where the server clock offset comes from: the app's `ServerClock` measurement, which this
+  /// package does not know about. Every frame's wall-clock SEI adds it and says it did; until it is
+  /// set, or while it answers nil, frames carry the steady wall clock with the corrected bit clear.
+  public func setServerClockOffset(_ offsetMs: @escaping @Sendable () -> Int?) {
+    lock.lock()
+    serverClockOffsetMs = offsetMs
+    lock.unlock()
+  }
 
   /// Now on `clock`, as `CFAbsoluteTime`.
   func absoluteNow() -> CFAbsoluteTime {
@@ -197,6 +214,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     lastCallbackWall = 0
     lastProgramFrameWall = 0
     lastResetWall = 0
+    content.reset()
+    frameWalls.removeAll()
     streamStartWall = absoluteNow()
     lastOutputWall = 0
     pendingEncodes = 0
@@ -291,6 +310,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     let loop = rateLoop
     rateLoop = nil
     pendingEncodes = 0
+    frameWalls.removeAll()
     lock.unlock()
     timer?.cancel()
     loop?.stop()
@@ -302,12 +322,15 @@ public final class ProgramStreamer: @unchecked Sendable {
     if running { telemetry.recordEncodeSessionChange(delta: -1) }
   }
 
-  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  /// `captureWall` is when the on-air camera captured this picture, for a live picture the stream
+  /// has not had before. Nil for a replay, a repeat or a source that does not know, whose frame
+  /// borrows the last live picture's lag; see `ProgrammeContentWall`.
+  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
     lock.lock()
     let admitted = pacer.admit(now: absoluteNow())
     lock.unlock()
     guard admitted else { return }
-    encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
+    encode(pixelBuffer, sourceTime: presentationTime, captureWall: captureWall, forceKey: nil, isIdle: false)
   }
 
   /// What `start` would configure the stream as, without opening an encoder or a socket.
@@ -358,9 +381,39 @@ public final class ProgramStreamer: @unchecked Sendable {
     didEncode(sample: sample, status: status, flags: flags)
   }
 
+  /// On air over `client` with `config`'s stream settings, started the way `start` starts but with
+  /// no publish: what `didEncode` sends is then what a test reads off the client's socket. With
+  /// `encoder` a real VideoToolbox session encodes what `append` is given, and the metadata and
+  /// decoder configuration go out first as on air; without one, the test hands frames to
+  /// `simulateOutputCallbackForTesting` and nothing goes ahead of them.
+  func goLiveForTesting(client: RTMPClient, config: AppConfig, encoder: Bool = false) throws {
+    _ = beginStart(config: config, onFailure: nil)
+    if encoder { try openEncoder() }
+    lock.lock()
+    self.client = client
+    isRunning = true
+    sentMetadata = !encoder
+    sentVideoConfig = !encoder
+    lock.unlock()
+  }
+
+  /// What `encode` notes for a frame it hands the encoder, without one.
+  func noteFrameForTesting(presentationTime: CMTime, captureWall: WallClock?) {
+    lock.lock()
+    noteFrame(at: presentationTime, captureWall: captureWall)
+    lock.unlock()
+  }
+
+  /// The frame stamped `time` is going to the encoder: its content wall is decided now, from when
+  /// its picture was captured, and waits for it to come back. Called with the lock held.
+  private func noteFrame(at time: CMTime, captureWall: WallClock?) {
+    frameWalls.note(content.wall(at: wallClock.now.seconds, captureWall: captureWall), for: time)
+  }
+
   private func encode(
     _ pixelBuffer: CVPixelBuffer,
     sourceTime: CMTime,
+    captureWall: WallClock? = nil,
     forceKey: Bool?,
     isIdle: Bool
   ) {
@@ -393,6 +446,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     pendingEncodes += 1
     telemetry.recordStreamPendingEncodes(pendingEncodes)
+    noteFrame(at: time, captureWall: captureWall)
     lock.unlock()
 
     guard let encodable = Self.streamPicture(pixelBuffer, width: width, height: height, converter: converter) else {
@@ -781,10 +835,20 @@ public final class ProgramStreamer: @unchecked Sendable {
       let pointer, length > 0
     else { return }
     let payload = Data(bytes: pointer, count: length)
-    let timestamp = milliseconds(CMSampleBufferGetPresentationTimeStamp(encoded))
+    let presentationTime = CMSampleBufferGetPresentationTimeStamp(encoded)
+    let timestamp = milliseconds(presentationTime)
     lock.lock()
     let codec = self.codec
+    // A frame the encoder has that was never noted (none should be) goes out as of now, so that
+    // every frame on the wire still says when it was.
+    let contentWall = frameWalls.take(presentationTime) ?? content.wall(at: wallClock.now.seconds, captureWall: nil)
+    let offsetMs = serverClockOffsetMs
     lock.unlock()
+    // Read outside the lock: it is the app's, and takes its own.
+    let frameWall = FrameWallClock(
+      contentWallMs: Int64((contentWall.seconds * 1000).rounded()),
+      serverClockOffsetMs: offsetMs()
+    )
     let keyframe = Self.payloadContainsIDR(payload, codec: codec) || isKeyframe(encoded)
     let now = absoluteNow()
 
@@ -825,7 +889,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     let outcome = client.sendVideo(
       timestampMs: timestamp,
-      tag: FLVTag.videoFrame(codec: codec, keyframe: keyframe, payload: payload)
+      tag: FLVTag.videoFrame(codec: codec, keyframe: keyframe, payload: payload, wallClock: frameWall)
     )
     // Only when the client is waiting for a keyframe to resume on. Asking on every over-budget
     // drop would force an IDR per frame while the link is still saturated, which is the opposite

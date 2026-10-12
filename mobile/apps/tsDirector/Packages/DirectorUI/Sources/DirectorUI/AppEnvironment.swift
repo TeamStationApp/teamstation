@@ -557,6 +557,11 @@ public final class AppEnvironment {
     programEncoder.setSoundCheckSink { recording, check in
       try? anchorIndex.recordSoundCheck(check, for: recording)
     }
+    // Every stream frame's wall-clock SEI is put on TeamStation's clock by the offset last measured.
+    // The clock itself, not `self`, for the same reason as the anchor sink: it is read on the
+    // encoder's thread, and `ServerClock` is safe to read from any.
+    let serverClock = self.serverClock
+    programStreamer.setServerClockOffset { serverClock.offsetMs }
   }
 
   /// Called once from the app's `task` modifier.
