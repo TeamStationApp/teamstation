@@ -734,6 +734,20 @@ export interface NotificationReceiptsTable {
   viewed_at: Timestamp
 }
 
+/** One write to a game's board that was not TeamStation scoring. */
+export interface ScoreboardLogTable {
+  game_id: string
+  /** The Redis write's version for the game. */
+  version: number
+  /** The server's time when the write was taken in. */
+  at: Timestamp
+  cause: 'publisher' | 'speedHold' | 'dashboard' | 'reset'
+  actor_id: number | null
+  /** The publisher's slot after the write, `{ state, receivedAt }`. */
+  publisher: Json | null
+  overrides: Json
+}
+
 export interface Database {
   event_tag_catalog: { tag: string }
   event_tags: EventTagsTable
@@ -766,6 +780,7 @@ export interface Database {
   memberships: MembershipsTable
   season_members: SeasonMembersTable
   scope_roles: ScopeRolesTable
+  scoreboard_log: ScoreboardLogTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
   system_settings: SystemSettingsTable

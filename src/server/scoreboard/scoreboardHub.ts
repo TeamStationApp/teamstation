@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 
+import { captureException } from '@sentry/node'
 import type { Kysely } from 'kysely'
 import { type RawData, WebSocket, WebSocketServer } from 'ws'
 
@@ -18,6 +19,7 @@ import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { mayRunGame } from '../director/runGames'
 import { type GameRecord, gameRecord, mayBeGameId } from './gameRecord'
+import { logScoreboard, type ScoreboardLogCause } from './scoreboardLog'
 import {
   parseScoreboardMessage,
   quit,
@@ -42,6 +44,9 @@ import {
  * see its states in the order they were written. Each socket remembers the
  * last version it was sent and is never sent one that is not newer: a socket
  * that opens mid-burst gets its first state and then only newer ones.
+ *
+ * Every write the hub makes, which is everything but the game's own scoring,
+ * is also logged in Postgres (`scoreboardLog.ts`) by the worker that made it.
  */
 
 type Kind = 'viewer' | 'publisher' | 'dashboard'
@@ -136,12 +141,44 @@ export function makeScoreboardHub(
       speedHolds.delete(gameId)
       store
         .mergeWatcher(gameId, { pitchSpeed: 0 }, startAt)
+        .then(async result => {
+          await logWrite(gameId, result, 'speedHold', null)
+        })
         .catch((error: unknown) => {
           if (error instanceof ScoreboardUnavailable) return
           log(`scoreboard ${gameId}: pitch speed: ${describe(error)}`)
         })
     }, speedHoldMs)
     speedHolds.set(gameId, timer)
+  }
+
+  /**
+   * Logs a write in the scoreboard log once it has gone through. A failure
+   * is reported and costs only the row: the board has changed whether or not
+   * the log says so, and the publisher or dashboard that wrote it is not
+   * told otherwise.
+   */
+  async function logWrite(
+    gameId: string,
+    result: WriteResult,
+    cause: ScoreboardLogCause,
+    actorId: number | null
+  ): Promise<void> {
+    if (result.kind !== 'written') return
+    try {
+      await logScoreboard(db, {
+        gameId,
+        version: result.message.version,
+        at: result.now,
+        cause,
+        actorId,
+        publisher: result.message.watcher,
+        overrides: result.message.overrides ?? NO_OVERRIDES
+      })
+    } catch (error) {
+      log(`scoreboard ${gameId}: scoreboard log: ${describe(error)}`)
+      captureException(error)
+    }
   }
 
   /** Runs a step on the game's chain; a failed step is logged, not fatal. */
@@ -430,16 +467,19 @@ export function makeScoreboardHub(
       return
     }
     let write: () => Promise<WriteResult>
+    let cause: ScoreboardLogCause
     let pitchSpeed: number | undefined
     try {
       if (member.kind === 'publisher') {
         const update = asScoreboardUpdate(raw)
         if (typeof update.pitchSpeed === 'number')
           pitchSpeed = update.pitchSpeed
+        cause = 'publisher'
         write = async () =>
           await store.mergeWatcher(room.gameId, update, room.record.startAt)
       } else {
         const command = asDashboardCommand(raw)
+        cause = command.type === 'overrides' ? 'dashboard' : 'reset'
         write = async () =>
           command.type === 'overrides'
             ? await store.writeOverrides(
@@ -462,9 +502,13 @@ export function makeScoreboardHub(
       // A balls update is not a speed update, so it leaves the hold alone.
       // Zero cancels it: the publisher already said there is no speed, and
       // arming on zero would broadcast another zero when the timer fired.
-      if (pitchSpeed == null) return
-      if (pitchSpeed > 0) armSpeedHold(room.gameId, room.record.startAt)
-      else clearSpeedHold(room.gameId)
+      if (pitchSpeed != null) {
+        if (pitchSpeed > 0) armSpeedHold(room.gameId, room.record.startAt)
+        else clearSpeedHold(room.gameId)
+      }
+      // Logged before this socket's next message is written, so one socket's
+      // rows arrive in the order of its writes.
+      await logWrite(room.gameId, result, cause, member.userId ?? null)
     } catch (error) {
       if (!(error instanceof ScoreboardUnavailable)) {
         log(`scoreboard ${room.gameId}: write: ${describe(error)}`)
