@@ -56,5 +56,8 @@ interface StreamAudioEncoding {
     /** Starts again: the next packet is packet zero. */
     fun reset()
 
+    /** Whatever the encoder still holds, once there is no more sound: the end of a recording. */
+    fun finish(): List<ByteArray> = emptyList()
+
     fun close()
 }
