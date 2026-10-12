@@ -17,7 +17,8 @@ import SwiftUI
 public final class AppEnvironment: RadarControlling, BroadcastControlling, ScoreboardControlling {
   public let launch: LaunchConfiguration
   public let camera = CameraSession()
-  public let radarSession = RadarSession()
+  /// Cameraman's one radar, through the fleet with a limit of one under its existing keys.
+  public let radarFleet: RadarFleet
   public private(set) var radar = RadarSnapshot()
   private let scoreboardDesk: ScoreboardDesk
   public private(set) var scoreboard: ScoreboardSnapshot
@@ -138,9 +139,11 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     eventControlPorts: [UInt16] = EventControlProtocol.ports,
     eventControlRebindDelay: TimeInterval = 0.5,
     scoreboardHTTP: ScoreboardHTTP? = nil,
-    scoreboardSockets: ScoreboardSocketOpener? = nil
+    scoreboardSockets: ScoreboardSocketOpener? = nil,
+    radarFleet: RadarFleet? = nil
   ) {
     self.launch = launch
+    self.radarFleet = radarFleet ?? RadarFleet(storage: .cameraman, limit: 1)
     self.settingsStore = settingsStore
     let preference = BroadcastPreference(store: broadcastStore)
     self.broadcastPreference = preference
@@ -205,7 +208,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     scoreboardDesk.onSnapshot = { [weak self] next in
       self?.scoreboard = next
     }
-    radarSession.onSpeeds = { [desk] pitch, exit in
+    self.radarFleet.onSpeeds = { [desk] _, pitch, exit in
       // Stamped on arrival, so a reading still on its way when the event changes is not sent to
       // the new one.
       let stamp = desk.currentTargetStamp()
@@ -417,23 +420,37 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   }
 
   public func setRadarEnabled(_ enabled: Bool) {
-    radarSession.setEnabled(enabled)
+    radarFleet.setEnabled(enabled)
   }
 
   public func openRadarPairing() {
-    radarSession.openPairing()
+    radarFleet.scan()
   }
 
   public func dismissRadarPairing() {
-    radarSession.dismissPairing()
+    radarFleet.stopScan()
   }
 
+  /// Picking a radar closes the list, as it always has.
   public func pairRadar(_ serial: String) {
-    radarSession.pair(serial)
+    guard radarFleet.pair(serial) else { return }
+    radarFleet.stopScan()
   }
 
   public func unpairRadar() {
-    radarSession.unpair()
+    for serial in radarFleet.serials {
+      radarFleet.unpair(serial)
+    }
+    radarFleet.stopScan()
+  }
+
+  /// From here on `radar` follows the fleet, and the radios come up if the radar is on.
+  func startRadar() {
+    radarFleet.onChange = { [weak self] in
+      guard let self else { return }
+      self.radar = self.radarFleet.cameramanSnapshot()
+    }
+    radarFleet.start()
   }
 
   public func selectScoreboardRoute(_ route: ScoreboardRoute) {
@@ -477,10 +494,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   }
 
   public func start() async {
-    radarSession.onChange = { [weak self] snapshot in
-      self?.radar = snapshot
-    }
-    radarSession.start()
+    startRadar()
     eventOverride.start()
     status = "requesting permissions"
     cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
@@ -1188,7 +1202,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       return ok()
 
     case let .radarFeed(pitch, exit):
-      // The path a radar reading takes from `radarSession.onSpeeds`: stamped with the target it
+      // The path a radar reading takes from `radarFleet.onSpeeds`: stamped with the target it
       // arrived for, then published.
       let stamp = scoreboardDesk.currentTargetStamp()
       scoreboardDesk.publish(pitchMph: pitch, exitMph: exit, stamp: stamp)
