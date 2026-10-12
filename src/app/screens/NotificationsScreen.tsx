@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import type { Notification } from '../../common/notifications'
+import { type Notification, RECORDING_UPLOAD } from '../../common/notifications'
 import { Button, Card, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -25,12 +25,22 @@ const inviteDate = (time: string): string =>
     minute: '2-digit'
   })
 
+/** A reminder to upload a phone's recording of one camera angle. */
+const isReminder = (item: Notification): boolean =>
+  item.type === RECORDING_UPLOAD
+
 export function NotificationsScreen({
   client,
-  onOpen
+  onOpen,
+  onUpload,
+  onDismissed
 }: {
   client: TeamStationClient
   onOpen: (id: string) => void
+  /** Opens the reminder's game on its Videos tab, where Upload Recording is. */
+  onUpload?: (gameId: string) => void
+  /** A reminder was dismissed, so the header's pending dot is asked again. */
+  onDismissed?: () => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [mode, setMode] = useState<'pending' | 'sent' | 'history'>('pending')
@@ -38,6 +48,7 @@ export function NotificationsScreen({
   const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [dismissing, setDismissing] = useState<string | undefined>()
   const begin = useLatestRequest()
   const cache = useRef<
     Partial<
@@ -125,6 +136,42 @@ export function NotificationsScreen({
       )
     }
   }
+  /** Settles a reminder for good: it leaves Pending and moves to History. */
+  const dismiss = async (item: Notification): Promise<void> => {
+    if (dismissing != null) return
+    setDismissing(item.requestId)
+    setError('')
+    try {
+      await client.dismissNotification(item.requestId)
+      const kept = (list: Notification[]): Notification[] =>
+        list.filter(other => other.requestId !== item.requestId)
+      setItems(kept)
+      const pending = cache.current.pending
+      if (pending != null)
+        cache.current.pending = { ...pending, items: kept(pending.items) }
+      delete cache.current.history
+      onDismissed?.()
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : 'The reminder could not be dismissed. Retry.'
+      )
+    } finally {
+      setDismissing(undefined)
+    }
+  }
+  const upload = (item: Notification): void => {
+    if (item.gameId != null) onUpload?.(item.gameId)
+  }
+  // Pending reminders come before anything waiting on an approval.
+  const shown =
+    mode === 'pending'
+      ? [
+          ...items.filter(isReminder),
+          ...items.filter(item => !isReminder(item))
+        ]
+      : items
   return (
     <Screen>
       <View style={styles.page}>
@@ -172,23 +219,62 @@ export function NotificationsScreen({
                 : 'No resolved notifications yet.'}
           </Text>
         )}
-        {items.map(item => (
-          <Pressable
-            key={item.requestId}
-            accessibilityRole="button"
-            accessibilityLabel={item.title}
-            onPress={() => {
-              onOpen(item.requestId)
-            }}
-          >
-            <Card style={styles.card}>
-              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
-              <Text style={styles.name}>{item.title}</Text>
-              <Text style={styles.hint}>{item.description}</Text>
+        {shown.map(item =>
+          mode === 'pending' && isReminder(item) ? (
+            <Card key={item.requestId} style={styles.card}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${item.title}. ${item.description}`}
+                style={styles.cardBody}
+                onPress={() => {
+                  upload(item)
+                }}
+              >
+                <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+                <Text style={styles.name}>{item.title}</Text>
+                <Text style={styles.hint}>{item.description}</Text>
+              </Pressable>
               <Text style={styles.status}>{statusLine(item, mode)}</Text>
+              <View style={styles.tabs}>
+                {item.gameId != null && (
+                  <Button
+                    compact
+                    label="Upload"
+                    onPress={() => {
+                      upload(item)
+                    }}
+                  />
+                )}
+                <Button
+                  compact
+                  kind="secondary"
+                  label="Dismiss"
+                  busy={dismissing === item.requestId}
+                  disabled={dismissing != null}
+                  onPress={() => {
+                    dismiss(item).catch(() => undefined)
+                  }}
+                />
+              </View>
             </Card>
-          </Pressable>
-        ))}
+          ) : (
+            <Pressable
+              key={item.requestId}
+              accessibilityRole="button"
+              accessibilityLabel={item.title}
+              onPress={() => {
+                onOpen(item.requestId)
+              }}
+            >
+              <Card style={styles.card}>
+                <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+                <Text style={styles.name}>{item.title}</Text>
+                <Text style={styles.hint}>{item.description}</Text>
+                <Text style={styles.status}>{statusLine(item, mode)}</Text>
+              </Card>
+            </Pressable>
+          )
+        )}
         {cursor != null && (
           <Button
             label="Load more"
@@ -212,6 +298,7 @@ function statusLine(
   mode: 'pending' | 'sent' | 'history'
 ): string {
   if (item.type === 'grant') return item.viewed ? 'Added' : 'New'
+  if (isReminder(item)) return 'Reminder'
   if (item.status === 'pending')
     return mode === 'sent' ? 'Awaiting approval' : 'Needs your approval'
   return item.status[0].toUpperCase() + item.status.slice(1)
@@ -221,6 +308,8 @@ interface DetailProps {
   client: TeamStationClient
   id: string
   onChanged: (replacementId?: string) => void
+  /** A reminder's Upload: opens its game on the Videos tab. */
+  onUpload?: (gameId: string) => void
 }
 
 /** A different route owns a different cache and decision state. */
@@ -233,7 +322,8 @@ export function NotificationDetailScreen(
 function NotificationDetail({
   client,
   id,
-  onChanged
+  onChanged,
+  onUpload
 }: DetailProps): React.ReactElement {
   const styles = getStyles(useTheme())
   const [item, setItem] = useState<Notification | undefined>()
@@ -336,6 +426,21 @@ function NotificationDetail({
       <Card style={styles.card}>
         {item == null ? (
           <Text style={styles.hint}>Loading invitation…</Text>
+        ) : isReminder(item) ? (
+          <>
+            <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+            <Text style={styles.title}>{item.title}</Text>
+            <Text style={styles.hint}>{item.description}</Text>
+            <Text style={styles.status}>Reminder</Text>
+            {item.gameId != null && (
+              <Button
+                label="Upload"
+                onPress={() => {
+                  if (item.gameId != null) onUpload?.(item.gameId)
+                }}
+              />
+            )}
+          </>
         ) : (
           <>
             <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
@@ -457,5 +562,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexWrap: 'wrap' as const,
     gap: theme.rem(0.5)
   },
-  card: { padding: theme.rem(1.25), gap: theme.rem(0.75) }
+  card: { padding: theme.rem(1.25), gap: theme.rem(0.75) },
+  cardBody: { gap: theme.rem(0.75) }
 }))
