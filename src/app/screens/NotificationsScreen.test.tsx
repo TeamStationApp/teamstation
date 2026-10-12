@@ -276,3 +276,222 @@ describe('a notification that somebody added you', function () {
     expect(changed).equals(1)
   })
 })
+
+describe('a reminder to upload a recording', function () {
+  const reminder: Notification = {
+    id: 'evt_reminder',
+    requestId: 'evt_reminder',
+    type: 'recordingUpload',
+    title: 'Upload your recording',
+    description:
+      'Home Plate on iPhone 13 Pro — provide a higher-quality copy for future viewing.',
+    sentAt: '2026-10-07T12:00:00Z',
+    expiresAt: '2026-10-07T12:00:00Z',
+    status: 'pending',
+    canAct: true,
+    canWithdraw: false,
+    canResend: false,
+    viewed: false,
+    leave: null,
+    gameId: 'gam_00000000000000000001',
+    liveStreamId: 'lvs_00000000000000000001'
+  }
+
+  it('comes first in Pending, labelled a reminder, and its body opens the game', async function () {
+    const opened: string[] = []
+    const uploads: string[] = []
+    const decided: string[] = []
+    const client = {
+      notifications: async () => ({
+        items: [invitation, reminder],
+        hasPending: true,
+        nextCursor: null
+      }),
+      decideRelationship: async (id: string) => {
+        decided.push(id)
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={id => {
+          opened.push(id)
+        }}
+        onUpload={gameId => {
+          uploads.push(gameId)
+        }}
+      />
+    )
+    const page = text()
+    expect(page.indexOf(reminder.title)).lessThan(
+      page.indexOf(invitation.title)
+    )
+    expect(page).includes(reminder.description)
+    expect(page).includes('Reminder')
+    expect(page.split('Needs your approval')).has.length(2)
+    await press(`${reminder.title}. ${reminder.description}`)
+    expect(uploads).deep.equals(['gam_00000000000000000001'])
+    await press('Upload')
+    expect(uploads).deep.equals([
+      'gam_00000000000000000001',
+      'gam_00000000000000000001'
+    ])
+    expect(opened).deep.equals([])
+    expect(decided).deep.equals([])
+  })
+
+  it('opens from History, without asking for a decision', async function () {
+    const opened: string[] = []
+    const settled = { ...reminder, status: 'accepted' as const, canAct: false }
+    const client = {
+      notifications: async ({ history }: { history: boolean }) => ({
+        items: history ? [settled] : [],
+        hasPending: false,
+        nextCursor: null
+      })
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={id => {
+          opened.push(id)
+        }}
+      />
+    )
+    await press('History')
+    expect(text()).includes('Reminder')
+    expect(text()).not.includes('Dismiss')
+    await press('Upload your recording')
+    expect(opened).deep.equals(['evt_reminder'])
+  })
+
+  it('dismisses, drops the card and asks for the pending dot again', async function () {
+    const dismissed: string[] = []
+    let refreshed = 0
+    let fail = true
+    const client = {
+      notifications: async () => ({
+        items: [reminder],
+        hasPending: true,
+        nextCursor: null
+      }),
+      dismissNotification: async (id: string) => {
+        if (fail) {
+          fail = false
+          throw new Error('Dismissing failed')
+        }
+        dismissed.push(id)
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={() => undefined}
+        onDismissed={() => {
+          refreshed++
+        }}
+      />
+    )
+    await press('Dismiss')
+    expect(text()).includes('Dismissing failed')
+    expect(text()).includes(reminder.title)
+    expect(refreshed).equals(0)
+    await press('Dismiss')
+    expect(dismissed).deep.equals(['evt_reminder'])
+    expect(text()).not.includes(reminder.title)
+    expect(text()).includes('No approvals are waiting for you.')
+    expect(refreshed).equals(1)
+  })
+
+  it('shows Upload in its detail and nothing to accept', async function () {
+    const uploads: string[] = []
+    const client = {
+      notification: async () => reminder,
+      viewNotification: async () => {}
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationDetailScreen
+        client={client}
+        id={reminder.requestId}
+        onChanged={() => undefined}
+        onUpload={gameId => {
+          uploads.push(gameId)
+        }}
+      />
+    )
+    expect(text()).includes(reminder.title)
+    expect(text()).includes(reminder.description)
+    expect(text()).includes('Reminder')
+    expect(text()).not.includes('Accept invitation')
+    expect(text()).not.includes('Decline invitation')
+    expect(text()).not.includes('Valid until')
+    await press('Upload')
+    expect(uploads).deep.equals(['gam_00000000000000000001'])
+  })
+
+  it('lights the header dot, clears it on Dismiss, and Upload opens the game', async function () {
+    let pending = true
+    const asked: string[] = []
+    globalThis.fetch = async (input, init) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      const method = init?.method ?? 'GET'
+      const path = url.split('?')[0]
+      asked.push(`${method} ${path}`)
+      if (method === 'PUT' && path.endsWith('/evt_reminder/dismissed')) {
+        pending = false
+        return new Response(null, { status: 204 })
+      }
+      const data = path.endsWith('/auth/me')
+        ? { id: 106, displayName: 'Tim Raines', isAdmin: false }
+        : path.endsWith('/me/roles')
+          ? { teams: {}, guardianOf: [] }
+          : path.endsWith('/me/notifications/summary')
+            ? { hasPending: pending }
+            : path.endsWith('/me/notifications')
+              ? {
+                  items: pending ? [reminder] : [],
+                  hasPending: pending,
+                  nextCursor: null
+                }
+              : {}
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    const dot = (): boolean =>
+      document.querySelector('[data-testid="notification-pending-dot"]') != null
+    showRoute(parseRoute('/notifications', ''), true)
+    await mount(<App />)
+    await act(async () => {
+      await delay(50)
+    })
+    expect(text()).includes(reminder.title)
+    expect(dot()).equals(true)
+    await press('Upload')
+    expect(window.location.pathname).equals('/games/gam_00000000000000000001')
+    expect(window.location.search).equals('')
+    showRoute(parseRoute('/notifications', ''), true)
+    await act(async () => root?.unmount())
+    root = undefined
+    document.body.replaceChildren()
+    await mount(<App />)
+    await act(async () => {
+      await delay(50)
+    })
+    await press('Dismiss')
+    await act(async () => {
+      await delay(50)
+    })
+    expect(asked).includes(
+      'PUT /api/v1/me/notifications/evt_reminder/dismissed'
+    )
+    expect(text()).not.includes(reminder.title)
+    expect(dot()).equals(false)
+  })
+})
