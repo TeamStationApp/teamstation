@@ -13,9 +13,10 @@ than keeping a copy of its own — a second copy is a copy that can drift.
   `MainApplication` so `fontWeight: '500'` and `'600'` resolve to the faces
   drawn for them rather than to a synthetic bold.
 
-  That last part is why `minSdkVersion` is **28**. React Native resolves a
-  registered family through `Typeface.create(base, weight, italic)`, which
-  only exists from API 28; below it the call collapses to
+  That last part is why `minSdkVersion` is at least **28** (it is 30, for the
+  phone streaming library). React Native resolves a registered family through
+  `Typeface.create(base, weight, italic)`, which only exists from API 28;
+  below it the call collapses to
   `Typeface.create(base, style)` and every weight under 700 becomes regular —
   which would silently cost the app two of its four weights on Android 7 and 8
   and show up as "the type looks wrong on that one phone". The app asks for

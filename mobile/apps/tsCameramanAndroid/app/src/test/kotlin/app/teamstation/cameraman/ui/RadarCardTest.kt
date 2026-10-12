@@ -8,9 +8,9 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import app.teamstation.cameraman.radar.RadarPhase
-import app.teamstation.cameraman.radar.RadarUiState
-import app.teamstation.cameraman.radar.SpeedBoard
+import app.teamstation.streamcore.radar.RadarPhase
+import app.teamstation.streamcore.radar.RadarUiState
+import app.teamstation.streamcore.radar.SpeedBoard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -19,8 +19,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import app.teamstation.cameraman.radar.PreferencesRadarPairingStore
-import app.teamstation.cameraman.radar.systemRadarRadio
+import app.teamstation.streamcore.radar.PreferencesRadarPairingStore
+import app.teamstation.streamcore.radar.systemRadarRadio
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
