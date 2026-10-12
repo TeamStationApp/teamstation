@@ -637,6 +637,33 @@ export const enUs = {
   dictation_left_out: 'Left out: %s',
   dictation_mic_unavailable: 'The microphone is not available: %s',
 
+  // Phone streaming
+  stream_cameras_title: 'Cameras',
+  stream_record_video: 'Record video',
+  stream_prompt_title: 'Name this camera angle',
+  stream_prompt_label: 'Camera angle',
+  stream_prompt_placeholder: 'Home Plate',
+  stream_prompt_cancel: 'Cancel',
+  stream_prompt_start: 'Start',
+  stream_prompt_too_long: 'A camera name can be at most %s characters.',
+  stream_prompt_separator: 'A camera name cannot contain " — ".',
+  stream_pill_idle: 'Press record to start stream',
+  stream_pill_connecting: 'Connecting',
+  stream_pill_live: 'Broadcasting',
+  stream_pill_ended: 'Stream ended',
+  stream_record_start: 'Start recording',
+  stream_record_stop: 'Stop recording',
+  stream_slide_to_stop: 'Slide to Stop',
+  stream_close: 'Close camera',
+  stream_settings: 'Camera settings',
+  stream_flip: 'Flip camera',
+  stream_error_permission:
+    'TeamStation needs the camera and the microphone to record. Allow them in Settings.',
+  stream_error_storage:
+    'There is not enough free space on this phone to record.',
+  stream_error_uploading: '%s is still uploading',
+  stream_error_failed: 'That did not work: %s',
+
   // Shared
   common_done: 'Done',
   common_back: 'Back',
