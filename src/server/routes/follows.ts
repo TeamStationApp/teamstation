@@ -5,6 +5,7 @@ import type { FollowableTeam, ScheduleEntry } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canReadFollowedTeam, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import { setFollow } from '../groups/follows'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { setAudit } from '../middleware/withAudit'
@@ -75,11 +76,7 @@ export function followRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = await followableTeam(db, pathParam(req.params.teamId))
-      await db
-        .insertInto('team_follows')
-        .values({ user_id: actor.userId, team_id: teamId })
-        .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
-        .execute()
+      await setFollow(db, actor.userId, { kind: 'team', id: teamId }, true)
       setAudit(res.locals, {
         entityType: 'team',
         entityId: teamId,
@@ -96,11 +93,7 @@ export function followRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = await followableTeam(db, pathParam(req.params.teamId))
-      await db
-        .deleteFrom('team_follows')
-        .where('user_id', '=', actor.userId)
-        .where('team_id', '=', teamId)
-        .execute()
+      await setFollow(db, actor.userId, { kind: 'team', id: teamId }, false)
       setAudit(res.locals, {
         entityType: 'team',
         entityId: teamId,

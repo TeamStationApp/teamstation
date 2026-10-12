@@ -8,6 +8,7 @@ import type { Role } from '../../common/roles'
 import { addEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
 import { type Database, makeDatabase } from '../db/database'
+import { setFollow } from '../groups/follows'
 import { linkGuardian } from '../people/guardians'
 
 /**
@@ -347,11 +348,7 @@ export async function chatSeed(
           .execute()
       }
       for (const team of person.follows ?? []) {
-        await trx
-          .insertInto('team_follows')
-          .values({ user_id: userId, team_id: teams[team] })
-          .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
-          .execute()
+        await setFollow(trx, userId, { kind: 'team', id: teams[team] }, true)
       }
       people[person.key] = {
         key: person.key,

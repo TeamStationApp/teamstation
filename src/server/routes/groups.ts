@@ -39,6 +39,7 @@ import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import type { GuardianInvitation } from '../email/sendMail'
 import { createGroup } from '../groups/createGroup'
+import { setFollow } from '../groups/follows'
 import { storeGroupPhoto } from '../groups/groupPhoto'
 import { isGuardianRequest } from '../groups/guardianLimits'
 import {
@@ -667,15 +668,7 @@ export function groupRoutes(
         id: String(req.params.id)
       }
       const group = await publicGroup(db, ref, media.space)
-      await db
-        .insertInto('follows')
-        .values({
-          user_id: actor.userId,
-          group_type: ref.kind,
-          group_id: group.id
-        })
-        .onConflict(oc => oc.doNothing())
-        .execute()
+      await setFollow(db, actor.userId, { kind: ref.kind, id: group.id }, true)
       res.json(group)
     })
   )
@@ -685,12 +678,12 @@ export function groupRoutes(
     withAsync(async (req, res) => {
       const actor = await currentActor(db, actorOf(req))
       const kind = clean(asGroupKind, req.params.kind)
-      await db
-        .deleteFrom('follows')
-        .where('user_id', '=', actor.userId)
-        .where('group_type', '=', kind)
-        .where('group_id', '=', String(req.params.id))
-        .execute()
+      await setFollow(
+        db,
+        actor.userId,
+        { kind, id: String(req.params.id) },
+        false
+      )
       res.json({ ok: true })
     })
   )
