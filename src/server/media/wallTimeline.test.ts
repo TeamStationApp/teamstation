@@ -24,8 +24,8 @@ import { wallTimelineOf } from './wallTimeline'
 
 /**
  * `GET /videos/:videoId/wall-timeline` (U20): every row of the confidence
- * table, from points written straight into `video_wall_anchors` (nothing
- * writes them yet), the start fallback, `afterMs`, and the access the
+ * table, from points written straight into `video_wall_anchors` (the
+ * scanners' own are tested beside them), the start fallback, `afterMs`, and the access the
  * video's playback has.
  */
 describe("a video's wall-clock timeline (U20)", function () {

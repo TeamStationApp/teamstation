@@ -22,6 +22,8 @@ import {
   uploadVideoDirectory,
   verifyVideoDirectory
 } from './spacesVideo'
+import { scanRecording } from './wallClockScan'
+import { storeWallPoints } from './wallTimeline'
 
 const run = promisify(execFile)
 
@@ -354,6 +356,10 @@ export async function ingestVideoFile(
     const durationSec = Math.round(
       await probeDuration(ffprobeBeside(ffmpegPath), join(work, MEDIA_PLAYLIST))
     )
+    // The frames' own wall clock, read off the remux because its playlist is
+    // the time a player will report. A take with none of it has no points,
+    // and its timeline is its start.
+    const wallPoints = await scanRecording(work)
 
     onStep?.('uploading')
     const files = [MASTER_PLAYLIST, MEDIA_PLAYLIST, VIDEO_FILE]
@@ -393,34 +399,41 @@ export async function ingestVideoFile(
     // are paid for for ever with nothing able to find them. Copies nobody can
     // see are the failure this whole path was written to avoid.
     try {
-      await db
-        .insertInto('videos')
-        .values({
-          id: videoId,
-          game_id: gameId,
-          kind,
-          title,
-          storage: 'spaces',
-          status: 'ready',
-          start_at: firstFrameAt,
-          start_at_source: startAtSource,
-          start_at_clock_offset_ms: startAtClockOffsetMs,
-          duration_sec: durationSec,
-          width: probed.width,
-          height: probed.height,
-          // The same tag the track carries and the same value the live path
-          // records, so an uploaded recording and a streamed one describe
-          // themselves the same way. Null for a codec `tagFor` will not vouch
-          // for, rather than a guess.
-          codecs: tagFor(probed.codecName),
-          num_cameras: numCameras,
-          hidden: false,
-          size_bytes: String(uploaded.bytes),
-          spaces_verified_at: now,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await db.transaction().execute(async trx => {
+        await trx
+          .insertInto('videos')
+          .values({
+            id: videoId,
+            game_id: gameId,
+            kind,
+            title,
+            storage: 'spaces',
+            status: 'ready',
+            start_at: firstFrameAt,
+            start_at_source: startAtSource,
+            start_at_clock_offset_ms: startAtClockOffsetMs,
+            duration_sec: durationSec,
+            width: probed.width,
+            height: probed.height,
+            // The same tag the track carries and the same value the live path
+            // records, so an uploaded recording and a streamed one describe
+            // themselves the same way. Null for a codec `tagFor` will not vouch
+            // for, rather than a guess.
+            codecs: tagFor(probed.codecName),
+            num_cameras: numCameras,
+            hidden: false,
+            size_bytes: String(uploaded.bytes),
+            spaces_verified_at: now,
+            created_at: now,
+            updated_at: now
+          })
+          .execute()
+        await storeWallPoints(
+          trx,
+          videoId,
+          wallPoints.map(point => ({ ...point, source: 'sei' }))
+        )
+      })
     } catch (error) {
       await forgetTheCopy(space, videoId)
       throw error

@@ -1,6 +1,9 @@
 import { mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import type { Kysely } from 'kysely'
+
+import type { Database } from '../db/database'
 import {
   ffprobeFor,
   MASTER_PLAYLIST,
@@ -10,6 +13,8 @@ import {
   remuxToHls,
   VIDEO_FILE
 } from '../media/ffmpeg'
+import { scanRecording } from '../media/wallClockScan'
+import { storeWallPoints } from '../media/wallTimeline'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
 /**
@@ -104,4 +109,40 @@ export async function toRecording(
 export async function isRecordingShape(dir: string): Promise<boolean> {
   const names = await readdir(dir).catch((): string[] => [])
   return names.includes(VIDEO_FILE) && names.includes(MASTER_PLAYLIST)
+}
+
+/**
+ * Moves a finished stream's wall-clock points onto the recording it became.
+ *
+ * A stream that carried the SEI is scanned again, in the recording's own
+ * file and on its own playlist, and its points replace the live ones in one
+ * transaction: they are the same frames, but the recording is what everybody
+ * will play from now on. Answers how many points it wrote.
+ *
+ * A stream that carried none keeps its `arrival` points as they are. Each is
+ * at its segment's start on the live playlist, the sum of the `EXTINF` before
+ * it, and the remux is the same segments end to end, so that is still where
+ * the segment starts in the recording: to about a frame for each reconnect
+ * before it, because a writer's last segment is listed a frame short and the
+ * remux counts it whole. Arrival is only ever good to a second or so.
+ */
+export async function replaceAnchorsFromRecording(
+  db: Kysely<Database>,
+  videoId: string,
+  dir: string
+): Promise<number> {
+  const points = await scanRecording(dir)
+  if (points.length === 0) return 0
+  await db.transaction().execute(async trx => {
+    await trx
+      .deleteFrom('video_wall_anchors')
+      .where('video_id', '=', videoId)
+      .execute()
+    await storeWallPoints(
+      trx,
+      videoId,
+      points.map(point => ({ ...point, source: 'sei' }))
+    )
+  })
+  return points.length
 }

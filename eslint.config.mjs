@@ -39,6 +39,16 @@ export default [
   },
 
   {
+    files: ['scripts/stampWallClockSei.ts', 'scripts/e2e/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.scripts.json'
+      }
+    }
+  },
+
+  {
     files: ['Masonfile.ts'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.mason.json' }

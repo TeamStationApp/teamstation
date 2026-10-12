@@ -20,8 +20,13 @@ import {
   isSoundStepProblem,
   soundStepProblem
 } from '../media/trackStarts'
+import { storeWallPoints } from '../media/wallTimeline'
 import type { LiveSettings } from '../serverConfig'
-import { isRecordingShape, toRecording } from './finishVideo'
+import {
+  isRecordingShape,
+  replaceAnchorsFromRecording,
+  toRecording
+} from './finishVideo'
 import { openSecret } from './secrets'
 import {
   clearLive,
@@ -34,6 +39,7 @@ import {
   startIngest,
   stopIngest
 } from './splitter'
+import { type ScanCursor, scanNewSegments } from './wallAnchors'
 
 /**
  * What keeps the ingest and the database in step.
@@ -114,6 +120,8 @@ const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
 /** One chain per stream, so two events for one stream cannot interleave. */
 const work = new Map<string, Promise<void>>()
+/** Video id → how far its live wall-clock scan has got. */
+const anchorCursors = new Map<string, ScanCursor>()
 
 export function liveVideoDir(mediaRoot: string, videoId: string): string {
   return join(mediaRoot, 'work', 'videos', videoId)
@@ -271,6 +279,7 @@ export function stopLiveController(): void {
   stopIngest()
   tracked.clear()
   lastStatusWrite.clear()
+  anchorCursors.clear()
 }
 
 /**
@@ -681,6 +690,7 @@ export async function sync(
     setLive(key, { liveStreamId: row.id, hlsDir, destinations: [] })
     tracked.set(row.id, { key, videoId: row.videoId })
     wanted.add(key)
+    await recordWallPoints(current, row.videoId, hlsDir, now.getTime())
   }
 
   // Anything the ingest still holds that this pass did not ask for: a revoked
@@ -689,6 +699,37 @@ export async function sync(
     if (wanted.has(entry.key)) continue
     clearLive(entry.key, 'no longer open')
     tracked.delete(liveStreamId)
+  }
+}
+
+/**
+ * Adds the wall-clock points of the segments the stream has written since the
+ * last tick.
+ *
+ * Idle streams too, not only publishing ones: the writer finishes the last
+ * segment of a publish after the publisher has gone, and a segment found only
+ * after the reconnect would be placed by an arrival twenty seconds late. A
+ * failure is said and tried again on the next tick, from the same place,
+ * rather than stopping the loop that keeps every other stream going.
+ */
+async function recordWallPoints(
+  current: LiveControllerOptions,
+  videoId: string,
+  hlsDir: string,
+  now: number
+): Promise<void> {
+  try {
+    const scanned = await scanNewSegments(
+      hlsDir,
+      anchorCursors.get(videoId),
+      now
+    )
+    await storeWallPoints(current.db, videoId, scanned.points)
+    anchorCursors.set(videoId, scanned.cursor)
+  } catch (error) {
+    ;(current.log ?? console.log)(
+      `live: wall clock of ${videoId}: ${String(error)}`
+    )
   }
 }
 
@@ -806,6 +847,7 @@ export async function finishStream(
     .executeTakeFirst()
 
   if (row?.videoId == null) return
+  anchorCursors.delete(row.videoId)
 
   // A key nobody ever used, or used only by something that was turned away —
   // an encoder in the wrong codec connects and is refused, which does count as
@@ -916,6 +958,13 @@ async function putAway(
       .where('id', '=', videoId)
       .execute()
     return
+  }
+
+  // The recording's own timeline, which is where the points belong now.
+  try {
+    await replaceAnchorsFromRecording(db, videoId, dir)
+  } catch (error) {
+    log(`live: wall clock of ${videoId} not rescanned: ${String(error)}`)
   }
 
   await db
