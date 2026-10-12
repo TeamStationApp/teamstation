@@ -128,5 +128,8 @@
   "src/app/player/multiCam/useMultiCam.ts",
   "src/app/player/multiCam/barParts.tsx",
   "src/app/stream/**/*.ts",
-  "src/app/player/multiCam/orientationLock.ts"
+  "src/app/player/multiCam/orientationLock.ts",
+  "src/app/stream/**/*.tsx",
+  "src/app/screens/GameWatchLayout.native.tsx",
+  "src/app/components/TextField.tsx"
 ]
