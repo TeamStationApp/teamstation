@@ -1,0 +1,98 @@
+{
+  "frameRate" : 30,
+  "gopSeconds" : 2,
+  "maxKeyFrameInterval" : 60,
+  "steps" : [
+    {
+      "forceKey" : true,
+      "now" : 0,
+      "ptsTimescale" : 600,
+      "ptsValue" : 0,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 0.03333333333333333,
+      "ptsTimescale" : 600,
+      "ptsValue" : 19,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 0.06666666666666667,
+      "ptsTimescale" : 600,
+      "ptsValue" : 40,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 0.2,
+      "ptsTimescale" : 600,
+      "ptsValue" : 120,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 0.2,
+      "ptsTimescale" : 600,
+      "ptsValue" : 140,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 0.15,
+      "ptsTimescale" : 600,
+      "ptsValue" : 160,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 0.5,
+      "ptsTimescale" : 600,
+      "ptsValue" : 300,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : true,
+      "now" : 0.5333333333333333,
+      "ptsTimescale" : 600,
+      "ptsValue" : 319,
+      "requestKeyframe" : true
+    },
+    {
+      "forceKey" : false,
+      "now" : 1,
+      "ptsTimescale" : 600,
+      "ptsValue" : 600,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 2,
+      "ptsTimescale" : 600,
+      "ptsValue" : 1200,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 2.1,
+      "ptsTimescale" : 600,
+      "ptsValue" : 1260,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : true,
+      "now" : 4.6,
+      "ptsTimescale" : 600,
+      "ptsValue" : 2760,
+      "requestKeyframe" : false
+    },
+    {
+      "forceKey" : false,
+      "now" : 4.633333333333333,
+      "ptsTimescale" : 600,
+      "ptsValue" : 2779,
+      "requestKeyframe" : false
+    }
+  ]
+}

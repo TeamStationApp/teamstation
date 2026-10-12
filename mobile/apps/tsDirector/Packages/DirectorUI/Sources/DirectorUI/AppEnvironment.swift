@@ -8,6 +8,7 @@ import CameramanRemote
 import DirectorRTSP
 import DirectorCore
 import DirectorDVR
+import DirectorMedia
 import DirectorPipeline
 import DirectorRTMP
 import DirectorSources
@@ -199,7 +200,6 @@ public final class AppEnvironment {
   /// Whether the operator wants the programme streaming. `isStreaming` says whether it is going out
   /// right now; this says whether it should be, which is what tells a drop from a Stop.
   private var streamWanted = false
-  private var streamRetryDelay: Double = 3
 
   public private(set) var isStreaming = false {
     didSet {
@@ -311,6 +311,16 @@ public final class AppEnvironment {
   let retention: RetentionPolicy
   let programEncoder: ProgramEncoder
   let programStreamer: ProgramStreamer
+  /// The programme half of a take: its row, the master, resume as the next part, and the live
+  /// session's heartbeat. See `RecordingSession`.
+  let programmeRecording: RecordingSession
+  /// Keeps the stream on the air: dials, redials with backoff, and stops on an ended stream. See
+  /// `StreamSessionController`.
+  @ObservationIgnored
+  public private(set) lazy var streamSession: StreamSessionController = makeStreamSession()
+  /// The settings and destination of the dial in progress, taken as it starts, as the dial always
+  /// has: Settings saved mid-dial apply from the next one.
+  private var dialConfig = AppConfig.default
   private var streamErrorGate = StreamErrorGate()
   /// Wi-Fi's received bytes, extended past the interface's 32-bit wrap and folded into a rate.
   /// What an NDI tile shows as its throughput, less the RTSP tiles' own counts.
@@ -358,8 +368,8 @@ public final class AppEnvironment {
   /// Format-change and late-audio reopens of one camera, so two packets do not stack writers.
   private var reopeningArchives: Set<SourceID> = []
   private var proxies: [SourceID: ProxyStore] = [:]
-  private var recordingID: Int64?
-  private var recordingStartedAt: WallClock?
+  private var recordingID: Int64? { programmeRecording.recordingID }
+  private var recordingStartedAt: WallClock? { programmeRecording.startedAt }
   private var pollTimer: Timer?
   /// SwiftUI is fed a snapshot at most once a second, plus immediately on chrome changes
   /// (live/replay, program cut, record/stream). The 5 Hz poll still writes `telemetry` so
@@ -400,12 +410,6 @@ public final class AppEnvironment {
   @ObservationIgnored private var retentionSweepInFlight = false
   /// The grid last written to the open take, so an unchanged one is not written again.
   private var lastGridSnapshot: Data?
-  /// Writes the live session's heartbeat while anything is live. How stale this is at the next
-  /// launch is the whole measurement of how long the app was away.
-  private var heartbeatTimer: Timer?
-  /// Every five seconds. Frequent enough that the downtime reading is never meaningfully wrong,
-  /// rare enough that it is one small write a minute rather than a background load.
-  private static let heartbeatInterval: TimeInterval = 5
   private var testClock: TestClock?
   private var announcedCameraStatus: [SourceID: String] = [:]
   /// Picture for a preview opened without enabling the camera. A live tile uses its own renderer.
@@ -509,6 +513,15 @@ public final class AppEnvironment {
     self.exportFallbackEncoding = fallbackEncoding
     self.exporter = ExportService(index: index, fallbackEncoding: { fallbackEncoding.withLock { $0 } })
     self.retention = RetentionPolicy(index: index)
+    // The take's anchors and each part's sound check go onto the take's row from here; see
+    // `RecordingSession`. The programme clock takes the master's rate from it too.
+    let router = self.router
+    self.programmeRecording = RecordingSession(
+      index: index,
+      encoder: programEncoder,
+      clock: clock,
+      setRecordingRate: { router.setRecordingRate($0) }
+    )
 
     telemetry.mutate { [sourceProfile] snapshot in
       snapshot.sourceProfile = sourceProfile.rawValue
@@ -518,23 +531,6 @@ public final class AppEnvironment {
       self?.publishLiveSessionTelemetry()
     }
 
-    // Set here rather than at construction: the encoder is built before the index exists.
-    let anchorIndex = index
-    // No `self` here on purpose: this runs on whichever queue delivered the frame, so it must not
-    // reach back into anything main-actor isolated. The recording it belongs to is carried in.
-    programEncoder.setAnchorSink { recording, part, seconds, wall in
-      try? anchorIndex.insertProgramAnchor(
-        recordingID: recording,
-        part: part,
-        programSeconds: seconds,
-        wall: wall
-      )
-    }
-    // The part's sound verdict, onto the take's own row. Telemetry already carries it for the
-    // status line, but that is memory; this is what an export or an upload can still read.
-    programEncoder.setSoundCheckSink { recording, check in
-      try? anchorIndex.recordSoundCheck(check, for: recording)
-    }
   }
 
   /// Called once from the app's `task` modifier.
@@ -684,38 +680,20 @@ public final class AppEnvironment {
       programSourceStore.save(source)
     }
 
-    recordingID = take.recordingID
-    recordingStartedAt = take.startedAt
+    // A new part of the same programme file family, with the take's own programme settings, listed
+    // on the take's row as it opens. Losing it is not losing the take: the per-camera archives are
+    // the part of a game that cannot be made again.
+    programmeRecording.adopt(take)
     isRecording = true
-    // Anchors from here on belong to the take being picked up, under whatever part the resumed
-    // encoder opens.
-    programEncoder.setAnchorRecording(take.recordingID)
-    try? index.noteResumed(take.recordingID, at: clock.now)
-    let resumeCount = (try? index.recordings().first { $0.id == take.recordingID })?.resumeCount
-
-    // A new part of the same programme file family. Losing it is not losing the take: the
-    // per-camera archives are the part of a game that cannot be made again.
+    var resumeCount: Int?
     do {
-      // The take's own programme settings, so a resumed part matches the parts before it.
-      let programme = (try? index.encoding(for: take.recordingID))?.programme ?? config.programEncoding
-      programEncoder.configure(programme)
-      router.setRecordingRate(programme.frameRate)
-      try programEncoder.resume(
-        startedAt: take.startedAt,
-        nextPart: take.nextProgramPart,
-        at: clock.now
+      resumeCount = try programmeRecording.resumeProgramme(
+        take,
+        at: clock.now,
+        settings: RecordingSettings(config: config)
       )
-      // On record now, not at stop: a take that is killed again before it stops must still list the
-      // part this process wrote.
-      if let opened = programEncoder.outputURL?.lastPathComponent {
-        let listed = (try? index.recordings().first { $0.id == take.recordingID })?.programFilename ?? ""
-        let names = listed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-          .filter { !$0.isEmpty }
-        if !names.contains(opened) {
-          try? index.setProgramFilename((names + [opened]).joined(separator: ","), for: take.recordingID)
-        }
-      }
     } catch {
+      resumeCount = (try? index.recordings().first { $0.id == take.recordingID })?.resumeCount
       let message = "Program output unavailable after resume: \(error)"
       statusMessage = message
       telemetry.mutate { $0.dvr.lastError = message }
@@ -751,7 +729,9 @@ public final class AppEnvironment {
       return
     }
     telemetry.mutate { $0.dvr.resumedStream = true }
-    startStreaming()
+    // A redial of the stream it had, never a request for a new one: a stream that was ended while
+    // the app was away stays ended.
+    startStreaming(reason: .redial)
   }
 
   /// Deletes this take's segment files that were never finished and never indexed.
@@ -776,8 +756,7 @@ public final class AppEnvironment {
   public func shutdown() async {
     pollTimer?.invalidate()
     retentionTimer?.invalidate()
-    heartbeatTimer?.invalidate()
-    heartbeatTimer = nil
+    programmeRecording.stopHeartbeat()
     if isRecording { await stopRecording() }
     endPeek()
     pictureInPicture.tearDown()
@@ -2008,18 +1987,15 @@ public final class AppEnvironment {
     }
     let now = clock.now
     let recordingID: Int64
+    // The take's row, with the encoding it is recorded with kept for its exports; the master's
+    // anchors belong to it until it stops.
+    let settings = RecordingSettings(config: config)
     do {
-      recordingID = try index.beginRecording(at: now)
+      recordingID = try programmeRecording.open(at: now, settings: settings)
     } catch {
       statusMessage = "Could not start recording: \(error)"
       return
     }
-    self.recordingID = recordingID
-    // The encoding this take is recorded with, kept with it for its exports.
-    try? index.saveEncoding(config.takeEncoding, for: recordingID)
-    // Anchors belong to this recording until it stops.
-    programEncoder.setAnchorRecording(recordingID)
-    self.recordingStartedAt = now
     // The grid as it is at this instant, so the take can be picked up against the cameras it was
     // actually recording rather than whatever the stores hold at the next launch. Cleared first:
     // an identical grid to the previous take's is still a row this take has not got.
@@ -2042,12 +2018,7 @@ public final class AppEnvironment {
     // part of a game that cannot be re-created afterwards.
     do {
       // The programme settings this take was recorded with, saved above with the take.
-      programEncoder.configure(config.programEncoding)
-      router.setRecordingRate(config.programFrameRate)
-      try programEncoder.start(at: now)
-      if let filename = programEncoder.outputURL?.lastPathComponent {
-        try? index.setProgramFilename(filename, for: recordingID)
-      }
+      try programmeRecording.startProgramme(at: now, settings: settings)
     } catch {
       let message = "Program output unavailable: \(error)"
       statusMessage = message
@@ -2092,7 +2063,10 @@ public final class AppEnvironment {
     TeamStationAccount(
       serverURL: AppServer.url,
       deviceName: UIDevice.current.name,
-      appOrigin: AppServer.appOrigin
+      appOrigin: AppServer.appOrigin,
+      // TeamStation keys this Director's stream on the installation and lists it by model.
+      installId: DirectorInstallID.persisted(in: .standard),
+      deviceModel: DeviceModelName.current
     )
   }
 
@@ -2146,6 +2120,11 @@ public final class AppEnvironment {
   }
 
   public func startStreaming() {
+    startStreaming(reason: .start)
+  }
+
+  /// `.redial` for the automatic restart at launch, which may only put back the stream held.
+  private func startStreaming(reason: StreamSessionController.DialReason) {
     guard !isStreaming else { return }
     guard distributorExport == nil else {
       statusMessage = "TS Distributor is exporting — stream once it has finished"
@@ -2168,7 +2147,6 @@ public final class AppEnvironment {
     }
     streamErrorGate.reset()
     streamWanted = true
-    streamRetryDelay = Self.firstStreamRetrySeconds
     isStreaming = true
     // A stream is always recorded. The local take is the only copy that is not
     // at the mercy of the uplink, it is what replay cuts from during the game,
@@ -2179,7 +2157,7 @@ public final class AppEnvironment {
     // drops the publish is usually still filming.
     if !isRecording { startRecording() }
     beginLiveSession(streaming: true)
-    dialStream()
+    streamSession.start(reason: reason)
   }
 
   /// Chooses the game this Director covers, from Settings' event picker.
@@ -2222,89 +2200,93 @@ public final class AppEnvironment {
     Task { await eventCoordinator.destinationChanged(to: destination) }
   }
 
-  /// How long to wait before dialling the ingest again, and how far that backs off. A squeezed
-  /// uplink comes back in seconds, so the first retry is quick; an ingest that is down stays down,
-  /// so the wait grows rather than hammering it for the rest of a game.
-  static let firstStreamRetrySeconds: Double = 3
-  static let longestStreamRetrySeconds: Double = 30
-
   /// Opens the publish, and puts it back when it drops on its own.
   ///
   /// A drop is not a stop. The send times out whenever the uplink carries less than the programme
   /// for longer than the socket allows — measured on the rig, a 1.2 Mbit cap under a 4 Mbps
   /// programme ends the publish in about twenty seconds — and before this the stream stayed off for
   /// the rest of the session, with the operator's only warning a toast they had to be watching for.
-  private func dialStream() {
-    let session = config
-    let destination = config.streamDestination
-    router.setStreamRate(session.streamFrameRate)
-    Task { [weak self] in
-      guard let self else { return }
-      // The event is claimed here if it never was, and asked for again if it
-      // was: a key can have been rotated since, and offline the cached address
-      // is what there is. A refusal goes the way a failed publish does.
-      let publishTo: String
-      do {
-        publishTo = try await self.eventCoordinator.streamURLForDial(destination: destination)
-          ?? self.config.streamURL
-      } catch {
-        self.handleStreamDrop(error.localizedDescription)
-        return
-      }
-      do {
-        try await self.programStreamer.start(urlString: publishTo, config: session) { [weak self] message in
-          Task { @MainActor in
-            self?.handleStreamDrop(message)
+  /// The controller redials with backoff, at once when the network comes back, and stops for good
+  /// when TeamStation says the stream was ended.
+  private func makeStreamSession() -> StreamSessionController {
+    StreamSessionController(
+      publisher: programStreamer,
+      host: .init(
+        requestURL: { [weak self] reason in
+          guard let self else { throw CancellationError() }
+          // The event is claimed here if it never was, and asked for again if it was: a key can
+          // have been rotated since, and offline the cached address is what there is.
+          return try await self.eventCoordinator.streamURL(
+            for: reason,
+            destination: self.dialConfig.streamDestination,
+            typed: self.config.streamURL
+          )
+        },
+        settings: { [weak self] in StreamSettings(config: self?.dialConfig ?? .default) },
+        explainDialFailure: { [weak self] error in
+          // TeamStation knows better than the socket does why a publish to one of its games will
+          // not start, and it has already written the reason on the game's row. Asked only for a
+          // game we picked, and only when the dial failed, so the ordinary path costs nothing.
+          var message = Self.streamErrorMessage(error)
+          if self?.dialConfig.streamDestination == .event,
+            let said = await self?.teamStation.reasonForRefusal()
+          {
+            message = said
           }
-        }
-      } catch {
-        // TeamStation knows better than the socket does why a publish to one
-        // of its games will not start, and it has already written the reason
-        // on the game's row. Asked only for a game we picked, and only when
-        // the dial failed, so the ordinary path costs nothing.
-        var message = Self.streamErrorMessage(error)
-        if destination == .event,
-          let said = await self.teamStation.reasonForRefusal()
-        {
-          message = said
-        }
-        await MainActor.run {
-          self.handleStreamDrop(message)
-        }
-      }
-    }
+          return message
+        },
+        // A URL that cannot be parsed is not worth retrying.
+        isRetryable: { !$0.contains("stream URL") },
+        willDial: { [weak self] _ in
+          guard let self else { return }
+          self.dialConfig = self.config
+          self.router.setStreamRate(self.dialConfig.streamFrameRate)
+        },
+        dropped: { [weak self] message in
+          // Counted and said once.
+          guard let self else { return }
+          self.reportStreamError(message)
+          self.telemetry.recordStreamDisconnect(message)
+          self.streamMegabitsPerSecond = 0
+        },
+        redialing: { [weak self] in
+          guard let self else { return }
+          self.telemetry.recordStreamReconnect()
+          self.streamErrorGate.reset()
+          self.isStreaming = true
+        },
+        gaveUp: { [weak self] _ in
+          guard let self else { return }
+          self.isStreaming = false
+          self.endLiveSession(streaming: true)
+        },
+        ended: { [weak self] message in self?.streamEnded(message) }
+      ),
+      pathMonitor: SystemNetworkPathMonitor()
+    )
   }
 
-  /// The publish dropped by itself. Counted, said once, and dialled again while the operator still
-  /// wants it — a URL that cannot be parsed is not worth retrying, so that one stops.
-  private func handleStreamDrop(_ message: String) {
-    reportStreamError(message)
-    telemetry.recordStreamDisconnect(message)
-    programStreamer.stop()
+  /// TeamStation ended this camera (a 410 on a redial): what a deliberate stop does, so the Stream
+  /// button starts again and a later relaunch does not resume streaming. The recording carries on.
+  private func streamEnded(_ message: String) {
+    streamWanted = false
+    isStreaming = false
+    holdProgrammeSound()
+    endLiveSession(streaming: true)
     streamMegabitsPerSecond = 0
-    guard streamWanted, !message.contains("stream URL") else {
-      isStreaming = false
-      endLiveSession(streaming: true)
-      return
-    }
-    let delay = streamRetryDelay
-    streamRetryDelay = min(delay * 2, Self.longestStreamRetrySeconds)
-    Task { [weak self] in
-      try? await Task.sleep(for: .seconds(delay))
-      await MainActor.run {
-        guard let self, self.streamWanted else { return }
-        self.telemetry.recordStreamReconnect()
-        self.streamErrorGate.reset()
-        self.isStreaming = true
-        self.dialStream()
-      }
-    }
+    streamDroppedPackets = 0
+    telemetry.recordStreamTransport(droppedPackets: 0, queuedBytes: 0)
+    telemetry.recordStreamRate(StreamRateTelemetry())
+    streamErrorGate.reset()
+    reportStreamError(message)
   }
 
   public func stopStreaming() async {
     streamWanted = false
     holdProgrammeSound()
     guard isStreaming || programStreamer.running else {
+      // A redial may still be waiting.
+      streamSession.stop()
       isStreaming = false
       endLiveSession(streaming: true)
       return
@@ -2313,7 +2295,7 @@ public final class AppEnvironment {
     // Also the failure path: a stream that dropped is a stream that is off, so it is not one the
     // next launch should dial again.
     endLiveSession(streaming: true)
-    programStreamer.stop()
+    streamSession.stop()
     streamMegabitsPerSecond = 0
     streamDroppedPackets = 0
     // The poll only records transport health while streaming, so without this the last depth
@@ -2452,7 +2434,7 @@ public final class AppEnvironment {
     // Nothing the programme writes after this instant belongs to the take. Finishing fills it out to
     // the stop, and a live picture arriving during that fill takes its timestamp from it; anchoring
     // those would record the fill's pace as real time.
-    programEncoder.setAnchorRecording(nil)
+    programmeRecording.detachAnchors()
     retentionTimer?.invalidate()
     retentionTimer = nil
     setRecordingStage("detaching")
@@ -2508,10 +2490,10 @@ public final class AppEnvironment {
     // master everything it holds, so the master's sound reaches the end of its picture and Stop
     // takes no longer than it did.
     router.recordingMixer.flush(through: clock.now)
-    let programEncoder = self.programEncoder
+    let programmeRecording = self.programmeRecording
     let programURL = ProgramURL()
     await finishWithDeadline("program", seconds: 45) {
-      await programURL.set(programEncoder.finish(until: endedAt + tail))
+      await programURL.set(programmeRecording.finishProgramme(until: endedAt + tail))
     }
     if let url = await programURL.value {
       let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
@@ -2520,25 +2502,14 @@ public final class AppEnvironment {
     }
 
     setRecordingStage("closing index")
-    if let recordingID {
-      // The whole family, not only this process's own list. After a resume the parts written
-      // before the crash are not in `outputURLs`, and the export stem-matches from the first
-      // name, so the list has to keep starting with the take's first part.
-      let recorded = ((try? index.recordings().first { $0.id == recordingID })?.programFilename)
-        .map { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } } ?? []
-      let written = programEncoder.outputURLs.map(\.lastPathComponent).filter { !$0.isEmpty }
-      let names = recorded.filter { !$0.isEmpty } + written.filter { !recorded.contains($0) }
-      if !names.isEmpty {
-        try? index.setProgramFilename(names.joined(separator: ","), for: recordingID)
-      }
-      try? index.endRecording(recordingID, at: endedAt)
+    // Every part's file on the take's row, the parts written before a crash first, and its end.
+    let closing = recordingID
+    programmeRecording.close(endedAt: endedAt)
+    if closing != nil {
       // The take stopped being live when recording stopped, but only now has an end: without this
       // TS Distributor keeps the length it read before, and counts it up as if still recording.
       distributorEvents.publish(.recordingsChanged)
     }
-    recordingID = nil
-    programEncoder.setAnchorRecording(nil)
-    recordingStartedAt = nil
     lastGridSnapshot = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
@@ -2614,36 +2585,22 @@ public final class AppEnvironment {
     }
   }
 
-  /// Opens or updates the row that says what this app is doing, and starts the heartbeat.
+  /// Opens or updates the row that says what this app is doing, and starts the heartbeat. Each
+  /// beat with nothing live any more closes the session instead.
   private func beginLiveSession(recording: Int64? = nil, streaming: Bool? = nil) {
-    try? index.openLiveSession(recordingID: recording, streaming: streaming, at: clock.now)
-    guard heartbeatTimer == nil else { return }
-    heartbeatTimer = Timer.scheduledTimer(
-      withTimeInterval: Self.heartbeatInterval,
-      repeats: true
-    ) { [weak self] _ in
-      Task { @MainActor in self?.beatLiveSession() }
+    programmeRecording.beginLiveSession(recording: recording, streaming: streaming) { [weak self] in
+      guard let self else { return false }
+      return self.isRecording || self.isStreaming
     }
-  }
-
-  private func beatLiveSession() {
-    guard isRecording || isStreaming else {
-      endLiveSession()
-      return
-    }
-    try? index.heartbeat(at: clock.now)
   }
 
   /// Clears one half of the live session, and stops the heartbeat once neither is left.
   private func endLiveSession(recording: Bool = false, streaming: Bool = false) {
-    if recording || streaming {
-      try? index.closeLiveSession(recording: recording, streaming: streaming)
-    } else {
-      try? index.closeLiveSession()
-    }
-    guard !isRecording, !isStreaming else { return }
-    heartbeatTimer?.invalidate()
-    heartbeatTimer = nil
+    programmeRecording.endLiveSession(
+      recording: recording,
+      streaming: streaming,
+      stillLive: isRecording || isStreaming
+    )
   }
 
   private func startRetentionSweeps() {
@@ -4131,6 +4088,7 @@ public final class AppEnvironment {
   public func update(config newConfig: AppConfig) {
     let wantsSimulated = newConfig.useSimulatedCameras
     let sessionIsSimulated = isUsingSimulatedCameras
+    let renamed = newConfig.cameraName != persistedConfig.cameraName
     persistedConfig = newConfig
     configStore.save(newConfig)
     var session = Self.applying(launch, to: newConfig)
@@ -4149,6 +4107,11 @@ public final class AppEnvironment {
       eventControl.subnetsChanged()
     }
     eventControl.setEnabled(session.eventControlEnabled)
+    // A new camera name renames the stream this Director holds, keeping its key and its video.
+    if renamed, session.streamDestination == .event {
+      let name = session.cameraName
+      Task { await eventCoordinator.cameraRenamed(to: name) }
+    }
     if wantsSimulated != sessionIsSimulated {
       Task { await applySourceProfile(SourceProfile.forSimulatedCameras(wantsSimulated)) }
     }
@@ -4898,7 +4861,7 @@ public final class AppEnvironment {
       snapshot = next
       lastPublishedUIAt = clock.now.seconds
       if isStreaming {
-        let stream = programStreamer.metrics
+        let stream = streamSession.refreshCongestion()
         streamMegabitsPerSecond = stream.megabitsPerSecond
         streamDroppedPackets = stream.droppedPackets
         // Into telemetry as well as the HUD, so `dump-state` and the soak scripts can see a
