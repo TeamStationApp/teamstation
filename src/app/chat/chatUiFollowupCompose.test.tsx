@@ -1412,6 +1412,50 @@ describe('chat conversation shared file preparation and sending', function () {
     expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
   })
 
+  it('keeps the unchanged reply and file beside typing added during an older successful send', async function () {
+    const engine = new FakeEngine()
+    const send = pending<undefined>()
+    engine.sendWork = send.promise
+    const target = message({
+      senderName: 'Shohei Ohtani',
+      body: 'Original body'
+    })
+    const attachment = prepared()
+    await screen(engine, {
+      draft: {
+        text: 'Submitted caption',
+        replyTo: target,
+        picked: [attachment],
+        scrollOffset: 0
+      }
+    })
+    await press('Send')
+    expect(engine.calls).deep.equals([
+      [
+        'attach',
+        'cnv_aurora',
+        [attachment],
+        'Submitted caption',
+        { quoteId: target.id }
+      ]
+    ])
+    await type('New unsent caption')
+    await act(async () => {
+      send.resolve(undefined)
+      await wait()
+    })
+    expect(input().value).equals('New unsent caption')
+    expect(document.querySelector('[aria-label="Cancel reply"]')).not.equals(
+      null
+    )
+    expect(
+      document.querySelector('[data-testid="chat-attachment-chip"]')!
+        .textContent
+    ).contains('notes.pdf')
+    expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
+    expect(engine.calls).length(1)
+  })
+
   it('discards a prepared result after posting permission changes and recovers the preparation counter', async function () {
     const engine = new FakeEngine()
     const picker = pending<PickedFile[]>()
