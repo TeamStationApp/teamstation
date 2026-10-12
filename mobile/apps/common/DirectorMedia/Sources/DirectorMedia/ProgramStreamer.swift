@@ -210,7 +210,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     codec = Self.rtmpCodec(settings.codec)
     bitrateLow = settings.bitrateLow
     bitrateHigh = settings.bitrateHigh
-    bitrate = settings.bitrateHigh
+    bitrate = settings.openingBitrate
     frameRate = max(1, settings.frameRate)
     gopSeconds = settings.gopSeconds
   }
@@ -229,12 +229,13 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.unlock()
   }
 
-  /// Starts the controller at the high bitrate, which is where the session already is. Until the
+  /// Starts the controller at the opening bitrate, which is where the session already is. Until the
   /// publish is live there is no link to judge, and the controller holds.
   private func startRateLoop(client: RTMPClient) {
     lock.lock()
     let high = bitrateHigh
     let low = bitrateLow
+    let opening = bitrate
     lock.unlock()
     let loop = AdaptiveBitrateLoop(
       ceiling: high,
@@ -252,7 +253,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     rateLoop = loop
     lock.unlock()
-    loop.configure(ceiling: high, floor: low, enabled: true)
+    loop.configure(ceiling: high, floor: low, start: opening, enabled: true)
   }
 
   /// A rate from the controller, onto the live session: the next frame is coded at it. A session
