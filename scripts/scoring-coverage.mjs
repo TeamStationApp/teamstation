@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import {
+  globSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -11,6 +12,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const currentSetupScope = process.argv.includes('--current-setup')
+const rosterEdit = process.argv.includes('--roster-edit')
 // Collection and both validators must describe the same changed-source set.
 const base =
   process.env.TS_COVERAGE_BASE ??
@@ -22,7 +24,16 @@ const { coverageSources } = createRequire(import.meta.url)(
   './coverage-source-paths.cjs'
 )
 const includes = currentSetupScope
-  ? coverageSources(base).paths
+  ? [
+      ...coverageSources(base, process.cwd(), rosterEdit).paths,
+      // Collect the source-map sentinel even when only a child form changed.
+      'src/app/scoring/ScoringScreen.tsx',
+      ...(rosterEdit
+        ? globSync('src/common/scoring/**/*.ts').filter(
+            path => !/\.test\.ts$/.test(path)
+          )
+        : [])
+    ]
   : JSON.parse(readFileSync('src/test/scoringCoveragePaths.json', 'utf8'))
 if (currentSetupScope && includes.length === 0)
   throw new Error('Current setup coverage requires changed production paths.')
@@ -33,6 +44,8 @@ mkdirSync(temp, { recursive: true })
 const test = spawnSync(
   'node_modules/.bin/mocha',
   [
+    '--timeout',
+    '20000',
     '-r',
     'sucrase/register',
     '-r',
@@ -43,7 +56,23 @@ const test = spawnSync(
       ? [
           'src/common/scoring/*.test.ts',
           'src/app/scoring/*.test.ts',
-          'src/app/field/*.test.ts'
+          'src/app/field/*.test.ts',
+          ...(rosterEdit
+            ? [
+                'src/app/navigation/*.test.ts',
+                'src/common/api.test.ts',
+                'src/common/roles.test.ts',
+                'src/common/playerSettings.test.ts',
+                'src/common/names.test.ts',
+                'src/common/rosterFullName.test.ts',
+                'src/server/access.test.ts',
+                'src/server/routes/players.test.ts',
+                'src/server/routes/rosterManagement.test.ts',
+                'src/server/routes/teams.test.ts',
+                'src/server/teams/teamRoster.test.ts',
+                'src/server/openapi.test.ts'
+              ]
+            : [])
         ]
       : ['src/**/*.test.ts']
     ).flatMap(spec => ['--spec', spec]),
@@ -54,6 +83,25 @@ const test = spawnSync(
   ],
   { stdio: 'inherit', env: { ...process.env, NODE_V8_COVERAGE: temp } }
 )
+let extraFailed = false
+if (rosterEdit) {
+  for (const file of readdirSync('lib')
+    .filter(file => /^roster-edit-\d+-tests\.cjs$/.test(file))
+    .sort()) {
+    const result = spawnSync(
+      'node_modules/.bin/mocha',
+      [
+        '--timeout',
+        '20000',
+        '-r',
+        './src/test/scoringDomSetup.cjs',
+        'lib/' + file
+      ],
+      { stdio: 'inherit', env: { ...process.env, NODE_V8_COVERAGE: temp } }
+    )
+    if (result.status !== 0) extraFailed = true
+  }
+}
 // Node caches multi-source bundle maps as file URLs. c8's exclusion callback
 // compares filesystem paths before resolving each source, otherwise marking
 // every bundled function covered. Normalize map identifiers, never counters.
@@ -89,7 +137,8 @@ const report = spawnSync(
   ],
   { stdio: 'inherit' }
 )
-process.exitCode = test.status !== 0 ? (test.status ?? 1) : (report.status ?? 1)
+process.exitCode =
+  test.status !== 0 || extraFailed ? test.status || 1 : (report.status ?? 1)
 
 const summary = JSON.parse(
   readFileSync('coverage/coverage-summary.json', 'utf8')
@@ -114,7 +163,7 @@ if (
 }
 
 // Validate the same base used to collect the changed-source coverage above.
-const { paths, untracked } = coverageSources(base)
+const { paths, untracked } = coverageSources(base, process.cwd(), rosterEdit)
 
 let covered = 0
 let total = 0
@@ -172,6 +221,7 @@ if (changedBase != null) {
   // roots, git cannot pair a moved file with its old path and would count
   // every line of it as changed.
   const roots = [
+    ...(rosterEdit ? ['src/server/'] : []),
     'src/app/',
     'src/common/',
     'src/server/stats/',

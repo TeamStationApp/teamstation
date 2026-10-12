@@ -9,12 +9,13 @@ const ROOTS = ['src/app/', 'src/common/']
 // diffed with rename detection and the roots applied afterwards, because git
 // pairs a move only when it can see both sides. Deleted files have no current
 // executable lines or source map to account for.
-function coverageSources(base, cwd = process.cwd()) {
+function coverageSources(base, cwd = process.cwd(), rosterEdit = false) {
+  const roots = rosterEdit ? [...ROOTS, 'src/server/'] : ROOTS
   const git = args => execFileSync('git', args, { cwd, encoding: 'utf8' })
   const wanted = path =>
     SOURCE.test(path) &&
     !NOT_SOURCE.test(path) &&
-    ROOTS.some(root => path.startsWith(root))
+    roots.some(root => path.startsWith(root))
   const fields = git([
     'diff',
     '--name-status',
@@ -40,7 +41,7 @@ function coverageSources(base, cwd = process.cwd()) {
     '--others',
     '--exclude-standard',
     '-z',
-    ...ROOTS
+    ...roots
   ])
     .split('\0')
     .filter(wanted)
