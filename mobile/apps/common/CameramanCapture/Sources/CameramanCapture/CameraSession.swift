@@ -1,6 +1,7 @@
 import AVFoundation
 import CameramanCore
 import Foundation
+import QuartzCore
 
 /// `CMSampleBuffer` is not `Sendable`, but a captured frame has exactly one owner at a time: the
 /// capture queue hands it over and does not touch it again. The box makes that hand-off explicit
@@ -17,7 +18,8 @@ public struct SampleBuffer: @unchecked Sendable {
 ///
 /// All AVFoundation access is confined to one serial queue. Configuring a session on the main thread
 /// works but stalls it for hundreds of milliseconds on `startRunning`, which on this app would land
-/// exactly as the operator taps the flip button.
+/// exactly as the operator taps the flip button. A preview layer drawn through `showPreview` is
+/// attached, turned and detached on that queue too.
 public final class CameraSession: @unchecked Sendable {
   public struct State: Sendable, Equatable {
     public var position: CameraPosition = .back
@@ -62,6 +64,8 @@ public final class CameraSession: @unchecked Sendable {
   /// would swap 1920×1080 into portrait; those are ignored and this is used instead.
   private var lastLandscapeCaptureAngle: CGFloat = 180
   private var sessionObservers: [any NSObjectProtocol] = []
+  /// The preview layers drawing this session, with the angle and mirroring each was asked for.
+  private var previews: [ObjectIdentifier: PreviewHold] = [:]
 
   /// Delivered on the main queue, because every consumer is UI.
   public var onStateChange: (@MainActor @Sendable (State) -> Void)?
@@ -85,9 +89,51 @@ public final class CameraSession: @unchecked Sendable {
     sessionObservers.forEach { NotificationCenter.default.removeObserver($0) }
   }
 
-  /// Handed to the preview layer. Safe to read from the main thread: `AVCaptureVideoPreviewLayer`
-  /// is designed to be attached on the main thread to a session running on another queue.
+  /// The session itself, to tell which session a layer draws. A preview layer is attached, turned
+  /// and detached only through `showPreview` and `hidePreview`, never by setting its session.
   public var captureSession: AVCaptureSession { session }
+
+  /// Draws this session in a preview layer, turned by `rotationAngle` and mirrored when asked. Called
+  /// again for the same layer, it changes the angle or the mirroring.
+  ///
+  /// A preview layer's session, and its connection's angle and mirroring, are the session's
+  /// configuration: AVFoundation brackets each change in `beginConfiguration` and
+  /// `commitConfiguration`. `startRunning` and `stopRunning` raise an exception when they run inside
+  /// such a bracket opened on another thread, so these changes are made on the capture queue, in
+  /// order with `start`, `stop` and every other change, never on the main thread. The angle and the
+  /// mirroring are kept and applied again whenever the connection is rebuilt: after a flip, and when
+  /// the session starts.
+  public func showPreview(in layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool) {
+    let target = PreviewHold(layer: layer, rotationAngle: rotationAngle, mirrored: mirrored)
+    let key = ObjectIdentifier(layer)
+    queue.async { [self] in
+      guard let layer = target.layer else { return }
+      previews[key] = target
+      Self.withoutAnimation {
+        if layer.session !== session { layer.session = session }
+        applyPreview(target)
+      }
+    }
+  }
+
+  /// Stops drawing this session in a preview layer, on the capture queue, after every change and
+  /// every start or stop asked for before it, then calls `done` there. The layer is held until then:
+  /// a preview layer freed while attached detaches itself on the thread that frees it.
+  ///
+  /// A layer that is to draw another session is shown there only after `done`. Setting a layer's
+  /// session detaches it from the one it had, on the calling thread, so showing it on another
+  /// session's queue first would detach it from this session off this queue.
+  public func hidePreview(in layer: AVCaptureVideoPreviewLayer, then done: (@Sendable () -> Void)? = nil) {
+    let held = HeldLayer(layer)
+    let key = ObjectIdentifier(layer)
+    queue.async { [self] in
+      previews[key] = nil
+      if held.layer.session === session {
+        Self.withoutAnimation { held.layer.session = nil }
+      }
+      done?()
+    }
+  }
 
   public func configure(position: CameraPosition, settings: StreamSettings) {
     queue.async { [self] in
@@ -101,6 +147,7 @@ public final class CameraSession: @unchecked Sendable {
       guard !session.isRunning else { return }
       session.startRunning()
       state.isRunning = session.isRunning
+      applyPreviews()
       publish()
     }
   }
@@ -203,6 +250,7 @@ public final class CameraSession: @unchecked Sendable {
     state.availableFormats = Self.descriptors(of: selected)
     state.mapping = Self.mapping(for: selected, selection: selection, catalog: catalog, position: position)
     state.failure = nil
+    applyPreviews()
     // Start at the wide lens rather than the ultra-wide: 1x is what an operator pointing a phone at a
     // field expects to see, and 0.5x on a triple camera is a noticeably distorted framing. When 1x
     // is not among the remaining lenses, sit on the widest one that is still on.
@@ -339,6 +387,43 @@ public final class CameraSession: @unchecked Sendable {
     }
   }
 
+  /// Each preview's angle and mirroring, on its connection as it is now. A connection is made only once
+  /// the session has an input, and made again when the input changes.
+  private func applyPreviews() {
+    previews = previews.filter { $0.value.layer != nil }
+    guard !previews.isEmpty else { return }
+    Self.withoutAnimation {
+      for target in previews.values { applyPreview(target) }
+    }
+  }
+
+  /// Only what has changed: setting a connection again on every call reconfigures a running session
+  /// for nothing.
+  private func applyPreview(_ target: PreviewHold) {
+    guard let connection = target.layer?.connection else { return }
+    if connection.videoRotationAngle != target.rotationAngle,
+       connection.isVideoRotationAngleSupported(target.rotationAngle) {
+      connection.videoRotationAngle = target.rotationAngle
+    }
+    if connection.isVideoMirroringSupported {
+      if connection.automaticallyAdjustsVideoMirroring {
+        connection.automaticallyAdjustsVideoMirroring = false
+      }
+      if connection.isVideoMirrored != target.mirrored {
+        connection.isVideoMirrored = target.mirrored
+      }
+    }
+  }
+
+  /// A layer changed off the main thread is committed in its own transaction, without the implicit
+  /// animation a layer property change would otherwise get.
+  private static func withoutAnimation(_ change: () -> Void) {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    change()
+    CATransaction.commit()
+  }
+
   private func publish() {
     let snapshot = state
     guard let onStateChange else { return }
@@ -414,6 +499,7 @@ public final class CameraSession: @unchecked Sendable {
     let running = session.isRunning
     guard state.isRunning != running else { return }
     state.isRunning = running
+    if running { applyPreviews() }
     publish()
   }
 
@@ -560,6 +646,29 @@ public final class CameraSession: @unchecked Sendable {
       supportsMultiLensSwitching: keepsMultiLensSwitching,
       isBinned: format.isVideoBinned
     )
+  }
+}
+
+/// A preview layer and what it was asked to show. The layer is a `CALayer`, which is not `Sendable`;
+/// it is handed to the capture queue and touched only there, inside a transaction.
+private final class PreviewHold: @unchecked Sendable {
+  weak var layer: AVCaptureVideoPreviewLayer?
+  let rotationAngle: CGFloat
+  let mirrored: Bool
+
+  init(layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool) {
+    self.layer = layer
+    self.rotationAngle = rotationAngle
+    self.mirrored = mirrored
+  }
+}
+
+/// A preview layer kept alive until the capture queue has detached it.
+private struct HeldLayer: @unchecked Sendable {
+  let layer: AVCaptureVideoPreviewLayer
+
+  init(_ layer: AVCaptureVideoPreviewLayer) {
+    self.layer = layer
   }
 }
 

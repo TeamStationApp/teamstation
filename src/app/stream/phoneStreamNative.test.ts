@@ -40,13 +40,7 @@ function load(reactNative: Record<string, unknown>): NativeFacade {
   }
 }
 
-const flush = async (): Promise<void> => {
-  await new Promise(resolve => setTimeout(resolve, 0))
-}
-
 describe('phone streaming on a phone', function () {
-  ;(globalThis as { __DEV__?: boolean }).__DEV__ = true
-
   it('finds TSPhoneStream, asks Android for permissions, and draws the preview component', async function () {
     const native = fakePhoneStreamModule({
       capabilities: { supported: true, deviceModel: 'Google Pixel 10' }
@@ -81,13 +75,10 @@ describe('phone streaming on a phone', function () {
       args: ['Home Plate', true, []]
     })
 
-    const lines: string[] = []
-    facade.reportPhoneStreamCapabilities(line => lines.push(line))
-    facade.reportPhoneStreamCapabilities(line => lines.push(line))
-    await flush()
-    expect(lines).deep.equals([
-      'phoneStream capabilities supported=true deviceModel=Google Pixel 10'
-    ])
+    expect(await facade.phoneStream.capabilities()).deep.equals({
+      supported: true,
+      deviceModel: 'Google Pixel 10'
+    })
 
     const seen: unknown[] = []
     function Probe(): null {
@@ -111,7 +102,7 @@ describe('phone streaming on a phone', function () {
     })
   })
 
-  it('keeps quiet when the capabilities cannot be read, and outside a development build', async function () {
+  it('answers unsupported when the capabilities cannot be read, and opens nothing without the module', async function () {
     const native = fakePhoneStreamModule()
     native.failures.capabilities = new Error('gone')
     const facade = load({
@@ -120,26 +111,16 @@ describe('phone streaming on a phone', function () {
       TurboModuleRegistry: { get: () => native },
       codegenNativeComponent: () => 'host'
     })
-    const lines: string[] = []
-    facade.reportPhoneStreamCapabilities(line => lines.push(line))
-    await flush()
-    expect(lines).deep.equals([
-      'phoneStream capabilities supported=false deviceModel='
-    ])
+    expect(await facade.phoneStream.capabilities()).deep.equals({
+      supported: false,
+      deviceModel: ''
+    })
     const quiet = load({
       Platform: { OS: 'ios', Version: '18.0' },
       PermissionsAndroid: {},
       TurboModuleRegistry: { get: () => null },
       codegenNativeComponent: () => 'host'
     })
-    ;(globalThis as { __DEV__?: boolean }).__DEV__ = false
-    try {
-      quiet.reportPhoneStreamCapabilities(line => lines.push(line))
-      await flush()
-    } finally {
-      ;(globalThis as { __DEV__?: boolean }).__DEV__ = true
-    }
-    expect(lines).has.length(1)
     // With no module, an iPhone opens nothing and asks for nothing.
     try {
       await quiet.phoneStream.open('Home Plate')

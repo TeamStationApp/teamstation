@@ -58,7 +58,7 @@ extension PhoneStreamTests {
       #expect(device.configured.first?.0 == .back)
       #expect(device.configured.first?.1.width == 1920)
       #expect(device.configured.first?.1.frameRate == 30)
-      #expect(engine.previewSession == nil)
+      #expect(engine.previewDevice === device)
 
       device.publish(Self.thirteenPro())
       #expect(engine.status.displayedZoom == 1)
@@ -121,6 +121,7 @@ extension PhoneStreamTests {
       await engine.close()
       #expect(!engine.isOpen)
       #expect(device.stopped == 1)
+      #expect(engine.previewDevice == nil)
       await engine.close()
     }
 

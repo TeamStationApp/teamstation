@@ -117,8 +117,12 @@ final class FakeCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)?
   var onAudioFrame: (@Sendable (SampleBuffer) -> Void)?
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)?
-  var previewSession: AVCaptureSession? { nil }
   var configured: [(CameraPosition, CameramanCore.StreamSettings)] = []
+  /// Starts, stops and preview calls in the order they came: "start", "stop",
+  /// "show <angle> <mirrored>" and "hide".
+  var calls: [String] = []
+  /// The preview calls alone.
+  var previews: [String] { calls.filter { $0 != "start" && $0 != "stop" } }
   var started = 0
   var stopped = 0
   var flips = 0
@@ -128,11 +132,28 @@ final class FakeCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   func configure(position: CameraPosition, settings: CameramanCore.StreamSettings) {
     configured.append((position, settings))
   }
-  func start() { started += 1 }
-  func stop() { stopped += 1 }
+  func start() {
+    started += 1
+    calls.append("start")
+  }
+  func stop() {
+    stopped += 1
+    calls.append("stop")
+  }
   func flip() { flips += 1 }
   func setDeviceZoom(_ value: Double) { deviceZooms.append(value) }
   func setDisplayedZoom(_ value: Double) { displayedZooms.append(value) }
+  func showPreview(in layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool) {
+    calls.append("show \(Int(rotationAngle)) \(mirrored)")
+  }
+  /// When set, a hide's `done` waits here until the test calls it, as a camera whose queue is
+  /// still busy starting would.
+  var heldRelease: (@Sendable () -> Void)?
+  var holdsRelease = false
+  func hidePreview(in layer: AVCaptureVideoPreviewLayer, then done: (@Sendable () -> Void)?) {
+    calls.append("hide")
+    if holdsRelease { heldRelease = done } else { done?() }
+  }
 
   @MainActor
   func publish(_ state: CameraSession.State) {
@@ -147,7 +168,8 @@ final class ReplayCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)?
   var onAudioFrame: (@Sendable (SampleBuffer) -> Void)?
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)?
-  var previewSession: AVCaptureSession? { nil }
+  func showPreview(in layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool) {}
+  func hidePreview(in layer: AVCaptureVideoPreviewLayer, then done: (@Sendable () -> Void)?) { done?() }
   private let pictures: [CVPixelBuffer]
   private let queue = DispatchQueue(label: "phonestream.tests.replay", qos: .userInitiated)
   private var videoTimer: DispatchSourceTimer?
@@ -256,7 +278,8 @@ final class RotationFailingCaptureDevice: PhoneCaptureDevice, @unchecked Sendabl
     }
   }
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)?
-  var previewSession: AVCaptureSession? { nil }
+  func showPreview(in layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool) {}
+  func hidePreview(in layer: AVCaptureVideoPreviewLayer, then done: (@Sendable () -> Void)?) { done?() }
   private(set) var starts = 0
 
   /// Pictures delivered so far.

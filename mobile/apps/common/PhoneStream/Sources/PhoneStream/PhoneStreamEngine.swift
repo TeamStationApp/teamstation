@@ -32,7 +32,8 @@ public struct PhoneLens: Sendable, Equatable {
  * The phone's streaming and recording engine: TS Director's pipeline from the phone's camera.
  *
  * - `open` starts the capture and the programme; the preview draws straight from the capture
- *   session (`previewSession`), without the programme's picture delay. `close` ends them.
+ *   session (`previewDevice`, through `PhoneStreamPreviewLink`), without the programme's picture
+ *   delay. `close` ends them.
  * - `startRecording` starts two things from the same programme tick: a `RecordingSession`, whose
  *   take carries the game, the angle and the live stream and is written by `ProgramEncoder` at
  *   6 Mbps, and a `StreamSessionController`, which publishes `ProgramStreamer` to the URL and puts it
@@ -227,8 +228,9 @@ public final class PhoneStreamEngine {
 
   // MARK: - Open and close
 
-  /// The capture session the preview layer draws, nil before `open` and on a simulator.
-  public var previewSession: AVCaptureSession? { source?.device?.previewSession }
+  /// The camera the preview layer draws, nil before `open`, after `close`, and for the simulator's
+  /// synthetic source.
+  public var previewDevice: (any PhoneCaptureDevice)? { source?.device }
 
   /// Starts the camera, the preview and the programme. On an open engine, applies the arguments.
   public func open(angleName: String, audioEnabled: Bool = true, disabledLenses: Set<String> = []) throws {

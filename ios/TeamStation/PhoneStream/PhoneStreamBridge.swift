@@ -3,10 +3,53 @@ import CameramanCapture
 import Foundation
 import PhoneStream
 import react_native_video
+import UIKit
 
 /// What every call hands back to `RCTPhoneStream`: a value to resolve with, or an error code (the
 /// engine's own, such as `uploadInProgress`) and a message to reject with.
 typealias PhoneStreamReply = (_ value: Any?, _ code: String?, _ message: String?) -> Void
+
+/**
+ * The preview view's hold on the engine's camera, for `TSPhoneStreamPreviewComponentView`: the
+ * layer follows the camera the engine has open, and is turned and mirrored, through
+ * `PhoneStreamPreviewLink`, so every change to the capture session is made on the camera's own
+ * queue. Main thread only.
+ */
+@MainActor
+@objc(TSPhoneStreamPreviewLink)
+final class TSPhoneStreamPreviewLink: NSObject {
+  private let link: PhoneStreamPreviewLink
+
+  @objc init(layer: AVCaptureVideoPreviewLayer) {
+    link = PhoneStreamPreviewLink(layer: layer)
+    super.init()
+  }
+
+  /// Draws the camera the engine has open now: none before `open` and after `close`, and none for
+  /// the simulator's synthetic source.
+  @objc func refresh() {
+    link.follow(PhoneStreamEngine.shared?.previewDevice)
+  }
+
+  @objc func turn(_ rotationAngle: CGFloat, mirrored: Bool) {
+    link.turn(rotationAngle: rotationAngle, mirrored: mirrored)
+  }
+
+  /// Takes the layer from the camera, as a view that is freed must.
+  @objc func detach() {
+    link.follow(nil)
+  }
+
+  /// Takes the layer from the camera and keeps it off every `refresh`, while the view waits in the
+  /// pool; `unpark` once it is in use again.
+  @objc func park() {
+    link.park()
+  }
+
+  @objc func unpark() {
+    link.unpark()
+  }
+}
 
 /**
  * `PhoneStreamEngine` for the `TSPhoneStream` TurboModule, in Foundation types the Objective-C++
@@ -19,7 +62,7 @@ typealias PhoneStreamReply = (_ value: Any?, _ code: String?, _ message: String?
  */
 @objc(TSPhoneStreamBridge)
 final class TSPhoneStreamBridge: NSObject {
-  /// Posted on the main queue whenever the preview's capture session may have changed: after an
+  /// Posted on the main queue whenever the camera the preview draws may have changed: after an
   /// `open` or a `close`.
   @objc static let previewSessionChanged = Notification.Name("TSPhoneStreamPreviewSessionChanged")
 
@@ -58,11 +101,6 @@ final class TSPhoneStreamBridge: NSObject {
     }
   }
 
-  /// The capture session the preview layer draws, nil before `open` and on a simulator.
-  @MainActor @objc static func previewSession() -> AVCaptureSession? {
-    PhoneStreamEngine.shared?.previewSession
-  }
-
   // MARK: - Calls
 
   /// Unsupported when the engine could not open, so the app offers no streaming rather than
@@ -92,6 +130,8 @@ final class TSPhoneStreamBridge: NSObject {
           if !engine.isOpen { PublicAudioSessionManager.setIsAudioSessionManagementDisabled(false) }
           throw error
         }
+        // The streaming screen is up while the engine is open: the phone stays awake for it.
+        UIApplication.shared.isIdleTimerDisabled = true
         NotificationCenter.default.post(name: Self.previewSessionChanged, object: nil)
         return nil
       }
@@ -102,6 +142,7 @@ final class TSPhoneStreamBridge: NSObject {
     Self.runAsync(reply) { engine in
       await engine.close()
       PublicAudioSessionManager.setIsAudioSessionManagementDisabled(false)
+      UIApplication.shared.isIdleTimerDisabled = false
       NotificationCenter.default.post(name: Self.previewSessionChanged, object: nil)
       return nil
     }

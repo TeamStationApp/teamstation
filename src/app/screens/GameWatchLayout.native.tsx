@@ -15,6 +15,13 @@ import type { GameWatchLayoutProps } from './gameWatchLayoutProps'
 
 export type { GameWatchLayoutProps }
 
+/**
+ * The upright column's cap: none that any list reaches. A number rather than
+ * no key at all, because an animated style keeps the last value of a key it
+ * stops returning (see `listStyle`).
+ */
+const UNCAPPED = 1_000_000
+
 /** Native arrangement of the same pinned sections and pegged video as the web. */
 export function GameWatchLayout(
   props: GameWatchLayoutProps
@@ -70,10 +77,17 @@ export function GameWatchLayout(
     }
   })
   const listStyle = useAnimatedStyle(() => {
-    if (!sideBySide) return {}
+    // Upright, the column is as tall as everything in it, and has to say so.
+    // Returning no `maxHeight` left the sideways cap on the view: Android's
+    // streaming screen turns the phone sideways under this tab and back, and
+    // the column, which does not scroll upright, then cut off the cameras'
+    // upload rows and Record video with no way to reach them.
+    if (!sideBySide) return { maxHeight: UNCAPPED }
     const top = headerHeight + bodyTop.value + listTop.value - scrollY.value
     return { maxHeight: Math.max(120, height - top) }
-  })
+    // Named, so it is worked out again when the phone turns wherever the
+    // worklet's closure is not tracked for it (a build without the plugin).
+  }, [sideBySide, height, headerHeight])
   const measurePeg = (event: LayoutChangeEvent): void => {
     pegTop.value = event.nativeEvent.layout.y
     pegHeight.value = event.nativeEvent.layout.height
@@ -83,6 +97,10 @@ export function GameWatchLayout(
       ref={pinned.screen.scrollRef}
       onLayout={handleLayout}
       style={style}
+      // A tap on a button in a dialog opened from this tab (Record video's
+      // camera angle prompt) acts while the keyboard is up, rather than only
+      // putting the keyboard away.
+      keyboardShouldPersistTaps="handled"
       onScroll={onPageScroll}
       scrollEventThrottle={16}
       onContentSizeChange={(_width, contentY) => {
@@ -153,6 +171,7 @@ export function GameWatchLayout(
           </Animated.View>
           <Animated.ScrollView
             scrollEnabled={sideBySide}
+            keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
             onLayout={event => {
               listTop.value = event.nativeEvent.layout.y
