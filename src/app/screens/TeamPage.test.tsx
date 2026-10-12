@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asGameSummary, TeamStationClient } from '../../common/api'
+import {
+  asGameSummary,
+  asRosterEntry,
+  TeamStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -27,6 +31,7 @@ const detail = (patch: Partial<GroupDetail> = {}): GroupDetail =>
     games: [],
     staff: [],
     canViewPrivate: false,
+    nonMemberView: false,
     canManage: false,
     ...patch
   })
@@ -176,7 +181,7 @@ describe('restored access-aware team presentation', () => {
       expect(document.body.textContent).not.includes('Demo Hawks')
       expect(reads).equals(1)
     })
-  it('uses the original four-tab shell without private requests for a public viewer', async () => {
+  it('uses the original four-tab shell without private requests for somebody signed out', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail()
     let privateReads = 0
@@ -212,6 +217,71 @@ describe('restored access-aware team presentation', () => {
     expect(document.body.textContent).not.includes('Create Game')
     expect(privateReads).equals(0)
   })
+  for (const following of [true, false])
+    it(`gives anybody signed in who is not a member the full team page${following ? ', following it' : ', not following it, as from Search'}, asking for nothing kept for members`, async () => {
+      const api = new TeamStationClient({ baseUrl: '/api/v1' })
+      api.group = async () => detail({ nonMemberView: true })
+      const asked: string[] = []
+      api.teamGames = async id => {
+        asked.push(`teamGames ${id}`)
+        return []
+      }
+      api.roster = async id => {
+        asked.push(`roster ${id}`)
+        return [
+          asRosterEntry({
+            userId: 201,
+            shortName: 'Avery S',
+            jersey: '7',
+            positions: ['SS'],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          })
+        ]
+      }
+      for (const method of [
+        'teamStats',
+        'teamPitchingStats',
+        'invites'
+      ] as const)
+        api[method] = async () => {
+          asked.push(method)
+          throw new Error('Kept for members')
+        }
+      api.follows = async () => (following ? [detail().group] : [])
+      await mount(
+        <TeamPage
+          client={api}
+          id="alias"
+          initialTab="team"
+          onOpenGame={() => undefined}
+          onOpenPlayer={() => undefined}
+        />
+      )
+      expect(
+        [...document.querySelectorAll('[role="tab"]')].map(n => n.textContent)
+      ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+      // The members' roster, not the public page's staff list.
+      expect(document.body.textContent).includes('Avery S')
+      expect(document.body.textContent).not.includes('Standalone team')
+      expect(document.body.textContent).not.includes('membership is required')
+      expect(document.querySelector('[aria-label^="Avery S"]')).equals(null)
+      await press('Stats')
+      expect(document.body.textContent).includes('SEASON PERFORMANCE')
+      expect(document.body.textContent).includes(
+        'You need to be a member of one of the teams to see this.'
+      )
+      expect(asked).deep.equals(['teamGames canonical', 'roster canonical'])
+      // Following it or not changes the button on the card, and nothing else.
+      expect(
+        document.querySelector(
+          `[aria-label="${following ? 'Unfollow' : 'Follow'} Demo Hawks"]`
+        )
+      ).not.equals(null)
+    })
   it('loads private collections with the canonical identity and sends the gear to settings', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail({ canViewPrivate: true, canManage: true })
@@ -373,7 +443,6 @@ describe('gear-only team actions', () => {
       <TeamSettingsActions
         detail={detail({ canManage: true })}
         onLink={v => seen.push(v)}
-        onManage={v => seen.push(v)}
         onCreateGame={v => seen.push(v)}
         onCreateExternal={v => seen.push(v)}
         onPromote={v => seen.push(v)}
@@ -382,10 +451,11 @@ describe('gear-only team actions', () => {
     for (const label of [
       'Join a Season',
       'Create Game',
-      'Create placeholder team',
-      'Manage people and roles'
+      'Create placeholder team'
     ])
       await press(label)
+    // People are added from Settings and managed from the roster now.
+    expect(document.body.textContent).not.includes('Manage people')
     expect(seen).deep.equals([
       {
         subject: { kind: 'team', id: 'canonical' },
@@ -393,7 +463,7 @@ describe('gear-only team actions', () => {
         relationship: 'participation',
         direction: 'parents'
       },
-      ...Array(3).fill({ kind: 'team', id: 'canonical' })
+      ...Array(2).fill({ kind: 'team', id: 'canonical' })
     ])
   })
   it('offers placeholder promotion with custody and hides unavailable/unauthorized actions', async () => {

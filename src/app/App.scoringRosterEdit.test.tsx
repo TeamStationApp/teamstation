@@ -400,13 +400,16 @@ describe('actual App scoring player Settings return', function () {
       }
     )
   })
-  it('keeps own-team editing when the opponent roster is inaccessible', async function () {
+  it('keeps own-team editing when the opponent roster is read without private names', async function () {
     await withScoringApp(async fixture => {
       await fixture.roles(['scorekeeper'], 'team', ['away'])
       await openEditor()
+      // Anybody signed in reads another team's roster, short names only, so
+      // the opponent's is there without the right to manage it.
       expect(
         fixture.trace.some(
-          line => line.includes('/teams/home/roster') && line.includes('-> 404')
+          line =>
+            line.includes('/teams/home/roster ') && line.includes('-> 200')
         )
       ).equals(true)
       expect(
@@ -519,7 +522,6 @@ describe('actual App scoring player Settings return', function () {
           await openEditor()
           await press('Mookie Betts,')
           await type('Jersey number', '14')
-          await press('Bats Left')
           const pauseSave = delayedCommit
             ? fixture.pauseSettings
             : fixture.pauseSettingsResponses
@@ -549,7 +551,6 @@ describe('actual App scoring player Settings return', function () {
           pauseSave(false, false)
           if (back) await press('Mookie Betts,')
           await type('Jersey number', '15')
-          await press('Bats Switch')
           await press('Save')
           await waitFor(() =>
             fixture.trace.some(
@@ -563,11 +564,11 @@ describe('actual App scoring player Settings return', function () {
           await waitFor(
             () =>
               document.querySelector(
-                '[aria-label^="Mookie Betts, jersey 15, bats switch"]'
+                '[aria-label^="Mookie Betts, jersey 15,"]'
               ) != null
           )
           pauseSave(false)
-          const expected = delayedCommit ? '14, bats left' : '15, bats switch'
+          const expected = delayedCommit ? '14,' : '15,'
           await waitFor(
             () =>
               document.querySelector('[aria-label="Loading team roster"]') ==
@@ -831,8 +832,9 @@ describe('actual App scoring player Settings return', function () {
       document.dispatchEvent(
         new window.KeyboardEvent('keydown', { key: 'b', bubbles: true })
       )
-      await press('Bats Switch')
-      await press('Throws Left')
+      // Settings beside a team edits the jersey and positions; how a player
+      // bats and throws is edited away from a team.
+      await press('SS')
       await press('Save')
       expect(JSON.stringify(fixture.stored())).equals(scoring)
       await press('Back')
@@ -846,7 +848,7 @@ describe('actual App scoring player Settings return', function () {
       )
       expect(
         document.querySelector(
-          '[aria-label^="Mookie Betts, jersey 12, bats switch, throws left"]'
+          '[aria-label^="Mookie Betts, jersey 12, bats right, throws right"]'
         )
       ).not.equals(null)
       expect(opens).equals(1)

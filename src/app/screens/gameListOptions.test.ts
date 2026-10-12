@@ -47,4 +47,12 @@ describe('schedule and published recording destinations', () => {
       autoPlay: true
     })
   })
+  it('never starts a non-member’s game playing, whose video is kept for members', () => {
+    expect(gameListOptions({ videoCount: 2 }, 'schedule', true)).deep.equals({
+      autoPlay: false
+    })
+    expect(gameListOptions({ videoCount: 2 }, 'schedule', false)).deep.equals({
+      autoPlay: true
+    })
+  })
 })

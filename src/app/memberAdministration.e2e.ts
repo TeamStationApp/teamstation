@@ -31,7 +31,7 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
   await fill(page, 'Sign-in code', f.h.mail.get(email)!)
   await press(page, 'Sign in')
   await page.waitForSelector('[aria-label^="Account,"]')
-  await text(page, 'Discover leagues, seasons and teams')
+  await text(page, 'Your Home')
 }
 async function toggle(page: Page, label: string): Promise<void> {
   await page.waitForSelector(`input[aria-label="${label}"]`)
@@ -65,20 +65,7 @@ async function main(): Promise<void> {
     const recipient = await actorPage(106)
     const node = await actorPage(105)
     await team.bringToFront()
-    await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
-      waitUntil: 'networkidle0'
-    })
-    await press(team, 'Manage people and roles')
-    await text(team, 'Add somebody')
-    await fill(team, 'E-mail address', 'fixture106@example.com')
-    await press(team, 'Choose invitation roles')
-    await toggle(team, 'Team admin')
-    await press(team, 'Save')
-    await press(team, 'Add')
-    await text(team, 'An invitation is on its way')
-    await press(team, 'Open sent invitation')
-    await text(team, 'Pending')
-    const requestId = new URL(team.url()).pathname.split('/').at(-1)!
+    // The team's only direct administrator cannot be taken out.
     expect(
       (
         await f.h.request(
@@ -89,16 +76,28 @@ async function main(): Promise<void> {
         )
       ).status
     ).equals(409)
-    await team.screenshot({
-      path: join(artifacts!, 'pending-admin-replacement.png')
-    })
-    await recipient.bringToFront()
-    await recipient.goto(f.h.origin + `/notifications/${requestId}`, {
+    // Adding somebody is in the team's Settings, and an address an account
+    // has verified is added at once, with nothing to accept.
+    await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
       waitUntil: 'networkidle0'
     })
-    await text(recipient, 'administrator')
-    await press(recipient, 'Accept invitation')
-    await text(recipient, 'Accepted')
+    await press(team, 'Manage')
+    await text(team, 'Add somebody')
+    await fill(team, 'E-mail address', 'fixture106@example.com')
+    await press(team, 'Choose roles')
+    await toggle(team, 'Team admin')
+    await press(team, 'Save')
+    await text(team, 'Adds them as: Team admin.')
+    await press(team, 'Add')
+    await text(team, 'Tim Raines has been added.')
+    await team.screenshot({
+      path: join(artifacts!, 'admin-added-at-once.png')
+    })
+    await recipient.bringToFront()
+    await recipient.goto(f.h.origin + '/notifications', {
+      waitUntil: 'networkidle0'
+    })
+    await text(recipient, 'added you as Admin')
     expect(
       (
         await f.h.request(
@@ -109,14 +108,17 @@ async function main(): Promise<void> {
         )
       ).status
     ).equals(200)
-    await recipient.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    // The new administrator finds themselves among the team's Admins.
+    await recipient.goto(f.h.origin + `/teams/${f.teamA}?tab=team`, {
       waitUntil: 'networkidle0'
     })
-    await press(recipient, 'Manage people and roles')
-    await text(recipient, 'Tim Raines')
-    await recipient.screenshot({ path: join(artifacts!, 'manage-after.png') })
+    await text(recipient, 'ADMINS')
+    await text(recipient, 'Tim R')
+    await recipient.screenshot({
+      path: join(artifacts!, 'roster-admin-after.png')
+    })
     lines.push(
-      'E9 PASS: requested direct administrator access stays pending; last-direct removal is refused before acceptance and succeeds after the real recipient approves'
+      "E9 PASS: the sole direct administrator cannot be taken out; an administrator added from Settings takes effect at once and is told in the inbox; only then does the first administrator's removal succeed"
     )
 
     await node.bringToFront()
@@ -128,9 +130,8 @@ async function main(): Promise<void> {
     await node.screenshot({
       path: join(artifacts!, 'last-admin-protected.png')
     })
-    // A second independent signed-in recipient accepts the team replacement.
-    const second = await actorPage(103)
-    const invitation = await f.h.request(
+    // The node administrator adds a second direct administrator, at once.
+    const second = await f.h.request(
       'POST',
       `/manage/team/${f.teamA}/people`,
       {
@@ -140,14 +141,8 @@ async function main(): Promise<void> {
       },
       105
     )
-    const next = (
-      (await invitation.json()) as { invited: { requestId: string } }
-    ).invited.requestId
-    await second.goto(f.h.origin + `/notifications/${next}`, {
-      waitUntil: 'networkidle0'
-    })
-    await press(second, 'Accept invitation')
-    await text(second, 'Accepted')
+    expect(second.status).equals(201)
+    expect(await second.json()).deep.include({ added: true })
     await node.bringToFront()
     await press(node, 'Confirm account change')
     await text(node, 'Suspended')
@@ -181,7 +176,7 @@ async function main(): Promise<void> {
       path: join(artifacts!, 'node-admin-protected.png')
     })
     lines.push(
-      'E9 PASS: sole direct administrator suspension is blocked; an accepted replacement enables suspension; reactivation preserves identity and requires a fresh sign-in; node role appears on that account; lower scopes cannot read or moderate the node'
+      'E9 PASS: sole direct administrator suspension is blocked; a second administrator added at once enables suspension; reactivation preserves identity and requires a fresh sign-in; node role appears on that account; lower scopes cannot read or moderate the node'
     )
 
     const unknownEmail = 'new-browser-member@example.com'
@@ -241,10 +236,10 @@ async function main(): Promise<void> {
         .where('id', '=', person.user_id)
         .executeTakeFirstOrThrow()
     ).deep.equals({ is_admin: false, onboarding_step: 'complete' })
-    await newcomer.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    await newcomer.goto(f.h.origin + `/teams/${f.teamA}?tab=team`, {
       waitUntil: 'networkidle0'
     })
-    await text(newcomer, 'Hank A.')
+    await text(newcomer, 'Hank A')
     await newcomer.screenshot({
       path: join(artifacts!, 'person-invitation-onboarding.png')
     })

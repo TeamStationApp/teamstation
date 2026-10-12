@@ -33,7 +33,7 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
   await fill(page, 'Sign-in code', f.h.mail.get(email)!)
   await press(page, 'Sign in')
   await page.waitForSelector('[aria-label^="Account,"]')
-  await text(page, 'Discover leagues, seasons and teams')
+  await text(page, 'Your Home')
 }
 async function manualLocation(page: Page): Promise<void> {
   await press(page, 'Enter location manually')
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     await press(plain, 'Use initials')
     await shot(plain, 'league-creation-after.png')
     await press(plain, 'Create League')
-    await text(plain, 'Group settings')
+    await plain.waitForSelector('[aria-label="League settings"]')
     await shot(plain, 'league-created.png')
     const league = await f.h.db
       .selectFrom('leagues')
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
       'E3 league PASS: denied GPS remains usable; confirmed own city, initials and recurring organization name saved once'
     )
 
-    await press(plain, 'Create Season')
+    await press(plain, 'Create season')
     await fill(plain, 'Season name', 'Demo Browser Fall')
     await press(plain, 'Continue')
     await text(plain, 'Fall 2026')
@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     await press(plain, 'Use initials')
     await press(plain, 'Create Season')
     await text(plain, 'Demo Browser Fall')
-    await text(plain, 'Parent league: Demo Browser League')
+    await plain.waitForSelector('[aria-label="Season settings"]')
     await shot(plain, 'season-after.png')
     const season = await f.h.db
       .selectFrom('seasons')
@@ -139,7 +139,9 @@ async function main(): Promise<void> {
       'E4 season PASS: name is independent of current/prior/two-next presets; inclusive custom cross-year calendar creates an empty parent-only season'
     )
 
-    await press(plain, 'Create Team')
+    await press(plain, 'Teams', 'tab')
+    await press(plain, 'Create team')
+    await press(plain, 'Team')
     await fill(plain, 'Team name', 'Demo Browser Owls')
     await press(plain, 'Continue')
     await manualLocation(plain)
@@ -149,7 +151,6 @@ async function main(): Promise<void> {
     await shot(plain, 'team-creation-after.png')
     await press(plain, 'Create Team')
     await text(plain, 'Demo Browser Owls')
-    await text(plain, 'Parent season: Demo Browser Fall')
     await shot(plain, 'team-after.png')
     const team = await f.h.db
       .selectFrom('teams')
@@ -158,6 +159,13 @@ async function main(): Promise<void> {
       .executeTakeFirstOrThrow()
     expect(team.league_id).equals(league.id)
     expect(team.picture_catalog_id).equals(null)
+    expect(
+      await f.h.db
+        .selectFrom('season_team_parents')
+        .select('season_id')
+        .where('team_id', '=', team.id)
+        .execute()
+    ).deep.equals([{ season_id: season.id }])
     expect(
       await f.h.db
         .selectFrom('season_teams')
@@ -169,8 +177,8 @@ async function main(): Promise<void> {
       'E3 team/E4 parent-only team PASS: name, own locality and initials save; creation in a season establishes management only'
     )
 
-    await press(plain, 'Group settings')
-    await text(plain, 'Parent relationships')
+    await press(plain, 'Manage')
+    await text(plain, 'Team management')
     await shot(plain, 'parent-settings-after.png')
     await press(plain, 'Change picture')
     await press(plain, 'Use initials')
@@ -197,11 +205,15 @@ async function main(): Promise<void> {
     await press(publicPage, 'Discover leagues, seasons and teams')
     await fill(publicPage, 'Search by name or city', 'Demo Browser Owls')
     await press(publicPage, 'Open Demo Browser Owls Renamed')
+    await press(publicPage, 'Team', 'tab')
     await text(publicPage, 'Demo Browser City')
     await shot(publicPage, 'public-discovery-after.png')
+    // No way into the team's Settings, where its people are added.
     expect(
-      await publicPage.evaluate(() => document.body.textContent)
-    ).not.includes('Manage people')
+      await publicPage.evaluate(
+        () => document.querySelector('[aria-label="Manage"]') === null
+      )
+    ).equals(true)
     await publicPage.reload({ waitUntil: 'networkidle0' })
     await text(publicPage, 'Demo Browser Owls Renamed')
     const privateDenied = await f.h.request(
@@ -396,7 +408,9 @@ async function main(): Promise<void> {
     await recipient.goto(f.h.origin + `/groups/team/${external.id}`, {
       waitUntil: 'networkidle0'
     })
-    await text(recipient, 'Manage people and roles')
+    // An administrator now: the team's Settings let them add people.
+    await press(recipient, 'Manage')
+    await text(recipient, 'Add somebody')
     expect(
       await f.h.db
         .selectFrom('teams')

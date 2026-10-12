@@ -1,9 +1,9 @@
-import type { Kysely, Selectable } from 'kysely'
+import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
 
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import type { Notification } from '../../common/notifications'
-import { adminScopes } from '../access'
+import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
 import {
@@ -11,9 +11,11 @@ import {
   type Clock,
   realClock,
   requestStatus,
+  speaksForSender,
   type StoredRequest
 } from '../groups/requests'
-import { canAdminister, currentActor } from '../groups/rights'
+import { currentActor } from '../groups/rights'
+import { groupName, heldAt } from '../invites/grants'
 import { titleAndDescription } from './requestInformation'
 
 async function informationFor(
@@ -32,7 +34,18 @@ async function informationFor(
     .where('event_id', '=', event.id)
     .where('user_id', '=', actor.userId)
     .executeTakeFirst()
-  const metadata = event.metadata as { title?: string; description?: string }
+  const metadata = event.metadata as {
+    title?: string
+    description?: string
+    scope?: GroupRef
+  }
+  // A grant offers to leave the level it gave, for as long as they are in it.
+  let leave: Notification['leave'] = null
+  if (event.source_type === 'grant' && metadata.scope != null) {
+    const held = await heldAt(db, metadata.scope, actor.userId)
+    if (held.member || held.roles.length > 0)
+      leave = { ...metadata.scope, name: await groupName(db, metadata.scope) }
+  }
   return {
     id: event.id,
     requestId: event.id,
@@ -45,8 +58,17 @@ async function informationFor(
     canAct: false,
     canWithdraw: false,
     canResend: false,
-    viewed: receipt != null
+    viewed: receipt != null,
+    leave
   }
+}
+
+/**
+ * Whether a notification is new news: one waiting for this person's answer,
+ * or a grant they have not opened yet, which lights the bell until they do.
+ */
+function isNews(row: Notification): boolean {
+  return row.canAct || (row.type === 'grant' && !row.viewed)
 }
 
 export async function notificationFor(
@@ -66,7 +88,7 @@ export async function notificationFor(
   let representedConsent = false
   for (const side of sides) {
     const sideRef = { kind: side.scope_type, id: side.scope_id }
-    if (!(await approvesSide(db, fresh, sideRef))) continue
+    if (!(await approvesSide(db, fresh, sideRef, request))) continue
     eligible = true
     if (
       side.scope_type === 'team' &&
@@ -80,16 +102,14 @@ export async function notificationFor(
         valid = await approvesSide(
           db,
           { userId: side.approved_by, isAdmin: false, scopes: [] },
-          sideRef
+          sideRef,
+          request
         )
       } catch {}
     }
     if (!valid) actionable = true
   }
-  const senderAdmin = await canAdminister(db, fresh, {
-    kind: request.sender_scope_type,
-    id: request.sender_scope_id
-  })
+  const senderAdmin = await speaksForSender(db, fresh, request)
   const event = await db
     .selectFrom('notification_events')
     .select(['id', 'recorded_recipients'])
@@ -125,7 +145,8 @@ export async function notificationFor(
       canAct: false,
       canWithdraw: true,
       canResend: false,
-      viewed: receipt != null
+      viewed: receipt != null,
+      leave: null
     }
   const historical =
     status !== 'pending' &&
@@ -146,9 +167,58 @@ export async function notificationFor(
     canWithdraw:
       status === 'pending' &&
       (senderAdmin || request.sender_id === fresh.userId || representedConsent),
-    canResend: status !== 'accepted' && senderAdmin,
-    viewed: receipt != null
+    canResend:
+      status !== 'accepted' && senderAdmin && request.kind !== 'guardian',
+    viewed: receipt != null,
+    leave: null
   }
+}
+
+/**
+ * The teams whose players' guardian requests this person may answer, while
+ * those players have no guardian: every team they administer, coach or
+ * assist. Whether a player has one is read per request, by `approvesSide`.
+ */
+async function coachedTeams(
+  db: Kysely<Database>,
+  actor: Actor,
+  administered: GroupRef[]
+): Promise<string[]> {
+  const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+  return [
+    ...new Set([
+      ...scopes.coach.teamIds,
+      ...scopes.assistant.teamIds,
+      ...administered.filter(ref => ref.kind === 'team').map(ref => ref.id)
+    ])
+  ]
+}
+
+/**
+ * The players of these teams as a guardian request's terms name them: every
+ * row playing on one, and the open row each became, as text. A query, not a
+ * list, so a league's worth of players never leaves the database.
+ */
+function playersOf(teamIds: string[]): RawBuilder<string> {
+  return sql<string>`(
+    with recursive chain(id, first) as (
+      select memberships.user_id, true
+      from memberships
+      inner join teams on teams.id = memberships.team_id
+      where memberships.team_id in (${sql.join(teamIds)})
+        and memberships.is_player = true
+        and teams.merged_into is null
+      union
+      select users.merged_into, false
+      from chain
+      inner join users on users.id = chain.id
+      where users.merged_into is not null
+    )
+    select chain.id::text
+    from chain
+    inner join users on users.id = chain.id
+    where chain.first or users.merged_into is null
+  )`
 }
 
 /** SQL selects candidate requests; live side checks govern disclosure and the pending dot. */
@@ -190,6 +260,10 @@ export async function inbox(
       refs.push({ kind: 'team', id: team.id })
   let rows = db.selectFrom('group_requests').selectAll()
   if (!scopes.isAdmin) {
+    // A guardian request asks the player's side: so the player's guardians,
+    // and while there are none its coaching staff.
+    const teamIds = await coachedTeams(db, fresh, refs)
+    const guarded = await guardedRows(db, fresh.userId)
     const emails = await db
       .selectFrom('user_emails')
       .select('email')
@@ -239,6 +313,30 @@ export async function inbox(
         eb('id', 'in', historyIds),
         eb('id', 'in', viewedIds),
         eb('sender_id', '=', fresh.userId),
+        ...(guarded.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'guardian'),
+                eb(
+                  sql<string>`terms->>'playerUserId'`,
+                  'in',
+                  guarded.map(String)
+                )
+              ])
+            ]),
+        ...(teamIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'guardian'),
+                eb(
+                  sql<string>`terms->>'playerUserId'`,
+                  'in',
+                  playersOf(teamIds)
+                )
+              ])
+            ]),
         ...refs.map(ref =>
           eb.and([
             eb('sender_scope_type', '=', ref.kind),
@@ -254,19 +352,22 @@ export async function inbox(
     const row = await notificationFor(db, fresh, request, clock)
     if (row != null) projected.push(row)
   }
-  if (options.history === true) {
-    const information = await db
-      .selectFrom('notification_events')
-      .selectAll()
-      .where('source_type', '!=', 'groupRequest')
-      .where(eb =>
-        eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
-      )
-      .execute()
-    for (const event of information) {
-      const row = await informationFor(db, fresh, event)
-      if (row != null) projected.push(row)
-    }
+  // History lists every piece of information; the other tabs read grants,
+  // which are news until opened, and light the bell.
+  const information = await db
+    .selectFrom('notification_events')
+    .selectAll()
+    .where('source_type', '!=', 'groupRequest')
+    .$if(options.history !== true, query =>
+      query.where('source_type', '=', 'grant')
+    )
+    .where(eb =>
+      eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
+    )
+    .execute()
+  for (const event of information) {
+    const row = await informationFor(db, fresh, event)
+    if (row != null) projected.push(row)
   }
   projected.sort((a, b) =>
     a.sentAt === b.sentAt
@@ -279,13 +380,13 @@ export async function inbox(
         ? -1
         : 1
   )
-  const hasPending = projected.some(row => row.canAct)
+  const hasPending = projected.some(isNews)
   let visible = projected.filter(row =>
     options.history === true
       ? row.status !== 'pending'
       : options.sent === true
         ? row.canWithdraw
-        : row.canAct
+        : isNews(row)
   )
   if (options.cursor != null) {
     const [time, id] = options.cursor.split('|')

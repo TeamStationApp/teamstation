@@ -4,14 +4,15 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
-import { asPlayerSettings } from '../../common/playerSettings'
+import { asPersonSettings, asPlayerSettings } from '../../common/playerSettings'
 import { asUserId } from '../../common/userIdNumber'
 import {
-  canManageRoster,
   canSeePerson,
   canSeePlayedFor,
+  guardsPerson,
   mayEditName,
-  roleScopes,
+  mayManagePlayer,
+  teamsPlayedOnNow,
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
@@ -19,6 +20,7 @@ import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
+import { guardianInviteAs } from '../groups/requests'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -33,6 +35,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { highlightSettings } from '../settings'
+import { playerFilterOf } from '../stats/rows'
 import { teamRoster } from '../teams/teamRoster'
 
 /**
@@ -43,10 +46,11 @@ import { teamRoster } from '../teams/teamRoster'
  * from them — season, team and year are exactly the three things this list
  * knows — so narrowing a page costs no second request.
  *
- * **No jersey number here.** A number belongs to a player *on a team*
- * (`memberships.jersey`) and is drawn where that context exists: the team's
- * roster, and the box score. Sending it from an endpoint about a person is how
- * it ends up on a card that has to choose between a child's two numbers.
+ * **No jersey number on the person.** A number belongs to a player *on a
+ * team* (`memberships.jersey`), so it travels only inside a `teams[]` row,
+ * beside the team it was worn for, with that team's positions. Nothing about
+ * the person carries one: that is how a number ends up on a card that has to
+ * choose between a child's two.
  */
 export function playerRoutes(
   db: Kysely<Database>,
@@ -95,8 +99,12 @@ export function playerRoutes(
 
       // The same rule as every other read: you may see somebody if you can
       // already see a team they are on, or a season opened up to you. Their
-      // own page is always theirs.
-      if (!canSeePerson(scopes, userId === actor.userId, teams)) {
+      // own page is always theirs, and their guardian's: every team they
+      // have played for, the ones they have left included.
+      const ownPage =
+        userId === actor.userId ||
+        (await guardsPerson(db, scopes, actor.userId, person))
+      if (!canSeePerson(scopes, ownPage, teams)) {
         throw notFound()
       }
 
@@ -116,12 +124,21 @@ export function playerRoutes(
         name: shortName({ ...user, id: userId }),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
+        /**
+         * How this person may invite a guardian of the player: as a guardian,
+         * with no sending team; from a team they coach, while the player has
+         * no guardian; or not at all.
+         */
+        guardianInviteAs: await guardianInviteAs(db, actor, userId),
         avatarUrl: imageUrl(media.space, user.avatarPath, PROFILE_SIZE),
         bats: user.bats,
         throws: user.throws,
-        teams: teams.filter(
-          team => userId === actor.userId || canSeePlayedFor(scopes, team)
-        )
+        teams: teams
+          .filter(team => ownPage || canSeePlayedFor(scopes, team))
+          .map(({ logoPath, ...team }) => ({
+            ...team,
+            logoUrl: imageUrl(media.space, logoPath)
+          }))
       })
     })
   )
@@ -219,17 +236,42 @@ export function playerRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       const limit = limitOf(req.query.limit)
       const before = dateOf(req.query.before)
+      // The same season, team and year the page's stats are narrowed to, so
+      // the Videos tab and the Stats tab answer one question.
+      const filter = playerFilterOf(req.query)
 
       // Every row that is this person, because a merge closes a row without
       // moving what was written under it.
       const person = await onePerson(db, userId)
+      // Their own plays, and their guardian's child's, from every team.
+      const ownPlays =
+        person.userIds.includes(actor.userId) ||
+        (await guardsPerson(db, scopes, actor.userId, person))
 
       // The plays this person is credited on. The credit is what the row is
       // drawn from, so the credit is what is searched: `event_players` says
       // somebody was named on a play, which is not the same as somebody having
       // done something worth watching.
       const creditsByEvent = await creditsForPlayer(db, person.userId)
-      const eventIds = [...creditsByEvent.keys()]
+      // A team filter is the team they played for, as on their stats: a play
+      // whose credit names another team of theirs is that team's, even in a
+      // game against this one. A credit with no team leaves it to the game.
+      const eventIds = [...creditsByEvent]
+        .filter(([, credits]) => {
+          if (filter.teamId == null) return true
+          const teams = new Set(
+            credits
+              .filter(
+                outcome =>
+                  outcome.creditUserId != null &&
+                  person.userIds.includes(outcome.creditUserId)
+              )
+              .map(outcome => outcome.teamId)
+          )
+          teams.delete(null)
+          return teams.size === 0 || teams.has(filter.teamId)
+        })
+        .map(([eventId]) => eventId)
       if (eventIds.length === 0) {
         res.json({ highlights: [], nextBefore: null, withoutVideo: 0 })
         return
@@ -252,6 +294,25 @@ export function playerRoutes(
       if (before != null) {
         query = query.where('events.startTime', '<', before)
       }
+      // Narrowed before the page is cut, so a filtered page is as full as an
+      // unfiltered one and `nextBefore` pages through the filtered plays.
+      const { seasonId, teamId, year } = filter
+      if (seasonId != null) {
+        query = query.where('games.season_id', '=', seasonId)
+      }
+      if (teamId != null) {
+        query = query.where(eb =>
+          eb.or([
+            eb('games.home_team_id', '=', teamId),
+            eb('games.away_team_id', '=', teamId)
+          ])
+        )
+      }
+      if (year != null) {
+        query = query
+          .where('games.start_at', '>=', new Date(Date.UTC(year, 0, 1)))
+          .where('games.start_at', '<', new Date(Date.UTC(year + 1, 0, 1)))
+      }
 
       const rows = await query
         .orderBy('events.startTime', 'desc')
@@ -263,7 +324,7 @@ export function playerRoutes(
       const seen = rows.filter(
         row =>
           scopes.isAdmin ||
-          person.userIds.includes(actor.userId) ||
+          ownPlays ||
           scopes.teamIds.has(row.homeTeamId) ||
           scopes.teamIds.has(row.awayTeamId) ||
           (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
@@ -411,12 +472,13 @@ export function playerRoutes(
    * positions belong to this team; the name and how they bat and throw belong
    * to the player and read the same on every team.
    *
-   * A coach or scorekeeper (set on the team, its season or league), an
-   * administrator of any of those, and a site administrator. Anybody else,
-   * and anybody who is not a player on this team, is answered 404: the
-   * question "may I change this?" is not asked of a page nobody offered.
-   * Preserve canManageRoster's intentional scorekeeper exception: they may
-   * be the only person responsible for maintaining the roster.
+   * A coach, assistant or scorekeeper of the team (set on it, or on its
+   * season or league), an administrator of any of those, a guardian of the
+   * player, and a site administrator (`mayManagePlayer`). Anybody else, and
+   * anybody who is not a player on this team, is answered 404: the question
+   * "may I change this?" is not asked of a page nobody offered. Preserve
+   * canManageRoster's intentional scorekeeper exception: they may be the only
+   * person responsible for maintaining the roster.
    *
    * Setting either hand marks it `manual`, so the next roster import
    * leaves the roster manager's answer alone. The answer is the player's roster
@@ -430,8 +492,7 @@ export function playerRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const userId = userIdParam(req.params.userId)
-      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-      if (!canManageRoster(scopes, teamId)) throw notFound()
+      if (!(await mayManagePlayer(db, actor, userId, teamId))) throw notFound()
 
       const place = await db
         .selectFrom('memberships')
@@ -544,6 +605,59 @@ export function playerRoutes(
     })
   )
 
+  /**
+   * How a player bats and throws, which is theirs on every team, asked about
+   * the person rather than their place on one team: what a guardian sets
+   * from Home.
+   *
+   * A guardian of the player, a coach, assistant or scorekeeper of any team
+   * they play on, or its administrator, and a site administrator
+   * (`mayManagePlayer` without a team). Anybody else,
+   * and a row closed into another, is answered 404. `jersey` and `positions`
+   * belong to a team and are refused here with 400, as is a body that changes
+   * nothing. Setting either hand marks it `manual`, as the team's settings
+   * do, and is audited the same way.
+   */
+  router.put(
+    '/players/:userId/settings',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const userId = userIdParam(req.params.userId)
+      if (!(await mayManagePlayer(db, actor, userId, null))) throw notFound()
+
+      const user = await db
+        .selectFrom('users')
+        .select(['bats', 'throws'])
+        .where('id', '=', userId)
+        .where('merged_into', 'is', null)
+        .executeTakeFirst()
+      if (user == null) throw notFound()
+
+      const body = cleanBody(asPersonSettings, req.body)
+      const after = await db
+        .updateTable('users')
+        .set({
+          ...(body.bats === undefined ? {} : { bats: body.bats }),
+          ...(body.throws === undefined ? {} : { throws: body.throws }),
+          bats_source: 'manual',
+          updated_at: new Date()
+        })
+        .where('id', '=', userId)
+        .returning(['bats', 'throws'])
+        .executeTakeFirstOrThrow()
+
+      setAudit(res.locals, {
+        entityType: 'playerSettings',
+        entityId: userId,
+        before: { bats: user.bats, throws: user.throws },
+        after: { bats: after.bats, throws: after.throws }
+      })
+      res.json({ userId, bats: after.bats, throws: after.throws })
+    })
+  )
+
   return router
 }
 
@@ -563,9 +677,22 @@ function dateOf(raw: unknown): Date | undefined {
 export interface PlayerTeam {
   teamId: string
   teamName: string
+  /** The team's logo in the Space, which a page signs into `logoUrl`. */
+  logoPath: string | null
   seasonId: string | null
   seasonName: string | null
   seasonYear: number | null
+  /** Their number on this team; null on a team they only have stats for. */
+  jersey: string | null
+  /** Where they play on this team; empty on a team they only have stats for. */
+  positions: string[]
+  /**
+   * Whether they play on this team now: a player's membership of it, on any
+   * of their rows. False on a team they only have stats for, such as one they
+   * have left. Read by `teamsPlayedOnNow`, the test `mayManagePlayer` makes
+   * of a team.
+   */
+  current: boolean
 }
 
 /**
@@ -576,6 +703,11 @@ export interface PlayerTeam {
  * child imported from a roster has the first without the second until their
  * games are ingested; a child who appears only in an opponent's play-by-play
  * can have the second without the first.
+ *
+ * A team appears once for each season it is in, belongs to or played in, and
+ * without a season only when it has none. Each row carries the jersey and positions of
+ * their membership on that team, which a stats row has no way to know, and
+ * whether they play there now.
  */
 export async function teamsOf(
   db: Kysely<Database>,
@@ -584,14 +716,26 @@ export async function teamsOf(
   // Every row that is this person: a child on five teams was five imports,
   // and the teams of the four that were closed are still theirs.
   if (userIds.length === 0) return []
+  // A team's seasons: those it competes in, and those it belongs to.
+  const teamSeasons = db
+    .selectFrom('season_teams')
+    .select(['season_id', 'team_id'])
+    .union(
+      db.selectFrom('season_team_parents').select(['season_id', 'team_id'])
+    )
+    .as('team_seasons')
   const fromMemberships = await db
     .selectFrom('memberships')
     .innerJoin('teams', 'teams.id', 'memberships.team_id')
-    .leftJoin('season_teams', 'season_teams.team_id', 'memberships.team_id')
-    .leftJoin('seasons', 'seasons.id', 'season_teams.season_id')
+    .leftJoin(teamSeasons, 'team_seasons.team_id', 'memberships.team_id')
+    .leftJoin('seasons', 'seasons.id', 'team_seasons.season_id')
     .select([
       'memberships.team_id as teamId',
+      'memberships.user_id as userId',
+      'memberships.jersey as jersey',
+      'memberships.positions as positions',
       'teams.name as teamName',
+      'teams.logo_path as logoPath',
       'seasons.id as seasonId',
       'seasons.name as seasonName',
       'seasons.year as seasonYear'
@@ -611,6 +755,7 @@ export async function teamsOf(
     .select([
       'teams.id as teamId',
       'teams.name as teamName',
+      'teams.logo_path as logoPath',
       'seasons.id as seasonId',
       'seasons.name as seasonName',
       'seasons.year as seasonYear'
@@ -620,10 +765,49 @@ export async function teamsOf(
     .where('teams.merged_into', 'is', null)
     .execute()
 
+  // Their place on each team. One person can be on a team under two rows
+  // until a merge tidies it up; the open row (first in `userIds`) speaks
+  // first, and a closed row fills in only what the open one left blank.
+  const places = new Map<
+    string,
+    { jersey: string | null; positions: string[] }
+  >()
+  const byRow = [...fromMemberships].sort(
+    (a, b) => userIds.indexOf(a.userId) - userIds.indexOf(b.userId)
+  )
+  for (const row of byRow) {
+    const place = places.get(row.teamId) ?? { jersey: null, positions: [] }
+    places.set(row.teamId, {
+      jersey: place.jersey ?? row.jersey,
+      positions: place.positions.length > 0 ? place.positions : row.positions
+    })
+  }
+
+  const playing = new Set(await teamsPlayedOnNow(db, userIds))
   const byKey = new Map<string, PlayerTeam>()
   for (const row of [...fromPlays, ...fromMemberships]) {
-    byKey.set(`${row.teamId} ${row.seasonId ?? ''}`, row)
+    const place = places.get(row.teamId)
+    byKey.set(`${row.teamId} ${row.seasonId ?? ''}`, {
+      teamId: row.teamId,
+      teamName: row.teamName,
+      logoPath: row.logoPath,
+      seasonId: row.seasonId,
+      seasonName: row.seasonName,
+      seasonYear: row.seasonYear,
+      jersey: place?.jersey ?? null,
+      positions: place?.positions ?? [],
+      current: playing.has(row.teamId)
+    })
   }
+
+  // A team listed in a season needs no second row without one: its games
+  // outside any season are still its games.
+  const seasoned = new Set(
+    [...byKey.values()]
+      .filter(team => team.seasonId != null)
+      .map(team => team.teamId)
+  )
+  for (const team of seasoned) byKey.delete(`${team} `)
 
   // Newest season first, and a team with no season at the end: a page opens on
   // what somebody is doing now, not on what they did three years ago.

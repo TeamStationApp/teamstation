@@ -27,9 +27,9 @@ export interface GroupScreenProps {
   groupRef: GroupRef
   onOpen: (group: GroupRef) => void
   onOpenTeam?: (team: TeamSummary) => void
-  // Used by the team route adapter before GroupContent is mounted.
-  // eslint-disable-next-line react/no-unused-prop-types
   onOpenPlayer?: TeamScreenProps['onOpenPlayer']
+  /** Somebody on a team's, season's or league's people list, as a profile. */
+  onOpenPerson?: (group: GroupRef, userId: number, name: string) => void
   onCreate: (
     kind: GroupKind,
     parent: GroupRef,
@@ -63,6 +63,13 @@ export function GroupScreen(props: GroupScreenProps): React.ReactElement {
         onTab={props.onTab}
         onOpenGame={props.onOpenGame ?? (() => undefined)}
         onOpenPlayer={props.onOpenPlayer}
+        onOpenPerson={
+          props.onOpenPerson == null
+            ? undefined
+            : (userId, name, teamId) => {
+                props.onOpenPerson?.({ kind: 'team', id: teamId }, userId, name)
+              }
+        }
         onSettings={id => {
           props.onSettings({ kind: 'team', id })
         }}
@@ -81,6 +88,8 @@ function GroupContent({
   groupRef,
   onOpen,
   onOpenTeam,
+  onOpenPlayer,
+  onOpenPerson,
   onCreate,
   onSettings,
   onLink,
@@ -170,6 +179,20 @@ function GroupContent({
           videos: 0
         }}
         publicDetail={detail}
+        onOpenPlayer={
+          onOpenPlayer == null
+            ? undefined
+            : (userId, name, from) => {
+                onOpenPlayer(userId, name, from)
+              }
+        }
+        onOpenPerson={
+          onOpenPerson == null
+            ? undefined
+            : (userId, name) => {
+                onOpenPerson(canonical, userId, name)
+              }
+        }
         onOpenGame={onOpenGame ?? (() => undefined)}
         onOpenTeam={team => {
           if (onOpenTeam != null) onOpenTeam(team)
@@ -241,7 +264,20 @@ function GroupContent({
       onSettings={onSettings}
       onLink={onLink}
       onCreateExternal={onCreateExternal}
-      onOpenRequest={onOpenRequest}
+      onOpenPlayer={
+        onOpenPlayer == null
+          ? undefined
+          : (userId, name) => {
+              onOpenPlayer(userId, name)
+            }
+      }
+      onOpenPerson={
+        onOpenPerson == null
+          ? undefined
+          : (userId, name) => {
+              onOpenPerson(canonical, userId, name)
+            }
+      }
       onChanged={() => {
         load().catch(() => undefined)
       }}

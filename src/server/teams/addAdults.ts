@@ -10,7 +10,8 @@ import type {
   TeamMemberError,
   TeamMemberExternalId
 } from '../../common/teamMembers'
-import { survivorsOf } from '../admin/people'
+import { guardiansOf, guardiansWhoCanAct } from '../access'
+import { onePerson, survivorsOf } from '../admin/people'
 import { addEmail } from '../auth/emails'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
@@ -38,6 +39,14 @@ const STAFF_ROLES: readonly RoleFlag[] = ['coach', 'scorekeeper']
  * by `attachEmail`'s rule. Then they gain what the row
  * asks that they lack: a membership, guardian links to the team's players,
  * and the coach and scorekeeper roles when they are staff.
+ *
+ * A guardian link is made only to a player who had no guardian who can sign
+ * in when the call began (`guardiansWhoCanAct`: a parent imported with no
+ * address takes no say), so every parent one import names for a new player
+ * is linked, and never to the caller's own account: once a player has a
+ * guardian, their guardians decide who else becomes one, and a team's staff
+ * cannot make themselves one. A site administrator's import is not held to either.
+ * What was refused is counted in `guardiansRefused`.
  */
 export async function addAdults(
   db: Kysely<Database>,
@@ -60,17 +69,39 @@ export async function addAdults(
       unchanged: 0,
       error: 0,
       guardianLinks: 0,
+      guardiansRefused: 0,
       staff: 0
     }
+    const links: GuardianLinking = {
+      caller,
+      callerId: (await onePerson(trx, caller.userId)).userId,
+      guardedBefore: new Map()
+    }
     for (const [index, row] of rows.entries()) {
-      const result = await addAdult(trx, teamId, row, index, caller)
+      const result = await addAdult(trx, teamId, row, index, links)
       results.push(result)
       counts[result.result] += 1
       counts.guardianLinks += result.guardianLinks
+      counts.guardiansRefused += result.guardiansRefused
       if (result.rolesAdded.length > 0) counts.staff += 1
     }
     return { results, counts }
   })
+}
+
+/**
+ * What one call's guardian links are decided by: the caller, as the row they
+ * sign in as, and whether each player had a guardian when the call began,
+ * read the first time the call names them, before it links anybody to them.
+ */
+interface GuardianLinking {
+  caller: { userId: number; isAdmin: boolean }
+  callerId: number
+  /**
+   * Each player's guardians when the call first came to them: everyone
+   * linked, and those of them who can sign in, who alone hold the say.
+   */
+  guardedBefore: Map<number, { linked: readonly number[]; acting: number }>
 }
 
 async function addAdult(
@@ -78,8 +109,9 @@ async function addAdult(
   teamId: string,
   row: TeamAdultRow,
   index: number,
-  caller: { userId: number; isAdmin: boolean }
+  linking: GuardianLinking
 ): Promise<TeamAdultResult> {
+  const { caller } = linking
   const refused = (error: TeamMemberError): TeamAdultResult => ({
     index,
     result: 'error',
@@ -87,6 +119,7 @@ async function addAdult(
     joined: false,
     guardianLinks: 0,
     guardiansMissing: 0,
+    guardiansRefused: 0,
     rolesAdded: []
   })
   const holder = await externalIdHolder(trx, row.externalId)
@@ -153,9 +186,9 @@ async function addAdult(
     if (attached === 'notAttached') emailNotAttached = true
   }
 
-  const joined = await joinTeam(trx, teamId, userId, row)
-  if (joined.gained) gained = true
-  const links = await linkGuardian(trx, teamId, userId, row.guardianOf)
+  const joined = await joinTeam(trx, teamId, userId)
+  if (joined) gained = true
+  const links = await linkGuardian(trx, teamId, userId, row.guardianOf, linking)
   const rolesAdded = row.staff
     ? await addStaffRoles(trx, teamId, userId, caller.userId)
     : []
@@ -169,9 +202,10 @@ async function addAdult(
     index,
     result,
     userId,
-    joined: joined.joined,
+    joined,
     guardianLinks: links.made,
     guardiansMissing: links.missing,
+    guardiansRefused: links.refused,
     rolesAdded,
     ...(emailHeldElsewhere ? { emailHeldElsewhere: true as const } : {}),
     ...(emailNotAttached ? { emailNotAttached: true as const } : {}),
@@ -256,60 +290,47 @@ function isAddressTaken(error: unknown): boolean {
 }
 
 /**
- * A membership of the team if they have none: a `member`, and a spectator
- * unless they are staff who guard nobody. An existing one only gains the
- * spectator flag; nothing is unset, and its role is never raised.
+ * A membership of the team, as a `member`, if they have none. An existing one
+ * is left as it is: its role is never raised.
  */
 async function joinTeam(
   trx: Transaction<Database>,
   teamId: string,
-  userId: number,
-  row: TeamAdultRow
-): Promise<{ joined: boolean; gained: boolean }> {
-  const spectator = !(row.staff && row.guardianOf.length === 0)
-  const membership = await trx
-    .selectFrom('memberships')
-    .select(['id', 'is_spectator'])
-    .where('user_id', '=', userId)
-    .where('team_id', '=', teamId)
+  userId: number
+): Promise<boolean> {
+  const made = await trx
+    .insertInto('memberships')
+    .values({
+      id: makeId('membership'),
+      user_id: userId,
+      team_id: teamId,
+      role: 'member',
+      joined_at: new Date()
+    })
+    .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
+    .returning('id')
     .executeTakeFirst()
-  if (membership == null) {
-    await trx
-      .insertInto('memberships')
-      .values({
-        id: makeId('membership'),
-        user_id: userId,
-        team_id: teamId,
-        role: 'member',
-        is_spectator: spectator,
-        joined_at: new Date()
-      })
-      .execute()
-    return { joined: true, gained: true }
-  }
-  if (!spectator || membership.is_spectator) {
-    return { joined: false, gained: false }
-  }
-  await trx
-    .updateTable('memberships')
-    .set({ is_spectator: true })
-    .where('id', '=', membership.id)
-    .execute()
-  return { joined: false, gained: true }
+  return made != null
 }
 
 /**
  * A guardian link to each named player of this team, made where absent. An
- * id that names nobody who plays for this team is counted as missing.
+ * id that names nobody who plays for this team is counted as missing. Unless
+ * a site administrator calls, a player who had a guardian before the call
+ * gains no new one, and the caller is linked to nobody: both are counted as
+ * refused. An adult who already guards the player is neither.
  */
 async function linkGuardian(
   trx: Transaction<Database>,
   teamId: string,
   userId: number,
-  guardianOf: TeamMemberExternalId[]
-): Promise<{ made: number; missing: number }> {
+  guardianOf: TeamMemberExternalId[],
+  linking: GuardianLinking
+): Promise<{ made: number; missing: number; refused: number }> {
   let made = 0
   let missing = 0
+  let refused = 0
+  const adult = (await onePerson(trx, userId)).userId
   for (const externalId of guardianOf) {
     const holder = await externalIdHolder(trx, externalId)
     const playerId = holder.held && 'userId' in holder ? holder.userId : null
@@ -327,6 +348,21 @@ async function linkGuardian(
       missing += 1
       continue
     }
+    if (!linking.caller.isAdmin) {
+      let before = linking.guardedBefore.get(playerId)
+      if (before == null) {
+        before = {
+          linked: await guardiansOf(trx, [playerId]),
+          acting: (await guardiansWhoCanAct(trx, [playerId])).length
+        }
+        linking.guardedBefore.set(playerId, before)
+      }
+      if (before.linked.includes(adult)) continue
+      if (before.acting > 0 || adult === linking.callerId) {
+        refused += 1
+        continue
+      }
+    }
     const inserted = await trx
       .insertInto('user_links')
       .values({
@@ -343,7 +379,7 @@ async function linkGuardian(
       .executeTakeFirst()
     if (Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0) made += 1
   }
-  return { made, missing }
+  return { made, missing, refused }
 }
 
 /** Coach and scorekeeper on the team, where absent. Only ever added. */

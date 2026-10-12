@@ -88,6 +88,30 @@ describe('api client', function () {
     expect(mutation.calls[2].body).equals(undefined)
   })
 
+  it("narrows a player's highlights by the stats filter, and pages with it", async function () {
+    const { fetch, calls } = stubFetch(200, {
+      highlights: [],
+      nextBefore: null,
+      withoutVideo: 0
+    })
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch
+    })
+    await client.playerHighlights('7')
+    await client.playerHighlights('7', {
+      before: '2026-05-02T18:00:00.000Z',
+      limit: 5,
+      seasonId: 'season/one',
+      teamId: 'team/one',
+      year: 2026
+    })
+    expect(calls.map(call => call.url)).deep.equals([
+      'http://example.com/api/v1/players/7/highlights',
+      'http://example.com/api/v1/players/7/highlights?before=2026-05-02T18%3A00%3A00.000Z&limit=5&seasonId=season%2Fone&teamId=team%2Fone&year=2026'
+    ])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({
@@ -156,7 +180,10 @@ describe('api client', function () {
       bats: 'left',
       throws: 'right',
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     })
     const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
@@ -242,7 +269,10 @@ describe('api client', function () {
       jersey: '12',
       positions: [],
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     }
     const roster = stubFetch(200, [
       { ...entry, walkUpSong: song },
@@ -569,7 +599,26 @@ describe('api client', function () {
     expect(calls[0].url).equals(
       'http://x/api/v1/users?externalId=a%26b&externalId=c'
     )
-    expect(users).deep.equals([{ userId: 7, externalIds: ['a&b', 'c'] }])
+    // An answer without the name and picture still reads.
+    expect(users).deep.equals([
+      {
+        userId: 7,
+        externalIds: ['a&b', 'c'],
+        shortName: undefined,
+        avatarUrl: null
+      }
+    ])
+  })
+
+  it('asks for the players the signed-in person is a guardian of', async function () {
+    const { fetch, calls } = stubFetch(200, [
+      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+    ])
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect(await client.guardedPlayers()).deep.equals([
+      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+    ])
+    expect(calls[0].url).equals('http://x/api/v1/users?guardedBy=me')
   })
 
   it('trims a trailing slash off the base so paths do not double up', async function () {
@@ -697,6 +746,7 @@ describe('api client', function () {
       ingestStatus: 'ok',
       ingestMessage: null,
       linescore: JSON.parse(JSON.stringify(linescore)),
+      nonMemberView: false,
       videos: []
     })
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
@@ -885,6 +935,7 @@ describe('api client', function () {
       awayScore: null,
       ingestStatus: 'none',
       ingestMessage: null,
+      nonMemberView: false,
       videos: []
     }
     const flagged = stubFetch(200, {

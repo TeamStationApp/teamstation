@@ -76,6 +76,27 @@ export const enUs = {
   teams_title: 'Teams',
   teams_none: 'You are not on a team yet.',
 
+  // A team's roster, by section
+  roster_admins: 'Admins',
+  roster_staff: 'Staff',
+  roster_players: 'Players',
+  roster_family: 'Family members',
+  roster_spectators: 'Spectators',
+  roster_followers: 'Followers',
+  roster_guardian_of: 'Parent/guardian of %s',
+  // The pill on somebody given their place from above: `Season coach`, and
+  // for a member of the season or league, `Season spectator`.
+  roster_inherited_pill: '%1$s %2$s',
+  roster_level_season: 'Season',
+  roster_level_league: 'League',
+  roster_role_member: 'spectator',
+  roster_role_admin: 'admin',
+  roster_role_coach: 'coach',
+  roster_role_assistant: 'assistant',
+  roster_role_scorekeeper: 'scorekeeper',
+  roster_role_songkeeper: 'songkeeper',
+  roster_role_videographer: 'videographer',
+
   // Games
   games_title: 'Games',
   games_none: 'No games yet.',
@@ -99,10 +120,26 @@ export const enUs = {
   game_score_game: 'Score Game',
   /** The title of the simplified scoreboard, the 1.0 override dashboard. */
   game_override_scoreboard: 'Override Scoreboard',
-  game_no_video: 'No video for this game.',
+  /** The Videos tab of a game nothing was recorded of, in place of a player. */
+  game_no_video: 'No videos.',
   game_video_unavailable: 'This video is not available right now.',
   /** Marks a video in the picker whose file is no longer on the server. */
   game_video_gone_suffix: '(unavailable)',
+  /**
+   * Where somebody signed in who is not a member meets what is kept for
+   * members on a team page: the batting and pitching, and the team's videos.
+   * The server's own `membersOnly` words.
+   */
+  members_only: 'You need to be a member of one of the teams to see this.',
+  /**
+   * A game's Videos tab for a non-member, in place of a player, and again
+   * on tapping one of its highlights.
+   */
+  game_videos_members_only:
+    "You need to be a member of one of the teams to watch this game's videos.",
+  /** Under a non-member's line score, in place of each side's lines. */
+  box_score_members_only:
+    'You need to be a member of one of these teams to see individual player stats.',
 
   // Four angles at once
   angles_open: 'All angles',
@@ -191,8 +228,16 @@ export const enUs = {
   player_filter_unknown: 'a filter that no longer exists',
   player_games: '%s games',
   player_one_game: '1 game',
+  /** The pill above a player's videos that opens the filter. */
+  player_videos_filter: 'Filter videos',
+  player_videos_filter_empty: 'No highlights under this filter.',
 
-  // A player's settings, for a coach of the team the page was opened for
+  // Every team a player has played for
+  player_teams: 'Teams',
+  player_teams_empty: 'Not on any team yet.',
+
+  // A player's settings: on the team the page was opened for, their jersey
+  // and positions; away from any team, how they bat and throw
   player_settings: 'Settings',
   player_settings_first_name: 'First name',
   player_settings_last_name: 'Last name',
@@ -208,6 +253,23 @@ export const enUs = {
   player_settings_cannot_load: 'Cannot load this player\u2019s settings.',
   player_settings_cannot_save: 'Cannot save these settings.',
   player_settings_not_on_team: 'This player is not on this team\u2019s roster.',
+
+  // Guardians: a guardian, or a team's coaching staff while the player has
+  // none, invite one by address from Settings; anybody else who can see the
+  // player asks to be one under their name
+  player_guardian_invite: 'Invite a guardian',
+  player_guardian_invite_detail:
+    'A guardian sees every team %s plays on and manages their number, positions and walk-up song. They accept from their notifications.',
+  player_guardian_email: 'E-mail address',
+  player_guardian_send: 'Send invitation',
+  player_guardian_cannot_send: 'The invitation could not be sent. Retry.',
+  player_guardian_request: 'Request to be a guardian',
+  player_guardian_request_title: 'Ask to be %s\u2019s guardian?',
+  player_guardian_request_send: 'Send request',
+  player_guardian_request_detail:
+    '%s or a guardian of theirs decides, or a coach of one of their teams if they have no guardian. Once approved you see their teams and manage their details.',
+  player_guardian_request_sent: 'Guardian request sent',
+  player_guardian_cannot_request: 'The request could not be sent. Retry.',
 
   // A player's walk-up song, for a songkeeper of the team the page was opened for
   player_walkup: 'Walk-up',
@@ -362,54 +424,29 @@ export const enUs = {
   invite_expired: 'Expired',
   invite_exhausted: 'All used up',
 
-  // The page behind the gear
-  manage_title: 'Manage %s',
-  manage_people: 'Who can watch',
-  manage_people_detail:
-    'A tick shows where somebody\u2019s access comes from. More than one is normal \u2014 a coach whose child is on the roster is in the team and the season.',
-  manage_person: 'Person',
-  manage_via_team: 'Team',
-  manage_via_season: 'Season',
-  manage_via_league: 'League',
-  manage_admin: 'Admin',
-  manage_admins: 'Administrators',
-  manage_admins_detail:
-    'An administrator can invite people, remove them, and make other administrators of this and everything inside it.',
-  manage_admins_none: 'Nobody but you.',
-  manage_admin_email: 'E-mail address of somebody who already has an account',
-  manage_admin_on: 'Make an administrator',
-  manage_admin_off: 'Remove',
-  manage_role: 'Role',
-  manage_role_line: '%s %s · %s',
-  manage_role_none: 'No role here',
-  manage_role_admin: 'admin',
-  manage_role_owner: 'owner',
-  manage_role_manager: 'manager',
-  manage_role_member: 'member',
-  manage_role_spectator: 'spectator',
-  manage_role_from: '%s \u00b7 from %s',
-  manage_created: 'Joined',
-  manage_last_login: 'Last login',
-  manage_never: 'Never',
-  manage_seen: 'Here %s',
-  manage_filter: 'Search',
-  manage_filter_placeholder: 'A name or an address',
-  manage_no_email: 'No address on file',
+  // A group's people, in its Settings
   manage_remove: 'Remove',
-  manage_pending: 'Invited, not joined yet',
   manage_add: 'Add somebody',
   manage_add_detail:
-    'Invite someone to %s by email. Existing and new accounts accept an invitation before group access or requested roles begin. Invitations last seven days.',
+    'Add someone to %s by email. Somebody with an account is added at once, and told; anybody else is sent an invitation, which applies when they sign up with that address. Invitations last seven days.',
   manage_email: 'E-mail address',
   manage_add_submit: 'Add',
+  manage_choose_roles: 'Choose roles',
+  manage_add_as: 'Adds them as: %s.',
+  manage_new_person: 'the person you add',
   manage_added: '%s has been added.',
   manage_invited: 'An invitation is on its way to %s.',
   manage_already: '%s already had access.',
-  manage_refused: 'You do not administer this.',
+  manage_open_sent: 'Open sent invitation',
+  manage_pending_header: 'Invitations waiting',
+  manage_invited_on: 'Invited %s, not joined yet',
+  manage_open_invitation: 'Open',
+  manage_no_address_header: 'No address on file',
+  manage_no_address_detail:
+    'Nobody can sign in to these accounts, so they hold no role. Remove one to take it out of here.',
   manage_open: 'Manage',
 
   // Changing what somebody may do at one level
-  role_change: 'Change role',
   role_title: 'Roles for %s',
   role_scope: 'At %s, and everything inside it.',
   role_team_admin: 'Team admin',
@@ -420,17 +457,54 @@ export const enUs = {
   role_coach: 'Coach',
   role_coach_detail:
     'Edits the players\u2019 jerseys, positions, bats and throws in %s, and sees their full names.',
+  role_assistant: 'Assistant',
+  role_assistant_detail:
+    'Same as a coach: edits the players\u2019 jerseys, positions, bats and throws in %s, and sees their full names.',
   role_scorekeeper: 'Scorekeeper',
-  role_scorekeeper_detail: 'Scores the games of %s.',
+  role_scorekeeper_detail:
+    'Scores the games of %s, sets walk-up songs and DJs them.',
   role_songkeeper: 'Songkeeper',
   role_songkeeper_detail: 'Sets walk-up songs and DJs the games of %s.',
   role_videographer: 'Videographer',
   role_videographer_detail: 'Films and streams the games of %s.',
   role_from: 'From %s',
   role_admin_all: 'Admins can do all of this',
+  role_scorekeeper_all: 'Scorekeepers can do this',
   role_save: 'Save',
   role_cancel: 'Cancel',
-  manage_no_address_header: 'No address on file',
+
+  // A person's profile, opened from a team's, season's or league's people
+  profile_context_team: 'Team \u00b7 %s',
+  profile_context_season: 'Season \u00b7 %s',
+  profile_context_league: 'League \u00b7 %s',
+  profile_guardian_of: 'Parent/Guardian of',
+  profile_team_roles: 'Team roles',
+  profile_season_roles: 'Season roles',
+  profile_league_roles: 'League roles',
+  profile_level_note: 'Change these on %s\u2019s page.',
+  profile_no_sign_in:
+    '%s can\u2019t sign in, so can be a member here but hold no role.',
+  profile_admin: 'Admin',
+  profile_member: 'Member',
+  profile_follower: 'Follower',
+  profile_add: 'Add',
+  profile_remove: 'Remove',
+  profile_held: 'Yes',
+  profile_not_held: '\u2014',
+  profile_with: 'With %s',
+  profile_player: 'Player',
+  profile_following: 'Following',
+  profile_not_following: 'Not following',
+  profile_refused: 'You can\u2019t open this person here.',
+  player_team_roles: 'Team roles',
+  player_remove_from_team: 'Remove from %s',
+  player_remove_title: 'Remove %1$s from %2$s?',
+  player_remove_confirm: 'Remove %s',
+  player_remove_detail:
+    '%1$s leaves %2$s: off the roster, and every role they hold on it.',
+  player_removed: 'Removed %1$s from %2$s',
+  player_remove_unchanged: '%1$s is not on %2$s. Nothing was changed.',
+  people_none: 'Nobody here yet.',
 
   // Coming in through an invite
   join_header: 'Invitation',

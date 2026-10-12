@@ -406,7 +406,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * this one, taking the `<video>` with it and stopping playback dead.
    */
   const anglesOffered = useMemo(() => multiAngleSupported(playerEngine()), [])
-  const showAngles = anglesOffered && angles != null && angles.length > 0
+  /**
+   * Somebody signed in who is a member of neither team: the score, the line
+   * score and the highlights' pictures, and not the video, the box score's
+   * tables or the summary under the card, which are kept for members.
+   * Nothing kept is asked for, so the page never meets the server's refusal.
+   */
+  const nonMemberView = game?.nonMemberView === true
+  const showAngles =
+    anglesOffered && !nonMemberView && angles != null && angles.length > 0
 
   // The card's own content goes up into the header as the card scrolls away:
   // the away team over the home team, small, with their scores beside them.
@@ -633,7 +641,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
   useEffect(() => {
-    if (video == null) return
+    if (video == null || nonMemberView) return
     const forVideoId = video.id
     let live = true
     setPlayback(undefined)
@@ -651,12 +659,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, video])
+  }, [client, video, nonMemberView])
 
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
+  // After the game, too, which says whether this is a non-member's, whose
+  // tables are kept for members.
+  const gameLoaded = game != null
   useEffect(() => {
-    if (tab !== 'boxScore' || box != null) return
+    if (tab !== 'boxScore' || box != null || !gameLoaded || nonMemberView)
+      return
     let live = true
     client
       .boxScore(gameId)
@@ -669,7 +681,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [box, client, gameId, tab])
+  }, [box, client, nonMemberView, gameId, gameLoaded, tab])
 
   const playbackUrl = playback?.url ?? null
 
@@ -858,6 +870,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
     setChosen(highlight)
+    // There is no video to seek for a non-member, and no moment to link to:
+    // the notice in the player's place says why.
+    if (nonMemberView) return
     // The address follows, so the moment somebody is looking at is the moment
     // they can send to somebody else.
     if (video != null)
@@ -943,7 +958,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       homeTeamId={game.homeTeamId}
       date={shortDate(game.startAt)}
       venue={game.venue ?? undefined}
-      teamStats={teamStatsOf(game.linescore)}
+      teamStats={nonMemberView ? null : teamStatsOf(game.linescore)}
       onOpenAwayTeam={openSide(game.awayTeamId)}
       onOpenHomeTeam={openSide(game.homeTeamId)}
     />
@@ -988,8 +1003,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   )
 
+  // A non-member's tap gets no play's account: the members-only message is
+  // repeated under the tapped highlight instead (see `highlightList`).
   const description =
-    chosen?.description == null || chosen.description === '' ? null : (
+    chosen == null ||
+    nonMemberView ||
+    chosen.description == null ||
+    chosen.description === '' ? null : (
       // The same card as the angle names above it, and the same glass: the
       // two belong to the picture and sit under it, and a solid white panel
       // the width of the column read as a different kind of thing entirely.
@@ -1011,37 +1031,60 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     )
 
   const isLive = video?.status === 'live'
+  /**
+   * What stands in the player's place when there is nothing to play: a game
+   * nothing was recorded of, or a non-member, whose video is kept for
+   * members. Words on the page, not a black box with nothing in it. Painted
+   * the page's own colour, since the highlights scroll up under it.
+   */
+  const notice =
+    video == null
+      ? lstrings.game_no_video
+      : nonMemberView
+        ? lstrings.game_videos_members_only
+        : undefined
   const player = (
     <View style={styles.playerBlock}>
-      <PlayerSurface
-        videoRef={playerRef}
-        width={layout.videoWidth}
-        height={layout.videoHeight}
-        controlsVisible={controlsVisible}
-        active={!showAngles}
-      >
-        {isLive && <LivePill />}
-        {video == null ? (
-          <Text style={styles.message}>{lstrings.game_no_video}</Text>
-        ) : playback == null ? (
-          <ActivityIndicator color={theme.primaryTextColor} />
-        ) : playback.url == null ? (
-          // The row says there is a video and its files are not there. Saying
-          // so beats a player that shows black and never explains itself.
-          <Text style={styles.message}>{lstrings.game_video_unavailable}</Text>
-        ) : (
-          // The platform's own controls stay: they scrub, mute and go
-          // fullscreen well, and the gesture layer is cut around them rather
-          // than replacing them — `controlGeometry.ts` knows where each
-          // platform puts them.
-          <VideoView
-            source={playback.url}
-            onHandle={takePlayer}
-            controls
-            onControlsVisible={setControlsVisible}
-          />
-        )}
-      </PlayerSurface>
+      {notice != null ? (
+        <View
+          testID="gameVideoNotice"
+          style={[styles.videoNotice, { width: layout.videoWidth }]}
+        >
+          <Text accessibilityRole="alert" style={styles.notice}>
+            {notice}
+          </Text>
+        </View>
+      ) : (
+        <PlayerSurface
+          videoRef={playerRef}
+          width={layout.videoWidth}
+          height={layout.videoHeight}
+          controlsVisible={controlsVisible}
+          active={!showAngles}
+        >
+          {isLive && <LivePill />}
+          {playback == null ? (
+            <ActivityIndicator color={theme.primaryTextColor} />
+          ) : playback.url == null ? (
+            // The row says there is a video and its files are not there. Saying
+            // so beats a player that shows black and never explains itself.
+            <Text style={styles.message}>
+              {lstrings.game_video_unavailable}
+            </Text>
+          ) : (
+            // The platform's own controls stay: they scrub, mute and go
+            // fullscreen well, and the gesture layer is cut around them rather
+            // than replacing them — `controlGeometry.ts` knows where each
+            // platform puts them.
+            <VideoView
+              source={playback.url}
+              onHandle={takePlayer}
+              controls
+              onControlsVisible={setControlsVisible}
+            />
+          )}
+        </PlayerSurface>
+      )}
 
       {/*
         The same strip as everywhere else, rather than a fourth hand-drawn
@@ -1075,8 +1118,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 }
               }),
               // Last, after the angles themselves: it is not another camera,
-              // it is all of them at once.
-              { id: ALL_ANGLES, label: lstrings.angles_open }
+              // it is all of them at once. Not for a non-member, who is shown
+              // no video.
+              ...(nonMemberView
+                ? []
+                : [{ id: ALL_ANGLES, label: lstrings.angles_open }])
             ]}
             selected={video?.id ?? ''}
             onSelect={id => {
@@ -1142,6 +1188,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   highlight.isScoringPlay ? styles.scoring : undefined
                 ]}
               />
+              {/*
+                The message in the player's place may be scrolled out of
+                sight by now, so a non-member's tap is answered where they
+                tapped, too.
+              */}
+              {nonMemberView && highlight.eventId === activeEventId ? (
+                <Text
+                  testID="highlightMembersOnly"
+                  accessibilityRole="alert"
+                  style={[styles.notice, styles.highlightNotice]}
+                >
+                  {lstrings.game_videos_members_only}
+                </Text>
+              ) : null}
             </Pressable>
           ))}
         </View>
@@ -1302,7 +1362,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               player={player}
               description={description}
               sections={sections}
-              highlightList={highlightList}
+              // A game nothing was recorded of has nothing to have
+              // highlights of: "No videos." is the whole of the tab.
+              highlightList={video == null ? null : highlightList}
               footer={
                 <>
                   {/*
@@ -1383,6 +1445,18 @@ interface BoxScoreProps {
 function BoxScore(props: BoxScoreProps): React.ReactElement {
   const { game, box, theme, sideBySide, onOpenPlayer } = props
   const styles = getStyles(theme)
+
+  // The innings and the runs are a non-member's; each side's lines are not.
+  if (game.nonMemberView) {
+    return (
+      <View style={styles.boxScore}>
+        <LineScore game={game} theme={theme} />
+        <Text accessibilityRole="alert" style={styles.notice}>
+          {lstrings.box_score_members_only}
+        </Text>
+      </View>
+    )
+  }
 
   if (box == null) {
     return (
@@ -1477,8 +1551,10 @@ function LineScore(props: {
     { name: game.homeTeamName, side: line.home }
   ]
   // Runs, hits, errors and home runs. A hit batter belongs in the pitcher's
-  // line and the batter's, not up here beside the innings.
-  const totals = ['R', 'H', 'E', 'HR']
+  // line and the batter's, not up here beside the innings. A non-member is sent
+  // the runs alone.
+  const counted = !game.nonMemberView
+  const totals = counted ? ['R', 'H', 'E', 'HR'] : ['R']
 
   return (
     // Seven innings and five totals is wider than a phone. It scrolls sideways
@@ -1520,9 +1596,13 @@ function LineScore(props: {
             </Text>
           ))}
           <Text style={[styles.cell, styles.cellStrong]}>{side.r}</Text>
-          <Text style={styles.cell}>{side.h ?? '–'}</Text>
-          <Text style={styles.cell}>{side.e ?? '–'}</Text>
-          <Text style={styles.cell}>{side.hr ?? '–'}</Text>
+          {counted && (
+            <>
+              <Text style={styles.cell}>{side.h ?? '–'}</Text>
+              <Text style={styles.cell}>{side.e ?? '–'}</Text>
+              <Text style={styles.cell}>{side.hr ?? '–'}</Text>
+            </>
+          )}
         </View>
       ))}
     </ScrollView>
@@ -2015,6 +2095,9 @@ const getStyles = cacheStyles((theme: Theme) =>
     // colour that is transparent.
     highlight: {
       flexDirection: 'row',
+      // So a non-member's repeated message goes under the highlight, across
+      // its whole width, rather than squeezing its title.
+      flexWrap: 'wrap',
       alignItems: 'center',
       gap: theme.rem(0.75),
       paddingHorizontal: theme.rem(0.375),
@@ -2151,6 +2234,22 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(1.25),
       fontWeight: '600',
       textAlign: 'center'
+    },
+    // A notice the reader has to read, not a hint: the page's own text
+    // colour on the page's own background.
+    notice: {
+      color: theme.primaryTextColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(1),
+      lineHeight: theme.rem(1.4),
+      textAlign: 'center'
+    },
+    highlightNotice: { width: '100%', paddingTop: theme.rem(0.25) },
+    videoNotice: {
+      alignItems: 'center',
+      backgroundColor: theme.backgroundColor,
+      paddingHorizontal: theme.rem(1),
+      paddingVertical: theme.rem(1.25)
     },
     message: {
       color: theme.secondaryTextColor,

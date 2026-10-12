@@ -27,6 +27,99 @@ const action = {
   }
 }
 const retryKey = { type: 'string', minLength: 8, maxLength: 120 }
+/** A parent, competition, personal-role or promotion invitation. */
+const relationship = {
+  type: 'object',
+  required: ['kind', 'sender', 'idempotencyKey'],
+  properties: {
+    kind: {
+      type: 'string',
+      enum: ['parent', 'participation', 'promotion', 'person']
+    },
+    sender: ref,
+    idempotencyKey: retryKey,
+    confirmBoth: { type: 'boolean' },
+    actions: { type: 'array', items: action },
+    teamId: { type: 'string' },
+    seasonId: { type: 'string' },
+    recipientUserId: { type: 'integer' },
+    recipientEmail: {
+      type: 'string',
+      format: 'email',
+      description:
+        'Verified active account email; provide this or recipientUserId' +
+        '. A person kind requires recipientEmail: an address an account has verified adds that account at once (201 with status `accepted`, and the id of the notification telling them; 409 when it holds all of it already), and only an address nobody has verified is invited, applied when it is verified.'
+    },
+    admin: {
+      type: 'boolean',
+      default: false,
+      description: 'Requested personal group administrator role'
+    },
+    flags: {
+      type: 'array',
+      items: {
+        type: 'string',
+        enum: [
+          'coach',
+          'assistant',
+          'scorekeeper',
+          'songkeeper',
+          'videographer'
+        ]
+      }
+    }
+  }
+}
+/**
+ * A guardian invitation from a team, a guardian's invitation with no sender,
+ * or a request with no sender, which names its sender as the guardian.
+ */
+const guardian = {
+  type: 'object',
+  required: ['kind', 'playerUserId', 'guardian', 'idempotencyKey'],
+  properties: {
+    kind: { type: 'string', enum: ['guardian'] },
+    playerUserId: { type: 'integer' },
+    guardian: {
+      oneOf: [
+        {
+          type: 'object',
+          required: ['userId'],
+          properties: {
+            userId: {
+              type: 'integer',
+              description:
+                'The account; for a request, the sender; for a guardian’s invitation, anybody else'
+            }
+          }
+        },
+        {
+          type: 'object',
+          required: ['email'],
+          properties: {
+            email: {
+              type: 'string',
+              format: 'email',
+              description:
+                'Mailed an invitation; an address no account has verified yet is bound to the account that verifies it and accepts'
+            }
+          }
+        }
+      ]
+    },
+    sender: {
+      type: 'object',
+      required: ['kind', 'id'],
+      description:
+        "The team the invitation comes from, while the player has no guardian. Absent for a request to be the guardian yourself, and for an invitation from one of the player's guardians.",
+      properties: {
+        kind: { type: 'string', enum: ['team'] },
+        id: { type: 'string' }
+      }
+    },
+    idempotencyKey: retryKey
+  }
+}
 const body = (schema: unknown): unknown => ({
   required: true,
   content: { 'application/json': { schema } }
@@ -180,48 +273,23 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
     '/relationship-requests': {
       post: {
         summary:
-          'Send a seven-day parent, competition, personal-role or verified promotion request',
+          'Send a seven-day parent, competition, personal-role, verified promotion or guardian invitation, or ask to be a guardian',
         security: [{ bearer: [] }],
         description:
-          'Sending records consent for that scope. confirmBoth explicitly records both sides when the sender administers both. Competition does not grant team permissions. Promotion preserves identity and history.',
+          'Sending records consent for that scope. confirmBoth explicitly records both sides when the sender administers both. Competition does not grant team permissions. Promotion preserves identity and history. ' +
+          "Once a player has a guardian, only their guardians (and the player) say who else becomes one; a team's staff speak only for a player with no guardian. Only a guardian whose account can sign in counts: one a roster import made with no email address leaves the say with the team's staff. A site administrator may do all of it. " +
+          "A team's guardian invitation comes from a team (`sender`) whose administrator, coach or assistant sends it, about one of the team's players who has no guardian yet (403 `<player> has a guardian already. Ask them to invite another guardian.` once they have one, also when the invitee accepts), to an account or an email address, which is mailed; the invitee accepts. " +
+          "A guardian's invitation has no `sender` and names somebody else as `guardian`: a guardian of the player invites another, by account or address, mailed the same way; the invitee accepts, while the sender is still a guardian. Anybody else sending one is refused (403). " +
+          'A guardian request has no `sender` and names the signed-in user as `guardian`, who asks to be the guardian of a player on a team they can see; one approval suffices, read when it is given: from the player if their account signs in, from any guardian of the player, or, only while the player has no guardian, from an administrator, coach or assistant of a team the player plays on. Nobody approves their own request. ' +
+          "A player cannot be their own guardian (400), nobody invites themselves (400), and somebody who already guards the player is not asked again (409). The same guardian request still waiting (the same sender for the same player, the same guardian inviting the same account or address, or the same team inviting the same account or address for the same player) is answered with 200 and that request; nothing new is sent, and it counts once. The retry key of a guardian request, sent again, gets its first answer (201 or 200, the same body) and sends nothing again, unless the mail of the invitation failed, which it then sends; it is not authorized again, so it answers the same after the sender lost the team or the player left it. A user may have 5 guardian requests and guardian's invitations waiting, and after three of their requests are declined cannot ask again for 7 days (429 `rateLimited`); a team's invitations count toward neither, and a declined invitation never counts. Guardian requests are never resent.",
         requestBody: body({
-          type: 'object',
-          required: ['kind', 'sender', 'idempotencyKey'],
-          properties: {
-            kind: {
-              type: 'string',
-              enum: ['parent', 'participation', 'promotion', 'person']
-            },
-            sender: ref,
-            idempotencyKey: retryKey,
-            confirmBoth: { type: 'boolean' },
-            actions: { type: 'array', items: action },
-            teamId: { type: 'string' },
-            seasonId: { type: 'string' },
-            recipientUserId: { type: 'integer' },
-            recipientEmail: {
-              type: 'string',
-              format: 'email',
-              description:
-                'Verified active account email; provide this or recipientUserId' +
-                '. Personal role invitations require recipientEmail; unknown addresses may verify before acceptance.'
-            },
-            admin: {
-              type: 'boolean',
-              default: false,
-              description: 'Requested personal group administrator role'
-            },
-            flags: {
-              type: 'array',
-              items: {
-                type: 'string',
-                enum: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
-              }
-            }
-          }
+          oneOf: [relationship, guardian]
         }),
         responses: {
           ...responses,
+          200: {
+            description: 'The same guardian request, already waiting'
+          },
           201: { description: 'One invitation and its shared approval sides' }
         }
       }
@@ -329,7 +397,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           }
         ],
         description:
-          'hasPending counts actionable requests across every page. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
+          'hasPending counts actionable requests across every page, and every `grant` notification (somebody added you to a team, season or league) not yet viewed. The default list holds both; history holds resolved requests and every piece of information, grants included. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
         responses
       }
     },
@@ -365,7 +433,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           'Public minimal group profile with optional current management capability',
         parameters: [parameter('id')],
         description:
-          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media.',
+          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league. `canManagePeople` is true for its administrators, coaches and assistants, who open anybody on its people list and give or take away every role there but Admin; `canSeePeople` for its members and role holders, who read that list.',
         responses
       }
     }

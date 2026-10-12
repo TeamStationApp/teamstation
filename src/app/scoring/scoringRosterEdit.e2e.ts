@@ -647,9 +647,8 @@ async function main(): Promise<void> {
         await input('Jersey number', '12')
         await tap('P')
         await tap('SS')
-        await reach('Bats Switch')
-        await tap('Bats Switch')
-        await tap('Throws Left')
+        // Settings beside a team edits the jersey and positions; how a player
+        // bats and throws is edited away from a team.
         await reach('Save')
         await tap('Save')
         const until = Date.now() + 15000
@@ -671,7 +670,7 @@ async function main(): Promise<void> {
         )
         await tap('Back')
         await shown('Tap a player to edit settings.')
-        await shown('Mookie Betts, jersey 12, bats switch, throws left')
+        await shown('Mookie Betts, jersey 12, bats right, throws right')
         assert.equal(
           JSON.stringify(fixture.stored()),
           before,

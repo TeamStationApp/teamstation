@@ -298,7 +298,7 @@ for (const kinds of [
     for (const kind of ['league', 'season', 'team'] as const) {
       const title = kind[0].toUpperCase() + kind.slice(1)
       // A section on Home carries its own `Create League` pill; a kind with
-      // no section yet is created from the cards or buttons below them.
+      // no section yet is created from its large card.
       const label = `Create ${title}`
       await press(label)
     }
@@ -311,8 +311,15 @@ for (const kinds of [
         )
       )
     expect(content).not.includes('Current & past')
-    if (kinds.includes('team'))
-      expect(content).not.includes('Create an organization')
+    // Every kind with nothing in it has its large card, whatever else there
+    // is; a kind there is has none.
+    const words = {
+      league: 'Create an organization',
+      season: 'Create a season or tournament',
+      team: 'A team is a collection'
+    }
+    for (const kind of ['league', 'season', 'team'] as const)
+      expect(content.includes(words[kind]), kind).equals(!kinds.includes(kind))
   })
 }
 

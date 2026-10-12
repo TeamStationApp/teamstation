@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asTeamSummary, TeamStationClient } from '../../common/api'
+import {
+  asGameSummary,
+  asTeamSummary,
+  TeamStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { NodeAccount } from '../../common/nodeAdministration'
 import type { Notification } from '../../common/notifications'
@@ -75,6 +79,7 @@ const group = asPublicGroup({
   locality: null
 })
 const detail = asGroupDetail({
+  nonMemberView: false,
   group,
   parents: [],
   children: [],
@@ -262,29 +267,43 @@ describe('creation and organization interface behavior', () => {
   })
   it('opens an authorized hosted proposal without granting private access to the visiting team', async () => {
     const api = client()
+    // Signed in and not a member: the team's own page in the non-member
+    // view, whose schedule carries the request the caller may answer.
     api.group = async () =>
       asGroupDetail({
         ...detail,
         canManage: false,
         canViewPrivate: false,
-        games: [
-          {
-            id: 'gam_reserved',
-            homeTeam: { id: group.id, name: group.name },
-            awayTeam: { id: 'tem_guest', name: 'Demo Guest' },
-            seasonId: 'sea_host',
-            startAt: '2027-03-02T18:00:00Z',
-            venue: null,
-            status: 'scheduled',
-            homeScore: null,
-            awayScore: null,
-            cancellationReason: null,
-            withdrawnByTeamId: null,
-            pendingApproval: true,
-            pendingRequestId: 'req_host'
-          }
-        ]
+        nonMemberView: true
       })
+    api.teamGames = async () => [
+      asGameSummary({
+        id: 'gam_reserved',
+        homeTeamId: group.id,
+        awayTeamId: 'tem_guest',
+        homeTeamName: group.name,
+        awayTeamName: 'Demo Guest',
+        seasonId: 'sea_host',
+        startAt: '2027-03-02T18:00:00Z',
+        venue: null,
+        status: 'scheduled',
+        homeScore: null,
+        awayScore: null,
+        ingestStatus: 'pending',
+        videoCount: 0,
+        pendingApproval: true,
+        pendingRequestId: 'req_host'
+      })
+    ]
+    api.roster = async () => []
+    api.standings = async () => []
+    api.follows = async () => []
+    const asked: string[] = []
+    for (const method of ['teamStats', 'teamPitchingStats'] as const)
+      api[method] = async () => {
+        asked.push(method)
+        throw new Error('Kept for members')
+      }
     const opened: Array<{ id: string; options: unknown }> = []
     await mount(
       <GroupScreen
@@ -299,12 +318,23 @@ describe('creation and organization interface behavior', () => {
         onOpenGame={(id, _title, options) => opened.push({ id, options })}
       />
     )
+    await settle()
     expect(document.body.textContent).includes('Pending approval')
-    expect(document.body.textContent).not.includes('Open team videos and stats')
-    await press('Open game')
+    const row = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node =>
+      (node.getAttribute('aria-label') ?? '').startsWith(
+        'Demo Hawks vs Demo Guest'
+      )
+    )
+    expect(row).not.equals(undefined)
+    await act(async () => {
+      row!.click()
+    })
     expect(opened).deep.equals([
       { id: 'gam_reserved', options: { pendingRequestId: 'req_host' } }
     ])
+    expect(asked).deep.equals([])
   })
   it('continues an incompatible single parent choice into a reviewed multi-party batch and sends exactly the reviewed actions', async () => {
     const api = client()

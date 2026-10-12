@@ -13,15 +13,19 @@ import type {
   PublicGroup
 } from '../../common/publicGroups'
 import { publicStaffName } from '../../common/publicStaffName'
-import { ROLES } from '../../common/roles'
-import { roleScopes, visibleScopes } from '../access'
+import {
+  givenRolesOnTeam,
+  nonMemberTeam,
+  seesPeopleOf,
+  visibleScopes
+} from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { followMerges } from '../teams/followMerges'
-import { canAdminister } from './rights'
+import { canAdminister, canManagePeople } from './rights'
 
 export async function publicGroup(
   db: Kysely<Database>,
@@ -419,28 +423,10 @@ export async function groupDetail(
   }
   const staff: GroupDetail['staff'] = []
   if (ref.kind === 'team') {
-    const scopes: GroupRef[] = [ref, ...parentRefs]
-    const granted = await db
-      .selectFrom('scope_roles')
-      .select('user_id')
-      .where(eb =>
-        eb.or(
-          scopes.map(scope =>
-            eb.and([
-              eb('scope_type', '=', scope.kind),
-              eb('scope_id', '=', scope.id)
-            ])
-          )
-        )
-      )
-      .execute()
-    const owners = await db
-      .selectFrom('memberships')
-      .select('user_id')
-      .where('team_id', '=', ref.id)
-      .where('role', 'in', ['owner', 'manager'])
-      .execute()
-    const ids = [...new Set([...granted, ...owners].map(row => row.user_id))]
+    // The roles each was given, never the ones implied: an administrator is
+    // listed as admin alone, a scorekeeper as scorekeeper alone.
+    const given = await givenRolesOnTeam(db, ref.id)
+    const ids = [...given.keys()]
     const users =
       ids.length === 0
         ? []
@@ -454,24 +440,19 @@ export async function groupDetail(
               'onboarding_step'
             ])
             .where('id', 'in', ids)
-            .where('disabled_at', 'is', null)
-            .where('merged_into', 'is', null)
             .execute()
     for (const user of users) {
-      const roles = await roleScopes(db, user.id, false)
-      const effective = ROLES.filter(role => roles[role].teamIds.has(ref.id))
-      if (effective.length > 0)
-        staff.push({
-          name:
-            user.onboarding_step === 'name'
-              ? 'Staff member'
-              : publicStaffName({
-                  firstName: user.first_name,
-                  lastName: user.last_name,
-                  displayName: user.display_name
-                }),
-          roles: effective
-        })
+      staff.push({
+        name:
+          user.onboarding_step === 'name'
+            ? 'Staff member'
+            : publicStaffName({
+                firstName: user.first_name,
+                lastName: user.last_name,
+                displayName: user.display_name
+              }),
+        roles: given.get(user.id) ?? []
+      })
     }
   }
   const load = async (refs: GroupRef[]): Promise<PublicGroup[]> =>
@@ -498,9 +479,16 @@ export async function groupDetail(
     visible != null &&
     (visible.isAdmin ||
       (ref.kind === 'team' ? visible.teamIds : visible.seasonIds).has(ref.id))
+  // Anybody signed in who is not a member reads a team in the non-member
+  // view; a season or league page is the same for everybody.
+  const nonMemberView =
+    ref.kind === 'team' &&
+    visible != null &&
+    (await nonMemberTeam(db, actor, visible, ref.id))
   return {
     group,
     canViewPrivate,
+    nonMemberView,
     parents: await load(parentRefs),
     children: await load(childRefs),
     participatingSeasons: await load(participationRefs),
@@ -513,6 +501,11 @@ export async function groupDetail(
     canManage:
       actor == null || actor.apiTokenId != null
         ? false
-        : await canAdminister(db, actor, ref)
+        : await canAdminister(db, actor, ref),
+    canManagePeople:
+      actor == null || actor.apiTokenId != null
+        ? false
+        : await canManagePeople(db, actor, ref),
+    canSeePeople: actor == null ? false : await seesPeopleOf(db, actor, ref)
   }
 }

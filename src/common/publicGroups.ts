@@ -67,6 +67,23 @@ export const asGroupDetail = asObject({
     []
   ),
   canViewPrivate: asOptional(asBoolean, false),
-  canManage: asBoolean
+  /**
+   * Anybody signed in who is not a member of this team, following it or
+   * not: the team page shows names without pictures, the schedule and each
+   * game's score, and says the figures and the video are for members. False
+   * for members, for nobody signed in, and on every season and league.
+   */
+  nonMemberView: asBoolean,
+  canManage: asBoolean,
+  /**
+   * An administrator, coach or assistant of this group: they open anybody on
+   * its people list and give or take away every role there but Admin.
+   */
+  canManagePeople: asOptional(asBoolean),
+  /**
+   * Whether this viewer reads the group's people list with its photos: its
+   * members and role holders. A season's and league's People tab is theirs.
+   */
+  canSeePeople: asOptional(asBoolean)
 })
 export type GroupDetail = ReturnType<typeof asGroupDetail>

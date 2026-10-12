@@ -71,6 +71,7 @@ describe('the manage page', function () {
   let server: ReturnType<express.Express['listen']> | undefined
   let base = ''
   const posted: Array<{ email: string; link: string }> = []
+  const told: Array<{ email: string; roles: string; link: string }> = []
 
   before(async function () {
     admin = new Pool({ connectionString: adminUrl })
@@ -98,6 +99,9 @@ describe('the manage page', function () {
       manageRoutes(db, {
         sendInvite: async (email, invitation) => {
           posted.push({ email, link: invitation.link })
+        },
+        sendAdded: async (email, notice) => {
+          told.push({ email, roles: notice.roles, link: notice.link })
         },
         publicUrl: 'https://gs.example'
       })
@@ -257,7 +261,7 @@ describe('the manage page', function () {
         id: 'smb_parent',
         user_id: parentId,
         season_id: 'sea_spring',
-        role: 'spectator',
+        role: 'member',
         source: 'peertube'
       })
       .execute()
@@ -314,6 +318,9 @@ describe('the manage page', function () {
       idempotencyKey: `fixture-person-${++invitationNumber}`
     })
     expect(reply.status).equals(201)
+    // An address an account holds is added at once; only one nobody holds
+    // waits for its link to be used.
+    if (reply.body.invited == null) return
     const invite = await findInviteByCode(
       db!,
       (reply.body.invited as { code: string }).code
@@ -386,34 +393,49 @@ describe('the manage page', function () {
     expect(parent?.seasons.length).equals(1)
   })
 
-  it('waits for an existing account to accept before adding group access', async function () {
+  it('adds an existing account at once, and tells them in their inbox and by mail', async function () {
     if (db == null) this.skip()
     const added = await ask('/manage/team/tem_hawks/people', COACH, 'POST', {
-      email: parentEmail
+      email: parentEmail.toUpperCase()
     })
     expect(added.status).equals(201)
-    expect(added.body.added).equals(false)
-    expect(
-      await db
-        .selectFrom('memberships')
-        .select('id')
-        .where('user_id', '=', parentId)
-        .where('team_id', '=', 'tem_hawks')
-        .execute()
-    ).length(0)
-    const invitation = await findInviteByCode(
-      db,
-      (added.body.invited as { code: string }).code
-    )
-    await redeemInvite(db, invitation!, parentId)
-
+    expect(added.body).deep.equals({
+      added: true,
+      person: {
+        userId: parentId,
+        displayName: 'Jo Parent',
+        email: parentEmail
+      }
+    })
+    expect(added.body.invited).equals(undefined)
     const membership = await db
       .selectFrom('memberships')
-      .select(['is_spectator'])
+      .select(['role'])
       .where('user_id', '=', parentId)
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
-    expect(membership?.is_spectator).equals(true)
+    expect(membership?.role).equals('member')
+    const notice = await db
+      .selectFrom('notification_events')
+      .select(['id', 'metadata', 'recorded_recipients'])
+      .where('source_type', '=', 'grant')
+      .where(eb => eb(eb.val(parentId), '=', eb.fn.any('recorded_recipients')))
+      .executeTakeFirstOrThrow()
+    expect(notice.metadata).includes({
+      title: 'Robin Coach added you to Demo Hawks'
+    })
+    expect(told.at(-1)).deep.equals({
+      email: parentEmail,
+      roles: '',
+      link: `https://gs.example/notifications/${notice.id}`
+    })
+
+    // Adding them again adds nothing, tells nobody and says so.
+    const again = await ask('/manage/team/tem_hawks/people', COACH, 'POST', {
+      email: parentEmail
+    })
+    expect(again.body.added).equals(false)
+    expect(told.length).equals(1)
   })
 
   it('posts an invitation to an address nobody here holds', async function () {
@@ -458,11 +480,11 @@ describe('the manage page', function () {
     // something they cannot watch, which is nobody's intention.
     const membership = await db
       .selectFrom('season_members')
-      .select(['id'])
+      .select(['role'])
       .where('user_id', '=', coachId)
       .where('season_id', '=', 'sea_spring')
       .executeTakeFirst()
-    expect(membership == null).equals(false)
+    expect(membership?.role).equals('member')
 
     const back = await ask(
       `/manage/season/sea_spring/people/${coachId}/role`,
@@ -697,11 +719,11 @@ describe('the manage page', function () {
     // And able to see what they keep score of.
     const joined = await db
       .selectFrom('league_members')
-      .select(['id'])
+      .select(['role'])
       .where('user_id', '=', ghostId)
       .where('league_id', '=', 'lea_npll')
       .executeTakeFirst()
-    expect(joined == null).equals(false)
+    expect(joined?.role).equals('member')
 
     const season = await ask(
       `/manage/season/sea_spring/people/${ghostId}/roles`,
@@ -714,9 +736,13 @@ describe('the manage page', function () {
       `/manage/team/tem_hawks/people/${ghostId}/roles`,
       COACH,
       'PUT',
-      { admin: false, flags: ['videographer'] }
+      { admin: false, flags: ['videographer', 'assistant'] }
     )
-    expect(team.body.roles).deep.equals(['videographer'])
+    expect(team.body.roles).deep.equals(['assistant', 'videographer'])
+    expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([
+      'assistant',
+      'videographer'
+    ])
     expect(await rowsOf(ghostId, 'league', 'lea_npll')).deep.equals([
       'scorekeeper'
     ])
@@ -759,8 +785,9 @@ describe('the manage page', function () {
     expect(cleared.body.roles).deep.equals([])
     expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([])
 
+    // Two adds by address and five role changes.
     let audited: unknown[] = []
-    for (let tries = 0; tries < 50 && audited.length < 5; tries++) {
+    for (let tries = 0; tries < 50 && audited.length < 7; tries++) {
       await new Promise(resolve => setTimeout(resolve, 10))
       audited = await db
         .selectFrom('audit_log')
@@ -769,7 +796,7 @@ describe('the manage page', function () {
         .where('entity_id', '=', String(ghostId))
         .execute()
     }
-    expect(audited.length).equals(5)
+    expect(audited.length).equals(7)
   })
 
   it('lets only an administrator of the level or one above it set roles', async function () {
@@ -950,5 +977,101 @@ describe('the manage page', function () {
         roles: ['admin', 'coach']
       }
     ])
+  })
+
+  it('lists a season’s watcher on its team’s page, and gives them a team role at once', async function () {
+    if (db == null) this.skip()
+    // Somebody who watches the season and holds nothing on the team itself:
+    // the team's page lists them, with their tick under Season.
+    const watcherId = mintUser()
+    const watcherEmail = exampleEmail()
+    const now = new Date()
+    await db
+      .insertInto('users')
+      .values({
+        id: watcherId,
+        legacyId: legacyId(watcherId),
+        display_name: 'Lou Watcher',
+        login_enabled: true,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    await db
+      .insertInto('user_emails')
+      .values({
+        id: makeId('userEmail'),
+        user_id: watcherId,
+        email: watcherEmail,
+        is_primary: true,
+        verified_at: now
+      })
+      .execute()
+    await db
+      .insertInto('season_members')
+      .values({
+        id: 'smb_watcher',
+        user_id: watcherId,
+        season_id: 'sea_spring',
+        role: 'member',
+        source: 'peertube'
+      })
+      .execute()
+    const page = await ask('/manage/team/tem_hawks', COACH)
+    const listed = peopleOf(page.body).find(
+      person => person.userId === watcherId
+    )
+    expect(listed?.seasons.map(season => season.id)).deep.equals(['sea_spring'])
+    expect(listed?.teams).deep.equals([])
+
+    // Nothing to accept: they are the team's coach, and a member of it, now.
+    const made = await ask(
+      `/manage/team/tem_hawks/people/${watcherId}/roles`,
+      COACH,
+      'PUT',
+      { admin: false, flags: ['coach'] }
+    )
+    expect(made.status).equals(200)
+    expect(await rowsOf(watcherId, 'team', 'tem_hawks')).deep.equals(['coach'])
+    const membership = await db
+      .selectFrom('memberships')
+      .select('role')
+      .where('user_id', '=', watcherId)
+      .where('team_id', '=', 'tem_hawks')
+      .executeTakeFirst()
+    expect(membership?.role).equals('member')
+    const notice = await db
+      .selectFrom('notification_events')
+      .select('metadata')
+      .where('source_type', '=', 'grant')
+      .where(eb => eb(eb.val(watcherId), '=', eb.fn.any('recorded_recipients')))
+      .executeTakeFirstOrThrow()
+    expect(notice.metadata).includes({
+      title: 'Robin Coach added you as Coach of Demo Hawks'
+    })
+
+    // Somebody on no list of the team is not given anything by id.
+    const stranger = mintUser()
+    await db
+      .insertInto('users')
+      .values({
+        id: stranger,
+        legacyId: legacyId(stranger),
+        display_name: 'Stranger',
+        login_enabled: true,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    expect(
+      (
+        await ask(
+          `/manage/team/tem_hawks/people/${stranger}/roles`,
+          COACH,
+          'PUT',
+          { admin: false, flags: ['coach'] }
+        )
+      ).status
+    ).equals(404)
   })
 })

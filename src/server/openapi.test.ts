@@ -10,6 +10,7 @@ import {
   PITCH_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
+import { ROLE_FLAGS, ROLES } from '../common/roles'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
@@ -34,6 +35,7 @@ import { mediaRoutes } from './routes/media'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
+import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
@@ -159,6 +161,7 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(peopleRoutes(db, media)),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),
@@ -209,6 +212,7 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(peopleRoutes(db, media)),
       ...routesOf(meRoutes(db)),
       ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
       ...routesOf(onboardingRoutes(db, media)),
@@ -252,6 +256,194 @@ describe('the API document', function () {
     expect(settings?.description ?? '').includes('coach')
     expect(settings?.description ?? '').includes('404')
     expect(JSON.stringify(settings?.requestBody)).includes('"DH"')
+  })
+
+  it('documents guardian invitations and requests beside the other relationship requests', function () {
+    const post = (openApiDocument('0.0.0').paths as Record<string, any>)[
+      '/relationship-requests'
+    ].post
+    const [relationship, guardian] =
+      post.requestBody.content['application/json'].schema.oneOf
+    expect(relationship.required).deep.equals([
+      'kind',
+      'sender',
+      'idempotencyKey'
+    ])
+    expect(relationship.properties.kind.enum).not.includes('guardian')
+    expect(guardian.required).deep.equals([
+      'kind',
+      'playerUserId',
+      'guardian',
+      'idempotencyKey'
+    ])
+    expect(guardian.properties.kind.enum).deep.equals(['guardian'])
+    expect(
+      guardian.properties.guardian.oneOf.map(
+        (option: { required: string[] }) => option.required
+      )
+    ).deep.equals([['userId'], ['email']])
+    expect(guardian.properties.sender.properties.kind.enum).deep.equals([
+      'team'
+    ])
+    expect(guardian.properties.idempotencyKey).deep.equals({
+      type: 'string',
+      minLength: 8,
+      maxLength: 120
+    })
+    expect(post.summary).includes('guardian invitation')
+    expect(post.description).includes('A guardian request has no `sender`')
+    expect(post.description).includes('429 `rateLimited`')
+  })
+
+  it('describes a roster entry\u2019s section, staff roles and inherited pill', function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    const entry = schemas.RosterEntry
+    expect(entry.required).to.include.members([
+      'section',
+      'staffRoles',
+      'inheritedFrom'
+    ])
+    expect(entry.required).not.to.include('group')
+    expect(entry.properties).not.to.have.property('group')
+    expect(entry.properties.section.enum).deep.equals([
+      'admin',
+      'staff',
+      'player',
+      'family',
+      'spectator',
+      'follower'
+    ])
+    expect(entry.properties.staffRoles.items).deep.equals({
+      $ref: '#/components/schemas/RoleFlag'
+    })
+    expect(
+      entry.properties.inheritedFrom.oneOf[0].properties.level.enum
+    ).deep.equals(['season', 'league'])
+    // A spectator's pill names membership, which is not a role.
+    expect(
+      entry.properties.inheritedFrom.oneOf[0].properties.role.oneOf
+    ).deep.equals([
+      { $ref: '#/components/schemas/Role' },
+      { type: 'string', enum: ['member'] }
+    ])
+    const paths = document.paths as Record<string, any>
+    expect(
+      paths['/teams/{teamId}/roster'].get.responses[200].content[
+        'application/json'
+      ].schema.items
+    ).deep.equals({ $ref: '#/components/schemas/RosterEntry' })
+    expect(
+      paths['/teams/{teamId}/players/{userId}/settings'].put.responses[200]
+        .content['application/json'].schema
+    ).deep.equals({ $ref: '#/components/schemas/RosterEntry' })
+  })
+
+  it('lists every role flag, the assistant included, wherever roles are named', function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    expect(schemas.Role.enum).deep.equals([...ROLES])
+    expect(schemas.RoleFlag.enum).deep.equals([...ROLE_FLAGS])
+    expect(schemas.Role.description).includes('`assistant`')
+    const paths = document.paths as Record<string, any>
+    const invite =
+      paths['/manage/{scopeType}/{scopeId}/people'].post.requestBody.content[
+        'application/json'
+      ].schema
+    expect(invite.properties.flags.items.enum).deep.equals([...ROLE_FLAGS])
+    const personal =
+      paths['/relationship-requests'].post.requestBody.content[
+        'application/json'
+      ].schema.oneOf[0]
+    expect(personal.properties.flags.items.enum).deep.equals([...ROLE_FLAGS])
+    expect(
+      paths['/manage/{scopeType}/{scopeId}/people/{userId}/roles'].put
+        .description
+    ).includes('`assistant`')
+    expect(
+      paths['/teams/{teamId}/players/{userId}/settings'].put.description
+    ).includes('assistant')
+    expect(
+      paths['/teams/{teamId}/players/{userId}/walk-up-song'].put.description
+    ).includes('scorekeeper')
+    expect(paths['/games/{gameId}'].get.description).includes(
+      'songkeeper or scorekeeper'
+    )
+    expect(paths['/me/roles'].get.description).includes('`songkeeper`')
+  })
+
+  it('describes what a guardian may read and change', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const hands = paths['/players/{userId}/settings'].put
+    expect(hands.description).includes('guardian')
+    expect(hands.description).includes('400')
+    expect(hands.description).includes('404')
+    expect(
+      Object.keys(
+        hands.requestBody.content['application/json'].schema.properties
+      )
+    ).deep.equals(['bats', 'throws'])
+    expect(
+      paths['/teams/{teamId}/players/{userId}/settings'].put.description
+    ).includes('guardian')
+    expect(
+      paths['/teams/{teamId}/players/{userId}/walk-up-song'].put.description
+    ).includes('guardian')
+    const roles =
+      paths['/me/roles'].get.responses[200].content['application/json'].schema
+    expect(roles.required).deep.equals(['teams', 'guardianOf'])
+    expect(roles.properties.guardianOf.type).equals('array')
+    const users = paths['/users'].get
+    const guardedBy = users.parameters.find(
+      (parameter: { name: string }) => parameter.name === 'guardedBy'
+    )
+    expect(guardedBy.schema.enum).deep.equals(['me'])
+    expect(users.description).includes('`guardedBy=me`')
+    expect(users.description).includes('shortName')
+  })
+
+  it("says which of a player's teams they play on now", function () {
+    const document = openApiDocument('0.0.0')
+    const schemas = (document.components as { schemas: Record<string, any> })
+      .schemas
+    expect(schemas.PlayerTeam.required).to.include.members([
+      'jersey',
+      'positions',
+      'current'
+    ])
+    expect(schemas.PlayerTeam.properties.current).deep.equals({
+      type: 'boolean'
+    })
+    const paths = document.paths as Record<string, any>
+    expect(
+      paths['/players/{userId}'].get.responses[200].content['application/json']
+        .schema.properties.teams.items
+    ).deep.equals({ $ref: '#/components/schemas/PlayerTeam' })
+  })
+
+  it("narrows a player's highlights by the stats filter", function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const names = (route: string): string[] =>
+      paths[route].get.parameters.map(
+        (parameter: { name: string }) => parameter.name
+      )
+    expect(names('/players/{userId}/highlights')).deep.equals([
+      'userId',
+      'before',
+      'limit',
+      'seasonId',
+      'teamId',
+      'year'
+    ])
+    const filter = (route: string): unknown[] =>
+      paths[route].get.parameters.filter((parameter: { name: string }) =>
+        ['seasonId', 'teamId', 'year'].includes(parameter.name)
+      )
+    expect(filter('/players/{userId}/highlights')).deep.equals(
+      filter('/players/{userId}/stats')
+    )
   })
 
   it('describes the box-score stats field and the events play contract', function () {

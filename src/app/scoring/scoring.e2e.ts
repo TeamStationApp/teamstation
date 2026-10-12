@@ -20,6 +20,7 @@ import { initialHitTarget } from '../field/trajectoryGuide'
 import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const game = asGameDetail({
+  nonMemberView: false,
   id: 'g1',
   awayTeamId: 'away',
   homeTeamId: 'home',
@@ -233,6 +234,9 @@ async function open(
               positions: ['P'],
               isPlayer: true,
               role: 'member',
+              section: 'player',
+              staffRoles: [],
+              inheritedFrom: null,
               bats,
               throws: 'right'
             }
@@ -244,6 +248,9 @@ async function open(
               positions: [createPlayers()[i + 1].id],
               isPlayer: true,
               role: 'member',
+              section: 'player',
+              staffRoles: [],
+              inheritedFrom: null,
               bats: 'right' as const,
               throws: 'right'
             }))
@@ -255,6 +262,9 @@ async function open(
             positions: [createPlayers()[i].id],
             isPlayer: true,
             role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null,
             bats: 'right',
             throws: 'right'
           }))

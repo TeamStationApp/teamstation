@@ -524,6 +524,50 @@ const scopeIdParam = {
   required: true,
   schema: { type: 'string' }
 }
+/** A role one person is given or loses at a level, or its membership. */
+const roleParam = {
+  name: 'role',
+  in: 'path',
+  required: true,
+  schema: {
+    type: 'string',
+    enum: [
+      'admin',
+      'coach',
+      'assistant',
+      'scorekeeper',
+      'songkeeper',
+      'videographer',
+      'member'
+    ]
+  }
+}
+const roleOnlyParam = {
+  name: 'role',
+  in: 'path',
+  required: true,
+  schema: { $ref: '#/components/schemas/Role' }
+}
+const kindParam = {
+  name: 'kind',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', enum: ['league', 'season', 'team'] }
+}
+const idParam = {
+  name: 'id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+const heldAtResponse = {
+  description: 'What they hold at the level itself now',
+  content: {
+    'application/json': {
+      schema: { $ref: '#/components/schemas/HeldAt' }
+    }
+  }
+}
 /** Feet to the fence a level sets, or null to leave it to the one above. */
 const fenceDistanceFt = {
   type: ['integer', 'null'],
@@ -1165,6 +1209,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'tooLarge',
                 'unsupportedMedia',
                 'rateLimited',
+                'membersOnly',
                 'internal',
                 'unavailable'
               ]
@@ -1549,10 +1594,19 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         Role: {
           type: 'string',
-          enum: ['admin', 'coach', 'scorekeeper', 'songkeeper', 'videographer'],
+          enum: [
+            'admin',
+            'coach',
+            'assistant',
+            'scorekeeper',
+            'songkeeper',
+            'videographer'
+          ],
           description:
             'What somebody may do on a league, season or team and everything ' +
-            'inside it. `admin` holds every flag without having one set.'
+            'inside it. `admin` holds every flag without having one set. ' +
+            '`assistant` may do everything `coach` may, and `scorekeeper` ' +
+            'everything `songkeeper` may.'
         },
         WalkUpSong: {
           type: 'object',
@@ -1595,9 +1649,312 @@ export function openApiDocument(version: string): OpenApiDocument {
             endMs: { type: 'integer' }
           }
         },
+        PlayerTeam: {
+          type: 'object',
+          required: [
+            'teamId',
+            'teamName',
+            'seasonId',
+            'seasonName',
+            'seasonYear',
+            'jersey',
+            'positions',
+            'current',
+            'logoUrl'
+          ],
+          description:
+            'A team a player has played for, once for each season it is in, ' +
+            'belongs to or played in. `jersey` and `positions` are their ' +
+            'membership’s, null and empty on a team they only have stats ' +
+            'for. `current` is whether they are a player on it now, under any ' +
+            'of their rows: false on a team they have left.',
+          properties: {
+            teamId: { type: 'string' },
+            teamName: { type: 'string' },
+            seasonId: { type: ['string', 'null'] },
+            seasonName: { type: ['string', 'null'] },
+            seasonYear: { type: ['integer', 'null'] },
+            jersey: { type: ['string', 'null'] },
+            positions: { type: 'array', items: { type: 'string' } },
+            current: { type: 'boolean' },
+            logoUrl: {
+              type: ['string', 'null'],
+              description: "The team's logo, a signed URL; null without one."
+            }
+          }
+        },
+        RosterEntry: {
+          type: 'object',
+          required: [
+            'userId',
+            'shortName',
+            'avatarUrl',
+            'jersey',
+            'positions',
+            'isPlayer',
+            'role',
+            'bats',
+            'throws',
+            'section',
+            'staffRoles',
+            'inheritedFrom',
+            'walkUpSong'
+          ],
+          description:
+            'One person on a team\u2019s roster. Somebody listed without a ' +
+            'membership of the team (staff given their role on its season ' +
+            'or league, a member of its season or league, a guardian of one ' +
+            'of its players, or a follower) has `role` `member`, `isPlayer` ' +
+            'false, no jersey, no positions and no walk-up song.',
+          properties: {
+            userId: { type: 'integer' },
+            shortName: {
+              type: 'string',
+              description: 'First name and last initial.'
+            },
+            nameDetails: {
+              type: 'object',
+              required: ['firstName', 'lastName', 'displayName'],
+              description:
+                'A player\u2019s whole name, only on a read with ' +
+                '`includeFullNames=true` by a roster manager.',
+              properties: {
+                firstName: { type: ['string', 'null'] },
+                lastName: { type: ['string', 'null'] },
+                displayName: { type: 'string' }
+              }
+            },
+            avatarUrl: { type: ['string', 'null'] },
+            jersey: { type: ['string', 'null'] },
+            positions: { type: 'array', items: { type: 'string' } },
+            isPlayer: { type: 'boolean' },
+            role: {
+              type: 'string',
+              description: 'Their membership: `owner`, `manager` or `member`.'
+            },
+            bats: {
+              type: ['string', 'null'],
+              enum: ['left', 'right', 'switch', null]
+            },
+            throws: { type: ['string', 'null'], enum: ['left', 'right', null] },
+            section: {
+              type: 'string',
+              enum: [
+                'admin',
+                'staff',
+                'player',
+                'family',
+                'spectator',
+                'follower'
+              ],
+              description:
+                'The first that fits: `admin` (owner, manager, or the ' +
+                'admin role on the team, its season or its league), ' +
+                '`staff` (any role flag there), `player`, `family` (a ' +
+                'guardian of one of its players), `spectator` (a member of ' +
+                'the team, its season or its league), `follower` (follows ' +
+                'the team, or a team merged into it).'
+            },
+            staffRoles: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/RoleFlag' },
+              description:
+                'The flags given on the team, its season or its league, in ' +
+                'flag order. Implied roles are not listed.'
+            },
+            inheritedFrom: {
+              description:
+                'For the role that placed them (`admin`, the first of ' +
+                '`staffRoles`, or for a spectator `member`), the highest ' +
+                'level giving it when that is above the team: a team coach ' +
+                'who also coaches the league is `{ level: league, role: ' +
+                'coach }`, and a member of the team\u2019s season `{ level: ' +
+                'season, role: member }`. Null when the team gives it, and ' +
+                'for players, family and followers.',
+              oneOf: [
+                {
+                  type: 'object',
+                  required: ['level', 'role'],
+                  properties: {
+                    level: { type: 'string', enum: ['season', 'league'] },
+                    role: {
+                      oneOf: [
+                        { $ref: '#/components/schemas/Role' },
+                        { type: 'string', enum: ['member'] }
+                      ]
+                    }
+                  }
+                },
+                { type: 'null' }
+              ]
+            },
+            walkUpSong: {
+              oneOf: [
+                { $ref: '#/components/schemas/WalkUpSong' },
+                { type: 'null' }
+              ]
+            },
+            teamNames: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'On a season\u2019s or league\u2019s people list, the teams ' +
+                'a player plays on there. Absent from a team\u2019s roster.'
+            },
+            guardianOf: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'For a family member, the short names of the players on this ' +
+                'list they are a parent or guardian of. Absent for everybody ' +
+                'else.'
+            }
+          }
+        },
+        PersonProfile: {
+          type: 'object',
+          required: ['context', 'person', 'guardianOf', 'sections', 'viewer'],
+          description:
+            'One person as a team, season or league sees them, for the ' +
+            'profile opened from its people list.',
+          properties: {
+            context: {
+              type: 'object',
+              required: ['kind', 'id', 'name'],
+              properties: {
+                kind: { type: 'string', enum: ['league', 'season', 'team'] },
+                id: { type: 'string' },
+                name: { type: 'string' }
+              }
+            },
+            person: {
+              type: 'object',
+              required: [
+                'userId',
+                'shortName',
+                'fullName',
+                'avatarUrl',
+                'canHoldRoles'
+              ],
+              properties: {
+                userId: { type: 'integer' },
+                shortName: { type: 'string' },
+                fullName: {
+                  type: ['string', 'null'],
+                  description:
+                    'For a viewer who manages the level\u2019s people, or ' +
+                    'may read the whole name anyway; null for anybody else.'
+                },
+                avatarUrl: { type: ['string', 'null'] },
+                canHoldRoles: {
+                  type: 'boolean',
+                  description:
+                    'An account that signs in, not suspended or closed: ' +
+                    'only such a person is given a role.'
+                }
+              }
+            },
+            guardianOf: {
+              type: 'array',
+              description:
+                'The players they guard who play now on a team the level ' +
+                'reaches (the team; any team of the season; any team of ' +
+                'the league), each with the first such team by name.',
+              items: {
+                type: 'object',
+                required: ['userId', 'shortName', 'avatarUrl', 'teamId'],
+                properties: {
+                  userId: { type: 'integer' },
+                  shortName: { type: 'string' },
+                  avatarUrl: { type: ['string', 'null'] },
+                  teamId: { type: 'string' }
+                }
+              }
+            },
+            sections: {
+              type: 'array',
+              description:
+                'A team\u2019s profile: the team, all its seasons as one, ' +
+                'its league. A season\u2019s: the season and its league. A ' +
+                'league\u2019s: the league. A level with no group is left ' +
+                'out. `roles` and `member` are what was given at that level ' +
+                'itself; `editable` is true only for the level the profile ' +
+                'is opened from, for a viewer who manages its people.',
+              items: {
+                type: 'object',
+                required: [
+                  'level',
+                  'groups',
+                  'roles',
+                  'member',
+                  'follower',
+                  'editable'
+                ],
+                properties: {
+                  level: {
+                    type: 'string',
+                    enum: ['league', 'season', 'team']
+                  },
+                  groups: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['id', 'name'],
+                      properties: {
+                        id: { type: 'string' },
+                        name: { type: 'string' }
+                      }
+                    }
+                  },
+                  roles: {
+                    type: 'array',
+                    items: { $ref: '#/components/schemas/Role' }
+                  },
+                  member: { type: 'boolean' },
+                  follower: { type: 'boolean' },
+                  editable: { type: 'boolean' }
+                }
+              }
+            },
+            viewer: {
+              type: 'object',
+              required: ['manages', 'admin'],
+              properties: {
+                manages: {
+                  type: 'boolean',
+                  description:
+                    'An administrator, coach or assistant of the level.'
+                },
+                admin: {
+                  type: 'boolean',
+                  description: 'An administrator of it, who changes Admin.'
+                }
+              }
+            }
+          }
+        },
+        HeldAt: {
+          type: 'object',
+          required: ['userId', 'roles', 'member'],
+          description: 'What somebody holds at one level itself, now.',
+          properties: {
+            userId: { type: 'integer' },
+            roles: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Role' }
+            },
+            member: { type: 'boolean' }
+          }
+        },
         RoleFlag: {
           type: 'string',
-          enum: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
+          enum: [
+            'coach',
+            'assistant',
+            'scorekeeper',
+            'songkeeper',
+            'videographer'
+          ]
         },
         RoleGrant: {
           type: 'object',
@@ -2172,8 +2529,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Every team on which the caller holds any role, with the roles ' +
             'they hold there: set on the team, carried down from its season ' +
-            'or league, and every role on a team they administer. A site ' +
-            'admin holds every role on every team.',
+            'or league, every role on a team they administer, and ' +
+            '`songkeeper` wherever they are `scorekeeper`. A site ' +
+            'admin holds every role on every team. `guardianOf` lists the ' +
+            'players the caller is a guardian of (a `guardian` or `family` ' +
+            'link), by the user id each now signs in as.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -2182,7 +2542,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['teams'],
+                    required: ['teams', 'guardianOf'],
                     properties: {
                       teams: {
                         type: 'object',
@@ -2190,6 +2550,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                           type: 'array',
                           items: { $ref: '#/components/schemas/Role' }
                         }
+                      },
+                      guardianOf: {
+                        type: 'array',
+                        items: { type: 'integer' },
+                        description: 'Player user ids, in id order'
                       }
                     }
                   }
@@ -2448,7 +2813,9 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A team's games, newest first",
           description:
             'Answers 404 rather than 403 for a team the caller may not see, ' +
-            'so that probing cannot reveal which teams exist.',
+            'so that probing cannot reveal which teams exist. Anybody signed ' +
+            'in who is not a member of the team (the non-member view) reads ' +
+            'its games too, with their video counts, posters and logos.',
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {
@@ -2464,7 +2831,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'each in its own transaction, so one refused row stops nothing.\n\n' +
             '**Who may call:** a signed-in human administrator of the team, ' +
             'directly or through a true management parent, or a node admin. A plain ' +
-            'member, parent or spectator gets 403; a team the caller can ' +
+            'member or parent gets 403; a team the caller can ' +
             'neither see nor administer gets 404. A season or league admin ' +
             'must administer both proposed participating teams ' +
             'to publish a mutating row immediately; the hosting season is no additional consent side. Otherwise the row is ' +
@@ -2924,17 +3291,26 @@ export function openApiDocument(version: string): OpenApiDocument {
             'at all. Otherwise it is left off and the row says ' +
             '`emailNotAttached`. Held by somebody else, it stays there and ' +
             'the row says `emailHeldElsewhere`.\n\n' +
-            '**What a row gains:** a membership of the team when they have ' +
-            'none, as a `member` and a spectator unless they are staff who ' +
-            'guard nobody (an existing membership only gains the spectator ' +
-            'flag, and its role is never raised); a guardian link, which ' +
+            '**What a row gains:** a membership of the team as a `member` ' +
+            'when they have none (an existing membership is left as it is, ' +
+            'and its role is never raised); a guardian link, which ' +
             'may manage, to each `guardianOf` player of this team (an id ' +
             'naming no player here is counted in `guardiansMissing`); and, ' +
             'for staff, the `coach` and `scorekeeper` roles on the team. ' +
             'Roles are only ever added, and `admin` never is.\n\n' +
+            '**Guardian links are refused** (counted in `guardiansRefused`) ' +
+            'to a player who had a guardian who can sign in before this ' +
+            "call began, since that player's guardians decide who else " +
+            'becomes one (a parent imported with no email cannot sign in, ' +
+            'so takes no say), and for ' +
+            "the caller's own account; every parent one call names for a " +
+            'player with no guardian is linked. A site administrator is held ' +
+            'to neither. An adult who already guards the player is neither ' +
+            'linked again nor refused.\n\n' +
             '**Answers:** `result` is `created` (a new user), `matched` (an ' +
             'existing user who gained something here), `unchanged` or ' +
-            '`error`. `counts.guardianLinks` is the links this call made, and ' +
+            '`error`. `counts.guardianLinks` is the links this call made, ' +
+            '`counts.guardiansRefused` the links it refused, and ' +
             '`counts.staff` the adults who gained a role in it; posting the ' +
             'same body again answers both as 0.',
           security: [{ bearer: [] }],
@@ -2991,6 +3367,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                             'joined',
                             'guardianLinks',
                             'guardiansMissing',
+                            'guardiansRefused',
                             'rolesAdded'
                           ],
                           properties: {
@@ -3003,6 +3380,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                             joined: { type: 'boolean' },
                             guardianLinks: { type: 'integer' },
                             guardiansMissing: { type: 'integer' },
+                            guardiansRefused: { type: 'integer' },
                             rolesAdded: {
                               type: 'array',
                               items: {
@@ -3034,6 +3412,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                           unchanged: { type: 'integer' },
                           error: { type: 'integer' },
                           guardianLinks: { type: 'integer' },
+                          guardiansRefused: { type: 'integer' },
                           staff: { type: 'integer' }
                         }
                       }
@@ -3107,11 +3486,17 @@ export function openApiDocument(version: string): OpenApiDocument {
             "league's, else 200. A game with plays keeps the fence it had " +
             'when they began. `canScore` is whether the caller may post its ' +
             'plays: a scorekeeper of either team, which every admin of it ' +
-            'is. `canDj` is whether the caller may DJ it: a songkeeper of ' +
-            'either team, which every admin of it is. `scoreboard` is `{ open, mayOverride }`: ' +
+            'is. `canDj` is whether the caller may DJ it: a songkeeper or ' +
+            'scorekeeper of either team, which every admin of it is. ' +
+            '`scoreboard` is `{ open, mayOverride }`: ' +
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +
-            'scoreboard store cannot be asked.',
+            'scoreboard store cannot be asked. `nonMemberView` is true for ' +
+            'anybody signed in who is a member of neither team: ' +
+            'that caller reads the game, its records, logos and videos with ' +
+            'their posters, but each `linescore` side carries `runs` and `r` ' +
+            'alone (`h`, `e`, `bb`, `k`, `hr` and `hbp` are null), and ' +
+            '`canScore` and `canDj` are false. False for members.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -3645,7 +4030,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`built` when the lines match the plays, `incomplete` when a ' +
             'required Gumbo field is missing (with `detail` naming the play ' +
             'and field), or `failed` after a build threw. A game with no ' +
-            'lines yet has empty `batting` and `pitching`.',
+            'lines yet has empty `batting` and `pitching`. Anybody signed in ' +
+            'who is a member of neither team is answered 403 `membersOnly`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -3654,6 +4040,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'A line per batter and pitcher, with rates, and `stats` for ' +
                 "the builder's status"
             },
+            403: errorResponse,
             404: errorResponse
           }
         }
@@ -3667,7 +4054,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             're-synced video fixes them all at once. A highlight is a ' +
             'timestamp into the full video, never a separate clip. When the ' +
             "game's plays did not add up to its imported line score, " +
-            '`withheld` is `scoreMismatch` and the list is empty.',
+            '`withheld` is `scoreMismatch` and the list is empty. Anybody ' +
+            'signed in who is a member of neither team reads the list and ' +
+            'its stills too.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -3679,6 +4068,68 @@ export function openApiDocument(version: string): OpenApiDocument {
           ],
           responses: {
             200: { description: 'Highlights in game order, oldest first' },
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}': {
+        get: {
+          summary: 'One person, for their own page',
+          description:
+            'Their short name, avatar, bats and throws, whether the caller ' +
+            'may change their name (`canEditName`), how the caller may ' +
+            'invite a guardian of them (`guardianInviteAs`), and the teams ' +
+            'they have played for that the caller may see: every one to the ' +
+            'person and their guardians. A merged row answers 303 to the ' +
+            'person it was merged into.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          responses: {
+            200: {
+              description: 'The person, with `teams` newest season first',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'name', 'teams'],
+                    properties: {
+                      userId: { type: 'integer' },
+                      name: {
+                        type: 'string',
+                        description: 'First name and last initial.'
+                      },
+                      canEditName: { type: 'boolean' },
+                      guardianInviteAs: {
+                        type: ['string', 'null'],
+                        enum: ['guardian', 'team', null],
+                        description:
+                          '`guardian`: the caller is a guardian of the person ' +
+                          'and invites another with no `sender`. `team`: the ' +
+                          'caller administers, coaches or assists a team the ' +
+                          'person plays on now, and the person has no ' +
+                          'guardian yet (a site administrator, always), so ' +
+                          'invites from that team as `sender`. `null`: the ' +
+                          'caller may not invite one.'
+                      },
+                      avatarUrl: { type: ['string', 'null'] },
+                      bats: {
+                        type: ['string', 'null'],
+                        enum: ['left', 'right', 'switch', null]
+                      },
+                      throws: {
+                        type: ['string', 'null'],
+                        enum: ['left', 'right', null]
+                      },
+                      teams: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/PlayerTeam' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            303: { description: 'A merged row: the person it was merged into' },
             404: errorResponse
           }
         }
@@ -3719,6 +4170,59 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description: 'The totals, and what they can be narrowed to'
+            },
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/highlights': {
+        get: {
+          summary: 'Every highlight a player is credited on, newest first',
+          description:
+            'A page at a time: `nextBefore` is the play time to pass as ' +
+            '`before` for the next page, and `withoutVideo` counts plays on ' +
+            'the page no recording covers. `seasonId`, `teamId` and `year` ' +
+            'narrow the games the same way `/players/{userId}/stats` does, ' +
+            'before the page is cut; `teamId` is the team the player played ' +
+            'for. With none of them the answer is the career.',
+          security: [{ bearer: [] }],
+          parameters: [
+            userIdParam,
+            {
+              name: 'before',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' },
+              description: 'Only plays before this moment'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50 },
+              description: 'Page size; 20 unless set, never more than 50'
+            },
+            {
+              name: 'seasonId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only games in this season'
+            },
+            {
+              name: 'teamId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only games played for this team'
+            },
+            {
+              name: 'year',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Only games played in this calendar year'
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'Highlights, newest first, with `nextBefore` and `withoutVideo`'
             },
             404: errorResponse
           }
@@ -3875,15 +4379,22 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/users': {
         get: {
-          summary: 'Who people are here, by the ids another service has',
+          summary:
+            'Who people are here, by the ids another service has, or the players you guard',
           description:
             'A play names people by TeamStation user id alone, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
-            '`{ userId, externalIds }`: a person, and which of the asked ids ' +
-            'are theirs. A merged row answers as the person it was merged ' +
+            '`{ userId, externalIds, shortName, avatarUrl }`: a person, ' +
+            'which of the asked ids are theirs, their short name and their ' +
+            'signed picture (null when none). A merged row answers as the ' +
+            'person it was merged ' +
             'into. Only people you could see the page of are answered. ' +
             '`externalId` is required and may be given more than once; an ' +
-            'empty one is refused. With view=administration, a signed-in node ' +
+            'empty one is refused. With `guardedBy=me` instead, the answer ' +
+            'is the players you are a guardian of, sorted by short name, ' +
+            'each with empty `externalIds`; any other `guardedBy` is 400, ' +
+            'and so is `guardedBy` beside `externalId`. ' +
+            'With view=administration, a signed-in node ' +
             'administrator instead receives account identity and node/suspension ' +
             'state, filtered by query (name or verified email, at most 120 ' +
             'characters). This view requires no externalId and does not alter ' +
@@ -3911,11 +4422,20 @@ export function openApiDocument(version: string): OpenApiDocument {
               style: 'form',
               explode: true,
               description: "Another service's ids for the people"
+            },
+            {
+              name: 'guardedBy',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['me'] },
+              description:
+                'The players the caller is a guardian of, in place of externalId'
             }
           ],
           responses: {
             200: {
-              description: 'In user id order; empty when nobody matches'
+              description:
+                'By externalId, in user id order; by guardedBy, by short name. Empty when nobody matches'
             },
             400: errorResponse,
             401: errorResponse
@@ -3924,14 +4444,27 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/teams/{teamId}/roster': {
         get: {
-          summary: "A team's players, coaches and followers",
+          summary:
+            'Everybody on a team: administrators, staff, players, family, spectators and followers',
           description:
+            'Every member of the team, every member of its seasons and its ' +
+            'league, everybody given a role on the team, its seasons or its ' +
+            'league, every guardian of one of its players, and everybody ' +
+            'who follows it (or a team merged into it) from an account that ' +
+            'is open and not disabled, each once, in the first `section` ' +
+            'that fits: admin, staff, player, family, spectator, follower. ' +
+            'Within a section the team\u2019s own people come first, then ' +
+            'those given their place above it (`inheritedFrom`), each by ' +
+            'name. Anybody signed in who is not a member of the team (the ' +
+            'non-member view) reads the same roster, followers included, ' +
+            'with `avatarUrl` null on every entry. ' +
             'Names default to a first name and last initial. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
-            'coach, scorekeeper or admin on this team or its parents. Others get 404. ' +
+            'coach, assistant, scorekeeper or admin on this team or its parents. Others get 404. ' +
             '`walkUpSong` is the WalkUpSong the person has ' +
             'on this team, or null. Whether the caller may change the songs ' +
-            'is `GET /me/roles`: `songkeeper` or `admin` on the team.',
+            'is `GET /me/roles`: `songkeeper` (which every scorekeeper ' +
+            'holds) or `admin` on the team.',
           security: [{ bearer: [] }],
           parameters: [
             teamIdParam,
@@ -3944,7 +4477,17 @@ export function openApiDocument(version: string): OpenApiDocument {
             }
           ],
           responses: {
-            200: { description: 'The roster, coaches first' },
+            200: {
+              description: 'The roster, administrators first',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'array',
+                    items: { $ref: '#/components/schemas/RosterEntry' }
+                  }
+                }
+              }
+            },
             400: errorResponse,
             404: errorResponse
           }
@@ -3954,8 +4497,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         put: {
           summary: "Set a player's name, jersey, positions, bats and throws",
           description:
-            'For a coach or scorekeeper of the team — the flag set on the team, its season ' +
-            'or its league — an admin of any of those, or a site admin. ' +
+            'For a coach, assistant or scorekeeper of the team — the flag ' +
+            'set on the team, its season or its league — an admin of any of ' +
+            'those, a guardian of the player, or a site admin. ' +
             'Anybody else, and a user who is not a player on the team, gets ' +
             '404. Send only the fields to change; a body with none is 400. ' +
             "`jersey` and `positions` are the player's place on this team. " +
@@ -4025,7 +4569,82 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                "The player's roster entry, as GET /teams/{teamId}/roster lists it"
+                "The player's roster entry, as GET /teams/{teamId}/roster lists it",
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/settings': {
+        put: {
+          summary: 'Set how a player bats and throws',
+          description:
+            'The hands are the player\u2019s own and read the same on every ' +
+            'team. For a guardian of the player, a coach, assistant, ' +
+            'scorekeeper or admin of any team the player plays on, or a site ' +
+            'admin; anybody else, and a ' +
+            'merged row, gets 404. Only `bats` and `throws` are accepted: ' +
+            '`jersey` and `positions` belong to a team ' +
+            '(PUT /teams/{teamId}/players/{userId}/settings) and are 400 ' +
+            'here, as is a body that changes nothing. Setting either hand ' +
+            'marks them set by hand, so a roster import no longer ' +
+            'overwrites them. Audited as `playerSettings`.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  minProperties: 1,
+                  properties: {
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The hands as they now read',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'bats', 'throws'],
+                    properties: {
+                      userId: { type: 'integer' },
+                      bats: {
+                        type: 'string',
+                        nullable: true,
+                        enum: ['left', 'right', 'switch']
+                      },
+                      throws: {
+                        type: 'string',
+                        nullable: true,
+                        enum: ['left', 'right']
+                      }
+                    }
+                  }
+                }
+              }
             },
             400: errorResponse,
             401: errorResponse,
@@ -4037,8 +4656,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         put: {
           summary: "Set a player's walk-up song on a team",
           description:
-            'For a songkeeper of the team — the flag set on the team, its ' +
-            'season or its league — an admin of any of those, or a site ' +
+            'For a songkeeper or scorekeeper of the team — the flag set on ' +
+            'the team, its season or its league — an admin of any of those, ' +
+            'a guardian of the player, or a site ' +
             'admin. Anybody else, and a user who is not a player on the ' +
             'team, gets 404; a bad body is 400. Replaces any song the player ' +
             'had on the team. Audited, and announced on the game socket as a ' +
@@ -4086,6 +4706,10 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/teams/{teamId}/stats': {
         get: {
           summary: "A team's batting or pitching",
+          description:
+            'For members. Anybody else signed in is answered 403 ' +
+            '`membersOnly`; a team that is not there (or merged into ' +
+            'another), 404.',
           security: [{ bearer: [] }],
           parameters: [
             teamIdParam,
@@ -4107,6 +4731,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           ],
           responses: {
             200: { description: 'A row per player' },
+            403: errorResponse,
             404: errorResponse
           }
         }
@@ -4481,11 +5106,18 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'Add one person by address',
           description:
-            'Both existing and new accounts accept a seven-day invitation ' +
-            'before membership or requested roles begin. The email link and ' +
-            'bell inbox refer to one shared request. Inviting creates no ' +
-            'account; sign-in still requires email verification. A pending ' +
-            'replacement does not count as an active direct administrator.',
+            'An address an account has verified adds that account at once, ' +
+            'as a member of this level with the roles asked for, Admin ' +
+            'included: `added` true and `person` (`added` false when they ' +
+            'held all of it already). They are told in their inbox, with a ' +
+            'way to leave, and mailed at the address; a failed mail undoes ' +
+            'the add (500), so a retry adds and mails again. An address ' +
+            'nobody has verified gets a seven-day invitation (`invited`), ' +
+            'applied when somebody signs in with it or verifies it, or ' +
+            'accepted from its link. Inviting creates no account. A pending ' +
+            'replacement does not count as an active direct administrator. ' +
+            'Only an administrator of the level may call; anybody else gets ' +
+            '404.',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam],
           requestBody: {
@@ -4504,6 +5136,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                         type: 'string',
                         enum: [
                           'coach',
+                          'assistant',
                           'scorekeeper',
                           'songkeeper',
                           'videographer'
@@ -4526,7 +5159,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             201: {
               description:
-                'Pending personal invitation; no new group grants yet',
+                'Added at once (`person`), or invited by address (`invited`)',
               content: {
                 'application/json': {
                   schema: {
@@ -4588,13 +5221,16 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Set everything somebody may do at this level',
           description:
             'Replaces their roles on this one level: `admin`, and any of ' +
-            'the flags `coach`, `scorekeeper`, `songkeeper` and ' +
+            'the flags `coach`, `assistant`, `scorekeeper`, `songkeeper` and ' +
             '`videographer`. A role set here reaches everything inside ' +
             'this level. Only at the level named: a team page sets team ' +
             'roles and nothing wider. It adds them to the level as well, so ' +
-            'they can see what they hold a role on. Only an admin of this ' +
-            'level or one above it may call; anybody else gets 404. Nobody ' +
-            'may clear their own `admin` here.',
+            'they can see what they hold a role on, at once, and tells them ' +
+            'of what is new. Its administrators, coaches and assistants (set ' +
+            'here or on a level above) may call; changing `admin` is for an ' +
+            'administrator (403), and anybody else gets 404, as does somebody ' +
+            'not on the level\u2019s people list. Nobody may clear their own ' +
+            '`admin` here.',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam, userIdParam],
           requestBody: {
@@ -4640,6 +5276,168 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/manage/{scopeType}/{scopeId}/people/{userId}/roles/{role}': {
+        put: {
+          summary: 'Give one role at this level, or its membership, at once',
+          description:
+            '`role` is `admin`, a flag, or `member`. A role brings the ' +
+            'level\u2019s membership with it. Nothing waits for acceptance: ' +
+            'the person is told in their inbox, and mailed when they were ' +
+            'not in the level before. Its administrators, coaches and ' +
+            'assistants may call; `admin` is for an administrator (403). ' +
+            'Anybody else, and anybody not on the level\u2019s people list, ' +
+            'gets 404. A role needs an account that signs in (409).',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam, roleParam],
+          responses: {
+            200: heldAtResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Take one role at this level away, or take them out of it',
+          description:
+            'A role, or with `member` the level\u2019s membership and every ' +
+            'role there. What a level above gives stays. Taking away ' +
+            '`admin`, or taking an administrator out, is for an ' +
+            'administrator (403), and the last direct administrator stays ' +
+            '(409). A player of a team is not taken out of it this way ' +
+            '(409): their membership is their place on its roster.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam, roleParam],
+          responses: {
+            200: heldAtResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/me/groups/{kind}/{id}': {
+        delete: {
+          summary: 'Leave a team, season or league',
+          description:
+            'Takes away your membership of it and every role you hold ' +
+            'there. What a level above gives you is left there, to leave ' +
+            'at that level. The last direct administrator stays (409).',
+          security: [{ bearer: [] }],
+          parameters: [kindParam, idParam],
+          responses: {
+            200: {
+              description: 'Whether there was anything to leave',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['removed'],
+                    properties: { removed: { type: 'boolean' } }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/me/groups/{kind}/{id}/roles/{role}': {
+        delete: {
+          summary: 'Step down from one of your roles at a level',
+          description:
+            'Keeps the level\u2019s membership and your other roles. A role ' +
+            'you do not hold there changes nothing. The last direct ' +
+            'administrator stays (409).',
+          security: [{ bearer: [] }],
+          parameters: [kindParam, idParam, roleOnlyParam],
+          responses: {
+            200: heldAtResponse,
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      ...Object.fromEntries(
+        (['seasons', 'leagues'] as const).map(collection => [
+          `/${collection}/{id}/people`,
+          {
+            get: {
+              summary: `A ${collection.slice(0, -1)}\u2019s people, in the roster\u2019s sections`,
+              description:
+                'Admins and Staff: roles given here and on the league ' +
+                'above. Players: everybody playing now on a team this ' +
+                'level reaches, with `teamNames`. Family members: their ' +
+                'guardians. Spectators: members here and of the league ' +
+                'above. Followers: people following this level. Each ' +
+                'person once, in the first that fits, with a pill for a ' +
+                'level above. For its members and role holders and site ' +
+                'administrators; anybody else gets 404. `manages` and ' +
+                '`admin` say what this viewer may do with them.',
+              security: [{ bearer: [] }],
+              parameters: [idParam],
+              responses: {
+                200: {
+                  description: 'The people, and what this viewer may do',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        required: ['people', 'manages', 'admin'],
+                        properties: {
+                          people: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/RosterEntry' }
+                          },
+                          manages: { type: 'boolean' },
+                          admin: { type: 'boolean' }
+                        }
+                      }
+                    }
+                  }
+                },
+                401: errorResponse,
+                404: errorResponse
+              }
+            }
+          }
+        ])
+      ),
+      ...Object.fromEntries(
+        (['teams', 'seasons', 'leagues'] as const).map(collection => [
+          `/${collection}/{id}/people/{userId}`,
+          {
+            get: {
+              summary: `One person, as a ${collection.slice(0, -1)} sees them`,
+              description:
+                'For the level\u2019s administrators, coaches and assistants, ' +
+                'and the person themselves; anybody else gets 404, as does ' +
+                'somebody not on the level\u2019s people list.',
+              security: [{ bearer: [] }],
+              parameters: [idParam, userIdParam],
+              responses: {
+                200: {
+                  description: 'The profile',
+                  content: {
+                    'application/json': {
+                      schema: { $ref: '#/components/schemas/PersonProfile' }
+                    }
+                  }
+                },
+                401: errorResponse,
+                404: errorResponse
+              }
+            }
+          }
+        ])
+      ),
       '/manage/{scopeType}/{scopeId}/people/{userId}/role': {
         put: {
           summary: 'Make somebody an administrator of this level, or not',
@@ -5206,6 +6004,11 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/seasons/{seasonId}/standings': {
         get: {
           summary: "A season's table",
+          description:
+            'For anybody in the season or a season or league that opened ' +
+            'itself to them, and for anybody else signed in once a team is ' +
+            'active in it (each team page shows its place); a season with ' +
+            'no active team answers them 404.',
           security: [{ bearer: [] }],
           parameters: [
             {

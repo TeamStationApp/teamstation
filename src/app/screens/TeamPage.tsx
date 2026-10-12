@@ -20,7 +20,10 @@ export function TeamPage({
   team: hint,
   onSettings,
   ...presentation
-}: Omit<TeamScreenProps, 'team' | 'onManage' | 'publicDetail'> & {
+}: Omit<
+  TeamScreenProps,
+  'team' | 'onManage' | 'publicDetail' | 'nonMemberView' | 'managesPeople'
+> & {
   client: TeamStationClient
   id: string
   team?: TeamSummary
@@ -88,14 +91,21 @@ export function TeamPage({
     kind: group.external ? 'external' : 'full',
     canViewPrivate: detail.canViewPrivate
   })
+  // Anybody signed in gets the members' page, less what the server keeps for
+  // members when they are not one; only somebody signed out gets the public
+  // one. The same page however the team was reached: Search, a follow, a
+  // game or a link.
+  const full = detail.canViewPrivate || detail.nonMemberView
   return (
     <TeamScreen
-      key={`${group.id}:${detail.canViewPrivate}`}
+      key={`${group.id}:${detail.canViewPrivate}:${detail.nonMemberView}`}
       client={client}
       team={team}
       {...presentation}
       refreshRevision={refreshRevision}
-      publicDetail={detail.canViewPrivate ? undefined : detail}
+      publicDetail={full ? undefined : detail}
+      nonMemberView={detail.nonMemberView}
+      managesPeople={detail.canManagePeople === true}
       onManage={
         detail.canManage && onSettings != null
           ? () => {

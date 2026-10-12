@@ -3,20 +3,20 @@ import { Text, View } from 'react-native'
 
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail } from '../../common/publicGroups'
-import { Button, Card, SectionHeader } from '../components'
+import { Card, SectionHeader } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { gameListOptions } from './gameListOptions'
-import type { TeamScreenProps } from './TeamScreen'
 
-/** Draw only the already-public projection; no private collections are loaded. */
+/**
+ * A team for somebody not signed in: the already-public projection alone, and
+ * no private collection loaded. Anybody signed in, member or not, gets the
+ * team's own page instead, in the non-member view when not a member.
+ */
 export function PublicTeamContent({
   detail,
-  tab,
-  onOpenGame
+  tab
 }: {
   detail: GroupDetail
   tab: 'videos' | 'schedule' | 'team' | 'stats'
-  onOpenGame?: TeamScreenProps['onOpenGame']
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   if (tab === 'videos' || tab === 'stats')
@@ -42,21 +42,6 @@ export function PublicTeamContent({
               {new Date(game.startAt).toLocaleString()}
               {game.venue == null ? '' : ` · ${game.venue}`}
             </Text>
-            {game.pendingRequestId != null && onOpenGame != null && (
-              <Button
-                label="Open game"
-                kind="secondary"
-                onPress={() => {
-                  const options = gameListOptions(game, 'schedule')
-                  if (options?.pendingRequestId != null)
-                    onOpenGame(
-                      game.id,
-                      `${game.awayTeam.name} at ${game.homeTeam.name}`,
-                      options
-                    )
-                }}
-              />
-            )}
             <Text style={styles.hint}>
               {game.pendingApproval
                 ? 'Pending approval'

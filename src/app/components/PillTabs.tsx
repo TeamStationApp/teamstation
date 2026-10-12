@@ -30,6 +30,12 @@ export interface PillTabsProps<Id extends string = string> {
    * strip that belongs inside a panel of its own.
    */
   bleed?: boolean
+  /**
+   * Narrower sides and gaps, for a strip of five that has to fit a 390-point
+   * phone whole: a cut-off label at either end reads as a fault. The height
+   * and the 48px target are the same as every other strip's.
+   */
+  dense?: boolean
 }
 
 /**
@@ -44,7 +50,8 @@ export interface PillTabsProps<Id extends string = string> {
  * It scrolls sideways rather than wrapping or shrinking. Four tabs fit a phone;
  * a fifth would either wrap to a second line that looks like a mistake, or
  * squeeze the labels until they truncate. Scrolling keeps every tab the same
- * size whatever the window is doing.
+ * size whatever the window is doing. A strip that has five, such as a player's
+ * page, is `dense`, so all five still fit a phone side by side.
  *
  * **One size, everywhere.** Paul picked the videos list's filter on
  * 2026-09-17 and asked for that exact pill on the team and season sections and
@@ -57,7 +64,14 @@ export interface PillTabsProps<Id extends string = string> {
 export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  const { tabs, selected, onSelect, size = 'compact', bleed = true } = props
+  const {
+    tabs,
+    selected,
+    onSelect,
+    size = 'compact',
+    bleed = true,
+    dense = false
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const inset = useContentInset()
@@ -73,7 +87,7 @@ export function PillTabs<Id extends string = string>(
       : undefined
 
   const row = (
-    <View style={styles.row}>
+    <View style={[styles.row, dense && styles.rowDense]}>
       {tabs.map(tab => (
         <PillButton
           key={tab.id}
@@ -82,6 +96,7 @@ export function PillTabs<Id extends string = string>(
           role={tab.role ?? 'tab'}
           selected={tab.id === selected}
           size={size}
+          dense={dense}
           onPress={() => {
             onSelect(tab.id)
           }}
@@ -110,6 +125,7 @@ export function PillButton({
   badge,
   selected = true,
   size = 'compact',
+  dense = false,
   role = 'button',
   onPress,
   disabled = false,
@@ -119,6 +135,7 @@ export function PillButton({
   badge?: string
   selected?: boolean
   size?: 'regular' | 'compact'
+  dense?: boolean
   role?: 'tab' | 'button'
   onPress?: () => void
   disabled?: boolean
@@ -146,6 +163,7 @@ export function PillButton({
         style={[
           styles.pill,
           compact && styles.pillCompact,
+          dense && styles.pillDense,
           selected ? styles.pillActive : styles.pillIdle
         ]}
       >
@@ -187,6 +205,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
   },
+  rowDense: {
+    gap: theme.rem(theme.spaceXsRem)
+  },
   // What the finger gets: 48 tall, which the spec asks for so a tab can be hit
   // one-handed while somebody is also holding a scorebook. It is transparent —
   // shrinking the pill is a drawing decision and must not shrink this.
@@ -220,6 +241,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   pillCompact: {
     minHeight: theme.rem(2.25),
     paddingHorizontal: theme.rem(theme.spaceMdRem)
+  },
+  pillDense: {
+    paddingHorizontal: theme.rem(theme.spaceSmRem)
   },
   pillIdle: {
     backgroundColor: theme.pillBackground

@@ -185,13 +185,7 @@ export function NotificationsScreen({
               <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
               <Text style={styles.name}>{item.title}</Text>
               <Text style={styles.hint}>{item.description}</Text>
-              <Text style={styles.status}>
-                {item.status === 'pending'
-                  ? mode === 'sent'
-                    ? 'Awaiting approval'
-                    : 'Needs your approval'
-                  : item.status[0].toUpperCase() + item.status.slice(1)}
-              </Text>
+              <Text style={styles.status}>{statusLine(item, mode)}</Text>
             </Card>
           </Pressable>
         ))}
@@ -207,6 +201,20 @@ export function NotificationsScreen({
       </View>
     </Screen>
   )
+}
+
+/**
+ * What a notification's state is, in a word or two. Somebody being added to
+ * a group needed nobody's approval: it is new until opened, then added.
+ */
+function statusLine(
+  item: Notification,
+  mode: 'pending' | 'sent' | 'history'
+): string {
+  if (item.type === 'grant') return item.viewed ? 'Added' : 'New'
+  if (item.status === 'pending')
+    return mode === 'sent' ? 'Awaiting approval' : 'Needs your approval'
+  return item.status[0].toUpperCase() + item.status.slice(1)
 }
 
 interface DetailProps {
@@ -232,6 +240,8 @@ function NotificationDetail({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [readUnavailable, setReadUnavailable] = useState(false)
+  /** The group just left from here, said once it is done. */
+  const [left, setLeft] = useState<string | undefined>()
   const begin = useLatestRequest()
   const mounted = useRef(true)
   useEffect(() => {
@@ -300,6 +310,27 @@ function NotificationDetail({
       if (mounted.current) setBusy(false)
     }
   }
+  /** Leaves the team, season or league somebody was added to. */
+  const leave = async (): Promise<void> => {
+    const group = item?.leave
+    if (busy || group == null) return
+    setBusy(true)
+    setError('')
+    try {
+      await client.leaveGroup(group.kind, group.id)
+      if (!mounted.current) return
+      setLeft(group.name)
+      await load()
+      if (mounted.current) onChanged()
+    } catch (error) {
+      if (mounted.current)
+        setError(
+          error instanceof Error ? error.message : 'You could not leave. Retry.'
+        )
+    } finally {
+      if (mounted.current) setBusy(false)
+    }
+  }
   return (
     <Screen>
       <Card style={styles.card}>
@@ -316,8 +347,21 @@ function NotificationDetail({
               </Text>
             )}
             <Text style={styles.status}>
-              {item.status[0].toUpperCase() + item.status.slice(1)}
+              {item.type === 'grant'
+                ? 'Added'
+                : item.status[0].toUpperCase() + item.status.slice(1)}
             </Text>
+            {item.leave != null && (
+              <Button
+                label={`Leave ${item.leave.name}`}
+                kind="secondary"
+                busy={busy}
+                onPress={() => {
+                  leave().catch(() => undefined)
+                }}
+              />
+            )}
+            {left != null && <Text style={styles.hint}>You left {left}.</Text>}
             {item.status === 'pending' && (
               <Text style={styles.hint}>
                 Valid until {inviteDate(item.expiresAt)}. Opening this

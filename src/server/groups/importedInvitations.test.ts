@@ -65,7 +65,7 @@ describe('proved imported email invitation eligibility', function () {
     expect(await rolesAt(f.h.db, 'team', team.id, 106)).deep.equals(['admin'])
   })
   for (const method of ['code', 'link', 'invitation'] as const)
-    it(`retains an imported identity and verifies its address through ${method}, enabling only its explicitly accepted invitation`, async () => {
+    it(`retains an imported identity and verifies its address through ${method}, which applies the invitation waiting for it`, async () => {
       const email = 'fixture106@example.com'
       await f.h.db
         .updateTable('users')
@@ -144,18 +144,11 @@ describe('proved imported email invitation eligibility', function () {
             .executeTakeFirstOrThrow()
         ).verified_at
       ).equals(null)
-      expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals(
-        method === 'invitation' ? ['coach'] : []
-      )
+      // Proving the address applies what was waiting for it, however it
+      // was proved: nothing is left to accept.
+      expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals(['coach'])
       const inbox = (await (
-        await f.h.request(
-          'GET',
-          method === 'invitation'
-            ? '/me/notifications?history=1'
-            : '/me/notifications',
-          undefined,
-          106
-        )
+        await f.h.request('GET', '/me/notifications?history=1', undefined, 106)
       ).json()) as { items: Array<{ requestId: string }> }
       expect(
         inbox.items.some(row => row.requestId === invitation.requestId)

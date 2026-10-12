@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asTeamSummary, TeamStationClient } from '../../common/api'
+import {
+  asRosterEntry,
+  asTeamSummary,
+  TeamStationClient
+} from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import type { ParentAction } from '../../common/groupLinks'
 import {
@@ -71,6 +75,7 @@ const team = (id: string, name: string): PublicGroup =>
     }
   })
 const detail = asGroupDetail({
+  nonMemberView: false,
   group: season,
   parents: [],
   children: [team('team_hawks', 'Demo Hawks')],
@@ -99,7 +104,12 @@ const summary = (id: string, name: string): ReturnType<typeof asTeamSummary> =>
 
 function client(manage = true): TeamStationClient {
   const api = new TeamStationClient({ baseUrl: '/api/v1' })
-  api.group = async () => ({ ...detail, canManage: manage })
+  api.group = async () => ({
+    ...detail,
+    canManage: manage,
+    canManagePeople: manage,
+    canSeePeople: manage
+  })
   api.seasonGames = async () => []
   api.seasonTeams = async () => [
     summary('team_hawks', 'Demo Hawks'),
@@ -214,5 +224,105 @@ describe('the season page', () => {
     expect(button('People')).equals(undefined)
     expect(button('Add team')).equals(undefined)
     expect(button('More for Demo Hawks')).equals(undefined)
+  })
+})
+
+describe('a season’s People tab, and a team’s roster, through the group page', () => {
+  const people = [
+    asRosterEntry({
+      userId: 201,
+      shortName: 'Avery S',
+      jersey: null,
+      positions: [],
+      isPlayer: true,
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
+      teamNames: ['Demo Hawks']
+    }),
+    asRosterEntry({
+      userId: 106,
+      shortName: 'Tim R',
+      jersey: null,
+      positions: [],
+      isPlayer: false,
+      role: 'member',
+      section: 'family',
+      staffRoles: [],
+      inheritedFrom: null
+    })
+  ]
+  async function tapRow(name: string): Promise<void> {
+    const row = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent?.includes(name) === true)
+    expect(row, name).not.equals(undefined)
+    await act(async () => {
+      row!.click()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+  }
+
+  it('opens a player’s page and anybody else’s profile from the season', async () => {
+    const api = client()
+    api.levelPeople = async () => ({ people, manages: true, admin: true })
+    const players: unknown[] = []
+    const persons: unknown[] = []
+    await mount(
+      <GroupScreen
+        client={api}
+        groupRef={{ kind: 'season', id: season.id }}
+        initialTab="people"
+        onOpen={() => {}}
+        onCreate={() => {}}
+        onSettings={() => {}}
+        onLink={() => {}}
+        onPrivate={() => {}}
+        onOpenPlayer={(userId, name, from) => {
+          players.push([userId, name, from])
+        }}
+        onOpenPerson={(group, userId) => {
+          persons.push([group, userId])
+        }}
+      />
+    )
+    expect(document.body.textContent).includes('Demo Hawks')
+    await tapRow('Avery S')
+    await tapRow('Tim R')
+    expect(players).deep.equals([[201, 'Avery S', { seasonId: season.id }]])
+    expect(persons).deep.equals([[{ kind: 'season', id: season.id }, 106]])
+  })
+
+  it('opens somebody on a team’s roster as the team’s profile', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    const hawks = asGroupDetail({
+      ...detail,
+      group: team('team_canonical', 'Demo Hawks'),
+      canManagePeople: true
+    })
+    api.group = async () => hawks
+    api.teamGames = async () => []
+    api.roster = async () => people
+    api.teamStats = async () => []
+    api.teamPitchingStats = async () => []
+    const persons: unknown[] = []
+    await mount(
+      <GroupScreen
+        client={api}
+        groupRef={{ kind: 'team', id: 'team_alias' }}
+        initialTab="team"
+        onOpen={() => {}}
+        onCreate={() => {}}
+        onSettings={() => {}}
+        onLink={() => {}}
+        onPrivate={() => {}}
+        onOpenPerson={(group, userId) => {
+          persons.push([group, userId])
+        }}
+      />
+    )
+    await tapRow('Tim R')
+    expect(persons).deep.equals([[{ kind: 'team', id: 'team_canonical' }, 106]])
   })
 })

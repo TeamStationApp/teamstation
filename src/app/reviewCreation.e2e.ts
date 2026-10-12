@@ -213,7 +213,7 @@ async function main(): Promise<void> {
     await press(league, 'Continue')
     await press(league, 'Use initials')
     await press(league, 'Create Team')
-    await text(league, 'Group settings')
+    await league.waitForSelector('[aria-label="Manage"]')
     expect(
       (
         await f.h.db
@@ -233,7 +233,7 @@ async function main(): Promise<void> {
     await press(league, 'Continue')
     await press(league, 'Use initials')
     await press(league, 'Create Season')
-    await text(league, 'Group settings')
+    await league.waitForSelector('[aria-label="Season settings"]')
     expect(
       (
         await f.h.db
@@ -572,6 +572,7 @@ async function main(): Promise<void> {
     await league.goto(f.h.origin + `/groups/team/${f.teamA}`, {
       waitUntil: 'domcontentloaded'
     })
+    await press(league, 'Manage')
     await press(league, 'Create Game')
     await press(league, 'Choose a different season')
     await press(league, 'Host: Demo Regular')
@@ -677,21 +678,27 @@ async function main(): Promise<void> {
     await press(imported, 'Baseball')
     await press(imported, 'Continue')
     await text(imported, 'Your Home')
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([])
-    await press(imported, 'Notifications')
-    await text(imported, 'Invitation to Demo Hawks')
-    await press(imported, 'Invitation to Demo Hawks')
-    await press(imported, 'Accept invitation')
-    await text(imported, 'Accepted')
-    expect(new URL(imported.url()).pathname).equals(
-      `/notifications/${personalId}`
-    )
+    // Proving the address applied the invitation waiting for it, with only
+    // the role it named; nothing is left to accept.
     expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals(['coach'])
-    await press(imported, 'Back')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', personalId)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('accepted')
+    // The inbox says what was given, with nothing to accept.
+    await press(imported, 'Notifications')
+    await text(imported, 'Babe Ruth added you as Coach of Demo Hawks')
+    expect(
+      await imported.evaluate(() => document.body.textContent)
+    ).not.includes('Accept invitation')
     await press(imported, 'Back')
     await text(imported, 'Your Home')
     await press(imported, 'Demo Hawks')
-    await press(imported, 'Open team videos and stats')
     await imported.waitForFunction(
       () =>
         document.body.textContent != null &&
@@ -714,12 +721,15 @@ async function main(): Promise<void> {
       },
       101
     )
+    // The address is proved now, so Songkeeper is given at once, and told.
     expect(songInvite.status).equals(201)
+    expect(await songInvite.json()).deep.include({ added: true })
+    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([
+      'coach',
+      'songkeeper'
+    ])
     await press(imported, 'Notifications')
-    await press(imported, 'Invitation to Demo Hawks')
-    await press(imported, 'Accept invitation')
-    await text(imported, 'Accepted')
-    await press(imported, 'Back')
+    await text(imported, 'added you as Songkeeper of Demo Hawks')
     await press(imported, 'Back')
     await press(imported, 'Walk-up', 'tab')
     await text(imported, 'No walk-up song yet')
@@ -728,10 +738,10 @@ async function main(): Promise<void> {
       'songkeeper'
     ])
     lines.push(
-      'E8/E9 review PASS: accepting coach and then songkeeper invitations refreshes shared roles; player Settings saves and the authorized Walk-up tab opens in the same app session without a reload; native music editing retains its existing platform requirement'
+      'E8/E9 review PASS: a coach invitation applied on sign-in and a songkeeper role added at once refresh shared roles; player Settings saves and the authorized Walk-up tab opens in the same app session without a reload; native music editing retains its existing platform requirement'
     )
     lines.push(
-      'E8 review PASS: proving an imported address signs in to the same account, resumes required onboarding, reveals its addressed inbox invitation and grants only the explicitly accepted roles'
+      'E8 review PASS: proving an imported address signs in to the same account, resumes required onboarding, applies its addressed invitation without acceptance and grants only the role it named'
     )
     const leagueCreated = await f.h.request(
       'POST',
@@ -790,7 +800,7 @@ async function main(): Promise<void> {
     await navigation.evaluate(() => window.dispatchEvent(new Event('focus')))
     await held
     await press(navigation, 'Open Demo Navigation Season')
-    await text(navigation, 'Create Game')
+    await navigation.waitForSelector('[aria-label="Season settings"]')
     const oldResponse = navigation.waitForResponse(
       response =>
         new URL(response.url()).pathname ===
@@ -808,7 +818,10 @@ async function main(): Promise<void> {
     await navigation.screenshot({
       path: join(artifacts, 'group-navigation-current.png')
     })
-    await press(navigation, 'Create Team')
+    await press(navigation, 'Teams', 'tab')
+    await press(navigation, 'Create team')
+    if ((await navigation.$('[aria-label="Placeholder team"]')) !== null)
+      await press(navigation, 'Team')
     expect(new URL(navigation.url()).searchParams.get('parentKind')).equals(
       'season'
     )

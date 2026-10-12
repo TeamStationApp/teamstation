@@ -60,6 +60,7 @@ async function show(
     games: [game()],
     staff: [{ name: 'Demo A.', roles: ['coach', 'admin'] }],
     canManage: false,
+    nonMemberView: false,
     ...patch
   })
   if (root == null) {

@@ -139,6 +139,55 @@ describe('GameHeroCard', function () {
     )
   })
 
+  /** How many rules a card with a summary draws, counted below. */
+  let ruled = 0
+
+  /** The rule above the summary: a top border on the card's last block. */
+  function separators(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll<HTMLElement>('div')).filter(
+      node => getComputedStyle(node).borderTopWidth === '1px'
+    )
+  }
+
+  it('draws a member’s summary under a rule', async function () {
+    const line = { h: 7, bb: 2, k: 3, hr: 1, e: 0, kDef: 4 }
+    const container = await render(
+      <GameHeroCard {...oct4} teamStats={{ away: line, home: null }} />
+    )
+    expect(container.textContent).includes('7 H · 2 BB · 3 K · 1 HR')
+    // The summary's block is the one carrying the rule.
+    expect(
+      separators(container).some(node =>
+        (node.textContent ?? '').startsWith('Badgers (Ripken)7 H')
+      )
+    ).equals(true)
+    ruled = separators(container).length
+  })
+
+  for (const [why, teamStats] of [
+    ['a non-member’s card, which is given none', null],
+    ['a game whose plays were never counted', { away: null, home: null }]
+  ] as const)
+    it(`leaves out the summary and its rule for ${why}`, async function () {
+      const container = await render(
+        <GameHeroCard
+          {...oct4}
+          awayScore={3}
+          homeScore={5}
+          status="FINAL"
+          awayRecord="0–2"
+          homeRecord="2–0"
+          teamStats={teamStats}
+        />
+      )
+      // The score and the records stay.
+      for (const words of ['3', '5', 'Away · 0–2', 'Home · 2–0'])
+        expect(leaf(container, words), words).not.equals(undefined)
+      expect(container.textContent).not.includes(' H · ')
+      expect(container.textContent).not.includes('Def:')
+      expect(separators(container).length).equals(ruled - 1)
+    })
+
   it('opens a side’s team from its tile as well as its name', async function () {
     const opened: string[] = []
     const container = await render(

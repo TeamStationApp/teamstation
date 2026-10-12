@@ -21,6 +21,7 @@ import { ScoringSession } from '../common/scoring/session'
 import { setupOf } from '../common/scoring/state'
 
 const game = asGameDetail({
+  nonMemberView: false,
   id: 'defensive-roster',
   awayTeamId: 'away',
   homeTeamId: 'home',
@@ -74,6 +75,9 @@ const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
       positions: [POSITIONS[i % 9]],
       isPlayer: true,
       role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
       bats: 'right',
       throws: 'right'
     })

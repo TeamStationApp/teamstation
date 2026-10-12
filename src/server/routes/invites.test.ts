@@ -315,11 +315,11 @@ describe('invite codes', function () {
     expect(first.status).equals(200)
     expect(first.body.granted).equals(true)
 
-    // An explicit season viewer sees its games, without private access to
-    // other teams' unrelated rosters, statistics or schedules.
+    // A member of the season is a member of every team in it, as a member
+    // of each team is: its games, and the teams' own pages.
     const after = await visibleScopes(db, parentId, false)
     expect(after.seasonIds.has('sea_spring')).equals(true)
-    expect(after.teamIds.has('tem_ravens')).equals(false)
+    expect(after.teamIds.has('tem_ravens')).equals(true)
 
     // A link sits in a mailbox and gets opened twice. The second time is not
     // an error and must not cost the invite a use.
@@ -380,12 +380,12 @@ describe('invite codes', function () {
     expect(scopes.teamIds.has('tem_hawks')).equals(true)
     const membership = await db
       .selectFrom('memberships')
-      .select(['is_spectator', 'role'])
+      .select(['role', 'is_player'])
       .where('user_id', '=', user.id)
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
-    expect(membership?.is_spectator).equals(true)
-    expect(membership?.role).equals('member')
+    // A plain member, as every invite makes at every level.
+    expect(membership).deep.equals({ role: 'member', is_player: false })
 
     // And it is recorded as the redemption it was, rather than only counted.
     const redemption = await db
@@ -434,11 +434,11 @@ describe('invite codes', function () {
 
     const membership = await db
       .selectFrom('memberships')
-      .select(['is_spectator'])
+      .select(['role'])
       .where('user_id', '=', parentId)
       .where('team_id', '=', 'tem_ravens')
       .executeTakeFirst()
-    expect(membership?.is_spectator).equals(true)
+    expect(membership?.role).equals('member')
   })
 
   it('lets a league invite carry seasons the league does not have yet', async function () {
@@ -471,6 +471,14 @@ describe('invite codes', function () {
     expect(made.status).equals(201)
     const joined = await ask('/join/league26/redeem', COACH, 'POST', {})
     expect(joined.status).equals(200)
+    // A member of the league, the same kind of member a team invite makes.
+    const row = await db
+      .selectFrom('league_members')
+      .select(['role'])
+      .where('user_id', '=', coachId)
+      .where('league_id', '=', 'lea_npll')
+      .executeTakeFirst()
+    expect(row?.role).equals('member')
 
     // Nothing to see yet: the league has no seasons.
     const before = await visibleScopes(db, coachId, false)
@@ -504,9 +512,10 @@ describe('invite codes', function () {
       .values({ season_id: 'sea_autumn', team_id: 'tem_badgers' })
       .execute()
 
+    // And its teams with it.
     const after = await visibleScopes(db, coachId, false)
     expect(after.seasonIds.has('sea_autumn')).equals(true)
-    expect(after.teamIds.has('tem_badgers')).equals(false)
+    expect(after.teamIds.has('tem_badgers')).equals(true)
   })
 
   it('stops a link without forgetting who came through it', async function () {

@@ -3,12 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
-import {
-  badRequest,
-  conflict,
-  notFound,
-  unauthorized
-} from '../../common/errors'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { makeId } from '../../common/ids'
 import { asRoleFlags, type RoleFlag } from '../../common/roles'
@@ -18,7 +13,8 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
-import { currentActor } from '../groups/rights'
+import { currentActor, requirePeopleManager } from '../groups/rights'
+import { type AddedMail, heldAt, notifyGrant } from '../invites/grants'
 import {
   type Invite,
   inviteProblem,
@@ -35,11 +31,12 @@ import {
   rolesAt,
   setScopeRoles
 } from '../invites/people'
-import { invitePerson } from '../invites/personRequests'
+import { addPersonByAddress } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { onPeopleList } from '../teams/teamRoster'
 import { inviteUrl } from './invites'
 
 /**
@@ -83,6 +80,8 @@ export interface ManageRouteOptions {
     email: string,
     invitation: { scopeName: string; invitedBy: string; link: string }
   ) => Promise<void>
+  /** Tells somebody with an account they were added. */
+  sendAdded?: AddedMail['sendAdded']
   publicUrl?: string
   clock?: Clock
 }
@@ -101,46 +100,6 @@ export function manageRoutes(
       next()
     })
   )
-  const connected = async (
-    source: Kysely<Database>,
-    kind: InviteScopeType,
-    id: string,
-    userId: number
-  ): Promise<void> => {
-    const role = await source
-      .selectFrom('scope_roles')
-      .select('id')
-      .where('scope_type', '=', kind)
-      .where('scope_id', '=', id)
-      .where('user_id', '=', userId)
-      .executeTakeFirst()
-    const member =
-      kind === 'team'
-        ? await source
-            .selectFrom('memberships')
-            .select('id')
-            .where('team_id', '=', id)
-            .where('user_id', '=', userId)
-            .executeTakeFirst()
-        : kind === 'season'
-          ? await source
-              .selectFrom('season_members')
-              .select('id')
-              .where('season_id', '=', id)
-              .where('user_id', '=', userId)
-              .executeTakeFirst()
-          : await source
-              .selectFrom('league_members')
-              .select('id')
-              .where('league_id', '=', id)
-              .where('user_id', '=', userId)
-              .executeTakeFirst()
-    if (role == null && member == null)
-      throw conflict(
-        'Invite this person to the group first. Access and roles begin after they accept.'
-      )
-  }
-
   /** The scope, refused as 404 to anybody who does not administer it. */
   const mustAdminister = async (
     userId: number,
@@ -195,8 +154,11 @@ export function manageRoutes(
   /**
    * Add one person by address.
    *
-   * Existing and new accounts both accept a seven-day personal invitation.
-   * Requested group roles stay pending until that verified recipient accepts.
+   * An address an account has verified adds that account at once, with the
+   * roles asked for: told in its inbox and mailed there, with a way to
+   * leave. An address nobody has verified gets a seven-day invitation, which
+   * applies itself when somebody verifies the address, or is accepted from
+   * its link.
    */
   router.post(
     '/manage/:scopeType/:scopeId/people',
@@ -213,7 +175,7 @@ export function manageRoutes(
         scopeId
       )
       const body = cleanBody(asPersonByEmail, req.body)
-      const { request, invite } = await invitePerson(
+      const result = await addPersonByAddress(
         db,
         actor,
         { kind: scopeType, id: scopeId },
@@ -223,8 +185,28 @@ export function manageRoutes(
           flags: body.flags,
           idempotencyKey: body.idempotencyKey ?? makeId('invite')
         },
-        options.clock ?? realClock
+        options.clock ?? realClock,
+        { publicUrl: options.publicUrl, sendAdded: options.sendAdded }
       )
+      if ('applied' in result) {
+        const { applied } = result
+        setAudit(res.locals, {
+          entityType: 'scopeRoles',
+          entityId: applied.userId,
+          after: { scopeType, scopeId, added: applied.added }
+        })
+        // `added` is false for somebody who held all of it already.
+        res.status(201).json({
+          added: applied.added.length > 0,
+          person: {
+            userId: applied.userId,
+            displayName: applied.displayName,
+            email: applied.email
+          }
+        })
+        return
+      }
+      const { request, invite } = result.invited
       const email = invite.forEmail!
       const who = await db
         .selectFrom('users')
@@ -285,9 +267,9 @@ export function manageRoutes(
 
   /**
    * Somebody who may be given a role here: an account that has not been
-   * merged into another. They are added to the scope as well, so they can
-   * see it: an administrator or a scorekeeper with no membership holds a
-   * role on something they cannot open, which nobody asks for on purpose.
+   * merged into another, on this level's people list (404 otherwise). The
+   * roles take effect at once, with the level's membership, and they are
+   * told so.
    */
   const mustBePerson = async (userId: number): Promise<void> => {
     const person = await db
@@ -312,6 +294,10 @@ export function manageRoutes(
    * The body is the whole of what they hold here, so an empty list with
    * `admin: false` takes every role on this level away and leaves them a
    * member.
+   *
+   * Its administrators, coaches and assistants may call it; changing
+   * whether somebody is an administrator is for an administrator (403 for
+   * anybody else), and anybody who is none of those gets 404.
    */
   router.put(
     '/manage/:scopeType/:scopeId/people/:userId/roles',
@@ -322,23 +308,38 @@ export function manageRoutes(
       const scopeType = asScopeType(req.params.scopeType)
       const scopeId = pathParam(req.params.scopeId)
       const userId = userIdParam(req.params.userId)
-      await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
+      const ref = { kind: scopeType, id: scopeId }
       const body = cleanBody(asRolesChange, req.body)
+      const held = await heldAt(db, ref, userId)
+      const touchesAdmin = body.admin !== held.roles.includes('admin')
+      await requirePeopleManager(db, actor, ref, touchesAdmin)
 
       await mustBePerson(userId)
+      if (!(await onPeopleList(db, ref, userId))) throw notFound()
 
       const { before, roles } = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
-        await connected(trx, scopeType, scopeId, userId)
         const before = await rolesAt(trx, scopeType, scopeId, userId)
+        const was = await heldAt(trx, ref, userId)
         const roles = await setScopeRoles(
           trx,
           scopeType,
           scopeId,
           userId,
           body,
-          actor.userId
+          actor.userId,
+          touchesAdmin ? 'admin' : 'manager'
         )
+        await notifyGrant(trx, {
+          ref,
+          userId,
+          added: [
+            ...(was.member ? [] : (['member'] as const)),
+            ...roles.filter(role => !was.roles.includes(role))
+          ],
+          actorId: actor.userId,
+          at: (options.clock ?? realClock).now()
+        })
         return { before, roles }
       })
 
@@ -371,9 +372,11 @@ export function manageRoutes(
 
       await mustBePerson(userId)
 
+      if (!(await onPeopleList(db, { kind: scopeType, id: scopeId }, userId)))
+        throw notFound()
+
       const { before, roles } = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
-        await connected(trx, scopeType, scopeId, userId)
         const before = await rolesAt(trx, scopeType, scopeId, userId)
         const roles = await setScopeRoles(
           trx,

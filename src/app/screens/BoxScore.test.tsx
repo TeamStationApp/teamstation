@@ -8,6 +8,7 @@ import {
   asBattingRow,
   asPitchingRow,
   type BattingRow,
+  type LineScoreSide,
   type PitchingRow,
   TeamStationClient
 } from '../../common/api'
@@ -117,6 +118,95 @@ async function boxScore(
   })
   return host
 }
+
+/** A non-member's box score: the server sends the runs and keeps the rest. */
+async function nonMemberBoxScore(): Promise<{
+  container: HTMLElement
+  asked: string[]
+}> {
+  const asked: string[] = []
+  const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  const side = (runs: number[], r: number): LineScoreSide => ({
+    runs,
+    r,
+    h: null,
+    e: null,
+    bb: null,
+    k: null,
+    hr: null,
+    hbp: null
+  })
+  client.game = async () => ({
+    ...gameFixture,
+    nonMemberView: true,
+    canScore: false,
+    status: 'final',
+    awayScore: 1,
+    homeScore: 7,
+    linescore: { away: side([1, 0], 1), home: side([3, 4], 7) }
+  })
+  client.teams = async () => []
+  client.boxScore = async () => {
+    asked.push('boxScore')
+    throw new Error('kept for members')
+  }
+  client.playback = async () => {
+    asked.push('playback')
+    throw new Error('kept for members')
+  }
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => {
+    root?.render(
+      <ThemeProvider>
+        <GestureHandlerRootView>
+          <GameScreen client={client} gameId="g1" initialTab="boxScore" />
+        </GestureHandlerRootView>
+      </ThemeProvider>
+    )
+  })
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  return { container: host, asked }
+}
+
+describe('a non-member’s box score', function () {
+  it('shows the line score by inning, then the members-only message, readably, and asks for no tables', async function () {
+    this.timeout(10000)
+    const { container, asked } = await nonMemberBoxScore()
+    const text = container.textContent ?? ''
+    const message =
+      'You need to be a member of one of these teams to see individual player stats.'
+    expect(text).includes(message)
+    // The page's own text colour, not a hint's.
+    const notice = container.querySelector('[role="alert"]')
+    expect(notice?.textContent).equals(message)
+    expect(getComputedStyle(notice!).color).equals(
+      rgb(tsBallpark.primaryTextColor)
+    )
+    // The innings and the runs come first, and the counts the server kept
+    // back are not drawn as dashes.
+    const [owls] = pinned(container, 'Owls')
+    expect(owls, 'line score row').not.equals(undefined)
+    const row = owls.parentElement!
+    expect(Array.from(row.children).map(cell => cell.textContent)).deep.equals([
+      'Owls',
+      '1',
+      '0',
+      '1'
+    ])
+    const head = row.previousElementSibling!
+    expect(Array.from(head.children).map(cell => cell.textContent)).deep.equals(
+      ['', '1', '2', 'R']
+    )
+    expect(text.indexOf('Hawks')).lessThan(text.indexOf(message))
+    expect(text).not.includes('Batting —')
+    expect(text).not.includes('Pitching —')
+    expect(asked).deep.equals([])
+  })
+})
 
 describe('the box score', function () {
   it('draws the line score’s pinned names, and the cell above them, on the card’s white', async function () {

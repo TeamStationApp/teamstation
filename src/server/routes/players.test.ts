@@ -69,6 +69,7 @@ describe('a player, and who may change their name', function () {
   // One person per flag on the Badgers, a coach of the league above them, a
   // coach of the Legends only, and a site administrator with no role at all.
   const teamCoachId = mintUser()
+  const assistantId = mintUser()
   const scorekeeperId = mintUser()
   const songkeeperId = mintUser()
   const videographerId = mintUser()
@@ -146,6 +147,7 @@ describe('a player, and who may change their name', function () {
         },
         ...[
           teamCoachId,
+          assistantId,
           scorekeeperId,
           songkeeperId,
           videographerId,
@@ -243,6 +245,7 @@ describe('a player, and who may change their name', function () {
         // leaves them: a member of the team they hold it on.
         ...[
           teamCoachId,
+          assistantId,
           scorekeeperId,
           songkeeperId,
           videographerId,
@@ -260,7 +263,7 @@ describe('a player, and who may change their name', function () {
         id: makeId('leagueMember'),
         user_id: leagueCoachId,
         league_id: leagueId,
-        role: 'spectator',
+        role: 'member',
         source: 'manual'
       })
       .execute()
@@ -282,6 +285,7 @@ describe('a player, and who may change their name', function () {
       .insertInto('scope_roles')
       .values([
         flag(teamCoachId, 'team', teamId, 'coach'),
+        flag(assistantId, 'team', teamId, 'assistant'),
         flag(scorekeeperId, 'team', teamId, 'scorekeeper'),
         flag(songkeeperId, 'team', teamId, 'songkeeper'),
         flag(videographerId, 'team', teamId, 'videographer'),
@@ -380,17 +384,17 @@ describe('a player, and who may change their name', function () {
     expect(await mayEditName(db, childId, childId, about)).equals(true)
   })
 
-  // Paul's rule, 2026-10-02: team admins, coaches and other staff can see
-  // and edit a child's full name. A team-mate, a parent of somebody else and
-  // the staff of another team cannot.
-  it('lets the staff of the child’s team change it, and nobody else', async function () {
+  // Team admins, coaches, assistants and scorekeepers can see and edit a
+  // child's full name: a scorekeeper may be the only person keeping the
+  // roster. A songkeeper or videographer, a team-mate, a parent of somebody
+  // else and the staff of another team cannot.
+  it('lets the roster managers of the child’s team change it, and nobody else', async function () {
     for (const staff of [
       coachId,
       seasonAdminId,
       teamCoachId,
+      assistantId,
       scorekeeperId,
-      songkeeperId,
-      videographerId,
       leagueCoachId
     ]) {
       expect(
@@ -398,7 +402,12 @@ describe('a player, and who may change their name', function () {
         String(staff)
       ).equals(true)
     }
-    for (const outsider of [strangerId, otherCoachId]) {
+    for (const outsider of [
+      songkeeperId,
+      videographerId,
+      strangerId,
+      otherCoachId
+    ]) {
       expect(
         await mayEditName(db, outsider, childId, about),
         String(outsider)
@@ -424,6 +433,7 @@ describe('a player, and who may change their name', function () {
   // Everybody who can see the team in this fixture, from a site admin down.
   const everyViewer = (): number[] => [
     teamCoachId,
+    assistantId,
     leagueCoachId,
     coachId,
     childId,
@@ -458,8 +468,14 @@ describe('a player, and who may change their name', function () {
     }
   })
 
-  it('gives the name field to the staff of the team, and to nobody else on it', async function () {
-    for (const viewer of [teamCoachId, scorekeeperId, coachId, leagueCoachId]) {
+  it('gives the name field to the roster managers of the team, and to nobody else on it', async function () {
+    for (const viewer of [
+      teamCoachId,
+      assistantId,
+      scorekeeperId,
+      coachId,
+      leagueCoachId
+    ]) {
       const answer = await get(`/players/${childId}/name`, viewer)
       expect(answer.status, String(viewer)).equals(200)
       expect(answer.body).deep.include({
@@ -473,7 +489,12 @@ describe('a player, and who may change their name', function () {
     }
     // A parent on another team asks for the name alone.
     expect((await get(`/players/${childId}/name`, parentId)).status).equals(200)
-    for (const viewer of [strangerId, otherCoachId]) {
+    for (const viewer of [
+      songkeeperId,
+      videographerId,
+      strangerId,
+      otherCoachId
+    ]) {
       const answer = await get(`/players/${childId}/name`, viewer)
       expect(answer.status, String(viewer)).equals(404)
       const detail = asPlayerDetail(
@@ -673,13 +694,16 @@ describe('a player, and who may change their name', function () {
         .set({ login_enabled: false })
         .where('id', '=', childId)
         .execute()
+      // The player's guardian manages their child, the name included.
       for (const viewer of [
         teamCoachId,
+        assistantId,
         scorekeeperId,
         leagueCoachId,
         coachId,
         seasonAdminId,
-        siteAdminId
+        siteAdminId,
+        parentId
       ]) {
         const body = {
           name: { firstName: ' Mookie ', lastName: ' Betts ' },
@@ -702,7 +726,6 @@ describe('a player, and who may change their name', function () {
         videographerId,
         strangerId,
         otherCoachId,
-        parentId,
         childId
       ]) {
         const body = {
@@ -774,10 +797,12 @@ describe('a player, and who may change their name', function () {
     }
   })
 
-  it('lets a coach, scorekeeper or admin of the team set player settings', async function () {
+  it('lets a coach, an assistant, a scorekeeper or an admin of the team, or the player’s guardian, set a player’s settings', async function () {
     for (const [viewer, jersey] of [
+      [parentId, '2'],
       [teamCoachId, '3'],
       [scorekeeperId, '4'],
+      [assistantId, '7'],
       [leagueCoachId, '5'],
       [coachId, '6'],
       [seasonAdminId, '8'],
@@ -798,7 +823,6 @@ describe('a player, and who may change their name', function () {
       videographerId,
       strangerId,
       otherCoachId,
-      parentId,
       childId
     ]) {
       const answer = await put(settingsOf(teamId, childId), viewer, {
@@ -806,6 +830,11 @@ describe('a player, and who may change their name', function () {
       })
       expect(answer.status, String(viewer)).equals(404)
     }
+    // A guardian manages their own child, never another player.
+    expect(
+      (await put(settingsOf(teamId, bothTeamsId), parentId, { jersey: '99' }))
+        .status
+    ).equals(404)
     // Rights come first: a bad body from somebody with none is still 404.
     expect(
       (await put(settingsOf(teamId, childId), songkeeperId, {})).status
@@ -937,17 +966,143 @@ describe('a player, and who may change their name', function () {
     ])
   })
 
+  const handsOf = (player: number | string): string =>
+    `/players/${player}/settings`
+
+  it('lets a guardian, a coach of any of the player’s teams or a site admin set how they bat and throw', async function () {
+    const mine = await put(handsOf(childId), parentId, {
+      bats: 'right',
+      throws: 'left'
+    })
+    expect(mine.status).equals(200)
+    expect(mine.body).deep.equals({
+      userId: childId,
+      bats: 'right',
+      throws: 'left'
+    })
+    // A field left out is left alone.
+    expect(
+      (await put(handsOf(childId), teamCoachId, { throws: null })).body
+    ).deep.equals({ userId: childId, bats: 'right', throws: null })
+    const user = await db
+      .selectFrom('users')
+      .select(['bats', 'throws', 'bats_source'])
+      .where('id', '=', childId)
+      .executeTakeFirstOrThrow()
+    expect(user).deep.equals({
+      bats: 'right',
+      throws: null,
+      bats_source: 'manual'
+    })
+    // The Legends' coach, for a player who is on the Legends too; an
+    // assistant, a scorekeeper and a coach carried down from the league; a
+    // site admin.
+    for (const [viewer, bats] of [
+      [otherCoachId, 'switch'],
+      [assistantId, 'left'],
+      [scorekeeperId, 'switch'],
+      [leagueCoachId, 'right'],
+      [siteAdminId, 'left']
+    ] as const) {
+      const answer = await put(handsOf(bothTeamsId), viewer, { bats })
+      expect(answer.status, String(viewer)).equals(200)
+      expect((answer.body as { bats: string }).bats).equals(bats)
+    }
+    let audited: Array<{ before: unknown; after: unknown }> = []
+    for (let tries = 0; tries < 50 && audited.length < 2; tries++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      audited = await db
+        .selectFrom('audit_log')
+        .select(['before', 'after'])
+        .where('entity_type', '=', 'playerSettings')
+        .where('entity_id', '=', String(childId))
+        .where('path', '=', handsOf(childId))
+        .orderBy('at')
+        .execute()
+    }
+    expect(audited).deep.equals([
+      {
+        before: { bats: 'left', throws: null },
+        after: { bats: 'right', throws: 'left' }
+      },
+      {
+        before: { bats: 'right', throws: 'left' },
+        after: { bats: 'right', throws: null }
+      }
+    ])
+  })
+
+  it('answers 404 to anybody else for a player’s hands, and 400 for a team’s fields', async function () {
+    for (const [viewer, player] of [
+      [strangerId, childId],
+      [songkeeperId, childId],
+      [videographerId, childId],
+      // The Legends' coach, for a player who is not on the Legends.
+      [otherCoachId, childId],
+      // A guardian, for somebody else's child.
+      [parentId, bothTeamsId],
+      [childId, childId]
+    ] as const) {
+      const answer = await put(handsOf(player), viewer, { bats: 'right' })
+      expect(answer.status, `${viewer} ${player}`).equals(404)
+    }
+    // Rights come first: a bad body from somebody with none is still 404.
+    expect((await put(handsOf(childId), strangerId, {})).status).equals(404)
+    expect((await put(handsOf('nobody'), siteAdminId, {})).status).equals(404)
+    expect(
+      (await put(handsOf(mintUser()), siteAdminId, { bats: 'left' })).status
+    ).equals(404)
+    for (const body of [
+      {},
+      [],
+      { jersey: '7' },
+      { positions: ['SS'] },
+      { bats: 'left', jersey: '7' },
+      { bats: 'both' },
+      { throws: 'switch' }
+    ]) {
+      const answer = await put(handsOf(childId), parentId, body)
+      expect(answer.status, JSON.stringify(body)).equals(400)
+    }
+    const user = await db
+      .selectFrom('users')
+      .select(['bats'])
+      .where('id', '=', childId)
+      .executeTakeFirstOrThrow()
+    expect(user.bats).equals('right')
+  })
+
+  it('shows a guardian their child’s page, and lists their child in GET /me/roles', async function () {
+    const page = await get(`/players/${childId}`, parentId)
+    expect(page.status).equals(200)
+    expect(
+      asPlayerDetail(page.body).teams.map(team => team.teamId)
+    ).deep.equals([teamId])
+    const roles = await get('/me/roles', parentId)
+    expect((roles.body as { guardianOf: number[] }).guardianOf).deep.equals([
+      childId
+    ])
+    expect(
+      ((await get('/me/roles', teamCoachId)).body as { guardianOf: number[] })
+        .guardianOf
+    ).deep.equals([])
+  })
+
   it('lists coach on the team in GET /me/roles, and keeps the roster a bare array', async function () {
     const roles = await get('/me/roles', teamCoachId)
     expect(roles.status).equals(200)
     expect(
       (roles.body as { teams: Record<string, string[]> }).teams[teamId]
     ).deep.equals(['coach'])
+    const assistant = await get('/me/roles', assistantId)
+    expect(
+      (assistant.body as { teams: Record<string, string[]> }).teams[teamId]
+    ).deep.equals(['assistant'])
     const roster = await get(`/teams/${teamId}/roster`, teamCoachId)
     expect(Array.isArray(roster.body)).equals(true)
   })
 
-  it('lists the teams a player has been on, with the season', async function () {
+  it('lists the teams a player has been on, with the season and their number', async function () {
     const teams = await teamsOf(db, [childId])
     expect(teams).deep.equals([
       {
@@ -955,7 +1110,11 @@ describe('a player, and who may change their name', function () {
         teamName: 'Badgers',
         seasonId,
         seasonName: 'Spring 2026',
-        seasonYear: 2026
+        seasonYear: 2026,
+        jersey: '12',
+        positions: [],
+        current: true,
+        logoPath: null
       }
     ])
   })

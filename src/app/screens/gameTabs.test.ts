@@ -7,6 +7,7 @@ import { gameTabs } from './gameTabs'
 function gameWith(fields: Partial<GameDetail>): GameDetail {
   return {
     ...asGameDetail({
+      nonMemberView: false,
       id: 'g1',
       awayTeamId: 'away',
       homeTeamId: 'home',

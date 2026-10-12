@@ -82,6 +82,23 @@ describe('a still by its signed URL', function () {
     expect(response.status).equals(403)
   })
 
+  it('refuses a token signed for another second of the same video', async function () {
+    // The Space holds 150, so only the token stands between this and a frame.
+    const borrowed = new URL(urlFor('vid_1', 151))
+    const response = await fetch(
+      `${origin}/api/v1/videos/vid_1/stills/150.jpg${borrowed.search}`,
+      { redirect: 'manual' }
+    )
+    expect(response.status).equals(403)
+    // And the other way round: 150's token does not open 151.
+    const handed = new URL(urlFor('vid_1', 150))
+    const moved = await fetch(
+      `${origin}/api/v1/videos/vid_1/stills/151.jpg${handed.search}`,
+      { redirect: 'manual' }
+    )
+    expect(moved.status).equals(403)
+  })
+
   it('answers 404 for a name that is not a second', async function () {
     const token = new URL(urlFor('vid_1', 150)).search
     const response = await fetch(

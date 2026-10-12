@@ -54,9 +54,15 @@ export function stillKey(videoId: string, atSec: number): string {
   return spaceKey(videoId, `stills/${stillSecond(atSec)}.jpg`)
 }
 
-/** What a still URL's token is signed against: this video's stills only. */
-export function stillSubject(videoId: string): string {
-  return `stills:${videoId}`
+/**
+ * What a still URL's token is signed against: this one second of this video.
+ *
+ * Not the whole video. A non-member is handed still URLs for a game they may
+ * not play, and a token good for every second would let them rewrite the
+ * second and pull the video frame by frame, with the server cutting each one.
+ */
+export function stillSubject(videoId: string, atSec: number): string {
+  return `stills:${videoId}:${stillSecond(atSec)}`
 }
 
 /**
@@ -70,7 +76,11 @@ export function stillUrl(
   atSec: number,
   now: number = Date.now()
 ): string {
-  const token = signQueryToken(media.mediaSecret, stillSubject(videoId), now)
+  const token = signQueryToken(
+    media.mediaSecret,
+    stillSubject(videoId, atSec),
+    now
+  )
   return `${media.publicUrl}/api/v1/videos/${videoId}/stills/${stillSecond(atSec)}.jpg?t=${token}`
 }
 

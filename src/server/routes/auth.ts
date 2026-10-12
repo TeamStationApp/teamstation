@@ -33,6 +33,7 @@ import { onboardingFor, settleAccount } from '../auth/settleAccount'
 import { makeToken, SESSION_COOKIE, sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { settleInviteSignIn } from '../invites/joining'
+import { applyWaitingInvitations } from '../invites/personRequests'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
@@ -242,7 +243,11 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         displayName: claim.displayName
       })
     } else await settleAccount(db, email)
-    return await findUserByEmail(db, email)
+    const user = await findUserByEmail(db, email)
+    // The address is proved now: whatever it was added to while nobody held
+    // it applies at once.
+    if (user != null) await applyWaitingInvitations(db, user.id)
+    return user
   }
 
   /** The signed-in person's own picture, for the header. */

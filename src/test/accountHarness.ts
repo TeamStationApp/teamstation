@@ -15,6 +15,7 @@ import { makeToken } from '../server/auth/tokens'
 import type { Database } from '../server/db/database'
 import { makeDatabase } from '../server/db/database'
 import { jsonBody } from '../server/jsonBody'
+import type { MediaContext } from '../server/media/mediaContext'
 import type { SpaceSettings } from '../server/media/spacesHls'
 import { withAudit } from '../server/middleware/withAudit'
 import { withActor } from '../server/middleware/withAuth'
@@ -25,6 +26,16 @@ import { meRoutes } from '../server/routes/me'
 import { playerRoutes } from '../server/routes/players'
 import { teamRoutes } from '../server/routes/teams'
 import { traceHttp } from './httpTrace'
+
+/**
+ * More routes for one fixture, mounted after every API route the harness
+ * mounts itself and before the web app's catch-all, so a path they answer is
+ * never handed `index.html`.
+ */
+export type MountExtra = (
+  app: express.Express,
+  fixture: { db: Kysely<Database>; media: MediaContext }
+) => void
 
 /** Real DB, real routes, real image uploads; external mail and S3 terminate locally. */
 export async function accountHarness(
@@ -45,7 +56,8 @@ export async function accountHarness(
       sendCode: (email: string, code: string) => Promise<void>
     }
   ) => void,
-  bindHost = '127.0.0.1'
+  bindHost = '127.0.0.1',
+  mountExtra?: MountExtra
 ): Promise<AccountHarness> {
   const name = `account_test_${Date.now()}_${Math.floor(Math.random() * 100000)}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
@@ -143,6 +155,7 @@ export async function accountHarness(
   }
   const mail = new Map<string, string>()
   const links = new Map<string, string>()
+  const invitations = new Map<string, object>()
   const sendCode = async (
     email: string,
     code: string,
@@ -172,6 +185,7 @@ export async function accountHarness(
   app.use('/api/v1', meRoutes(db))
   app.use('/api/v1', teamRoutes(db, media))
   app.use('/api/v1', playerRoutes(db, media))
+  mountExtra?.(app, { db, media })
   if (webRoot != null) {
     app.get('/api/v1/health', (_req, res) => {
       res.json({ ok: true, version: 'test', dictation: false })
@@ -189,6 +203,7 @@ export async function accountHarness(
     db,
     mail,
     links,
+    invitations,
     space,
     objects,
     controls,
@@ -236,6 +251,8 @@ export interface AccountHarness {
   db: Kysely<Database>
   mail: Map<string, string>
   links: Map<string, string>
+  /** Each address's last invitation mail that says more than a link. */
+  invitations: Map<string, object>
   space: SpaceSettings
   objects: Map<string, Buffer>
   controls: { failMail: boolean; failPut: boolean }

@@ -235,6 +235,24 @@ describe('approved games and shared schedule ownership', function () {
     expect(await retry.json()).property('status', 'cancelled')
     expect(await f.h.db.selectFrom('games').select('id').execute()).length(0)
   })
+  it('lets an administrator of the sending season withdraw a proposal, and not a team that has not consented', async () => {
+    const id = await send(game(), 102, 'sender-scope-withdraw')
+    const refused = await f.h.request(
+      'POST',
+      `/game-requests/${id}/withdraw`,
+      {},
+      101
+    )
+    expect(refused.status).equals(403)
+    const withdrawn = await f.h.request(
+      'POST',
+      `/game-requests/${id}/withdraw`,
+      {},
+      105
+    )
+    expect(withdrawn.status).equals(200)
+    expect(await withdrawn.json()).property('status', 'cancelled')
+  })
   async function send(
     intent = game(),
     user = 102,

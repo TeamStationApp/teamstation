@@ -710,23 +710,20 @@ describe('whether a viewer may score a game', function () {
     return asGameDetail(await response.json()).canDj
   }
 
-  // U27: DJ Game is for whoever keeps either team's walk-up songs.
-  it('offers DJ Game to a songkeeper or an admin of either team', async function () {
+  // U27: DJ Game is for whoever keeps either team's walk-up songs, which
+  // every scorekeeper does.
+  it('offers DJ Game to a songkeeper, a scorekeeper or an admin of either team', async function () {
     for (const name of [
       'songkeeper',
       'awaySongkeeper',
+      'homeScorekeeper',
+      'leagueScorekeeper',
       'awayManager',
       'siteAdmin'
     ]) {
       expect(await canDjFor(name), name).equals(true)
     }
-    for (const name of [
-      'homeScorekeeper',
-      'leagueScorekeeper',
-      'coach',
-      'videographer',
-      'member'
-    ]) {
+    for (const name of ['coach', 'videographer', 'member']) {
       expect(await canDjFor(name), name).equals(false)
     }
   })

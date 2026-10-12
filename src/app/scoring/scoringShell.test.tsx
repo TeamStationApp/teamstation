@@ -72,7 +72,10 @@ function fixtureFetch(signedIn = true): void {
                 jersey: String(i + 1),
                 positions: [],
                 isPlayer: true,
-                role: 'member'
+                role: 'member',
+                section: 'player',
+                staffRoles: [],
+                inheritedFrom: null
               }))
             : path.endsWith('/live-streams')
               ? { streams: [] }
@@ -140,7 +143,7 @@ describe('scoring shell and exit', function () {
     '/schedule',
     '/account',
     '/players/p1',
-    '/teams/t1/manage'
+    '/teams/t1/people/7'
   ]) {
     it(`keeps existing navigation reachable at ${path}`, async function () {
       fixtureFetch()
@@ -154,7 +157,7 @@ describe('scoring shell and exit', function () {
       await click('Videos')
       expect(currentRoute().name).equals('videos')
       await click('Home')
-      if (['account', 'player', 'manage'].includes(route.name)) {
+      if (['account', 'player', 'person'].includes(route.name)) {
         expect(currentRoute().name).equals(route.name)
         await click('Home')
       }
@@ -371,7 +374,7 @@ describe('scoring shell and exit', function () {
     for (const route of [
       { name: 'account' } as const,
       { name: 'player', userId: 'p1' } as const,
-      { name: 'manage', scopeKind: 'team', scopeId: 't1' } as const
+      { name: 'person', kind: 'team', id: 't1', userId: '7' } as const
     ])
       expect(stackFor(route).home).has.length(1)
     let exits = 0
@@ -484,6 +487,9 @@ describe('scoring shell and exit', function () {
         positions: [],
         isPlayer: true,
         role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null,
         walkUpSong: song
       }))
     globalThis.fetch = async input => {
@@ -615,6 +621,9 @@ describe('scoring shell and exit', function () {
         positions: [],
         isPlayer: true,
         role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null,
         walkUpSong: index < ids.length ? song(ids[index]) : null
       }))
     globalThis.fetch = async input => {

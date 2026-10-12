@@ -27,7 +27,15 @@ import { meRoutes } from './me'
 const scratchName = `teamstation_me_${Date.now()}`
 const scratchUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
-const PEOPLE = ['keeper', 'manager', 'site', 'nobody'] as const
+const PEOPLE = [
+  'keeper',
+  'assistant',
+  'manager',
+  'site',
+  'nobody',
+  'parent',
+  'child'
+] as const
 type Person = (typeof PEOPLE)[number]
 const token = (person: Person): string => `tok_me_${person}`.padEnd(35, '0')
 
@@ -128,6 +136,13 @@ describe('what the signed-in person may do', function () {
           scope_type: 'team',
           scope_id: 'tem_b',
           role: 'coach'
+        },
+        {
+          id: makeId('scopeRole'),
+          user_id: user('assistant'),
+          scope_type: 'season',
+          scope_id: 'sea_me',
+          role: 'assistant'
         }
       ])
       .execute()
@@ -138,6 +153,15 @@ describe('what the signed-in person may do', function () {
         user_id: user('manager'),
         team_id: 'tem_c',
         role: 'manager'
+      })
+      .execute()
+    await db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: user('parent'),
+        related_user_id: user('child'),
+        kind: 'family'
       })
       .execute()
 
@@ -170,15 +194,25 @@ describe('what the signed-in person may do', function () {
 
   it('lists the roles each team inherits, and what is set on the team itself', async function () {
     if (db == null) this.skip()
+    // A scorekeeper holds everything a songkeeper does, and is told so.
     expect(await rolesOf('keeper')).deep.equals({
-      tem_a: ['scorekeeper'],
-      tem_b: ['coach', 'scorekeeper']
+      tem_a: ['scorekeeper', 'songkeeper'],
+      tem_b: ['coach', 'scorekeeper', 'songkeeper']
+    })
+  })
+
+  it('lists an assistant as assistant, carried down from the season', async function () {
+    if (db == null) this.skip()
+    expect(await rolesOf('assistant')).deep.equals({
+      tem_a: ['assistant'],
+      tem_b: ['assistant']
     })
   })
 
   it('gives an administrator every role on the team they run', async function () {
     if (db == null) this.skip()
     expect(await rolesOf('manager')).deep.equals({ tem_c: [...ROLES] })
+    expect((await rolesOf('manager')).tem_c).includes('assistant')
   })
 
   it('gives a site administrator every role on every team', async function () {
@@ -188,6 +222,22 @@ describe('what the signed-in person may do', function () {
       tem_b: [...ROLES],
       tem_c: [...ROLES]
     })
+  })
+
+  it('lists the players somebody is a guardian of, and nobody for anybody else', async function () {
+    if (db == null) this.skip()
+    const guardianOf = async (person: Person): Promise<unknown> => {
+      const response = await fetch(`${base}/me/roles`, {
+        headers: { authorization: `Bearer ${token(person)}` }
+      })
+      return ((await response.json()) as { guardianOf: unknown }).guardianOf
+    }
+    expect(await guardianOf('parent')).deep.equals([users.get('child')])
+    for (const person of ['child', 'keeper', 'site', 'nobody'] as const) {
+      expect(await guardianOf(person), person).deep.equals([])
+    }
+    // An answer from before the list existed reads as guarding nobody.
+    expect(asMyRoles({ teams: {} }).guardianOf).deep.equals([])
   })
 
   it('lists nothing for somebody with no role, and needs a session', async function () {

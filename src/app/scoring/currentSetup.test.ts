@@ -284,7 +284,10 @@ describe('current scoring setup', function () {
       jersey: '00',
       positions: [],
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     })
     const otherTeam = original.gameData.teams.home.id
     expect(withRosterDetails(original, { [otherTeam]: [entry] })).equals(

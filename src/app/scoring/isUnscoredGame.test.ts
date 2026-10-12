@@ -5,6 +5,7 @@ import { asGameDetail } from '../../common/api'
 import { isUnscoredGame, scoringEntry } from './isUnscoredGame'
 
 export const gameFixture = asGameDetail({
+  nonMemberView: false,
   id: 'g1',
   awayTeamId: 'away',
   homeTeamId: 'home',

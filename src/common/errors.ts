@@ -23,6 +23,12 @@ export const asErrorCode = asLiteral(
   'tooLarge',
   'unsupportedMedia',
   'rateLimited',
+  /**
+   * The caller is signed in and a member of no team in this answer: the part
+   * asked for is for members. A 403 rather than a 404, because the
+   * non-member view of the team and the game already showed they are there.
+   */
+  'membersOnly',
   'internal',
   /** A service the answer depends on is away for now; ask again later. */
   'unavailable'
@@ -62,6 +68,7 @@ export const errorStatus: Record<ErrorCode, number> = {
   tooLarge: 413,
   unsupportedMedia: 415,
   rateLimited: 429,
+  membersOnly: 403,
   internal: 500,
   unavailable: 503
 }
@@ -121,6 +128,16 @@ export const rateLimited = (
   message: string,
   retryAfterSec: number
 ): HttpError => new HttpError('rateLimited', message, { retryAfterSec })
+
+/**
+ * What somebody signed in who is not a member is told for the parts of a
+ * team kept for members: figures, the box score and the video itself.
+ */
+export const membersOnly = (): HttpError =>
+  new HttpError(
+    'membersOnly',
+    'You need to be a member of one of the teams to see this.'
+  )
 
 /** A body, or a part of one, heavier than this route takes. */
 export const tooLarge = (message: string): HttpError =>

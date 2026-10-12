@@ -29,14 +29,18 @@ export function selectLocale(strings: LocaleFile | undefined): void {
   }
 }
 
-/** Fills the `%s` placeholders in a string, left to right. */
+/**
+ * Fills the `%s` placeholders in a string, left to right. `%1$s` and `%2$s`
+ * name a value by its place instead, so a language can put the words of
+ * `Season coach` the other way round.
+ */
 export function sprintf(
   template: string,
   ...values: Array<string | number | null | undefined>
 ): string {
   let index = 0
-  return template.replace(/%s/g, () => {
-    const value = values[index++]
+  return template.replace(/%(?:(\d+)\$)?s/g, (_match, place?: string) => {
+    const value = values[place == null ? index++ : Number(place) - 1]
     return value == null ? '' : String(value)
   })
 }

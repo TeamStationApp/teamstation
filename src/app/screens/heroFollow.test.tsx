@@ -48,6 +48,7 @@ function client(
       competingTeams: [],
       games: [],
       staff: [],
+      nonMemberView: false,
       ...access
     })
   api.follows = async () => (followed ? [group] : [])

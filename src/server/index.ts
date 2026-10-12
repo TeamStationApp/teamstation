@@ -17,6 +17,8 @@ import { attachDictation } from './dictation/route'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
 import {
+  addedNoticeSender,
+  guardianInviteSender,
   mailConfigured,
   sendInvitation,
   sendSignInCode
@@ -62,6 +64,7 @@ import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
+import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
@@ -475,10 +478,17 @@ function runWorker(): void {
     })
   )
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl, appOrigins }))
-  app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
+  const sendAdded = addedNoticeSender(serverConfig.smtp)
+  app.use('/api/v1', manageRoutes(db, { sendInvite, sendAdded, publicUrl }))
+  app.use('/api/v1', peopleRoutes(db, mediaContext, { sendAdded, publicUrl }))
   app.use(
     '/api/v1',
-    groupRoutes(db, mediaContext, undefined, { sendInvite, publicUrl })
+    groupRoutes(db, mediaContext, undefined, {
+      sendInvite,
+      sendGuardianInvite: guardianInviteSender(serverConfig.smtp),
+      sendAdded,
+      publicUrl
+    })
   )
   app.use('/api/v1', nodeAdministrationRoutes(db))
   app.use('/api/v1', gameApprovalRoutes(db))
@@ -501,7 +511,7 @@ function runWorker(): void {
   app.use('/api/v1', statsRoutes(db, mediaContext))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
-  app.use('/api/v1', userRoutes(db))
+  app.use('/api/v1', userRoutes(db, mediaContext.space))
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))

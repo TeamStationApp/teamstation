@@ -16,6 +16,7 @@ import {
   relationshipSides,
   withdrawRelationshipRequest
 } from '../groups/requests'
+import { addToScope } from './people'
 
 /**
  * Invite codes: who may make one, what one is worth, and what redeeming does.
@@ -25,11 +26,12 @@ import {
  * downwards, means a league admin can invite to any of its teams and a team
  * admin only to their own.
  *
- * Redeeming grants **watching**, never editing: a team invite makes a
- * spectator of that team, a season invite a member of that season, a league
- * invite a member of that league. Somebody who already has stronger access —
- * a coach, a parent on the roster — keeps it: redeeming is a floor, not a
- * setting.
+ * Redeeming makes a plain **member** of that level, never an editor: a team
+ * invite a member of the team, a season invite a member of the season, a
+ * league invite a member of the league, the same kind of member at every
+ * level, who reaches every team below it as a team member does
+ * (`addToScope`). Somebody who already has stronger access — a coach, a
+ * parent on the roster — keeps it: redeeming is a floor, not a setting.
  */
 
 export type InviteScopeType = 'league' | 'season' | 'team'
@@ -411,7 +413,8 @@ export async function redeemInvite(
         !(await approvesSide(
           trx,
           { userId, isAdmin: false, scopes: [] },
-          personal
+          personal,
+          request
         ))
       )
         throw forbidden('This invitation belongs to its named recipient')
@@ -441,7 +444,9 @@ export async function redeemInvite(
       .returning(['id'])
       .executeTakeFirst()
 
-    const granted = requestGrant ?? (await grant(trx, current, userId))
+    const granted =
+      requestGrant ??
+      (await addToScope(trx, current.scopeType, current.scopeId, userId)).added
 
     if (recorded != null) {
       await trx
@@ -453,57 +458,4 @@ export async function redeemInvite(
 
     return { granted, scopeType: invite.scopeType, scopeId: invite.scopeId }
   })
-}
-
-/** Writes the one row the scope calls for, or leaves a stronger one alone. */
-async function grant(
-  trx: Kysely<Database>,
-  invite: Invite,
-  userId: number
-): Promise<boolean> {
-  if (invite.scopeType === 'team') {
-    const added = await trx
-      .insertInto('memberships')
-      .values({
-        id: makeId('membership'),
-        user_id: userId,
-        team_id: invite.scopeId,
-        role: 'member',
-        is_spectator: true
-      })
-      .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
-      .returning(['id'])
-      .executeTakeFirst()
-    return added != null
-  }
-
-  if (invite.scopeType === 'season') {
-    const added = await trx
-      .insertInto('season_members')
-      .values({
-        id: makeId('seasonMember'),
-        user_id: userId,
-        season_id: invite.scopeId,
-        role: 'spectator',
-        source: 'manual'
-      })
-      .onConflict(oc => oc.columns(['user_id', 'season_id']).doNothing())
-      .returning(['id'])
-      .executeTakeFirst()
-    return added != null
-  }
-
-  const added = await trx
-    .insertInto('league_members')
-    .values({
-      id: makeId('leagueMember'),
-      user_id: userId,
-      league_id: invite.scopeId,
-      role: 'spectator',
-      source: 'manual'
-    })
-    .onConflict(oc => oc.columns(['user_id', 'league_id']).doNothing())
-    .returning(['id'])
-    .executeTakeFirst()
-  return added != null
 }

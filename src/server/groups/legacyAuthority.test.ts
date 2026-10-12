@@ -221,7 +221,12 @@ describe('legacy creation and person reads respect current authority', function 
     for (const user of [101, 103, 105, 106])
       expect(await profile(user)).equals(200)
     expect(await lookup(103)).deep.equals([
-      { userId: 106, externalIds: ['demo-player'] }
+      {
+        userId: 106,
+        externalIds: ['demo-player'],
+        shortName: 'Tim R',
+        avatarUrl: null
+      }
     ])
   })
 })

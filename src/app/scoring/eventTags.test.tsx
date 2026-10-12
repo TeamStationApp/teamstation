@@ -394,6 +394,9 @@ describe('event tag UI', function () {
           positions: [],
           isPlayer: true,
           role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null,
           bats: 'right'
         })
       )

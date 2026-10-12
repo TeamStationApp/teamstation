@@ -85,6 +85,7 @@ function fixture(managed = [home.id, away.id, replacement.id]): {
       [home, away, replacement, league].find(group => group.id === ref.id) ??
       home
     return asGroupDetail({
+      nonMemberView: false,
       group,
       parents: [],
       children: [],
@@ -577,6 +578,7 @@ describe('separate game settings drafts and consent labels', () => {
     const f = fixture()
     f.client.group = async () =>
       asGroupDetail({
+        nonMemberView: false,
         group: { ...home, locality: null },
         parents: [],
         children: [],

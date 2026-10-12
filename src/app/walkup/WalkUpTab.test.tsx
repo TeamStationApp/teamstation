@@ -106,7 +106,9 @@ function entry(song: WalkUpSong | null, userId = 7): RosterEntry {
     throws: 'right',
     isPlayer: true,
     role: 'member',
-    group: 'player',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null,
     walkUpSong: song
   })
 }

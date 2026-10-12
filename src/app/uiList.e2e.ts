@@ -197,6 +197,7 @@ async function open(path: string, size: Size): Promise<Page> {
             awayScore: 1,
             ingestStatus: 'done',
             ingestMessage: null,
+            nonMemberView: false,
             videos: [],
             linescore: {
               away: { runs: [1], r: 1, h: 2, e: 0 },
@@ -253,6 +254,7 @@ async function open(path: string, size: Size): Promise<Page> {
             awayScore: 4,
             ingestStatus: 'done',
             ingestMessage: null,
+            nonMemberView: false,
             videos: []
           })
         )

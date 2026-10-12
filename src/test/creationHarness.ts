@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 
 import { makeToken } from '../server/auth/tokens'
+import type { AddedNotice, GuardianInvitation } from '../server/email/sendMail'
 import { type Clock, realClock } from '../server/groups/requests'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { eventListRoutes } from '../server/routes/eventList'
@@ -14,6 +15,7 @@ import { manageRoutes } from '../server/routes/manage'
 import { nodeAdministrationRoutes } from '../server/routes/nodeAdministration'
 import { notificationRoutes } from '../server/routes/notifications'
 import { onboardingRoutes } from '../server/routes/onboarding'
+import { peopleRoutes } from '../server/routes/people'
 import { pictureRoutes } from '../server/routes/pictures'
 import { scheduleRoutes } from '../server/routes/schedule'
 import { seasonRoutes } from '../server/routes/seasons'
@@ -21,13 +23,18 @@ import { statsRoutes } from '../server/routes/stats'
 import { teamMemberRoutes } from '../server/routes/teamMembers'
 import { userRoutes } from '../server/routes/users'
 import { walkUpSongRoutes } from '../server/routes/walkUpSongs'
-import { type AccountHarness, accountHarness } from './accountHarness'
+import {
+  type AccountHarness,
+  accountHarness,
+  type MountExtra
+} from './accountHarness'
 
 /** Real server/database/mail/object service; no creation or approval response is stubbed. */
 export async function creationHarness(
   webRoot?: string,
   clock: Clock = realClock,
-  bindHost = '127.0.0.1'
+  bindHost = '127.0.0.1',
+  mountExtra?: MountExtra
 ): Promise<AccountHarness> {
   const h: AccountHarness = await accountHarness(
     webRoot,
@@ -42,15 +49,40 @@ export async function creationHarness(
       app.use('/api/v1', onboardingRoutes(db, media))
       app.use('/api/v1', pictureRoutes(db, space))
       app.use('/api/v1', locationRoutes())
-      app.use('/api/v1', groupRoutes(db, media, clock, { sendInvite }))
-      app.use('/api/v1', manageRoutes(db, { sendInvite, clock }))
+      const sendGuardianInvite = async (
+        email: string,
+        invitation: GuardianInvitation
+      ): Promise<void> => {
+        if (h.controls.failMail) throw new Error('Test invitation mail failure')
+        h.links.set(email, invitation.link)
+        h.invitations.set(email, invitation)
+      }
+      // Mail telling somebody they were added: its link, and the notice.
+      const sendAdded = async (
+        email: string,
+        notice: AddedNotice
+      ): Promise<void> => {
+        if (h.controls.failMail) throw new Error('Test added mail failure')
+        h.links.set(email, notice.link)
+        h.invitations.set(email, notice)
+      }
+      app.use(
+        '/api/v1',
+        groupRoutes(db, media, clock, {
+          sendInvite,
+          sendGuardianInvite,
+          sendAdded
+        })
+      )
+      app.use('/api/v1', manageRoutes(db, { sendInvite, sendAdded, clock }))
+      app.use('/api/v1', peopleRoutes(db, media, { sendAdded, clock }))
       app.use('/api/v1', inviteRoutes(db, { sendCode }))
       app.use('/api/v1', nodeAdministrationRoutes(db))
       app.use('/api/v1', gameApprovalRoutes(db, clock))
       app.use('/api/v1', scheduleRoutes(db))
       app.use('/api/v1', notificationRoutes(db, clock))
       app.use('/api/v1', seasonRoutes(db, media))
-      app.use('/api/v1', userRoutes(db))
+      app.use('/api/v1', userRoutes(db, space))
       app.use('/api/v1', statsRoutes(db, media))
       app.use('/api/v1', walkUpSongRoutes(db))
       app.use('/api/v1', lineupRoutes(db))
@@ -72,7 +104,8 @@ export async function creationHarness(
         })
       )
     },
-    bindHost
+    bindHost,
+    mountExtra
   )
   try {
     // This synthetic harness starts after the explicit migration cutover.

@@ -5,7 +5,7 @@ import { byJersey } from './rosterOrder'
 
 /** Prefer the one team where the scorer holds an admin or staff role. */
 export function rosterStaffSide(
-  roles: MyRoles | undefined,
+  roles: Pick<MyRoles, 'teams'> | undefined,
   awayTeamId: string,
   homeTeamId: string
 ): Side | undefined {

@@ -386,17 +386,13 @@ describe('the scoreboard over HTTP', function () {
     }
     // The season and league admins see the game as members of the season
     // and the league; what they may change comes from their admin roles.
-    for (const [who, role] of [
-      [spectator, 'spectator'],
-      [seasonAdmin, 'member']
-    ] as const) {
+    for (const who of [spectator, seasonAdmin]) {
       await db
         .insertInto('season_members')
         .values({
           id: makeId('seasonMember'),
           user_id: who.userId,
           season_id: season,
-          role,
           joined_at: new Date()
         })
         .execute()

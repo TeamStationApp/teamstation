@@ -88,6 +88,8 @@ describe('game-bounded historical box-score averages', function () {
           }
         ])
         .execute()
+      // Not a member of either side of that game: its box score is kept for
+      // members.
       expect(
         (
           await f.h.request(
@@ -97,7 +99,7 @@ describe('game-bounded historical box-score averages', function () {
             106
           )
         ).status
-      ).equals(404)
+      ).equals(403)
       const average = async (userId: number): Promise<number | null> => {
         const response = await f.h.request(
           'GET',

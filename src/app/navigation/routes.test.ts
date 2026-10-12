@@ -401,13 +401,82 @@ describe('a player', function () {
     expect(parseRoute(head, search)).deep.equals(route)
   })
 
-  // The filter belongs to the Stats tab alone, so a narrowing on a Videos
+  // Each tab has a filter of its own, so one tab's narrowing on another's
   // address is a setting no screen honours. Dropped rather than carried.
-  it('drops a filter from the tab that has none', function () {
+  it('drops a filter from the tab it does not belong to', function () {
     expect(parseRoute('/players/1', 'season=sea_2&team=tem_3')).deep.equals({
       name: 'player',
       userId: '1'
     })
+    expect(
+      parseRoute('/players/1', 'tab=stats&vseason=sea_2&vyear=2026')
+    ).deep.equals({
+      name: 'player',
+      userId: '1',
+      tab: 'stats',
+      seasonId: undefined,
+      teamId: undefined,
+      year: undefined
+    })
+    expect(
+      routePath({
+        name: 'player',
+        userId: '1',
+        tab: 'stats',
+        videoSeasonId: 'sea_2'
+      })
+    ).equals('/players/1?tab=stats')
+    expect(
+      routePath({
+        name: 'player',
+        userId: '1',
+        tab: 'teams',
+        seasonId: 'sea_2'
+      })
+    ).equals('/players/1?tab=teams')
+  })
+
+  it('carries what the videos are narrowed to, and reads it back', function () {
+    const route = {
+      name: 'player' as const,
+      userId: '1',
+      videoSeasonId: 'sea_2',
+      videoTeamId: 'tem_3',
+      videoYear: 2026,
+      onTeam: 't1'
+    }
+    const path = routePath(route)
+    expect(path).equals(
+      '/players/1?vseason=sea_2&vteam=tem_3&vyear=2026&onTeam=t1'
+    )
+    const [head, search] = path.split('?')
+    expect(parseRoute(head, search)).deep.equals(route)
+    expect(
+      routePath({ name: 'player', userId: '1', tab: 'videos', videoYear: 2025 })
+    ).equals('/players/1?vyear=2025')
+    expect(parseRoute('/players/1', 'vyear=soon')).deep.equals({
+      name: 'player',
+      userId: '1'
+    })
+  })
+
+  it('carries the Teams tab, with or without a team, and reads it back', function () {
+    for (const route of [
+      { name: 'player' as const, userId: 'u1', tab: 'teams' as const },
+      {
+        name: 'player' as const,
+        userId: 'u1',
+        tab: 'teams' as const,
+        onTeam: 't1'
+      }
+    ]) {
+      const path = routePath(route)
+      const [head, search] = path.split('?')
+      expect(parseRoute(head, search)).deep.equals(route)
+    }
+    expect(routePath({ name: 'player', userId: 'u1', tab: 'teams' })).equals(
+      '/players/u1?tab=teams'
+    )
   })
 
   it('ignores a year that is not one', function () {
@@ -486,13 +555,16 @@ describe('a player', function () {
     )
   })
 
-  it('opens Videos for Settings with no team to edit the player on', function () {
+  // Away from a team, Settings is how the player bats and throws: still a
+  // tab, which the screen offers or not by who is asking.
+  it('carries Settings with no team, and reads it back', function () {
     expect(parseRoute('/players/u1', 'tab=settings')).deep.equals({
       name: 'player',
-      userId: 'u1'
+      userId: 'u1',
+      tab: 'settings'
     })
     expect(routePath({ name: 'player', userId: 'u1', tab: 'settings' })).equals(
-      '/players/u1'
+      '/players/u1?tab=settings'
     )
   })
 })

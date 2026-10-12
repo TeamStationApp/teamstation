@@ -16,6 +16,9 @@ describe('private roster presentation cache', function () {
       throws: 'left',
       isPlayer: true,
       role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
       nameDetails: {
         firstName: 'Mookie',
         lastName: 'Betts',

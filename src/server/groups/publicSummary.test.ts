@@ -110,6 +110,101 @@ describe('limited public organization profiles', function () {
         .status
     ).equals(401)
   })
+  it('lists the roles staff were given, never the ones those imply', async () => {
+    const given = (
+      userId: number,
+      scopeType: 'season' | 'team',
+      scopeId: string,
+      role: 'assistant' | 'scorekeeper'
+    ): {
+      id: string
+      scope_type: 'season' | 'team'
+      scope_id: string
+      user_id: number
+      role: 'assistant' | 'scorekeeper'
+      granted_by: number
+      granted_at: Date
+    } => ({
+      id: `role_staff_${userId}_${role}`,
+      scope_type: scopeType,
+      scope_id: scopeId,
+      user_id: userId,
+      role,
+      granted_by: 101,
+      granted_at: new Date()
+    })
+    await f.h.db
+      .insertInto('scope_roles')
+      .values([
+        given(106, 'team', f.teamA, 'scorekeeper'),
+        given(103, 'season', f.seasonA, 'assistant')
+      ])
+      .execute()
+    try {
+      const detail = (await (
+        await f.h.request('GET', `/teams/${f.teamA}`, undefined, null)
+      ).json()) as { staff: Array<{ name: string; roles: string[] }> }
+      const byName = Object.fromEntries(
+        detail.staff.map(person => [person.name, person.roles])
+      )
+      // The admin is admin alone, the scorekeeper is not also a songkeeper,
+      // and an assistant set on the season is listed on its team.
+      expect(byName['Babe R.']).deep.equals(['admin'])
+      expect(byName['Tim R.']).deep.equals(['scorekeeper'])
+      expect(byName['Mike T.']).deep.equals(['assistant'])
+    } finally {
+      await f.h.db
+        .deleteFrom('scope_roles')
+        .where('id', 'like', 'role_staff_%')
+        .execute()
+    }
+  })
+  it('marks a team page as the non-member view for anybody signed in who is not a member, following it or not', async () => {
+    const view = async (
+      path: string,
+      userId: number | null
+    ): Promise<{ nonMemberView: boolean; canViewPrivate: boolean }> =>
+      (await (await f.h.request('GET', path, undefined, userId)).json()) as {
+        nonMemberView: boolean
+        canViewPrivate: boolean
+      }
+    // Nobody signed in reads the public page.
+    expect((await view(`/teams/${f.teamA}`, null)).nonMemberView).equals(false)
+    // Signed in and following nothing: the non-member view already.
+    const unfollowed = await view(`/teams/${f.teamA}`, 103)
+    expect(unfollowed.canViewPrivate).equals(false)
+    expect(unfollowed.nonMemberView).equals(true)
+    await f.h.db
+      .insertInto('follows')
+      .values([
+        { user_id: 103, group_type: 'team', group_id: f.teamA },
+        { user_id: 103, group_type: 'season', group_id: f.seasonA },
+        { user_id: 101, group_type: 'team', group_id: f.teamA }
+      ])
+      .execute()
+    try {
+      // Following it changes nothing.
+      const followed = await view(`/teams/${f.teamA}`, 103)
+      expect(followed.canViewPrivate).equals(false)
+      expect(followed.nonMemberView).equals(true)
+      // A season or a league page is the same for everybody.
+      expect((await view(`/seasons/${f.seasonA}`, 103)).nonMemberView).equals(
+        false
+      )
+      expect((await view(`/leagues/${f.leagueA}`, 103)).nonMemberView).equals(
+        false
+      )
+      // A member who follows their own team reads it as a member.
+      const own = await view(`/teams/${f.teamA}`, 101)
+      expect(own.canViewPrivate).equals(true)
+      expect(own.nonMemberView).equals(false)
+    } finally {
+      await f.h.db
+        .deleteFrom('follows')
+        .where('user_id', 'in', [101, 103])
+        .execute()
+    }
+  })
   it('includes aggregate results and parent context without private play events or stats', async () => {
     await f.h.db
       .insertInto('games')

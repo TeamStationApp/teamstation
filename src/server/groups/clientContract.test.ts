@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { asParentPreview } from '../../common/groupLinks'
 import { asGroupDetail } from '../../common/publicGroups'
 import { accountTestPicture } from '../../test/accountHarness'
@@ -10,6 +11,10 @@ import {
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
+import {
+  type GuardianFixture,
+  guardianFixture
+} from '../../test/guardianFixture'
 
 describe('group and inbox client contracts over real HTTP', function () {
   this.timeout(60000)
@@ -306,5 +311,71 @@ describe('group and inbox client contracts over real HTTP', function () {
         })
       ).status
     ).equals(201)
+  })
+})
+
+describe('the non-member view through the client', function () {
+  this.timeout(60000)
+  let f: GuardianFixture
+  let follower: TeamStationClient
+  let member: TeamStationClient
+  before(async () => {
+    f = await guardianFixture()
+    const client = (userId: number): TeamStationClient =>
+      new TeamStationClient({
+        baseUrl: `${f.h.origin}/api/v1`,
+        token: f.h.tokens.get(userId)
+      })
+    follower = client(f.people.follower)
+    member = client(f.people.teamCoach)
+  })
+  after(async () => {
+    await f?.h.close()
+  })
+
+  /** The code a refused read is thrown with, or `answered`. */
+  const refusal = async (read: () => Promise<unknown>): Promise<string> => {
+    try {
+      await read()
+      return 'answered'
+    } catch (error) {
+      if (error instanceof HttpError) return error.code
+      throw error
+    }
+  }
+
+  it('cleans the non-member view of a team and a game, and branches on membersOnly', async () => {
+    const [game] = f.games
+    const team = await follower.group({ kind: 'team', id: f.teamA })
+    expect(team.nonMemberView).equals(true)
+    expect(asGroupDetail(team)).deep.equals(team)
+    expect(
+      (await follower.roster(f.teamA)).every(row => row.avatarUrl === null)
+    ).equals(true)
+    expect((await follower.teamGames(f.teamA)).length).equals(2)
+    const detail = await follower.game(game.id)
+    expect(detail.nonMemberView).equals(true)
+    expect(detail.canScore).equals(false)
+    expect(
+      (await follower.highlights(game.videoId)).highlights.length
+    ).greaterThan(0)
+
+    expect(await refusal(async () => await follower.teamStats(f.teamA))).equals(
+      'membersOnly'
+    )
+    expect(await refusal(async () => await follower.boxScore(game.id))).equals(
+      'membersOnly'
+    )
+    expect(
+      await refusal(async () => await follower.playback(game.videoId))
+    ).equals('membersOnly')
+
+    expect(
+      (await member.group({ kind: 'team', id: f.teamA })).nonMemberView
+    ).equals(false)
+    expect((await member.game(game.id)).nonMemberView).equals(false)
+    expect(await refusal(async () => await member.boxScore(game.id))).equals(
+      'answered'
+    )
   })
 })

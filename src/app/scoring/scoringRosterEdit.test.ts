@@ -31,7 +31,10 @@ const entry = (
     throws: 'left',
     positions: [],
     isPlayer: true,
-    role: 'member'
+    role: 'member',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null
   })
 describe('roster editing presentation', function () {
   it('prefers only one team with any staff or admin role, including scorekeeper', function () {

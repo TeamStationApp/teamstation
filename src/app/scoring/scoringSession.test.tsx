@@ -86,6 +86,9 @@ function clientForSwitchHitter(
             positions: ['P'],
             isPlayer: true,
             role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null,
             bats
           })
         ]

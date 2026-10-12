@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 
+import { asEither, asObject } from 'cleaners'
 import { type Request, Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
@@ -23,16 +24,23 @@ import {
 import { asParentActions } from '../../common/groupLinks'
 import { makeId } from '../../common/ids'
 import { asLocality } from '../../common/locality'
-import type { RelationshipInvitation } from '../../common/notifications'
+import { shortName } from '../../common/names'
+import type {
+  GuardianTerms,
+  RelationshipInvitation
+} from '../../common/notifications'
 import { asCatalogId, catalogPicture } from '../../common/pictureCatalog'
 import type { PublicGroup } from '../../common/publicGroups'
 import { asRoleFlags } from '../../common/roles'
+import { asUserId } from '../../common/userIdNumber'
 import { adminScopes, roleScopes, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import type { GuardianInvitation } from '../email/sendMail'
 import { createGroup } from '../groups/createGroup'
 import { storeGroupPhoto } from '../groups/groupPhoto'
+import { isGuardianRequest } from '../groups/guardianLimits'
 import {
   type OwnershipChoice,
   ownershipPreflight
@@ -47,7 +55,9 @@ import {
   type Clock,
   createRelationshipRequest,
   decideRelationshipRequest,
+  oweGuardianMail,
   realClock,
+  type SentRequest,
   withdrawRelationshipRequest
 } from '../groups/requests'
 import {
@@ -55,10 +65,11 @@ import {
   currentActor,
   requireGroupAdmin
 } from '../groups/rights'
+import type { AddedMail } from '../invites/grants'
 import { setScopeRoles } from '../invites/people'
 import {
+  addPersonByAddress,
   ensurePersonLink,
-  invitePerson,
   personTerms
 } from '../invites/personRequests'
 import type { MediaContext } from '../media/mediaContext'
@@ -91,6 +102,12 @@ async function invitation(
     raw.idempotencyKey.length > 120
   )
     throw badRequest('Sending needs a retry key')
+  if (raw.kind === 'guardian')
+    return {
+      sender: raw.sender == null ? undefined : clean(asGroupRef, raw.sender),
+      terms: await guardianTerms(db, raw.playerUserId, raw.guardian),
+      idempotencyKey: raw.idempotencyKey
+    }
   const sender = clean(asGroupRef, raw.sender)
   if (raw.kind === 'parent') {
     const actions = clean(asParentActions, raw.actions)
@@ -215,7 +232,46 @@ async function invitation(
       idempotencyKey: raw.idempotencyKey
     }
   }
-  throw badRequest('Choose parent, participation or promotion invitation')
+  throw badRequest(
+    'Choose parent, participation, promotion, person or guardian invitation'
+  )
+}
+
+const asGuardianInput = asEither(
+  asObject({ userId: asUserId }),
+  asObject({ email: asAccountEmail })
+)
+
+/**
+ * Who is asked to be a player's guardian. An address that a signing-in
+ * account has verified names that account, and keeps the address the
+ * invitation is mailed to; any other address waits for whoever verifies it.
+ */
+async function guardianTerms(
+  db: Kysely<Database>,
+  playerUserId: unknown,
+  guardian: unknown
+): Promise<GuardianTerms> {
+  const player = clean(asUserId, playerUserId)
+  const named = clean(asGuardianInput, guardian)
+  if ('userId' in named)
+    return { kind: 'guardian', playerUserId: player, guardian: named }
+  const account = await db
+    .selectFrom('user_emails')
+    .innerJoin('users', 'users.id', 'user_emails.user_id')
+    .select('users.id')
+    .where(sql<string>`lower(email)`, '=', named.email)
+    .where('verified_at', 'is not', null)
+    .where('users.login_enabled', '=', true)
+    .where('users.disabled_at', 'is', null)
+    .where('users.merged_into', 'is', null)
+    .executeTakeFirst()
+  return {
+    kind: 'guardian',
+    playerUserId: player,
+    guardian:
+      account == null ? named : { userId: account.id, email: named.email }
+  }
 }
 
 /** Mount before the compatible private team/season collection routers. */
@@ -229,6 +285,11 @@ export function groupRoutes(
       email: string,
       invitation: { scopeName: string; invitedBy: string; link: string }
     ) => Promise<void>
+    sendGuardianInvite?: (
+      email: string,
+      invitation: GuardianInvitation
+    ) => Promise<void>
+    sendAdded?: AddedMail['sendAdded']
   }
 ): Router {
   const router = Router()
@@ -236,6 +297,10 @@ export function groupRoutes(
     request: Awaited<ReturnType<typeof createRelationshipRequest>>
   ): Promise<void> => {
     const terms = request.terms as RelationshipInvitation['terms']
+    if (terms.kind === 'guardian') {
+      await deliverGuardian(request, terms)
+      return
+    }
     if (terms.kind !== 'person') return
     const invite = await ensurePersonLink(db, request)
     if (personMail == null) return
@@ -260,6 +325,53 @@ export function groupRoutes(
       scopeName: group.name,
       invitedBy: sender.display_name,
       link: inviteUrl(personMail.publicUrl, invite.code)
+    })
+  }
+  /**
+   * A guardian invitation addressed by email, a team's or a guardian's, is
+   * mailed, linking to the notification, which is where it is accepted.
+   * Requests, and invitations to an account by id, wait in the inbox alone.
+   */
+  const deliverGuardian = async (
+    request: Awaited<ReturnType<typeof createRelationshipRequest>>,
+    terms: GuardianTerms
+  ): Promise<void> => {
+    const email = terms.guardian.email
+    if (
+      personMail?.sendGuardianInvite == null ||
+      email == null ||
+      isGuardianRequest(request)
+    )
+      return
+    const sender = await db
+      .selectFrom('users')
+      .select('display_name')
+      .where('id', '=', request.sender_id)
+      .executeTakeFirstOrThrow()
+    const team =
+      request.sender_scope_id == null
+        ? undefined
+        : await db
+            .selectFrom('teams')
+            .select('name')
+            .where('id', '=', request.sender_scope_id)
+            .executeTakeFirstOrThrow()
+    const player = await db
+      .selectFrom('users')
+      .select([
+        'id',
+        'first_name as firstName',
+        'last_name as lastName',
+        'display_name as displayName'
+      ])
+      .where('id', '=', terms.playerUserId)
+      .executeTakeFirstOrThrow()
+    const base = (personMail.publicUrl ?? '').replace(/\/$/, '')
+    await personMail.sendGuardianInvite(email, {
+      playerName: shortName(player),
+      ...(team == null ? {} : { teamName: team.name }),
+      invitedBy: sender.display_name,
+      link: `${base}/notifications/${encodeURIComponent(request.id)}`
     })
   }
   router.get(
@@ -673,31 +785,68 @@ export function groupRoutes(
     '/relationship-requests',
     requireActor,
     withAsync(async (req, res) => {
-      await requireGroupAdmin(
-        db,
-        actorOf(req),
-        clean(asGroupRef, req.body?.sender)
-      )
+      // Guardian kinds are authorized when the request is made.
+      if (req.body?.kind !== 'guardian')
+        await requireGroupAdmin(
+          db,
+          actorOf(req),
+          clean(asGroupRef, req.body?.sender)
+        )
       const body = await invitation(db, req.body, actorOf(req).userId)
-      const result =
-        body.terms.kind === 'person'
-          ? (
-              await invitePerson(
-                db,
-                actorOf(req),
-                body.terms.scope,
-                {
-                  email: body.terms.recipientEmail,
-                  admin: body.terms.admin,
-                  flags: body.terms.flags,
-                  idempotencyKey: body.idempotencyKey
-                },
-                clock
-              )
-            ).request
-          : await createRelationshipRequest(db, actorOf(req), body, clock)
-      await deliverPerson(result)
-      res.status(201).json({ id: result.id, status: result.status })
+      let result: SentRequest
+      if (body.terms.kind === 'person') {
+        // An address an account holds adds that account at once; there is
+        // nothing to wait for, and the answer says so.
+        const added = await addPersonByAddress(
+          db,
+          actorOf(req),
+          body.terms.scope,
+          {
+            email: body.terms.recipientEmail,
+            admin: body.terms.admin,
+            flags: body.terms.flags,
+            idempotencyKey: body.idempotencyKey
+          },
+          clock,
+          { publicUrl: personMail?.publicUrl, sendAdded: personMail?.sendAdded }
+        )
+        if ('applied' in added) {
+          if (added.applied.added.length === 0)
+            throw conflict(
+              `${added.applied.displayName} already has this access here`
+            )
+          res.status(201).json({
+            id: added.applied.notificationId ?? '',
+            status: 'accepted'
+          })
+          return
+        }
+        result = added.invited.request
+      } else
+        result = await createRelationshipRequest(db, actorOf(req), body, clock)
+      if (result.answer == null) {
+        await deliverPerson(result)
+        res.status(201).json({ id: result.id, status: result.status })
+        return
+      }
+      // A guardian request is mailed once, and its retry key always gets
+      // its first answer: 200 when the same one was already waiting.
+      if (result.deliver === true)
+        try {
+          await deliverPerson(result)
+        } catch (error) {
+          await oweGuardianMail(
+            db,
+            actorOf(req).userId,
+            body.idempotencyKey,
+            result.id,
+            result.answer
+          )
+          throw error
+        }
+      res
+        .status(result.answer.code)
+        .json({ id: result.id, status: result.answer.status })
     })
   )
   for (const decision of ['accept', 'decline'] as const)
@@ -753,9 +902,11 @@ export function groupRoutes(
           .selectAll()
           .where('id', '=', id)
           .executeTakeFirstOrThrow()
+        if (original.kind === 'guardian')
+          throw conflict('A guardian request is not resent. Send a new one.')
         await requireGroupAdmin(trx, actor, {
-          kind: original.sender_scope_type,
-          id: original.sender_scope_id
+          kind: original.sender_scope_type!,
+          id: original.sender_scope_id!
         })
         const held = await trx
           .selectFrom('creation_idempotency')
@@ -799,14 +950,14 @@ export function groupRoutes(
         const body = await invitation(trx, {
           kind: terms.kind,
           sender: {
-            kind: original.sender_scope_type,
-            id: original.sender_scope_id
+            kind: original.sender_scope_type!,
+            id: original.sender_scope_id!
           },
           actions: terms.kind === 'parent' ? terms.preview.actions : undefined,
           teamId:
-            terms.kind === 'parent' || terms.kind === 'person'
-              ? undefined
-              : terms.teamId,
+            terms.kind === 'participation' || terms.kind === 'promotion'
+              ? terms.teamId
+              : undefined,
           seasonId: terms.kind === 'participation' ? terms.seasonId : undefined,
           recipientUserId:
             terms.kind === 'promotion' ? terms.recipientUserId : undefined,

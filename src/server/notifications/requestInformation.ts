@@ -1,8 +1,11 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { GroupRef } from '../../common/groupCreation'
+import { shortName } from '../../common/names'
 import type { RequestTerms } from '../../common/notifications'
+import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
+import { isGuardianRequest } from '../groups/guardianLimits'
 import type { StoredRequest } from '../groups/requests'
 
 export async function titleAndDescription(
@@ -96,7 +99,32 @@ export async function titleAndDescription(
     const roles = [...(terms.admin ? ['administrator'] : []), ...terms.flags]
     return {
       title: `Invitation to ${group}`,
-      description: `${sender} from ${organization} invited you to ${group}. Requested access: ${roles.length === 0 ? 'watching' : roles.join(', ')}. These grants apply only after the named recipient accepts.`
+      description: `${sender} from ${organization} invited you to ${group}. Requested access: ${roles.length === 0 ? 'watching' : roles.join(', ')}. They apply when the address it was sent to is verified, or when you accept.`
+    }
+  }
+  if (terms.kind === 'guardian') {
+    const player = await db
+      .selectFrom('users')
+      .select([
+        'id',
+        'first_name as firstName',
+        'last_name as lastName',
+        'display_name as displayName'
+      ])
+      .where('id', '=', terms.playerUserId)
+      .executeTakeFirstOrThrow()
+    const short = shortName(player)
+    if (isGuardianRequest(request))
+      return {
+        title: `${sender} asks to be ${short}'s guardian`,
+        description: `Approving lets them see ${short}'s teams and manage ${short}'s details.`
+      }
+    return {
+      title: `Be a guardian of ${short}`,
+      description:
+        request.sender_scope_type == null
+          ? `${sender} invited you to be ${short}'s guardian.`
+          : `${sender} from ${organization} invited you to be ${short}'s guardian.`
     }
   }
   if (terms.kind === 'participation') {
@@ -131,6 +159,43 @@ export async function titleAndDescription(
   return {
     title: `${child} invited to ${parent}`,
     description: `${sender} from ${organization} requested a management parent relationship. This shares permissions and preserves competition memberships and every game. ${terms.preview.explanation.join(' ')}`
+  }
+}
+
+/** A role as the inbox names it. */
+const ROLE_WORDS: Record<Role, string> = {
+  admin: 'Admin',
+  coach: 'Coach',
+  assistant: 'Assistant',
+  scorekeeper: 'Scorekeeper',
+  songkeeper: 'Songkeeper',
+  videographer: 'Videographer'
+}
+
+/** `Coach`, `Coach and Scorekeeper`, `Admin, Coach and Scorekeeper`. */
+export function roleList(roles: readonly Role[]): string {
+  const words = roles.map(role => ROLE_WORDS[role])
+  return words.length <= 1
+    ? (words[0] ?? '')
+    : `${words.slice(0, -1).join(', ')} and ${words.at(-1)!}`
+}
+
+/**
+ * What a grant's notification says: "Dana Lee added you as Coach of Owls",
+ * or "Dana Lee added you to Owls" for a membership alone. Nothing waits for
+ * an answer; the notification offers to leave instead.
+ */
+export function grantInformation(
+  actorName: string,
+  groupName: string,
+  roles: readonly Role[]
+): { title: string; description: string } {
+  return {
+    title:
+      roles.length === 0
+        ? `${actorName} added you to ${groupName}`
+        : `${actorName} added you as ${roleList(roles)} of ${groupName}`,
+    description: `You are a member of ${groupName} now. If you don't want to be, leave it here.`
   }
 }
 

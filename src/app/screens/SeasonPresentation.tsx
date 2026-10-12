@@ -42,20 +42,20 @@ import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { clock, matchupLines, shortDate, shortTime } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
-import { ManageScreen } from './ManageScreen'
+import { LevelPeopleTab } from './LevelPeopleTab'
 import { SeasonStandings } from './SeasonStandings'
 import { battingColumns, pitchingColumns } from './statColumns'
 import { useBreakParent } from './useBreakParent'
 import { gamesFor, type When } from './whenFilter'
 
-/** What a season's administrator can do from its Teams and People tabs. */
+/** What a season's administrator can do from its Teams tab. */
 export interface SeasonManagement {
   /** Ask an existing team in, as a managed child or as a competitor. */
   onAddTeam: (relationship: 'parent' | 'participation') => void
   onCreateTeam: () => void
   onCreatePlaceholder?: () => void
   onOpenRequest?: (id: string) => void
-  /** After a relationship is broken or people change: load the page again. */
+  /** After a relationship is broken: load the page again. */
   onChanged: () => void
 }
 
@@ -73,7 +73,8 @@ export interface SeasonPresentationProps {
     name: string,
     from?: { seasonId?: string }
   ) => void
-  onManage?: () => void
+  /** Somebody on the People tab who is not a player, as their profile. */
+  onOpenPerson?: (userId: number, name: string) => void
   onSettings?: () => void
   initialTab?: string
   onTab?: (tab: string, correcting?: boolean) => void
@@ -125,11 +126,38 @@ export function SeasonPresentation(
   const { width } = useWindowDimensions()
   const mayView = publicDetail?.canViewPrivate ?? true
   const management = props.management
+  // Its members and role holders read the season's people, as the server
+  // says on the group's page. Opened from anywhere else, such as Home, the
+  // season's group detail is read for that alone; until it answers, the
+  // People tab an address asks for is left alone rather than corrected away.
+  const [loadedPeople, setLoadedPeople] = useState<boolean | undefined>()
+  useEffect(() => {
+    if (publicDetail != null) return
+    let active = true
+    setLoadedPeople(undefined)
+    client
+      .group({ kind: 'season', id: season.id })
+      .then(detail => {
+        if (active) setLoadedPeople(detail.canSeePeople === true)
+      })
+      .catch(() => {
+        if (active) setLoadedPeople(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [client, publicDetail, season.id])
+  const seesPeople =
+    publicDetail != null
+      ? publicDetail.canSeePeople === true
+      : loadedPeople === true
+  const waitingForPeople =
+    initialTab === 'people' && publicDetail == null && loadedPeople == null
   const tabs = [
     ...(mayView
       ? TABS
       : TABS.filter(item => item.id === 'schedule' || item.id === 'teams')),
-    ...(management == null ? [] : [PEOPLE_TAB])
+    ...(seesPeople ? [PEOPLE_TAB] : [])
   ]
   const defaultTab = mayView ? 'standings' : 'schedule'
   const allowedTab = (id?: string): TabId =>
@@ -177,12 +205,13 @@ export function SeasonPresentation(
   )
 
   useEffect(() => {
+    if (waitingForPeople) return
     const next = allowedTab(initialTab)
     setTab(next)
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // Tab validity changes when the server revokes private access.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab, mayView, management == null])
+  }, [initialTab, mayView, seesPeople, waitingForPeople])
   useEffect(() => {
     if (initialWhen != null) setWhen(initialWhen)
   }, [initialWhen])
@@ -446,13 +475,6 @@ export function SeasonPresentation(
                   color={theme.secondaryTextColor}
                 />
               </Pressable>
-            ) : props.onManage != null ? (
-              <ManageGear
-                client={client}
-                scopeType="season"
-                scopeId={season.id}
-                onPress={props.onManage}
-              />
             ) : (
               // A visitor who neither runs this season nor belongs to it can
               // follow it where an administrator has the gear.
@@ -875,22 +897,13 @@ export function SeasonPresentation(
           )}
         </View>
       )}
-      {tab === 'people' && management != null && (
-        <ManageScreen
-          embedded
+      {tab === 'people' && seesPeople && (
+        <LevelPeopleTab
           client={client}
-          scopeKind="season"
-          scopeId={season.id}
-          onOpenRequest={
-            management.onOpenRequest == null
-              ? undefined
-              : id => {
-                  management.onOpenRequest?.(id)
-                }
-          }
-          onChanged={() => {
-            management.onChanged()
-          }}
+          kind="season"
+          id={season.id}
+          onOpenPlayer={props.onOpenPlayer}
+          onOpenPerson={props.onOpenPerson}
         />
       )}
       {breaker.sheet}

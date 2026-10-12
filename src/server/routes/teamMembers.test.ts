@@ -532,7 +532,6 @@ describe('a team’s people by external id', function () {
   ): Promise<
     | {
         is_player: boolean
-        is_spectator: boolean
         jersey: string | null
         role: string
       }
@@ -540,7 +539,7 @@ describe('a team’s people by external id', function () {
   > =>
     await database()
       .selectFrom('memberships')
-      .select(['is_player', 'is_spectator', 'jersey', 'role'])
+      .select(['is_player', 'jersey', 'role'])
       .where('team_id', '=', teamId)
       .where('user_id', '=', userId)
       .executeTakeFirst()
@@ -869,7 +868,7 @@ describe('a team’s people by external id', function () {
       ]).deep.equals(before)
     })
 
-    it('makes a spectator who holds the id a player, filling a jersey only where none was', async function () {
+    it('makes a member who holds the id a player, filling a jersey only where none was', async function () {
       const team = await newTeam('Spectators')
       const watcher = await existingUser('spectator-1')
       const numbered = await existingUser('spectator-2')
@@ -879,14 +878,12 @@ describe('a team’s people by external id', function () {
           {
             id: makeId('membership'),
             user_id: watcher,
-            team_id: team,
-            is_spectator: true
+            team_id: team
           },
           {
             id: makeId('membership'),
             user_id: numbered,
             team_id: team,
-            is_spectator: true,
             jersey: '5'
           }
         ])
@@ -1221,14 +1218,25 @@ describe('a team’s people by external id', function () {
       const userId = answer.body.results[0].userId
       const roster = await ask('GET', `/teams/${team}/roster`, ADMIN)
       expect(roster.status).equals(200)
-      expect(roster.body).to.have.length(1)
-      expect(roster.body[0]).deep.include({
+      // The team's administrators are listed too, above its players.
+      const players = roster.body.filter(
+        (entry: { section: string }) => entry.section === 'player'
+      )
+      expect(players).to.have.length(1)
+      expect(players[0]).deep.include({
         userId,
         jersey: '11',
         isPlayer: true
       })
       const found = await ask('GET', '/users?externalId=found-1', ADMIN)
-      expect(found.body).deep.equals([{ userId, externalIds: ['found-1'] }])
+      expect(found.body).deep.equals([
+        {
+          userId,
+          externalIds: ['found-1'],
+          shortName: 'Kai M',
+          avatarUrl: null
+        }
+      ])
     })
 
     it('records an audit entry for the team', async function () {
@@ -1482,6 +1490,7 @@ describe('a team’s people by external id', function () {
         joined: true,
         guardianLinks: 2,
         guardiansMissing: 0,
+        guardiansRefused: 0,
         rolesAdded: []
       })
       expect(row).not.to.have.property('emailHeldElsewhere')
@@ -1491,6 +1500,7 @@ describe('a team’s people by external id', function () {
         unchanged: 0,
         error: 0,
         guardianLinks: 2,
+        guardiansRefused: 0,
         staff: 0
       })
 
@@ -1525,7 +1535,6 @@ describe('a team’s people by external id', function () {
         kind: 'member'
       })
       expect(await membershipOf(teamId, row.userId)).deep.include({
-        is_spectator: true,
         is_player: false,
         role: 'member'
       })
@@ -1684,7 +1693,7 @@ describe('a team’s people by external id', function () {
       ])
     })
 
-    it('gives a parent who is also staff their links, coach and scorekeeper, and a spectator membership', async function () {
+    it('gives a parent who is also staff their links, coach and scorekeeper, and a membership', async function () {
       const { teamId } = await teamWithPlayers('Coach parents', 'cp', 1)
       const answer = await adults(teamId, [
         {
@@ -1706,9 +1715,7 @@ describe('a team’s people by external id', function () {
         'coach',
         'scorekeeper'
       ])
-      expect((await membershipOf(teamId, row.userId))?.is_spectator).equals(
-        true
-      )
+      expect((await membershipOf(teamId, row.userId))?.role).equals('member')
     })
 
     it('finds the user holding the address when nobody holds the id, and records the id on them', async function () {
@@ -1827,6 +1834,7 @@ describe('a team’s people by external id', function () {
         joined: false,
         guardianLinks: 0,
         guardiansMissing: 0,
+        guardiansRefused: 0,
         rolesAdded: []
       })
       expect(await count('users')).equals(users)
@@ -1964,9 +1972,9 @@ describe('a team’s people by external id', function () {
         'songkeeper'
       ])
       const staffOnly = first.body.results[1].userId
-      // Staff who guard nobody are not spectators.
+      // Staff who guard nobody are members too.
       expect(await membershipOf(teamId, staffOnly)).deep.include({
-        is_spectator: false,
+        is_player: false,
         role: 'member'
       })
 
@@ -2002,7 +2010,139 @@ describe('a team’s people by external id', function () {
       expect(elsewhere.players).to.have.length(1)
     })
 
-    it('makes a follower a spectator with no links and no roles', async function () {
+    it('links every parent one call names for a child with no guardian, and refuses a child with one and the caller, unless a site administrator imports', async function () {
+      const { teamId, players } = await teamWithPlayers('Guarded', 'grd', 2)
+      const [first, second] = players
+      const links = (answer: Answer): number[][] =>
+        answer.body.results.map((row: any) => [
+          row.guardianLinks,
+          row.guardiansRefused
+        ])
+      // Two parents of a child with no guardian, in one call: both linked.
+      // Each has an address, so signs in, and holds the say from then on.
+      const ma = {
+        firstName: 'Ma',
+        email: 'grd.ma@example.test',
+        externalId: ext('grd-ma', 'member'),
+        guardianOf: [ext('grd-1')]
+      }
+      const both = await adults(
+        teamId,
+        [
+          ma,
+          {
+            firstName: 'Pa',
+            email: 'grd.pa@example.test',
+            externalId: ext('grd-pa', 'member'),
+            guardianOf: [ext('grd-1')]
+          }
+        ],
+        SEASON_ADMIN
+      )
+      expect(both.status).equals(200)
+      expect(links(both)).deep.equals([
+        [1, 0],
+        [1, 0]
+      ])
+      expect(both.body.counts).deep.include({
+        guardianLinks: 2,
+        guardiansRefused: 0
+      })
+
+      // Later, a third for that child is refused, and so is the caller for a
+      // child with none; a parent already linked is neither.
+      await giveEmail(seasonAdmin.userId, 'sam.season@example.test', true)
+      const uncle = {
+        firstName: 'Uncle',
+        externalId: ext('grd-uncle', 'member'),
+        guardianOf: [ext('grd-1')]
+      }
+      const sam = {
+        firstName: 'Sam',
+        email: 'sam.season@example.test',
+        externalId: ext('grd-sam', 'member'),
+        guardianOf: [ext('grd-2')]
+      }
+      const later = await adults(teamId, [uncle, sam, ma], SEASON_ADMIN)
+      expect(later.status).equals(200)
+      expect(links(later)).deep.equals([
+        [0, 1],
+        [0, 1],
+        [0, 0]
+      ])
+      expect(later.body.counts).deep.include({
+        guardianLinks: 0,
+        guardiansRefused: 2
+      })
+      expect(later.body.results[1].userId).equals(seasonAdmin.userId)
+      expect(await linksOf(seasonAdmin.userId)).deep.equals([])
+      expect(await linksOf(later.body.results[0].userId)).deep.equals([])
+
+      // A site administrator's import is held to neither.
+      const byAdmin = await adults(teamId, [uncle, sam], ADMIN)
+      expect(links(byAdmin)).deep.equals([
+        [1, 0],
+        [1, 0]
+      ])
+      expect(await linksOf(later.body.results[0].userId)).deep.equals([
+        { related_user_id: first, kind: 'guardian', can_manage: true }
+      ])
+      expect(await linksOf(seasonAdmin.userId)).deep.equals([
+        { related_user_id: second, kind: 'guardian', can_manage: true }
+      ])
+    })
+
+    it('takes no say from the staff for a parent with no address, so a later import with one still links', async function () {
+      const { teamId, players } = await teamWithPlayers('No say', 'nsy', 1)
+      const links = (answer: Answer): number[][] =>
+        answer.body.results.map((row: any) => [
+          row.guardianLinks,
+          row.guardiansRefused
+        ])
+      // A parent with no address can never sign in, but is linked.
+      const gran = {
+        firstName: 'Gran',
+        externalId: ext('nsy-gran', 'member'),
+        guardianOf: [ext('nsy-1')]
+      }
+      const first = await adults(teamId, [gran], SEASON_ADMIN)
+      expect(links(first)).deep.equals([[1, 0]])
+      const granId = first.body.results[0].userId
+      expect(await linksOf(granId)).deep.equals([
+        { related_user_id: players[0], kind: 'guardian', can_manage: true }
+      ])
+
+      // So a later import's parent with an address is linked too, and Gran
+      // is neither linked again nor refused.
+      const mom = {
+        firstName: 'Mom',
+        email: 'nsy.mom@example.test',
+        externalId: ext('nsy-mom', 'member'),
+        guardianOf: [ext('nsy-1')]
+      }
+      const later = await adults(teamId, [mom, gran], SEASON_ADMIN)
+      expect(later.status).equals(200)
+      expect(links(later)).deep.equals([
+        [1, 0],
+        [0, 0]
+      ])
+      expect(later.body.counts).deep.include({
+        guardianLinks: 1,
+        guardiansRefused: 0
+      })
+
+      // Mom signs in, so the next import's parent is hers to decide.
+      const aunt = {
+        firstName: 'Aunt',
+        email: 'nsy.aunt@example.test',
+        externalId: ext('nsy-aunt', 'member'),
+        guardianOf: [ext('nsy-1')]
+      }
+      const third = await adults(teamId, [aunt], SEASON_ADMIN)
+      expect(links(third)).deep.equals([[0, 1]])
+    })
+
+    it('makes an adult who guards nobody a member with no links and no roles', async function () {
       const teamId = await newTeam('Followers')
       const answer = await adults(teamId, [
         { firstName: 'Fan', externalId: ext('follower-1', 'member') }
@@ -2015,26 +2155,26 @@ describe('a team’s people by external id', function () {
         rolesAdded: []
       })
       expect(await membershipOf(teamId, row.userId)).deep.include({
-        is_spectator: true,
-        is_player: false
+        is_player: false,
+        role: 'member'
       })
       expect(await linksOf(row.userId)).deep.equals([])
       expect(await rolesOf(row.userId, teamId)).deep.equals([])
     })
 
-    it('keeps a player a player, and makes them a spectator too', async function () {
+    it('keeps a player a player, changing nothing', async function () {
       const { teamId, players } = await teamWithPlayers('Both', 'both', 1)
       const answer = await adults(teamId, [
         { firstName: 'Kid1', externalId: ext('both-1') }
       ])
       expect(answer.body.results[0]).deep.include({
-        result: 'matched',
+        result: 'unchanged',
         userId: players[0],
         joined: false
       })
       expect(await membershipOf(teamId, players[0])).deep.include({
         is_player: true,
-        is_spectator: true
+        role: 'member'
       })
     })
 
@@ -2061,6 +2201,7 @@ describe('a team’s people by external id', function () {
         unchanged: 0,
         error: 0,
         guardianLinks: 2,
+        guardiansRefused: 0,
         staff: 1
       })
       const tables = async (): Promise<number[]> => [
@@ -2084,6 +2225,7 @@ describe('a team’s people by external id', function () {
         unchanged: 3,
         error: 0,
         guardianLinks: 0,
+        guardiansRefused: 0,
         staff: 0
       })
       expect(await tables()).deep.equals(before)
@@ -2105,6 +2247,7 @@ describe('a team’s people by external id', function () {
         joined: false,
         guardianLinks: 0,
         guardiansMissing: 0,
+        guardiansRefused: 0,
         rolesAdded: []
       })
       expect(answer.body.counts).deep.include({ created: 1, error: 1 })
@@ -2283,7 +2426,10 @@ describe('a team’s people by external id', function () {
       expect(row.avatar_updated_at).not.equals(null)
       expect(answer.body.url).includes(`${row.avatar_path}-192.png`)
       const roster = await ask('GET', `/teams/${teamId}/roster`, ADMIN)
-      expect(roster.body[0].avatarUrl).to.be.a('string')
+      expect(
+        roster.body.find((entry: { userId: number }) => entry.userId === userId)
+          .avatarUrl
+      ).to.be.a('string')
     })
 
     it('uploads nothing for the picture it already holds', async function () {

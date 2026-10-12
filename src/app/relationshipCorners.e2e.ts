@@ -226,7 +226,6 @@ async function main(): Promise<void> {
     await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'domcontentloaded'
     })
-    await press(host, 'Open season games and standings')
     await press(host, 'Teams', 'tab')
     await text(host, 'Demo Hawks')
     await f.h.db
@@ -260,12 +259,24 @@ async function main(): Promise<void> {
         .where('id', '=', approvedExternal)
         .executeTakeFirstOrThrow()
     ).game_id!
-    expect(
-      (await f.h.request('GET', `/games/${otherGame}`, undefined, 204)).status
-    ).equals(404)
+    // Not a member of either side: the reduced view every signed-in
+    // non-member gets, with the members' parts held back.
+    const otherGameView = await f.h.request(
+      'GET',
+      `/games/${otherGame}`,
+      undefined,
+      204
+    )
+    expect(otherGameView.status).equals(200)
+    expect(await otherGameView.json()).deep.include({
+      nonMemberView: true,
+      canScore: false
+    })
     await direct.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'domcontentloaded'
     })
+    // The guest is on the season's schedule; its games are in 2029.
+    await press(direct, 'All', 'tab')
     await text(direct, 'Demo Corner External')
     await direct.screenshot({
       path: join(artifacts!, 'guest-participation.png')
@@ -455,7 +466,7 @@ async function main(): Promise<void> {
         .executeTakeFirstOrThrow()
       expect(stored.season_id).equals(seasonId)
     }
-    await direct.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    await direct.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
       waitUntil: 'domcontentloaded'
     })
     await text(direct, 'Regular fixture')

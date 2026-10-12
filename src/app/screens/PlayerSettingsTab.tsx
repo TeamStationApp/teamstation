@@ -14,12 +14,33 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface PlayerSettingsTabProps {
   client: TeamStationClient
-  /** The team the page was opened for: whose jersey and positions these are. */
-  teamId: string
+  /**
+   * The team the page was opened for: whose jersey and positions these are.
+   * Without one, the form is how the player bats and throws instead.
+   */
+  teamId?: string
   userId: string
-  /** The roster entry as it reads after a save, so the page can redraw. */
-  onSaved?: (entry: RosterEntry) => void
+  /**
+   * Whether to ask the team's roster for the player's whole name, and offer
+   * it to edit: the viewer manages that roster (`managesRoster`), which a
+   * guardian alone does not. Asked for by default.
+   */
+  fullNames?: boolean
+  /**
+   * How they bat and throw after a save, so the page can redraw, and, saved
+   * on a team, the player's roster entry there as it now reads.
+   */
+  onSaved?: (
+    hands: Pick<RosterEntry, 'bats' | 'throws'>,
+    entry?: RosterEntry
+  ) => void
 }
+
+/** What the form starts from: a roster entry, or the person away from one. */
+type Saved = Pick<
+  RosterEntry,
+  'jersey' | 'positions' | 'bats' | 'throws' | 'nameDetails'
+>
 
 type Bats = NonNullable<RosterEntry['bats']>
 type Throws = NonNullable<RosterEntry['throws']>
@@ -43,23 +64,26 @@ const THROWS: Array<{ id: Throws; label: string }> = [
 ]
 
 /**
- * A roster manager edits the player's name and hands everywhere, and their
- * jersey number and positions on this team.
+ * What a roster manager or a guardian sets for one player. Opened from a
+ * team, the jersey number and the positions they play there, and the
+ * player's name when the roster sent it (`fullNames`); opened from anywhere
+ * else, how they bat and throw, which reads the same on every team. Never
+ * both: a page opened for one team is about that team.
  *
- * The form starts from the player's roster entry on this team. Save is
- * offered only once something differs from it, and sends only what differs,
- * so two coaches changing two different things do not undo each other. A
- * refusal stays on the form, beside what was typed, rather than throwing it
- * away.
+ * The form starts from the player's roster entry on the team, or from the
+ * player. Save is offered only once something differs from it, and sends
+ * only what differs, so two coaches changing two different things do not
+ * undo each other. A refusal stays on the form, beside what was typed, rather
+ * than throwing it away.
  */
 export function PlayerSettingsTab(
   props: PlayerSettingsTabProps
 ): React.ReactElement {
-  const { client, teamId, userId, onSaved } = props
+  const { client, teamId, userId, fullNames = true, onSaved } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
-  const [saved, setSaved] = useState<RosterEntry | undefined>(undefined)
+  const [saved, setSaved] = useState<Saved | undefined>(undefined)
   const [draft, setDraft] = useState<Draft | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -71,13 +95,23 @@ export function PlayerSettingsTab(
     setSaved(undefined)
     setDraft(undefined)
     setLoadError(undefined)
-    client
-      .roster(teamId, { includeFullNames: true })
-      .then(roster => {
+    const loaded: Promise<Saved | undefined> =
+      teamId == null
+        ? client.player(userId).then(({ bats, throws }) => ({
+            jersey: null,
+            positions: [],
+            bats,
+            throws,
+            nameDetails: undefined
+          }))
+        : client
+            .roster(teamId, { includeFullNames: fullNames })
+            .then(roster =>
+              roster.find(row => String(row.userId) === userId && row.isPlayer)
+            )
+    loaded
+      .then(entry => {
         if (cancelled) return
-        const entry = roster.find(
-          row => String(row.userId) === userId && row.isPlayer
-        )
         if (entry == null) {
           setLoadError(lstrings.player_settings_not_on_team)
           return
@@ -91,7 +125,7 @@ export function PlayerSettingsTab(
     return () => {
       cancelled = true
     }
-  }, [client, teamId, userId])
+  }, [client, teamId, userId, fullNames])
 
   if (loadError != null) {
     return (
@@ -119,13 +153,20 @@ export function PlayerSettingsTab(
   const save = (): void => {
     setBusy(true)
     setError(undefined)
-    client
-      .setPlayerSettings(teamId, userId, changes)
-      .then(entry => {
-        setSaved(entry)
-        setDraft(draftOf(entry))
+    const stored: Promise<{ saved: Saved; entry?: RosterEntry }> =
+      teamId == null
+        ? client
+            .setPlayerBatsThrows(userId, changes)
+            .then(({ bats, throws }) => ({ saved: { ...saved, bats, throws } }))
+        : client
+            .setPlayerSettings(teamId, userId, changes)
+            .then(entry => ({ saved: entry, entry }))
+    stored
+      .then(({ saved: now, entry }) => {
+        setSaved(now)
+        setDraft(draftOf(now))
         setDone(true)
-        onSaved?.(entry)
+        onSaved?.({ bats: now.bats, throws: now.throws }, entry)
       })
       .catch((caught: unknown) => {
         setError(
@@ -141,109 +182,118 @@ export function PlayerSettingsTab(
 
   return (
     <Card style={styles.form}>
-      {draft.name != null && (
-        <View pointerEvents={busy ? 'none' : 'auto'} style={{ gap: 16 }}>
+      {teamId != null && (
+        <>
+          {draft.name != null && (
+            <View pointerEvents={busy ? 'none' : 'auto'} style={{ gap: 16 }}>
+              <TextField
+                label={lstrings.player_settings_first_name}
+                value={draft.name.firstName}
+                onChangeText={firstName => {
+                  edit({ name: { ...draft.name!, firstName } })
+                }}
+              />
+              <TextField
+                label={lstrings.player_settings_last_name}
+                value={draft.name.lastName}
+                onChangeText={lastName => {
+                  edit({ name: { ...draft.name!, lastName } })
+                }}
+              />
+            </View>
+          )}
           <TextField
-            label={lstrings.player_settings_first_name}
-            value={draft.name.firstName}
-            onChangeText={firstName => {
-              edit({ name: { ...draft.name!, firstName } })
+            label={lstrings.player_settings_jersey}
+            value={draft.jersey}
+            keyboardType="number-pad"
+            onChangeText={jersey => {
+              edit({ jersey })
             }}
           />
-          <TextField
-            label={lstrings.player_settings_last_name}
-            value={draft.name.lastName}
-            onChangeText={lastName => {
-              edit({ name: { ...draft.name!, lastName } })
-            }}
-          />
-        </View>
+
+          <Text style={styles.label}>
+            {lstrings.player_settings_positions.toUpperCase()}
+          </Text>
+          <View
+            style={styles.chips}
+            accessibilityLabel={lstrings.player_settings_positions}
+          >
+            {PLAYER_POSITIONS.map(position => {
+              const on = draft.positions.includes(position)
+              return (
+                <Chip
+                  key={position}
+                  label={position}
+                  role="checkbox"
+                  on={on}
+                  disabled={busy}
+                  onPress={() => {
+                    edit({
+                      positions: on
+                        ? draft.positions.filter(held => held !== position)
+                        : PLAYER_POSITIONS.filter(
+                            item =>
+                              item === position ||
+                              draft.positions.includes(item)
+                          )
+                    })
+                  }}
+                />
+              )
+            })}
+          </View>
+        </>
       )}
-      <TextField
-        label={lstrings.player_settings_jersey}
-        value={draft.jersey}
-        keyboardType="number-pad"
-        onChangeText={jersey => {
-          edit({ jersey })
-        }}
-      />
 
-      <Text style={styles.label}>
-        {lstrings.player_settings_positions.toUpperCase()}
-      </Text>
-      <View
-        style={styles.chips}
-        accessibilityLabel={lstrings.player_settings_positions}
-      >
-        {PLAYER_POSITIONS.map(position => {
-          const on = draft.positions.includes(position)
-          return (
-            <Chip
-              key={position}
-              label={position}
-              role="checkbox"
-              on={on}
-              disabled={busy}
-              onPress={() => {
-                edit({
-                  positions: on
-                    ? draft.positions.filter(held => held !== position)
-                    : PLAYER_POSITIONS.filter(
-                        item =>
-                          item === position || draft.positions.includes(item)
-                      )
-                })
-              }}
-            />
-          )
-        })}
-      </View>
+      {teamId == null && (
+        <>
+          <Text style={styles.label}>
+            {lstrings.player_settings_bats.toUpperCase()}
+          </Text>
+          <View
+            style={styles.chips}
+            accessibilityRole="radiogroup"
+            accessibilityLabel={lstrings.player_settings_bats}
+          >
+            {BATS.map(choice => (
+              <Chip
+                key={choice.id}
+                label={choice.label}
+                accessibilityLabel={`${lstrings.player_settings_bats} ${choice.label}`}
+                role="radio"
+                on={draft.bats === choice.id}
+                disabled={busy}
+                onPress={() => {
+                  edit({ bats: choice.id })
+                }}
+              />
+            ))}
+          </View>
 
-      <Text style={styles.label}>
-        {lstrings.player_settings_bats.toUpperCase()}
-      </Text>
-      <View
-        style={styles.chips}
-        accessibilityRole="radiogroup"
-        accessibilityLabel={lstrings.player_settings_bats}
-      >
-        {BATS.map(choice => (
-          <Chip
-            key={choice.id}
-            label={choice.label}
-            accessibilityLabel={`${lstrings.player_settings_bats} ${choice.label}`}
-            role="radio"
-            on={draft.bats === choice.id}
-            disabled={busy}
-            onPress={() => {
-              edit({ bats: choice.id })
-            }}
-          />
-        ))}
-      </View>
-
-      <Text style={styles.label}>
-        {lstrings.player_settings_throws.toUpperCase()}
-      </Text>
-      <View
-        style={styles.chips}
-        accessibilityRole="radiogroup"
-        accessibilityLabel={lstrings.player_settings_throws}
-      >
-        {THROWS.map(choice => (
-          <Chip
-            key={choice.id}
-            label={choice.label}
-            accessibilityLabel={`${lstrings.player_settings_throws} ${choice.label}`}
-            role="radio"
-            on={draft.throws === choice.id}
-            disabled={busy}
-            onPress={() => {
-              edit({ throws: choice.id })
-            }}
-          />
-        ))}
-      </View>
+          <Text style={styles.label}>
+            {lstrings.player_settings_throws.toUpperCase()}
+          </Text>
+          <View
+            style={styles.chips}
+            accessibilityRole="radiogroup"
+            accessibilityLabel={lstrings.player_settings_throws}
+          >
+            {THROWS.map(choice => (
+              <Chip
+                key={choice.id}
+                label={choice.label}
+                accessibilityLabel={`${lstrings.player_settings_throws} ${choice.label}`}
+                role="radio"
+                on={draft.throws === choice.id}
+                disabled={busy}
+                onPress={() => {
+                  edit({ throws: choice.id })
+                }}
+              />
+            ))}
+          </View>
+        </>
+      )}
 
       {error != null && <Text style={styles.error}>{error}</Text>}
       {done && !changed && (
@@ -261,14 +311,14 @@ export function PlayerSettingsTab(
   )
 }
 
-/** The form's starting point: what the roster says now. */
-function draftOf(entry: RosterEntry): Draft {
+/** The form's starting point: what the roster, or the player, says now. */
+function draftOf(entry: Saved): Draft {
   const details = entry.nameDetails
   let name: PlayerSettings['name']
   if (details != null) {
     const first = details.firstName?.trim() ?? ''
     const last = details.lastName?.trim() ?? ''
-    const full = rosterFullName({ id: entry.userId, ...details })
+    const full = rosterFullName({ id: 0, ...details })
     // Legacy imports sometimes stored only one part. Preserve the full label
     // when constructing the two edit fields instead of dropping its surname.
     if (first !== '' && last !== '') name = { firstName: first, lastName: last }
@@ -296,7 +346,7 @@ function draftOf(entry: RosterEntry): Draft {
  * The fields that differ from the roster entry, and nothing else. An emptied
  * jersey field is no number; positions compare as a set.
  */
-export function changesOf(saved: RosterEntry, draft: Draft): PlayerSettings {
+export function changesOf(saved: Saved, draft: Draft): PlayerSettings {
   const changes: PlayerSettings = {}
   const previousName = draftOf(saved).name
   if (draft.name != null && previousName != null) {

@@ -20,6 +20,7 @@ import {
 } from './scoringSource'
 
 const game = asGameDetail({
+  nonMemberView: false,
   id: 'g1',
   awayTeamId: 'away',
   homeTeamId: 'home',
@@ -44,7 +45,10 @@ const roster = (first: number): RosterEntry[] =>
       jersey: String(i + 1),
       positions: [],
       isPlayer: true,
-      role: 'member'
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
     })
   )
 const away = roster(101)

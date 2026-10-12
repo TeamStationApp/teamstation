@@ -381,6 +381,7 @@ export async function rosterEditFixture(
             awayScore: null,
             ingestStatus: 'pending',
             ingestMessage: null,
+            nonMemberView: false,
             canScore: true,
             videos: []
           }

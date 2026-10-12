@@ -38,5 +38,6 @@ export const iconCodepoints: Record<IconName, number> = {
   mic: 0xe029,
   mic_off: 0xe02b,
   notifications: 0xe7f4,
-  search: 0xe8b6
+  search: 0xe8b6,
+  filter_alt: 0xef4f
 }

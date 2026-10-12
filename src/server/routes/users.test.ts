@@ -6,6 +6,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { TeamStationClient } from '../../common/api'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
@@ -22,9 +23,11 @@ import { userRoutes } from './users'
 /**
  * `GET /users?externalId=`, through the real router.
  *
- * Ada plays for Home and is known by two ids of different kinds. Bea plays
- * for nobody, and Bee was merged into her. Cal is on Home without playing,
- * and is the one asking when the asker is not the site administrator.
+ * Ada plays for Home and is known by two ids of different kinds, and has a
+ * picture. Bea plays for nobody, and Bee was merged into her. Cal is on Home
+ * without playing, and is the one asking when the asker is not the site
+ * administrator. Cal is Ada's guardian, and family of Bee's; Dot plays for
+ * nobody and is Cal's link of kind `other`.
  */
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_users_${Date.now()}`
@@ -44,6 +47,15 @@ const ada = mint()
 const bea = mint()
 const bee = mint()
 const cal = mint()
+const dot = mint()
+const space = {
+  endpoint: 'https://sfo3.example.test',
+  region: 'sfo3',
+  bucket: 'demo',
+  accessKeyId: 'AKIAEXAMPLE000000000',
+  secretAccessKey: 'secret',
+  pathStyle: false
+}
 
 describe('the users route', function () {
   this.timeout(60000)
@@ -77,7 +89,7 @@ describe('the users route', function () {
     const app = express()
     app.use(jsonBody)
     app.use(withActor(db))
-    app.use('/api/v1', userRoutes(db))
+    app.use('/api/v1', userRoutes(db, space))
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -105,12 +117,23 @@ describe('the users route', function () {
     const query = externalIds
       .map(id => `externalId=${encodeURIComponent(id)}`)
       .join('&')
+    return await askWith(token, query)
+  }
+  async function askWith(
+    token: string | null,
+    query: string
+  ): Promise<{ status: number; body: any }> {
     const response = await fetch(
       `${base}/users${query === '' ? '' : `?${query}`}`,
-      { headers: { authorization: `Bearer ${token}` } }
+      {
+        headers: token == null ? {} : { authorization: `Bearer ${token}` }
+      }
     )
     return { status: response.status, body: await response.json() }
   }
+  /** Ada's picture, signed, as every answer carries it. */
+  const picture = (body: any[]): string | null =>
+    body.find(person => person.userId === ada.userId)?.avatarUrl ?? null
 
   const byUserId = (a: { userId: number }, b: { userId: number }): number =>
     a.userId - b.userId
@@ -124,10 +147,21 @@ describe('the users route', function () {
       'ext-bee'
     )
     expect(answer.status).equals(200)
+    expect(picture(answer.body)).includes('/avatars/ada/')
     expect(answer.body).deep.equals(
       [
-        { userId: ada.userId, externalIds: ['ext-ada', 'ext-ada-login'] },
-        { userId: bea.userId, externalIds: ['ext-bea', 'ext-bee'] }
+        {
+          userId: ada.userId,
+          externalIds: ['ext-ada', 'ext-ada-login'],
+          shortName: 'Ada L',
+          avatarUrl: picture(answer.body)
+        },
+        {
+          userId: bea.userId,
+          externalIds: ['ext-bea', 'ext-bee'],
+          shortName: 'Bea B',
+          avatarUrl: null
+        }
       ].sort(byUserId)
     )
   })
@@ -137,10 +171,64 @@ describe('the users route', function () {
     expect(answer.status).equals(200)
     expect(answer.body).deep.equals(
       [
-        { userId: ada.userId, externalIds: ['ext-ada'] },
-        { userId: cal.userId, externalIds: ['ext-cal'] }
+        {
+          userId: ada.userId,
+          externalIds: ['ext-ada'],
+          shortName: 'Ada L',
+          avatarUrl: picture(answer.body)
+        },
+        {
+          userId: cal.userId,
+          externalIds: ['ext-cal'],
+          shortName: 'Cal C',
+          avatarUrl: null
+        }
       ].sort(byUserId)
     )
+  })
+
+  it('lists the players the asker is a guardian of, by short name', async function () {
+    const answer = await askWith(CAL, 'guardedBy=me')
+    expect(answer.status).equals(200)
+    // A `guardian` link and a `family` one, the latter to a row since merged,
+    // which answers as the row it was merged into; never the `other` link.
+    expect(answer.body).deep.equals(
+      [
+        {
+          userId: ada.userId,
+          externalIds: [],
+          shortName: 'Ada L',
+          avatarUrl: picture(answer.body)
+        },
+        {
+          userId: bea.userId,
+          externalIds: [],
+          shortName: 'Bea B',
+          avatarUrl: null
+        }
+      ].sort((a, b) => a.shortName.localeCompare(b.shortName))
+    )
+    expect(picture(answer.body)).includes('/avatars/ada/')
+    expect((await askWith(ADMIN, 'guardedBy=me')).body).deep.equals([])
+    // The app's client reads the same list.
+    const client = new TeamStationClient({ baseUrl: base, token: CAL })
+    const read = await client.guardedPlayers()
+    expect(read.map(({ avatarUrl: _, ...rest }) => rest)).deep.equals(
+      answer.body.map(({ avatarUrl: _, ...rest }: any) => rest)
+    )
+    expect(picture(read)).includes('/avatars/ada/')
+  })
+
+  it('refuses guardedBy anybody but me, beside externalId, or for nobody', async function () {
+    for (const query of [
+      'guardedBy=you',
+      'guardedBy=',
+      'guardedBy=me&guardedBy=me',
+      'guardedBy=me&externalId=ext-ada'
+    ]) {
+      expect((await askWith(CAL, query)).status, query).equals(400)
+    }
+    expect((await askWith(null, 'guardedBy=me')).status).equals(401)
   })
 
   it('answers nobody for an id no user holds', async function () {
@@ -165,7 +253,8 @@ describe('the users route', function () {
           { made: ada, name: 'Ada Lovelace', isAdmin: false },
           { made: bea, name: 'Bea Brown', isAdmin: false },
           { made: bee, name: 'Bea B', isAdmin: false },
-          { made: cal, name: 'Cal Carter', isAdmin: false }
+          { made: cal, name: 'Cal Carter', isAdmin: false },
+          { made: dot, name: 'Dot Dunn', isAdmin: false }
         ].map(person => ({
           id: person.made.userId,
           legacyId: person.made.legacyId,
@@ -180,6 +269,28 @@ describe('the users route', function () {
       .updateTable('users')
       .set({ merged_into: bea.userId })
       .where('id', '=', bee.userId)
+      .execute()
+    await db
+      .updateTable('users')
+      .set({ avatar_path: 'avatars/ada/1' })
+      .where('id', '=', ada.userId)
+      .execute()
+    await db
+      .insertInto('user_links')
+      .values(
+        (
+          [
+            [ada, 'guardian'],
+            [bee, 'family'],
+            [dot, 'other']
+          ] as const
+        ).map(([child, kind]) => ({
+          id: makeId('userLink'),
+          user_id: cal.userId,
+          related_user_id: child.userId,
+          kind
+        }))
+      )
       .execute()
     await db
       .insertInto('auth_sessions')

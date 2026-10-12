@@ -67,7 +67,9 @@ const jordan = asRosterEntry({
   positions: ['SS', '2B'],
   isPlayer: true,
   role: 'member',
-  group: 'player'
+  section: 'player',
+  staffRoles: [],
+  inheritedFrom: null
 })
 
 const batting = asBattingRow({
@@ -216,9 +218,33 @@ describe('a player’s whole name is never shown', function () {
     expect(filters).deep.equals([{ seasonId: 'sea_1' }, {}])
   })
 
-  it('is not in the roster row’s subtitle, which is the positions alone', function () {
+  it('is not in the roster row’s subtitle: a player’s positions, a staff member’s roles', function () {
     expect(rosterSubtitle(jordan)).equals('SS · 2B')
     expect(rosterSubtitle({ ...jordan, positions: [] })).equals(undefined)
+    const staff = {
+      ...jordan,
+      section: 'staff' as const,
+      staffRoles: ['assistant' as const, 'scorekeeper' as const]
+    }
+    // A coach who also plays is listed by what they do on the staff.
+    expect(rosterSubtitle(staff)).equals('Assistant · Scorekeeper')
+    expect(
+      rosterSubtitle({ ...staff, section: 'admin', staffRoles: [] })
+    ).equals(undefined)
+    // A spectator and a follower have nothing under the name, a season's
+    // member included: the level is the pill's.
+    for (const section of ['spectator', 'follower'] as const)
+      expect(
+        rosterSubtitle({
+          ...jordan,
+          section,
+          isPlayer: false,
+          positions: [],
+          inheritedFrom:
+            section === 'spectator' ? { level: 'season', role: 'member' } : null
+        }),
+        section
+      ).equals(undefined)
   })
 
   it('is not on the team’s roster, and a row still opens the player', async function () {
@@ -251,7 +277,9 @@ describe('a player’s whole name is never shown', function () {
           positions: [],
           isPlayer: false,
           role: 'manager',
-          group: 'coach'
+          section: 'admin',
+          staffRoles: [],
+          inheritedFrom: null
         })
       ],
       teamStats: async () => [batting],
@@ -298,10 +326,55 @@ describe('a player’s whole name is never shown', function () {
     expect(text()).includes('#12')
     await press('Jordan P')
     expect(opened).deep.equals([7])
-    // The team goes twice: as the Stats filter, and as the team the page was
-    // opened for, which a coach's Settings tab edits the player on.
-    expect(froms).deep.equals([{ teamId: 'tem_hawks', onTeam: 'tem_hawks' }])
+    // The team goes as the one the page was opened for: both of the player's
+    // filters start on it, and a coach's Settings tab edits the player on it.
+    expect(froms).deep.equals([{ onTeam: 'tem_hawks' }])
     for (const tab of ['Videos', 'Schedule', 'Stats']) await press(tab)
     expect(text()).includes('Jordan P')
+  })
+
+  it('is not on a non-member’s roster either, whose rows open nothing', async function () {
+    const opened: number[] = []
+    const client = {
+      teamGames: async () => [],
+      roster: async () => [jordan],
+      standings: async () => [],
+      follows: async () => []
+    } as unknown as TeamStationClient
+    await render(
+      <TeamScreen
+        client={client}
+        team={{
+          id: 'tem_hawks',
+          name: 'Hawks',
+          shortName: null,
+          logoPath: null,
+          logoUrl: null,
+          record: null,
+          seasonCategory: 'unscheduled',
+          canViewPrivate: false,
+          kind: 'full'
+        }}
+        nonMemberView
+        initialTab="team"
+        onOpenGame={() => undefined}
+        onOpenPlayer={userId => {
+          opened.push(userId)
+        }}
+      />
+    )
+    expect(text()).includes('Jordan P')
+    expect(text()).includes('SS · 2B')
+    expect(text()).not.includes('Pujols')
+    // A player's page answers a non-member `404`, so the row is not a button
+    // and carries no chevron.
+    const row = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Jordan P'
+    )
+    expect(row).not.equals(undefined)
+    expect(row!.closest('[role="button"]')).equals(null)
+    expect(text()).not.includes('chevron_right')
+    row!.click()
+    expect(opened).deep.equals([])
   })
 })

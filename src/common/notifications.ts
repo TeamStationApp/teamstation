@@ -1,4 +1,12 @@
-import { asArray, asBoolean, asObject, asString } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asEither,
+  asNull,
+  asObject,
+  asOptional,
+  asString
+} from 'cleaners'
 
 import { asLiteral } from './asLiteral'
 import type { GameRequestTerms } from './gameApprovals'
@@ -6,7 +14,25 @@ import type { GroupRef } from './groupCreation'
 import type { ParentAction, ParentPreview } from './groupLinks'
 import type { RoleFlag } from './roles'
 
-export type RelationshipRequestInput = {
+/** Who is asked to be a guardian: an account, or an address. */
+export type GuardianInput = { userId: number } | { email: string }
+
+/**
+ * The body of `POST /relationship-requests`. A guardian invitation comes from
+ * a team its sender coaches; a guardian request, which a person sends for
+ * themselves, has no sender.
+ */
+export type RelationshipRequestInput =
+  | GroupRequestInput
+  | {
+      kind: 'guardian'
+      playerUserId: number
+      guardian: GuardianInput
+      sender?: { kind: 'team'; id: string }
+      idempotencyKey: string
+    }
+
+type GroupRequestInput = {
   sender: GroupRef
   confirmBoth?: boolean
   idempotencyKey: string
@@ -51,14 +77,27 @@ export type RequestTerms =
       admin: boolean
       flags: RoleFlag[]
     }
+  | GuardianTerms
+
+/**
+ * The guardian is an account, with the address it was invited by when it was
+ * invited by one, or an address no account has verified yet, bound to the
+ * account that accepts.
+ */
+export interface GuardianTerms {
+  kind: 'guardian'
+  playerUserId: number
+  guardian: { userId: number; email?: string } | { email: string }
+}
 
 export interface RelationshipInvitation {
-  sender: GroupRef
+  /** Absent only for a guardian request, which a person sends for themselves. */
+  sender?: GroupRef
   terms: RequestTerms
   confirmBoth?: boolean
   idempotencyKey: string
 }
-export const asNotification = asObject({
+const cleanNotification = asObject({
   id: asString,
   requestId: asString,
   type: asString,
@@ -77,9 +116,29 @@ export const asNotification = asObject({
   canAct: asBoolean,
   canWithdraw: asBoolean,
   canResend: asBoolean,
-  viewed: asBoolean
+  viewed: asBoolean,
+  /**
+   * On a notification that somebody added you to a team, season or league
+   * (`type` `grant`): that level, while you are still in it, so you can
+   * leave it from here. Null once you have left, and on every other kind.
+   */
+  leave: asOptional(
+    asEither(
+      asNull,
+      asObject({
+        kind: asLiteral('league', 'season', 'team'),
+        id: asString,
+        name: asString
+      })
+    ),
+    null
+  )
 })
-export type Notification = ReturnType<typeof asNotification>
+type Cleaned = ReturnType<typeof cleanNotification>
+export type Notification = Omit<Cleaned, 'leave'> & {
+  leave?: Cleaned['leave']
+}
+export const asNotification: (raw: unknown) => Notification = cleanNotification
 export const asNotificationPage = asObject({
   items: asArray(asNotification),
   hasPending: asBoolean,

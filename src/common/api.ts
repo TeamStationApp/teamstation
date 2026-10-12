@@ -57,14 +57,14 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
-import type { PlayerSettings } from './playerSettings'
+import type { PersonSettings, PlayerSettings } from './playerSettings'
 import {
   asGroupDetail,
   asPublicGroup,
   type GroupDetail,
   type PublicGroup
 } from './publicGroups'
-import { asRole, type Role, type RoleFlag } from './roles'
+import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
 import {
   cleanAction,
   type Problem,
@@ -278,8 +278,9 @@ export const asGameDetail = asObject({
    */
   canScore: asOptional(asBoolean, false),
   /**
-   * Whether this viewer may DJ the game: a songkeeper of either team, which
-   * every administrator of it is. Absent from an older server, and false.
+   * Whether this viewer may DJ the game: a songkeeper or scorekeeper of
+   * either team, which every administrator of it is. Absent from an older
+   * server, and false.
    */
   canDj: asOptional(asBoolean, false),
   /**
@@ -292,6 +293,12 @@ export const asGameDetail = asObject({
     asNullable(asObject({ open: asBoolean, mayOverride: asBoolean })),
     null
   ),
+  /**
+   * Whether this caller is signed in and a member of neither team: `linescore`
+   * then carries each side's runs alone, `canScore` and `canDj` are false,
+   * and the box score and playback answer `membersOnly`. False for members.
+   */
+  nonMemberView: asBoolean,
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>
@@ -496,7 +503,23 @@ export const asThrows = asEither(
   asLiteral('right')
 )
 
-export const asRosterEntry = asObject({
+/**
+ * A roster's sections, in the order they are listed: administrators, staff
+ * (coach, assistant, scorekeeper, songkeeper, videographer), players, the
+ * players' guardians, the other members (of the team, or of its season or
+ * league), and the people who follow the team.
+ */
+export const asRosterSection = asLiteral(
+  'admin',
+  'staff',
+  'player',
+  'family',
+  'spectator',
+  'follower'
+)
+export type RosterSection = ReturnType<typeof asRosterSection>
+
+const cleanRosterEntry = asObject({
   /** Only sent for an explicitly authorized roster-management read. */
   nameDetails: asOptional(
     asObject({
@@ -519,12 +542,40 @@ export const asRosterEntry = asObject({
   positions: asArray(asString),
   isPlayer: asBoolean,
   role: asString,
-  /** `coach`, `player` or `follower` — the section they are listed under. */
-  group: asOptional(asString, 'player'),
+  /** The section they are listed under: the first of these that fits. */
+  section: asRosterSection,
+  /** The flags they were given on the team or above it, in flag order. */
+  staffRoles: asArray(asRoleFlag),
+  /**
+   * For somebody listed for a role given above the team, the highest level
+   * that gives it ("League admin", "Season coach"), and for a spectator
+   * who is a member through the team's season or league, that level with
+   * `member` ("Season spectator"); null for the team's own.
+   */
+  inheritedFrom: asNullable(
+    asObject({
+      level: asLiteral('season', 'league'),
+      role: asEither(asRole, asLiteral('member'))
+    })
+  ),
   /** Their walk-up song on this team, or null for none. */
-  walkUpSong: asOptional(asNullable(asWalkUpSong), null)
+  walkUpSong: asOptional(asNullable(asWalkUpSong), null),
+  /**
+   * On a season's or league's people list, the teams a player plays on
+   * there; absent from a team's roster, where the team is the page.
+   */
+  teamNames: asOptional(asArray(asString)),
+  /**
+   * Under a family member, the players on this list they are a guardian of,
+   * by their short names; absent for everybody else.
+   */
+  guardianOf: asOptional(asArray(asString))
 })
-export type RosterEntry = ReturnType<typeof asRosterEntry>
+export type RosterEntry = Omit<
+  ReturnType<typeof cleanRosterEntry>,
+  'teamNames' | 'guardianOf'
+> & { teamNames?: string[]; guardianOf?: string[] }
+export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
   plays: asArray(
@@ -533,13 +584,21 @@ const asStoredGame = asObject({
   currentPlay: asOptional(asNullable(asCurrentPlay), null)
 })
 
-/** A team this player has played for, and in which season. */
+/**
+ * A team this player has played for, in which season, and their number and
+ * positions there: null and empty on a team they only have stats for.
+ * `current` is whether they play on it now; a team they left is false.
+ */
 export const asPlayerTeam = asObject({
   teamId: asString,
   teamName: asString,
+  logoUrl: asNullable(asString),
   seasonId: asNullable(asString),
   seasonName: asNullable(asString),
-  seasonYear: asNullable(asNumber)
+  seasonYear: asNullable(asNumber),
+  jersey: asNullable(asString),
+  positions: asArray(asString),
+  current: asBoolean
 })
 export type PlayerTeam = ReturnType<typeof asPlayerTeam>
 
@@ -550,8 +609,8 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * screen. The whole name is never part of it: it is fetched separately, by
  * `playerName`, when somebody who may change it opens the name field.
  *
- * No jersey number: a number belongs to a player *on a team*, and is drawn on
- * the team's roster and in the box score, where that context exists.
+ * No jersey number on the person: a number belongs to a player *on a team*,
+ * and travels only in a `teams` row of `PlayerDetail`, beside its team.
  */
 export const asPlayerName = asObject({
   userId: asUserId,
@@ -566,12 +625,27 @@ export const asPlayerDetail = asObject({
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
+  /**
+   * How the viewer may invite a guardian of this person: `guardian`, as one
+   * of their guardians, with no sending team; `team`, from a team the viewer
+   * coaches that the person plays on, while they have no guardian; `null`,
+   * not at all.
+   */
+  guardianInviteAs: asOptional(asNullable(asLiteral('guardian', 'team')), null),
   avatarUrl: asOptional(asNullable(asString), null),
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),
   teams: asArray(asPlayerTeam)
 })
 export type PlayerDetail = ReturnType<typeof asPlayerDetail>
+
+/** How a player bats and throws, as `PUT /players/:userId/settings` stored it. */
+export const asPersonSettingsAnswer = asObject({
+  userId: asUserId,
+  bats: asBats,
+  throws: asThrows
+})
+export type PersonSettingsAnswer = ReturnType<typeof asPersonSettingsAnswer>
 
 /**
  * One highlight of one player, for their own page.
@@ -713,7 +787,11 @@ export type SeasonGame = ReturnType<typeof asSeasonGame>
 /** A person another service knows, and which of the asked ids are theirs. */
 export const asUserMatch = asObject({
   userId: asUserId,
-  externalIds: asArray(asString)
+  externalIds: asArray(asString),
+  /** `Jordan P`, told apart from anybody else in the same answer. */
+  shortName: asOptional(asString),
+  /** Their picture, signed and short-lived; null when they have none. */
+  avatarUrl: asOptional(asNullable(asString), null)
 })
 export type UserMatch = ReturnType<typeof asUserMatch>
 
@@ -1023,9 +1101,83 @@ export function grantsOf(person: ScopePerson): RoleGrant[] {
   )
 }
 
+/** A level as a person's profile names it. */
+export const asPeopleLevel = asLiteral('league', 'season', 'team')
+
+/**
+ * What a person holds at one level of their profile: the team, every season
+ * the team belongs to taken together, or the league. `roles` and `member`
+ * are what was given at that level itself, never inherited; `follower` is
+ * whether they follow it. `editable` is whether this viewer's buttons change
+ * it: only the level the profile was opened from, for its administrators,
+ * coaches and assistants.
+ */
+export const asProfileSection = asObject({
+  level: asPeopleLevel,
+  groups: asArray(asNamed),
+  roles: asArray(asRole),
+  member: asBoolean,
+  follower: asBoolean,
+  editable: asBoolean
+})
+export type ProfileSection = ReturnType<typeof asProfileSection>
+
+/**
+ * One person as a team, season or league's people see them, opened from its
+ * people list: who they are, the players they are a guardian of there, and
+ * what they hold at that level and the ones above it.
+ */
+export const asPersonProfile = asObject({
+  context: asObject({ kind: asPeopleLevel, id: asString, name: asString }),
+  person: asObject({
+    userId: asUserId,
+    shortName: asString,
+    /** Their whole name, for a viewer who may read it; otherwise null. */
+    fullName: asNullable(asString),
+    avatarUrl: asNullable(asString),
+    /** Whether they can hold a role: an account that signs in. */
+    canHoldRoles: asBoolean
+  }),
+  /** The players they guard who play at this level, each with a team. */
+  guardianOf: asArray(
+    asObject({
+      userId: asUserId,
+      shortName: asString,
+      avatarUrl: asNullable(asString),
+      teamId: asString
+    })
+  ),
+  sections: asArray(asProfileSection),
+  viewer: asObject({
+    /** An administrator, coach or assistant of the level: Add and Remove. */
+    manages: asBoolean,
+    /** An administrator of it: the Admin row too. */
+    admin: asBoolean
+  })
+})
+export type PersonProfile = ReturnType<typeof asPersonProfile>
+
+/** A season's or league's people, and what this viewer may do with them. */
+export const asLevelPeople = asObject({
+  people: asArray(asRosterEntry),
+  manages: asBoolean,
+  admin: asBoolean
+})
+export type LevelPeople = ReturnType<typeof asLevelPeople>
+
+/** What somebody holds at one level after a change. */
+export const asHeldAt = asObject({
+  userId: asUserId,
+  roles: asArray(asRole),
+  member: asBoolean
+})
+export type HeldAt = ReturnType<typeof asHeldAt>
+
 /** The roles the signed-in person holds on each team where they hold any. */
 export const asMyRoles = asObject({
-  teams: asObject(asArray(asRole))
+  teams: asObject(asArray(asRole)),
+  /** The players they are a guardian of, by the row each signs in as. */
+  guardianOf: asOptional(asArray(asUserId), () => [])
 })
 export type MyRoles = ReturnType<typeof asMyRoles>
 
@@ -1940,6 +2092,15 @@ export class TeamStationClient {
     return await this.request('GET', `/users?${query}`, asArray(asUserMatch))
   }
 
+  /** The players the signed-in person is a guardian of, by short name. */
+  async guardedPlayers(): Promise<UserMatch[]> {
+    return await this.request(
+      'GET',
+      '/users?guardedBy=me',
+      asArray(asUserMatch)
+    )
+  }
+
   async seasonGames(seasonId: string): Promise<SeasonGame[]> {
     return await this.request(
       'GET',
@@ -2272,6 +2433,22 @@ export class TeamStationClient {
   }
 
   /**
+   * How a player bats and throws, away from any team: for a guardian of the
+   * player, or a coach of a team they play on. Only the fields sent change.
+   */
+  async setPlayerBatsThrows(
+    userId: number | string,
+    settings: PersonSettings
+  ): Promise<PersonSettingsAnswer> {
+    return await this.request(
+      'PUT',
+      `/players/${encodeURIComponent(userId)}/settings`,
+      asPersonSettingsAnswer,
+      settings
+    )
+  }
+
+  /**
    * Sets a player's walk-up song on one team, for a songkeeper. The answer
    * is the song as it was stored.
    */
@@ -2319,14 +2496,26 @@ export class TeamStationClient {
     )
   }
 
-  /** Every highlight one player is credited on, newest first, a page at a time. */
+  /**
+   * Every highlight one player is credited on, newest first, a page at a
+   * time, narrowed to a season, a team or a year as `playerStats` is.
+   */
   async playerHighlights(
     userId: string,
-    options: { before?: string; limit?: number } = {}
+    options: {
+      before?: string
+      limit?: number
+      seasonId?: string
+      teamId?: string
+      year?: number
+    } = {}
   ): Promise<PlayerHighlights> {
     const query = new URLSearchParams()
     if (options.before != null) query.set('before', options.before)
     if (options.limit != null) query.set('limit', String(options.limit))
+    if (options.seasonId != null) query.set('seasonId', options.seasonId)
+    if (options.teamId != null) query.set('teamId', options.teamId)
+    if (options.year != null) query.set('year', String(options.year))
     const text = query.toString()
     return await this.request(
       'GET',
@@ -2560,6 +2749,94 @@ export class TeamStationClient {
       roles
     )
     return answer.roles
+  }
+
+  /** A season's or league's people, in the roster's sections. */
+  async levelPeople(
+    kind: 'league' | 'season',
+    id: string
+  ): Promise<LevelPeople> {
+    return await this.request(
+      'GET',
+      `/${kind}s/${encodeURIComponent(id)}/people`,
+      asLevelPeople
+    )
+  }
+
+  /** One person, as the level they were opened from sees them. */
+  async personProfile(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: number
+  ): Promise<PersonProfile> {
+    return await this.request(
+      'GET',
+      `/${kind}s/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}`,
+      asPersonProfile
+    )
+  }
+
+  /**
+   * Gives somebody one role at this level, or its membership (`member`), at
+   * once: a role brings the membership with it.
+   */
+  async addRole(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: number,
+    role: Role | 'member'
+  ): Promise<HeldAt> {
+    return await this.request(
+      'PUT',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/roles/${role}`,
+      asHeldAt,
+      {}
+    )
+  }
+
+  /**
+   * Takes one role at this level away from somebody, or with `member` takes
+   * them out of the level, every role there with it.
+   */
+  async removeRole(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: number,
+    role: Role | 'member'
+  ): Promise<HeldAt> {
+    return await this.request(
+      'DELETE',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/roles/${role}`,
+      asHeldAt
+    )
+  }
+
+  /**
+   * Leaves a team, season or league: its membership and every role there.
+   * What a level above gives is left where it was given.
+   */
+  async leaveGroup(
+    kind: 'league' | 'season' | 'team',
+    id: string
+  ): Promise<{ removed: boolean }> {
+    return await this.request(
+      'DELETE',
+      `/me/groups/${kind}/${encodeURIComponent(id)}`,
+      asObject({ removed: asBoolean })
+    )
+  }
+
+  /** Steps down from one role of your own at this level. */
+  async stepDown(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    role: Role
+  ): Promise<HeldAt> {
+    return await this.request(
+      'DELETE',
+      `/me/groups/${kind}/${encodeURIComponent(id)}/roles/${role}`,
+      asHeldAt
+    )
   }
 
   /** The roles the signed-in person holds, team by team. */

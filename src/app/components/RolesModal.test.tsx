@@ -62,6 +62,7 @@ function saveButton(): HTMLElement {
 const LABELS = [
   'Team admin',
   'Coach',
+  'Assistant',
   'Scorekeeper',
   'Songkeeper',
   'Videographer'
@@ -77,13 +78,16 @@ describe('the roles of one person on one level', function () {
     root = undefined
   })
 
-  it('shows five switches, each saying what it allows here', async function () {
+  it('shows six switches, each saying what it allows here', async function () {
     await mount()
     for (const label of LABELS)
       expect(toggle(label).checked, label).equals(false)
     const text = document.body.textContent ?? ''
     expect(text).includes('Roles for Sam Keeper')
-    expect(text).includes('Scores the games of Hawks.')
+    expect(text).includes('Same as a coach')
+    expect(text).includes(
+      'Scores the games of Hawks, sets walk-up songs and DJs them.'
+    )
     expect(text).includes('Sets walk-up songs and DJs the games of Hawks.')
     expect(text).includes('Films and streams the games of Hawks.')
     expect(text).includes('full names')
@@ -99,7 +103,7 @@ describe('the roles of one person on one level', function () {
     expect(
       (document.body.textContent ?? '').split('Admins can do all of this')
         .length - 1
-    ).equals(4)
+    ).equals(5)
   })
 
   it('shows a flag set above on and fixed, naming where it comes from', async function () {
@@ -108,6 +112,39 @@ describe('the roles of one person on one level', function () {
     expect(toggle('Scorekeeper').disabled).equals(true)
     expect(document.body.textContent).includes('From Spring league')
     expect(toggle('Coach').disabled).equals(false)
+    // A scorekeeper from above keeps the songs here too.
+    expect(toggle('Songkeeper').checked).equals(true)
+    expect(toggle('Songkeeper').disabled).equals(true)
+    expect(document.body.textContent).includes('Scorekeepers can do this')
+  })
+
+  it('shows Songkeeper on and fixed while Scorekeeper is on, and saves only Scorekeeper', async function () {
+    const saved = await mount()
+    await flip('Scorekeeper')
+    expect(toggle('Songkeeper').checked).equals(true)
+    expect(toggle('Songkeeper').disabled).equals(true)
+    expect(document.body.textContent).includes('Scorekeepers can do this')
+    await flip('Scorekeeper')
+    expect(toggle('Songkeeper').checked).equals(false)
+    expect(toggle('Songkeeper').disabled).equals(false)
+    expect(document.body.textContent).not.includes('Scorekeepers can do this')
+    await flip('Scorekeeper')
+    await act(async () => {
+      saveButton().click()
+    })
+    expect(saved).deep.equals([{ admin: false, flags: ['scorekeeper'] }])
+  })
+
+  it('keeps a Songkeeper set here when Scorekeeper goes off', async function () {
+    const saved = await mount({ held: ['scorekeeper', 'songkeeper'] })
+    expect(toggle('Songkeeper').disabled).equals(true)
+    await flip('Scorekeeper')
+    expect(toggle('Songkeeper').checked).equals(true)
+    expect(toggle('Songkeeper').disabled).equals(false)
+    await act(async () => {
+      saveButton().click()
+    })
+    expect(saved).deep.equals([{ admin: false, flags: ['songkeeper'] }])
   })
 
   it('shows an admin from above on and fixed, with every flag', async function () {
@@ -120,15 +157,16 @@ describe('the roles of one person on one level', function () {
   it('saves only the switches set on this level', async function () {
     const saved = await mount({
       held: ['songkeeper'],
-      inherited: { scorekeeper: 'Spring league' }
+      inherited: { videographer: 'Spring league' }
     })
     expect(saveButton().getAttribute('aria-disabled')).equals('true')
+    await flip('Assistant')
     await flip('Coach')
     await flip('Songkeeper')
     await act(async () => {
       saveButton().click()
     })
-    expect(saved).deep.equals([{ admin: false, flags: ['coach'] }])
+    expect(saved).deep.equals([{ admin: false, flags: ['coach', 'assistant'] }])
   })
 
   it('saves admin with the flags held under it', async function () {

@@ -153,12 +153,13 @@ const PLAYERS = [
   ['Logan W.', '22', ['P']]
 ] as const
 const COACHES = ['Dave R.', 'Rob T.', 'Brian S.']
-const FOLLOWERS = ['Alex B.', 'Ichiro S.', 'Cal R.']
+// Members of the team with no role who do not play.
+const SPECTATORS = ['Alex B.', 'Ichiro S.', 'Cal R.']
 
 interface Person {
   shortName: string
   jersey: string | null
-  group: 'coach' | 'player' | 'follower'
+  section: 'staff' | 'player' | 'spectator'
   positions: string[]
 }
 
@@ -166,27 +167,29 @@ const ROSTER = [
   ...COACHES.map((shortName): Person => ({
     shortName,
     jersey: null,
-    group: 'coach',
+    section: 'staff',
     positions: []
   })),
   ...PLAYERS.map(([shortName, jersey, positions]): Person => ({
     shortName,
     jersey,
-    group: 'player',
+    section: 'player',
     positions: [...positions]
   })),
-  ...FOLLOWERS.map((shortName): Person => ({
+  ...SPECTATORS.map((shortName): Person => ({
     shortName,
     jersey: null,
-    group: 'follower',
+    section: 'spectator',
     positions: []
   }))
 ].map((person, index) => ({
   ...person,
   userId: 100 + index,
   avatarUrl: null,
-  isPlayer: person.group === 'player',
-  role: person.group,
+  isPlayer: person.section === 'player',
+  role: 'member',
+  staffRoles: person.section === 'staff' ? ['coach'] : [],
+  inheritedFrom: null,
   bats: null,
   throws: null,
   walkUpSong: null
@@ -320,6 +323,34 @@ export function teamScheduleAnswer(
     case '/invites':
       // The manage gear shows for somebody who may invite.
       return { status: 200, body: { canInvite: true, invites: [] } }
+    case `/teams/${TEAM_ID}`:
+      // The team's page reads the team first; a member who manages it, so
+      // the gear shows.
+      return {
+        status: 200,
+        body: {
+          group: {
+            kind: 'team',
+            id: TEAM_ID,
+            name: TEAM_NAME,
+            imageUrl: null,
+            locality: null
+          },
+          parents: [],
+          children: [],
+          participatingSeasons: [],
+          competingTeams: [],
+          staff: [],
+          games: [],
+          canViewPrivate: true,
+          nonMemberView: false,
+          canManage: true,
+          canManagePeople: true,
+          canSeePeople: true
+        }
+      }
+    case '/me/notifications/summary':
+      return { status: 200, body: { hasPending: false } }
     default:
       onUnknown(method, route)
       return { status: 200, body: [] }
