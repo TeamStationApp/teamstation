@@ -125,6 +125,10 @@ public struct TeamStationDeviceStream: Sendable, Codable, Equatable {
   public let url: String?
   public let deviceId: String?
   public let deviceModel: String?
+  /// When the ingest starts taking this stream, and when it stops (nil: when the game's window
+  /// does).
+  public let opensAt: Date?
+  public let closesAt: Date?
 
   public init(
     id: String,
@@ -134,7 +138,9 @@ public struct TeamStationDeviceStream: Sendable, Codable, Equatable {
     lastError: String? = nil,
     url: String? = nil,
     deviceId: String? = nil,
-    deviceModel: String? = nil
+    deviceModel: String? = nil,
+    opensAt: Date? = nil,
+    closesAt: Date? = nil
   ) {
     self.id = id
     self.gameId = gameId
@@ -144,6 +150,8 @@ public struct TeamStationDeviceStream: Sendable, Codable, Equatable {
     self.url = url
     self.deviceId = deviceId
     self.deviceModel = deviceModel
+    self.opensAt = opensAt
+    self.closesAt = closesAt
   }
 }
 

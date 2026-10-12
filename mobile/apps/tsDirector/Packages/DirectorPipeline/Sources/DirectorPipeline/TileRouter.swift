@@ -808,6 +808,8 @@ public final class TileRouter: @unchecked Sendable {
       )
     }
     if let frame = tick.streamFrame, programStreamer.running {
+      // A new picture's capture time is when the frame was: its wall-clock SEI carries it, and the
+      // first one sent places the live video on TeamStation (`liveTimelineStart`).
       programStreamer.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)),

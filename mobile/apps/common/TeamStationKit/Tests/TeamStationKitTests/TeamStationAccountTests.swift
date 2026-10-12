@@ -114,7 +114,8 @@ private let installId = "00000000-0000-4000-8000-000000000001"
 @MainActor
 private func makeAccount(
   server: String = "https://teamstation.example",
-  keychain: KeychainStore = .inMemory()
+  keychain: KeychainStore = .inMemory(),
+  clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 }
 ) -> TeamStationAccount {
   StreamServer.reset()
   keychain.setToken("tok")
@@ -126,7 +127,8 @@ private func makeAccount(
     installId: installId,
     deviceModel: "iPad Pro",
     keychain: keychain,
-    session: URLSession(configuration: configuration)
+    session: URLSession(configuration: configuration),
+    clock: clock
   )
 }
 
@@ -325,6 +327,84 @@ struct ChooseTests {
     StreamServer.refuse = true
     #expect(await account.renameStream(label: "Right Field") == false)
     #expect(account.lastError == "This game is not yours to stream")
+  }
+
+  @Test func reportsTheHeldStreamsLiveStartAsItIsGiven() async throws {
+    // The caller has put it on the server's clock already; the account asks nothing more.
+    let account = makeAccount()
+    let started = Date(timeIntervalSince1970: 1_790_000_000.5)
+    #expect(await account.reportLiveStart(startedAt: started) == false)
+    #expect(await account.choose(event: event("g1")))
+    #expect(await account.reportLiveStart(startedAt: started))
+    #expect(StreamServer.asked.last == "PATCH /api/v1/games/g1/live-streams/lst_1")
+    #expect(StreamServer.bodies.last == [ "liveStartedAt": "2026-09-21T14:13:20.500Z" ])
+    StreamServer.refuse = true
+    #expect(await account.reportLiveStart(startedAt: started) == false)
+    #expect(account.lastError == nil)
+  }
+
+  @Test func saysWhyFromTheRowsStateAndWindowBeforeTheIngestsWord() {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    func row(
+      state: String? = "idle",
+      opensAt: Date? = nil,
+      closesAt: Date? = nil,
+      lastError: String? = nil
+    ) -> TeamStationDeviceStream {
+      TeamStationDeviceStream(
+        id: "lst_9", gameId: "g1", state: state, lastError: lastError,
+        deviceId: installId, opensAt: opensAt, closesAt: closesAt
+      )
+    }
+    let ended = TeamStationError.streamEnded.localizedDescription
+    #expect(TeamStationAccount.refusal(of: row(state: "ended", lastError: "x"), now: now) == ended)
+    #expect(TeamStationAccount.refusal(of: row(state: "revoked"), now: now) == ended)
+    let early = TeamStationAccount.refusal(of: row(opensAt: now.addingTimeInterval(600), lastError: "x"), now: now)
+    #expect(early?.hasPrefix("This camera can go live from ") == true)
+    let late = TeamStationAccount.refusal(of: row(opensAt: now.addingTimeInterval(-600), closesAt: now, lastError: "x"), now: now)
+    #expect(late?.hasPrefix("This camera's streaming window closed at ") == true)
+    // Inside its window, the ingest's own sentence; nothing to say, nil.
+    let open = row(opensAt: now.addingTimeInterval(-600), closesAt: now.addingTimeInterval(600), lastError: "Disk full")
+    #expect(TeamStationAccount.refusal(of: open, now: now) == "Disk full")
+    #expect(TeamStationAccount.refusal(of: row(lastError: ""), now: now) == nil)
+    #expect(TeamStationAccount.refusal(of: row(), now: now) == nil)
+  }
+
+  @Test func aPhoneSaysItRecordsLocallyWhenItAsksForItsStream() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    _ = try await client.requestLiveStream(
+      gameId: "g1", label: "Home Plate", deviceId: installId, deviceModel: "iPhone 13 Pro",
+      heldStreamId: "lst_1", recordsLocally: true
+    )
+    #expect(StreamServer.bodies.last?["recordsLocally"] == "1")
+    _ = try await client.requestLiveStream(gameId: "g1", label: "Home Plate", deviceId: installId, deviceModel: "iPad Pro")
+    #expect(StreamServer.bodies.last?["recordsLocally"] == nil)
+  }
+
+  @Test func reportsWhenAStreamsFirstPictureWasCapturedWithAPatch() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    let answer = try await client.reportLiveStart(
+      gameId: "g1",
+      streamId: "lst_1",
+      startedAt: Date(timeIntervalSince1970: 1_790_000_000.375)
+    )
+    #expect(answer.id == "lst_1")
+    #expect(StreamServer.asked == [ "PATCH /api/v1/games/g1/live-streams/lst_1" ])
+    #expect(StreamServer.bodies == [ [ "liveStartedAt": "2026-09-21T14:13:20.375Z" ] ])
   }
 
   @Test func forgetsTheChosenGameEverywhere() async {
