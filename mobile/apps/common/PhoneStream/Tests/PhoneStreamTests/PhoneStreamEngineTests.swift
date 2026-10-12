@@ -145,6 +145,54 @@ extension PhoneStreamTests {
     }
 
     @Test("""
+      Turned between the two landscapes mid-recording, a capture that stops on the rotation's \
+      runtime error is started again each time and its pictures keep reaching the programme, while \
+      an interruption and a closed engine are left alone
+      """)
+    func rotationMidCaptureKeepsPicturesFlowing() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      let rig = EngineRig(root: try scratchDirectory())
+      let camera = RotationFailingCaptureDevice()
+      let engine = try rig.engine(source: { PhoneCameraSource(input: .camera(camera)) })
+      try engine.open(angleName: Self.angle)
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                angleName: Self.angle, request: rig.request)
+      #expect(await waitUntil { engine.status.phase == "live" && camera.delivered > 30 })
+
+      for turn in 1 ... 3 {
+        camera.rotate()
+        let stopped = camera.delivered
+        // Started again within the restart's short wait, and a second of pictures follows.
+        #expect(await waitUntil(3) { camera.starts == turn + 1 })
+        #expect(await waitUntil(3) { camera.delivered >= stopped + 25 }, "turn \(turn): \(camera.delivered - stopped) pictures")
+        #expect(engine.captureRestarts == turn)
+      }
+      // The programme went on taking fresh pictures, and the stream and the recording ran throughout.
+      #expect(engine.status.phase == "live")
+      #expect(engine.isRecording)
+      let frames = engine.encoder.frameCount
+      try await Task.sleep(for: .seconds(1))
+      #expect(engine.encoder.frameCount > frames)
+
+      // An interruption is AVFoundation's to end: nothing starts the camera over it.
+      camera.interrupt()
+      try await Task.sleep(for: .seconds(1))
+      #expect(camera.starts == 4)
+      #expect(engine.captureRestarts == 3)
+
+      // Closed while a restart waits: nothing starts the camera of a closed engine.
+      camera.start()
+      camera.rotate()
+      await engine.close()
+      try await Task.sleep(for: .seconds(1))
+      #expect(camera.starts == 5)
+      #expect(engine.captureRestarts == 3)
+      sink.drop()
+    }
+
+    @Test("""
       A 410 on the redial stops the stream at idle with streamEnded and no more redials, while the \
       recording carries on
       """)

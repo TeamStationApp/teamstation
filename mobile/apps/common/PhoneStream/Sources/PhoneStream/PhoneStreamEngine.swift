@@ -94,6 +94,10 @@ public final class PhoneStreamEngine {
   public private(set) var audioEnabled = true
   private var source: PhoneCameraSource?
   private var cameraState = CameraSession.State()
+  /// A restart of a capture that stopped on a runtime error, waiting to run.
+  private var captureRestart: Task<Void, Never>?
+  /// How many times the capture has been started again after a runtime error.
+  public private(set) var captureRestarts = 0
   private var captureSettings = CameramanCore.StreamSettings()
   private var pinchStartDeviceZoom: Double?
   private var stream: StreamTake?
@@ -207,7 +211,7 @@ public final class PhoneStreamEngine {
     )
     let source = environment.makeSource()
     if let device = source.device {
-      device.onStateChange = { [weak self] state in self?.cameraState = state }
+      device.onStateChange = { [weak self] state in self?.cameraChanged(state) }
       device.configure(position: .back, settings: captureSettings)
     }
     programme.start()
@@ -235,11 +239,47 @@ public final class PhoneStreamEngine {
     if stream != nil { await stopRecording() }
     statusLoop?.cancel()
     statusLoop = nil
+    captureRestart?.cancel()
+    captureRestart = nil
     source?.stop()
     source = nil
     programme.stop()
     isOpen = false
     publishStatus()
+  }
+
+  // MARK: - A capture that stops on its own
+
+  /// How long a capture stopped by a runtime error waits before it is started again.
+  static let captureRestartDelaySeconds = 0.3
+
+  /// Whether the camera stopped on a runtime error, rather than because it was closed or the
+  /// system took it away (an interruption, which AVFoundation ends by itself).
+  static func stoppedOnError(_ state: CameraSession.State) -> Bool {
+    !state.isRunning && !state.isInterrupted && state.failure?.hasPrefix("runtimeError") == true
+  }
+
+  /// Each change of the camera's state. A capture that stops on a runtime error is started again
+  /// while the engine is open, so the preview and the programme carry on.
+  ///
+  /// Changing a connection's rotation rebuilds the capture graph, microphone included. When the
+  /// app's audio session has meanwhile been set to a category without input, which the host's
+  /// video player does whenever the category changes, that rebuild fails with a runtime error and
+  /// `AVCaptureSession` stops: the preview and the stream then hold their last picture for good.
+  /// Starting it again is what AVFoundation asks of a runtime error, and puts the input back.
+  private func cameraChanged(_ state: CameraSession.State) {
+    cameraState = state
+    guard isOpen, captureRestart == nil, Self.stoppedOnError(state),
+      let device = source?.device
+    else { return }
+    captureRestart = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(Self.captureRestartDelaySeconds))
+      guard !Task.isCancelled, let self else { return }
+      self.captureRestart = nil
+      guard self.isOpen, self.source?.device === device, Self.stoppedOnError(self.cameraState) else { return }
+      self.captureRestarts += 1
+      device.start()
+    }
   }
 
   public func setAngleName(_ name: String) {

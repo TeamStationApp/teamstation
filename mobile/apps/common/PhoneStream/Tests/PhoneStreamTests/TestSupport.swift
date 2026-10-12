@@ -200,6 +200,92 @@ final class ReplayCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   }
 }
 
+/// The camera as an `AVCaptureSession` behaves when a rotation's rebuild fails: the pictures stop
+/// and the state says it stopped on a runtime error, until `start` is called again. Pictures come
+/// from a `ReplayCaptureDevice` and are counted.
+final class RotationFailingCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
+  private let replay = ReplayCaptureDevice()
+  private let lock = NSLock()
+  private var pictures = 0
+  private var state = CameraSession.State()
+  var onAudioFrame: (@Sendable (SampleBuffer) -> Void)? {
+    get { replay.onAudioFrame }
+    set { replay.onAudioFrame = newValue }
+  }
+  var onVideoFrame: (@Sendable (SampleBuffer) -> Void)? {
+    didSet {
+      guard let deliver = onVideoFrame else {
+        replay.onVideoFrame = nil
+        return
+      }
+      let counting: @Sendable (SampleBuffer) -> Void = { [weak self] sample in
+        self?.counted()
+        deliver(sample)
+      }
+      replay.onVideoFrame = counting
+    }
+  }
+  var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)?
+  var previewSession: AVCaptureSession? { nil }
+  private(set) var starts = 0
+
+  /// Pictures delivered so far.
+  var delivered: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return pictures
+  }
+
+  private func counted() {
+    lock.lock()
+    pictures += 1
+    lock.unlock()
+  }
+
+  func configure(position: CameraPosition, settings: CameramanCore.StreamSettings) {}
+  func flip() {}
+  func setDeviceZoom(_ value: Double) {}
+  func setDisplayedZoom(_ value: Double) {}
+
+  /// Called on the main actor, as the engine calls it.
+  func start() {
+    starts += 1
+    replay.start()
+    state.isRunning = true
+    publish()
+  }
+
+  func stop() {
+    replay.stop()
+    state.isRunning = false
+    publish()
+  }
+
+  private func publish() {
+    let snapshot = state
+    MainActor.assumeIsolated { onStateChange?(snapshot) }
+  }
+
+  /// The phone turns to the other landscape: the capture rotation flips, and the rebuild fails.
+  @MainActor
+  func rotate() {
+    replay.stop()
+    state.captureRotationAngle = state.captureRotationAngle == 0 ? 180 : 0
+    state.isRunning = false
+    state.failure = "runtimeError AVFoundationErrorDomain -11800: The operation could not be completed"
+    publish()
+  }
+
+  /// The system takes the camera away, as going to the background does; AVFoundation gives it back.
+  @MainActor
+  func interrupt() {
+    replay.stop()
+    state.isRunning = false
+    state.isInterrupted = true
+    publish()
+  }
+}
+
 // MARK: - The battery
 
 @MainActor
