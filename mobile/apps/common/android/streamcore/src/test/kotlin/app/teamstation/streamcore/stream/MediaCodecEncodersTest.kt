@@ -110,4 +110,36 @@ class MediaCodecEncodersTest {
         encoder.close()
         encoder.close()
     }
+
+    @Test
+    fun aBusyCodecIsAskedAgainSoNoFrameIsLeftBehind() {
+        ShadowMediaCodec.addEncoder(MediaFormat.MIMETYPE_AUDIO_AAC, copy)
+        val encoder = MediaCodecAacEncoder()
+        // Every other request for an input buffer times out, as a codec that is still encoding does.
+        var asks = 0
+        encoder.dequeueInput = { codec, timeout -> if (asks++ % 2 == 0) -1 else codec.dequeueInputBuffer(timeout) }
+        val packets = encoder.encode(ShortArray(1024 * 2 * 8))
+        assertEquals(8, packets.size)
+        assertTrue(asks >= 16)
+        // SilentAac's eight frames at once, on the same busy codec: a packet, and no exception.
+        assertTrue(app.teamstation.streamcore.record.SilentAac.packet(encoder) != null)
+    }
+
+    @Test
+    fun finishQueuesWhatABusyCodecHeldBackAndPadsOnlyThePartialFrame() {
+        ShadowMediaCodec.addEncoder(MediaFormat.MIMETYPE_AUDIO_AAC, copy)
+        // A codec with no buffer free gets no second chance within the call.
+        val encoder = MediaCodecAacEncoder(inputWaitMicros = 0)
+        var busy = true
+        encoder.dequeueInput = { codec, timeout -> if (busy) -1 else codec.dequeueInputBuffer(timeout) }
+        // Eight frames and a part of one are all held back.
+        assertTrue(encoder.encode(ShortArray(1024 * 2 * 8 + 100) { 3 }).isEmpty())
+        busy = false
+        // The eight whole frames, then the partial one padded to a frame: nine packets, no exception.
+        val finished = encoder.finish()
+        assertEquals(9, finished.size)
+        assertTrue(finished.all { it.size == 4096 })
+        assertTrue(encoder.finish().isEmpty())
+        encoder.close()
+    }
 }
