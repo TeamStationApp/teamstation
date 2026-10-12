@@ -19,7 +19,14 @@ import { makeDatabase } from '../db/database'
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import type { SpaceSettings } from '../media/spacesHls'
 import type { LiveControllerOptions } from './controller'
-import { finishStream, liveVideoDir, settleLiveWork } from './controller'
+import {
+  finishStream,
+  liveVideoDir,
+  REPLACED_BY_UPLOAD,
+  settleLiveWork,
+  sweepLocalCopies,
+  sync
+} from './controller'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
 /**
@@ -384,6 +391,112 @@ describe('the end of a live stream', function () {
       .executeTakeFirst()
     expect(stored?.storage).equals('spaces')
     expect(stored?.message).matches(/^sound is stamped/)
+  })
+
+  it('keeps a recording an upload replaced between publishes, and packs nothing up', async function () {
+    if (options == null || db == null) this.skip()
+    await makeStream({
+      id: 'liv_replaced',
+      videoId: 'vid_replaced',
+      published: true
+    })
+    const dir = await recordSomething('vid_replaced')
+    // The phone stopped, without End, and its own recording replaced the
+    // live copy: what the upload's finish does to the stream and its video.
+    const now = new Date()
+    await db
+      .insertInto('videos')
+      .values({
+        id: 'vid_upload',
+        game_id: 'gam_liv_replaced',
+        kind: 'program',
+        title: 'Demo Away at Demo Home',
+        storage: 'spaces',
+        status: 'ready',
+        hidden: false,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    await db
+      .updateTable('videos')
+      .set({ hidden: true, replaced_by: 'vid_upload' })
+      .where('id', '=', 'vid_replaced')
+      .execute()
+    await db
+      .updateTable('live_streams')
+      .set({ state: 'revoked', local_recording: 'uploaded' })
+      .where('id', '=', 'liv_replaced')
+      .execute()
+    const uploadsBefore = held.size
+
+    await sync(options)
+    await settleLiveWork()
+
+    const stream = await db
+      .selectFrom('live_streams')
+      .select(['state', 'ended_at as endedAt', 'last_error as lastError'])
+      .where('id', '=', 'liv_replaced')
+      .executeTakeFirstOrThrow()
+    expect(stream.state).equals('revoked')
+    expect(stream.endedAt).not.equals(null)
+    expect(stream.lastError, 'nobody took its permission away').equals(
+      REPLACED_BY_UPLOAD
+    )
+    const video = await db
+      .selectFrom('videos')
+      .select(['status', 'storage', 'hidden'])
+      .where('id', '=', 'vid_replaced')
+      .executeTakeFirstOrThrow()
+    // Whole and watchable here, should the replacement be undone, and never
+    // remuxed or sent to the Space.
+    expect(video).deep.equals({
+      status: 'ready',
+      storage: 'local',
+      hidden: true
+    })
+    const closed = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+    expect(closed.trimEnd().endsWith('#EXT-X-ENDLIST')).equals(true)
+    await stat(join(dir, 'video.mp4')).then(
+      () => expect.fail('nothing is packed up'),
+      () => undefined
+    )
+    expect(held.size).equals(uploadsBefore)
+  })
+
+  it('packs up a replaced copy and sends it to the Space once its upload is deleted', async function () {
+    if (options == null || db == null) this.skip()
+    // The copy the case above kept: finished while replaced, so still in its
+    // segments. Deleting the upload that replaced it does what the delete
+    // route does — the foreign key clears the pointer, and the hiding and the
+    // purge date are undone — and it is an ordinary finished live copy again.
+    await db
+      .updateTable('videos')
+      .set({ hidden: false, purge_after: null })
+      .where('replaced_by', '=', 'vid_upload')
+      .execute()
+    await db.deleteFrom('videos').where('id', '=', 'vid_upload').execute()
+    // Past the wait before a retry.
+    await db
+      .updateTable('videos')
+      .set({ updated_at: new Date(Date.now() - 3_600_000) })
+      .where('id', '=', 'vid_replaced')
+      .execute()
+
+    await sweepLocalCopies(options)
+    await settleLiveWork()
+
+    const dir = liveVideoDir(mediaRoot, 'vid_replaced')
+    expect((await stat(join(dir, 'video.mp4'))).size).greaterThan(0)
+    const row = await db
+      .selectFrom('videos')
+      .select(['storage', 'replaced_by as replacedBy'])
+      .where('id', '=', 'vid_replaced')
+      .executeTakeFirstOrThrow()
+    expect(row).deep.equals({ storage: 'spaces', replacedBy: null })
+    expect(
+      [...held.keys()].some(key => key.endsWith('vid_replaced/video.mp4'))
+    ).equals(true)
   })
 
   it('says nothing about late sound kept at its stream time', async function () {
