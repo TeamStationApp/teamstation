@@ -2,7 +2,7 @@ package app.teamstation.cameraman
 
 import app.teamstation.cameraman.core.BroadcastPolicy
 import app.teamstation.cameraman.core.BroadcastPreference
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
