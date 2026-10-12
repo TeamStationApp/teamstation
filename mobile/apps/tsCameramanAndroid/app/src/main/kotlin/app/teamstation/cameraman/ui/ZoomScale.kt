@@ -36,7 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.teamstation.cameraman.core.ZoomMapping
+import app.teamstation.streamcore.core.ZoomMapping
 import app.teamstation.cameraman.ui.theme.CameramanTokens
 import kotlin.math.abs
 

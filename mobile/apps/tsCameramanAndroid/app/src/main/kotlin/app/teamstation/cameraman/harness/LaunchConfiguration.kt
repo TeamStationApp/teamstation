@@ -1,8 +1,8 @@
 package app.teamstation.cameraman.harness
 
 import android.content.Intent
-import app.teamstation.cameraman.core.StreamCodec
-import app.teamstation.cameraman.core.StreamSettings
+import app.teamstation.streamcore.core.StreamCodec
+import app.teamstation.streamcore.core.StreamSettings
 
 /**
  * Launch arguments and environment overrides, so a test run can put the app in a known state
