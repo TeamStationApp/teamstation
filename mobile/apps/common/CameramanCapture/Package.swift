@@ -8,7 +8,7 @@ let package = Package(
     .library(name: "CameramanCapture", targets: [ "CameramanCapture" ])
   ],
   dependencies: [
-    .package(path: "../../common/CameramanCore")
+    .package(path: "../CameramanCore")
   ],
   targets: [
     .target(
