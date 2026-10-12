@@ -38,7 +38,9 @@ class AdaptiveBitrateController(
     ceiling: Int,
     /** Half the ceiling when null, and kept between zero and the ceiling either way. */
     floor: Int? = null,
-    val tuning: Tuning = Tuning()
+    val tuning: Tuning = Tuning(),
+    /** The rate the encoder opens at, kept between the floor and the ceiling; null starts at the ceiling. */
+    start: Int? = null
 ) {
     enum class Decision(val rawValue: String) {
         HOLD("hold"),
@@ -146,10 +148,10 @@ class AdaptiveBitrateController(
         private set
 
     /** Unrounded, so a slow climb is not lost to the quantum. */
-    private var target = ceiling.toDouble()
+    private var target = startWithin(ceiling, this.floor, start).toDouble()
 
     /** What the encoder was last told. */
-    var bitrate: Int = ceiling
+    var bitrate: Int = startWithin(ceiling, this.floor, start)
         private set
 
     private val deliveries = ArrayDeque<Delivery>()
@@ -171,19 +173,20 @@ class AdaptiveBitrateController(
      */
     private var lastCongestedRate: Double? = null
 
-    var status = Status(ceiling = ceiling, floor = this.floor, bitrate = ceiling)
+    var status = Status(ceiling = ceiling, floor = this.floor, bitrate = bitrate)
         private set
 
     /**
-     * Starts again at [ceiling], forgetting everything measured. For a new operator rate or floor,
-     * and for an encoder that has been rebuilt at the ceiling. [floor] is half the new ceiling when
-     * null. The counts carry over: they describe the session.
+     * Starts again at [start] (the ceiling when null), forgetting everything measured. For a new
+     * operator rate or floor, and for an encoder that has been rebuilt at that rate. [floor] is half
+     * the new ceiling when null. The counts carry over: they describe the session.
      */
-    fun reset(ceiling: Int, floor: Int? = null) {
+    fun reset(ceiling: Int, floor: Int? = null, start: Int? = null) {
         this.ceiling = ceiling
         this.floor = floorWithin(ceiling, floor)
-        target = ceiling.toDouble()
-        bitrate = ceiling
+        val first = startWithin(ceiling, this.floor, start)
+        target = first.toDouble()
+        bitrate = first
         deliveries.clear()
         transportDelays.clear()
         congestedTicks = 0
@@ -197,7 +200,7 @@ class AdaptiveBitrateController(
         status = Status(
             ceiling = ceiling,
             floor = this.floor,
-            bitrate = ceiling,
+            bitrate = first,
             decreases = status.decreases,
             increases = status.increases
         )
@@ -439,5 +442,7 @@ class AdaptiveBitrateController(
 
     private companion object {
         fun floorWithin(ceiling: Int, floor: Int?): Int = min(max(0, floor ?: (ceiling / 2)), ceiling)
+
+        fun startWithin(ceiling: Int, floor: Int, start: Int?): Int = min(max(floor, start ?: ceiling), ceiling)
     }
 }

@@ -143,6 +143,27 @@ class ProgramEncoderTest {
     }
 
     @Test
+    fun repeatsOnTheProgrammeGridLeaveTheSoundOriginToFreshPictures() {
+        val encoder = encoder()
+        encoder.start(wall)
+        // Two seconds of a 30 fps grid, each fresh picture captured 0.15 s before its tick, and a
+        // repeat after every fresh picture handed over 20 ms late, which would imply a later origin.
+        val start = wall
+        for (frame in 0 until 60) {
+            val fresh = frame % 2 == 0
+            if (!fresh) {
+                host += 0.02
+                wall += 0.02
+            }
+            encoder.append(frame.toDouble() / 30, captureWall = if (fresh) wall - 0.15 else null, onClockGrid = true)
+            host += 1.0 / 30 - if (fresh) 0.0 else 0.02
+            wall += 1.0 / 30 - if (fresh) 0.0 else 0.02
+        }
+        assertEquals(start - 0.15, encoder.soundOriginForTesting!!, 1e-6)
+        encoder.finish()
+    }
+
+    @Test
     fun aSecondPictureInOneSlotIsLeftOutAndAFastSourceFollowsRealTime() {
         val encoder = encoder()
         encoder.start(wall)
