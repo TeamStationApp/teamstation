@@ -11,6 +11,8 @@ without reaching into another app's `Packages`.
 | `DirectorSources` | `FrameSource`, camera identity, advertisements, synthetic and file sources |
 | `DirectorRTSP` | RTSP client, RTP depacketizers, VideoToolbox decode, AWX browse, subnet probe |
 | `CameramanCore` | Cameraman's pure types: zoom mapping, lenses, stream settings, format catalogue, thermal level, and the `CameraControlling` seam |
+| `CameramanCapture` | Cameraman's `AVCaptureSession`: lens discovery and switching, zoom, rotation, capability measurement and the radar session. The TeamStation app captures with the same code |
+| `DirectorRTMP` | TS Director's RTMP client: handshake, chunking, AMF0, FLV tags (Enhanced RTMP `hvc1`), the send ledger. The TeamStation app streams with the same code |
 | `CameramanControlUI` | Cameraman's operating screen, Settings sheet, zoom rail, thermal and battery pills, generic over `CameraControlling` |
 | `LoopbackHTTP` | A small HTTP/1.1 server bound to loopback (`LinkServer`), its request parser and responses, and `JSONEventHub` for newline-delimited event streams. TS Director's link to TS Distributor (`DirectorLink`) is built on it |
 | `CameramanRemote` | `RemoteCameraControl`: `CameraControlling` over RTSP `GET_PARAMETER` / `SET_PARAMETER`, polling at 1 Hz with coalesced writes |
@@ -31,5 +33,5 @@ the way `DirectorCore` did.
   `DirectorRTSP` to round-trip the packetizers
 - **TS Preview** — path-depends for NearStream `/live/substream2` decode
 
-App-only work (Director's program encode, DVR, UI and RTMP; Cameraman's
-capture, encode, server and harness) stays under each app's `Packages`.
+App-only work (Director's program encode, DVR and UI; Cameraman's encode,
+server and harness) stays under each app's `Packages`.

@@ -22,8 +22,9 @@ def use_expo_modules!(options = {})
   generate_or_remove_xcode_env_updates_file!()
 end
 
-# ExpoModulesCore and expo-gl need iOS 16.4; React Native's own floor is 15.1.
-platform :ios, '16.4'
+# The phone's streaming code shares TS Director's and TS Cameraman's Swift packages, which target
+# iOS 18 (ExpoModulesCore and expo-gl need only 16.4; React Native's own floor is 15.1).
+platform :ios, '18.0'
 prepare_react_native_project!
 
 linkage = ENV['USE_FRAMEWORKS']
