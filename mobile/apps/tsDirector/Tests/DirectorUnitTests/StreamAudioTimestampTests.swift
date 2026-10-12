@@ -1,5 +1,6 @@
 import Testing
 
+@testable import DirectorMedia
 @testable import DirectorPipeline
 
 /// Sound is stamped on its own clock, not on a wall clock.
