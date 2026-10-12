@@ -323,6 +323,13 @@ export interface DirectorUploadsTable {
    */
   started_at: Timestamp | null
   /**
+   * The server's clock less the app's when the recording was made, in ms, as
+   * the app measured it. Added to `started_at` when the upload is taken in,
+   * so the video starts on the server's clock. Null from an app that did not
+   * measure it.
+   */
+  server_clock_offset_ms: number | null
+  /**
    * Which part of taking the upload in the server is on — `assembling`,
    * `probing`, `remuxing`, `uploading`, `writing` — while `state` says
    * `assembling`. Null before the finish is asked for and after it is done.
@@ -355,6 +362,12 @@ export interface VideosTable {
     | 'distributor'
     | 'manual'
     | null
+  /**
+   * The measured offset, in ms, that moved `start_at` from the recording
+   * app's clock onto the server's. Null when nothing was measured, and then
+   * `start_at` is only as good as the clock that said it.
+   */
+  start_at_clock_offset_ms: number | null
   sync_offset_sec: Generated<number>
   duration_sec: number | null
   /** How many cameras the recording holds. One unless something says else. */
@@ -780,6 +793,18 @@ export interface ScoreboardLogTable {
   overrides: Json
 }
 
+/** One point of a video's wall-clock timeline. */
+export interface VideoWallAnchorsTable {
+  video_id: string
+  /** Playlist time, as the player's `currentTime`. */
+  media_ms: number
+  /** The server-clock instant of the frame at `media_ms`. */
+  wall: Timestamp
+  source: 'sei' | 'arrival'
+  /** False for a wall clock stamped without a measured server offset. */
+  corrected: Generated<boolean>
+}
+
 export interface Database {
   team_events: TeamEventsTable
   game_rsvps: EventRsvpsTable
@@ -829,6 +854,7 @@ export interface Database {
   user_links: UserLinksTable
   user_emails: UserEmailsTable
   users: UsersTable
+  video_wall_anchors: VideoWallAnchorsTable
   videos: VideosTable
   walk_up_songs: WalkUpSongsTable
   director_uploads: DirectorUploadsTable

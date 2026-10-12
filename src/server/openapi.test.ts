@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { directorRoutes } from './routes/director'
+import { directorUploadRoutes } from './routes/directorUploads'
 import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
@@ -93,6 +94,8 @@ const live: LiveRouteOptions = {
   host: '127.0.0.1'
 }
 
+const uploads = { uploadsDir: '/tmp', ffmpegPath: '/usr/bin/ffmpeg' }
+
 interface RouteLayer {
   route?: { path: string; methods: Record<string, boolean> }
 }
@@ -163,6 +166,7 @@ describe('the API document', function () {
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
+      ...routesOf(directorUploadRoutes(db, uploads)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
@@ -216,6 +220,7 @@ describe('the API document', function () {
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
+      ...routesOf(directorUploadRoutes(db, uploads)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
