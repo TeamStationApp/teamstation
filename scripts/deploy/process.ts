@@ -38,7 +38,8 @@ class CompilerDiagnostics {
 
   private retain(line: string): void {
     line = redact(line)
-    for (const secret of this.secrets) line = line.split(secret).join('[redacted]')
+    for (const secret of this.secrets)
+      line = line.split(secret).join('[redacted]')
     this.tail = (this.tail + line + '\n').slice(-diagnosticLimit)
   }
 
@@ -69,7 +70,6 @@ class CompilerDiagnostics {
     return this.tail.trim()
   }
 }
-
 
 /**
  * What each failed tool wrote, kept off the error itself so that logging or
@@ -135,7 +135,6 @@ export interface Command {
   captureStderr?: boolean
 }
 /** How much of a tool's latest output is kept, unprinted, for its failure. */
-const tailLimit = 64 * 1024
 
 /** How many of a failed tool's last lines the build log shows. */
 const reportedLines = 80
@@ -220,8 +219,17 @@ export class Processes {
         else if (code !== 0) {
           const tail = diagnostics.finish()
           const tool = path.basename(command.file)
-          if (['gradlew', 'xcodebuild', 'cargo', 'node', 'npm'].includes(tool))
-            console.error(`${tool} failed (exit ${code})${tail === '' ? '' : `:\n${tail}`}`)
+          const compiler = [
+            'gradlew',
+            'xcodebuild',
+            'cargo',
+            'node',
+            'npm'
+          ].includes(tool)
+          const safeTool = /^[a-zA-Z0-9._-]+$/.test(tool) ? tool : 'tool'
+          console.error(
+            `${safeTool} failed (exit ${code})${!compiler || tail === '' ? '' : `:\n${tail}`}`
+          )
           reject(
             new DeploymentToolError(
               'Deployment tool failed',

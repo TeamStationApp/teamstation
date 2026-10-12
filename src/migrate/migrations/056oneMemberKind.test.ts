@@ -118,9 +118,13 @@ describe('056 makes one kind of member at every level', function () {
   })
 
   it('rolls down to the earlier shape, every member a spectator again', async () => {
-    expect(await migrateDown(pool, migrations, 1)).deep.equals([
-      '056oneMemberKind'
-    ])
+    expect(
+      await migrateDown(
+        pool,
+        migrations.filter(m => m.name <= '056oneMemberKind'),
+        1
+      )
+    ).deep.equals(['056oneMemberKind'])
     expect(await schemaSnapshot(pool)).deep.equals(before056)
     expect(await roles('season_members')).deep.equals([
       'spectator',

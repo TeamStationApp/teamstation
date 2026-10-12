@@ -75,7 +75,9 @@ const hawks: TeamSummary = {
   logoPath: null,
   logoUrl: null,
   record: null,
-  kind: 'full'
+  kind: 'full',
+  canViewPrivate: false,
+  seasonCategory: 'unscheduled'
 }
 
 const schedule: ScheduleEntry[] = [

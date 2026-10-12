@@ -12,7 +12,7 @@ import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
-import { visibleScopes } from '../access'
+import { canReadFollowedTeam, visibleScopes } from '../access'
 import { mergeTeams } from '../admin/mergeTeams'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
@@ -379,13 +379,18 @@ describe('following a team (U1)', function () {
     it('keeps the followed team out of teamIds', async function () {
       const fan = await visibleScopes(database(), userId('F'), false)
       expect([...fan.teamIds]).deep.equals([])
-      expect([...fan.followedTeamIds]).deep.equals([seed.teams.hawks])
+      expect(
+        await canReadFollowedTeam(database(), userId('F'), seed.teams.hawks)
+      ).equals(true)
       // A follow of one's own team adds nothing to follow.
       const player = await visibleScopes(database(), userId('E'), false)
       expect([...player.teamIds]).deep.equals([seed.teams.eagles])
-      expect([...player.followedTeamIds]).deep.equals([seed.teams.hawks])
-      const coach = await visibleScopes(database(), userId('Hc'), false)
-      expect([...coach.followedTeamIds]).deep.equals([])
+      expect(
+        await canReadFollowedTeam(database(), userId('E'), seed.teams.hawks)
+      ).equals(true)
+      expect(
+        await canReadFollowedTeam(database(), userId('Hc'), seed.teams.hawks)
+      ).equals(false)
     })
 
     it('lists the team in GET /teams as a fan, with no record', async function () {

@@ -64,6 +64,29 @@ describe('mediaOrigins', function () {
     ).deep.equals(['https://app.teamstation.app', 'https://*.mzstatic.com'])
   })
 
+  it('allows the separately configured read-only source origin only when it can serve named keys', function () {
+    const readOnlySource = {
+      ...keys,
+      endpoint: 'https://shared.example-ts.test',
+      region: 'example',
+      bucket: 'shared',
+      keys: ['images/team/example/hash-96.png']
+    }
+    expect(mediaOriginsOfJson({ space: { ...keys, readOnlySource } })).includes(
+      'https://shared.shared.example-ts.test'
+    )
+    expect(
+      mediaOriginsOfJson({
+        space: { readOnlySource: { ...readOnlySource, pathStyle: true } }
+      })
+    ).includes('https://shared.example-ts.test')
+    expect(
+      mediaOriginsOfJson({
+        space: { readOnlySource: { ...readOnlySource, keys: [] } }
+      })
+    ).not.includes('https://shared.shared.example-ts.test')
+  })
+
   it('reads no file when the schema is imported', function () {
     // In a directory with a broken serverConfig.json: loading the schema
     // module (and mediaOrigins) must not touch it.

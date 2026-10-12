@@ -540,6 +540,9 @@ export function SeasonPresentation(
         />
       }
     >
+      {props.chats != null && props.onOpenChat != null && (
+        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
+      )}
       {error !== '' && (
         <View style={styles.section}>
           <Text accessibilityRole="alert" style={styles.error}>

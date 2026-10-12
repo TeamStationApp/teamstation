@@ -11,6 +11,7 @@ import type { MediaContext } from '../media/mediaContext'
 export const STAFF_ROLES = [
   'admin',
   'coach',
+  'assistant',
   'scorekeeper',
   'songkeeper'
 ] as const

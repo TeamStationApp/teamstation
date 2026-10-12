@@ -152,9 +152,18 @@ export const asTeamSummary = asObject({
     'unscheduled'
   ),
   canViewPrivate: asOptional(asBoolean, false),
+  /** Optional compatibility fields sent by older team-list servers. */
+  access: asOptional(asLiteral('member', 'fan')),
+  following: asOptional(asBoolean),
+  onTeam: asOptional(asBoolean),
   kind: asOptional(asEither(asLiteral('full'), asLiteral('external')), 'full')
 })
-export type TeamSummary = ReturnType<typeof asTeamSummary>
+type TeamSummaryFromList = ReturnType<typeof asTeamSummary>
+export type TeamSummary = Omit<
+  TeamSummaryFromList,
+  'access' | 'following' | 'onTeam'
+> &
+  Partial<Pick<TeamSummaryFromList, 'access' | 'following' | 'onTeam'>>
 
 /** A team somebody may follow, from `GET /teams/search` or `/me/follows`. */
 export const asFollowableTeam = asObject({
@@ -3121,7 +3130,11 @@ export class TeamStationClient {
 
   /** The teams this person follows. */
   async myFollows(): Promise<FollowableTeam[]> {
-    return await this.request('GET', '/me/team-follows', asArray(asFollowableTeam))
+    return await this.request(
+      'GET',
+      '/me/team-follows',
+      asArray(asFollowableTeam)
+    )
   }
 
   /** A team's games, as anybody who can read its listing may see them. */

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { asServerConfig } from './serverConfig'
+import { asServerConfig } from './serverConfigSchema'
 
 const readOnlySource = {
   endpoint: 'https://shared.example-ts.test',

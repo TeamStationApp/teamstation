@@ -144,7 +144,11 @@ export function followRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeTeam(scopes, teamId) && !(await canReadFollowedTeam(db, actor.userId, teamId))) throw notFound()
+      if (
+        !canSeeTeam(scopes, teamId) &&
+        !(await canReadFollowedTeam(db, actor.userId, teamId))
+      )
+        throw notFound()
 
       const games = await db
         .selectFrom('games')
@@ -189,7 +193,11 @@ export function followRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeTeam(scopes, teamId) && !(await canReadFollowedTeam(db, actor.userId, teamId))) throw notFound()
+      if (
+        !canSeeTeam(scopes, teamId) &&
+        !(await canReadFollowedTeam(db, actor.userId, teamId))
+      )
+        throw notFound()
       res.json(await teamStaff(db, media.space, teamId))
     })
   )

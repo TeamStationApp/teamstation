@@ -26,9 +26,18 @@ export function mediaOrigins(config: ServerConfig): string[] {
   if (spaceConfigured(space)) {
     const endpoint = new URL(space.endpoint)
     origins.push(
-      space.pathStyle
+      space.pathStyle === true
         ? endpoint.origin
         : `${endpoint.protocol}//${space.bucket}.${endpoint.host}`
+    )
+  }
+  const source = space.readOnlySource
+  if (source != null && source.keys.length > 0 && spaceConfigured(source)) {
+    const endpoint = new URL(source.endpoint)
+    origins.push(
+      source.pathStyle === true
+        ? endpoint.origin
+        : `${endpoint.protocol}//${source.bucket}.${endpoint.host}`
     )
   }
   origins.push('https://*.mzstatic.com')

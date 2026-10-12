@@ -2,7 +2,14 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { makeId } from '../../common/ids'
-import { audienceOf, isUnder13, type ScopeKind, scopeTypeOf } from './audiences'
+import {
+  audienceOf,
+  eligibleSurvivors,
+  isEligible,
+  isUnder13,
+  type ScopeKind,
+  scopeTypeOf
+} from './audiences'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
 import { seasonTitle, titlesOf } from './titles'
 
@@ -77,6 +84,56 @@ describe('chat audiences (U5)', function () {
 
   after(async function () {
     await fixture?.close()
+  })
+
+  it('excludes explicitly disabled accounts without removing their existing membership', async () => {
+    const id = fixture.id('Hk')
+    await fixture.db
+      .updateTable('users')
+      .set({ disabled_at: fixture.now })
+      .where('id', '=', id)
+      .execute()
+    try {
+      expect(await isEligible(fixture.db, id, fixture.now)).equals(false)
+      expect([
+        ...(await eligibleSurvivors(fixture.db, [id], fixture.now))
+      ]).deep.equals([])
+      expect(
+        await audience('teamStaff', fixture.seed.teams.hawks)
+      ).not.includes('Hk')
+    } finally {
+      await fixture.db
+        .updateTable('users')
+        .set({ disabled_at: null })
+        .where('id', '=', id)
+        .execute()
+    }
+    expect(await isEligible(fixture.db, id, fixture.now)).equals(true)
+  })
+
+  it('includes the master assistant role in direct team staff', async () => {
+    const id = fixture.id('Hk')
+    const roleId = makeId('scopeRole')
+    await fixture.db
+      .insertInto('scope_roles')
+      .values({
+        id: roleId,
+        user_id: id,
+        scope_type: 'team',
+        scope_id: fixture.seed.teams.owls,
+        role: 'assistant'
+      })
+      .execute()
+    try {
+      expect(await audience('teamStaff', fixture.seed.teams.owls)).includes(
+        'Hk'
+      )
+    } finally {
+      await fixture.db
+        .deleteFrom('scope_roles')
+        .where('id', '=', roleId)
+        .execute()
+    }
   })
 
   async function audience(kind: ScopeKind, scopeId: string): Promise<string[]> {
