@@ -4,6 +4,7 @@
   "src/app/scoring/**/*.tsx",
   "src/app/App.tsx",
   "src/app/screens/GameScreen.tsx",
+  "src/app/screens/NotificationsScreen.tsx",
   "src/app/navigation/routes.ts",
   "src/app/navigation/useAddressBar.ts",
   "src/app/components/AppNav.tsx",
