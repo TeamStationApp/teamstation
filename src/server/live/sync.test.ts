@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,7 +15,12 @@ import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { LiveControllerOptions } from './controller'
-import { resolveKey, sync } from './controller'
+import {
+  handleLiveEventForTest,
+  liveVideoDir,
+  resolveKey,
+  sync
+} from './controller'
 import { sealSecret } from './secrets'
 import { configureIngest, liveKeys, resetForTest } from './splitter'
 
@@ -34,6 +39,7 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const SECRET = 's'.repeat(32)
 const FIRST_KEY = 'ts_firstkeyfirstkeyfirst'
 const SECOND_KEY = 'ts_secondkeysecondkeysec'
+const THIRD_KEY = 'ts_thirdkeythirdkeythirdk'
 
 describe('what the ingest is told', function () {
   this.timeout(60000)
@@ -293,5 +299,117 @@ describe('what the ingest is told', function () {
       .executeTakeFirst()
     expect(row?.state).equals('ended')
     expect(row?.lastError).equals('the stream was ended')
+  })
+
+  it('keeps one video through a reconnect that replaced a quiet publisher', async function () {
+    if (options == null || db == null) this.skip()
+    const now = new Date()
+    await db
+      .insertInto('videos')
+      .values({
+        id: 'vid_2',
+        game_id: 'gam_1',
+        kind: 'live',
+        title: 'Home Plate',
+        storage: 'local',
+        status: 'processing',
+        hidden: true,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    const owner = await db
+      .selectFrom('live_streams')
+      .select('user_id as userId')
+      .where('id', '=', 'liv_1')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('live_streams')
+      .values({
+        id: 'liv_2',
+        game_id: 'gam_1',
+        team_id: 'tem_home',
+        user_id: owner.userId,
+        key_hash: hashToken(THIRD_KEY),
+        key_prefix: THIRD_KEY.slice(0, 8),
+        key_cipher: sealSecret(SECRET, THIRD_KEY),
+        state: 'idle',
+        slot: 2,
+        opens_at: new Date(now.getTime() - 3_600_000),
+        video_id: 'vid_2',
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    const video = async (): Promise<{
+      status: string
+      hidden: boolean
+      startAt: Date | null
+    }> =>
+      await db!
+        .selectFrom('videos')
+        .select(['status', 'hidden', 'start_at as startAt'])
+        .where('id', '=', 'vid_2')
+        .executeTakeFirstOrThrow()
+    const stream = async (): Promise<{
+      state: string
+      videoId: string | null
+    }> =>
+      await db!
+        .selectFrom('live_streams')
+        .select(['state', 'video_id as videoId'])
+        .where('id', '=', 'liv_2')
+        .executeTakeFirstOrThrow()
+
+    await handleLiveEventForTest(
+      { type: 'publishStarted', key: THIRD_KEY, liveStreamId: 'liv_2' },
+      options
+    )
+    const first = await video()
+    expect(first.status).equals('live')
+    expect(first.startAt).not.equals(null)
+    // The writer has been at it: the playlist is on the disk.
+    const dir = liveVideoDir(mediaRoot, 'vid_2')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\n')
+
+    const gameVideos = async (): Promise<string[]> =>
+      (
+        await db!
+          .selectFrom('videos')
+          .select('id')
+          .where('game_id', '=', 'gam_1')
+          .execute()
+      )
+        .map(row => row.id)
+        .sort()
+    const videosBefore = await gameVideos()
+
+    // What the ingest says when a new publish replaces the quiet one: the old
+    // connection's publish ended, and the new one's started.
+    await handleLiveEventForTest(
+      {
+        type: 'publishEnded',
+        key: THIRD_KEY,
+        liveStreamId: 'liv_2',
+        reason: 'The camera reconnected'
+      },
+      options
+    )
+    await handleLiveEventForTest(
+      { type: 'publishStarted', key: THIRD_KEY, liveStreamId: 'liv_2' },
+      options
+    )
+
+    expect(await stream()).deep.equals({
+      state: 'publishing',
+      videoId: 'vid_2'
+    })
+    const after = await video()
+    expect(after.status).equals('live')
+    expect(after.hidden).equals(false)
+    expect(after.startAt?.getTime()).equals(first.startAt?.getTime())
+    // One video per stream: the reconnect made none of its own.
+    expect(await gameVideos()).deep.equals(videosBefore)
   })
 })

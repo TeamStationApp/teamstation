@@ -2,7 +2,7 @@ import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
 
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
-import type { Notification } from '../../common/notifications'
+import { type Notification, RECORDING_UPLOAD } from '../../common/notifications'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
@@ -30,7 +30,7 @@ async function informationFor(
     return null
   const receipt = await db
     .selectFrom('notification_receipts')
-    .select('event_id')
+    .select(['event_id', 'dismissed_at'])
     .where('event_id', '=', event.id)
     .where('user_id', '=', actor.userId)
     .executeTakeFirst()
@@ -38,6 +38,8 @@ async function informationFor(
     title?: string
     description?: string
     scope?: GroupRef
+    gameId?: string
+    liveStreamId?: string
   }
   // A grant offers to leave the level it gave, for as long as they are in it.
   let leave: Notification['leave'] = null
@@ -46,6 +48,10 @@ async function informationFor(
     if (held.member || held.roles.length > 0)
       leave = { ...metadata.scope, name: await groupName(db, metadata.scope) }
   }
+  // A reminder waits on its owner until they dismiss it or the upload lands,
+  // which settles it the same way.
+  const reminder = event.source_type === RECORDING_UPLOAD
+  const waiting = reminder && receipt?.dismissed_at == null
   return {
     id: event.id,
     requestId: event.id,
@@ -54,13 +60,31 @@ async function informationFor(
     description: metadata.description ?? '',
     sentAt: event.created_at.toISOString(),
     expiresAt: event.created_at.toISOString(),
-    status: 'accepted',
-    canAct: false,
+    status: waiting ? 'pending' : 'accepted',
+    canAct: waiting,
     canWithdraw: false,
     canResend: false,
     viewed: receipt != null,
-    leave
+    leave,
+    ...(reminder
+      ? { gameId: metadata.gameId, liveStreamId: metadata.liveStreamId }
+      : {})
   }
+}
+
+/** A reminder still waiting: Pending lists these before anything else. */
+function rankOf(row: Notification): number {
+  return row.type === RECORDING_UPLOAD && row.status === 'pending' ? 0 : 1
+}
+
+/** Pending reminders first, then oldest first, then by id. */
+function compareRows(
+  a: { rank: number; sentAt: string; requestId: string },
+  b: { rank: number; sentAt: string; requestId: string }
+): number {
+  if (a.rank !== b.rank) return a.rank - b.rank
+  if (a.sentAt !== b.sentAt) return a.sentAt < b.sentAt ? -1 : 1
+  return a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0
 }
 
 /**
@@ -380,13 +404,35 @@ export async function inbox(
     if (row != null) projected.push(row)
   }
   // History lists every piece of information; the other tabs read grants,
-  // which are news until opened, and light the bell.
+  // which are news until opened, and undismissed upload reminders, which
+  // wait in Pending. Both light the bell.
   const information = await db
     .selectFrom('notification_events')
     .selectAll()
     .where('source_type', '!=', 'groupRequest')
     .$if(options.history !== true, query =>
-      query.where('source_type', '=', 'grant')
+      query.where(eb =>
+        eb.or([
+          eb('source_type', '=', 'grant'),
+          eb.and([
+            eb('source_type', '=', RECORDING_UPLOAD),
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('notification_receipts')
+                  .select('notification_receipts.event_id')
+                  .whereRef(
+                    'notification_receipts.event_id',
+                    '=',
+                    'notification_events.id'
+                  )
+                  .where('notification_receipts.user_id', '=', fresh.userId)
+                  .where('notification_receipts.dismissed_at', 'is not', null)
+              )
+            )
+          ])
+        ])
+      )
     )
     .where(eb =>
       eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
@@ -397,15 +443,10 @@ export async function inbox(
     if (row != null) projected.push(row)
   }
   projected.sort((a, b) =>
-    a.sentAt === b.sentAt
-      ? a.requestId < b.requestId
-        ? -1
-        : a.requestId > b.requestId
-          ? 1
-          : 0
-      : a.sentAt < b.sentAt
-        ? -1
-        : 1
+    compareRows(
+      { rank: rankOf(a), sentAt: a.sentAt, requestId: a.requestId },
+      { rank: rankOf(b), sentAt: b.sentAt, requestId: b.requestId }
+    )
   )
   const hasPending = projected.some(isNews)
   let visible = projected.filter(row =>
@@ -416,11 +457,26 @@ export async function inbox(
         : isNews(row)
   )
   if (options.cursor != null) {
-    const [time, id] = options.cursor.split('|')
-    if (!Number.isFinite(Date.parse(time)) || id == null)
+    // The last row of the page before, rank and all, so a page that ended
+    // among the reminders carries on there even when that reminder has been
+    // dismissed since. A cursor without a rank is from before reminders were
+    // listed first, when every row was of the second rank.
+    const parts = options.cursor.split('|')
+    const [rankText, time, id] = parts.length === 2 ? ['1', ...parts] : parts
+    if (
+      (rankText !== '0' && rankText !== '1') ||
+      !Number.isFinite(Date.parse(time)) ||
+      id == null ||
+      parts.length > 3
+    )
       throw forbidden('Invalid notification cursor')
+    const at = { rank: Number(rankText), sentAt: time, requestId: id }
     visible = visible.filter(
-      row => row.sentAt > time || (row.sentAt === time && row.requestId > id)
+      row =>
+        compareRows(
+          { rank: rankOf(row), sentAt: row.sentAt, requestId: row.requestId },
+          at
+        ) > 0
     )
   }
   const limit = Math.max(1, Math.min(100, options.limit ?? 25))
@@ -431,7 +487,7 @@ export async function inbox(
     hasPending,
     nextCursor:
       visible.length > limit && last != null
-        ? `${last.sentAt}|${last.requestId}`
+        ? `${rankOf(last)}|${last.sentAt}|${last.requestId}`
         : null
   }
 }
@@ -484,6 +540,40 @@ export async function markViewed(
       oc
         .columns(['event_id', 'user_id'])
         .doUpdateSet({ viewed_at: clock.now() })
+    )
+    .execute()
+}
+
+/**
+ * Dismisses a notification for this person: Pending lets it go, and History
+ * keeps it. A reminder nobody opened has no receipt yet, so this makes one.
+ */
+export async function dismissNotification(
+  db: Kysely<Database>,
+  actor: Actor,
+  id: string,
+  clock: Clock = realClock
+): Promise<void> {
+  const detail = await notificationDetail(db, actor, id, clock)
+  const event = await db
+    .selectFrom('notification_events')
+    .select('id')
+    .where('id', '=', detail.id)
+    .executeTakeFirst()
+  if (event == null) throw notFound()
+  const now = clock.now()
+  await db
+    .insertInto('notification_receipts')
+    .values({
+      event_id: event.id,
+      user_id: actor.userId,
+      viewed_at: now,
+      dismissed_at: now
+    })
+    .onConflict(oc =>
+      oc
+        .columns(['event_id', 'user_id'])
+        .doUpdateSet({ viewed_at: now, dismissed_at: now })
     )
     .execute()
 }

@@ -1341,6 +1341,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'forbidden',
                 'notFound',
                 'conflict',
+                'gone',
                 'tooLarge',
                 'unsupportedMedia',
                 'rateLimited',
@@ -1430,6 +1431,25 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'What the ingest last reported: the stream arriving, and each ' +
                 'leg it is being sent to. Never carries a key.'
+            },
+            deviceModel: {
+              type: ['string', 'null'],
+              description:
+                'What the device holding it is, in words. On every item of ' +
+                'a game\u2019s list, and on a single device stream; null for ' +
+                'a browser\u2019s or streaming software\u2019s stream'
+            },
+            deviceId: {
+              type: ['string', 'null'],
+              description:
+                'The install holding it, on the owner\u2019s own streams only'
+            },
+            localRecording: {
+              type: 'string',
+              enum: ['none', 'recorded', 'uploaded'],
+              description:
+                'How far the phone\u2019s own recording of it has got. ' +
+                '`uploaded`: the upload stands in for its live copy'
             },
             url: {
               type: 'string',
@@ -5516,7 +5536,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Asked when a publish fails: the ingest writes why on the row, ' +
             'and that sentence beats the socket\u2019s, which can only say ' +
-            'that a connection closed.',
+            'that a connection closed. The camera is the one the claim ' +
+            'resolves.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -6299,7 +6320,15 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Up to four per person per game. The slot is the lowest I do not ' +
             'already hold, so ending one and asking again gives that number ' +
-            'back rather than counting upwards.',
+            'back rather than counting upwards.\n\n' +
+            'With `deviceId`, the stream that device holds under that camera ' +
+            'name: the same one again, in any case (200); else one an ' +
+            'installed TS Director claimed under that name, which the device ' +
+            'adopts with its key and video (200); else a new one (201), after ' +
+            'revoking an ended stream of that device and name. A camera name ' +
+            'is unique among my active device streams on the game (409). A ' +
+            'redial sends `heldStreamId`; if that stream was ended or ' +
+            'revoked the answer is 410 and nothing is created.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -6308,7 +6337,26 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { label: { type: 'string' } }
+                  properties: {
+                    label: { type: 'string' },
+                    deviceId: {
+                      type: 'string',
+                      description: 'The install id of the device asking'
+                    },
+                    deviceModel: { type: 'string', maxLength: 60 },
+                    recordsLocally: {
+                      type: 'boolean',
+                      description:
+                        'A phone keeps its own recording: only its own ' +
+                        'upload replaces this stream\u2019s live copy'
+                    },
+                    heldStreamId: {
+                      type: 'string',
+                      description:
+                        'The stream a redial already holds. Only an explicit ' +
+                        'start leaves it out'
+                    }
+                  }
                 }
               }
             }
@@ -6322,9 +6370,15 @@ export function openApiDocument(version: string): OpenApiDocument {
                 }
               }
             },
-            200: { description: 'The one that won a race for the same slot' },
+            200: {
+              description:
+                'The stream this device already holds or adopted, or the ' +
+                'one that won a race for the same slot'
+            },
             400: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            409: errorResponse,
+            410: errorResponse
           }
         }
       },
@@ -6428,7 +6482,17 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         },
         patch: {
-          summary: 'Rename one of my cameras',
+          summary:
+            'Rename one of my cameras, or say a phone holds its recording',
+          description:
+            'A device stream\u2019s new name must not be one of my other ' +
+            'active device streams\u2019 on the game (409). ' +
+            '`localRecording` takes only `recorded`, and only on a device ' +
+            'stream; the first change from `none` records an upload reminder ' +
+            'for me. `liveStartedAt` says when the stream\u2019s first picture ' +
+            'was captured, on the server\u2019s clock (`GET /time`): the live ' +
+            'video is placed there unless a publisher already placed it, or ' +
+            'the instant is too far from when the publish arrived to be of it.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           requestBody: {
@@ -6438,7 +6502,9 @@ export function openApiDocument(version: string): OpenApiDocument {
                 schema: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string' }
+                    label: { type: 'string' },
+                    localRecording: { type: 'string', enum: ['recorded'] },
+                    liveStartedAt: { type: 'string', format: 'date-time' }
                   }
                 }
               }
@@ -6447,7 +6513,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: 'The camera as it now stands' },
             400: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
@@ -6712,7 +6779,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Take a game, and get the URL to publish it to',
           description:
             'For a videographer of either team, which every admin of it ' +
-            'is. Anybody else gets 404.',
+            'is. Anybody else gets 404. Kept for the TS Director builds ' +
+            'already installed: it returns my lowest-numbered stream that no ' +
+            'device holds, renamed to `cameraName`, or makes one in my lowest ' +
+            'free slot, and never returns or renames a device\u2019s stream. ' +
+            'Newer builds ask `POST /games/{gameId}/live-streams` with their ' +
+            'install id.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -6734,7 +6806,18 @@ export function openApiDocument(version: string): OpenApiDocument {
             'For a videographer of either team of the game, which every ' +
             'admin of it is; anybody else gets 404. 400 when the server has ' +
             'nowhere to put a recording, or the recording is empty. The ' +
-            'answer says how big each part is and how many to send.',
+            'answer says how big each part is and how many to send. An ' +
+            'upload with no `liveStreamId` replaces the live copies it ' +
+            'covers by the 120-second coverage rule, among streams that do ' +
+            'not keep their own recording. `liveStreamId` counts only for a ' +
+            'stream of mine on this game that keeps its own recording and ' +
+            'has not been replaced, ended or revoked streams included. That ' +
+            'stream\u2019s live copy alone is replaced when the upload lands: ' +
+            'always with `wholeStream`, else only if the upload covers it, ' +
+            'and never while it is publishing; a stream with no live copy is ' +
+            'settled by the upload all the same. Any other stream of mine ' +
+            'makes the upload replace nothing. 409 when it is publishing as ' +
+            'the upload opens.',
           security: [{ bearer: [] }],
           requestBody: {
             required: true,
@@ -6773,6 +6856,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                         'as it is. A value that is not finite or is more ' +
                         'than a day either way is ignored, and the upload ' +
                         'goes in as one without it'
+                    },
+                    liveStreamId: {
+                      type: 'string',
+                      description:
+                        'The phone stream this recording was made alongside'
+                    },
+                    wholeStream: {
+                      type: 'boolean',
+                      description:
+                        'The recording ran for every moment that stream ' +
+                        'published, so its live copy is replaced whatever ' +
+                        'the coverage test says'
                     }
                   }
                 }
@@ -6785,7 +6880,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             400: errorResponse,
             401: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
