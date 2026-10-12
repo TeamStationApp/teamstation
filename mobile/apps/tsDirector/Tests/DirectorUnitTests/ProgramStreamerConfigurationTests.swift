@@ -4,6 +4,7 @@ import DirectorRTMP
 import DirectorSources
 import Foundation
 import Testing
+@testable import DirectorMedia
 @testable import DirectorPipeline
 
 @Suite("Program streamer configuration")
@@ -23,7 +24,7 @@ struct ProgramStreamerConfigurationTests {
     config.gopSeconds = 1
 
     let streamer = ProgramStreamer(telemetry: PipelineTelemetry(), converter: PixelConverter())
-    let configured = streamer.configurationForTesting(config)
+    let configured = streamer.configurationForTesting(StreamSettings(config: config))
     #expect(configured == .init(
       width: 1280,
       height: 720,
@@ -42,7 +43,7 @@ struct ProgramStreamerConfigurationTests {
     var config = AppConfig.default
     config.streamCodec = .h264
     let streamer = ProgramStreamer(telemetry: PipelineTelemetry(), converter: PixelConverter())
-    #expect(streamer.configurationForTesting(config).codec == .h264)
+    #expect(streamer.configurationForTesting(StreamSettings(config: config)).codec == .h264)
   }
 
   @Test("The send buffer holds half a minute of the high bitrate, with room for its spikes")

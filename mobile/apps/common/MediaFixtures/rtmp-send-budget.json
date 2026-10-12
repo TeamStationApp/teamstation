@@ -1,0 +1,473 @@
+{
+  "budgets" : [
+    {
+      "bitrate" : 500000,
+      "sendBudgetBytes" : 2812500
+    },
+    {
+      "bitrate" : 2000000,
+      "sendBudgetBytes" : 11250000
+    },
+    {
+      "bitrate" : 4000000,
+      "sendBudgetBytes" : 22500000
+    },
+    {
+      "bitrate" : 6000000,
+      "sendBudgetBytes" : 33750000
+    },
+    {
+      "bitrate" : 20000000,
+      "sendBudgetBytes" : 67108864
+    }
+  ],
+  "bufferSeconds" : 30,
+  "shedding" : [
+    {
+      "budgetBytes" : 100000,
+      "delayExceeded" : false,
+      "dropped" : [
+
+      ],
+      "name" : "under budget",
+      "queue" : [
+        {
+          "bytes" : 40,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 7,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 4000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 4000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        }
+      ]
+    },
+    {
+      "budgetBytes" : 30000,
+      "delayExceeded" : false,
+      "dropped" : [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "name" : "over budget by one group",
+      "queue" : [
+        {
+          "bytes" : 40,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 7,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 6000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 6000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 6000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 6000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1500,
+          "kind" : "delta"
+        }
+      ]
+    },
+    {
+      "budgetBytes" : 40000,
+      "delayExceeded" : false,
+      "dropped" : [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        14,
+        15,
+        17
+      ],
+      "name" : "over budget with audio between pictures",
+      "queue" : [
+        {
+          "bytes" : 40,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 7,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 4800,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 4800,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 4800,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 4800,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 4800,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 400,
+          "kind" : "audio"
+        },
+        {
+          "bytes" : 1200,
+          "kind" : "delta"
+        }
+      ]
+    },
+    {
+      "budgetBytes" : 10000000,
+      "delayExceeded" : true,
+      "dropped" : [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "name" : "delay over the send buffer sheds everything but headers",
+      "queue" : [
+        {
+          "bytes" : 40,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 7,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 3600,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 900,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 900,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 3600,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 900,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 900,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 3600,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 900,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 900,
+          "kind" : "delta"
+        }
+      ]
+    },
+    {
+      "budgetBytes" : 10,
+      "delayExceeded" : false,
+      "dropped" : [
+
+      ],
+      "name" : "only headers queued",
+      "queue" : [
+        {
+          "bytes" : 40,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 7,
+          "kind" : "header"
+        }
+      ]
+    },
+    {
+      "budgetBytes" : 9000,
+      "delayExceeded" : false,
+      "dropped" : [
+        1,
+        2,
+        3
+      ],
+      "name" : "a group cut mid-way loses its tail too",
+      "queue" : [
+        {
+          "bytes" : 40,
+          "kind" : "header"
+        },
+        {
+          "bytes" : 4000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        },
+        {
+          "bytes" : 4000,
+          "kind" : "key"
+        },
+        {
+          "bytes" : 1000,
+          "kind" : "delta"
+        }
+      ]
+    }
+  ]
+}

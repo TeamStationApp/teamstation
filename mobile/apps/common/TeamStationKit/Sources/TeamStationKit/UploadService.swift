@@ -68,7 +68,8 @@ public actor UploadService {
   /// `startedAt` is when the recording began — the take's own wall clock, the
   /// same for every file of it — because that is what the library aligns a
   /// take's cameras on. `uploadId` resumes an upload already opened; leaving
-  /// it out opens one.
+  /// it out opens one. `liveStreamId` and `wholeStream` say which live stream
+  /// the recording is the local copy of (see `TeamStationClient.openUpload`).
   public func send(
     file: URL,
     gameId: String,
@@ -76,6 +77,8 @@ public actor UploadService {
     kind: String,
     startedAt: Date,
     uploadId existing: String? = nil,
+    liveStreamId: String? = nil,
+    wholeStream: Bool? = nil,
     onProgress: @Sendable (Progress) -> Void = { _ in }
   ) async throws -> String {
     let size = try fileSize(file)
@@ -99,7 +102,9 @@ public actor UploadService {
           kind: kind,
           filename: file.lastPathComponent,
           sizeBytes: size,
-          startedAt: startedAt
+          startedAt: startedAt,
+          liveStreamId: liveStreamId,
+          wholeStream: wholeStream
         )
       }
       opened = (made.uploadId, made.partSize, made.parts, Set(made.received))
