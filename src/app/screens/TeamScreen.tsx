@@ -1,12 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import {
-  type LayoutChangeEvent,
-  Pressable,
-  Text,
-  useWindowDimensions,
-  View
-} from 'react-native'
-import Animated from 'react-native-reanimated'
+import { Pressable, Text, useWindowDimensions, View } from 'react-native'
 
 import type {
   BattingRow,
@@ -22,26 +15,26 @@ import type { GroupDetail } from '../../common/publicGroups'
 import {
   Badge,
   Card,
+  CardBand,
   Emblem,
   GameRow,
-  HANDOFF_RAMP,
   HandoffView,
   Icon,
   initialsOf,
   ManageGear,
+  PillBand,
   PillTabs,
+  PinnedContent,
+  PinnedSpacer,
   ScheduleRow,
   Screen,
   SectionHeader,
   type Stat,
   StatGrid,
   useBreakpoint,
-  useContentInset,
-  useHandoff,
   useHeaderHandoff,
-  useHeaderSlot,
-  usePinnedHead,
-  useScreenBottom,
+  usePinnedHandoff,
+  usePinnedTabs,
   webStyle,
   WideTable
 } from '../components'
@@ -184,11 +177,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   // The team's name slides up into the header as its card goes under, and
   // comes back down when it returns. The header carries no title for this
   // screen otherwise: the name is on the card a few pixels below it.
-  const { headerHeight } = useHeaderSlot()
-  // Measured on the card's band, whose lower edge is the pills' upper one,
-  // and brought forward half the hand-off's ramp: the name has finished
-  // arriving at the moment the pills pin, and stays while they are pinned.
-  const handoff = useHandoff(headerHeight + HANDOFF_LEAD)
+  const head = usePinnedHandoff()
+  const { handoff } = head
   const progress = handoff.progress
   useHeaderHandoff(
     useMemo(
@@ -326,40 +316,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
   // The card scrolls away and the pills pin under the header; a selected tab
   // starts directly under them, the schedule at its next game.
-  const screenBottom = useScreenBottom()
-  const pinned = usePinnedHead({
-    headerHeight,
+  const { pinned, selectTab } = usePinnedTabs({
+    head,
     ready: !loading,
     tab,
-    anchorOnRow: tab === 'schedule' && next >= 0,
-    // The screen's bottom margin below the space after the content: the page
-    // can always scroll that much further.
-    tail: screenBottom,
-    onScroll: handoff.handleScroll,
-    cardRef: handoff.ref
+    anchorOnRow: tab === 'schedule' && next >= 0
   })
 
   return (
     <Screen {...pinned.screen}>
-      <Band
-        ref={pinned.cardBand.ref}
-        onLayout={pinned.cardBand.handleLayout}
-        style={[styles.band, styles.cardBand, pinned.cardBand.style]}
-      >
-        {/*
-          The page behind the glass header, which the card band carries up
-          with it: a held card has earlier games scrolled up under it, and
-          they would otherwise show through the glass above the card.
-        */}
-        <View
-          pointerEvents="none"
-          // Placed by its top rather than `bottom: '100%'`, which Yoga
-          // measures against the band's padded content box, not its edge.
-          style={[
-            styles.backdrop,
-            { top: -headerHeight, height: headerHeight }
-          ]}
-        />
+      <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
           <View style={styles.identityTop}>
             <Emblem
@@ -434,34 +400,21 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             )}
           </View>
         </Card>
-      </Band>
+      </CardBand>
 
-      <Band
-        ref={pinned.pillBand.ref}
-        onLayout={pinned.pillBand.handleLayout}
-        style={[styles.band, styles.pillBand, pinned.pillBand.style]}
-      >
-        {/*
-          A sliver of the page above the pills, under the header's lower edge.
-          iOS's glass blurs less at its very edge, and a row passing under it
-          showed sharp there, just above the pinned pills.
-        */}
-        <View
-          pointerEvents="none"
-          style={[styles.backdrop, { top: -GLASS_EDGE, height: GLASS_EDGE }]}
-        />
+      <PillBand part={pinned.pillBand}>
         <PillTabs
           tabs={TABS}
           selected={tab}
           onSelect={selected => {
-            pinned.select(selected)
+            selectTab(selected)
             setTab(selected)
             onTab?.(selected)
           }}
           size="compact"
           accessibilityLabel="Team sections"
         />
-      </Band>
+      </PillBand>
 
       {error != null && <Text style={styles.error}>{error}</Text>}
       {loading && <Text style={styles.muted}>Loading…</Text>}
@@ -470,19 +423,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         <PublicTeamContent detail={publicDetail} tab={tab} />
       )}
 
-      {/*
-        One view for whichever tab is showing, a new one for each tab: the
-        anchor measures it, and a tab that is new to the page has to be laid
-        out before it can be.
-      */}
       {!loading && publicDetail == null && (
-        <View
-          key={tab}
-          testID="teamTabContent"
-          ref={pinned.content.ref}
-          onLayout={pinned.content.handleLayout}
-          style={styles.tabContent}
-        >
+        <PinnedContent key={tab} part={pinned.content} testID="teamTabContent">
           {tab === 'videos' && nonMemberView && <MembersOnly />}
 
           {tab === 'videos' && !nonMemberView && (
@@ -623,52 +565,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               )}
             </View>
           )}
-        </View>
+        </PinnedContent>
       )}
-      {/* Room for the tab to start under the pills however short it is. */}
-      <View
-        ref={pinned.spacer.ref}
-        onLayout={pinned.spacer.handleLayout}
-        style={[styles.spacer, pinned.spacer.style]}
-      />
+      <PinnedSpacer part={pinned.spacer} />
     </Screen>
-  )
-}
-
-/** Half the hand-off's ramp: see where `useHandoff` is called. */
-const HANDOFF_LEAD = HANDOFF_RAMP / 2
-
-/** How much of the header's lower edge the pill band paints behind. */
-const GLASS_EDGE = 4
-
-/**
- * A strip of the page as wide as the screen: through the column's margins, and
- * painted, so what scrolls under it does not show at its sides.
- */
-function Band(props: {
-  children: React.ReactNode
-  ref?: React.Ref<React.ComponentRef<typeof View>>
-  onLayout?: (event: LayoutChangeEvent) => void
-  style: React.ComponentProps<typeof Animated.View>['style']
-}): React.ReactElement {
-  const { children, ref, onLayout, style } = props
-  const inset = useContentInset()
-  return (
-    <Animated.View
-      ref={ref}
-      onLayout={onLayout}
-      style={[
-        {
-          marginLeft: -inset.left,
-          marginRight: -inset.right,
-          paddingLeft: inset.left,
-          paddingRight: inset.right
-        },
-        style
-      ]}
-    >
-      {children}
-    </Animated.View>
   )
 }
 
@@ -914,44 +814,6 @@ function seasonStats(standing: StandingsRow | undefined): Stat[] {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  band: {
-    backgroundColor: theme.backgroundColor,
-    // Android paints by elevation and ignores `zIndex` where the two
-    // disagree, and every row is a card with an elevation of its own. The
-    // shadow is not wanted: the band is the page, not something on it.
-    shadowColor: 'transparent'
-  },
-  cardBand: {
-    zIndex: 2,
-    elevation: 8,
-    // Over the column's top margin and the gap down to the pills, so a held
-    // card hides what has scrolled up under it.
-    marginTop: -theme.rem(theme.spaceLgRem),
-    paddingTop: theme.rem(theme.spaceLgRem),
-    marginBottom: -theme.rem(theme.spaceLgRem),
-    paddingBottom: theme.rem(theme.spaceLgRem)
-  },
-  pillBand: {
-    zIndex: 3,
-    elevation: 9,
-    // Takes back the column's gap, so the content starts at the band's lower
-    // edge: the pills' own target room, the same below them as above.
-    marginBottom: -theme.rem(theme.spaceLgRem)
-  },
-  backdrop: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    backgroundColor: theme.backgroundColor
-  },
-  tabContent: {
-    gap: theme.rem(theme.spaceLgRem)
-  },
-  spacer: {
-    // Takes back the column's gap before it, so a tab with no room after it
-    // ends where it always did.
-    marginTop: -theme.rem(theme.spaceLgRem)
-  },
   headerHandoff: {
     flexDirection: 'row',
     alignItems: 'center',

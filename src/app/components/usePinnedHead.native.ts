@@ -45,6 +45,8 @@ interface Measured {
   pinAt?: number
   /** The tab's content: its top in the column, and its height. */
   content?: { y: number; height: number }
+  /** Which tab `content` was measured for. */
+  contentTab?: string
   /** The next game's top inside its section, and the section's in the content. */
   rowY?: number
   sectionY?: number
@@ -348,7 +350,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       roomAfterDrag.value = false
       growing.current = undefined
       clearTimers()
-      if (tab !== latest.current.tab) {
+      // A tab other than the one measured lays out anew before it anchors —
+      // also when it is already showing, selected after the address moved it.
+      if (tab !== measured.current.contentTab) {
         measured.current = {
           ...measured.current,
           content: undefined,
@@ -392,6 +396,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         handleLayout: (event: LayoutChangeEvent) => {
           const { y: top, height } = event.nativeEvent.layout
           measured.current.content = { y: top, height }
+          measured.current.contentTab = latest.current.tab
           tryAnchor()
           resizeRoom()
         }
