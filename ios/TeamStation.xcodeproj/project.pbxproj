@@ -24,6 +24,9 @@
 		A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */; };
 		A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */; };
 		A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */; };
+		B5E0A1C10000000000000002 /* RCTPhoneStream.mm in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000001 /* RCTPhoneStream.mm */; };
+		B5E0A1C10000000000000004 /* PhoneStreamBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000003 /* PhoneStreamBridge.swift */; };
+		B5E0A1C10000000000000006 /* TSPhoneStreamPreviewComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000005 /* TSPhoneStreamPreviewComponentView.mm */; };
 		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
@@ -52,6 +55,9 @@
 		A1D1C7A70000000000000003 /* DictationMicrophone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DictationMicrophone.swift; sourceTree = "<group>"; };
 		A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTDictationMicrophone.mm; sourceTree = "<group>"; };
 		A9244C9899EB18E867E716E9 /* SpaceGrotesk-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Regular.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Regular.ttf"; sourceTree = SOURCE_ROOT; };
+		B5E0A1C10000000000000001 /* RCTPhoneStream.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTPhoneStream.mm; sourceTree = "<group>"; };
+		B5E0A1C10000000000000003 /* PhoneStreamBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneStreamBridge.swift; sourceTree = "<group>"; };
+		B5E0A1C10000000000000005 /* TSPhoneStreamPreviewComponentView.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = TSPhoneStreamPreviewComponentView.mm; sourceTree = "<group>"; };
 		BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-TeamStation/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		C9B14565B09802CB64B889F5 /* SpaceGrotesk-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Medium.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Medium.ttf"; sourceTree = SOURCE_ROOT; };
 		E62A480C138F4F68BF682000 /* RCTHaptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTHaptics.mm; path = TeamStation/RCTHaptics.mm; sourceTree = SOURCE_ROOT; };
@@ -82,6 +88,7 @@
 				BBC657A1B801E2924A1F71F6 /* WalkUpMusic */,
 				A1D1C7A70000000000000001 /* TSPointerEvents.m */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
+				B5E0A1C10000000000000007 /* PhoneStream */,
 			);
 			name = TeamStation;
 			sourceTree = "<group>";
@@ -157,6 +164,17 @@
 			);
 			name = DictationMicrophone;
 			path = TeamStation/DictationMicrophone;
+			sourceTree = SOURCE_ROOT;
+		};
+		B5E0A1C10000000000000007 /* PhoneStream */ = {
+			isa = PBXGroup;
+			children = (
+				B5E0A1C10000000000000001 /* RCTPhoneStream.mm */,
+				B5E0A1C10000000000000003 /* PhoneStreamBridge.swift */,
+				B5E0A1C10000000000000005 /* TSPhoneStreamPreviewComponentView.mm */,
+			);
+			name = PhoneStream;
+			path = TeamStation/PhoneStream;
 			sourceTree = SOURCE_ROOT;
 		};
 		BBC657A1B801E2924A1F71F6 /* WalkUpMusic */ = {
@@ -374,6 +392,9 @@
 				A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */,
 				A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */,
 				2C4859213D85F5C819CDFF61 /* SystemVolume.swift in Sources */,
+				B5E0A1C10000000000000002 /* RCTPhoneStream.mm in Sources */,
+				B5E0A1C10000000000000004 /* PhoneStreamBridge.swift in Sources */,
+				B5E0A1C10000000000000006 /* TSPhoneStreamPreviewComponentView.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
