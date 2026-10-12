@@ -13,7 +13,11 @@ import { HttpError } from '../../common/errors'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { angleNameProblem, angleNameToSend } from './AngleNamePrompt'
 import { CameraAnglesPanel } from './CameraAnglesPanel.native'
-import { fakePhoneStreamModule } from './fakePhoneStreamModule'
+import {
+  type FakePhoneStreamModule,
+  fakePhoneStreamModule,
+  RECORDING
+} from './fakePhoneStreamModule'
 import { makePhoneStream } from './phoneStreamClient'
 import { StreamFooter } from './StreamFooter'
 import { StreamFooter as NativeStreamFooter } from './StreamFooter.native'
@@ -55,7 +59,13 @@ interface FakeClient {
   client: TeamStationClient
   added: Array<{ gameId: string; label?: string; device?: DeviceStreamOptions }>
   revealed: string[]
+  /** Every action on a camera, as `<call> <stream id>`. */
+  acted: string[]
+  /** How many times the game's cameras were read. */
+  listed: number
   allowed: boolean
+  mine: LiveStream[]
+  others: LiveStream[]
   next: () => Promise<LiveStream>
   reveal: () => Promise<LiveStream>
 }
@@ -64,17 +74,41 @@ function fakeClient(): FakeClient {
   const fake: FakeClient = {
     added: [],
     revealed: [],
+    acted: [],
+    listed: 0,
     allowed: true,
+    mine: [],
+    others: [],
     next: async () => stream(),
     reveal: async () => stream(),
     client: undefined as unknown as TeamStationClient
   }
+  const acting =
+    (name: string) =>
+    async (_gameId: string, id: string): Promise<LiveStream> => {
+      fake.acted.push(`${name} ${id}`)
+      return stream({ id })
+    }
   fake.client = {
     baseUrl: 'https://teamstation.example.test/api/v1',
     token: 'token-0000',
     liveStreams: async (gameId: string): Promise<GameLiveStreams> => {
+      fake.listed += 1
       if (!fake.allowed) throw new HttpError('notFound', 'Not found')
-      return { gameId, mine: [], others: [], canAdd: 4, maxCameras: 4 }
+      return {
+        gameId,
+        mine: fake.mine,
+        others: fake.others,
+        canAdd: 4,
+        maxCameras: 4
+      }
+    },
+    rotateLiveStream: acting('rotate'),
+    endLiveStream: acting('end'),
+    removeLiveStream: acting('remove'),
+    deleteVideo: async (videoId: string) => {
+      fake.acted.push(`deleteVideo ${videoId}`)
+      return { id: videoId, removedFromSpace: 0 }
     },
     addLiveStream: async (
       gameId: string,
@@ -105,9 +139,10 @@ function FakeScreen(props: StreamingScreenProps): React.ReactElement {
 
 async function mount(
   fake: FakeClient,
-  capabilities: unknown = { supported: true, deviceModel: 'iPhone 13 Pro' }
+  capabilities: unknown = { supported: true, deviceModel: 'iPhone 13 Pro' },
+  native: FakePhoneStreamModule = fakePhoneStreamModule({ capabilities }),
+  copied: string[] = []
 ): Promise<void> {
-  const native = fakePhoneStreamModule({ capabilities })
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -120,6 +155,7 @@ async function mount(
           phone={makePhoneStream(native)}
           deviceId={async () => DEVICE_ID}
           Screen={FakeScreen as never}
+          copy={text => copied.push(text)}
         />
       </ThemeProvider>
     )
@@ -355,5 +391,462 @@ describe('Record video on a phone', function () {
     })
     // The browser's own engine stub cannot record, so the phone's panel is empty here.
     expect(host.textContent).equals('')
+  })
+})
+
+const OTHER_DEVICE = '00000000-0000-4000-8000-00000000000b'
+
+const byTestId = (id: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+
+/** The labels the open "…" sheet offers, in order. */
+const sheetActions = (): string[] =>
+  [
+    ...document.querySelectorAll<HTMLElement>('[data-testid^="stream-action-"]')
+  ].map(node =>
+    node.getAttribute('data-testid')!.slice('stream-action-'.length)
+  )
+
+/** A take on this phone, as the engine lists it. */
+function take(patch: Partial<typeof RECORDING> = {}): typeof RECORDING {
+  return { ...RECORDING, gameId: 'gam_1', liveStreamId: 'liv_1', ...patch }
+}
+
+/** The panel's five-second poll, held so a test can run it when it likes. */
+function heldPoll(): { poll: () => Promise<void>; restore: () => void } {
+  const real = globalThis.setInterval
+  const realClear = globalThis.clearInterval
+  const held = new Map<unknown, () => void>()
+  globalThis.setInterval = ((callback: () => void, ms?: number) => {
+    if (ms !== 5000) return real(callback, ms)
+    const id = { poll: held.size + 1 }
+    held.set(id, callback)
+    return id
+  }) as unknown as typeof setInterval
+  globalThis.clearInterval = (id: unknown) => {
+    if (held.delete(id)) return
+    realClear(id as Parameters<typeof clearInterval>[0])
+  }
+  return {
+    poll: async () => {
+      await act(async () => {
+        for (const callback of [...held.values()]) callback()
+        await delay(20)
+      })
+    },
+    restore: () => {
+      globalThis.setInterval = real
+      globalThis.clearInterval = realClear
+    }
+  }
+}
+
+describe('the cameras on a game, on a phone', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    opened.length = 0
+  })
+
+  it('lists every angle with its device, owner and state, and reads them again every five seconds', async function () {
+    const poll = heldPoll()
+    try {
+      const fake = fakeClient()
+      fake.mine = [
+        stream({ id: 'liv_1', label: 'Home Plate', state: 'publishing' }),
+        stream({
+          id: 'liv_2',
+          label: 'First Base',
+          deviceModel: 'Pixel 10',
+          deviceId: OTHER_DEVICE,
+          localRecording: 'recorded',
+          closesAt: '2026-05-20T17:00:00.000Z'
+        }),
+        stream({
+          id: 'liv_3',
+          label: 'Bullpen',
+          deviceModel: null,
+          deviceId: null,
+          state: 'ended'
+        })
+      ]
+      fake.others = [
+        stream({
+          id: 'liv_4',
+          label: 'Center Field',
+          ownerName: 'Shohei Ohtani',
+          deviceModel: 'iPad Pro',
+          deviceId: undefined
+        })
+      ]
+      await mount(fake)
+      expect(byTestId('angle-row-liv_1')?.textContent).equals(
+        'Home PlateiPhone 13 ProLive'
+      )
+      expect(byTestId('angle-row-liv_2')?.textContent).equals(
+        'First BasePixel 10Recording on Pixel 10 not uploadedEnded'
+      )
+      expect(byTestId('angle-row-liv_3')?.textContent).equals('BullpenEnded')
+      expect(byTestId('angle-row-liv_4')?.textContent).equals(
+        'Center FieldiPad Pro · Shohei OhtaniIdle'
+      )
+      expect(text()).contains('Record video')
+
+      const before = fake.listed
+      fake.mine = []
+      fake.others = []
+      await poll.poll()
+      expect(fake.listed).equals(before + 1)
+      expect(byTestId('angle-row-liv_1')).equals(null)
+    } finally {
+      poll.restore()
+    }
+  })
+
+  it('opens the camera again from this phone’s own rows only', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', label: 'Home Plate' }),
+      stream({ id: 'liv_2', label: 'First Base', deviceId: OTHER_DEVICE })
+    ]
+    fake.next = async () => stream({ id: 'liv_1', label: 'Home Plate' })
+    await mount(fake)
+    expect(byTestId('angle-row-liv_2')?.getAttribute('role')).not.equals(
+      'button'
+    )
+    await press(byTestId('angle-row-liv_2')!)
+    expect(fake.added).deep.equals([])
+
+    await press(byTestId('angle-row-liv_1')!)
+    expect(fake.added).deep.equals([
+      {
+        gameId: 'gam_1',
+        label: 'Home Plate',
+        device: {
+          deviceId: DEVICE_ID,
+          deviceModel: 'iPhone 13 Pro',
+          recordsLocally: true
+        }
+      }
+    ])
+    expect(opened.at(-1)?.session.streamId).equals('liv_1')
+    const listed = fake.listed
+    await press(byTestId('fake-screen')!)
+    expect(byTestId('fake-screen')).equals(null)
+    expect(fake.listed).equals(listed + 1)
+
+    // A refusal is said under the list.
+    fake.next = async () => {
+      throw new HttpError('gone', 'This camera was ended')
+    }
+    await press(byTestId('angle-row-liv_1')!)
+    expect(text()).contains('This camera was ended')
+  })
+
+  it('offers on each camera exactly what the web panel offers', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', label: 'Home Plate' }),
+      stream({ id: 'liv_2', label: 'Live One', state: 'publishing' }),
+      stream({
+        id: 'liv_3',
+        label: 'Done One',
+        state: 'ended',
+        videoId: 'vid_3'
+      })
+    ]
+    fake.others = [
+      stream({ id: 'liv_4', label: 'Theirs', ownerName: 'Aaron Judge' }),
+      stream({
+        id: 'liv_5',
+        label: 'Theirs Ended',
+        ownerName: 'Aaron Judge',
+        state: 'ended'
+      })
+    ]
+    await mount(fake)
+    const offered = async (id: string): Promise<string[]> => {
+      await press(byTestId(`angle-more-${id}`)!)
+      const found = sheetActions()
+      await press(button('Cancel'))
+      await settle()
+      return found
+    }
+    expect(await offered('liv_1')).deep.equals([
+      'reveal',
+      'rotate',
+      'end',
+      'remove'
+    ])
+    expect(await offered('liv_2')).deep.equals(['reveal', 'rotate', 'end'])
+    expect(await offered('liv_3')).deep.equals([
+      'reveal',
+      'rotate',
+      'deleteVideo',
+      'remove'
+    ])
+    expect(await offered('liv_4')).deep.equals(['end'])
+    expect(byTestId('angle-more-liv_5')).equals(null)
+    await press(byTestId('angle-more-liv_1')!)
+    expect(text()).contains('Copy stream URL')
+    expect(text()).contains('Rotate key')
+    expect(text()).contains('End')
+    expect(text()).contains('Remove')
+  })
+
+  it('copies the URL, and acts at once off the air but asks twice on it', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', label: 'Home Plate', url: undefined }),
+      stream({ id: 'liv_2', label: 'Live One', state: 'publishing' })
+    ]
+    fake.reveal = async () =>
+      stream({ id: 'liv_1', url: 'rtmp://ingest.example.test/live/ts_1' })
+    const copied: string[] = []
+    await mount(fake, undefined, undefined, copied)
+
+    await press(byTestId('angle-more-liv_1')!)
+    await press(byTestId('stream-action-reveal')!)
+    await settle()
+    expect(copied).deep.equals(['rtmp://ingest.example.test/live/ts_1'])
+    expect(text()).contains('Copied the stream URL for Home Plate')
+    expect(sheetActions()).deep.equals([])
+
+    await press(byTestId('angle-more-liv_1')!)
+    await press(byTestId('stream-action-rotate')!)
+    await settle()
+    expect(fake.acted).deep.equals(['rotate liv_1'])
+
+    await press(byTestId('angle-more-liv_2')!)
+    await press(byTestId('stream-action-end')!)
+    expect(fake.acted).deep.equals(['rotate liv_1'])
+    expect(byTestId('stream-action-end')?.textContent).equals('Tap again: End')
+    await press(byTestId('stream-action-end')!)
+    await settle()
+    expect(fake.acted).deep.equals(['rotate liv_1', 'end liv_2'])
+
+    // A failure stays in the sheet.
+    fake.reveal = async () => stream({ id: 'liv_1', url: undefined })
+    await press(byTestId('angle-more-liv_1')!)
+    await press(byTestId('stream-action-reveal')!)
+    expect(text()).contains('This camera has no URL to copy')
+  })
+
+  it('offers Upload Recording, shows its progress, cancels, retries, and goes when it lands', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [take()],
+      uploadRecording: new Promise(() => {}),
+      cancelUpload: undefined
+    })
+    const fake = fakeClient()
+    fake.mine = [stream({ id: 'liv_1', label: 'Home Plate' })]
+    await mount(fake, undefined, native)
+    expect(byTestId('upload-row-liv_1')?.textContent).equals(
+      'Home PlateUpload RecordingProvide a higher-quality copy for future viewing.'
+    )
+
+    await press(byTestId('upload-recording-liv_1')!)
+    expect(
+      native.calls.filter(call => call.name === 'uploadRecording')
+    ).deep.equals([
+      {
+        name: 'uploadRecording',
+        args: [
+          'liv_1',
+          'https://teamstation.example.test/api/v1',
+          'token-0000',
+          'Home Plate'
+        ]
+      }
+    ])
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Preparing 0%'
+    )
+    const emit = async (
+      state: string,
+      fraction: number,
+      message?: string
+    ): Promise<void> => {
+      await act(async () => {
+        native.emitUpload({
+          liveStreamId: 'liv_1',
+          state,
+          fraction,
+          bytesSent: 0,
+          bytesTotal: 0,
+          message
+        })
+        await delay(20)
+      })
+    }
+    await emit('uploading', 0.42)
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Uploading 42%'
+    )
+
+    await press(byTestId('upload-cancel-liv_1')!)
+    expect(native.calls.at(-2)?.name).equals('cancelUpload')
+    // The cancelled upload's last word changes nothing.
+    await emit('failed', 0.42, 'cancelled')
+    expect(byTestId('upload-recording-liv_1')).not.equals(null)
+
+    await press(byTestId('upload-recording-liv_1')!)
+    await emit('failed', 0.5, 'The network went away')
+    expect(text()).contains('The upload stopped: The network went away')
+    await press(byTestId('upload-retry-liv_1')!)
+    expect(native.calls.filter(call => call.name === 'uploadRecording')).length(
+      3
+    )
+    await emit('processing', 1)
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Processing 100%'
+    )
+
+    native.answers.recordings = [take({ uploadedAt: 1_790_000_100_000 })]
+    await emit('uploaded', 1)
+    expect(byTestId('upload-row-liv_1')).equals(null)
+  })
+
+  it('says why an upload could not start', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [take()]
+    })
+    native.failures.uploadRecording = {
+      code: 'noRecording',
+      message: 'There is no recording of this camera'
+    }
+    await mount(fakeClient(), undefined, native)
+    await press(byTestId('upload-recording-liv_1')!)
+    expect(text()).contains(
+      'The upload stopped: There is no recording of this camera'
+    )
+  })
+
+  it('reads a finished upload, and lists takes after the camera closes', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [take()],
+      uploadRecording: 'vid_1'
+    })
+    await mount(fakeClient(), undefined, native)
+    native.answers.recordings = [take({ uploadedAt: 1_790_000_100_000 })]
+    await press(byTestId('upload-recording-liv_1')!)
+    expect(byTestId('upload-row-liv_1')).equals(null)
+  })
+
+  it('names a take by its angle as the server calls it now, after a rename', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [
+        take({ angleName: 'Second Base' }),
+        take({ liveStreamId: 'liv_gone', angleName: 'Left Field' })
+      ]
+    })
+    const fake = fakeClient()
+    fake.mine = [stream({ id: 'liv_1', label: 'Third Base' })]
+    await mount(fake, undefined, native)
+    expect(byTestId('upload-row-liv_1')?.textContent).contains('Third Base')
+    expect(byTestId('upload-row-liv_1')?.textContent).not.contains(
+      'Second Base'
+    )
+    // A stream the server no longer lists keeps the take's own name.
+    expect(byTestId('upload-row-liv_gone')?.textContent).contains('Left Field')
+  })
+
+  it('keeps an uploading angle closed, and Record video under its name says so', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [
+        take({ uploadId: 'upl_1', uploadRunning: true }),
+        take({
+          liveStreamId: 'liv_9',
+          angleName: 'Left Field',
+          gameId: 'gam_other',
+          uploadId: 'upl_9'
+        })
+      ]
+    })
+    const fake = fakeClient()
+    fake.mine = [stream({ id: 'liv_1', label: 'Home Plate' })]
+    await mount(fake, undefined, native)
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Uploading 0%'
+    )
+    // Another game's take has no row here.
+    expect(byTestId('upload-row-liv_9')).equals(null)
+
+    await press(byTestId('angle-row-liv_1')!)
+    expect(text()).contains('Home Plate is still uploading')
+    expect(fake.added).deep.equals([])
+
+    await press(button('Record video'))
+    await type('home plate')
+    await press(button('Start'))
+    expect(text()).contains('home plate is still uploading')
+    expect(fake.added).deep.equals([])
+  })
+
+  it('starts a running upload’s row where the engine says it stands, then follows its reports', async function () {
+    // Resumed at launch, the upload reported before this panel listened: its
+    // row read 0% until the next report, which came only as a part landed.
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [
+        take({
+          uploadId: 'upl_1',
+          uploadRunning: true,
+          uploadProgress: {
+            liveStreamId: 'liv_1',
+            state: 'uploading',
+            fraction: 0.52,
+            bytesSent: 52,
+            bytesTotal: 100
+          }
+        })
+      ]
+    })
+    await mount(fakeClient(), undefined, native)
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Uploading 52%'
+    )
+    await act(async () => {
+      native.emitUpload({
+        liveStreamId: 'liv_1',
+        state: 'uploading',
+        fraction: 0.61,
+        bytesSent: 61,
+        bytesTotal: 100
+      })
+      await delay(20)
+    })
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Uploading 61%'
+    )
+  })
+
+  it('says an upload cut off in another run was interrupted, and Retry carries it on', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [take({ uploadId: 'upl_1' })],
+      uploadRecording: new Promise(() => {})
+    })
+    await mount(fakeClient(), undefined, native)
+    expect(text()).contains('The upload was interrupted.')
+    await press(byTestId('upload-retry-liv_1')!)
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Preparing 0%'
+    )
+  })
+
+  it('shows the cameras without Record video on a phone that cannot record', async function () {
+    const fake = fakeClient()
+    fake.others = [stream({ id: 'liv_4', label: 'Center Field' })]
+    await mount(fake, { supported: false, deviceModel: '' })
+    expect(byTestId('angle-row-liv_4')).not.equals(null)
+    expect(text()).not.contains('Record video')
   })
 })
