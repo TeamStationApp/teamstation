@@ -1585,6 +1585,12 @@ function Shell(props: AppProps): React.ReactElement {
         onOpen={id => {
           push({ name: 'notification', id })
         }}
+        onUpload={gameId => {
+          push({ name: 'game', gameId, title: '', tab: 'watch' })
+        }}
+        onDismissed={() => {
+          refreshNotifications().catch(() => undefined)
+        }}
       />
     ) : top.name === 'notification' ? (
       <NotificationDetailScreen
@@ -1595,6 +1601,9 @@ function Shell(props: AppProps): React.ReactElement {
           if (replacementId != null)
             replace({ name: 'notification', id: replacementId })
           refreshNotifications().catch(() => undefined)
+        }}
+        onUpload={gameId => {
+          push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
       />
     ) : top.name === 'account' && session != null ? (
