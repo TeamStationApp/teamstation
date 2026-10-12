@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What streamcore's own code needs, merged into each app that includes it.
+  StreamSessionController redials when the default network comes back, which it learns from
+  ConnectivityManager.registerDefaultNetworkCallback.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+</manifest>

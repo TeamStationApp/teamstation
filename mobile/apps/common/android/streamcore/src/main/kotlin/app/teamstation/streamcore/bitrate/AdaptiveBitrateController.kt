@@ -75,8 +75,40 @@ class AdaptiveBitrateController(
         val quantum: Int = 100_000,
         val shortfall: Double = 0.9,
         val idleReset: Double = 10.0,
-        val baseDelayWindow: Double = 10.0
-    )
+        val baseDelayWindow: Double = 10.0,
+        /**
+         * A link that carried less than this share of the current rate over the delivery window was
+         * stalled rather than slow, and what it carried says nothing about what it can: a cut then
+         * takes its fixed step instead of going to the measured rate. Zero always takes the
+         * measurement at its word.
+         */
+        val stallShare: Double = 0.0,
+        /**
+         * Whether a queue the link is already emptying is left alone. The queue's age goes on rising
+         * after a cut until the backlog from before it has gone, so a sender that cuts on age alone
+         * keeps cutting a link that now carries more than it is given.
+         */
+        val holdWhileDraining: Boolean = false
+    ) {
+        companion object {
+            /**
+             * An RTMP stream, which has seconds of room where a camera has a fraction of one: the RTMP
+             * client holds `RTMPClient.sendBufferSeconds` of stream before it sheds anything, so a
+             * queue has to reach a second before it is trimmed, a second and a half before the rate
+             * goes to what the link carries, and five seconds before the large cut. A stall below a
+             * tenth of the rate takes the fixed step, and a draining queue is left to drain. TS
+             * Director's `Tuning.rtmpStream`.
+             */
+            val rtmpStream = Tuning(
+                clearDelay = 0.25,
+                growingDelay = 1.0,
+                congestedDelay = 1.5,
+                emergencyDelay = 5.0,
+                stallShare = 0.1,
+                holdWhileDraining = true
+            )
+        }
+    }
 
     /** What the controller last did and why, for the state dump. */
     data class Status(
@@ -201,8 +233,8 @@ class AdaptiveBitrateController(
         val lost = sample.droppedFrames + sample.flushes > 0
         if (lost) lastLossAt = now
 
-        val decision = decide(delay, sample.queueDelay, lost, now)
-        val measuredCap = delivery?.let { it * tuning.deliveryFactor } ?: Double.POSITIVE_INFINITY
+        val decision = decide(delay, sample.queueDelay, lost, isDraining(), now)
+        val measuredCap = cutDelivery()?.let { it * tuning.deliveryFactor } ?: Double.POSITIVE_INFINITY
         when (decision) {
             Decision.EMERGENCY -> {
                 cut(min(target * tuning.emergencyFactor, measuredCap), now)
@@ -242,6 +274,22 @@ class AdaptiveBitrateController(
      */
     private fun isFallingShort(sample: CongestionSample): Boolean {
         if (sample.queueDelay > 0.02) return true
+        val (drained, offered) = windowTotals() ?: return false
+        if (offered <= 0) return false
+        return drained < offered * tuning.shortfall
+    }
+
+    /**
+     * Whether the link carried at least what the encoder offered over the delivery window, so a
+     * backlog is shrinking on its own.
+     */
+    private fun isDraining(): Boolean {
+        val (drained, offered) = windowTotals() ?: return false
+        return offered > 0 && drained >= offered
+    }
+
+    /** Bytes drained and offered over the delivery window, or null until the window is covered. */
+    private fun windowTotals(): Pair<Long, Long>? {
         var covered = 0.0
         var drained = 0L
         var offered = 0L
@@ -251,8 +299,14 @@ class AdaptiveBitrateController(
             offered += entry.offered
             if (covered >= tuning.deliveryWindow * 0.95) break
         }
-        if (covered < tuning.deliveryWindow * 0.95 || offered <= 0) return false
-        return drained < offered * tuning.shortfall
+        if (covered < tuning.deliveryWindow * 0.95) return null
+        return drained to offered
+    }
+
+    /** The delivery rate a cut may go to: the measured one, unless the link stalled rather than slowed. */
+    private fun cutDelivery(): Double? {
+        val delivery = deliveryRate() ?: return null
+        return if (delivery < bitrate * tuning.stallShare) null else delivery
     }
 
     /** Bits per second the link carried over the last second, or null until a second is measured. */
@@ -302,7 +356,7 @@ class AdaptiveBitrateController(
 
     // MARK: - Deciding
 
-    private fun decide(delay: Double, appDelay: Double, lost: Boolean, now: Double): Decision {
+    private fun decide(delay: Double, appDelay: Double, lost: Boolean, draining: Boolean, now: Double): Decision {
         val sinceDecrease = now - lastDecreaseAt
         // Each cut is judged against the rate it would leave; one already at the floor has nowhere
         // to go.
@@ -315,10 +369,12 @@ class AdaptiveBitrateController(
         ) {
             return Decision.EMERGENCY
         }
-        if (canCut && congestedTicks >= 2 && sinceDecrease >= tuning.decreaseHold) {
+        // The smaller steps are for a queue that is still building.
+        val mayTrim = !(tuning.holdWhileDraining && draining)
+        if (canCut && mayTrim && congestedTicks >= 2 && sinceDecrease >= tuning.decreaseHold) {
             return Decision.CONGESTED
         }
-        if (canCut && delay > tuning.growingDelay && isGrowing && sinceDecrease >= tuning.decreaseHold) {
+        if (canCut && mayTrim && delay > tuning.growingDelay && isGrowing && sinceDecrease >= tuning.decreaseHold) {
             return Decision.GROWING
         }
         if (target < ceiling && delay < tuning.clearDelay &&
@@ -336,7 +392,7 @@ class AdaptiveBitrateController(
     private fun cut(rate: Double, now: Double) {
         val next = max(floor.toDouble(), rate)
         if (next >= target) return
-        lastCongestedRate = min(target, deliveryRate() ?: target)
+        lastCongestedRate = min(target, cutDelivery() ?: target)
         target = next
         lastDecreaseAt = now
         congestedTicks = 0
