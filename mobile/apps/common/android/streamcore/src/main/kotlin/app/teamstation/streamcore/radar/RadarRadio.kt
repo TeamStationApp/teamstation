@@ -8,6 +8,9 @@ interface RadarRadio {
     fun subscribe(uuid: String)
     fun write(bytes: ByteArray): Int
     fun setListener(listener: RadarRadioListener?)
+
+    /** The radio is done with: its scan, its GATT client and its thread go. */
+    fun release() = Unit
 }
 
 interface RadarRadioListener {
@@ -27,7 +30,8 @@ class AndroidRadarRadio(
     private val disconnectFn: () -> Unit,
     private val subscribeFn: (String) -> Unit,
     private val writeFn: (ByteArray) -> Int,
-    private val listenerFn: (RadarRadioListener?) -> Unit
+    private val listenerFn: (RadarRadioListener?) -> Unit,
+    private val releaseFn: () -> Unit = {}
 ) : RadarRadio {
     override fun startScan(onName: (String) -> Unit) = startScanFn(onName)
     override fun stopScan() = stopScanFn()
@@ -36,4 +40,5 @@ class AndroidRadarRadio(
     override fun subscribe(uuid: String) = subscribeFn(uuid)
     override fun write(bytes: ByteArray): Int = writeFn(bytes)
     override fun setListener(listener: RadarRadioListener?) = listenerFn(listener)
+    override fun release() = releaseFn()
 }
