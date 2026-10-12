@@ -1,5 +1,4 @@
 import Foundation
-import DirectorTestHarness
 import VideoToolbox
 
 /// Measures how many concurrent hardware encode sessions this device will actually give us.

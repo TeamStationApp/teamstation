@@ -4,6 +4,7 @@ import CoreVideo
 import DirectorCore
 import DirectorDVR
 import DirectorExport
+@testable import DirectorMedia
 @testable import DirectorPipeline
 import DirectorSources
 import Foundation
