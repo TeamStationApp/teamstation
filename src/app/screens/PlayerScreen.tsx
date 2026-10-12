@@ -5,8 +5,10 @@ import type {
   PlayerDetail,
   PlayerHighlight,
   PlayerStats,
+  RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import { rosterFullName, shortName } from '../../common/names'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
@@ -48,15 +50,17 @@ export interface PlayerScreenProps {
    */
   forTeam?: string
   /**
-   * Whether the viewer coaches `forTeam`, from `GET /me/roles`. Undefined
+   * Whether the viewer manages the roster of `forTeam`, from GET /me/roles:
+   * coach, scorekeeper or admin. Undefined
    * while that is still being asked, so an address that opens on Settings is
    * not sent back to Videos before the answer is in.
    */
-  canCoach?: boolean
+  canManageRoster?: boolean
+  onSettingsSaved?: (entry: RosterEntry) => void
   /**
    * The Walk-up tab. `canEdit` is whether the viewer keeps `forTeam`'s
    * walk-up songs — a songkeeper of it or its admin — from `GET /me/roles`,
-   * and undefined while that is still being asked, as `canCoach` is. The song
+   * and undefined while that is still being asked, as `canManageRoster` is. The song
    * itself is read from `forTeam`'s roster by the tab.
    */
   walkUp?: {
@@ -132,7 +136,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onFilter,
     onOpenMoment,
     forTeam,
-    canCoach,
+    canManageRoster,
     walkUp,
     music = webMusic
   } = props
@@ -140,6 +144,43 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const styles = getStyles(theme)
 
   const [player, setPlayer] = useState<PlayerDetail | undefined>(undefined)
+  const savedPlayer = useRef<
+    { userId: string; entry: RosterEntry; profileName: string } | undefined
+  >(undefined)
+  const [privateName, setPrivateName] = useState<string>()
+  const [privateNameDenied, setPrivateNameDenied] = useState(false)
+  const privateNameGeneration = useRef(0)
+  useEffect(() => {
+    let live = true
+    const generation = ++privateNameGeneration.current
+    setPrivateName(undefined)
+    setPrivateNameDenied(false)
+    if (canManageRoster === true && forTeam != null) {
+      client
+        .roster(forTeam, { includeFullNames: true })
+        .then(rows => {
+          if (!live || privateNameGeneration.current !== generation) return
+          const entry = rows.find(
+            row => String(row.userId) === userId && row.isPlayer
+          )
+          if (entry == null) setPrivateNameDenied(true)
+          setPrivateName(
+            entry?.nameDetails == null
+              ? undefined
+              : rosterFullName({ id: entry.userId, ...entry.nameDetails })
+          )
+        })
+        .catch(() => {
+          if (live && privateNameGeneration.current === generation) {
+            setPrivateName(undefined)
+            setPrivateNameDenied(true)
+          }
+        })
+    }
+    return () => {
+      live = false
+    }
+  }, [client, userId, forTeam, canManageRoster])
   const [tab, setTab] = useState<PlayerTab>(initialTab ?? 'videos')
   /**
    * The address is allowed to change this, not only to start it.
@@ -162,16 +203,18 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   // to nobody else. An address that asks for either without that right opens
   // on Videos, and says so, once the answer to "do they hold it?" is in.
   const canKeepSongs = walkUp?.canEdit
-  const settingsShown = forTeam != null && canCoach === true
+  const settingsShown = forTeam != null && canManageRoster === true
+  const settingsPending =
+    forTeam != null && canManageRoster == null && tab === 'settings'
   const walkUpShown = forTeam != null && canKeepSongs === true
   const tabs = [
     ...TABS,
     ...(walkUpShown ? [WALKUP_TAB] : []),
-    ...(settingsShown ? [SETTINGS_TAB] : [])
+    ...(settingsShown || settingsPending ? [SETTINGS_TAB] : [])
   ]
   const refused =
     forTeam != null &&
-    ((tab === 'settings' && canCoach === false) ||
+    ((tab === 'settings' && canManageRoster === false) ||
       (tab === 'walkup' && canKeepSongs === false))
   useEffect(() => {
     if (!refused) return
@@ -179,7 +222,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onTab?.('videos', true)
   }, [refused, onTab])
   const shownTab =
-    (tab === 'settings' && !settingsShown) || (tab === 'walkup' && !walkUpShown)
+    (tab === 'settings' && !settingsShown && !settingsPending) ||
+    (tab === 'walkup' && !walkUpShown)
       ? 'videos'
       : tab
 
@@ -201,7 +245,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   // team's does. Until the request lands, the name the tapped row showed is
   // what goes up there: it is the same name, and a header that appears half a
   // second late reads as the page having jumped.
-  const shown = player?.name ?? title ?? ''
+  const publicName =
+    savedPlayer.current?.userId === userId
+      ? savedPlayer.current.profileName
+      : player?.name
+  const shown =
+    tab === 'settings' && canManageRoster === true && !privateNameDenied
+      ? (privateName ?? publicName ?? title ?? '')
+      : (publicName ?? (privateNameDenied ? '' : title) ?? '')
   const { headerHeight } = useHeaderSlot()
   const handoff = useHandoff(headerHeight)
   const progress = handoff.progress
@@ -253,7 +304,19 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     client
       .player(userId)
       .then(loaded => {
-        if (!cancelled) setPlayer(loaded)
+        if (!cancelled) {
+          const saved = savedPlayer.current
+          setPlayer(
+            saved?.userId === userId
+              ? {
+                  ...loaded,
+                  name: saved.profileName,
+                  bats: saved.entry.bats,
+                  throws: saved.entry.throws
+                }
+              : loaded
+          )
+        }
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
@@ -427,19 +490,43 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
       {shownTab === 'settings' && forTeam != null && (
         <View style={styles.section}>
-          <PlayerSettingsTab
-            client={client}
-            teamId={forTeam}
-            userId={userId}
-            onSaved={entry => {
-              // How they bat and throw is on the card above; keep it true.
-              setPlayer(held =>
-                held == null
-                  ? held
-                  : { ...held, bats: entry.bats, throws: entry.throws }
-              )
-            }}
-          />
+          {settingsPending ? (
+            <Text style={styles.muted}>{lstrings.common_loading}</Text>
+          ) : (
+            <PlayerSettingsTab
+              client={client}
+              teamId={forTeam}
+              userId={userId}
+              onSaved={entry => {
+                // A roster may extend surnames to resolve collisions. The
+                // ordinary player page always uses its own abbreviated name.
+                const profileName =
+                  entry.nameDetails == null
+                    ? entry.shortName
+                    : shortName({ id: entry.userId, ...entry.nameDetails })
+                savedPlayer.current = { userId, entry, profileName }
+                props.onSettingsSaved?.(entry)
+                if (entry.nameDetails != null) {
+                  privateNameGeneration.current++
+                  setPrivateNameDenied(false)
+                  setPrivateName(
+                    rosterFullName({ id: entry.userId, ...entry.nameDetails })
+                  )
+                }
+                // How they bat and throw is on the card above; keep it true.
+                setPlayer(held =>
+                  held == null
+                    ? held
+                    : {
+                        ...held,
+                        name: profileName,
+                        bats: entry.bats,
+                        throws: entry.throws
+                      }
+                )
+              }}
+            />
+          )}
         </View>
       )}
 

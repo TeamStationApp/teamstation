@@ -18,15 +18,23 @@ export function PlayerEntrySheet({
   onClose,
   onCancel = onClose,
   onAddPlaceholders,
+  initialDraft,
   onAdd
 }: {
   onClose: () => void
   onCancel?: () => void
   onAddPlaceholders?: (count: number) => void | Promise<void>
+  /** Existing game-only player; without it this remains the creation form. */
+  initialDraft?: PlayerDraft
   onAdd: (draft: PlayerDraft) => void | Promise<void>
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
-  const [draft, setDraft] = useState(emptyPlayerDraft)
+  const [draft, setDraft] = useState(() =>
+    initialDraft == null
+      ? emptyPlayerDraft()
+      : { ...initialDraft, throws: initialDraft.throws ?? 'right' }
+  )
+  const editing = initialDraft != null
   const [submitted, setSubmitted] = useState(false)
   const [placeholders, setPlaceholders] = useState(false)
   const [scrollReset, setScrollReset] = useState(0)
@@ -74,7 +82,11 @@ export function PlayerEntrySheet({
         focus()
       } else onClose()
     } catch {
-      setProblem('Unable to add the player. Please try again.')
+      setProblem(
+        editing
+          ? 'Unable to save the player. Please try again.'
+          : 'Unable to add the player. Please try again.'
+      )
     } finally {
       if (another || !added) saving.current = false
       setBusy(false)
@@ -82,7 +94,7 @@ export function PlayerEntrySheet({
   }
   return (
     <ScoringSheet
-      title="Create Player"
+      title={editing ? 'Edit Player' : 'Create Player'}
       textCancel
       scrollReset={scrollReset}
       onClose={onCancel}
@@ -187,37 +199,39 @@ export function PlayerEntrySheet({
         <Button
           color={theme.scoringMenuActiveBackground}
           textColor={theme.scoringMenuActiveText}
-          accessibilityLabel="Add Player"
-          label="Add Player"
+          accessibilityLabel={editing ? 'Save Player' : 'Add Player'}
+          label={editing ? 'Save Player' : 'Add Player'}
           disabled={busy}
           onPress={() => {
             add(false).catch(() => undefined)
           }}
         />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Save and Add Another Player"
-          disabled={busy}
-          onPress={() => {
-            add(true).catch(() => undefined)
-          }}
-          style={{
-            minHeight: 44,
-            justifyContent: 'center',
-            alignItems: 'center'
-          }}
-        >
-          <Text
+        {!editing && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Save and Add Another Player"
+            disabled={busy}
+            onPress={() => {
+              add(true).catch(() => undefined)
+            }}
             style={{
-              ...text,
-              color: theme.successColor,
-              fontFamily: theme.semiBoldTextFont
+              minHeight: 44,
+              justifyContent: 'center',
+              alignItems: 'center'
             }}
           >
-            Save and Add Another Player
-          </Text>
-        </Pressable>
-        {onAddPlaceholders != null && (
+            <Text
+              style={{
+                ...text,
+                color: theme.successColor,
+                fontFamily: theme.semiBoldTextFont
+              }}
+            >
+              Save and Add Another Player
+            </Text>
+          </Pressable>
+        )}
+        {!editing && onAddPlaceholders != null && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Add Placeholder Players"

@@ -497,6 +497,14 @@ export const asThrows = asEither(
 )
 
 export const asRosterEntry = asObject({
+  /** Only sent for an explicitly authorized roster-management read. */
+  nameDetails: asOptional(
+    asObject({
+      firstName: asNullable(asString),
+      lastName: asNullable(asString),
+      displayName: asString
+    })
+  ),
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),
   userId: asUserId,
@@ -2235,16 +2243,19 @@ export class TeamStationClient {
     }
   }
 
-  async roster(teamId: string): Promise<RosterEntry[]> {
+  async roster(
+    teamId: string,
+    options: { includeFullNames?: boolean } = {}
+  ): Promise<RosterEntry[]> {
     return await this.request(
       'GET',
-      `/teams/${encodeURIComponent(teamId)}/roster`,
+      `/teams/${encodeURIComponent(teamId)}/roster${options.includeFullNames === true ? '?includeFullNames=true' : ''}`,
       asArray(asRosterEntry)
     )
   }
 
   /**
-   * What a coach sets for one player on one team. Only the fields sent
+   * What a roster manager sets for one player on one team. Only the fields sent
    * change; the answer is the player's roster entry as it now reads.
    */
   async setPlayerSettings(

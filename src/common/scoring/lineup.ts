@@ -325,7 +325,14 @@ export function applyRoster(
   const play = next.liveData.plays.currentPlay
   if (play == null) startAppearance(next)
   else {
-    if (play.matchup.batter.id !== batter.id)
+    // Correct an edited hand before pitching; keep a pitched appearance's
+    // recorded side, and preserve unchanged switch hitters' manual choices.
+    if (
+      play.matchup.batter.id !== batter.id ||
+      (next.gameData.players[batter.id].bats !==
+        state.gameData.players[batter.id]?.bats &&
+        canSwitchBatter(next))
+    )
       play.matchup.batSide.code =
         next.gameData.players[batter.id].bats === 'left' ? 'L' : 'R'
     play.matchup.batter = batter

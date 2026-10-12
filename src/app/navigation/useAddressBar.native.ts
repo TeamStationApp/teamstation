@@ -4,7 +4,7 @@ import { BackHandler, Linking, Platform } from 'react-native'
 import { appOrigin } from '../native/config'
 import { routeOfUrl } from './deepLink'
 import { makeHistory } from './history'
-import type { Route } from './routes'
+import { type Route, routePath } from './routes'
 
 /**
  * Keeps the app's idea of where it is, and a history to go back through.
@@ -74,6 +74,15 @@ export function popRoute(): void {
   history.back()
 }
 
+export function scoringOriginHistory(): number {
+  return history.depth()
+}
+export function backFromScoringPlayer(origin?: number): boolean {
+  const steps = origin == null ? 1 : Math.max(1, history.depth() - origin)
+  for (let index = 0; index < steps; index++) history.back()
+  return true
+}
+
 /**
  * Calls back when the reader goes back, or follows a link into the app.
  *
@@ -85,12 +94,34 @@ export function popRoute(): void {
  * the home screen, which reads as a hang. iOS has no system Back; the chevron
  * in the header is it.
  */
-export function useBrowserBack(onRoute: (route: Route) => void): void {
+export function useBrowserBack(
+  onRoute: (route: Route, onHandled?: (accepted: boolean) => void) => void
+): void {
   useEffect(() => {
+    let pending = false
+    const deliver = (route: Route, restore: () => void): void => {
+      pending = true
+      const handled = (accepted: boolean): void => {
+        if (!accepted && routePath(history.current()) === routePath(route))
+          restore()
+        pending = false
+      }
+      try {
+        onRoute(route, handled)
+      } catch {
+        handled(false)
+      }
+    }
     const opened = (event: { url: string }): void => {
+      if (pending) return
       const route = routeOfUrl(event.url, { appOrigin })
+      const previous = history.current()
+      const depth = history.depth()
       history.show(route)
-      onRoute(route)
+      deliver(route, () => {
+        if (history.depth() > depth) history.back()
+        else history.show(previous, true)
+      })
     }
     const link = Linking.addEventListener('url', opened)
 
@@ -100,11 +131,15 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
       }
     }
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (pending) return true
       // `false` closes the app, which is what should happen at the bottom of
       // the history: a Back button that does nothing on the home screen reads
       // as a hang.
+      const previous = history.current()
       if (!history.back()) return false
-      onRoute(history.current())
+      deliver(history.current(), () => {
+        history.show(previous)
+      })
       return true
     })
     return () => {

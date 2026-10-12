@@ -117,6 +117,158 @@ describe('a player’s settings form', function () {
     root = undefined
   })
 
+  it('saves an authorized name together with the jersey and retains refused edits', async function () {
+    const entry = {
+      ...jordan,
+      nameDetails: {
+        firstName: 'Mookie',
+        lastName: 'Betts',
+        displayName: 'Mookie Betts'
+      }
+    }
+    const saves: Saved[] = []
+    let refuse = true
+    const client = settingsClient([entry], saves, settings =>
+      refuse
+        ? new Error('Cannot save')
+        : {
+            ...entry,
+            jersey: settings.jersey ?? entry.jersey,
+            shortName: 'Paul G',
+            nameDetails: { ...settings.name!, displayName: 'Paul Goldschmidt' }
+          }
+    )
+    await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
+    expect((labelled('First name') as HTMLInputElement).value).equals('Mookie')
+    await type('First name', ' Mookie ')
+    expect(saveDisabled()).equals(true)
+    await type('First name', 'Paul')
+    await type('Last name', 'Goldschmidt')
+    await type('Jersey number', '14')
+    await press('Save')
+    expect(text()).includes('Cannot save')
+    expect((labelled('First name') as HTMLInputElement).value).equals('Paul')
+    refuse = false
+    await press('Save')
+    expect(saves[1].settings).deep.equals({
+      name: { firstName: 'Paul', lastName: 'Goldschmidt' },
+      jersey: '14'
+    })
+    expect(saveDisabled()).equals(true)
+    expect(text()).includes('Saved.')
+  })
+
+  it('preserves complete legacy names when either or both imported parts are absent', async function () {
+    for (const parts of [
+      { firstName: 'Mookie', lastName: null },
+      { firstName: null, lastName: 'Betts' },
+      { firstName: null, lastName: null },
+      { firstName: 'Mookie', lastName: null, displayName: 'Mookie' }
+    ]) {
+      await render(
+        <PlayerSettingsTab
+          client={settingsClient(
+            [
+              {
+                ...jordan,
+                nameDetails: { displayName: 'Mookie Betts', ...parts }
+              }
+            ],
+            []
+          )}
+          teamId="t1"
+          userId="7"
+        />
+      )
+      expect((labelled('First name') as HTMLInputElement).value).equals(
+        'Mookie'
+      )
+      expect((labelled('Last name') as HTMLInputElement).value).equals(
+        'displayName' in parts ? '' : 'Betts'
+      )
+      expect(saveDisabled()).equals(true)
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+    }
+  })
+
+  it('keeps a surname-only name in the last-name field when adding its missing first name', async function () {
+    const saves: Saved[] = []
+    const entry = {
+      ...jordan,
+      nameDetails: { firstName: null, lastName: 'Betts', displayName: 'Betts' }
+    }
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([entry], saves, settings => ({
+          ...entry,
+          nameDetails: { ...settings.name!, displayName: 'Mookie Betts' }
+        }))}
+        teamId="t1"
+        userId="7"
+      />
+    )
+    expect((labelled('First name') as HTMLInputElement).value).equals('')
+    expect((labelled('Last name') as HTMLInputElement).value).equals('Betts')
+    expect(saveDisabled()).equals(true)
+    await type('First name', 'Mookie')
+    await press('Save')
+    expect(saves[0].settings).deep.equals({
+      name: { firstName: 'Mookie', lastName: 'Betts' }
+    })
+  })
+
+  it('preserves a compound first name through clearing, reopening and restoring its surname', async function () {
+    const saves: Saved[] = []
+    let current: RosterEntry = {
+      ...jordan,
+      nameDetails: {
+        firstName: 'Hyun Jin',
+        lastName: 'Ryu',
+        displayName: 'Hyun Jin Ryu'
+      }
+    }
+    const client = settingsClient([current], saves, settings => {
+      current = {
+        ...current,
+        nameDetails: {
+          firstName:
+            settings.name!.firstName === '' ? null : settings.name!.firstName,
+          lastName:
+            settings.name!.lastName === '' ? null : settings.name!.lastName,
+          displayName: [settings.name!.firstName, settings.name!.lastName]
+            .filter(Boolean)
+            .join(' ')
+        }
+      }
+      return current
+    })
+    client.roster = async () => [current]
+    await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
+    await type('Last name', '')
+    await press('Save')
+    expect((labelled('First name') as HTMLInputElement).value).equals(
+      'Hyun Jin'
+    )
+    expect((labelled('Last name') as HTMLInputElement).value).equals('')
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
+    expect((labelled('First name') as HTMLInputElement).value).equals(
+      'Hyun Jin'
+    )
+    await type('Last name', 'Ryu')
+    await press('Save')
+    expect(saves.map(saved => saved.settings)).deep.equals([
+      { name: { firstName: 'Hyun Jin', lastName: '' } },
+      { name: { firstName: 'Hyun Jin', lastName: 'Ryu' } }
+    ])
+  })
+
   it('loads the player’s values on this team', async function () {
     await render(
       <PlayerSettingsTab

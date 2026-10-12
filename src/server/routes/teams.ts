@@ -8,6 +8,7 @@ import { scoreboardOpen } from '../../common/scoreboard'
 import {
   adminScopes,
   canKeepSongs,
+  canManageRoster,
   canManageTeam,
   canScore,
   canSeeGame,
@@ -690,10 +691,21 @@ export function teamRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
+      const fullNames = req.query.includeFullNames
+      if (
+        fullNames !== undefined &&
+        fullNames !== 'true' &&
+        fullNames !== 'false'
+      )
+        throw badRequest('includeFullNames must be true or false')
+      if (fullNames === 'true') {
+        const roles = await roleScopes(db, actor.userId, actor.isAdmin)
+        if (!canManageRoster(roles, teamId)) throw notFound()
+      }
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (!canSeeTeam(scopes, teamId)) throw notFound()
 
-      res.json(await teamRoster(db, media.space, teamId))
+      res.json(await teamRoster(db, media.space, teamId, fullNames === 'true'))
     })
   )
 

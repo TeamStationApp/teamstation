@@ -84,6 +84,19 @@ const selectedTab = (): string | undefined =>
           : undefined
 const text = (): string => document.body.textContent ?? ''
 
+async function typeName(label: string, value: string): Promise<void> {
+  await act(async () => {
+    const field = document.querySelector<HTMLInputElement>(
+      `[aria-label="${label}"]`
+    )!
+    Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(field, value)
+    field.dispatchEvent(new window.Event('input', { bubbles: true }))
+  })
+}
+
 const jordan = asRosterEntry({
   userId: 7,
   shortName: 'Jordan P',
@@ -152,6 +165,234 @@ afterEach(async function () {
 })
 
 describe('a player’s Settings tab', function () {
+  it('abbreviates collision-expanded roster names on ordinary tabs, including delayed profiles', async function () {
+    for (const delayed of [false, true]) {
+      const client = playerClient()
+      const entry = {
+        ...jordan,
+        shortName: 'Paul Goldschmidt',
+        nameDetails: {
+          firstName: 'Paul',
+          lastName: 'Goldschmidt',
+          displayName: 'Paul Goldschmidt'
+        }
+      }
+      let release:
+        ((player: ReturnType<typeof asPlayerDetail>) => void) | undefined
+      client.player = async () =>
+        delayed
+          ? await new Promise(resolve => {
+              release = resolve
+            })
+          : asPlayerDetail({ userId: 7, name: 'Paul G', teams: [] })
+      client.roster = async () => [entry]
+      client.setPlayerSettings = async () => ({ ...entry, bats: 'left' })
+      await render(
+        <PlayerScreen
+          client={client}
+          userId="7"
+          forTeam="t1"
+          canManageRoster
+          initialTab="settings"
+        />
+      )
+      await press('Bats Left')
+      await press('Save')
+      expect(text()).includes('Paul Goldschmidt')
+      await press('Videos')
+      expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
+      await act(async () => {
+        release?.(asPlayerDetail({ userId: 7, name: 'Paul G', teams: [] }))
+        await delay(20)
+      })
+      expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
+      await press('Stats')
+      expect(text()).not.includes('Goldschmidt')
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+    }
+  })
+  it('recovers the full header name after a failed independent header lookup and successful Save', async function () {
+    const client = playerClient()
+    const entry = {
+      ...jordan,
+      nameDetails: {
+        firstName: 'Mookie',
+        lastName: 'Betts',
+        displayName: 'Mookie Betts'
+      }
+    }
+    let calls = 0
+    client.roster = async () => {
+      if (++calls > 1) throw new Error('temporary refusal')
+      return [entry]
+    }
+    client.setPlayerSettings = async () => ({
+      ...entry,
+      shortName: 'Paul G',
+      nameDetails: {
+        firstName: 'Paul',
+        lastName: 'Goldschmidt',
+        displayName: 'Paul Goldschmidt'
+      }
+    })
+    await render(
+      <PlayerScreen
+        client={client}
+        userId="7"
+        forTeam="t1"
+        canManageRoster
+        initialTab="settings"
+      />
+    )
+    expect(text()).not.includes('Mookie Betts')
+    await typeName('First name', 'Paul')
+    await typeName('Last name', 'Goldschmidt')
+    await press('Save')
+    expect(text()).includes('Paul Goldschmidt')
+  })
+
+  it('retains the saved public name while the initial player profile is delayed', async function () {
+    const client = playerClient()
+    const entry = {
+      ...jordan,
+      nameDetails: {
+        firstName: 'Mookie',
+        lastName: 'Betts',
+        displayName: 'Mookie Betts'
+      }
+    }
+    let release:
+      ((player: ReturnType<typeof asPlayerDetail>) => void) | undefined
+    client.player = async () =>
+      await new Promise(resolve => {
+        release = resolve
+      })
+    client.roster = async () => [entry]
+    client.setPlayerSettings = async () => ({
+      ...entry,
+      shortName: 'Paul G',
+      nameDetails: {
+        firstName: 'Paul',
+        lastName: 'Goldschmidt',
+        displayName: 'Paul Goldschmidt'
+      }
+    })
+    await render(
+      <PlayerScreen
+        client={client}
+        userId="7"
+        forTeam="t1"
+        canManageRoster
+        initialTab="settings"
+      />
+    )
+    await typeName('First name', 'Paul')
+    await typeName('Last name', 'Goldschmidt')
+    await press('Save')
+    await press('Videos')
+    expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
+    await act(async () => {
+      release?.(asPlayerDetail({ userId: 7, name: 'Mookie B', teams: [] }))
+      await delay(20)
+    })
+    expect(text()).includes('Paul G').and.not.includes('Mookie B')
+  })
+  it('shows the saved name and rejects an older header-name response', async function () {
+    const client = playerClient()
+    const entry = {
+      ...jordan,
+      nameDetails: {
+        firstName: 'Mookie',
+        lastName: 'Betts',
+        displayName: 'Mookie Betts'
+      }
+    }
+    let calls = 0
+    let release: ((rows: Array<typeof entry>) => void) | undefined
+    client.roster = async () =>
+      ++calls === 1
+        ? [entry]
+        : await new Promise(resolve => {
+            release = resolve
+          })
+    client.setPlayerSettings = async () => ({
+      ...entry,
+      shortName: 'Paul G',
+      nameDetails: {
+        firstName: 'Paul',
+        lastName: 'Goldschmidt',
+        displayName: 'Paul Goldschmidt'
+      }
+    })
+    await render(
+      <PlayerScreen
+        client={client}
+        userId="7"
+        forTeam="t1"
+        canManageRoster
+        initialTab="settings"
+      />
+    )
+    for (const [label, value] of [
+      ['First name', 'Paul'],
+      ['Last name', 'Goldschmidt']
+    ]) {
+      await act(async () => {
+        const field = document.querySelector<HTMLInputElement>(
+          `[aria-label="${label}"]`
+        )!
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(field, value)
+        field.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+    }
+    await press('Save')
+    expect(text()).includes('Paul Goldschmidt')
+    await act(async () => {
+      release?.([entry])
+      await delay(20)
+    })
+    expect(text()).includes('Paul Goldschmidt').and.not.includes('Mookie Betts')
+    await press('Videos')
+    expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
+  })
+  it('shows authorized full names only in Settings and forwards completed saves', async function () {
+    const client = playerClient()
+    client.roster = async () => [
+      {
+        ...jordan,
+        nameDetails: {
+          firstName: 'Mookie',
+          lastName: 'Betts',
+          displayName: 'Mookie Betts'
+        }
+      }
+    ]
+    let saved = false
+    await render(
+      <PlayerScreen
+        client={client}
+        userId="7"
+        forTeam="t1"
+        canManageRoster
+        initialTab="settings"
+        onSettingsSaved={() => {
+          saved = true
+        }}
+      />
+    )
+    expect(text()).includes('Mookie Betts')
+    await press('Bats Left')
+    await press('Save')
+    expect(saved).equals(true)
+    await press('Videos')
+    expect(text()).includes('Jordan P').and.not.includes('Mookie Betts')
+  })
   it('shows for a coach of the team the page was opened for, and saves to it', async function () {
     const saves: Array<{ teamId: string; settings: PlayerSettings }> = []
     const tabs: PlayerTab[] = []
@@ -160,7 +401,7 @@ describe('a player’s Settings tab', function () {
         client={playerClient(saves)}
         userId="7"
         forTeam="t1"
-        canCoach
+        canManageRoster
         onTab={tab => {
           tabs.push(tab)
         }}
@@ -179,9 +420,9 @@ describe('a player’s Settings tab', function () {
 
   it('is not there without the team, or without the right to coach it', async function () {
     for (const props of [
-      { forTeam: undefined, canCoach: true },
-      { forTeam: 't1', canCoach: false },
-      { forTeam: 't1', canCoach: undefined }
+      { forTeam: undefined, canManageRoster: true },
+      { forTeam: 't1', canManageRoster: false },
+      { forTeam: 't1', canManageRoster: undefined }
     ]) {
       await render(
         <PlayerScreen client={playerClient()} userId="7" {...props} />
@@ -201,7 +442,7 @@ describe('a player’s Settings tab', function () {
         userId="7"
         initialTab="settings"
         forTeam="t1"
-        canCoach={false}
+        canManageRoster={false}
         onTab={(tab, correcting) => {
           tabs.push([tab, correcting])
         }}
@@ -224,7 +465,9 @@ describe('a player’s Settings tab', function () {
         }}
       />
     )
-    expect(selectedTab()).equals('Videos')
+    expect(selectedTab()).equals(undefined)
+    expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
+    expect(tabNames()).includes('Settings')
     expect(tabs).deep.equals([])
   })
 
@@ -238,7 +481,7 @@ describe('a player’s Settings tab', function () {
         initialTab="stats"
         initialFilter={{ teamId: 't1' }}
         forTeam="t1"
-        canCoach
+        canManageRoster
         onFilter={filter => {
           filters.push(filter)
         }}
@@ -252,7 +495,7 @@ describe('a player’s Settings tab', function () {
     expect(filters).deep.equals([{ teamId: 'tem_other' }, {}])
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Settings'])
     await press('Settings')
-    expect(rosters).deep.equals(['t1'])
+    expect(rosters).deep.equals(['t1', 't1'])
   })
 })
 
@@ -300,7 +543,7 @@ describe('a player’s Settings address, through the app', function () {
   })
 
   it('opens Videos for anybody else, and says so on the address', async function () {
-    fixtureFetch({ t1: ['scorekeeper'] })
+    fixtureFetch({ t1: ['videographer'] })
     showRoute(parseRoute('/players/7', 'tab=settings&onTeam=t1'), true)
     await render(<App />)
     await act(async () => {
@@ -341,7 +584,7 @@ describe('a player’s Walk-up tab', function () {
         client={playerClient()}
         userId="7"
         forTeam="t1"
-        canCoach
+        canManageRoster
         walkUp={{ canEdit: true }}
       />
     )
@@ -408,7 +651,7 @@ describe('a player’s Walk-up tab', function () {
         userId="7"
         initialTab="walkup"
         forTeam="t1"
-        canCoach
+        canManageRoster
         walkUp={{ canEdit: false }}
         onTab={(tab, correcting) => {
           tabs.push([tab, correcting])

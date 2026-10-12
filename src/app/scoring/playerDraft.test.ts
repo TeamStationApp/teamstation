@@ -4,9 +4,12 @@ import { describe, it } from 'mocha'
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { createDevelopmentSession } from './developmentSession'
+import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   addPlayerDraft,
+  draftOfLocalPlayer,
+  editLocalPlayerDraft,
   emptyPlayerDraft,
   PLAYER_POSITIONS,
   playerDraftError
@@ -14,6 +17,98 @@ import {
 import { initialScoringState, scoringReducer } from './scoringMachine'
 
 describe('local player entry', function () {
+  it('renders the current local batter’s edited handedness when the rosters are saved before pitching', function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const state = initialScoringState(session)
+    const id = session.liveData.plays.currentPlay!.matchup.batter.id
+    const draft = structuredClone(session)
+    editLocalPlayerDraft(draft, 'away', id, {
+      ...draftOfLocalPlayer(draft.gameData.players[id]),
+      bats: 'left'
+    })
+    const saved = scoringReducer(state, { type: 'ROSTER', draft })
+    expect(
+      saved.session.liveData.plays.currentPlay!.matchup.batSide.code
+    ).equals('L')
+    expect(
+      fieldPlayersFor(saved.session).find(player => player.batting === true)
+        ?.batSide
+    ).equals('L')
+    expect(scoringReducer(saved, { type: 'UNDO' }).session).deep.equals(
+      state.session
+    )
+  })
+  it('corrects a named placeholder in place while preserving its lineup, defense and Undo identity', function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const id = session.liveData.boxscore.teams.away.players[0]
+    const before = JSON.stringify(session.liveData.boxscore)
+    const identities = JSON.stringify(session.meta.identities)
+    const state = initialScoringState(session)
+    const edited = structuredClone(session)
+    const player = draftOfLocalPlayer(edited.gameData.players[id])
+    editLocalPlayerDraft(edited, 'away', id, {
+      ...player,
+      firstName: 'Jose',
+      lastName: 'Altuve',
+      jersey: '00',
+      bats: 'switch',
+      throws: 'left',
+      positions: ['DH', 'P', 'DH', 'bad']
+    })
+    expect(edited.gameData.players[id]).includes({
+      id,
+      userId: null,
+      fullName: 'Jose Altuve',
+      jersey: '00',
+      bats: 'switch',
+      throws: 'left'
+    })
+    expect(edited.gameData.players[id].positions).deep.equals(['P', 'DH'])
+    expect(JSON.stringify(edited.liveData.boxscore)).equals(before)
+    expect(JSON.stringify(edited.meta.identities)).equals(identities)
+    const saved = scoringReducer(state, { type: 'ROSTER', draft: edited })
+    expect(saved.session.gameData.players[id].fullName).equals('Jose Altuve')
+    const undone = scoringReducer(saved, { type: 'UNDO' })
+    expect(undone.session.gameData.players[id]).deep.equals(
+      session.gameData.players[id]
+    )
+    const snapshot = JSON.stringify(edited)
+    expect(() => {
+      editLocalPlayerDraft(edited, 'home', id, player)
+    }).throws('not on the roster')
+    expect(() => {
+      editLocalPlayerDraft(edited, 'away', 99999, player)
+    }).throws('not on the roster')
+    expect(() => {
+      editLocalPlayerDraft(edited, 'away', id, {
+        ...player,
+        firstName: '',
+        lastName: ''
+      })
+    }).throws('Enter a player name')
+    expect(JSON.stringify(edited)).equals(snapshot)
+    edited.gameData.players[id].userId = 100
+    expect(() => {
+      editLocalPlayerDraft(edited, 'away', id, player)
+    }).throws('not on the roster')
+  })
+
+  it('starts legacy game-only names and unknown throwing hands without inventing a hand', function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const player =
+      session.gameData.players[session.liveData.boxscore.teams.away.players[0]]
+    player.fullName = 'Jose Ramirez'
+    delete player.firstName
+    delete player.lastName
+    player.throws = null
+    const draft = draftOfLocalPlayer(player)
+    expect(draft).includes({
+      firstName: 'Jose',
+      lastName: 'Ramirez',
+      throws: null
+    })
+    expect(draft.positions).not.equals(player.positions)
+  })
   it('validates names and jersey without mutating a draft on failure', function () {
     const session = createDevelopmentSession(gameFixture, [], [])
     const before = JSON.stringify(session)

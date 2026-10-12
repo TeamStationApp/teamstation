@@ -63,6 +63,7 @@ export function useDictationControls(props: DictationButtonProps): {
     onAnswer,
     onDismissQuestion,
     spaceTalks = true,
+    suspended,
     onActions,
     model,
     openSocket,
@@ -120,7 +121,15 @@ export function useDictationControls(props: DictationButtonProps): {
     },
     release: dictation.release
   }
-  useSpaceToTalk(available && dictation.enabled, spaceTalks, keys)
+  useSpaceToTalk(
+    available && dictation.enabled && suspended !== true,
+    spaceTalks,
+    keys
+  )
+  const { setEnabled } = dictation
+  useEffect(() => {
+    if (suspended === true) setEnabled(false)
+  }, [suspended, setEnabled])
   const entries = useLog(dictation, problem?.message, played, undone)
   const linger = useLinger(
     entries,

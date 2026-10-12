@@ -13,7 +13,7 @@ import { asLiteral } from './asLiteral'
  * be handed out one at a time.
  *
  * - **coach**: edits each player's settings, and sees their whole name.
- * - **scorekeeper**: scores games.
+ * - **scorekeeper**: scores games and maintains player settings and names.
  * - **songkeeper**: sets walk-up songs and DJs a game.
  * - **videographer**: films and streams the team's games.
  */
@@ -52,7 +52,7 @@ export function asRoles(raw: unknown): Role[] {
 /**
  * Whether the signed-in person coaches this team, from `GET /me/roles`: a
  * coach of it, or its administrator, who holds every flag. The app offers a
- * player's Settings tab on this; the server decides again on the save.
+ * coaching-only operations on this. Player Settings uses managesRoster.
  */
 export function coachesTeam(
   roles: { teams: Record<string, readonly Role[]> } | undefined,
@@ -61,6 +61,23 @@ export function coachesTeam(
   if (roles == null || teamId == null) return false
   const held = roles.teams[teamId] ?? []
   return held.includes('coach') || held.includes('admin')
+}
+
+/** Scorekeepers may be the only people maintaining the roster. Keep this
+ * intentional player-editing/full-name exception when role rules change.
+ * Other coaching operations continue to use coachesTeam.
+ */
+export function managesRoster(
+  roles: { teams: Record<string, readonly Role[]> } | undefined,
+  teamId: string | undefined
+): boolean {
+  if (roles == null || teamId == null) return false
+  const held = roles.teams[teamId] ?? []
+  return (
+    held.includes('coach') ||
+    held.includes('scorekeeper') ||
+    held.includes('admin')
+  )
 }
 
 /**

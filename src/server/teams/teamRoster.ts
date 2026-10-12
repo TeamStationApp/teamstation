@@ -8,11 +8,8 @@ import type { MediaContext } from '../media/mediaContext'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
 
 /**
- * Who is on a team. Every viewer reads the same answer.
- *
- * Everybody reads short names, coaches and administrators included. The whole
- * name is never on a roster: it is only behind `GET /players/:userId/name`,
- * for the person editing it.
+ * Who is on a team. Ordinary reads contain short names. A route that has
+ * authorized roster management may explicitly request private name details.
  *
  * Each entry carries the person's walk-up song on this team, or `null`: a
  * song belongs to a player's place on a team, so the same child reads
@@ -21,7 +18,8 @@ import { teamWalkUpSongs } from '../routes/walkUpSongs'
 export async function teamRoster(
   db: Kysely<Database>,
   space: MediaContext['space'],
-  teamId: string
+  teamId: string,
+  includeFullNames = false
 ): Promise<RosterEntry[]> {
   const rows = await db
     .selectFrom('memberships')
@@ -72,6 +70,14 @@ export async function teamRoster(
     ...rows
       .map(row => ({
         userId: row.userId,
+        nameDetails:
+          includeFullNames && row.isPlayer
+            ? {
+                firstName: row.firstName,
+                lastName: row.lastName,
+                displayName: row.displayName
+              }
+            : undefined,
         bats: row.bats,
         throws: row.throws,
         shortName: names.get(row.userId) ?? row.displayName,

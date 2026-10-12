@@ -13,7 +13,7 @@ export const PLAYER_POSITION_SPOTS = [
   { position: 'SS', x: 0.28, y: 94 },
   { position: '2B', x: 0.72, y: 94 },
   { position: '1B', x: 1, y: 142 },
-  { position: 'P', x: 0.5, y: 198 },
+  { position: 'P', x: 0.5, y: 166 },
   { position: 'C', x: 0.5, y: 254 }
 ] as const
 

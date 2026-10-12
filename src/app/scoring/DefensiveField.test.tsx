@@ -102,7 +102,7 @@ describe('compact defensive field', function () {
                 initialDraft={{
                   draft: state.session,
                   side: 'away',
-                  defense: true
+                  mode: 'defense'
                 }}
                 onSave={() => undefined}
               />

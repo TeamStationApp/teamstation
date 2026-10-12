@@ -82,6 +82,7 @@ export interface Dictation {
 }
 
 export interface DictationButtonProps {
+  suspended?: boolean
   /** Whether this server takes dictation. The control shows only when it does. */
   health: () => Promise<Health>
   url: string

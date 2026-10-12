@@ -35,6 +35,99 @@ describe('player entry sheet', function () {
     root = undefined
   })
 
+  it('defaults unknown throws to right, saves once, and keeps a refused edit', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    let calls = 0
+    let closes = 0
+    let refuse = true
+    let saved: PlayerDraft | undefined
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <PlayerEntrySheet
+            initialDraft={{
+              firstName: 'Jose',
+              lastName: 'Ramirez',
+              jersey: '11',
+              bats: 'switch',
+              throws: null,
+              positions: ['DH']
+            }}
+            onAdd={draft => {
+              calls++
+              if (refuse) throw new Error('refused')
+              saved = draft
+            }}
+            onClose={() => {
+              closes++
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    expect((node('First Name') as HTMLInputElement).value).equals('Jose')
+    expect(node('Throws R').getAttribute('aria-selected')).equals('true')
+    expect(node('Throws —')).equals(null)
+    expect(
+      document.querySelector('[aria-label="Save and Add Another Player"]')
+    ).equals(null)
+    await input('Last Name', 'Altuve')
+    await tap('Save Player')
+    expect(document.body.textContent).includes('Unable to save the player')
+    expect((node('Last Name') as HTMLInputElement).value).equals('Altuve')
+    refuse = false
+    await tap('Throws L')
+    await tap('Throws R')
+    await tap('Save Player')
+    await tap('Save Player')
+    expect(calls).equals(2)
+    expect(closes).equals(1)
+    expect(saved).includes({
+      firstName: 'Jose',
+      lastName: 'Altuve',
+      throws: 'right'
+    })
+  })
+
+  it('cancels an unset throwing hand without saving the right-hand default', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const original: PlayerDraft = {
+      firstName: 'Jose',
+      lastName: 'Ramirez',
+      jersey: '11',
+      bats: 'right',
+      throws: null,
+      positions: ['DH']
+    }
+    let saves = 0
+    let cancels = 0
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <PlayerEntrySheet
+            initialDraft={original}
+            onAdd={() => {
+              saves++
+            }}
+            onClose={() => undefined}
+            onCancel={() => {
+              cancels++
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    expect(node('Throws R').getAttribute('aria-selected')).equals('true')
+    await tap('Cancel')
+    expect(cancels).equals(1)
+    expect(saves).equals(0)
+    expect(original.throws).equals(null)
+  })
+
   it('focuses, validates, saves all optional fields, resets for another and cancels without adding', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)

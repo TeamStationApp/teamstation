@@ -4,7 +4,8 @@
  *
  * The full name is stored — it is what the import sent, what a parent would
  * search for, and what an admin needs to tell two children apart — but it is
- * never drawn. The API sends it to nobody except whoever may edit it —
+ * drawn only in authorized roster management and player Settings. The API
+ * sends it to nobody except whoever may edit it —
  * `mayEditName` on the server: a guardian, the player, a site
  * administrator, and anybody holding a role on a team the player plays for,
  * set on the team or carried down from its season or league, or that team's
@@ -37,6 +38,17 @@ export function fullName(person: NamedPerson): string {
   const last = (person.lastName ?? '').trim()
   if (first === '' && last === '') return person.displayName.trim()
   return [first, last].filter(half => half !== '').join(' ')
+}
+
+/** Authorized roster display uses complete name parts, or the legacy full
+ * label when an import only split part of it. Ordinary screens use shortName.
+ */
+export function rosterFullName(person: NamedPerson): string {
+  const first = (person.firstName ?? '').trim()
+  const last = (person.lastName ?? '').trim()
+  if (first !== '' && last !== '') return fullName(person)
+  const legacy = person.displayName.trim()
+  return legacy === '' ? fullName(person) : legacy
 }
 
 /**

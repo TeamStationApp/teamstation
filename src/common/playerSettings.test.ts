@@ -9,6 +9,30 @@ import {
 } from './playerSettings'
 
 describe('a player’s settings', function () {
+  it('validates trimmed name parts and refuses empty, malformed or oversized names', function () {
+    expect(
+      asPlayerSettings({ name: { firstName: ' Mookie ', lastName: ' Betts ' } })
+    ).deep.equals({ name: { firstName: 'Mookie', lastName: 'Betts' } })
+    expect(
+      asPlayerSettings({ name: { firstName: '', lastName: 'Betts' } })
+    ).deep.equals({ name: { firstName: '', lastName: 'Betts' } })
+    expect(
+      asPlayerSettings({ name: { firstName: 'Mookie', lastName: '' } })
+    ).deep.equals({ name: { firstName: 'Mookie', lastName: '' } })
+    for (const name of [
+      null,
+      [],
+      'Mookie',
+      {},
+      { firstName: null, lastName: 'Betts' },
+      { firstName: 'Mookie', lastName: 2 },
+      { firstName: ' ', lastName: ' ' },
+      { firstName: 'M'.repeat(101), lastName: 'Betts' },
+      { firstName: 'Mookie', lastName: 'B'.repeat(101) }
+    ]) {
+      expect(() => asPlayerSettings({ name }), JSON.stringify(name)).throws()
+    }
+  })
   it('offers the nine fielding positions and the designated hitter', function () {
     expect(PLAYER_POSITIONS).deep.equals([
       'P',
