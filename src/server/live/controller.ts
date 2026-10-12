@@ -52,6 +52,9 @@ import {
  */
 
 const SYNC_INTERVAL_MS = 1000
+/** Why a stream whose recording an upload replaced was closed. */
+export const REPLACED_BY_UPLOAD =
+  'the recording uploaded from the phone replaced it'
 /**
  * How long a stream that stopped arriving is kept open for.
  *
@@ -109,6 +112,8 @@ interface Tracked {
 let timer: NodeJS.Timeout | undefined
 let sweepTimer: NodeJS.Timeout | undefined
 let options: LiveControllerOptions | undefined
+/** The sync still running, so a slow one is never overlapped by the next tick. */
+let syncing: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
@@ -157,9 +162,7 @@ export function startLiveController(next: LiveControllerOptions): boolean {
     })
 
   timer = setInterval(() => {
-    sync().catch((error: unknown) => {
-      log(`live: ${String(error)}`)
-    })
+    syncOnce(log).catch(() => {})
   }, SYNC_INTERVAL_MS)
   timer.unref?.()
 
@@ -176,6 +179,28 @@ export function startLiveController(next: LiveControllerOptions): boolean {
   }, SWEEP_INTERVAL_MS)
   sweepTimer.unref?.()
   return true
+}
+
+/**
+ * One tick of the controller's timer: a sync, unless the last one is still
+ * running. Under load a sync can take longer than the tick, and two at once
+ * each read the ingest before the other wrote — the second then took a stream
+ * the first had just opened for one that was no longer open, and dropped its
+ * first publisher. Skipping the tick lets the next one see the settled state.
+ */
+export async function syncOnce(
+  log: (message: string) => void,
+  run: () => Promise<void> = sync
+): Promise<void> {
+  if (syncing != null) return
+  syncing = run()
+    .catch((error: unknown) => {
+      log(`live: ${String(error)}`)
+    })
+    .finally(() => {
+      syncing = undefined
+    })
+  await syncing
 }
 
 /**
@@ -294,8 +319,21 @@ export async function settleLiveWork(): Promise<void> {
   await Promise.all([...work.values()])
 }
 
-async function handle(event: LiveEvent): Promise<void> {
-  const current = options
+/**
+ * Test seam: one event from the ingest, handled as the running controller
+ * handles it, against `current`.
+ */
+export async function handleLiveEventForTest(
+  event: LiveEvent,
+  current: LiveControllerOptions
+): Promise<void> {
+  await handle(event, current)
+}
+
+async function handle(
+  event: LiveEvent,
+  current: LiveControllerOptions | undefined = options
+): Promise<void> {
   if (current == null) return
   const { db } = current
 
@@ -405,9 +443,14 @@ export async function beganPublishing(
       status: 'live',
       hidden: false,
       // A reconnect keeps the first start: the video is one recording of one
-      // game, and its clock began when the first frame did.
+      // game, and its clock began when the first frame did. So does a start
+      // its publisher has already given (`placeByPublisher`), which can land
+      // before this does.
       start_at: eb.fn.coalesce('start_at', eb.val(now)),
-      start_at_source: 'liveSession',
+      start_at_source: eb.fn.coalesce(
+        'start_at_source',
+        eb.val<'liveSession'>('liveSession')
+      ),
       updated_at: now
     }))
     .where('id', '=', row.videoId)
@@ -584,7 +627,8 @@ export async function sync(
       'live_streams.closes_at as closesAt',
       'live_streams.video_id as videoId',
       'live_streams.last_published_at as lastPublishedAt',
-      'live_streams.last_error as lastError'
+      'live_streams.last_error as lastError',
+      'live_streams.local_recording as localRecording'
     ])
     .where(eb =>
       eb.or([
@@ -614,7 +658,9 @@ export async function sync(
       await finishStream(
         current,
         row.id,
-        row.lastError ?? 'streaming permission was removed'
+        row.localRecording === 'uploaded'
+          ? REPLACED_BY_UPLOAD
+          : (row.lastError ?? 'streaming permission was removed')
       )
       continue
     }
@@ -863,6 +909,19 @@ export async function finishStream(
     })
     .where('id', '=', row.videoId)
     .execute()
+
+  // A recording uploaded from the phone replaced this one while it was
+  // between publishes. It is kept here, whole and watchable, for the month
+  // in which the replacement may be undone, and the purge deletes it with
+  // its work directory after that: packing it up and paying the Space for a
+  // copy nobody sees would be work for nothing.
+  const replaced = await db
+    .selectFrom('videos')
+    .select('id')
+    .where('id', '=', row.videoId)
+    .where('replaced_by', 'is not', null)
+    .executeTakeFirst()
+  if (replaced != null) return
 
   const videoId = row.videoId
   queue(`finish:${videoId}`, async () => {

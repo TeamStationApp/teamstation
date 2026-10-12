@@ -1,4 +1,4 @@
-import { asObject, asOptional, asString } from 'cleaners'
+import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
@@ -12,17 +12,24 @@ import {
 } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import {
   cameraLabelOf,
   createLiveStream,
+  deviceIdOf,
+  deviceLabelTaken,
+  deviceModelOf,
   freeSlot,
   labelFor,
+  labelTaken,
   liveStreamById,
   type LiveStreamRow,
   liveStreamsFor,
   MAX_CAMERAS,
   myLiveStreams,
+  placeByPublisher,
+  requestDeviceStream,
   revealKey,
   rotateLiveStreamKey,
   setCameraName,
@@ -31,6 +38,7 @@ import {
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { recordRecordingReminder } from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
 
 /**
@@ -60,8 +68,24 @@ export interface LiveRouteOptions {
   host: string
 }
 
-const asStreamChange = asObject({ label: asOptional(asString) })
-const asNewStream = asObject({ label: asOptional(asString) })
+const asStreamChange = asObject({
+  label: asOptional(asString),
+  /** Only `recorded`, and only on the caller's own device stream. */
+  localRecording: asOptional(asString),
+  /**
+   * When the stream's first picture was captured, on the publisher's wall
+   * clock, as an ISO 8601 instant: where its live video starts.
+   */
+  liveStartedAt: asOptional(asString)
+})
+const asNewStream = asObject({
+  label: asOptional(asString),
+  /** The install asking. With it, the device path below answers. */
+  deviceId: asOptional(asString),
+  deviceModel: asOptional(asString),
+  recordsLocally: asOptional(asBoolean),
+  heldStreamId: asOptional(asString)
+})
 
 interface GameRow {
   id: string
@@ -142,6 +166,11 @@ export function liveRoutes(
   /**
    * Another camera of this person's own, up to the fourth.
    *
+   * With a `deviceId`, it is the stream that device holds under that camera
+   * name: the same one again (200), one an installed Director claimed under
+   * that name (200), or a new one (201). See `requestDeviceStream`. Without
+   * one — a browser, streaming software — every request is a new camera.
+   *
    * The slot is the lowest they do not already hold, so somebody who ends
    * their second camera and asks for another gets that number back rather
    * than counting upwards for ever.
@@ -174,17 +203,43 @@ export function liveRoutes(
       const body = cleanBody(asNewStream, req.body)
       // Blank is the same as omitted: the slot's own name, not an empty one.
       const named = cameraLabelOf(body.label)
-      const mine = await myLiveStreams(db, game.id, actor.userId)
-      const slot = freeSlot(mine)
-      if (slot == null) {
-        throw badRequest(
-          `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-        )
+      if (body.deviceId != null) {
+        const answer = await requestDeviceStream(db, {
+          gameId: game.id,
+          teamId,
+          startAt: game.startAt,
+          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`,
+          userId: actor.userId,
+          deviceId: deviceIdOf(body.deviceId),
+          deviceModel: deviceModelOf(body.deviceModel),
+          label: named ?? null,
+          recordsLocally: body.recordsLocally === true,
+          heldStreamId: body.heldStreamId,
+          live,
+          sessionSecret
+        })
+        setAudit(res.locals, {
+          entityType: 'liveStream',
+          entityId: answer.row.id
+        })
+        res.status(answer.created ? 201 : 200).json({
+          ...(await summaryOf(db, answer.row, actor.userId)),
+          url: streamUrlFor(live, host, answer.key)
+        })
+        return
       }
-
-      let created
-      try {
-        created = await createLiveStream(db, {
+      // Under the game's lock, as a device's request and a Director's claim
+      // are, so streaming software and a phone asking at once get a slot
+      // each, and neither is handed the other's key.
+      const created = await db.transaction().execute(async trx => {
+        await lockKeys(trx, [`liveStreams:${game.id}`])
+        const slot = freeSlot(await myLiveStreams(trx, game.id, actor.userId))
+        if (slot == null) {
+          throw badRequest(
+            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
+          )
+        }
+        return await createLiveStream(trx, {
           gameId: game.id,
           teamId,
           startAt: game.startAt,
@@ -195,21 +250,7 @@ export function liveRoutes(
           sessionSecret,
           videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
         })
-      } catch (error) {
-        // Two presses of the button at once: one of them wins the slot and the
-        // other lands here. Hand back what it was asking for rather than a
-        // five-hundred.
-        const raced = (await myLiveStreams(db, game.id, actor.userId)).find(
-          row => row.slot === slot
-        )
-        if (raced == null) throw error
-        setAudit(res.locals, { entityType: 'liveStream', entityId: raced.id })
-        res.json({
-          ...(await summaryOf(db, raced, actor.userId)),
-          url: streamUrlFor(live, host, revealKey(sessionSecret, raced))
-        })
-        return
-      }
+      })
 
       setAudit(res.locals, { entityType: 'liveStream', entityId: created.id })
       res.status(201).json({
@@ -282,7 +323,16 @@ export function liveRoutes(
     })
   )
 
-  /** Renaming a camera. */
+  /**
+   * Renaming a camera, a phone saying it holds its recording, or a publisher
+   * saying when its first picture was captured.
+   *
+   * A device stream's new name follows the label rule: no two of the
+   * caller's active device streams on the game share one. The first change
+   * of `localRecording` from `none` to `recorded` records the upload
+   * reminder. `liveStartedAt` places the live video by the publisher's own
+   * clock, once; see `placeByPublisher`.
+   */
   router.patch(
     '/games/:gameId/live-streams/:streamId',
     requireActor,
@@ -301,17 +351,63 @@ export function liveRoutes(
       )
       const body = cleanBody(asStreamChange, req.body)
       const named = cameraLabelOf(body.label)
+      if (body.localRecording != null) {
+        if (body.localRecording !== 'recorded') {
+          throw badRequest('localRecording can only be set to recorded.')
+        }
+        if (row.deviceId == null) {
+          throw badRequest('Only a device stream holds a recording.')
+        }
+      }
+      const liveStartedAt =
+        body.liveStartedAt == null ? undefined : new Date(body.liveStartedAt)
+      if (liveStartedAt != null && Number.isNaN(liveStartedAt.getTime())) {
+        throw badRequest('liveStartedAt must be an ISO 8601 instant.')
+      }
+      if (
+        named != null &&
+        row.deviceId != null &&
+        (await deviceLabelTaken(db, {
+          gameId: game.id,
+          userId: actor.userId,
+          label: named,
+          exceptId: row.id
+        }))
+      ) {
+        throw labelTaken(named)
+      }
       // Absent leaves the stored name. Present writes the label and the
       // video title together, including a blank, which clears it.
       if (named !== undefined) {
         await setCameraName(db, row.id, named)
       }
+      if (body.localRecording != null) {
+        const marked = await db
+          .updateTable('live_streams')
+          .set({ local_recording: 'recorded', updated_at: new Date() })
+          .where('id', '=', row.id)
+          .where('local_recording', '=', 'none')
+          .executeTakeFirst()
+        if (Number(marked.numUpdatedRows) > 0) {
+          await recordRecordingReminder(db, row.id)
+        }
+      }
+      const placed =
+        liveStartedAt != null &&
+        (await placeByPublisher(db, row.id, liveStartedAt))
 
       setAudit(res.locals, {
         entityType: 'liveStream',
         entityId: row.id,
-        before: { label: row.label },
-        after: { label: named === undefined ? row.label : named }
+        before: { label: row.label, localRecording: row.localRecording },
+        after: {
+          label: named === undefined ? row.label : named,
+          localRecording:
+            body.localRecording != null && row.localRecording === 'none'
+              ? 'recorded'
+              : row.localRecording,
+          ...(placed ? { liveStartedAt: liveStartedAt.toISOString() } : {})
+        }
       })
       const fresh = (await liveStreamById(db, row.id)) ?? row
       res.json(await summaryOf(db, fresh, actor.userId))
@@ -537,12 +633,22 @@ async function summaryOf(
   return oneStream(row, status, names.get(row.userId) ?? '', askedBy)
 }
 
+/**
+ * One camera as an answer.
+ *
+ * Every item of a game's list says what device holds it and how far its
+ * recording has got, and the owner's own items say which install. A single
+ * camera says so too when a device holds it; one made for a browser or
+ * streaming software answers exactly as it always has.
+ */
 function oneStream(
   row: LiveStreamRow,
   status: LiveStatus | null,
   ownerName: string,
-  askedBy: number
+  askedBy: number,
+  inList = false
 ): LiveStream {
+  const device = inList || row.deviceId != null
   return asLiveStream({
     id: row.id,
     gameId: row.gameId,
@@ -559,7 +665,14 @@ function oneStream(
     // a key's prefix or a disk, and in any case there is nothing they could do
     // about it but tell them.
     lastError: row.userId === askedBy ? row.lastError : null,
-    status: row.userId === askedBy ? status : null
+    status: row.userId === askedBy ? status : null,
+    ...(device
+      ? {
+          deviceModel: row.deviceModel,
+          localRecording: row.localRecording,
+          ...(row.userId === askedBy ? { deviceId: row.deviceId } : {})
+        }
+      : {})
   })
 }
 
@@ -586,7 +699,8 @@ async function listFor(
       row,
       statuses.get(row.id) ?? null,
       names.get(row.userId) ?? '',
-      askedBy
+      askedBy,
+      true
     )
   )
   const mine = drawn.filter(row => row.userId === askedBy)
