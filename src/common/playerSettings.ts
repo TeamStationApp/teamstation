@@ -1,4 +1,4 @@
-import { asArray } from 'cleaners'
+import { asArray, asObject } from 'cleaners'
 
 import { asBats, asThrows } from './api'
 import { POSITIONS } from './scoring/state'
@@ -13,6 +13,30 @@ export type PlayerPosition = (typeof PLAYER_POSITIONS)[number]
 
 /** The longest jersey number a roster row has room for. */
 export const JERSEY_MAX_LENGTH = 3
+
+export const PLAYER_NAME_MAX_LENGTH = 100
+
+/** Both parts are sent together; a player must keep at least one name. */
+export function asPlayerSettingsName(raw: unknown): {
+  firstName: string
+  lastName: string
+} {
+  const part = (value: unknown): string => {
+    if (typeof value !== 'string') throw new TypeError('Expected a name')
+    const name = value.trim()
+    if (name.length > PLAYER_NAME_MAX_LENGTH) {
+      throw new TypeError(
+        `A name is at most ${PLAYER_NAME_MAX_LENGTH} characters`
+      )
+    }
+    return name
+  }
+  const name = asObject({ firstName: part, lastName: part })(raw)
+  if (name.firstName === '' && name.lastName === '') {
+    throw new TypeError('Enter a player name.')
+  }
+  return name
+}
 
 /**
  * A jersey number as it is stored: trimmed, and `null` for none. An empty
@@ -48,8 +72,8 @@ export function asPlayerPositions(raw: unknown): PlayerPosition[] {
  * optional, and only the ones sent change; a body that sends none asks for
  * nothing and is refused.
  *
- * `jersey` and `positions` belong to the player's place on this team; `bats`
- * and `throws` belong to the player, and read the same on every team.
+ * `jersey` and `positions` belong to the player's place on this team; `name`,
+ * `bats` and `throws` belong to the player and read the same on every team.
  */
 export function asPlayerSettings(raw: unknown): PlayerSettings {
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -59,6 +83,9 @@ export function asPlayerSettings(raw: unknown): PlayerSettings {
   // "not sent": here `null` is an answer — no number, no hand known.
   const body = raw as Record<string, unknown>
   const sent: PlayerSettings = {}
+  if (body.name !== undefined) {
+    sent.name = field('name', asPlayerSettingsName, body)
+  }
   if (body.jersey !== undefined) sent.jersey = field('jersey', asJersey, body)
   if (body.positions !== undefined) {
     sent.positions = field('positions', asPlayerPositions, body)
@@ -86,6 +113,8 @@ function field<T>(
 }
 
 export interface PlayerSettings {
+  /** Player-wide name, authorized separately from other settings. */
+  name?: { firstName: string; lastName: string }
   jersey?: string | null
   positions?: PlayerPosition[]
   bats?: 'left' | 'right' | 'switch' | null

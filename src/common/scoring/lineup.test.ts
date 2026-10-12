@@ -89,6 +89,51 @@ describe('a new game from two rosters', function () {
 })
 
 describe('roster checks', function () {
+  it('updates a current batter’s edited hand before the first pitch without rewriting pitched appearances or manual choices', function () {
+    const state = game()
+    const setup = setupOf(state)
+    setup.players[1].bats = 'left'
+    const edited = applyAction(state, { type: 'lineup', kind: 'roster', setup })
+    expect(edited.problems).deep.equals([])
+    expect(edited.state.gameData.players[1].bats).equals('left')
+    expect(
+      edited.state.liveData.plays.currentPlay!.matchup.batSide.code
+    ).equals('L')
+    const pitched = after(state, { type: 'pitch', call: 'B' })
+    const events = structuredClone(
+      pitched.liveData.plays.currentPlay!.playEvents
+    )
+    const afterPitch = applyAction(pitched, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(afterPitch.problems).deep.equals([])
+    expect(afterPitch.state.gameData.players[1].bats).equals('left')
+    expect(
+      afterPitch.state.liveData.plays.currentPlay!.matchup.batSide.code
+    ).equals('R')
+    expect(afterPitch.state.liveData.plays.currentPlay!.playEvents).deep.equals(
+      events
+    )
+    state.gameData.players[1].bats = 'switch'
+    const switched = after(state, {
+      type: 'lineup',
+      kind: 'batterSide',
+      batSide: 'L'
+    })
+    const unrelated = setupOf(switched)
+    unrelated.players[2].jersey = '00'
+    expect(
+      applyRoster(switched, unrelated).state!.liveData.plays.currentPlay!
+        .matchup.batSide.code
+    ).equals('L')
+    unrelated.players[1].bats = 'right'
+    expect(
+      applyRoster(switched, unrelated).state!.liveData.plays.currentPlay!
+        .matchup.batSide.code
+    ).equals('R')
+  })
   it('says what is wrong with a lineup', function () {
     const check = (
       edit: (setup: ReturnType<typeof setupOf>) => void

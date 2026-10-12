@@ -265,6 +265,21 @@ describe('scoring roster HTTP contract', function () {
     // Viewing season games does not grant access to a team's private roster.
     expect(followerResponse.status).equals(404)
   })
+  it('includes private names only for players in an authorized management read', async function () {
+    const response = await fetch(address + '?includeFullNames=true', {
+      headers: { 'x-test-user': String(coach) }
+    })
+    expect(response.status).equals(200)
+    const rows = ((await response.json()) as unknown[]).map(asRosterEntry)
+    expect(rows.find(row => row.userId === child)?.nameDetails).not.equals(
+      undefined
+    )
+    expect(
+      rows
+        .filter(row => !row.isPlayer)
+        .every(row => row.nameDetails === undefined)
+    ).equals(true)
+  })
   it('keeps existing team/game/video/box-score reads working after roster extraction', async function () {
     const origin = new URL(address).origin
     const get = async (path: string): Promise<unknown> => {

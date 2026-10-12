@@ -5,7 +5,11 @@ import {
   POSITION_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
-import { JERSEY_MAX_LENGTH, PLAYER_POSITIONS } from '../common/playerSettings'
+import {
+  JERSEY_MAX_LENGTH,
+  PLAYER_NAME_MAX_LENGTH,
+  PLAYER_POSITIONS
+} from '../common/playerSettings'
 import {
   CLIP_MAX_MS,
   CLIP_MIN_MS,
@@ -3922,24 +3926,35 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "A team's players, coaches and followers",
           description:
-            'Names are a first name and a last initial, for every caller; ' +
-            'the whole name is only on `GET /players/{userId}/name`. ' +
+            'Names default to a first name and last initial. includeFullNames=true ' +
+            'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
+            'coach, scorekeeper or admin on this team or its parents. Others get 404. ' +
             '`walkUpSong` is the WalkUpSong the person has ' +
             'on this team, or null. Whether the caller may change the songs ' +
             'is `GET /me/roles`: `songkeeper` or `admin` on the team.',
           security: [{ bearer: [] }],
-          parameters: [teamIdParam],
+          parameters: [
+            teamIdParam,
+            {
+              name: 'includeFullNames',
+              in: 'query',
+              schema: { type: 'boolean', default: false },
+              description:
+                'Request private names for authorized roster management.'
+            }
+          ],
           responses: {
             200: { description: 'The roster, coaches first' },
+            400: errorResponse,
             404: errorResponse
           }
         }
       },
       '/teams/{teamId}/players/{userId}/settings': {
         put: {
-          summary: "Set a player's jersey, positions, bats and throws",
+          summary: "Set a player's name, jersey, positions, bats and throws",
           description:
-            'For a coach of the team — the flag set on the team, its season ' +
+            'For a coach or scorekeeper of the team — the flag set on the team, its season ' +
             'or its league — an admin of any of those, or a site admin. ' +
             'Anybody else, and a user who is not a player on the team, gets ' +
             '404. Send only the fields to change; a body with none is 400. ' +
@@ -3947,7 +3962,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             "`bats` and `throws` are the player's own and read the same on " +
             'every team; setting either marks them set by hand, so a ' +
             'roster import no longer overwrites them. Audited. ' +
-            "Answers with the player's roster entry as it now reads.",
+            'The optional `name` replaces both trimmed name parts, with at least ' +
+            'one nonblank part; it also requires permission to edit the player name. ' +
+            'All submitted changes save atomically. ' +
+            "Answers with the player's authorized roster entry as it now reads.",
           security: [{ bearer: [] }],
           parameters: [teamIdParam, userIdParam],
           requestBody: {
@@ -3958,6 +3976,22 @@ export function openApiDocument(version: string): OpenApiDocument {
                   type: 'object',
                   minProperties: 1,
                   properties: {
+                    name: {
+                      type: 'object',
+                      required: ['firstName', 'lastName'],
+                      properties: {
+                        firstName: {
+                          type: 'string',
+                          maxLength: PLAYER_NAME_MAX_LENGTH
+                        },
+                        lastName: {
+                          type: 'string',
+                          maxLength: PLAYER_NAME_MAX_LENGTH
+                        }
+                      },
+                      description:
+                        'Trimmed; at least one part must be nonblank.'
+                    },
                     jersey: {
                       type: 'string',
                       nullable: true,

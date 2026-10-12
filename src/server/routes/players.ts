@@ -7,7 +7,7 @@ import { outcomeName } from '../../common/outcomes'
 import { asPlayerSettings } from '../../common/playerSettings'
 import { asUserId } from '../../common/userIdNumber'
 import {
-  canCoach,
+  canManageRoster,
   canSeePerson,
   canSeePlayedFor,
   mayEditName,
@@ -407,17 +407,19 @@ export function playerRoutes(
   )
 
   /**
-   * What a coach sets for one player on one team: the jersey number and the
-   * positions, which are the player's place on this team, and how they bat
-   * and throw, which is the player's own and reads the same on every team.
+   * What a roster manager sets for one player on one team: the jersey and
+   * positions belong to this team; the name and how they bat and throw belong
+   * to the player and read the same on every team.
    *
-   * A coach of the team (set on it, or on its season or league), an
+   * A coach or scorekeeper (set on the team, its season or league), an
    * administrator of any of those, and a site administrator. Anybody else,
    * and anybody who is not a player on this team, is answered 404: the
    * question "may I change this?" is not asked of a page nobody offered.
+   * Preserve canManageRoster's intentional scorekeeper exception: they may
+   * be the only person responsible for maintaining the roster.
    *
    * Setting either hand marks it `manual`, so the next roster import
-   * leaves the coach's answer alone. The answer is the player's roster
+   * leaves the roster manager's answer alone. The answer is the player's roster
    * entry as it now reads, the same shape `GET /teams/:teamId/roster` lists.
    */
   router.put(
@@ -429,7 +431,7 @@ export function playerRoutes(
       const teamId = pathParam(req.params.teamId)
       const userId = userIdParam(req.params.userId)
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-      if (!canCoach(scopes, teamId)) throw notFound()
+      if (!canManageRoster(scopes, teamId)) throw notFound()
 
       const place = await db
         .selectFrom('memberships')
@@ -439,7 +441,10 @@ export function playerRoutes(
           'memberships.jersey as jersey',
           'memberships.positions as positions',
           'users.bats as bats',
-          'users.throws as throws'
+          'users.throws as throws',
+          'users.first_name as firstName',
+          'users.last_name as lastName',
+          'users.display_name as displayName'
         ])
         .where('memberships.team_id', '=', teamId)
         .where('memberships.user_id', '=', userId)
@@ -449,6 +454,14 @@ export function playerRoutes(
       if (place == null) throw notFound()
 
       const body = cleanBody(asPlayerSettings, req.body)
+      if (
+        body.name !== undefined &&
+        !(await mayEditName(db, actor.userId, userId, {
+          isAdmin: actor.isAdmin
+        }))
+      ) {
+        throw notFound()
+      }
 
       await db.transaction().execute(async trx => {
         if (body.jersey !== undefined || body.positions !== undefined) {
@@ -463,13 +476,30 @@ export function playerRoutes(
             .where('id', '=', place.membershipId)
             .execute()
         }
-        if (body.bats !== undefined || body.throws !== undefined) {
+        if (
+          body.bats !== undefined ||
+          body.throws !== undefined ||
+          body.name !== undefined
+        ) {
           await trx
             .updateTable('users')
             .set({
               ...(body.bats === undefined ? {} : { bats: body.bats }),
               ...(body.throws === undefined ? {} : { throws: body.throws }),
-              bats_source: 'manual',
+              ...(body.bats === undefined && body.throws === undefined
+                ? {}
+                : { bats_source: 'manual' }),
+              ...(body.name === undefined
+                ? {}
+                : {
+                    first_name:
+                      body.name.firstName === '' ? null : body.name.firstName,
+                    last_name:
+                      body.name.lastName === '' ? null : body.name.lastName,
+                    display_name: [body.name.firstName, body.name.lastName]
+                      .filter(Boolean)
+                      .join(' ')
+                  }),
               updated_at: new Date()
             })
             .where('id', '=', userId)
@@ -479,6 +509,12 @@ export function playerRoutes(
 
       const before = {
         teamId,
+        ...(body.name === undefined
+          ? {}
+          : {
+              name: { firstName: place.firstName, lastName: place.lastName },
+              displayName: place.displayName
+            }),
         jersey: place.jersey,
         positions: place.positions,
         bats: place.bats,
@@ -488,10 +524,20 @@ export function playerRoutes(
         entityType: 'playerSettings',
         entityId: userId,
         before,
-        after: { ...before, ...body }
+        after: {
+          ...before,
+          ...body,
+          ...(body.name === undefined
+            ? {}
+            : {
+                displayName: [body.name.firstName, body.name.lastName]
+                  .filter(Boolean)
+                  .join(' ')
+              })
+        }
       })
 
-      const roster = await teamRoster(db, media.space, teamId)
+      const roster = await teamRoster(db, media.space, teamId, true)
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()
       res.json(entry)

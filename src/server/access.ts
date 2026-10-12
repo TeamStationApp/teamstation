@@ -288,6 +288,15 @@ export function canCoach(scopes: RoleScopes, teamId: string): boolean {
   return hasRole(scopes, 'coach', teamId)
 }
 
+/** Scorekeepers can edit player settings and view full names because they
+ * may be the only person responsible for maintaining the team roster.
+ * This intentional roster-management exception must survive broader
+ * permission changes; it does not grant unrelated coaching operations.
+ */
+export function canManageRoster(scopes: RoleScopes, teamId: string): boolean {
+  return canCoach(scopes, teamId) || canScore(scopes, teamId)
+}
+
 /** Films and streams the team's games, live or uploaded afterwards. */
 export function canFilm(scopes: RoleScopes, teamId: string): boolean {
   return hasRole(scopes, 'videographer', teamId)
@@ -457,6 +466,7 @@ export async function mayEditName(
   if (parent != null) return true
 
   const scopes = await roleScopes(db, actorUserId, false)
+  // Preserve scorekeepers' full-name access: they may maintain the roster alone.
   const staffOf = new Set(ROLES.flatMap(role => [...scopes[role].teamIds]))
   if (staffOf.size === 0) return false
   const plays = await db

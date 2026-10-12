@@ -644,9 +644,140 @@ describe('a player, and who may change their name', function () {
   const settingsOf = (team: string, player: number): string =>
     `/teams/${team}/players/${player}/settings`
 
-  it('lets a coach or an admin of the team set a player’s settings', async function () {
+  it('lets existing roster managers correct a placeholder name atomically, without broadening permissions', async function () {
+    const original = await db
+      .selectFrom('users')
+      .select([
+        'first_name',
+        'last_name',
+        'display_name',
+        'login_enabled',
+        'bats_source',
+        'bats'
+      ])
+      .where('id', '=', childId)
+      .executeTakeFirstOrThrow()
+    const place = await db
+      .selectFrom('memberships')
+      .select(['jersey'])
+      .where('team_id', '=', teamId)
+      .where('user_id', '=', childId)
+      .executeTakeFirstOrThrow()
+    const proof = (body: unknown, answer: unknown): void => {
+      if (process.env.TS_NAME_API_PROOF === '1')
+        console.log('Name Settings PUT', JSON.stringify({ body, answer }))
+    }
+    try {
+      await db
+        .updateTable('users')
+        .set({ login_enabled: false })
+        .where('id', '=', childId)
+        .execute()
+      for (const viewer of [
+        teamCoachId,
+        scorekeeperId,
+        leagueCoachId,
+        coachId,
+        seasonAdminId,
+        siteAdminId
+      ]) {
+        const body = {
+          name: { firstName: ' Mookie ', lastName: ' Betts ' },
+          jersey: '14'
+        }
+        const answer = await put(settingsOf(teamId, childId), viewer, body)
+        proof(body, answer)
+        expect(answer.status).equals(200)
+        const entry = asRosterEntry(answer.body)
+        expect(entry.nameDetails).deep.equals({
+          firstName: 'Mookie',
+          lastName: 'Betts',
+          displayName: 'Mookie Betts'
+        })
+        expect(entry.jersey).equals('14')
+        expect(entry.userId).equals(childId)
+      }
+      for (const viewer of [
+        songkeeperId,
+        videographerId,
+        strangerId,
+        otherCoachId,
+        parentId,
+        childId
+      ]) {
+        const body = {
+          name: { firstName: 'Mike', lastName: 'Trout' },
+          jersey: '99'
+        }
+        const answer = await put(settingsOf(teamId, childId), viewer, body)
+        proof(body, answer)
+        expect(answer.status).equals(404)
+      }
+      const body = { name: { firstName: '', lastName: '' }, jersey: '99' }
+      const invalid = await put(
+        settingsOf(teamId, childId),
+        scorekeeperId,
+        body
+      )
+      proof(body, invalid)
+      expect(invalid.status).equals(400)
+      const roster = (
+        await get(
+          `/teams/${teamId}/roster?includeFullNames=true`,
+          scorekeeperId
+        )
+      ).body as unknown[]
+      expect(
+        roster.map(asRosterEntry).find(row => row.userId === childId)?.jersey
+      ).equals('14')
+      const saved = await db
+        .selectFrom('users')
+        .select(['display_name', 'login_enabled', 'bats_source'])
+        .where('id', '=', childId)
+        .executeTakeFirstOrThrow()
+      expect(saved).deep.equals({
+        display_name: 'Mookie Betts',
+        login_enabled: false,
+        bats_source: original.bats_source
+      })
+      expect(
+        JSON.stringify(
+          (await get(`/teams/${teamId}/roster`, scorekeeperId)).body
+        )
+      ).not.includes('Betts')
+      const surnameOnly = await put(
+        settingsOf(teamId, childId),
+        scorekeeperId,
+        { name: { firstName: '', lastName: 'Betts' } }
+      )
+      expect(asRosterEntry(surnameOnly.body).nameDetails?.firstName).equals(
+        null
+      )
+      const firstOnly = await put(settingsOf(teamId, childId), scorekeeperId, {
+        name: { firstName: 'Mookie', lastName: '' },
+        bats: 'switch'
+      })
+      expect(asRosterEntry(firstOnly.body).nameDetails?.lastName).equals(null)
+      expect(asRosterEntry(firstOnly.body).bats).equals('switch')
+    } finally {
+      await db
+        .updateTable('users')
+        .set(original)
+        .where('id', '=', childId)
+        .execute()
+      await db
+        .updateTable('memberships')
+        .set({ jersey: place.jersey })
+        .where('team_id', '=', teamId)
+        .where('user_id', '=', childId)
+        .execute()
+    }
+  })
+
+  it('lets a coach, scorekeeper or admin of the team set player settings', async function () {
     for (const [viewer, jersey] of [
       [teamCoachId, '3'],
+      [scorekeeperId, '4'],
       [leagueCoachId, '5'],
       [coachId, '6'],
       [seasonAdminId, '8'],
@@ -663,7 +794,6 @@ describe('a player, and who may change their name', function () {
 
   it('answers 404 to anybody else, and for anybody who is not a player on the team', async function () {
     for (const viewer of [
-      scorekeeperId,
       songkeeperId,
       videographerId,
       strangerId,
@@ -678,7 +808,7 @@ describe('a player, and who may change their name', function () {
     }
     // Rights come first: a bad body from somebody with none is still 404.
     expect(
-      (await put(settingsOf(teamId, childId), scorekeeperId, {})).status
+      (await put(settingsOf(teamId, childId), songkeeperId, {})).status
     ).equals(404)
     // A member who does not play, a player on another team, a stranger to
     // both, and a team that does not exist.
