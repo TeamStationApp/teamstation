@@ -26,6 +26,8 @@ class PhoneStreamPreviewManager :
     override fun createViewInstance(context: ThemedReactContext): TextureView {
         val view = TextureView(context)
         view.surfaceTextureListener = PreviewSurface(context)
+        // The streaming screen is up while the preview is: the window holding it keeps the phone awake.
+        view.keepScreenOn = true
         return view
     }
 

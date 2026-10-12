@@ -113,6 +113,10 @@ export function GameWatchLayout(
   return (
     <Animated.ScrollView
       style={style}
+      // A tap on a button in a dialog opened from this tab (Record video's
+      // camera angle prompt) acts while the keyboard is up, rather than only
+      // putting the keyboard away.
+      keyboardShouldPersistTaps="handled"
       onScroll={handleScroll}
       scrollEventThrottle={16}
       onContentSizeChange={(_width, contentY) => {
@@ -188,6 +192,7 @@ export function GameWatchLayout(
       */}
       <Animated.ScrollView
         scrollEnabled={sideBySide}
+        keyboardShouldPersistTaps="handled"
         // Without this an inner vertical scroller on Android takes the gesture
         // and the outer one never moves again.
         nestedScrollEnabled
