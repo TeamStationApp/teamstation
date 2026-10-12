@@ -95,6 +95,15 @@ import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 const asNullable = <T>(cleaner: Cleaner<T>): Cleaner<T | null> =>
   asEither(asLiteral(null), cleaner)
 
+/**
+ * A key that may be missing, and whose value may be null when it is there.
+ * `asOptional` turns a null into the fallback, which loses the difference.
+ */
+const asAbsentOr =
+  <T>(cleaner: Cleaner<T>): Cleaner<T | undefined> =>
+  raw =>
+    raw === undefined ? undefined : cleaner(raw)
+
 export const asTeamSummary = asObject({
   id: asString,
   name: asString,
@@ -833,7 +842,7 @@ export type LiveStatus = ReturnType<typeof asLiveStatus>
  * creating the stream, revealing it, rotating it. Every other reply carries
  * `keyPrefix` and nothing that can publish.
  */
-export const asLiveStream = asObject({
+const cleanLiveStream = asObject({
   id: asString,
   gameId: asString,
   /** Whose camera it is, and what they are called. */
@@ -851,12 +860,46 @@ export const asLiveStream = asObject({
   lastError: asOptional(asNullable(asString), null),
   status: asOptional(asNullable(asLiveStatus), null),
   /**
+   * What the device holding it is, in words: `iPhone 13 Pro`, `iPad Pro`.
+   * Null for a browser's or streaming software's stream. On every item of a
+   * game's list, and on a single device stream.
+   */
+  deviceModel: asAbsentOr(asNullable(asString)),
+  /**
+   * The install holding it, on the owner's own streams only, so a device can
+   * tell which of its angles are its own.
+   */
+  deviceId: asAbsentOr(asNullable(asString)),
+  /** How far the phone's own recording has got. */
+  localRecording: asOptional(asLiteral('none', 'recorded', 'uploaded')),
+  /**
    * Only ever in the reply to a request that asked for it by name, and only
    * ever to the person the key belongs to.
    */
   url: asOptional(asString)
 })
-export type LiveStream = ReturnType<typeof asLiveStream>
+type CleanedLiveStream = ReturnType<typeof cleanLiveStream>
+/** The device fields are absent from a browser stream's own answers. */
+export type LiveStream = Omit<
+  CleanedLiveStream,
+  'deviceModel' | 'deviceId' | 'localRecording'
+> & {
+  deviceModel?: CleanedLiveStream['deviceModel']
+  deviceId?: CleanedLiveStream['deviceId']
+  localRecording?: CleanedLiveStream['localRecording']
+}
+export const asLiveStream: (raw: unknown) => LiveStream = cleanLiveStream
+
+/** What a device sends with a camera name to get its own stream. */
+export interface DeviceStreamOptions {
+  /** The install id. With it, asking again returns the same stream. */
+  deviceId: string
+  deviceModel?: string
+  /** A phone that keeps its own recording of this stream. */
+  recordsLocally?: boolean
+  /** The stream a redial already holds: 410 if somebody ended it. */
+  heldStreamId?: string
+}
 
 /**
  * Everything pointed at one game, split by whether it is yours.
@@ -1966,6 +2009,16 @@ export class TeamStationClient {
     )
   }
 
+  /** Takes a reminder out of Pending and into History. */
+  async dismissNotification(id: string): Promise<void> {
+    await this.request(
+      'PUT',
+      `/me/notifications/${encodeURIComponent(id)}/dismissed`,
+      asUnknownOk,
+      {}
+    )
+  }
+
   async hasNotifications(): Promise<boolean> {
     return (
       await this.request(
@@ -2196,13 +2249,20 @@ export class TeamStationClient {
     )
   }
 
-  /** Another camera of my own on this game, up to the fourth. */
-  async addLiveStream(gameId: string, label?: string): Promise<LiveStream> {
+  /**
+   * Another camera of my own on this game, up to the fourth. With a device,
+   * the stream this device holds under this name, or a new one.
+   */
+  async addLiveStream(
+    gameId: string,
+    label?: string,
+    device?: DeviceStreamOptions
+  ): Promise<LiveStream> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/live-streams`,
       asLiveStream,
-      label == null ? {} : { label }
+      { ...(label == null ? {} : { label }), ...(device ?? {}) }
     )
   }
 
@@ -2232,11 +2292,14 @@ export class TeamStationClient {
     )
   }
 
-  /** Renames one of my cameras. */
+  /**
+   * Renames one of my cameras, or says this phone holds its recording
+   * (`localRecording: 'recorded'`), which starts the upload reminder.
+   */
   async updateLiveStream(
     gameId: string,
     streamId: string,
-    change: { label?: string }
+    change: { label?: string; localRecording?: 'recorded' }
   ): Promise<LiveStream> {
     return await this.request(
       'PATCH',
