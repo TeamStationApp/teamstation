@@ -4,7 +4,7 @@ import { android } from './android'
 import { bundleEnvironment, ios } from './apple'
 import { loadSettings } from './config'
 import { macos } from './macos'
-import { Processes } from './process'
+import { describeFailure, Processes } from './process'
 import { type Builders, type Options, run } from './runner'
 import { target } from './targets'
 import { appId, branchName, platform } from './validation'
@@ -81,10 +81,11 @@ export async function masonDeploy(
         env
       )
     }
-  } catch {
+  } catch (error) {
     console.error(
       'Mason deployment failed; check private configuration and required tools'
     )
+    for (const line of describeFailure(error)) console.error(line)
   } finally {
     process.off('SIGINT', stop)
     process.off('SIGTERM', stop)

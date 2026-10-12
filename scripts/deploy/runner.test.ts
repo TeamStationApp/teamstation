@@ -295,7 +295,13 @@ describe('Pinned multi-app deployment orchestration', () => {
       commits.push(context.commit)
       numbers.push(context.buildNumber)
       assert.equal(context.version, '9.8.7')
-      throw new Error('synthetic-private-error')
+      throw new DeploymentToolError(
+        'Deployment tool failed',
+        '/private/fixture/gradlew',
+        1,
+        undefined,
+        'FAILURE: Build failed with an exception.\nDEPLOY_STORE_PASSWORD=synthetic-private-error\n'
+      )
     }
     assert.equal(
       await run(parse(), { ios, android }, new AbortController().signal, line =>
@@ -308,6 +314,14 @@ describe('Pinned multi-app deployment orchestration', () => {
     assert.equal(numbers.length, 2)
     assert.equal(service.requests.length, 1)
     assert(!logs.join('\n').includes('synthetic-private-error'))
+    const failed =
+      'android build failed (gradlew exited 1); no package was published'
+    assert.deepEqual(logs.slice(logs.indexOf(failed)), [
+      failed,
+      '  | FAILURE: Build failed with an exception.',
+      '  | DEPLOY_STORE_PASSWORD=[redacted]',
+      'ios uploaded'
+    ])
     assert.equal(
       readFileSync(path.join(source, 'package.json'), 'utf8'),
       '{"version":"9.8.7"}'
