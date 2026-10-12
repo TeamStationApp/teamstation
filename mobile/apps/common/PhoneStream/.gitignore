@@ -1,0 +1,5 @@
+# Generated Xcode project for the test host (source of truth is Tests/Host/project.yml)
+*.xcodeproj/
+DerivedData/
+.build/
+.swiftpm/
