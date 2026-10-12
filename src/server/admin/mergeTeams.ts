@@ -232,15 +232,16 @@ export async function mergeTeams(
     // A fan of the closed team follows the survivor: one row each, so a
     // person who followed both keeps the one they already had there.
     await sql`
-      insert into team_follows (user_id, team_id, created_at)
-      select user_id, ${intoTeamId}, created_at
-      from team_follows
-      where team_id = ${fromTeamId}
-      on conflict (user_id, team_id) do nothing
+      insert into follows (user_id, group_type, group_id, created_at)
+      select user_id, 'team', ${intoTeamId}, created_at
+      from follows
+      where group_type = 'team' and group_id = ${fromTeamId}
+      on conflict (user_id, group_type, group_id) do nothing
     `.execute(trx)
     await trx
-      .deleteFrom('team_follows')
-      .where('team_id', '=', fromTeamId)
+      .deleteFrom('follows')
+      .where('group_type', '=', 'team')
+      .where('group_id', '=', fromTeamId)
       .execute()
     // `season_teams` has no id of its own — it is the pair — so the duplicate
     // is removed by keeping the earliest row for each pair instead.

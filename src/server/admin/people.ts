@@ -465,23 +465,31 @@ async function moveFollows(
   keeping: number
 ): Promise<void> {
   const follows = await db
-    .selectFrom('team_follows')
-    .select(['team_id', 'created_at'])
+    .selectFrom('follows')
+    .select(['group_id', 'created_at'])
+    .where('group_type', '=', 'team')
     .where('user_id', '=', closing)
     .execute()
   if (follows.length === 0) return
   await db
-    .insertInto('team_follows')
+    .insertInto('follows')
     .values(
       follows.map(follow => ({
         user_id: keeping,
-        team_id: follow.team_id,
+        group_type: 'team' as const,
+        group_id: follow.group_id,
         created_at: follow.created_at
       }))
     )
-    .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
+    .onConflict(oc =>
+      oc.columns(['user_id', 'group_type', 'group_id']).doNothing()
+    )
     .execute()
-  await db.deleteFrom('team_follows').where('user_id', '=', closing).execute()
+  await db
+    .deleteFrom('follows')
+    .where('user_id', '=', closing)
+    .where('group_type', '=', 'team')
+    .execute()
 }
 
 /**
