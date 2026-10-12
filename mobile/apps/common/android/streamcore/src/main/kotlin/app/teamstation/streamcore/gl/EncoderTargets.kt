@@ -23,6 +23,9 @@ internal class EncoderTargets<Window, Target>(
     /** The first attached target, which is the one the renderer makes current to read a frame. */
     fun first(): Target? = targets.values.firstOrNull()
 
+    /** The target attached under [key], if any. */
+    operator fun get(key: String): Target? = targets[key]
+
     /**
      * Points [key] at [window], releasing whatever target the key held first: a codec's old input
      * window is dead the moment the codec is released. A null window, or one no target can be built

@@ -23,6 +23,7 @@ import app.teamstation.streamcore.core.LensSelection
 import app.teamstation.streamcore.core.StreamSettings
 import app.teamstation.streamcore.core.ZoomMapping
 import app.teamstation.streamcore.gl.CaptureRenderer
+import app.teamstation.streamcore.gl.ProgrammeTicker
 import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlin.math.min
@@ -72,6 +73,9 @@ class CameraSession(private val context: Context) {
     }
 
     private val thread = HandlerThread("cameraman-capture").apply { start() }
+
+    /** The capture thread, for a test that checks [release] ends it. */
+    internal val captureThread: Thread get() = thread
     private val handler = Handler(thread.looper)
     private val executor = Executor { runnable -> handler.post(runnable) }
     val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -97,6 +101,23 @@ class CameraSession(private val context: Context) {
     private var rotationOverride: Int? = null
     private var lensCatalog: List<CameraLens> = emptyList()
     private var lensSelection = LensSelection()
+
+    /** Configured and not closed: a camera lost meanwhile is opened again when it is free. */
+    private var keepOpen = false
+    private var watchingAvailability = false
+
+    /**
+     * Another app releasing the camera, or the camera service coming back, is when a lost camera can
+     * be opened again. Registered with the first configure; called on the capture thread.
+     */
+    private val availability = object : CameraManager.AvailabilityCallback() {
+        override fun onCameraAvailable(id: String) {
+            if (id == cameraId) reopenIfLost(fromAvailability = true)
+        }
+    }
+
+    /** When the camera was last asked to open again, on the boot clock in milliseconds. */
+    private var lastReopenAt = Long.MIN_VALUE / 2
     /**
      * The hardware's own zoom range, before any lens selection narrowed it.
      *
@@ -127,6 +148,29 @@ class CameraSession(private val context: Context) {
 
     /** Blanking turned on or off, so the encoder can force the keyframe the transition needs. */
     var onBlankChanged: (() -> Unit)? = null
+
+    /** The programme clock the encoders are drawn on; null draws them on each camera frame. */
+    private var programme: ProgrammeTicker? = null
+
+    /**
+     * Whether the open camera stamps its frames on `elapsedRealtimeNanos`
+     * (`SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME`), the clock the steady wall clock runs on. False means
+     * the monotonic clock `System.nanoTime` reads.
+     */
+    @Volatile
+    var sensorTimestampsAreRealtime: Boolean = true
+        private set
+
+    /**
+     * Draws the encoders on [ticker]'s clock instead of on each camera frame: the phone's programme
+     * tick, which sends the stream and the recording the latest picture thirty times a second.
+     */
+    fun setProgramme(ticker: ProgrammeTicker?) {
+        handler.post {
+            programme = ticker
+            renderer?.setProgramme(ticker)
+        }
+    }
 
     /**
      * Blanks the encoded picture without stopping capture. The preview stays live: the operator can
@@ -161,6 +205,11 @@ class CameraSession(private val context: Context) {
 
     fun configure(position: CameraPosition, settings: StreamSettings) {
         handler.post {
+            keepOpen = true
+            if (!watchingAvailability) {
+                watchingAvailability = true
+                runCatching { manager.registerAvailabilityCallback(availability, handler) }
+            }
             this.settings = settings
             lensSelection = LensSelection(settings.disabledLensIDs)
             applyDevice(position)
@@ -191,16 +240,52 @@ class CameraSession(private val context: Context) {
         }
     }
 
+    /**
+     * Opens the camera again if it was lost (disconnected, or failed) while it is meant to be open. A camera that is
+     * running, or was closed, is left as it is.
+     */
+    fun reopen() {
+        handler.post { reopenIfLost(fromAvailability = false) }
+    }
+
+    /**
+     * Opens a lost camera again. One the system says is free is opened at most every
+     * [reopenSpacingMillis], so a camera that fails as it opens, and is then free again, is not
+     * opened in a tight loop; the owner's own tries ([reopen]) are spaced by the owner.
+     */
+    private fun reopenIfLost(fromAvailability: Boolean) {
+        if (!keepOpen || state.isRunning || !(state.isInterrupted || state.failure != null)) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (fromAvailability && now - lastReopenAt < reopenSpacingMillis) return
+        lastReopenAt = now
+        applyDevice(state.position)
+    }
+
     fun close() {
+        handler.post { closeNow() }
+    }
+
+    /**
+     * Closes the camera and ends the capture thread, for an owner that makes a new session each time
+     * (the phone's streaming screen): one that only closed left a thread behind on every visit.
+     */
+    fun release() {
         handler.post {
-            runCatching { session?.close() }
-            session = null
-            runCatching { device?.close() }
-            device = null
-            renderer?.release()
-            renderer = null
-            publish(state.copy(isRunning = false))
+            closeNow()
+            runCatching { manager.unregisterAvailabilityCallback(availability) }
+            thread.quitSafely()
         }
+    }
+
+    private fun closeNow() {
+        keepOpen = false
+        runCatching { session?.close() }
+        session = null
+        runCatching { device?.close() }
+        device = null
+        renderer?.release()
+        renderer = null
+        publish(state.copy(isRunning = false))
     }
 
     fun flip() {
@@ -304,6 +389,8 @@ class CameraSession(private val context: Context) {
             return
         }
 
+        sensorTimestampsAreRealtime = characteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
+            CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
         val descriptors = descriptors(characteristics)
         val catalogue = FormatCatalogue(descriptors)
         val wanted = catalogue.selection(settings.width, settings.height, settings.frameRate)
@@ -337,6 +424,7 @@ class CameraSession(private val context: Context) {
                         created.deliverToEncoder = { deliversFrame(it) }
                         created.blankEncoder = !settings.videoEnabled
                         created.onBlankChanged = { onBlankChanged?.invoke() }
+                        programme?.let(created::setProgramme)
                     }
             } catch (error: Exception) {
                 publish(state.copy(failure = "could not start the renderer: ${error.message}"))
@@ -506,6 +594,9 @@ class CameraSession(private val context: Context) {
     }
 
     companion object {
+        /** The least time between two reopens the camera's availability starts. */
+        const val reopenSpacingMillis = 2_000L
+
         /**
          * Every format the device offers, reduced to what the picker and the catalogue need.
          *

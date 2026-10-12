@@ -1,0 +1,39 @@
+package app.teamstation.streamcore.gl
+
+/**
+ * One picture drawn into one encoder on a programme tick, stamped with [presentationNanos].
+ * [captureNanos] names the held camera picture to draw by its sensor timestamp; null draws the newest.
+ */
+data class ProgrammeDraw(val key: String, val presentationNanos: Long, val captureNanos: Long? = null)
+
+/**
+ * Draws a [CaptureRenderer]'s encoders on a programme clock rather than on each camera frame: TS
+ * Director's programme tick, for a host with one camera.
+ *
+ * At [frameRate] the renderer asks [tick] which encoders take a picture, which held picture each
+ * draws, and when each says that picture was. A tick that names no encoder draws nothing; the
+ * preview is drawn on every camera frame either way.
+ *
+ * TS Director shows each picture a fixed delay after capture. To do the same without leaving the
+ * GPU, the renderer copies each camera picture into one of [heldPictures] textures as it arrives and
+ * tells [pictureArrived]; a tick then names the one whose moment has come.
+ */
+interface ProgrammeTicker {
+    val frameRate: Int
+
+    /** How many recent camera pictures the renderer keeps for [tick] to choose among; 1 keeps none but the newest. */
+    val heldPictures: Int get() = 1
+
+    /**
+     * A camera picture the renderer now holds, by its sensor timestamp, on the renderer's thread.
+     * Answers the pictures the ticker may still draw, so the renderer reuses only the others' textures.
+     */
+    fun pictureArrived(captureNanos: Long): Set<Long> = setOf(captureNanos)
+
+    /**
+     * One tick, on the renderer's thread. [latestCaptureNanos] is the sensor timestamp of the
+     * newest picture the renderer holds, null before the first; [attached] the keys of the encoders
+     * it can draw into right now, so a picture is only ever placed where it will be drawn.
+     */
+    fun tick(latestCaptureNanos: Long?, attached: Set<String>): List<ProgrammeDraw>
+}
