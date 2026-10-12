@@ -46,7 +46,8 @@ public struct ProgrammeSettings: Hashable, Sendable {
 }
 
 /// How the programme stream is encoded: the values `ProgramStreamer` opens a session with. The
-/// bitrate starts at `bitrateHigh` and moves between the two with the uplink.
+/// bitrate starts at `bitrateStart` (`bitrateHigh` when that is nil) and moves between the low and
+/// the high with the uplink.
 public struct StreamSettings: Hashable, Sendable {
   public var codec: ProgramCodec
   public var resolution: ProgramResolution
@@ -54,6 +55,10 @@ public struct StreamSettings: Hashable, Sendable {
   public var bitrateLow: Int
   public var bitrateHigh: Int
   public var gopSeconds: Double
+  /// Where a session opens, below the high when the uplink is not known yet: a phone's starts at
+  /// half its high rather than at the top of a link it has never measured. Nil opens at the high,
+  /// as TS Director's stream always has.
+  public var bitrateStart: Int?
 
   public init(
     codec: ProgramCodec,
@@ -61,7 +66,8 @@ public struct StreamSettings: Hashable, Sendable {
     frameRate: Int,
     bitrateLow: Int,
     bitrateHigh: Int,
-    gopSeconds: Double
+    gopSeconds: Double,
+    bitrateStart: Int? = nil
   ) {
     self.codec = codec
     self.resolution = resolution
@@ -69,6 +75,13 @@ public struct StreamSettings: Hashable, Sendable {
     self.bitrateLow = bitrateLow
     self.bitrateHigh = bitrateHigh
     self.gopSeconds = gopSeconds
+    self.bitrateStart = bitrateStart
+  }
+
+  /// The rate a session opens at: `bitrateStart` held between the low and the high, or the high.
+  public var openingBitrate: Int {
+    guard let bitrateStart else { return bitrateHigh }
+    return min(max(bitrateLow, bitrateStart), bitrateHigh)
   }
 }
 

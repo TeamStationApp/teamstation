@@ -178,18 +178,20 @@ public struct AdaptiveBitrateController: Sendable {
 
   public private(set) var status: Status
 
-  /// `floor` defaults to half the ceiling, and is kept between zero and the ceiling.
-  public init(ceiling: Int, floor: Int? = nil, tuning: Tuning = Tuning()) {
+  /// `floor` defaults to half the ceiling, and is kept between zero and the ceiling. `start` is the
+  /// rate the encoder opens at, kept between the floor and the ceiling; nil starts at the ceiling.
+  public init(ceiling: Int, floor: Int? = nil, tuning: Tuning = Tuning(), start: Int? = nil) {
     self.tuning = tuning
     self.ceiling = ceiling
     let floor = min(max(0, floor ?? ceiling / 2), ceiling)
     self.floor = floor
-    target = Double(ceiling)
-    bitrate = ceiling
+    let first = min(max(floor, start ?? ceiling), ceiling)
+    target = Double(first)
+    bitrate = first
     status = Status(
       ceiling: ceiling,
       floor: floor,
-      bitrate: ceiling,
+      bitrate: first,
       lastDecision: .hold,
       decreases: 0,
       increases: 0,
@@ -199,11 +201,12 @@ public struct AdaptiveBitrateController: Sendable {
     )
   }
 
-  /// Starts again at `ceiling`, forgetting everything measured. For a new operator rate, and for an
-  /// encoder that has been rebuilt at the ceiling. The counts carry over: they describe the session.
-  public mutating func reset(ceiling: Int, floor: Int? = nil) {
+  /// Starts again at `start` (the ceiling when nil), forgetting everything measured. For a new
+  /// operator rate, and for an encoder that has been rebuilt at that rate. The counts carry over:
+  /// they describe the session.
+  public mutating func reset(ceiling: Int, floor: Int? = nil, start: Int? = nil) {
     let counts = (status.decreases, status.increases)
-    self = AdaptiveBitrateController(ceiling: ceiling, floor: floor, tuning: tuning)
+    self = AdaptiveBitrateController(ceiling: ceiling, floor: floor, tuning: tuning, start: start)
     (status.decreases, status.increases) = counts
   }
 

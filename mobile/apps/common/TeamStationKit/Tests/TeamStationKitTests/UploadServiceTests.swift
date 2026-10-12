@@ -270,6 +270,37 @@ struct UploadServiceTests {
     #expect(FlakyServer.opened[1]["wholeStream"] as? Bool == true)
   }
 
+  @Test func saysWhichUploadItOpenedBeforeSendingAPart() async throws {
+    // A phone keeps the id on its recording's row, so a killed upload resumes from the parts the
+    // server already has instead of opening a second upload.
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    final class Told: @unchecked Sendable {
+      var ids: [String] = []
+      var partsSeenWhenTold = -1
+    }
+    let told = Told()
+
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      onOpened: { id in
+        told.ids.append(id)
+        told.partsSeenWhenTold = FlakyServer.seen.filter { $0 == "part" }.count
+      }
+    )
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      uploadId: "dup_1",
+      onOpened: { told.ids.append($0) }
+    )
+
+    #expect(told.ids == [ "dup_1", "dup_1" ])
+    #expect(told.partsSeenWhenTold == 0)
+  }
+
   @Test func saysSoWhenTheServerCouldNotFinishIt() async throws {
     FlakyServer.failuresLeft = [:]
     FlakyServer.seen = []
