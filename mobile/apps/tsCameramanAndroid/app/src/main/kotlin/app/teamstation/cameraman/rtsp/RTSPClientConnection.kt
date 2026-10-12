@@ -40,7 +40,9 @@ internal class RTSPClientConnection(
      */
     private val sendBufferBytes: Int? = null,
     /** The boot clock, in seconds, which capture times are stamped on. */
-    private val clock: () -> Double = { android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000_000.0 }
+    private val clock: () -> Double = { android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000_000.0 },
+    /** The system clock, in milliseconds since 1970, which sender reports carry. */
+    private val wallClock: () -> Long = System::currentTimeMillis
 ) {
     private val queue: ExecutorService =
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "rtsp-conn") }
@@ -92,13 +94,17 @@ internal class RTSPClientConnection(
     /**
      * Wall clock minus the capture clock, sampled once per connection.
      *
-     * `EncodedVideoFrame.presentationTime` is on a monotonic capture clock; NTP is wall clock.
+     * Capture times are on the boot clock, [clock]: the camera stamps pictures on it (its timestamp
+     * source is REALTIME) and the microphone is read on it. NTP is wall clock. The difference is taken
+     * against that same boot clock, never `System.nanoTime()`, which stops while the phone sleeps and
+     * so would put every report off by the phone's sleep since boot.
+     *
      * Sampling the difference once and reusing it keeps successive reports on a single mapping, so a
      * receiver regressing RTP against NTP sees the camera's own rate rather than this app's clock
      * reads.
      */
     private val captureToWallOffsetMillis: Long by lazy {
-        System.currentTimeMillis() - (System.nanoTime() / 1_000_000)
+        wallClock() - Math.round(clock() * 1000)
     }
 
     /** Written on the executor, read by the bitrate loop's thread; the lock is its own. */

@@ -154,6 +154,72 @@ class CaptureStampTest {
     }
 
     @Test
+    fun `a report carries the picture's capture on the system clock, however long the phone has slept`() {
+        // Two hours since boot, all of it asleep: the boot clock counted it, the monotonic one did
+        // not. The offset is taken against the boot clock the picture is stamped on.
+        val identity = DeviceIdentity("00000000-0000-4000-8000-000000000001", "Loopback")
+        val listener = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        val client = Socket(InetAddress.getLoopbackAddress(), listener.localPort)
+        val accepted = listener.accept()
+        val bootNow = 7_200.0
+        val wallNow = 1_760_000_000_000L
+        val connection = RTSPClientConnection(
+            socket = accepted,
+            sdp = { video, audio ->
+                SDPBuilder(
+                    identity,
+                    SDPBuilder.VideoTrack(StreamCodec.H264, listOf(byteArrayOf(0x67, 0x42, 0, 0x1F), byteArrayOf(0x68, 0xCE.toByte(), 0x3C, 0x80.toByte())), 1920, 1080),
+                    null,
+                    video,
+                    audio
+                ).build()
+            },
+            hasAudio = false,
+            identity = { identity },
+            requestKeyframe = {},
+            clock = { bootNow },
+            wallClock = { wallNow }
+        )
+        connection.start()
+        val input = client.getInputStream()
+        val out = client.getOutputStream()
+        val url = "rtsp://127.0.0.1:${listener.localPort}/live/mainstream"
+        fun exchange(text: String): String {
+            out.write(text.toByteArray())
+            out.flush()
+            return readResponse(input)
+        }
+        exchange("DESCRIBE $url RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n")
+        val setup = exchange("SETUP $url/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n")
+        val session = Regex("Session: ([^;\\r\\n]+)").find(setup)!!.groupValues[1]
+        exchange("PLAY $url RTSP/1.0\r\nCSeq: 3\r\nSession: $session\r\n\r\n")
+
+        // Captured a tenth of a second before now.
+        connection.send(EncodedVideoFrame(listOf(byteArrayOf(0x65, 0x88.toByte(), 0x84.toByte(), 0)), isKeyframe = true, presentationTime = bootNow - 0.1), StreamCodec.H264)
+
+        client.soTimeout = 3_000
+        var report: ByteArray? = null
+        while (report == null) {
+            val marker = input.read()
+            if (marker < 0) break
+            if (marker != 0x24) continue
+            val channel = input.read()
+            val length = (input.read() shl 8) or input.read()
+            val bytes = input.readNBytes(length)
+            if (channel == 1) report = bytes
+        }
+        connection.close()
+        client.close()
+        listener.close()
+
+        val sender = report!!
+        assertEquals(200, sender[1].toInt() and 0xFF)
+        val ntp = readUInt32(sender, 8) + readUInt32(sender, 12) / 4_294_967_296.0
+        val expected = (wallNow - 100) / 1000.0 + 2_208_988_800.0
+        assertEquals(expected, ntp, 0.002)
+    }
+
+    @Test
     fun `media older than the bound is dropped on the way out, with no hole in the sequence numbers`() {
         val identity = DeviceIdentity("00000000-0000-4000-8000-000000000001", "Loopback")
         val listener = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
