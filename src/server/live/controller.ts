@@ -294,8 +294,21 @@ export async function settleLiveWork(): Promise<void> {
   await Promise.all([...work.values()])
 }
 
-async function handle(event: LiveEvent): Promise<void> {
-  const current = options
+/**
+ * Test seam: one event from the ingest, handled as the running controller
+ * handles it, against `current`.
+ */
+export async function handleLiveEventForTest(
+  event: LiveEvent,
+  current: LiveControllerOptions
+): Promise<void> {
+  await handle(event, current)
+}
+
+async function handle(
+  event: LiveEvent,
+  current: LiveControllerOptions | undefined = options
+): Promise<void> {
   if (current == null) return
   const { db } = current
 
