@@ -11,15 +11,25 @@ import java.nio.ByteOrder
  * AAC-LC at 128 kbps, 48 kHz stereo, on MediaCodec, used synchronously like TS Director's
  * `AACPacketizer`: [encode] hands the encoder whole 1024-sample frames and takes back whatever
  * packets it has finished.
+ *
+ * A codec holds on to its input buffers until it has encoded them, so one can have none free when a
+ * frame is ready. [encode] then takes the codec's output, which frees them, and asks again, for up to
+ * [inputWaitMicros]; whatever is still left waits for the next call, and [finish] queues it all before
+ * it ends the stream.
  */
 class MediaCodecAacEncoder(
     private val bitrate: Int = 128_000,
     /** How long one call waits for a buffer, in microseconds. */
-    private val timeoutMicros: Long = 2_000
+    private val timeoutMicros: Long = 2_000,
+    /** How long one call keeps asking a busy codec for input buffers, in microseconds. */
+    private val inputWaitMicros: Long = 500_000
 ) : StreamAudioEncoding {
     private var codec: MediaCodec? = null
     private var leftover = ShortArray(0)
     private var queuedFrames = 0L
+
+    /** Asks the codec for a free input buffer. Replaced in tests, to make a codec that is busy. */
+    internal var dequeueInput: (MediaCodec, Long) -> Int = { running, timeout -> running.dequeueInputBuffer(timeout) }
 
     override var audioSpecificConfig: ByteArray = defaultAudioSpecificConfig
         private set
@@ -30,14 +40,49 @@ class MediaCodecAacEncoder(
     override fun encode(samples: ShortArray): List<ByteArray> {
         leftover += samples
         val running = codec ?: open()
-        val needed = StreamAudioStamps.samplesPerPacket * channels
         val packets = mutableListOf<ByteArray>()
-        while (leftover.size >= needed) {
-            val index = running.dequeueInputBuffer(timeoutMicros)
-            if (index < 0) break
-            val frame = leftover.copyOfRange(0, needed)
-            leftover = leftover.copyOfRange(needed, leftover.size)
+        queueWholeFrames(running, packets, inputWaitMicros)
+        drain(running, packets)
+        return packets
+    }
+
+    /**
+     * Pads the last partial frame with silence, ends the stream and answers every packet still in
+     * the encoder, so a recording's sound runs to its last sample. Frames an earlier [encode] could
+     * not queue go first, so only what is short of a whole frame is padded.
+     */
+    override fun finish(): List<ByteArray> {
+        val running = codec ?: return emptyList()
+        val packets = mutableListOf<ByteArray>()
+        val partial = leftover.size % frameSamples
+        if (partial != 0) leftover += ShortArray(frameSamples - partial)
+        queueWholeFrames(running, packets, maxOf(inputWaitMicros, timeoutMicros * 50))
+        val index = dequeueInput(running, timeoutMicros * 50)
+        if (index >= 0) {
+            val time = queuedFrames * 1_000_000 / StreamAudioStamps.sampleRate
+            running.queueInputBuffer(index, 0, 0, time, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        }
+        drain(running, packets, untilEnd = true)
+        leftover = ShortArray(0)
+        return packets
+    }
+
+    /**
+     * Queues every whole frame in [leftover]. A codec with no input buffer free has its output taken,
+     * which frees one, and is asked again until [waitMicros] have passed.
+     */
+    private fun queueWholeFrames(running: MediaCodec, packets: MutableList<ByteArray>, waitMicros: Long) {
+        val deadline = System.nanoTime() + waitMicros * 1_000
+        while (leftover.size >= frameSamples) {
+            val index = dequeueInput(running, timeoutMicros)
+            if (index < 0) {
+                drain(running, packets)
+                if (System.nanoTime() >= deadline) return
+                continue
+            }
             val input = running.getInputBuffer(index) ?: continue
+            val frame = leftover.copyOfRange(0, frameSamples)
+            leftover = leftover.copyOfRange(frameSamples, leftover.size)
             input.clear()
             val bytes = ByteBuffer.allocate(frame.size * 2).order(ByteOrder.LITTLE_ENDIAN)
             bytes.asShortBuffer().put(frame)
@@ -47,14 +92,14 @@ class MediaCodecAacEncoder(
             queuedFrames += StreamAudioStamps.samplesPerPacket
             drain(running, packets)
         }
-        drain(running, packets)
-        return packets
     }
 
-    private fun drain(running: MediaCodec, into: MutableList<ByteArray>) {
+    private fun drain(running: MediaCodec, into: MutableList<ByteArray>, untilEnd: Boolean = false) {
         val info = MediaCodec.BufferInfo()
+        val deadline = System.nanoTime() + 500_000_000L
         while (true) {
-            val index = running.dequeueOutputBuffer(info, 0)
+            val index = running.dequeueOutputBuffer(info, if (untilEnd) timeoutMicros else 0)
+            if (untilEnd && index == MediaCodec.INFO_TRY_AGAIN_LATER && System.nanoTime() < deadline) continue
             if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 AudioEncoder.delaySamples(running.outputFormat)?.let { primingSamples = it }
                 continue
@@ -72,6 +117,7 @@ class MediaCodecAacEncoder(
                 }
             }
             running.releaseOutputBuffer(index, false)
+            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
         }
     }
 
@@ -103,6 +149,9 @@ class MediaCodecAacEncoder(
 
     companion object {
         const val channels = 2
+
+        /** One AAC frame of interleaved stereo samples. */
+        private const val frameSamples = StreamAudioStamps.samplesPerPacket * channels
 
         /** AAC-LC, 48 kHz, stereo. */
         val defaultAudioSpecificConfig = byteArrayOf(0x11, 0x90.toByte())
