@@ -3,9 +3,9 @@ import os
 
 /// Runs an `AdaptiveBitrateController` against the live server, four times a second.
 ///
-/// The encoder must be at the ceiling whenever `configure` is called; `configure` then says so again
-/// itself, after any tick already in flight, so a cut computed against the old session can never be
-/// the last word on the new one.
+/// The encoder must be at the starting rate (the ceiling unless one is given) whenever `configure` is
+/// called; `configure` then says so again itself, after any tick already in flight, so a cut computed
+/// against the old session can never be the last word on the new one.
 public final class AdaptiveBitrateLoop: @unchecked Sendable {
   public struct Status: Sendable, Equatable, Codable {
     public var enabled: Bool
@@ -43,14 +43,14 @@ public final class AdaptiveBitrateLoop: @unchecked Sendable {
 
   public var status: Status { published.withLock { $0 } }
 
-  /// A new ceiling or floor, or adaptation switched on or off. Either way the rate goes back to the
-  /// ceiling. `floor` defaults to half the ceiling.
-  public func configure(ceiling: Int, floor: Int? = nil, enabled: Bool) {
+  /// A new ceiling or floor, or adaptation switched on or off. Either way the rate goes back to
+  /// `start`, which is the ceiling unless given. `floor` defaults to half the ceiling.
+  public func configure(ceiling: Int, floor: Int? = nil, start: Int? = nil, enabled: Bool) {
     queue.async { [self] in
-      controller.reset(ceiling: ceiling, floor: floor)
+      controller.reset(ceiling: ceiling, floor: floor, start: start)
       self.enabled = enabled
       if enabled { startTimer() } else { stopTimer() }
-      apply(ceiling)
+      apply(controller.bitrate)
       publish()
     }
   }
