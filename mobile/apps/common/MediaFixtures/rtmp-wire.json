@@ -1,0 +1,107 @@
+{
+  "entries" : [
+    {
+      "bytes" : 9,
+      "description" : "C0 and the first 8 bytes of C1 for time 0x01020304; C1 is 1536 bytes, the rest random",
+      "file" : "rtmp-handshake-c0c1-head.bin",
+      "name" : "handshake-c0c1-head"
+    },
+    {
+      "bytes" : 1536,
+      "description" : "C2 echoes S1, here bytes i % 251",
+      "file" : "rtmp-handshake-c2.bin",
+      "name" : "handshake-c2"
+    },
+    {
+      "bytes" : 248,
+      "chunkSize" : 4096,
+      "chunkStreamID" : 3,
+      "description" : "connect on chunk stream 3, chunk size 4096; fourCcList names hvc1 for HEVC only",
+      "file" : "rtmp-connect-hevc.bin",
+      "messageType" : 20,
+      "name" : "connect-hevc",
+      "timestamp" : 0
+    },
+    {
+      "bytes" : 224,
+      "chunkSize" : 4096,
+      "chunkStreamID" : 3,
+      "description" : "connect on chunk stream 3, chunk size 4096; fourCcList names hvc1 for HEVC only",
+      "file" : "rtmp-connect-h264.bin",
+      "messageType" : 20,
+      "name" : "connect-h264",
+      "timestamp" : 0
+    },
+    {
+      "bytes" : 78,
+      "chunkSize" : 4096,
+      "chunkStreamID" : 3,
+      "description" : "publish of the stream key, transaction 3, type live",
+      "file" : "rtmp-publish.bin",
+      "messageType" : 20,
+      "name" : "publish",
+      "timestamp" : 0
+    },
+    {
+      "bytes" : 275,
+      "chunkSize" : 4096,
+      "chunkStreamID" : 4,
+      "description" : "@setDataFrame onMetaData for 1920x1080 at 30 fps, 4 Mbps, hvc1",
+      "file" : "rtmp-onmetadata-hevc.bin",
+      "messageType" : 18,
+      "name" : "onmetadata-hevc",
+      "timestamp" : 0
+    },
+    {
+      "bytes" : 111,
+      "description" : "Enhanced RTMP SequenceStart tag carrying the hvcC",
+      "file" : "rtmp-hevc-sequence-start-tag.bin",
+      "name" : "hevc-sequence-start-tag"
+    },
+    {
+      "bytes" : 20,
+      "description" : "Enhanced RTMP coded frame, keyframe, one IDR NAL, length-prefixed",
+      "file" : "rtmp-hevc-keyframe-tag.bin",
+      "name" : "hevc-keyframe-tag"
+    },
+    {
+      "bytes" : 17,
+      "description" : "Enhanced RTMP coded frame, inter frame, one TRAIL_R NAL",
+      "file" : "rtmp-hevc-delta-tag.bin",
+      "name" : "hevc-delta-tag"
+    },
+    {
+      "bytes" : 4,
+      "description" : "AAC sequence header, LC 48 kHz stereo",
+      "file" : "rtmp-aac-sequence-header-tag.bin",
+      "name" : "aac-sequence-header-tag"
+    },
+    {
+      "bytes" : 18,
+      "description" : "AAC raw frame",
+      "file" : "rtmp-aac-raw-tag.bin",
+      "name" : "aac-raw-tag"
+    },
+    {
+      "bytes" : 322,
+      "chunkSize" : 128,
+      "chunkStreamID" : 6,
+      "description" : "a 305-byte video message in 128-byte chunks on chunk stream 6",
+      "file" : "rtmp-video-chunked-128.bin",
+      "messageType" : 9,
+      "name" : "video-chunked-128",
+      "timestamp" : 1234
+    },
+    {
+      "bytes" : 28,
+      "chunkSize" : 4096,
+      "chunkStreamID" : 5,
+      "description" : "an audio message whose timestamp needs the extended field",
+      "file" : "rtmp-audio-extended-timestamp.bin",
+      "messageType" : 8,
+      "name" : "audio-extended-timestamp",
+      "timestamp" : 16777220
+    }
+  ],
+  "url" : "rtmp://ingest.example.test:1935/live/00000000-0000-4000-8000-000000000001"
+}
