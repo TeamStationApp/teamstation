@@ -134,9 +134,10 @@ chosen (the machine's `min-release-age`); `expo-modules-core` 58.0.4 asks for
 `react-native-worklets` 0.12: its optional peer range stops at 0.10. The
 worklets integration is not used by expo-gl.
 
-`ios/Podfile` sets **iOS 16.4**, the floor `ExpoModulesCore` and `expo-gl`
-declare; React Native's own is 15.1. The project's deployment target moved
-with it.
+`ios/Podfile` sets **iOS 18.0**, the floor of the TS Director and TS Cameraman
+Swift packages in `mobile/apps/common` that the phone's streaming code shares.
+`ExpoModulesCore` and `expo-gl` declare 16.4; React Native's own floor is 15.1.
+The project's deployment target moved with it.
 
 ### What stands in for the `expo` package
 

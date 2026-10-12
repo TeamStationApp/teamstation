@@ -14,14 +14,15 @@ can stand in for a fixed camera on the field without any intermediate server.
 ```
 
 Seven packages, split so the parts that can be tested without hardware are not tangled with the
-parts that cannot. Two of them live in `mobile/apps/common` because TS Director and TS Preview draw
-the same screen for a phone they control over the network:
+parts that cannot. Three of them live in `mobile/apps/common`: TS Director and TS Preview draw
+the same screen for a phone they control over the network, and the TeamStation app captures with
+the same camera session:
 
 | Package | Holds | Needs a device? |
 |---|---|---|
 | `common/CameramanCore` | identity, stream settings, zoom mapping, lenses, format catalogue, thermal level, frame types, the `CameraControlling` seam | no |
 | `common/CameramanControlUI` | the operating screen, Settings, zoom rail, thermal and battery pills, generic over `CameraControlling` | no |
-| `CameramanCapture` | `AVCaptureSession`, lens selection, format selection | yes |
+| `common/CameramanCapture` | `AVCaptureSession`, lens selection, format selection | yes |
 | `CameramanEncode` | VideoToolbox H.264/HEVC, AAC, NAL and parameter-set handling, the black frame both blanking paths share | partly |
 | `CameramanRTSP` | RTSP server, packetizers, SDP, RTCP, interleaved framing | no |
 | `CameramanUI` | `AppEnvironment` (which conforms to `CameraControlling`), the preview layer, root and diagnostic views, the external-display scene and clean feed | no |
