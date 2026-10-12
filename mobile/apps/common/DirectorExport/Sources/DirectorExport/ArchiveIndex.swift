@@ -70,6 +70,11 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// The dated title that upload uses, kept so a take can name its game with
   /// no network and no list to look it up in.
   public var gameTitle: String?
+  /// How far the server's clock was ahead of this iPad's steady wall clock while the take was made,
+  /// in milliseconds: the median of the `server_clock` samples inside the take, or the sample
+  /// nearest it when none fell inside. Nil when the iPad never measured. Its uploads send it, so
+  /// the server can put the take on its own clock, where the game's scoring is.
+  public var serverClockOffsetMs: Int?
 
   /// How long the take is, from what was actually written.
   ///
@@ -95,7 +100,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     encoding: TakeEncoding? = nil,
     soundChecks: [ProgramSoundCheck] = [],
     gameId: String? = nil,
-    gameTitle: String? = nil
+    gameTitle: String? = nil,
+    serverClockOffsetMs: Int? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -108,6 +114,23 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.soundChecks = soundChecks
     self.gameId = gameId
     self.gameTitle = gameTitle
+    self.serverClockOffsetMs = serverClockOffsetMs
+  }
+}
+
+/// One measurement of the server's clock against this iPad's (`ServerClock` in TeamStationKit).
+public struct ServerClockRecord: Sendable, Equatable {
+  /// When it was measured, on the steady wall clock the takes are recorded by.
+  public var wall: WallClock
+  /// The server's clock less this iPad's, in milliseconds.
+  public var offsetMs: Int
+  /// The round trip it was measured over, in milliseconds.
+  public var rttMs: Int
+
+  public init(wall: WallClock, offsetMs: Int, rttMs: Int) {
+    self.wall = wall
+    self.offsetMs = offsetMs
+    self.rttMs = rttMs
   }
 }
 
@@ -314,6 +337,19 @@ public final class ArchiveIndex: @unchecked Sendable {
       """)
     try store.execute(
       "CREATE INDEX IF NOT EXISTS program_cuts_lookup ON program_cuts(recording_id, wall);"
+    )
+    // How far the server's clock was from this iPad's, measured at sign-in and every minute while a
+    // take linked to an event records or streams. Kept by time rather than by take: a measurement
+    // belongs to the clock, and a take reads those inside it (`RecordingSummary.serverClockOffsetMs`).
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS server_clock (
+        wall REAL NOT NULL,
+        offset_ms INTEGER NOT NULL,
+        rtt_ms INTEGER NOT NULL
+      );
+      """)
+    try store.execute(
+      "CREATE INDEX IF NOT EXISTS server_clock_wall ON server_clock(wall);"
     )
   }
 
@@ -645,6 +681,7 @@ public final class ArchiveIndex: @unchecked Sendable {
       ORDER BY r.started_at DESC;
       """
     )
+    let clockSamples = try serverClockSamples()
     return try rows.map { row in
       let id = row.int(0)
       let started = WallClock(seconds: row.double(1))
@@ -662,9 +699,62 @@ public final class ArchiveIndex: @unchecked Sendable {
         encoding: Self.takeEncoding(row.values[6] == .null ? nil : row.string(6)),
         soundChecks: Self.soundChecks(row.values[7] == .null ? nil : row.string(7)),
         gameId: row.values[8] == .null || row.string(8).isEmpty ? nil : row.string(8),
-        gameTitle: row.values[9] == .null || row.string(9).isEmpty ? nil : row.string(9)
+        gameTitle: row.values[9] == .null || row.string(9).isEmpty ? nil : row.string(9),
+        serverClockOffsetMs: Self.serverClockOffset(
+          clockSamples,
+          from: started,
+          to: ended ?? lastSegment
+        )
       )
     }
+  }
+
+  // MARK: - The server's clock
+
+  /// Keeps one measurement of the server's clock against this iPad's.
+  public func insertServerClockSample(_ sample: ServerClockRecord) throws {
+    try store.execute(
+      "INSERT INTO server_clock (wall, offset_ms, rtt_ms) VALUES (?, ?, ?);",
+      [ .real(sample.wall.seconds), .integer(Int64(sample.offsetMs)), .integer(Int64(sample.rttMs)) ]
+    )
+  }
+
+  /// Every measurement, earliest first.
+  public func serverClockSamples() throws -> [ServerClockRecord] {
+    try store.query("SELECT wall, offset_ms, rtt_ms FROM server_clock ORDER BY wall ASC;").map {
+      ServerClockRecord(
+        wall: WallClock(seconds: $0.double(0)),
+        offsetMs: Int($0.int(1)),
+        rttMs: Int($0.int(2))
+      )
+    }
+  }
+
+  /// A take's server clock offset: the median of the samples from `start` to `end` (to the latest
+  /// sample for a take still open), or the sample nearest the take when none fell inside it; nil
+  /// with no samples at all.
+  ///
+  /// The median rather than the mean, so one measurement over a congested uplink does not move the
+  /// take. The nearest sample stands in for a take too short for a minute's schedule to land in, or
+  /// one recorded offline that was measured at sign-in before or after it.
+  public static func serverClockOffset(
+    _ samples: [ServerClockRecord],
+    from start: WallClock,
+    to end: WallClock?
+  ) -> Int? {
+    let inside = samples
+      .filter { sample in sample.wall >= start && end.map { sample.wall <= $0 } ?? true }
+      .map(\.offsetMs)
+      .sorted()
+    if !inside.isEmpty {
+      let middle = inside.count / 2
+      guard inside.count.isMultiple(of: 2) else { return inside[middle] }
+      return Int((Double(inside[middle - 1] + inside[middle]) / 2).rounded())
+    }
+    func distance(_ sample: ServerClockRecord) -> Double {
+      sample.wall < start ? start - sample.wall : sample.wall - (end ?? start)
+    }
+    return samples.min { distance($0) < distance($1) }?.offsetMs
   }
 
   public func segments(forRecording id: Int64) throws -> [SegmentRecord] {

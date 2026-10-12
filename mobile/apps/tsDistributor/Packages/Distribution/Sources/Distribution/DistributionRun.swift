@@ -21,24 +21,48 @@ public struct TeamStationPlan: Sendable {
   /// `2026-09-20 Monument Trails at Badgers`; each file adds what it is.
   public var title: String
   public var tracks: [UploadTrack]
-  /// Sends one file and answers with the video it became.
-  public var send: @Sendable (
+  /// How far the server's clock was ahead of the iPad's while the take was made, in milliseconds,
+  /// as the iPad listed it; nil when it never measured. Every file of the take is sent with it.
+  public var serverClockOffsetMs: Int?
+  /// Sends one file, with the take's server clock offset, and answers with the video it became.
+  public typealias Send = @Sendable (
     _ file: URL,
     _ title: String,
     _ kind: String,
+    _ serverClockOffsetMs: Int?,
     _ progress: @escaping @Sendable (Int64, Int64, String?) -> Void
   ) async throws -> String
+  public var send: Send
 
   public init(
     gameId: String,
     title: String,
     tracks: [UploadTrack],
-    send: @escaping @Sendable (URL, String, String, @escaping @Sendable (Int64, Int64, String?) -> Void) async throws -> String
+    serverClockOffsetMs: Int? = nil,
+    send: @escaping Send
   ) {
     self.gameId = gameId
     self.title = title
     self.tracks = tracks
+    self.serverClockOffsetMs = serverClockOffsetMs
     self.send = send
+  }
+
+  /// The upload of `listing`, a take TS Director listed, carrying the server clock offset it listed.
+  public init(
+    listing: RecordingListing,
+    gameId: String,
+    title: String,
+    tracks: [UploadTrack],
+    send: @escaping Send
+  ) {
+    self.init(
+      gameId: gameId,
+      title: title,
+      tracks: tracks,
+      serverClockOffsetMs: listing.serverClockOffsetMs,
+      send: send
+    )
   }
 
   /// What one file is called in the library: the take's title and the camera.
@@ -518,7 +542,8 @@ public final class DistributionRun {
         _ = try await plan.send(
           file,
           plan.title(for: track),
-          plan.kind(for: track)
+          plan.kind(for: track),
+          plan.serverClockOffsetMs
         ) { sent, of, step in
           Task { @MainActor in
             switch self.uploadStates[track] {
