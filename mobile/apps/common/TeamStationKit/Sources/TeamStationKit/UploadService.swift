@@ -70,6 +70,10 @@ public actor UploadService {
   /// take's cameras on. `uploadId` resumes an upload already opened; leaving
   /// it out opens one. `liveStreamId` and `wholeStream` say which live stream
   /// the recording is the local copy of (see `TeamStationClient.openUpload`).
+  ///
+  /// `onOpened` is told the upload's id as soon as the server has opened it (or as given), before
+  /// a byte is sent: a caller that keeps it can resume a killed upload from the parts the server
+  /// already has, rather than open a second one.
   public func send(
     file: URL,
     gameId: String,
@@ -79,6 +83,7 @@ public actor UploadService {
     uploadId existing: String? = nil,
     liveStreamId: String? = nil,
     wholeStream: Bool? = nil,
+    onOpened: @Sendable (String) -> Void = { _ in },
     onProgress: @Sendable (Progress) -> Void = { _ in }
   ) async throws -> String {
     let size = try fileSize(file)
@@ -109,6 +114,7 @@ public actor UploadService {
       }
       opened = (made.uploadId, made.partSize, made.parts, Set(made.received))
     }
+    onOpened(opened.id)
 
     guard let handle = try? FileHandle(forReadingFrom: file) else {
       throw UploadError.cannotRead(file.lastPathComponent)
