@@ -60,7 +60,6 @@ interface Harness {
   patches: Array<{ streamId: string; change: unknown }>
   rotations: string[]
   closes: number
-  settings: number
   failPatch: boolean
 }
 
@@ -78,7 +77,6 @@ async function mount(
     patches: [],
     rotations: [],
     closes: 0,
-    settings: 0,
     failPatch: false
   }
   const client = {
@@ -107,14 +105,12 @@ async function mount(
           deviceModel="iPhone 13 Pro"
           phone={makePhoneStream(native)}
           rotation={{
+            allow: () => harness.rotations.push('any'),
             lockLandscape: () => harness.rotations.push('landscape'),
             restore: () => harness.rotations.push('portrait')
           }}
           onClose={() => {
             harness.closes += 1
-          }}
-          onOpenSettings={() => {
-            harness.settings += 1
           }}
         />
       </ThemeProvider>
@@ -204,9 +200,14 @@ describe('the streaming screen', function () {
     expect(calls(h.native, 'setZoom')).deep.equals([[3]])
     await emit(h.native, { displayedZoom: 2.4 })
     expect(byTestId('zoom-label')?.textContent).equals('2x')
-    // The gear is M12's settings sheet; here it only calls the hook.
+    // The gear opens the settings sheet, which lets Android turn while it is
+    // up and holds it sideways again after Done.
     await press('settings-button')
-    expect(h.settings).equals(1)
+    expect(byTestId('settings-done')).not.equals(null)
+    expect(h.rotations).deep.equals(['landscape', 'any'])
+    await press('settings-done')
+    expect(byTestId('settings-done')).equals(null)
+    expect(h.rotations).deep.equals(['landscape', 'any', 'landscape'])
     await press('camera-close')
     expect(h.closes).equals(1)
     await act(async () => {
@@ -215,7 +216,12 @@ describe('the streaming screen', function () {
     })
     root = undefined
     expect(calls(h.native, 'close')).has.length(1)
-    expect(h.rotations).deep.equals(['landscape', 'portrait'])
+    expect(h.rotations).deep.equals([
+      'landscape',
+      'any',
+      'landscape',
+      'portrait'
+    ])
   })
 
   it('records on the stream URL with the redial’s request, holds Close, and stops with a slide', async function () {
@@ -380,8 +386,7 @@ describe('the streaming screen', function () {
     expect(byTestId('stream-problem')?.textContent).equals(
       'There is not enough free space on this phone to record.'
     )
-    // Without a settings hook the gear does nothing, and a token-less client sends an empty one.
-    await press('settings-button')
+    // A token-less client sends an empty one.
     await press('broadcast-button')
     expect(
       (calls(refused, 'startRecording')[0][4] as { token: string }).token
