@@ -264,6 +264,11 @@ export function watcherMode(
 export interface ScoreboardStore {
   /** The channel every write is published on. */
   readonly channel: string
+  /**
+   * The channel a game's board timeline is announced on, as `{ gameId }`,
+   * once everything the timeline reads from Postgres has committed.
+   */
+  readonly timelineChannel: string
   readonly prefix: string
   keyOf: (gameId: string) => string
   now: () => number
@@ -291,6 +296,8 @@ export interface ScoreboardStore {
    */
   resetScoreboard: (gameId: string, startAt: number) => Promise<WriteResult>
   readScoreboard: (gameId: string) => Promise<ScoreboardHash | undefined>
+  /** Tells every worker that the game's board timeline has changed. */
+  announceTimeline: (gameId: string) => Promise<void>
   exists: (gameId: string) => Promise<boolean>
   /** Called each time the command connection is ready, the first included. */
   onReady: (listener: () => void) => void
@@ -305,6 +312,7 @@ export function makeScoreboardStore(options: {
   const { client, prefix } = options
   const now = options.now ?? Date.now
   const channel = `${prefix}:scoreboard`
+  const timelineChannel = `${prefix}:scoreboardTimeline`
   const keyOf = (gameId: string): string => `${prefix}:scoreboard:${gameId}`
 
   /** Runs one command, turning a lost connection into `ScoreboardUnavailable`. */
@@ -353,6 +361,7 @@ export function makeScoreboardStore(options: {
 
   return {
     channel,
+    timelineChannel,
     prefix,
     keyOf,
     now,
@@ -406,6 +415,12 @@ export function makeScoreboardStore(options: {
         watcher: sourceOf(parse('watcher', asStoredSource)),
         overrides: parse('overrides', asDashboardOverrides)
       })
+    },
+    announceTimeline: async gameId => {
+      await command(
+        async () =>
+          await client.publish(timelineChannel, JSON.stringify({ gameId }))
+      )
     },
     exists: async gameId =>
       (await command(async () => await client.exists(keyOf(gameId)))) === 1,
