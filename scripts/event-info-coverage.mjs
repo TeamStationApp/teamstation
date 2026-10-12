@@ -46,6 +46,7 @@ const paths = [
     (phase !== 'server' || !path.startsWith('src/app/'))
 )
 const serverSuites = [
+  'src/test/smokeRecorder.test.ts',
   'src/common/eventInfo.test.ts',
   'src/common/api.test.ts',
   'src/common/gameApprovals.test.ts',
