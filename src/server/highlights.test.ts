@@ -1,6 +1,9 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { ScoringSession } from '../common/scoring/session'
+import { measureOffset } from '../common/serverClock'
+import { game } from '../test/scoringGames'
 import {
   computeHighlights,
   type HighlightEvent,
@@ -93,6 +96,43 @@ describe('highlights', function () {
     // Tap at 10:00 into the video; the play was 8 s earlier at 9:52; the
     // highlight starts 30 s before that, at 9:22.
     const [highlight] = computeHighlights([event()], video, settings)
+    expect(highlight.playOffsetSec).equals(592)
+    expect(highlight.startOffsetSec).equals(562)
+  })
+
+  it('seeks to a play scored on the server clock, in a video whose start is on it too (U4)', async function () {
+    // The scorer's phone runs 40 s slow. The session stamps the play with the
+    // phone's clock plus the offset measured against the server, as the
+    // video's start is on the server's clock.
+    let server = videoStart.getTime() + 600_000
+    const phone = (): number => server - 40_000
+    const { offsetMs } = await measureOffset(async () => server, 1, phone)
+    const session = ScoringSession.start(
+      {
+        load: async () => ({ plays: [], currentPlay: null }),
+        save: async () => ({ plays: [], currentPlay: null })
+      },
+      'g1',
+      game(),
+      {
+        now: () => new Date(phone() + offsetMs),
+        setTimer: () => null,
+        clearTimer: () => undefined
+      }
+    )
+    session.apply({ type: 'result', eventType: 'single' })
+    server += 20_000
+    session.apply({ type: 'pitch', call: 'B' })
+    const play = session.picture().plays.get(0)!
+    expect(play.about.startTime).equals(
+      new Date(videoStart.getTime() + 600_000).toISOString()
+    )
+    const [highlight] = computeHighlights(
+      [event({ startTime: new Date(play.about.startTime!) })],
+      video,
+      settings
+    )
+    // The tap at 10:00 into the video, less the lag and the lead.
     expect(highlight.playOffsetSec).equals(592)
     expect(highlight.startOffsetSec).equals(562)
   })

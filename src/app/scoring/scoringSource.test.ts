@@ -12,12 +12,14 @@ import {
 import { HttpError } from '../../common/errors'
 import { ScoringSession } from '../../common/scoring/session'
 import { type Position, POSITIONS } from '../../common/scoring/state'
+import { deviceStorage } from '../platform/deviceStorage'
 import { startingSetup, teamsOf } from './developmentSession'
 import {
   DevelopmentScoringSource,
   memoryStore,
   ServerScoringSource
 } from './scoringSource'
+import { ServerClock } from './serverClock'
 
 const game = asGameDetail({
   nonMemberView: false,
@@ -205,5 +207,61 @@ describe('the server scoring source with default lineups (U12)', function () {
     ])
     const empty = await source.open(game, away, home)
     await source.saveTag(empty, 'missing_target', null, 'actor')
+  })
+})
+
+describe('the server scoring source’s clock (U43)', function () {
+  /** Both sides' own rosters as their defaults: a game ready to score. */
+  const ready = async (teamId: string): Promise<DefaultLineup> => {
+    const rows = teamId === 'away' ? away : home
+    return {
+      lineup: {
+        batters: rows.map(row => person(row.userId)),
+        defense: Object.fromEntries(
+          POSITIONS.map((position, i) => [position, person(rows[i].userId)])
+        ) as Record<Position, LineupPerson | null>
+      },
+      fromGameId: 'g0',
+      setAt: '2026-09-28T12:00:00.000Z'
+    }
+  }
+
+  it('stamps every action with its clock, and keeps that clock while asked', async function () {
+    const { client: fake } = client(ready)
+    const timers = new Set<unknown>()
+    const clock = new ServerClock(
+      async () => Date.parse('2026-09-28T18:00:30.000Z'),
+      deviceStorage,
+      {
+        local: () => Date.parse('2026-09-28T18:00:00.000Z'),
+        setInterval: () => {
+          const timer = {}
+          timers.add(timer)
+          return timer
+        },
+        clearInterval: timer => timers.delete(timer)
+      }
+    )
+    const source = new ServerScoringSource(fake, clock)
+    const stop = source.keepTime()
+    expect(timers.size).equals(1)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(clock.offset).equals(30_000)
+    const session = await source.open(game, away, home)
+    expect(session.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    expect(
+      (session.picture().current?.teamStation as { actionTimes?: string[] })
+        .actionTimes
+    ).deep.equals(['2026-09-28T18:00:30.000Z'])
+    stop()
+    expect(timers.size).equals(0)
+  })
+
+  it('reads the server’s clock through its client by default', async function () {
+    const { client: fake } = client(ready)
+    fake.serverTime = async () => Date.now() + 12_000
+    const source = new ServerScoringSource(fake)
+    await source.clock.measure()
+    expect(source.clock.offset).within(11_000, 13_000)
   })
 })

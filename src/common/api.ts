@@ -1699,6 +1699,16 @@ export class TeamStationClient {
     return await this.request('GET', '/health', asHealth)
   }
 
+  /** The server's clock, in milliseconds since the epoch. */
+  async serverTime(): Promise<number> {
+    const answer = await this.request(
+      'GET',
+      '/time',
+      asObject({ now: asNumber })
+    )
+    return answer.now
+  }
+
   async teams(): Promise<TeamSummary[]> {
     return await this.request('GET', '/teams', asArray(asTeamSummary))
   }

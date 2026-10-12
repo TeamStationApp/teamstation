@@ -11,12 +11,14 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { deviceStorage } from '../platform/deviceStorage'
 import {
   type DefaultLineups,
   startingSetup,
   teamsOf
 } from './developmentSession'
 import { LocalEventTags } from './localEventTags'
+import { ServerClock } from './serverClock'
 
 /** Where the scoring screen's game comes from and is kept. */
 export interface ScoringSource {
@@ -29,6 +31,11 @@ export interface ScoringSource {
   ) => Promise<{ targetId: string; tag: string | null; revision: string }>
   /** The game outlives the screen: leaving loses only what is not saved yet. */
   persistent?: boolean
+  /**
+   * Keeps the clock the game's actions are stamped by in step with the
+   * server's while the screen is open; the returned function stops it.
+   */
+  keepTime?: () => () => void
   open: (
     game: GameDetail,
     away: RosterEntry[],
@@ -74,7 +81,18 @@ async function defaultsOf(
 /** Scores into the server's copy of the game as it is played. */
 export class ServerScoringSource implements ScoringSource {
   readonly persistent = true
-  constructor(private readonly client: TeamStationClient) {}
+  constructor(
+    private readonly client: TeamStationClient,
+    /** The server's clock, which every action is stamped on. */
+    readonly clock = new ServerClock(
+      async () => await client.serverTime(),
+      deviceStorage
+    )
+  ) {}
+
+  keepTime(): () => void {
+    return this.clock.keepTime()
+  }
 
   async tagChoices(): Promise<TagChoices> {
     return await this.client.tagChoices()
@@ -106,7 +124,7 @@ export class ServerScoringSource implements ScoringSource {
       store,
       game.id,
       context(game, away, home, defaults, false),
-      { requireCurrentSetup: true }
+      { requireCurrentSetup: true, now: () => this.clock.now() }
     )
   }
 }

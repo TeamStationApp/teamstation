@@ -43,8 +43,27 @@ import {
 export interface PlayStamp {
   setupBefore: GameSetup
   actions: ScoringAction[]
+  /** When each action was taken, one per action; undefined where unknown. */
+  actionTimes?: ReadonlyArray<string | undefined>
   startTime?: string | null
   endTime?: string | null
+}
+
+/**
+ * The record's actions and their times. The times are written only when
+ * every action has one, so a reader can trust the two lists line up.
+ */
+function recordActions(stamp: PlayStamp): {
+  actions: ScoringAction[]
+  actionTimes?: string[]
+} {
+  const times = stamp.actionTimes
+  return times != null &&
+    stamp.actions.length > 0 &&
+    times.length === stamp.actions.length &&
+    times.every(time => time != null)
+    ? { actions: stamp.actions, actionTimes: [...times] as string[] }
+    : { actions: stamp.actions }
 }
 
 // ---- Event types ----
@@ -1594,7 +1613,7 @@ function documentBody(
     teamStation: {
       version: 1,
       setupBefore: stamp.setupBefore,
-      actions: stamp.actions,
+      ...recordActions(stamp),
       detail: play.source.teamstation
     }
   }
@@ -1726,7 +1745,7 @@ export class PlayFolder {
         teamStation: {
           version: 1,
           setupBefore: stamp.setupBefore,
-          actions: stamp.actions
+          ...recordActions(stamp)
         }
       })
     }
@@ -1852,7 +1871,7 @@ export function finalDocumentOf(state: GameState, stamp: PlayStamp): GumboPlay {
     teamStation: {
       version: 1,
       setupBefore: stamp.setupBefore,
-      actions: stamp.actions
+      ...recordActions(stamp)
     }
   })
 }
