@@ -40,7 +40,7 @@ android {
                 // must run again whenever they change rather than be skipped as up to date.
                 listOf(
                     "TS_RTMP_INTEROP_URL", "TS_RTMP_INTEROP_MODE", "TS_RTMP_INTEROP_FIXTURE", "TS_RTMP_INTEROP_SECONDS",
-                    "TS_RTMP_INTEROP_LOG", "TS_RECORDING_E2E_DIR"
+                    "TS_RTMP_INTEROP_LOG", "TS_RECORDING_E2E_DIR", "TS_RECORDING_E2E_LOG"
                 )
                     .forEach { name -> test.inputs.property(name, System.getenv(name) ?: "") }
             }
