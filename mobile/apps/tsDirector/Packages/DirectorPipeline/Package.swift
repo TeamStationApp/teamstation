@@ -11,7 +11,7 @@ let package = Package(
     .package(path: "../../../common/AdaptiveBitrate"),
     .package(path: "../../common/DirectorCore"),
     .package(path: "../../common/DirectorSources"),
-    .package(path: "../DirectorRTMP"),
+    .package(path: "../../../common/DirectorRTMP"),
     .package(path: "../DirectorTestHarness")
   ],
   targets: [
