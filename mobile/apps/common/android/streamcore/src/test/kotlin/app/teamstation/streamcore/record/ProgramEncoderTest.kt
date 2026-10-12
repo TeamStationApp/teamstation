@@ -14,6 +14,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.Executor
 
 /** One AAC packet per 1024 samples of mix, holding its index; what is left over comes out at the end. */
 class CountingAac : StreamAudioEncoding {
@@ -70,8 +71,10 @@ class ProgramEncoderTest {
     private val anchors = mutableListOf<RecordingCatalog.ProgramAnchor>()
     private val checks = mutableListOf<ProgramSoundCheck>()
 
-    private fun encoder(settings: EncodeSettings = EncodeSettings()) =
-        ProgramEncoder(telemetry, settings, folder.root, clock = { wall }, uptime = { host }, audioEncoderFactory = { CountingAac() }).apply {
+    private fun encoder(settings: EncodeSettings = EncodeSettings(), syncExecutor: Executor = Executor(Runnable::run)) =
+        ProgramEncoder(
+            telemetry, settings, folder.root, clock = { wall }, uptime = { host }, audioEncoderFactory = { CountingAac() }, syncExecutor = syncExecutor
+        ).apply {
             setAnchorSink { recording, part, seconds, at -> anchors += RecordingCatalog.ProgramAnchor(part, seconds, at).also { assertEquals(7L, recording) } }
             setSoundCheckSink { _, check -> checks += check }
             setAnchorRecording(7)
@@ -128,18 +131,44 @@ class ProgramEncoderTest {
 
         assertEquals(file, encoder.finish(until = 1_000.0 + 10.5))
         assertFalse(encoder.running)
+        // Every fragment was forced to storage, outside the lock the pictures and sound are written under.
+        assertFalse(encoder.writerHasPendingSyncForTesting)
         val reader = FragmentedMp4Reader.read(file)!!
         assertEquals(300, reader.video!!.samples.size)
-        // The last picture is held out to the take's end, and the sound runs to it.
-        assertEquals(10.5, reader.video!!.endSeconds!!, 1e-6)
-        assertEquals(10.5, reader.audio!!.endSeconds!!, 0.03)
+        // The last picture is held out to the take's end on the wall clock, counted from where the
+        // part's timeline starts: its first picture was captured a twentieth of a second before it was
+        // placed, a frame after the take started, so the take ends 10.517 s into the part. The hold
+        // runs to the grid frame at or after that, and the sound with it.
+        assertEquals(10.5 + 1.0 / 30, reader.video!!.endSeconds!!, 1e-6)
+        assertEquals(10.5 + 1.0 / 30, reader.audio!!.endSeconds!!, 0.03)
         val check = checks.single()
         assertEquals(1, check.part)
         assertFalse(check.isShort)
         assertEquals(reader.audio!!.samples.size, check.samples)
-        assertTrue(check.detail, check.detail.startsWith("target 10.500"))
+        assertTrue(check.detail, check.detail.startsWith("target 10.517"))
         assertNotNull(telemetry.lastProgramFinish)
         assertNull(encoder.finish())
+    }
+
+    @Test
+    fun repeatsOnTheProgrammeGridLeaveTheSoundOriginToFreshPictures() {
+        val encoder = encoder()
+        encoder.start(wall)
+        // Two seconds of a 30 fps grid, each fresh picture captured 0.15 s before its tick, and a
+        // repeat after every fresh picture handed over 20 ms late, which would imply a later origin.
+        val start = wall
+        for (frame in 0 until 60) {
+            val fresh = frame % 2 == 0
+            if (!fresh) {
+                host += 0.02
+                wall += 0.02
+            }
+            encoder.append(frame.toDouble() / 30, captureWall = if (fresh) wall - 0.15 else null, onClockGrid = true)
+            host += 1.0 / 30 - if (fresh) 0.0 else 0.02
+            wall += 1.0 / 30 - if (fresh) 0.0 else 0.02
+        }
+        assertEquals(start - 0.15, encoder.soundOriginForTesting!!, 1e-6)
+        encoder.finish()
     }
 
     @Test
@@ -392,8 +421,11 @@ class ProgramEncoderTest {
         assertTrue(anchors.all { it.part == 3 })
         val file = resumed.finish(until = 1_000.0 + 20.0)!!
         val reader = FragmentedMp4Reader.read(file)!!
-        // The part began at its first picture, 15 s and a frame into the take, and runs to 20 s.
-        assertEquals(20.0 - (1_015.0 + 1.0 / 30 - 1_000.0), reader.video!!.endSeconds!!, 1e-3)
+        // The part began at its first picture, captured a twentieth of a second before it was placed
+        // 15 s and a frame into the take, and runs to 20 s on the wall clock.
+        val target = 20.0 - (1_015.0 + 1.0 / 30 - 0.05 - 1_000.0)
+        assertTrue(reader.video!!.endSeconds!! >= target - 1e-6)
+        assertEquals(target, reader.video!!.endSeconds!!, 1.0 / 30)
         assertEquals(3, checks.last().part)
     }
 
@@ -426,5 +458,167 @@ class ProgramEncoderTest {
         assertEquals(3, reader.fragments)
         assertEquals(9.0, reader.video!!.endSeconds!!, 1e-6)
         assertNull(encoder.finish())
+    }
+
+    /** An AAC encoder that, like MediaCodec, says its configuration and priming only once it has made a packet. */
+    private class LateReportingAac : StreamAudioEncoding {
+        private val counting = CountingAac()
+        override var audioSpecificConfig = byteArrayOf(0x11, 0x90.toByte())
+            private set
+        override var primingSamples = 2048
+            private set
+
+        override fun encode(samples: ShortArray): List<ByteArray> = counting.encode(samples).also { report(it) }
+        override fun finish(): List<ByteArray> = counting.finish().also { report(it) }
+        private fun report(packets: List<ByteArray>) {
+            if (packets.isEmpty()) return
+            audioSpecificConfig = byteArrayOf(0x12, 0x10)
+            primingSamples = 1024
+        }
+
+        override fun reset() = counting.reset()
+        override fun close() = Unit
+    }
+
+    @Test
+    fun thePartsSoundTrackSaysWhatTheEncoderReportsOnceItHasMadeSound() {
+        val encoder = ProgramEncoder(telemetry, EncodeSettings(), folder.root, clock = { wall }, uptime = { host }, audioEncoderFactory = { LateReportingAac() })
+        encoder.start(wall)
+        record(encoder, 2.0)
+        val file = encoder.finish(until = wall)!!
+        val audio = FragmentedMp4Reader.read(file)!!.audio!!
+        assertEquals(listOf<Byte>(0x12, 0x10), audio.configuration!!.toList())
+        assertEquals(1024L, audio.mediaTime)
+    }
+
+    @Test
+    fun aPartWhoseFileCannotBeOpenedSaysSoOnceAndFinishesClean() {
+        val encoder = encoder()
+        val failures = mutableListOf<String>()
+        encoder.onWriterFailure = { failures += it }
+        encoder.start(wall)
+        // Something else took the part's name: its file cannot be opened for writing.
+        val file = encoder.outputFile!!
+        file.delete()
+        file.mkdirs()
+        record(encoder, 2.0)
+        assertEquals(1, failures.size)
+        assertTrue(failures.single(), failures.single().startsWith("program writer failed"))
+        assertEquals(0L, encoder.frameCount)
+        assertEquals(file, encoder.finish(until = wall))
+        assertFalse(encoder.running)
+        assertEquals(1, failures.size)
+    }
+
+    @Test
+    fun aPartThatStopsTakingWritesKeepsWhatItWroteAndFinishes() {
+        val encoder = encoder()
+        val failures = mutableListOf<String>()
+        encoder.onWriterFailure = { failures += it }
+        encoder.start(wall)
+        record(encoder, 4.0)
+        val written = encoder.frameCount
+        // The storage refuses: the next write throws, as a full disk's would.
+        encoder.soundSinkOverride = object : SoundSink {
+            override val isReadyForMoreSound = true
+            override fun appendSound(samples: ShortArray): Boolean = throw java.io.IOException("No space left on device")
+            override fun finishSound() = Unit
+        }
+        record(encoder, 2.0)
+        assertEquals(listOf("program writer failed: No space left on device"), failures)
+        // Nothing more went into the part once it failed: the picture before the refused sound is the last.
+        assertEquals(written + 1, encoder.frameCount)
+        encoder.soundSinkOverride = null
+        val file = encoder.finish(until = wall)!!
+        val reader = FragmentedMp4Reader.read(file)!!
+        assertTrue(reader.complete)
+        assertEquals(3.0, reader.video!!.endSeconds!!, 1e-6)
+        assertTrue(telemetry.errors.any { it.startsWith("program writer failed") })
+    }
+
+    @Test
+    fun aSoundCodecThatThrowsEndsThePartAndItsFinishStillCloses() {
+        val encoder = encoder()
+        val failures = mutableListOf<String>()
+        encoder.onWriterFailure = { failures += it }
+        encoder.start(wall)
+        record(encoder, 4.0)
+        // The AAC codec dies as the part finishes: its encode throws a runtime error, not an I/O one.
+        encoder.soundSinkOverride = object : SoundSink {
+            override val isReadyForMoreSound = true
+            override fun appendSound(samples: ShortArray): Boolean = throw IllegalStateException("codec released")
+            override fun finishSound() = Unit
+        }
+        encoder.append(AudioFrame(ShortArray(960 * 2), wallClock = wall - 0.05))
+        val file = encoder.finish(until = wall + 1.0)!!
+        assertFalse(encoder.running)
+        assertEquals(listOf("program writer failed: codec released"), failures)
+        assertTrue(FragmentedMp4Reader.read(file)!!.video!!.samples.isNotEmpty())
+        // The next part opens: nothing was left running.
+        encoder.soundSinkOverride = null
+        encoder.start(wall)
+        assertTrue(encoder.running)
+        encoder.finish()
+    }
+
+    @Test
+    fun aStartWhileAPartIsRunningIsRefused() {
+        val encoder = encoder()
+        encoder.start(wall)
+        val first = encoder.outputFile
+        try {
+            encoder.start(wall + 60)
+            org.junit.Assert.fail("a second start was taken")
+        } catch (error: IllegalStateException) {
+            assertEquals("program writer is already running", error.message)
+        }
+        assertEquals(first, encoder.outputFile)
+        encoder.finish()
+    }
+
+    @Test
+    fun aPartWhoseFragmentsCannotBeForcedToStorageStops() {
+        val encoder = encoder()
+        val failures = mutableListOf<String>()
+        encoder.onWriterFailure = { failures += it }
+        encoder.forceToStorage = { throw java.io.SyncFailedException("sync failed") }
+        encoder.start(wall)
+        record(encoder, 4.0)
+        assertTrue(failures.single(), failures.single().startsWith("program writer failed"))
+        val written = encoder.frameCount
+        record(encoder, 1.0)
+        // Nothing more goes into a part whose fragments are not reaching storage.
+        assertEquals(written, encoder.frameCount)
+        encoder.finish(until = wall)
+        assertFalse(encoder.running)
+        assertEquals(1, failures.size)
+    }
+
+    @Test
+    fun fragmentsAreForcedToStorageOnTheirOwnThreadAndCountOnlyOnceForced() {
+        val queued = mutableListOf<Runnable>()
+        val forcedOn = mutableListOf<Thread>()
+        val encoder = encoder(syncExecutor = { queued += it })
+        encoder.forceToStorage = { forcedOn += Thread.currentThread() }
+        encoder.start(wall)
+        record(encoder, 7.0)
+        // Two fragments went to the file. Neither was forced on the thread that wrote it (the codec's
+        // output or the phone's sound), and neither counts as written until it is.
+        assertTrue(forcedOn.isEmpty())
+        assertTrue(encoder.writerHasPendingSyncForTesting)
+        // One force waits, however many fragments came meanwhile.
+        assertEquals(1, queued.size)
+        val worker = Thread { queued.removeAt(0).run() }
+        worker.start()
+        worker.join()
+        assertEquals(listOf(worker), forcedOn)
+        assertFalse(encoder.writerHasPendingSyncForTesting)
+        record(encoder, 3.5)
+        assertEquals(1, queued.size)
+        // The finish forces the file itself; a force still waiting for a finished part does nothing.
+        encoder.finish(until = wall)
+        assertEquals(2, forcedOn.size)
+        queued.removeAt(0).run()
+        assertEquals(2, forcedOn.size)
     }
 }

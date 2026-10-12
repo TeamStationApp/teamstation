@@ -8,6 +8,7 @@ import app.teamstation.streamcore.core.StreamCodec
 import app.teamstation.streamcore.rtmp.FLVTag
 import app.teamstation.streamcore.rtmp.HEVCDecoderConfiguration
 import app.teamstation.streamcore.rtmp.RTMPClient
+import app.teamstation.streamcore.rtmp.RTMPClientError
 import app.teamstation.streamcore.rtmp.RTMPURL
 import app.teamstation.streamcore.rtmp.RTMPVideoCodec
 import java.io.ByteArrayOutputStream
@@ -70,6 +71,13 @@ class ProgramStreamer(
     private var encoder: StreamVideoEncoding? = null
     private var aac: StreamAudioEncoding? = null
     private var isRunning = false
+
+    /**
+     * Which start the streamer is on: a start takes the next, and a stop moves past it. Work that
+     * finishes after a stop or a newer start (an encoder opened, a publish that fails) checks its
+     * own against this, so it cannot install anything on, or stop, a session that is not its own.
+     */
+    private var generation = 0L
     private var sentVideoConfig = false
     private var sentAudioConfig = false
     private var sentMetadata = false
@@ -103,6 +111,16 @@ class ProgramStreamer(
 
     override val running: Boolean get() = lock.withLock { isRunning }
 
+    /**
+     * When the first picture this publish sent was captured, in wall seconds: where the server's
+     * copy of the stream begins. Null until a picture has gone out. Every picture is stamped on the
+     * stream's clock from its capture time ([pictureWall]), so this is that clock's start plus the
+     * first stamp sent; a picture with no capture time counts from when it left the encoder.
+     */
+    @Volatile
+    var liveTimelineStart: Double? = null
+        private set
+
     /** The surface the stream's pictures are drawn into; a new one after the watchdog rebuilds the session. */
     val inputSurface: Surface? get() = lock.withLock { surface }
 
@@ -126,9 +144,17 @@ class ProgramStreamer(
 
     override suspend fun start(urlString: String, settings: StreamSettings, onFailure: ((String) -> Unit)?) {
         val url = RTMPURL.require(urlString)
-        if (!beginStart(settings, onFailure)) return
+        val session = beginStart(settings, onFailure) ?: return
 
-        openEncoder()
+        // A stop while this start opens its encoder or dials is a cancelled start, as it is for
+        // the client's own publish.
+        val opened = try {
+            openEncoder(session)
+        } catch (error: Exception) {
+            stop(session)
+            throw error
+        }
+        if (!opened) throw RTMPClientError.Cancelled
         val client = clientFactory()
         // How far behind the socket may fall before the client sheds media: the send buffer at the
         // top of the stream's range, which is the most this session ever produces.
@@ -137,19 +163,25 @@ class ProgramStreamer(
             videoCodec = RTMPVideoCodec.of(settings.codec)
         )
         client.onFailure { handleFailure(it.description) }
-        markStarted(client)
+        if (!markStarted(client, session)) {
+            client.stop()
+            throw RTMPClientError.Cancelled
+        }
         startRateLoop(client)
         telemetry.recordEncodeSessionChange(1)
         try {
             client.publish(url)
         } catch (error: Throwable) {
-            stop()
+            // Only this start's session: a stop and a newer start may have come while it dialled.
+            stop(session)
             throw error
         }
     }
 
-    private fun beginStart(settings: StreamSettings, onFailure: ((String) -> Unit)?): Boolean = lock.withLock {
-        if (isRunning) return false
+    /** Resets the session state for a start, answering its generation, or null while one runs. */
+    private fun beginStart(settings: StreamSettings, onFailure: ((String) -> Unit)?): Long? = lock.withLock {
+        if (isRunning) return null
+        generation += 1
         applyStreamSettings(settings)
         this.onFailure = onFailure
         sentVideoConfig = false
@@ -171,13 +203,14 @@ class ProgramStreamer(
         lastOutputWall = 0.0
         pendingEncodes = 0
         syncRequested = false
-        true
+        liveTimelineStart = null
+        generation
     }
 
     private fun applyStreamSettings(settings: StreamSettings) {
         this.settings = settings.copy(frameRate = maxOf(1, settings.frameRate))
         codec = RTMPVideoCodec.of(settings.codec)
-        bitrate = settings.bitrateHigh
+        bitrate = this.settings.openingBitrate
     }
 
     /** The next coded picture must be an IDR. */
@@ -191,11 +224,11 @@ class ProgramStreamer(
     }
 
     /**
-     * Starts the controller at the high bitrate, which is where the session already is. Until the
+     * Starts the controller at the opening bitrate, which is where the session already is. Until the
      * publish is live there is no link to judge, and the controller holds.
      */
     private fun startRateLoop(client: RTMPClient) {
-        val (high, low) = lock.withLock { settings.bitrateHigh to settings.bitrateLow }
+        val (high, low, opening) = lock.withLock { Triple(settings.bitrateHigh, settings.bitrateLow, bitrate) }
         val loop = AdaptiveBitrateLoop(
             ceiling = high,
             floor = low,
@@ -204,7 +237,7 @@ class ProgramStreamer(
             apply = { applyBitrate(it) }
         )
         lock.withLock { rateLoop = loop }
-        loop.configure(high, low, enabled = true)
+        loop.configure(high, low, enabled = true, start = opening)
     }
 
     /** A rate from the controller, onto the live session: the next picture is coded at it. */
@@ -217,16 +250,25 @@ class ProgramStreamer(
         running?.setBitrate(rate)
     }
 
-    private fun markStarted(client: RTMPClient) {
-        lock.withLock {
+    /** Puts [client] on the session, unless a stop has come since [session] began. */
+    private fun markStarted(client: RTMPClient, session: Long): Boolean {
+        val current = lock.withLock {
+            if (generation != session) return@withLock false
             this.client = client
             isRunning = true
+            true
         }
-        startGOPWatchdog()
+        if (current) startGOPWatchdog()
+        return current
     }
 
-    override fun stop() {
+    override fun stop() = stop(null)
+
+    /** Stops the streamer; given a [session], only while that start is still the current one. */
+    private fun stop(session: Long?) {
         val (wasRunning, closing) = lock.withLock {
+            if (session != null && session != generation) return
+            generation += 1
             val wasRunning = isRunning
             isRunning = false
             gopTimer?.cancel(false)
@@ -234,6 +276,7 @@ class ProgramStreamer(
             watchdog?.shutdown()
             watchdog = null
             pendingEncodes = 0
+            liveTimelineStart = null
             val closing = Closing(encoder, client, rateLoop, aac, surfaceListener.takeIf { encoder != null })
             encoder = null
             client = null
@@ -347,7 +390,7 @@ class ProgramStreamer(
     }
 
     private fun resetWedgedSession() {
-        val old = lock.withLock {
+        val (old, session) = lock.withLock {
             if (!isRunning) return
             val old = encoder
             encoder = null
@@ -359,11 +402,11 @@ class ProgramStreamer(
             lastResetWall = wallClock()
             telemetry.recordStreamPendingEncodes(0)
             telemetry.recordStreamEncoderReset()
-            old
+            old to generation
         }
         old?.close()
         try {
-            openEncoder()
+            openEncoder(session)
         } catch (error: Exception) {
             handleFailure(error.message ?: error.javaClass.simpleName)
         }
@@ -390,7 +433,16 @@ class ProgramStreamer(
                 audioPacketsSent = 0
             }
             audioNextWall = audio.wallClock + audio.durationSeconds
-            val packets = encoder.encode(audio.samples)
+            val packets = try {
+                encoder.encode(audio.samples)
+            } catch (error: Exception) {
+                // The stream loses this run of sound, not every output of the mix: the encoder
+                // starts again from the next run's own time, as after a break.
+                encoder.reset()
+                audioInputWall = null
+                telemetry.recordError("stream sound encoder: ${error.message ?: error.javaClass.simpleName}")
+                return
+            }
             val first = audioPacketsSent
             audioPacketsSent += packets.size
             val inputWall = audioInputWall
@@ -413,7 +465,12 @@ class ProgramStreamer(
         for ((packet, stamp) in sendable) client.sendAudio(stamp, FLVTag.audio(1, packet))
     }
 
-    private fun openEncoder() {
+    /**
+     * Opens an encoder session for start [generation] and installs it, answering whether it did: one
+     * that opens after a stop or a newer start is closed again rather than left on a stopped
+     * streamer. One that fails to open throws, having cleaned up after itself.
+     */
+    private fun openEncoder(generation: Long): Boolean {
         val config = lock.withLock {
             StreamEncoderConfig(settings.codec, settings.width, settings.height, settings.frameRate, bitrate, settings.gopSeconds)
         }
@@ -426,11 +483,20 @@ class ProgramStreamer(
             }
         )
         val listener = lock.withLock {
-            encoder = session
-            surface = opened
-            surfaceListener
+            if (this.generation != generation) {
+                null
+            } else {
+                encoder = session
+                surface = opened
+                surfaceListener ?: { _: Surface? -> }
+            }
         }
-        listener?.invoke(opened)
+        if (listener == null) {
+            session.close()
+            return false
+        }
+        listener(opened)
+        return true
     }
 
     private fun didFail(session: StreamVideoEncoding, code: Int) {
@@ -486,6 +552,7 @@ class ProgramStreamer(
                 val record = if (keyframe) decoderConfigurationRecord(parameterSets, codec) else null
                 if (record == null) return
                 sentVideoConfig = true
+                if (liveTimelineStart == null) liveTimelineStart = clock.startWall + time.seconds
                 header = FLVTag.videoSequenceHeader(codec, record)
             }
             Triple(client, metadata, header)
@@ -507,8 +574,8 @@ class ProgramStreamer(
 
     /** Puts the streamer live on [client] with a session from the factory, without a publish. */
     internal fun goLiveForTesting(client: RTMPClient, settings: StreamSettings, startWall: Double? = null) {
-        beginStart(settings, null)
-        openEncoder()
+        val session = beginStart(settings, null) ?: return
+        openEncoder(session)
         lock.withLock {
             this.client = client
             isRunning = true

@@ -7,14 +7,16 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
 /**
- * Draws the camera's external texture over a whole destination surface.
+ * Draws the camera's external texture over a whole destination surface, or, built with
+ * `external = false`, one of the plain 2D textures the renderer holds earlier pictures in.
  *
  * Two matrices, and keeping them apart is the point. `texMatrix` is whatever `SurfaceTexture` says
  * is needed to sample its buffer correctly — crop, vertical flip, driver-specific layout — and is
  * never ours to reason about. `mvpMatrix` is ours: the 0°/180° capture rotation and the aspect
  * scale — fill for the encoder, fit for the preview.
  */
-internal class TextureProgram {
+internal class TextureProgram(private val external: Boolean = true) {
+    private val target = if (external) GLES11Ext.GL_TEXTURE_EXTERNAL_OES else GLES20.GL_TEXTURE_2D
     private val program: Int
     private val positionHandle: Int
     private val textureCoordinateHandle: Int
@@ -42,7 +44,7 @@ internal class TextureProgram {
 
     init {
         val vertex = compile(GLES20.GL_VERTEX_SHADER, vertexShader)
-        val fragment = compile(GLES20.GL_FRAGMENT_SHADER, fragmentShader)
+        val fragment = compile(GLES20.GL_FRAGMENT_SHADER, if (external) fragmentShader else fragmentShader2D)
         program = GLES20.glCreateProgram()
         GLES20.glAttachShader(program, vertex)
         GLES20.glAttachShader(program, fragment)
@@ -91,7 +93,7 @@ internal class TextureProgram {
 
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
+        GLES20.glBindTexture(target, textureId)
         GLES20.glUniform1i(textureHandle, 0)
 
         GLES20.glUniformMatrix4fv(mvpMatrixHandle, 1, false, mvpMatrix, 0)
@@ -108,12 +110,46 @@ internal class TextureProgram {
 
         GLES20.glDisableVertexAttribArray(positionHandle)
         GLES20.glDisableVertexAttribArray(textureCoordinateHandle)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
+        GLES20.glBindTexture(target, 0)
         GLES20.glUseProgram(0)
     }
 
     fun release() {
         GLES20.glDeleteProgram(program)
+    }
+
+    /**
+     * A [width] x [height] RGBA texture with a framebuffer drawing into it: where the renderer keeps
+     * a camera picture until the programme's tick draws it. Answers (texture, framebuffer).
+     */
+    fun createHeldPicture(width: Int, height: Int): Pair<Int, Int> {
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        val texture = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+        GLES20.glGenFramebuffers(1, ids, 0)
+        val framebuffer = ids[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffer)
+        GLES20.glFramebufferTexture2D(
+            GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, texture, 0
+        )
+        val status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        check(status == GLES20.GL_FRAMEBUFFER_COMPLETE) { "held picture framebuffer incomplete: $status" }
+        return texture to framebuffer
+    }
+
+    fun releaseHeldPicture(texture: Int, framebuffer: Int) {
+        GLES20.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
+        GLES20.glDeleteTextures(1, intArrayOf(texture), 0)
     }
 
     private fun compile(type: Int, source: String): Int {
@@ -155,6 +191,15 @@ internal class TextureProgram {
             precision mediump float;
             varying vec2 vTextureCoord;
             uniform samplerExternalOES sTexture;
+            void main() {
+                gl_FragColor = texture2D(sTexture, vTextureCoord);
+            }
+        """
+
+        const val fragmentShader2D = """
+            precision mediump float;
+            varying vec2 vTextureCoord;
+            uniform sampler2D sTexture;
             void main() {
                 gl_FragColor = texture2D(sTexture, vTextureCoord);
             }
