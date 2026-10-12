@@ -140,8 +140,10 @@ public enum AMF0: Equatable, Sendable {
     data.append(contentsOf: utf8)
   }
 
+  /// In key order, so the same object is the same bytes every time: a dictionary's own order
+  /// changes from one launch to the next, and the wire fixtures the Kotlin port shares compare bytes.
   private func encodePairs(_ pairs: [String: AMF0], into data: inout Data) {
-    for (key, value) in pairs {
+    for (key, value) in pairs.sorted(by: { $0.key < $1.key }) {
       encodeString(key, into: &data, typed: false)
       value.encode(into: &data)
     }
