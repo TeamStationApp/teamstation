@@ -16,6 +16,8 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var current: [String: String] = [:]
   nonisolated(unsafe) static var ended: Set<String> = []
   nonisolated(unsafe) static var made = 0
+  /// How far the server's clock is ahead of this machine's, in seconds.
+  nonisolated(unsafe) static var skew = 0.0
 
   static func reset() {
     refuse = false
@@ -24,6 +26,7 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
     current = [:]
     ended = []
     made = 0
+    skew = 0
   }
 
   override class func canInit(with request: URLRequest) -> Bool { true }
@@ -56,6 +59,9 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
     parts: [String],
     fields: [String: Any]
   ) -> (Int, String) {
+    if parts.last == "time" {
+      return (200, #"{"serverTime":\#(((Date().timeIntervalSince1970 + Self.skew) * 1_000).rounded())}"#)
+    }
     if Self.refuse {
       return (409, #"{"code":"conflict","message":"This game is not yours to stream"}"#)
     }
@@ -109,12 +115,23 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
   }
 }
 
+/// A server that never answers: every request fails as unreachable.
+private final class NoServer: URLProtocol, @unchecked Sendable {
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+  }
+  override func stopLoading() {}
+}
+
 private let installId = "00000000-0000-4000-8000-000000000001"
 
 @MainActor
 private func makeAccount(
   server: String = "https://teamstation.example",
-  keychain: KeychainStore = .inMemory()
+  keychain: KeychainStore = .inMemory(),
+  clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 }
 ) -> TeamStationAccount {
   StreamServer.reset()
   keychain.setToken("tok")
@@ -126,7 +143,8 @@ private func makeAccount(
     installId: installId,
     deviceModel: "iPad Pro",
     keychain: keychain,
-    session: URLSession(configuration: configuration)
+    session: URLSession(configuration: configuration),
+    clock: clock
   )
 }
 
@@ -325,6 +343,144 @@ struct ChooseTests {
     StreamServer.refuse = true
     #expect(await account.renameStream(label: "Right Field") == false)
     #expect(account.lastError == "This game is not yours to stream")
+  }
+
+  @Test func reportsTheHeldStreamsLiveStartOnTheServersClock() async throws {
+    let account = makeAccount()
+    let started = Date(timeIntervalSince1970: 1_790_000_000.5)
+    #expect(await account.reportLiveStart(startedAt: started) == false)
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.skew = 2
+    #expect(await account.reportLiveStart(startedAt: started))
+    #expect(StreamServer.asked.suffix(5) == Array(repeating: "GET /api/v1/time", count: 4)
+      + [ "PATCH /api/v1/games/g1/live-streams/lst_1" ])
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    let text = try #require(StreamServer.bodies.last?["liveStartedAt"])
+    let sent = try #require(instant.date(from: text))
+    #expect(abs(sent.timeIntervalSince(started) - 2) < 0.05)
+    StreamServer.refuse = true
+    #expect(await account.reportLiveStart(startedAt: started) == false)
+    #expect(account.lastError == nil)
+  }
+
+  @Test func measuresTheServersClockAgainstTheClockTheStartIsOn() async throws {
+    // The device's own clock was stepped 30 s back since launch; the steady clock the stream is
+    // timed on was not, and the server reads 2 s ahead of the device's clock as it is now.
+    let account = makeAccount(clock: { Date().timeIntervalSince1970 + 30 })
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.skew = 2
+    let started = Date(timeIntervalSince1970: Date().timeIntervalSince1970 + 30)
+    #expect(await account.reportLiveStart(startedAt: started))
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    let text = try #require(StreamServer.bodies.last?["liveStartedAt"])
+    let sent = try #require(instant.date(from: text))
+    // On the server's clock that start is now plus 2 s, not 32 s from now.
+    #expect(abs(sent.timeIntervalSinceNow - 2) < 0.1, "reported \(sent.timeIntervalSinceNow) s from now")
+  }
+
+  @Test func saysWhyFromTheRowsStateAndWindowBeforeTheIngestsWord() {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    func row(
+      state: String? = "idle",
+      opensAt: Date? = nil,
+      closesAt: Date? = nil,
+      lastError: String? = nil
+    ) -> TeamStationDeviceStream {
+      TeamStationDeviceStream(
+        id: "lst_9", gameId: "g1", state: state, lastError: lastError,
+        deviceId: installId, opensAt: opensAt, closesAt: closesAt
+      )
+    }
+    let ended = TeamStationError.streamEnded.localizedDescription
+    #expect(TeamStationAccount.refusal(of: row(state: "ended", lastError: "x"), now: now) == ended)
+    #expect(TeamStationAccount.refusal(of: row(state: "revoked"), now: now) == ended)
+    let early = TeamStationAccount.refusal(of: row(opensAt: now.addingTimeInterval(600), lastError: "x"), now: now)
+    #expect(early?.hasPrefix("This camera can go live from ") == true)
+    let late = TeamStationAccount.refusal(of: row(opensAt: now.addingTimeInterval(-600), closesAt: now, lastError: "x"), now: now)
+    #expect(late?.hasPrefix("This camera's streaming window closed at ") == true)
+    // Inside its window, the ingest's own sentence; nothing to say, nil.
+    let open = row(opensAt: now.addingTimeInterval(-600), closesAt: now.addingTimeInterval(600), lastError: "Disk full")
+    #expect(TeamStationAccount.refusal(of: open, now: now) == "Disk full")
+    #expect(TeamStationAccount.refusal(of: row(lastError: ""), now: now) == nil)
+    #expect(TeamStationAccount.refusal(of: row(), now: now) == nil)
+  }
+
+  @Test func aPhoneSaysItRecordsLocallyWhenItAsksForItsStream() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    _ = try await client.requestLiveStream(
+      gameId: "g1", label: "Home Plate", deviceId: installId, deviceModel: "iPhone 13 Pro",
+      heldStreamId: "lst_1", recordsLocally: true
+    )
+    #expect(StreamServer.bodies.last?["recordsLocally"] == "1")
+    _ = try await client.requestLiveStream(gameId: "g1", label: "Home Plate", deviceId: installId, deviceModel: "iPad Pro")
+    #expect(StreamServer.bodies.last?["recordsLocally"] == nil)
+  }
+
+  @Test func picksTheShortestRoundTripForTheServersClock() {
+    #expect(ServerClock.offset(from: []) == nil)
+    // A clock that went backwards mid-request says nothing.
+    #expect(ServerClock.offset(from: [ .init(sent: 10, server: 99, received: 9) ]) == nil)
+    let samples: [ServerClock.Sample] = [
+      // Slow, and lopsided: its midpoint is a quarter of a second out.
+      .init(sent: 100, server: 101.5, received: 100.5),
+      // Quick: the server reads 1.04 s ahead of this device.
+      .init(sent: 200, server: 201.06, received: 200.04),
+      .init(sent: 300, server: 301.1, received: 300.2)
+    ]
+    #expect(abs((ServerClock.offset(from: samples) ?? 0) - 1.04) < 0.000_001)
+    #expect(samples[1].roundTrip == 200.04 - 200)
+  }
+
+  @Test func readsTheServersClockAndSaysWhenItCannot() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    StreamServer.skew = -3
+    let offset = try await client.serverClockOffset()
+    #expect(abs(offset + 3) < 0.05)
+    #expect(StreamServer.asked == Array(repeating: "GET /api/v1/time", count: ServerClock.samples))
+    // A clock that reads its own time half a minute fast.
+    let ahead = try await client.serverClockOffset(samples: 1, now: { Date().timeIntervalSince1970 + 30 })
+    #expect(abs(ahead + 33) < 0.05)
+    let unreachable = TeamStationClient(baseURL: URL(string: "https://teamstation.example")!, token: "tok", session: URLSession(configuration: {
+      let none = URLSessionConfiguration.ephemeral
+      none.protocolClasses = [ NoServer.self ]
+      return none
+    }()))
+    await #expect(throws: (any Error).self) { try await unreachable.serverClockOffset(samples: 2) }
+  }
+
+  @Test func reportsWhenAStreamsFirstPictureWasCapturedWithAPatch() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    let answer = try await client.reportLiveStart(
+      gameId: "g1",
+      streamId: "lst_1",
+      startedAt: Date(timeIntervalSince1970: 1_790_000_000.375)
+    )
+    #expect(answer.id == "lst_1")
+    #expect(StreamServer.asked == [ "PATCH /api/v1/games/g1/live-streams/lst_1" ])
+    #expect(StreamServer.bodies == [ [ "liveStartedAt": "2026-09-21T14:13:20.375Z" ] ])
   }
 
   @Test func forgetsTheChosenGameEverywhere() async {

@@ -53,6 +53,11 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var session: VTCompressionSession?
   private var aac = AACPacketizer()
   private var isRunning = false
+  /// Which start the streamer is on: a start takes the next, and a stop moves past it. Work that
+  /// finishes after a stop or a newer start (an encoder opened, a publish that fails, a client that
+  /// drops) checks its own against this, so it cannot install anything on, or stop, a session that
+  /// is not its own.
+  private var generation = 0
   private var sentVideoConfig = false
   private var sentAudioConfig = false
   private var sentMetadata = false
@@ -93,6 +98,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var lastCallbackWall: CFAbsoluteTime = 0
   private var lastProgramFrameWall: CFAbsoluteTime = 0
   private var lastResetWall: CFAbsoluteTime = 0
+  /// When this publish's first picture was captured, in `CFAbsoluteTime`; see `liveTimelineStart`.
+  private var timelineStart = StreamTimelineStart()
 
   /// `clock` is the one the mixes and the programme tick read (the steady wall clock in the app):
   /// the stream's video stamps and its sound's epoch are both taken from it, so a step of the
@@ -114,6 +121,15 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return isRunning
+  }
+
+  /// When the first picture this publish sent was captured, on `clock`: where the server's copy of
+  /// the stream begins. Nil until a picture has gone out. A picture appended without its capture
+  /// time is taken to have been captured as it was sent.
+  public var liveTimelineStart: WallClock? {
+    lock.lock()
+    defer { lock.unlock() }
+    return timelineStart.captured.map { WallClock(seconds: $0 + kCFAbsoluteTimeIntervalSince1970) }
   }
 
   public var metrics: Metrics {
@@ -155,9 +171,17 @@ public final class ProgramStreamer: @unchecked Sendable {
     case let .failure(error): throw error
     }
 
-    guard beginStart(settings: settings, onFailure: onFailure) else { return }
+    guard let session = beginStart(settings: settings, onFailure: onFailure) else { return }
+    if let opening = willOpenEncoderForTesting { await opening() }
 
-    try openEncoder()
+    // A stop, or a newer start, while this one opens its encoder or dials cancels it, as a stop
+    // cancels the client's own publish.
+    do {
+      guard try openEncoder(generation: session) else { throw RTMPClientError.cancelled }
+    } catch {
+      stop(generation: session)
+      throw error
+    }
     let client = RTMPClient()
     // How far behind the socket may fall before the client sheds media: `sendBufferSeconds` of the
     // top of the stream's range, which is the most this session ever produces.
@@ -166,24 +190,39 @@ public final class ProgramStreamer: @unchecked Sendable {
       videoCodec: Self.rtmpCodec(settings.codec)
     )
     client.onFailure { [weak self] error in
-      self?.handleFailure(error.description)
+      self?.handleFailure(error.description, generation: session)
     }
-    markStarted(client)
+    guard markStarted(client, generation: session) else {
+      client.stop()
+      throw RTMPClientError.cancelled
+    }
     startRateLoop(client: client)
     telemetry.recordEncodeSessionChange(delta: 1)
     do {
       try await client.publish(to: url)
     } catch {
-      stop()
+      // Only this start's session: a stop and a newer start may have come while it dialled.
+      stop(generation: session)
       throw error
     }
   }
 
-  /// NSLock cannot be taken inside an async function; these two helpers keep `start` legal.
-  private func beginStart(settings: StreamSettings, onFailure: FailureHandler?) -> Bool {
+  /// Runs as a start is about to open its encoder: for the tests of a stop that lands there.
+  var willOpenEncoderForTesting: (@Sendable () async -> Void)? {
+    get { lock.withLock { openingHook } }
+    set { lock.withLock { openingHook = newValue } }
+  }
+
+  private var openingHook: (@Sendable () async -> Void)?
+
+  /// NSLock cannot be taken inside an async function; these helpers keep `start` legal.
+  ///
+  /// Resets the session state for a start, answering its generation, or nil while one runs.
+  private func beginStart(settings: StreamSettings, onFailure: FailureHandler?) -> Int? {
     lock.lock()
     defer { lock.unlock() }
-    if isRunning { return false }
+    if isRunning { return nil }
+    generation += 1
     applyStreamSettings(settings)
     self.onFailure = onFailure
     sentVideoConfig = false
@@ -203,7 +242,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     streamStartWall = absoluteNow()
     lastOutputWall = 0
     pendingEncodes = 0
-    return true
+    timelineStart = StreamTimelineStart()
+    return generation
   }
 
   /// The stream group of Settings, and the keyframe interval every encoder shares.
@@ -213,9 +253,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     codec = Self.rtmpCodec(settings.codec)
     bitrateLow = settings.bitrateLow
     bitrateHigh = settings.bitrateHigh
-    bitrate = settings.bitrateHigh
+    bitrate = settings.openingBitrate
     frameRate = max(1, settings.frameRate)
     gopSeconds = settings.gopSeconds
+    aac.bitrate = settings.audioBitrate
   }
 
   static func rtmpCodec(_ codec: ProgramCodec) -> RTMPVideoCodec {
@@ -232,12 +273,13 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.unlock()
   }
 
-  /// Starts the controller at the high bitrate, which is where the session already is. Until the
+  /// Starts the controller at the opening bitrate, which is where the session already is. Until the
   /// publish is live there is no link to judge, and the controller holds.
   private func startRateLoop(client: RTMPClient) {
     lock.lock()
     let high = bitrateHigh
     let low = bitrateLow
+    let opening = bitrate
     lock.unlock()
     let loop = AdaptiveBitrateLoop(
       ceiling: high,
@@ -255,7 +297,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     rateLoop = loop
     lock.unlock()
-    loop.configure(ceiling: high, floor: low, enabled: true)
+    loop.configure(ceiling: high, floor: low, start: opening, enabled: true)
   }
 
   /// A rate from the controller, onto the live session: the next frame is coded at it. A session
@@ -272,16 +314,34 @@ public final class ProgramStreamer: @unchecked Sendable {
     if let session { Self.setRate(rate, on: session) }
   }
 
-  private func markStarted(_ client: RTMPClient) {
+  /// Puts `client` on the session, unless a stop or a newer start has come since `generation` began.
+  private func markStarted(_ client: RTMPClient, generation: Int) -> Bool {
     lock.lock()
+    guard self.generation == generation else {
+      lock.unlock()
+      return false
+    }
     self.client = client
     isRunning = true
     lock.unlock()
     startGOPWatchdog()
+    return true
   }
 
   public func stop() {
+    stop(generation: nil)
+  }
+
+  /// Stops the streamer; given a `generation`, only while that start is still the current one.
+  /// Answers whether it stopped.
+  @discardableResult
+  private func stop(generation: Int?) -> Bool {
     lock.lock()
+    if let generation, generation != self.generation {
+      lock.unlock()
+      return false
+    }
+    self.generation += 1
     let running = isRunning
     isRunning = false
     let timer = gopTimer
@@ -294,6 +354,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     let loop = rateLoop
     rateLoop = nil
     pendingEncodes = 0
+    timelineStart = StreamTimelineStart()
     lock.unlock()
     timer?.cancel()
     loop?.stop()
@@ -303,14 +364,17 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     client?.stop()
     if running { telemetry.recordEncodeSessionChange(delta: -1) }
+    return true
   }
 
-  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  /// A programme picture. `captureWall` is when it was captured, on `clock`, for a picture new to
+  /// the stream; nil for a repeat, which is taken to be as old as the last picture that said.
+  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
     lock.lock()
     let admitted = pacer.admit(now: absoluteNow())
     lock.unlock()
     guard admitted else { return }
-    encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
+    encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false, captureWall: captureWall)
   }
 
   /// What `start` would configure the stream as, without opening an encoder or a socket.
@@ -323,6 +387,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     var bitrateLow: Int
     var bitrateHigh: Int
     var gopSeconds: Double
+    /// The rate the sound's encoder opens at.
+    var audioBitrate = StreamSettings.defaultAudioBitrate
   }
 
   func configurationForTesting(_ settings: StreamSettings) -> Configuration {
@@ -337,7 +403,8 @@ public final class ProgramStreamer: @unchecked Sendable {
       bitrate: bitrate,
       bitrateLow: bitrateLow,
       bitrateHigh: bitrateHigh,
-      gopSeconds: gopSeconds
+      gopSeconds: gopSeconds,
+      audioBitrate: aac.bitrate
     )
   }
 
@@ -377,7 +444,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     _ pixelBuffer: CVPixelBuffer,
     sourceTime: CMTime,
     forceKey: Bool?,
-    isIdle: Bool
+    isIdle: Bool,
+    captureWall: WallClock? = nil
   ) {
     // Frames reach the encoder in the order they are stamped; see `submitLock`.
     submitLock.lock()
@@ -393,6 +461,11 @@ public final class ProgramStreamer: @unchecked Sendable {
       telemetry.recordProgramFrameAge(0)
     }
     let time = clock.nextPresentationTime(source: sourceTime, now: now)
+    timelineStart.submitted(
+      time: time,
+      now: now,
+      captureWall: captureWall.map { $0.seconds - kCFAbsoluteTimeIntervalSince1970 }
+    )
     let mustKey = forceKey ?? (clock.shouldForceKey(at: time, now: now) || !sentVideoConfig || isIdle)
     telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
     let cap = mustKey ? Self.idleIDRPendingCap : Self.maximumPendingEncodes
@@ -549,14 +622,15 @@ public final class ProgramStreamer: @unchecked Sendable {
     lastResetWall = absoluteNow()
     telemetry.recordStreamPendingEncodes(0)
     telemetry.recordStreamEncoderReset()
+    let current = generation
     lock.unlock()
     if let old {
       VTCompressionSessionInvalidate(old)
     }
     do {
-      try openEncoder()
+      try openEncoder(generation: current)
     } catch {
-      handleFailure(String(describing: error))
+      handleFailure(String(describing: error), generation: current)
     }
   }
 
@@ -682,7 +756,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
   }
 
-  private func openEncoder() throws {
+  /// Opens an encoder session for start `generation` and installs it, answering whether it did: one
+  /// that opens after a stop or a newer start is invalidated again rather than left on the streamer.
+  @discardableResult
+  private func openEncoder(generation: Int) throws -> Bool {
     var session: VTCompressionSession?
     let refcon = Unmanaged.passUnretained(self).toOpaque()
     lock.lock()
@@ -747,8 +824,17 @@ public final class ProgramStreamer: @unchecked Sendable {
     )
     VTCompressionSessionPrepareToEncodeFrames(session)
     lock.lock()
+    guard self.generation == generation else {
+      lock.unlock()
+      VTCompressionSessionInvalidate(session)
+      return false
+    }
+    // A start cancelled after its encoder opened leaves that encoder for the next start to replace.
+    let replaced = self.session
     self.session = session
     lock.unlock()
+    if let replaced { VTCompressionSessionInvalidate(replaced) }
+    return true
   }
 
   /// How far above the average the encoder may go over any one second.
@@ -855,6 +941,7 @@ public final class ProgramStreamer: @unchecked Sendable {
         return
       }
       sentVideoConfig = true
+      timelineStart.sent(time: CMSampleBufferGetPresentationTimeStamp(encoded), startWall: clock.startWall)
       lock.unlock()
       client.sendVideo(timestampMs: timestamp, tag: FLVTag.videoSequenceHeader(codec: codec, record: record))
     } else {
@@ -874,9 +961,14 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
   }
 
-  private func handleFailure(_ message: String) {
-    stop()
-    onFailure?(message)
+  /// A failure of start `generation`'s session: one reported after a stop or a newer start is not
+  /// this session's to act on.
+  private func handleFailure(_ message: String, generation: Int) {
+    lock.lock()
+    let handler = onFailure
+    lock.unlock()
+    guard stop(generation: generation) else { return }
+    handler?(message)
   }
 
   private func milliseconds(_ time: CMTime) -> UInt32 {
@@ -1024,6 +1116,8 @@ final class AACPacketizer: @unchecked Sendable {
   /// The encoder's priming: packet N decodes to the input from this many samples before sample
   /// N x 1024. Read from the converter; 2,112 for Apple's AAC-LC.
   private(set) var primingSamples = 2_112
+  /// The AAC rate the next converter is made with, from the session's settings.
+  var bitrate = StreamSettings.defaultAudioBitrate
 
   func reset() {
     if let converter { AudioConverterDispose(converter) }
@@ -1080,8 +1174,8 @@ final class AACPacketizer: @unchecked Sendable {
     if AudioConverterGetProperty(converter, kAudioConverterPrimeInfo, &primeSize, &prime) == noErr {
       primingSamples = Int(prime.leadingFrames)
     }
-    var bitrate: UInt32 = 128_000
-    AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &bitrate)
+    var rate = UInt32(bitrate)
+    AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &rate)
     // FLV AAC packet type 0 is AudioSpecificConfig (2 bytes), not Apple's MP4 magic cookie.
     audioSpecificConfig = Data([ 0x11, 0x90 ])
     self.converter = converter

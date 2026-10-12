@@ -21,7 +21,9 @@ extension ProgrammeSettings {
       resolution: config.programResolution,
       frameRate: config.programFrameRate,
       bitrate: config.programBitrate,
-      gopSeconds: config.gopSeconds
+      gopSeconds: config.gopSeconds,
+      // Director's recording sound, as its encoder always wrote it.
+      audioBitrate: 192_000
     )
   }
 }
@@ -34,7 +36,9 @@ extension StreamSettings {
       frameRate: config.streamFrameRate,
       bitrateLow: config.streamBitrateLow,
       bitrateHigh: config.streamBitrateHigh,
-      gopSeconds: config.gopSeconds
+      gopSeconds: config.gopSeconds,
+      // Director's stream sound, as its streamer always sent it.
+      audioBitrate: 128_000
     )
   }
 }

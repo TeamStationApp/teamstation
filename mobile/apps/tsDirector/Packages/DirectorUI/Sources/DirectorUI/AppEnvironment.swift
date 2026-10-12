@@ -200,6 +200,9 @@ public final class AppEnvironment {
   /// Whether the operator wants the programme streaming. `isStreaming` says whether it is going out
   /// right now; this says whether it should be, which is what tells a drop from a Stop.
   private var streamWanted = false
+  /// Set as the operator starts the stream, until TeamStation has been told when its first picture
+  /// was captured; see `EventCoordinator.liveStarted`.
+  private var liveStartWanted = false
 
   public private(set) var isStreaming = false {
     didSet {
@@ -2060,13 +2063,16 @@ public final class AppEnvironment {
   // MARK: - TeamStation
 
   private func makeAccount() -> TeamStationAccount {
-    TeamStationAccount(
+    let clock = self.clock
+    return TeamStationAccount(
       serverURL: AppServer.url,
       deviceName: UIDevice.current.name,
       appOrigin: AppServer.appOrigin,
       // TeamStation keys this Director's stream on the installation and lists it by model.
       installId: DirectorInstallID.persisted(in: .standard),
-      deviceModel: DeviceModelName.current
+      deviceModel: DeviceModelName.current,
+      // The live start it reports is on the stream's clock, so the server-clock offset is too.
+      clock: { clock.now.seconds }
     )
   }
 
@@ -2147,6 +2153,7 @@ public final class AppEnvironment {
     }
     streamErrorGate.reset()
     streamWanted = true
+    liveStartWanted = true
     isStreaming = true
     // A stream is always recorded. The local take is the only copy that is not
     // at the mercy of the uplink, it is what replay cuts from during the game,
@@ -2283,6 +2290,7 @@ public final class AppEnvironment {
 
   public func stopStreaming() async {
     streamWanted = false
+    liveStartWanted = false
     holdProgrammeSound()
     guard isStreaming || programStreamer.running else {
       // A redial may still be waiting.
@@ -4861,6 +4869,11 @@ public final class AppEnvironment {
       snapshot = next
       lastPublishedUIAt = clock.now.seconds
       if isStreaming {
+        if liveStartWanted, let started = programStreamer.liveTimelineStart {
+          liveStartWanted = false
+          let destination = dialConfig.streamDestination
+          Task { await eventCoordinator.liveStarted(at: started.date, destination: destination) }
+        }
         let stream = streamSession.refreshCongestion()
         streamMegabitsPerSecond = stream.megabitsPerSecond
         streamDroppedPackets = stream.droppedPackets
