@@ -35,7 +35,11 @@ extension PhoneStreamTests {
                    displayedZoom: 1, deviceZoom: 2, isSecondaryNative: false),
         CameraLens(id: "back-tele", position: .back, deviceType: CameraDeviceTypeName.telephoto,
                    uniqueDeviceID: "00000000-0000-4000-8000-000000000013", focalLengthMM: 77,
-                   displayedZoom: 3, deviceZoom: 6, isSecondaryNative: false)
+                   displayedZoom: 3, deviceZoom: 6, isSecondaryNative: false),
+        // The 48 mm crop of the wide sensor: a zoom stop, not a lens of its own.
+        CameraLens(id: "back-wide-2x", position: .back, deviceType: CameraDeviceTypeName.wideAngle,
+                   uniqueDeviceID: "00000000-0000-4000-8000-000000000012", focalLengthMM: 52,
+                   displayedZoom: 2, deviceZoom: 4, isSecondaryNative: true)
       ]
       return state
     }
@@ -81,6 +85,7 @@ extension PhoneStreamTests {
       #expect(device.deviceZooms == [ 4, 6, 3 ])
 
       let lenses = engine.lenses()
+      // One toggle per physical lens, as Cameraman's Lenses card: the wide's 2x crop is not listed.
       #expect(lenses.map { $0.lens.id } == [ "back-ultra", "back-wide", "back-tele" ])
       #expect(lenses.allSatisfy { $0.enabled })
       engine.setDisabledLenses([ "back-ultra" ])

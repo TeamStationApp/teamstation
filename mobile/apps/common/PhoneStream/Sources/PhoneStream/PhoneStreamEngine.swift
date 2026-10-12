@@ -676,11 +676,13 @@ public final class PhoneStreamEngine {
     )
   }
 
-  /// Every lens this phone has, with Cameraman's rule for which may be turned off.
+  /// The phone's physical lenses, one toggle each as on Cameraman's Lenses card, with Cameraman's
+  /// rule for which may be turned off. A native crop (the wide's 2x) is a zoom stop, not a lens: it
+  /// goes with its sensor, so it is not offered on its own.
   public func lenses() -> [PhoneLens] {
     let catalog = cameraState.availableLenses
     let selection = LensSelection(disabledIDs: captureSettings.disabledLensIDs).normalized(in: catalog)
-    return catalog.map { lens in
+    return LensSelection.physical(in: catalog).map { lens in
       PhoneLens(
         lens: lens,
         enabled: selection.isEnabled(lens),
