@@ -92,6 +92,7 @@ import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
+import { useResumePendingUploads } from './stream/useResumePendingUploads'
 import {
   cacheStyles,
   type Theme,
@@ -461,6 +462,7 @@ function Shell(props: AppProps): React.ReactElement {
   }, [signedInAs])
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
+  useResumePendingUploads(client, signedInAs)
 
   /**
    * The one socket every screen hears a game's changes on, for as long as
