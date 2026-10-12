@@ -27,7 +27,9 @@ sealed class UploadClientError(message: String) : Exception(message) {
 class UploadClient(
     private val baseURL: String,
     private val token: String? = null,
-    private val open: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
+    private val open: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+    /** How much of a body is written at a time, and so how often a part's progress can be told. */
+    private val chunkBytes: Int = 64 * 1024
 ) {
     /** An upload the server has opened, and how it wants the recording sent. */
     data class Opened(val uploadId: String, val partSize: Int, val parts: Int, val received: List<Int>)
@@ -96,10 +98,19 @@ class UploadClient(
         )
     }
 
-    /** One part of the recording, as bytes; minutes rather than seconds to land on a field's uplink. */
-    /** The first [length] bytes of [bytes] are the part, so one buffer can carry every part in turn. */
-    suspend fun sendPart(uploadId: String, index: Int, bytes: ByteArray, length: Int = bytes.size): PartTaken {
-        val json = request("director/uploads/${escape(uploadId)}/parts/$index", "PUT", bytes, "application/octet-stream", 300_000, length)
+    /**
+     * One part of the recording, as bytes; minutes rather than seconds to land on a field's uplink.
+     * The first [length] bytes of [bytes] are the part, so one buffer can carry every part in turn.
+     * [onSent] is told how many of them have been written to the connection so far.
+     */
+    suspend fun sendPart(
+        uploadId: String,
+        index: Int,
+        bytes: ByteArray,
+        length: Int = bytes.size,
+        onSent: (Int) -> Unit = {}
+    ): PartTaken {
+        val json = request("director/uploads/${escape(uploadId)}/parts/$index", "PUT", bytes, "application/octet-stream", 300_000, length, onSent)
         return PartTaken(json.getInt("received"), json.getInt("parts"), ints(json.optJSONArray("missing")))
     }
 
@@ -109,13 +120,19 @@ class UploadClient(
         return Finished(json.optStringOrNull("videoId"), json.optString("state"), json.optStringOrNull("step"))
     }
 
+    /** Gives the upload up, with the parts the server holds. Nothing is said when that fails. */
+    suspend fun abandonUpload(uploadId: String) {
+        runCatching { request("director/uploads/${escape(uploadId)}", "DELETE", null, null, 20_000) }
+    }
+
     private suspend fun request(
         path: String,
         method: String,
         body: ByteArray?,
         type: String?,
         timeoutMillis: Int,
-        bodyLength: Int = body?.size ?: 0
+        bodyLength: Int = body?.size ?: 0,
+        onSent: (Int) -> Unit = {}
     ): JSONObject =
         withContext(Dispatchers.IO) {
             val connection = try {
@@ -133,13 +150,24 @@ class UploadClient(
                     connection.doOutput = true
                     connection.setRequestProperty("content-type", type)
                     connection.setFixedLengthStreamingMode(bodyLength)
-                    connection.outputStream.use { it.write(body, 0, bodyLength) }
+                    connection.outputStream.use { out ->
+                        // In chunks, each told as it goes: in fixed-length streaming mode a write
+                        // returns once the connection has taken it.
+                        var written = 0
+                        while (written < bodyLength) {
+                            val count = minOf(chunkBytes, bodyLength - written)
+                            out.write(body, written, count)
+                            written += count
+                            onSent(written)
+                        }
+                    }
                 }
                 val status = connection.responseCode
                 val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
                     ?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
                 if (status == 401 || status == 403) throw UploadClientError.NotSignedIn
                 if (status !in 200..299) throw UploadClientError.Server(message(text, status))
+                if (status == 204) return@withContext JSONObject()
                 runCatching { JSONObject(text) }.getOrElse { throw UploadClientError.Server("TeamStation sent something unreadable") }
             } catch (error: IOException) {
                 throw UploadClientError.Offline
