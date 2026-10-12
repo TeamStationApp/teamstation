@@ -103,7 +103,7 @@ export function PublicTeamContent({
 }
 const getStyles = cacheStyles((theme: Theme) => ({
   section: { gap: theme.rem(0.75) },
-  card: { padding: theme.rem(1), gap: theme.rem(0.5) },
+  card: { gap: theme.rem(0.5) },
   name: {
     color: theme.primaryTextColor,
     fontFamily: theme.semiBoldTextFont,

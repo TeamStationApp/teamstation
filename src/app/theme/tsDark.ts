@@ -170,6 +170,7 @@ export const tsDark: Theme = {
   spaceMdRem: 0.875,
   spaceLgRem: 1.25,
   spaceXlRem: 2,
+  cardContentInsetRem: 1,
 
   maxContentWidthRem: 60
 }

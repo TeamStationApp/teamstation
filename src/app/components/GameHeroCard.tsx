@@ -447,8 +447,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: theme.rem(theme.spaceSmRem),
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
-    paddingTop: theme.rem(theme.spaceMdRem)
+    paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+    paddingTop: theme.rem(theme.cardContentInsetRem)
   },
   metaText: {
     flexShrink: 1,
@@ -490,8 +490,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem),
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
-    paddingVertical: theme.rem(theme.spaceMdRem)
+    paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+    paddingVertical: theme.rem(theme.cardContentInsetRem)
   },
   sideText: {
     flexShrink: 1,
@@ -577,8 +577,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   line: {
     borderTopWidth: 1,
     borderTopColor: theme.defaultBorderColor,
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
-    paddingVertical: theme.rem(theme.spaceSmRem),
+    paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+    paddingVertical: theme.rem(theme.cardContentInsetRem),
     gap: theme.rem(0.125)
   },
   lineText: {

@@ -224,7 +224,7 @@ export function GameSchedulingControls({
 }
 const getStyles = cacheStyles((theme: Theme) => ({
   section: { gap: theme.rem(0.75) },
-  card: { padding: theme.rem(1), gap: theme.rem(0.5) },
+  card: { gap: theme.rem(0.5) },
   title: {
     fontSize: theme.rem(1.125),
     color: theme.primaryTextColor,

@@ -45,7 +45,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     minWidth: 225,
     backgroundColor: theme.cardBackgroundColor,
     borderRadius: 16,
-    padding: 20,
+    padding: theme.rem(theme.cardContentInsetRem),
     borderWidth: 1,
     borderColor: theme.defaultBorderColor
   },

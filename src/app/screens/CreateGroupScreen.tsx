@@ -382,7 +382,7 @@ export function CreateGroupScreen({
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  card: { padding: theme.rem(1.25), gap: theme.rem(1) },
+  card: { gap: theme.rem(1) },
   title: {
     fontSize: theme.rem(1.5),
     color: theme.primaryTextColor,

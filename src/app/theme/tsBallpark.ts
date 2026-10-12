@@ -203,6 +203,7 @@ export const tsBallpark: Theme = {
   spaceMdRem: 0.875,
   spaceLgRem: 1.25,
   spaceXlRem: 2,
+  cardContentInsetRem: 1,
 
   // The container never grows past this, however wide the window. 60rem is
   // 960px: wide enough for a box score to breathe, narrow enough that a list

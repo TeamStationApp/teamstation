@@ -14,8 +14,10 @@ import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
   Card,
+  CardContent,
   Emblem,
   Icon,
+  ListCard,
   ListRow,
   Screen,
   TextField
@@ -405,45 +407,47 @@ export function WalkUpSongScreen(
           )}
         </Card>
       ) : (
-        <Card style={styles.card}>
-          <TextField
-            label={lstrings.walkup_search}
-            value={search.term}
-            onChangeText={text => {
-              search.setTerm(text)
-            }}
-            placeholder={
-              android
-                ? lstrings.walkup_search_device
-                : lstrings.walkup_search_apple
-            }
-          />
-          <Text style={styles.licence}>{lstrings.walkup_licence}</Text>
+        <ListCard>
+          <CardContent style={styles.card}>
+            <TextField
+              label={lstrings.walkup_search}
+              value={search.term}
+              onChangeText={text => {
+                search.setTerm(text)
+              }}
+              placeholder={
+                android
+                  ? lstrings.walkup_search_device
+                  : lstrings.walkup_search_apple
+              }
+            />
+            <Text style={styles.licence}>{lstrings.walkup_licence}</Text>
+            {error != null && <Text style={styles.error}>{error}</Text>}
+            {search.status === 'searching' && (
+              <Text style={styles.meta}>{lstrings.walkup_searching}</Text>
+            )}
+            {search.status === 'done' && search.results.length === 0 && (
+              <Text style={styles.meta}>{lstrings.walkup_no_match}</Text>
+            )}
+            {search.status === 'error' && (
+              <View style={styles.card}>
+                <Text style={styles.error}>{search.error}</Text>
+                <Button
+                  label={lstrings.walkup_retry}
+                  kind="secondary"
+                  onPress={() => {
+                    search.retry()
+                  }}
+                />
+              </View>
+            )}
+          </CardContent>
           {android && (
             <ListRow
               title={lstrings.walkup_choose_file}
               emblemIcon="music_note"
               onPress={pickFile}
             />
-          )}
-          {error != null && <Text style={styles.error}>{error}</Text>}
-          {search.status === 'searching' && (
-            <Text style={styles.meta}>{lstrings.walkup_searching}</Text>
-          )}
-          {search.status === 'done' && search.results.length === 0 && (
-            <Text style={styles.meta}>{lstrings.walkup_no_match}</Text>
-          )}
-          {search.status === 'error' && (
-            <View style={styles.card}>
-              <Text style={styles.error}>{search.error}</Text>
-              <Button
-                label={lstrings.walkup_retry}
-                kind="secondary"
-                onPress={() => {
-                  search.retry()
-                }}
-              />
-            </View>
           )}
           {search.status === 'done' &&
             search.results.map(candidate => (
@@ -459,7 +463,7 @@ export function WalkUpSongScreen(
                 }}
               />
             ))}
-        </Card>
+        </ListCard>
       )}
     </Screen>
   )

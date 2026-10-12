@@ -612,7 +612,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   urlBox: {
     backgroundColor: theme.inactiveBackgroundColor,
     borderRadius: theme.rem(theme.radiusRem),
-    padding: theme.rem(theme.spaceSmRem),
+    padding: theme.rem(theme.cardContentInsetRem),
     gap: theme.rem(0.25)
   },
   url: {

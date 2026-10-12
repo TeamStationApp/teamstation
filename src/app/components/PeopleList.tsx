@@ -5,8 +5,8 @@ import type { RosterEntry, RosterSection } from '../../common/api'
 import type { StringKey } from '../locales/en_US'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Card } from './Card'
 import { initialsOf } from './initials'
+import { ListCard } from './ListCard'
 import { ListRow } from './ListRow'
 import { flagLabel } from './RolesModal'
 import { SectionHeader } from './SectionHeader'
@@ -54,30 +54,28 @@ export function PeopleList({
               title={lstrings[heading]}
               note={String(listed.length)}
             />
-            <Card>
-              {listed.map((person, index) => (
-                <View key={person.userId}>
-                  {index > 0 && <View style={styles.divider} />}
-                  <ListRow
-                    title={person.shortName}
-                    subtitle={peopleSubtitle(person)}
-                    emblem={initialsOf(person.shortName)}
-                    emblemUri={person.avatarUrl}
-                    emblemShape="circle"
-                    badgeLabel={inheritedPill(person)}
-                    badgeTone="neutral"
-                    trailing={
-                      // An empty string is not a jersey number. Without this
-                      // the row reads as a bare `#`.
-                      person.jersey == null || person.jersey.trim() === ''
-                        ? undefined
-                        : `#${person.jersey.trim()}`
-                    }
-                    onPress={onOpen?.(person)}
-                  />
-                </View>
+            <ListCard>
+              {listed.map(person => (
+                <ListRow
+                  key={person.userId}
+                  title={person.shortName}
+                  subtitle={peopleSubtitle(person)}
+                  emblem={initialsOf(person.shortName)}
+                  emblemUri={person.avatarUrl}
+                  emblemShape="circle"
+                  badgeLabel={inheritedPill(person)}
+                  badgeTone="neutral"
+                  trailing={
+                    // An empty string is not a jersey number. Without this
+                    // the row reads as a bare `#`.
+                    person.jersey == null || person.jersey.trim() === ''
+                      ? undefined
+                      : `#${person.jersey.trim()}`
+                  }
+                  onPress={onOpen?.(person)}
+                />
               ))}
-            </Card>
+            </ListCard>
           </View>
         )
       })}
@@ -125,9 +123,5 @@ export function inheritedPill(person: RosterEntry): string | undefined {
 const getStyles = cacheStyles((theme: Theme) => ({
   section: {
     gap: theme.rem(theme.spaceMdRem)
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.defaultBorderColor
   }
 }))

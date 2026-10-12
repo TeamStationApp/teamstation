@@ -190,7 +190,7 @@ export function NodeAdministrationScreen({
 }
 const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1) },
-  card: { padding: theme.rem(1), gap: theme.rem(0.75) },
+  card: { gap: theme.rem(0.75) },
   title: {
     color: theme.primaryTextColor,
     fontSize: theme.rem(1.5),

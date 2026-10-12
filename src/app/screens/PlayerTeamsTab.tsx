@@ -1,8 +1,8 @@
 import React from 'react'
-import { Text, View } from 'react-native'
+import { Text } from 'react-native'
 
 import type { PlayerTeam } from '../../common/api'
-import { Card, initialsOf, ListRow } from '../components'
+import { Card, initialsOf, ListCard, ListRow } from '../components'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -37,41 +37,35 @@ export function PlayerTeamsTab(props: PlayerTeamsTabProps): React.ReactElement {
     )
   }
   return (
-    <Card>
-      {teams.map((team, index) => {
+    <ListCard>
+      {teams.map(team => {
         const subtitle = [team.seasonName, ...team.positions]
           .filter(part => part != null && part !== '')
           .join(' · ')
         const jersey = team.jersey?.trim() ?? ''
         return (
-          <View key={`${team.teamId} ${team.seasonId ?? ''}`}>
-            {index > 0 && <View style={styles.divider} />}
-            <ListRow
-              title={team.teamName}
-              subtitle={subtitle === '' ? undefined : subtitle}
-              emblem={initialsOf(team.teamName)}
-              emblemUri={team.logoUrl}
-              trailing={jersey === '' ? undefined : `#${jersey}`}
-              onPress={
-                onOpenTeam == null
-                  ? undefined
-                  : () => {
-                      onOpenTeam(team.teamId, team.teamName)
-                    }
-              }
-            />
-          </View>
+          <ListRow
+            key={`${team.teamId} ${team.seasonId ?? ''}`}
+            title={team.teamName}
+            subtitle={subtitle === '' ? undefined : subtitle}
+            emblem={initialsOf(team.teamName)}
+            emblemUri={team.logoUrl}
+            trailing={jersey === '' ? undefined : `#${jersey}`}
+            onPress={
+              onOpenTeam == null
+                ? undefined
+                : () => {
+                    onOpenTeam(team.teamId, team.teamName)
+                  }
+            }
+          />
         )
       })}
-    </Card>
+    </ListCard>
   )
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  divider: {
-    height: 1,
-    backgroundColor: theme.defaultBorderColor
-  },
   muted: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.9375),

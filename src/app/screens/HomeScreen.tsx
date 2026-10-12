@@ -19,6 +19,7 @@ import {
   Card,
   GameHeroCard,
   initialsOf,
+  ListCard,
   ListRow,
   LivePill,
   Screen,
@@ -357,7 +358,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             screen is nobody's idea of a home page.
           */}
           {live.slice(1).map(game => (
-            <Card key={game.videoId}>
+            <ListCard key={game.videoId}>
               <ListRow
                 title={liveTitle(game)}
                 subtitle={[
@@ -375,7 +376,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   onOpenGame(game.gameId, liveTitle(game), { autoPlay: true })
                 }}
               />
-            </Card>
+            </ListCard>
           ))}
         </View>
       )}
@@ -460,84 +461,72 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       {players.length > 0 && (
         <View style={styles.section}>
           <SectionHeader title="Your Players" />
-          <Card>
-            {players.map((player, index) => {
+          <ListCard>
+            {players.map(player => {
               const name = player.shortName ?? String(player.userId)
               return (
-                <View key={player.userId}>
-                  {index > 0 && <View style={styles.divider} />}
-                  <ListRow
-                    title={name}
-                    emblem={initialsOf(name)}
-                    emblemUri={player.avatarUrl}
-                    onPress={() => {
-                      props.onOpenPlayer?.(player.userId, name)
-                    }}
-                  />
-                </View>
+                <ListRow
+                  key={player.userId}
+                  title={name}
+                  emblem={initialsOf(name)}
+                  emblemUri={player.avatarUrl}
+                  onPress={() => {
+                    props.onOpenPlayer?.(player.userId, name)
+                  }}
+                />
               )
             })}
-          </Card>
+          </ListCard>
         </View>
       )}
 
       {counts.team > 0 && (
         <View style={styles.section}>
           <SectionHeader title="Your teams" actions={sectionActions('team')} />
-          <Card>
-            {teams.map((team, index) => (
-              <View key={team.id}>
-                {index > 0 && <View style={styles.divider} />}
-                <ListRow
-                  title={team.name}
-                  subtitle={subtitleFor(team)}
-                  emblem={initialsOf(team.name)}
-                  emblemUri={team.logoUrl}
-                  onPress={() => {
-                    onOpenTeam(team)
-                  }}
-                />
-              </View>
+          <ListCard>
+            {teams.map(team => (
+              <ListRow
+                key={team.id}
+                title={team.name}
+                subtitle={subtitleFor(team)}
+                emblem={initialsOf(team.name)}
+                emblemUri={team.logoUrl}
+                onPress={() => {
+                  onOpenTeam(team)
+                }}
+              />
             ))}
-            {followedTeams.map((group, index) => (
-              <View key={group.id}>
-                {index + teams.length > 0 && <View style={styles.divider} />}
-                {followedRow(group)}
-              </View>
+            {followedTeams.map(group => (
+              <View key={group.id}>{followedRow(group)}</View>
             ))}
-          </Card>
+          </ListCard>
         </View>
       )}
 
       {counts.season > 0 && (
         <View style={styles.section}>
           <SectionHeader title="Seasons" actions={sectionActions('season')} />
-          <Card>
-            {seasons.map((season, index) => (
-              <View key={season.id}>
-                {index > 0 && <View style={styles.divider} />}
-                <ListRow
-                  title={season.name}
-                  subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
-                  emblemIcon="event"
-                  emblemUri={season.logoUrl}
-                  badgeLabel={season.term ?? undefined}
-                  badgeTone="neutral"
-                  onPress={() => {
-                    props.onOpenGroup == null
-                      ? onOpenSeason(season)
-                      : props.onOpenGroup({ kind: 'season', id: season.id })
-                  }}
-                />
-              </View>
+          <ListCard>
+            {seasons.map(season => (
+              <ListRow
+                key={season.id}
+                title={season.name}
+                subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
+                emblemIcon="event"
+                emblemUri={season.logoUrl}
+                badgeLabel={season.term ?? undefined}
+                badgeTone="neutral"
+                onPress={() => {
+                  props.onOpenGroup == null
+                    ? onOpenSeason(season)
+                    : props.onOpenGroup({ kind: 'season', id: season.id })
+                }}
+              />
             ))}
-            {followedSeasons.map((group, index) => (
-              <View key={group.id}>
-                {index + seasons.length > 0 && <View style={styles.divider} />}
-                {followedRow(group)}
-              </View>
+            {followedSeasons.map(group => (
+              <View key={group.id}>{followedRow(group)}</View>
             ))}
-          </Card>
+          </ListCard>
         </View>
       )}
       {counts.league > 0 && (
@@ -546,7 +535,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             title="Your leagues"
             actions={sectionActions('league')}
           />
-          <Card>
+          <ListCard>
             {leagues.map(league => (
               <ListRow
                 key={league.id}
@@ -561,7 +550,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             {followedLeagues.map(group => (
               <View key={group.id}>{followedRow(group)}</View>
             ))}
-          </Card>
+          </ListCard>
         </View>
       )}
       {canCreate &&
@@ -627,10 +616,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '700',
     letterSpacing: theme.rem(0.04),
     color: theme.secondaryTextColor
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.defaultBorderColor
   },
   muted: {
     fontFamily: theme.regularTextFont,

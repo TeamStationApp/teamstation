@@ -678,7 +678,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   changeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: theme.rem(1),
+    padding: theme.rem(theme.cardContentInsetRem),
     gap: theme.rem(0.5)
   },
   changeLabel: {

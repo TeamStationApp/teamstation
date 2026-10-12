@@ -457,5 +457,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexWrap: 'wrap' as const,
     gap: theme.rem(0.5)
   },
-  card: { padding: theme.rem(1.25), gap: theme.rem(0.75) }
+  card: { gap: theme.rem(0.75) }
 }))

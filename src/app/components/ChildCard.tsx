@@ -58,7 +58,7 @@ export function ChildCard(props: ChildCardProps): React.ReactElement {
     else anchor.current.measureInWindow(place)
   }
   return (
-    <Card style={styles.card}>
+    <Card flush style={styles.card}>
       {/*
         The card's own tap target lies under its content rather than around
         it, so the season pills are its siblings and never buttons inside a
@@ -183,8 +183,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem),
-    padding: 0
+    gap: theme.rem(theme.spaceSmRem)
   },
   underlay: {
     position: 'absolute',
@@ -199,7 +198,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem),
-    padding: theme.rem(theme.spaceMdRem),
+    padding: theme.rem(theme.cardContentInsetRem),
     pointerEvents: 'box-none'
   },
   through: { pointerEvents: 'none' },
@@ -242,7 +241,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     height: theme.rem(2.75),
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: theme.rem(theme.spaceXsRem)
+    marginRight: theme.rem(theme.cardContentInsetRem)
   },
   dots: { gap: theme.rem(0.1875), alignItems: 'center' },
   dot: {
