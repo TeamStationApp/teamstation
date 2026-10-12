@@ -1,16 +1,22 @@
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { asNumber, asObject, asOptional, asString } from 'cleaners'
+import { asBoolean, asNumber, asObject, asOptional, asString } from 'cleaners'
 import express, { Router } from 'express'
 import type { Kysely, Selectable } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { canFilm, roleScopes } from '../access'
 import type { Database, DirectorUploadsTable } from '../db/database'
 import {
   assembleParts,
+  covers,
   ensureUploadDir,
   failureToShow,
   isComplete,
@@ -32,6 +38,7 @@ import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { settleRecordingReminder } from '../notifications/recordingReminders'
 
 /**
  * Where TS Director sends the recording it made.
@@ -76,8 +83,21 @@ const asNewUpload = asObject({
    * angles on it, so two cameras of one take must arrive saying the same
    * instant however far apart they were sent.
    */
-  startAt: asOptional(asString)
+  startAt: asOptional(asString),
+  /**
+   * The phone stream this recording was made alongside. Counted only for a
+   * stream of the caller's, on this game, that keeps its own recording and
+   * has not been replaced yet; anything else is ignored, so an upload that
+   * would succeed without it still does.
+   */
+  liveStreamId: asOptional(asString),
+  /** The recording ran for every moment that stream published. */
+  wholeStream: asOptional(asBoolean)
 })
+
+/** What an upload of an angle that is still on the air is told. */
+export const STOP_STREAMING_FIRST =
+  'Stop streaming this angle before uploading its recording'
 
 /** The largest single part this will take, with room over `PART_SIZE`. */
 const PART_LIMIT = PART_SIZE + 1024 * 1024
@@ -199,6 +219,22 @@ export function directorUploadRoutes(
       theSpace()
       const game = await gameIRun(body.gameId, actor.userId, actor.isAdmin)
 
+      // Ended and revoked streams still count: a recording made before an
+      // End can still replace its own angle's live copy.
+      const named =
+        body.liveStreamId == null
+          ? undefined
+          : await db
+              .selectFrom('live_streams')
+              .select(['id', 'state'])
+              .where('id', '=', body.liveStreamId)
+              .where('user_id', '=', actor.userId)
+              .where('game_id', '=', game.id)
+              .where('records_locally', '=', true)
+              .where('local_recording', '<>', 'uploaded')
+              .executeTakeFirst()
+      if (named?.state === 'publishing') throw conflict(STOP_STREAMING_FIRST)
+
       const uploadId = makeId('directorUpload')
       await ensureUploadDir(options.uploadsDir, uploadId)
       await db
@@ -212,7 +248,9 @@ export function directorUploadRoutes(
           filename: body.filename,
           size_bytes: String(Math.round(body.sizeBytes)),
           part_size: PART_SIZE,
-          started_at: recordingStart(body.startAt)
+          started_at: recordingStart(body.startAt),
+          live_stream_id: named?.id ?? null,
+          whole_stream: named != null && body.wholeStream === true
         })
         .execute()
       setAudit(res.locals, { entityType: 'directorUpload', entityId: uploadId })
@@ -426,7 +464,14 @@ export function directorUploadRoutes(
         }
       })
 
-      await replaceLiveRecording(db, game.id, ingested.videoId)
+      await replaceLiveRecording(
+        db,
+        game.id,
+        ingested.videoId,
+        row.live_stream_id == null
+          ? undefined
+          : { liveStreamId: row.live_stream_id, wholeStream: row.whole_stream }
+      )
 
       await db
         .updateTable('director_uploads')
@@ -494,12 +539,27 @@ export function directorUploadRoutes(
  * is the only thing anybody has checked; the purge is what stops the Space
  * being paid for ever for a copy on no page — and it stays off by default,
  * because a deployment may only delete from a bucket it owns.
+ *
+ * **Unnamed**, from TS Director or the Distributor: the coverage rule picks
+ * which live copies the upload covers, among streams that do not keep their
+ * own recording. A phone's angle is never hidden by somebody else's upload.
+ *
+ * **Named**, from the phone that recorded the angle: only that stream's live
+ * copy, and only while it is not publishing. With `wholeStream` it is hidden
+ * whatever the coverage test says; without, only if the test passes. When it
+ * is hidden, the upload takes its title, the stream is revoked and marked
+ * `uploaded`, and its reminder is settled. When it is not, the upload stands
+ * as a video of its own and the reminder stays.
  */
 export async function replaceLiveRecording(
   db: Kysely<Database>,
   gameId: string,
-  uploadedId: string
+  uploadedId: string,
+  named?: { liveStreamId: string; wholeStream: boolean }
 ): Promise<string[]> {
+  if (named != null) {
+    return await replaceNamedStream(db, gameId, uploadedId, named)
+  }
   const videos = await db
     .selectFrom('videos')
     .select([
@@ -510,6 +570,17 @@ export async function replaceLiveRecording(
       'duration_sec as durationSec'
     ])
     .where('game_id', '=', gameId)
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('live_streams')
+            .select('live_streams.id')
+            .whereRef('live_streams.video_id', '=', 'videos.id')
+            .where('live_streams.records_locally', '=', true)
+        )
+      )
+    )
     .execute()
 
   // Where the upload sits in time, which is what says whether it reaches the
@@ -530,4 +601,81 @@ export async function replaceLiveRecording(
     .where('id', 'in', replaced)
     .execute()
   return replaced
+}
+
+async function replaceNamedStream(
+  db: Kysely<Database>,
+  gameId: string,
+  uploadedId: string,
+  named: { liveStreamId: string; wholeStream: boolean }
+): Promise<string[]> {
+  const stream = await db
+    .selectFrom('live_streams')
+    .select(['id', 'state', 'video_id as videoId', 'local_recording'])
+    .where('id', '=', named.liveStreamId)
+    .where('game_id', '=', gameId)
+    .executeTakeFirst()
+  // Publishing again since the upload began, or replaced by another upload
+  // already: nothing is replaced, and the upload is a video of its own.
+  if (
+    stream?.videoId == null ||
+    stream.state === 'publishing' ||
+    stream.local_recording === 'uploaded'
+  ) {
+    return []
+  }
+  const videos = await db
+    .selectFrom('videos')
+    .select([
+      'id',
+      'title',
+      'hidden',
+      'start_at as startAt',
+      'duration_sec as durationSec'
+    ])
+    .where('id', 'in', [stream.videoId, uploadedId])
+    .execute()
+  const live = videos.find(one => one.id === stream.videoId)
+  const uploaded = videos.find(one => one.id === uploadedId)
+  if (live == null || uploaded == null) return []
+  if (!named.wholeStream && (live.hidden || !covers(uploaded, live))) {
+    return []
+  }
+
+  const now = new Date()
+  const replaced = await db.transaction().execute(async trx => {
+    // Revoked, so the next take on this angle asks for a fresh stream and
+    // video rather than this one, whose copy is now the upload. First, and
+    // only while it is still neither publishing nor replaced: the phone may
+    // have dialled it again since it was read above, and a stream that is on
+    // the air keeps its key and its video.
+    const claimed = await trx
+      .updateTable('live_streams')
+      .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
+      .where('id', '=', stream.id)
+      .where('state', '<>', 'publishing')
+      .where('local_recording', '<>', 'uploaded')
+      .executeTakeFirst()
+    if (Number(claimed.numUpdatedRows) === 0) return false
+    await trx
+      .updateTable('videos')
+      .set({
+        hidden: true,
+        replaced_by: uploadedId,
+        purge_after: purgeDateFor(now),
+        updated_at: now
+      })
+      .where('id', '=', live.id)
+      .execute()
+    // The angle strip names a video after its title, so the upload takes
+    // the angle's, whatever the app called it.
+    await trx
+      .updateTable('videos')
+      .set({ title: live.title, updated_at: now })
+      .where('id', '=', uploadedId)
+      .execute()
+    await settleRecordingReminder(trx, stream.id, now)
+    return true
+  })
+  return replaced ? [live.id] : []
 }
