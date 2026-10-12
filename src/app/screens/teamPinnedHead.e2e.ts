@@ -10,6 +10,8 @@ import {
   type FixtureSeason,
   LAST_ROW,
   NEXT_ROW,
+  PLAYER_ID,
+  PLAYER_NAME,
   PREVIOUS_ROW,
   TEAM_ID,
   TEAM_NAME,
@@ -72,13 +74,13 @@ interface Box {
 interface Layout {
   card?: Box
   pill: Box
-  /** The selected tab's content (`teamTabContent`). */
+  /** The selected tab's content (`teamTabContent`, `playerTabContent`). */
   content?: Box
   /** Each schedule row by its team line: `vs Falcons`, `@ Owls`. */
   rows: Record<string, Box>
   /** Everything written in each `scheduleGame` card. */
   rowTexts: string[]
-  /** The header's copy of the team's name, 0 hidden to 1 shown. */
+  /** The header's copy of the team's (or player's) name, 0 hidden to 1 shown. */
   name: number
 }
 
@@ -97,7 +99,8 @@ const near = (a: number | undefined, b: number | undefined): boolean =>
 async function open(
   size: Size,
   path: string,
-  season: FixtureSeason = 'normal'
+  season: FixtureSeason = 'normal',
+  coach = false
 ): Promise<Page> {
   if (browser == null) throw new Error('no browser')
   const page = await browser.newPage()
@@ -129,7 +132,8 @@ async function open(
       (method, route) => {
         observed.push(`fixture: unanswered ${method} ${route}`)
       },
-      season
+      season,
+      coach
     )
     request
       .respond({
@@ -156,7 +160,11 @@ async function open(
  * file is compiled by sucrase, which turns `??` and `?.` into calls to helpers
  * that do not exist inside the page.
  */
-const READ_IN_PAGE = `(function (teamName) {
+const READ_IN_PAGE = `(function (teamName, playerName) {
+  // A player's page names the player; the team's name is on its rows.
+  var player = document.querySelector('[data-testid="playerTabContent"]')
+  var content = player || document.querySelector('[data-testid="teamTabContent"]')
+  if (player != null) teamName = playerName
   var leaves = Array.prototype.filter.call(
     document.querySelectorAll('div, span'),
     function (node) { return node.childElementCount === 0 }
@@ -183,17 +191,24 @@ const READ_IN_PAGE = `(function (teamName) {
     var card = cards.find(function (c) { return c.contains(leaf) })
     rows[text] = box(card || leaf)
   })
-  // The header's copy is the highest drawing of the name; its opacity is the
-  // product of every ancestor's.
-  var copies = leaves
-    .filter(function (leaf) { return leaf.textContent === teamName })
+  // The header's copy is the one in its hand-off slot, and its opacity is
+  // the product of every ancestor's; every other drawing of the name is the
+  // card's, wherever the card has scrolled to.
+  var slot = document.querySelector('[data-testid="headerHandoff"]')
+  var named = leaves.filter(function (leaf) {
+    return leaf.textContent === teamName
+  })
+  var inHeader = function (leaf) { return slot != null && slot.contains(leaf) }
+  var copies = named
+    .filter(function (leaf) { return !inHeader(leaf) })
     .sort(function (a, b) {
       return a.getBoundingClientRect().top - b.getBoundingClientRect().top
     })
+  var header = named.find(inHeader)
   var name = 0
-  if (copies.length > 0) {
+  if (header != null) {
     name = 1
-    for (var node = copies[0]; node != null; node = node.parentElement) {
+    for (var node = header; node != null; node = node.parentElement) {
       name *= Number(getComputedStyle(node).opacity)
     }
   }
@@ -207,7 +222,7 @@ const READ_IN_PAGE = `(function (teamName) {
         .pop()
     ),
     pill: box(stats),
-    content: box(document.querySelector('[data-testid="teamTabContent"]')),
+    content: box(content),
     rows: rows,
     rowTexts: cards.map(function (card) { return card.textContent || '' }),
     name: name
@@ -217,7 +232,7 @@ const READ_IN_PAGE = `(function (teamName) {
 /** Every rectangle the checks read, in one pass over the page. */
 async function read(page: Page): Promise<Layout> {
   return (await page.evaluate(
-    `${READ_IN_PAGE}(${JSON.stringify(TEAM_NAME)})`
+    `${READ_IN_PAGE}(${JSON.stringify(TEAM_NAME)}, ${JSON.stringify(PLAYER_NAME)})`
   )) as Layout
 }
 
@@ -271,6 +286,24 @@ async function tab(page: Page, name: string): Promise<Layout> {
   if (target == null) throw new Error(`no ${name} pill`)
   await page.mouse.click(target.x, target.y)
   return await settle(page)
+}
+
+/** Clicks the button, radio or tab whose words are `label`. */
+async function press(page: Page, label: string): Promise<void> {
+  const target = (await page.evaluate(`(function (label) {
+    var found = Array.prototype.find.call(
+      document.querySelectorAll('[role="button"], [role="radio"], [role="tab"]'),
+      function (node) {
+        return (node.textContent || '').trim().indexOf(label) === 0
+      }
+    )
+    if (found == null) return null
+    var rect = found.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+  })(${JSON.stringify(label)})`)) as { x: number; y: number } | null
+  if (target == null) throw new Error(`nothing to press reads ${label}`)
+  await page.mouse.click(target.x, target.y)
+  await settle(page)
 }
 
 async function shot(page: Page, size: Size, name: string): Promise<void> {
@@ -465,7 +498,8 @@ describe('team screen: pinned pills and the schedule', function () {
 
     it(`${at}: E9, the manage gear on a held card`, async function () {
       if (!wanted('E9')) this.skip()
-      const page = await open(size, `/teams/${TEAM_ID}`)
+      // The gear is the coach's.
+      const page = await open(size, `/teams/${TEAM_ID}`, 'normal', true)
       await tab(page, 'Schedule')
       const gear = await page.$('[aria-label="Manage"]')
       check(gear != null, `${at} E9: the gear is on the card`)
@@ -695,6 +729,171 @@ describe('team screen: pinned pills and the schedule', function () {
       check(
         near(now.pill.top, pinned.pill.top),
         `${at} E11: the pills stay pinned`
+      )
+      await page.close()
+    })
+  }
+
+  for (const size of SIZES) {
+    const at = size.name
+
+    it(`${at}: P1–P3, a player's pills pin and every tab starts under them`, async function () {
+      if (!['P1', 'P2', 'P3'].some(wanted)) this.skip()
+      const page = await open(
+        size,
+        `/players/${PLAYER_ID}?onTeam=${TEAM_ID}`,
+        'normal',
+        true
+      )
+      const labels = (await page.evaluate(`Array.prototype.map.call(
+        document.querySelectorAll('[role="tab"]'),
+        function (node) { return node.textContent || '' }
+      )`)) as string[]
+      observed.push(`${at} player pills: ${labels.join(', ')}`)
+      check(
+        ['Videos', 'Stats', 'Walk-up', 'Teams', 'Settings'].every(label =>
+          labels.some(text => text.startsWith(label))
+        ),
+        `${at} P1: Videos, Stats, Walk-up, Teams and Settings are offered`
+      )
+
+      // P1
+      const rest = await read(page)
+      observed.push(`${at} player at rest: ${JSON.stringify(rest)}`)
+      const lead = (rest.content?.top ?? rest.pill.bottom) - rest.pill.top
+      const contentStart = (layout: Layout): number => layout.pill.top + lead
+      check(
+        rest.card != null && rest.card.bottom <= rest.pill.top,
+        `${at} P1: the card is above the pills`
+      )
+      check(rest.name < 0.1, `${at} P1: the header shows no name`)
+      await shot(page, size, 'player-arrive')
+
+      // P2
+      let previous = rest
+      let pinned: Layout | undefined
+      for (let step = 1; step <= 15; step++) {
+        const now = await scroll(page, size, 200)
+        const contentMoved =
+          (now.content?.top ?? 0) < (previous.content?.top ?? 0) - TOLERANCE
+        if (near(now.pill.top, previous.pill.top) && contentMoved) {
+          pinned = now
+          break
+        }
+        check(
+          now.pill.top < previous.pill.top - TOLERANCE,
+          `${at} P2: step ${step}, the pills rise with the videos`
+        )
+        previous = now
+      }
+      check(pinned != null, `${at} P2: the pills pin and the videos go on`)
+      // The card went up with the pills, at least as far as they did.
+      const rose = rest.pill.top - (pinned?.pill.top ?? rest.pill.top)
+      check(
+        pinned?.card != null &&
+          rose > TOLERANCE &&
+          pinned.card.bottom <= pinned.pill.top &&
+          pinned.card.top <= (rest.card?.top ?? 0) - rose + TOLERANCE,
+        `${at} P2: the card has gone under the header`
+      )
+      check((pinned?.name ?? 0) > 0.9, `${at} P2: the name is in the header`)
+      await shot(page, size, 'player-pinned')
+
+      // P3
+      for (const label of ['Stats', 'Walk-up', 'Teams', 'Settings', 'Videos']) {
+        const shown = await tab(page, label)
+        check(
+          near(shown.pill.top, pinned?.pill.top),
+          `${at} P3: ${label}, the pills stay pinned`
+        )
+        check(
+          near(shown.content?.top, contentStart(shown)),
+          `${at} P3: ${label} starts right under the pills`
+        )
+        if (label === 'Stats') await shot(page, size, 'player-stats')
+      }
+      const back = await scrollToEnd(page, size, -400)
+      check(
+        near(back.card?.top, rest.card?.top) &&
+          near(back.pill.top, rest.pill.top),
+        `${at} P3: dragged back down, the card and pills are where they began`
+      )
+      await page.close()
+    })
+
+    it(`${at}: P5, a tab that shrinks where it is leaves the pills pinned`, async function () {
+      if (!wanted('P5')) this.skip()
+      const page = await open(
+        size,
+        `/players/${PLAYER_ID}?onTeam=${TEAM_ID}`,
+        'normal',
+        true
+      )
+      const rest = await read(page)
+      const lead = (rest.content?.top ?? rest.pill.bottom) - rest.pill.top
+      const pinned = await scrollToEnd(page, size, 400)
+      const stats = await tab(page, 'Stats')
+      check(
+        stats.pill.top < rest.pill.top - TOLERANCE &&
+          near(stats.pill.top, pinned.pill.top),
+        `${at} P5: Stats opens with the pills pinned`
+      )
+      // A season with no pitching: the pitching card goes, and the tab is
+      // shorter than it was, where it is.
+      await press(page, 'Filter')
+      await press(page, 'Spring')
+      await press(page, 'Show these')
+      await page.waitForFunction(
+        () => !document.body.innerText.includes('Pitching')
+      )
+      const shrunk = await settle(page)
+      observed.push(`${at} P5 shrunk: ${JSON.stringify(shrunk)}`)
+      check(
+        near(shrunk.pill.top, stats.pill.top),
+        `${at} P5: the pills stay pinned`
+      )
+      check(
+        near(shrunk.content?.top, shrunk.pill.top + lead),
+        `${at} P5: Stats still starts right under the pills`
+      )
+      await page.close()
+    })
+
+    it(`${at}: P4, Back to a tab starts it under the pinned pills`, async function () {
+      if (!wanted('P4')) this.skip()
+      // Opened on Stats by its address, so Back has a Stats to return to.
+      const page = await open(
+        size,
+        `/players/${PLAYER_ID}?onTeam=${TEAM_ID}&tab=stats`,
+        'normal',
+        true
+      )
+      const rest = await read(page)
+      const lead = (rest.content?.top ?? rest.pill.bottom) - rest.pill.top
+      // Videos, then far down it: the page is now well past where Stats
+      // would start, so Stats can only start under the pills if Back
+      // anchors it.
+      await tab(page, 'Videos')
+      const deep = await scrollToEnd(page, size, 400)
+      check(
+        deep.pill.top < rest.pill.top - TOLERANCE &&
+          (deep.content?.top ?? 0) < deep.pill.top - 400,
+        `${at} P4: deep in Videos with the pills pinned`
+      )
+      // Back is not a tap: the address takes the page back to Stats.
+      await page.goBack()
+      await page.waitForFunction(() => location.search.includes('tab=stats'), {
+        timeout: 5000
+      })
+      const back = await settle(page)
+      observed.push(`${at} P4 back: ${JSON.stringify(back)}`)
+      check(
+        near(back.pill.top, deep.pill.top),
+        `${at} P4: the pills stay pinned`
+      )
+      check(
+        near(back.content?.top, back.pill.top + lead),
+        `${at} P4: Stats starts right under the pills`
       )
       await page.close()
     })
