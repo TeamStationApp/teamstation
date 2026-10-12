@@ -177,7 +177,7 @@ describe('the games feed', function () {
     expect(opened[0]).deep.equals({
       gameId: 'gam_published',
       title: 'Badgers @ Sox',
-      options: { autoPlay: true }
+      options: { tab: 'watch', autoPlay: true }
     })
   })
   it('forwards cancellation history to the shared schedule row', async function () {
@@ -244,7 +244,7 @@ describe('the games feed', function () {
       {
         gameId: 'gam_final',
         title: 'Badgers @ Sox',
-        options: { autoPlay: true }
+        options: { autoPlay: false }
       },
       {
         gameId: 'gam_now',
@@ -293,7 +293,7 @@ describe('the games feed', function () {
       'gam_live',
       'gam_plain'
     ])
-    expect(opened[0].options).deep.equals({ autoPlay: true })
+    expect(opened[0].options).deep.equals({ tab: 'watch', autoPlay: true })
     await setWidth(1440)
     expect(text()).includes(shortDate(START))
   })

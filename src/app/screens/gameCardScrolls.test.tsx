@@ -51,7 +51,7 @@ async function gamePage(): Promise<HTMLElement> {
     root?.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen client={client} gameId="g1" />
+          <GameScreen client={client} gameId="g1" initialTab="watch" />
         </GestureHandlerRootView>
       </ThemeProvider>
     )

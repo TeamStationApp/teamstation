@@ -773,7 +773,7 @@ function ScheduleCard(props: {
   return (
     <Card>
       <ScheduleRow
-        first={lines.second}
+        first={game.eventKind === 'event' ? lines.first : lines.second}
         startAt={game.startAt}
         venue={game.venue}
         status={game.status}

@@ -109,6 +109,117 @@ function api(): TeamStationClient {
   return client
 }
 describe('game scheduling interface recovery', () => {
+  it('adds an end time to a future game on its loaded local start date', async () => {
+    const client = api()
+    client.gameScheduling = async () => ({
+      game: {
+        ...game,
+        startAt: '2037-07-02T02:00:00.000Z',
+        timezone: 'America/Los_Angeles'
+      },
+      version: 'a'.repeat(64),
+      canPropose: true,
+      withdrawTeamIds: [team.id],
+      administeredTeamIds: [team.id]
+    })
+    let sent: Parameters<TeamStationClient['proposeGame']>[0] | undefined
+    client.proposeGame = async body => {
+      sent = body
+      return {
+        id: 'request_end',
+        status: 'pending',
+        gameId: null,
+        proposedGameId: null,
+        replacesGameId: null
+      }
+    }
+    await mount(
+      <CreateGameScreen
+        client={client}
+        source={{ kind: 'team', id: team.id }}
+        gameId="game_demo"
+        onSent={() => undefined}
+        onCancel={() => undefined}
+      />
+    )
+    await press('End time: Not set')
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="End date"]')
+        ?.value
+    ).equals('2037-07-01')
+    await press('Send game proposal')
+    expect(sent?.game.startAt).equals('2037-07-02T02:00:00.000Z')
+    expect(sent?.game.endAt).equals('2037-07-02T03:00:00.000Z')
+  })
+  it('keeps title events on the source team after changing a game participant', async () => {
+    const client = api()
+    let submitted = ''
+    client.createTeamEvent = async body => {
+      submitted = body.teamId
+      return { id: 'tev_demo' }
+    }
+    await mount(
+      <CreateGameScreen
+        client={client}
+        source={{ kind: 'team', id: team.id }}
+        onSent={() => undefined}
+        onEventCreated={() => undefined}
+        onCancel={() => undefined}
+      />
+    )
+    await press('Home: Demo Hawks')
+    await press('Choose Demo Eagles')
+    await press('Event')
+    await fill('Title', 'Team dinner')
+    await press('Create event')
+    expect(submitted).equals(team.id)
+  })
+  it('uses the canonical source team returned for a merged team address', async () => {
+    const client = api()
+    const group = client.group.bind(client)
+    client.group = async ref => {
+      const detail = await group(ref)
+      return ref.id === team.id
+        ? { ...detail, group: { ...detail.group, id: 'team_kept' } }
+        : detail
+    }
+    let submitted = ''
+    client.createTeamEvent = async body => {
+      submitted = body.teamId
+      return { id: 'tev_demo' }
+    }
+    await mount(
+      <CreateGameScreen
+        client={client}
+        source={{ kind: 'team', id: team.id }}
+        onSent={() => undefined}
+        onCancel={() => undefined}
+      />
+    )
+    await press('Home: Demo Hawks')
+    await press('Choose Demo Eagles')
+    await press('Event')
+    await fill('Title', 'Team dinner')
+    await press('Create event')
+    expect(submitted).equals('team_kept')
+  })
+  it('keeps placeholder teams in game mode even when their details are manageable', async () => {
+    await mount(
+      <CreateGameScreen
+        client={api()}
+        source={{ kind: 'team', id: away.id }}
+        onSent={() => undefined}
+        onCancel={() => undefined}
+      />
+    )
+    const event = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Event')!
+    expect(event.getAttribute('aria-disabled')).equals('true')
+    await press('Event')
+    expect(document.querySelector('input[aria-label="Title"]')).equals(null)
+    expect(document.body.textContent).includes('Create Game')
+  })
   it('lets an administered season originate a placement between two guest teams without claiming their approval', async () => {
     const client = api()
     const group = client.group.bind(client)
