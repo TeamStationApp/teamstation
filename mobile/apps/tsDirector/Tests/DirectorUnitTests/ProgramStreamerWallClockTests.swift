@@ -4,7 +4,8 @@ import Darwin
 import DirectorCore
 import Foundation
 import Testing
-@testable import DirectorPipeline
+@testable import DirectorMedia
+import DirectorPipeline
 @testable import DirectorRTMP
 
 /// The programme stream's wall clock, read off the wire: the streamer is put on air over a socket
@@ -282,7 +283,7 @@ private final class WireHarness {
     var config = AppConfig.default
     config.streamCodec = codec == .hevc ? .hevc : .h264
     config.streamResolution = .hd720
-    try streamer.goLiveForTesting(client: client, config: config, encoder: encoder)
+    try streamer.goLiveForTesting(client: client, settings: StreamSettings(config: config), encoder: encoder)
   }
 
   /// Waits, for up to two seconds, until the encoder has handed back everything it was given.

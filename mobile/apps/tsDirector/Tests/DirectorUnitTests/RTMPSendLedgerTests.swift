@@ -66,8 +66,9 @@ struct RTMPSendLedgerTests {
     }
     _ = client.congestionSample(at: RTMPClient.monotonicNow())
 
-    // Far more than the peer will take, so writes wait and then the budget sheds.
-    let tag = FLVTag.videoFrame(codec: .hevc, keyframe: false, payload: Data(repeating: 7, count: 8 * 1024))
+    // Far more than the peer will take, so writes wait and then the budget sheds. Keyframes, so
+    // every shed leaves a picture to decode from and nothing waits for one.
+    let tag = FLVTag.videoFrame(codec: .hevc, keyframe: true, payload: Data(repeating: 7, count: 8 * 1024))
     // Every tag is taken: the queue sheds its own oldest rather than refusing what is offered.
     var sent = 0
     for _ in 0 ..< 40 where client.sendVideo(timestampMs: 0, tag: tag) == .sent {

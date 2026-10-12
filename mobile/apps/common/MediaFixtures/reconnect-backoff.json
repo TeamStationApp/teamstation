@@ -1,0 +1,70 @@
+{
+  "events" : [
+    {
+      "at" : 0,
+      "event" : "drop",
+      "liveFor" : 1,
+      "waits" : 3
+    },
+    {
+      "at" : 4,
+      "event" : "drop",
+      "liveFor" : 1,
+      "waits" : 6
+    },
+    {
+      "at" : 11,
+      "event" : "drop",
+      "liveFor" : 1,
+      "waits" : 12
+    },
+    {
+      "at" : 24,
+      "event" : "drop",
+      "liveFor" : 1,
+      "waits" : 24
+    },
+    {
+      "at" : 49,
+      "event" : "drop",
+      "liveFor" : 1,
+      "waits" : 30
+    },
+    {
+      "at" : 80,
+      "event" : "drop",
+      "liveFor" : 1,
+      "waits" : 30
+    },
+    {
+      "at" : 111,
+      "event" : "drop",
+      "liveFor" : 45,
+      "waits" : 3
+    },
+    {
+      "at" : 143.9,
+      "event" : "drop",
+      "liveFor" : 29.9,
+      "waits" : 6
+    },
+    {
+      "at" : 149.9,
+      "event" : "drop",
+      "waits" : 12
+    },
+    {
+      "at" : 161.9,
+      "event" : "start"
+    },
+    {
+      "at" : 163.9,
+      "event" : "drop",
+      "liveFor" : 2,
+      "waits" : 3
+    }
+  ],
+  "firstRetrySeconds" : 3,
+  "liveResetSeconds" : 30,
+  "longestRetrySeconds" : 30
+}

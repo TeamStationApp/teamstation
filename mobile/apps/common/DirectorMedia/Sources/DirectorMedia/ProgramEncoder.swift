@@ -39,7 +39,7 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// anchor also means a programme being previewed with no take rolling never claims one, because
   /// it writes no anchors.
   private var partRecordingID: Int64?
-  private let telemetry: PipelineTelemetry
+  private let telemetry: any MediaTelemetry
   private let converter: PixelConverter
   /// The encoding the current part is written with; see `configure(_:)`.
   private var width: Int
@@ -83,6 +83,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Audio awaiting a writer that is not currently accepting it. Discarding instead of queueing
   /// leaves the audio track short of the video track, which stalls the muxer outright.
   private var pendingAudio: [PendingSound] = []
+  /// Sound the mix handed over while the part's origin was still being sampled, with when it was
+  /// captured. Placed the moment the origin settles; see `placeHeldSoundLocked`.
+  private var heldSound: [(sample: CMSampleBuffer, wall: Double, duration: CMTime)] = []
   /// Only one thread drains at a time. `AVAssetWriterInput.append` from two threads at once is not
   /// safe, and several threads reach the drain here.
   private var isDraining = false
@@ -117,14 +120,14 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// is used. The programme clock's frames stay within half a frame, since the clock numbers them
   /// from real time; one and a half keeps a source whose timestamps run fast within a frame of it.
   private static let gridSlack: Double = 1.5
-  /// The longest fill written frame by frame on the programme's grid; see `fillHold(until:)`.
-  private static let gridFillSeconds: Double = 30
   /// Serialises recover so a failed writer noticed on video and audio at once does not
   /// open two continuation files.
   private var isRecovering = false
   /// Poison is finishing the live writer on the control thread; ingest must not append.
   private var poisonFinishing = false
   private var sessionStarted = false
+  /// Set while `finish` lays the tail: live pictures stop here, so none lands among the fill's.
+  private var fillingTail = false
   private var blackPixelBuffer: CVPixelBuffer?
   /// Wall clock of `start(at:)`, used to fill the program file out to recording end when the
   /// compositor never delivered a frame (otherwise `finishWriting` hangs on an unstarted session).
@@ -170,7 +173,7 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// The most silence the tail at Stop will synthesise, in 21 ms chunks: about two minutes. A
   /// legitimate tail is the mix's wait, seconds at most. Anything beyond this is a cursor that has
   /// come adrift, and filling it would cost more than the sound is worth.
-  private static let maximumHoldSilence = 5_600
+  private static let maximumHoldSilence = HoldFill.maximumSilenceChunks
   /// Longest the tail at Stop will keep trying. Past this the writer is not coming back and the
   /// stop path matters more than the last of the sound.
   private static let holdSilenceDeadlineSeconds: Double = 8
@@ -211,21 +214,21 @@ public final class ProgramEncoder: @unchecked Sendable {
   private let clock: DirectorClock
 
   public init(
-    telemetry: PipelineTelemetry,
+    telemetry: any MediaTelemetry,
     converter: PixelConverter,
-    config: AppConfig,
+    settings: ProgrammeSettings,
     directory: URL = DirectorPaths.program,
     clock: DirectorClock = SystemClock()
   ) {
     self.clock = clock
     self.telemetry = telemetry
     self.converter = converter
-    self.width = config.programResolution.width
-    self.height = config.programResolution.height
-    self.bitrate = config.programBitrate
-    self.frameRate = config.programFrameRate
-    self.gopSeconds = config.gopSeconds
-    self.codec = config.programCodec
+    self.width = settings.resolution.width
+    self.height = settings.resolution.height
+    self.bitrate = settings.bitrate
+    self.frameRate = settings.frameRate
+    self.gopSeconds = settings.gopSeconds
+    self.codec = settings.codec
     self.directory = directory
   }
 
@@ -349,7 +352,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     // which after a crash comes only once a camera is delivering again — seconds after this, and in
     // a take whose cameras take half a minute to come back, half a minute after. That picture moves
     // this to where the part really starts; a part that never gets one keeps the resume.
-    previousPartsDuration = max(0, wall.seconds - take.seconds)
+    previousPartsDuration = Self.previousPartsSeconds(takeStart: take.seconds, partOpensAt: wall.seconds)
     resumedAwaitingPicture = true
     startedAt = take
     sessionStarted = false
@@ -456,7 +459,9 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.writtenFrames = 0
     self.soundOrigin.reset()
     self.pendingAudio.removeAll()
+    self.heldSound.removeAll()
     self.isRunning = true
+    self.fillingTail = false
     self.outputURL = url
     self.outputURLs.append(url)
     lock.unlock()
@@ -481,7 +486,11 @@ public final class ProgramEncoder: @unchecked Sendable {
     onClockGrid: Bool = false
   ) {
     lock.lock()
-    if poisonFinishing {
+    // Once the tail is being laid the part's picture is decided: a live frame arriving now would be
+    // stamped by the grid in the middle of the fill's own frames, which the writer refuses as a
+    // timestamp out of order and fails on — the Director stop that crashed when the encoder was
+    // behind.
+    if poisonFinishing || fillingTail {
       lock.unlock()
       return
     }
@@ -524,7 +533,10 @@ public final class ProgramEncoder: @unchecked Sendable {
       // still arriving pick their timestamps up from that fill and anchor it as real time.
       if resumedAwaitingPicture, let startedAt {
         resumedAwaitingPicture = false
-        previousPartsDuration = max(0, clock.now.seconds - startedAt.seconds)
+        previousPartsDuration = Self.previousPartsSeconds(
+          takeStart: startedAt.seconds,
+          partOpensAt: clock.now.seconds
+        )
       }
       if !sessionStarted {
         writer.startSession(atSourceTime: .zero)
@@ -561,12 +573,14 @@ public final class ProgramEncoder: @unchecked Sendable {
     if hostZero == nil { hostZero = nowHost - Double(lastSlot + 1) / rate }
     let hostSlot = Int64(((nowHost - (hostZero ?? nowHost)) * rate).rounded())
     let source = CMTimeSubtract(presentationTime, base)
-    var slot = source.isNumeric ? Int64((source.seconds * rate).rounded()) : hostSlot
-    if onClockGrid {
-      if slot <= lastSlot { slot = max(hostSlot, lastSlot + 1) }
-    } else if !continuingAfterRecovery, Double(abs(slot - hostSlot)) > Self.gridSlack {
-      slot = hostSlot
-    }
+    let slot = Self.gridSlot(
+      sourceSeconds: source.isNumeric ? source.seconds : nil,
+      rate: rate,
+      hostSlot: hostSlot,
+      lastSlot: lastSlot,
+      onClockGrid: onClockGrid,
+      continuingAfterRecovery: continuingAfterRecovery
+    )
     guard slot > lastSlot else {
       lock.unlock()
       return
@@ -590,6 +604,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       impliedPartStart: contentWall.seconds - time.seconds,
       atProgramme: time.seconds
     )
+    placeHeldSoundLocked()
     var anchor: (recording: Int64, part: Int, seconds: Double, wall: WallClock)?
     if let recording = anchorRecordingID,
        time.isNumeric,
@@ -626,7 +641,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     // false. That was the crash on stop after a camera reconnected: signal 6, no crash report.
     // Holding the lock across the append means `takeWriterForFinish` waits for it to land.
     lock.lock()
-    guard isRunning, !poisonFinishing, let liveWriter = self.writer, let liveAdaptor = self.adaptor,
+    guard isRunning, !poisonFinishing, !fillingTail, let liveWriter = self.writer, let liveAdaptor = self.adaptor,
       let liveInput = self.videoInput, liveInput.isReadyForMoreMediaData
     else {
       lock.unlock()
@@ -681,18 +696,50 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
     audioOffered += 1
     if duration.seconds > audioLongestSpan { audioLongestSpan = duration.seconds }
-    // Nil before the opening has been sampled, and for sound captured before the part began.
-    // Neither is a loss: the mix runs seconds behind, so this part's own first sound arrives
-    // long after the origin has settled.
-    guard let target = soundOrigin.timeline(forCaptureWall: frame.wallClock.seconds) else {
-      if soundOrigin.isSettled { audioBeforePart += 1 } else { audioUnseeded += 1 }
+    // Sound that arrives while the opening is still being sampled is held, not dropped, and placed
+    // once the origin settles. A mix that waits seconds (Director's) hands over nothing of the part
+    // that early, but a phone's waits one second against a 1.5 s opening, so the start of its part
+    // arrives before the origin is known; dropping it left the first 1.5 s of every phone take
+    // coded silence.
+    guard soundOrigin.isSettled else {
+      audioUnseeded += 1
+      heldSound.append((frame.sampleBuffer, frame.wallClock.seconds, duration))
+      if heldSound.count > Self.maximumPendingAudio {
+        let lost = heldSound.count - Self.maximumPendingAudio
+        audioQueueDrops += lost
+        heldSound.removeFirst(lost)
+      }
       lock.unlock()
+      return
+    }
+    queueSoundLocked(frame.sampleBuffer, capturedAt: frame.wallClock.seconds, duration: duration)
+    lock.unlock()
+
+    drainAudio(limit: 8)
+  }
+
+  /// Queues the held sound once the origin has settled, in the order it arrived and ahead of
+  /// anything later. Called with `lock` held; the next drain writes it.
+  private func placeHeldSoundLocked() {
+    guard soundOrigin.isSettled, !heldSound.isEmpty else { return }
+    let held = heldSound
+    heldSound.removeAll()
+    for chunk in held {
+      queueSoundLocked(chunk.sample, capturedAt: chunk.wall, duration: chunk.duration)
+    }
+  }
+
+  /// Places one chunk captured at `wall` on the part's timeline and queues it for the writer, or
+  /// counts it as before the part. Called with `lock` held and the origin settled.
+  private func queueSoundLocked(_ sample: CMSampleBuffer, capturedAt wall: Double, duration: CMTime) {
+    guard let target = soundOrigin.timeline(forCaptureWall: wall) else {
+      audioBeforePart += 1
       return
     }
     if audioFirstTarget < 0 { audioFirstTarget = target }
     audioLastTarget = target
 
-    pendingAudio.append(PendingSound(sample: frame.sampleBuffer, target: target, duration: duration))
+    pendingAudio.append(PendingSound(sample: sample, target: target, duration: duration))
     if pendingAudio.count > Self.maximumPendingAudio {
       // The queue stays bounded, and this no longer costs the timeline: `writtenAudioEnd` only
       // advances on buffers the writer took, so the next chunk's fill covers whatever these held.
@@ -702,9 +749,6 @@ public final class ProgramEncoder: @unchecked Sendable {
       pendingAudio.removeFirst(lost)
       telemetry.recordError("program sound queue overflowed, \(lost) buffer(s) of sound lost")
     }
-    lock.unlock()
-
-    drainAudio(limit: 8)
   }
 
   // The lock cannot be taken directly inside an async function.
@@ -781,6 +825,13 @@ public final class ProgramEncoder: @unchecked Sendable {
       guard let sink = soundSink, sink.isReadyForMoreSound else {
         lock.unlock()
         return
+      }
+      // A continuation writer opened by recovery runs with no session until its first picture, and
+      // sound reaching it first threw "Must start a session" from the input's append. Start it here,
+      // under the lock, as the picture paths do.
+      if let writer, !sessionStarted {
+        writer.startSession(atSourceTime: .zero)
+        sessionStarted = true
       }
 
       // The track is laid contiguously, so its position is wherever the writer has got to. A
@@ -1057,6 +1108,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       let target = max(0, wall.seconds - origin.seconds - previousPartsSeconds())
       let (pictureAt, soundAt) = trackEnds()
       let queuedBefore = pendingAudioCount()
+      beginTailFill()
       fillHold(until: target)
       // `fillHold` queues the tail's silence and drains once. One drain stops at the first refusal,
       // and the tail is hundreds of buffers — the length of the mix's wait for late sound — so a
@@ -1099,7 +1151,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     if pending.writer.status != .completed {
       let detail = Self.describe(pending.writer.error)
       telemetry.recordError("program master did not finalise: \(detail)")
-      telemetry.mutate { $0.dvr.lastError = "program master did not finalise: \(detail)" }
+      telemetry.recordRecordingError("program master did not finalise: \(detail)")
     }
 
     // What the file actually holds, not what the encoder believes it wrote: a buffer the writer
@@ -1178,6 +1230,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     adaptor = nil
     soundOrigin.reset()
     pendingAudio.removeAll()
+    heldSound.removeAll()
   }
 
   /// Opens a continuation file. The next video sample holds the dead interval as black + silence
@@ -1300,6 +1353,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     part += 1
     pendingRecoveryFill = true
     pendingAudio.removeAll()
+    heldSound.removeAll()
     soundOrigin.reset()
     acceptedAudioCount = 0
     writtenAudioEnd = 0
@@ -1331,6 +1385,13 @@ public final class ProgramEncoder: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Closes the live picture path for the rest of the part; `finish` calls it before the tail.
+  private func beginTailFill() {
+    lock.lock()
+    fillingTail = true
+    lock.unlock()
+  }
+
   /// Black video and silent audio covering `seconds` at the start of the current file.
   private func fillHold(seconds: Double) {
     fillHold(until: seconds)
@@ -1355,8 +1416,8 @@ public final class ProgramEncoder: @unchecked Sendable {
       sessionStarted = true
     }
     let frame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
-    let start = (lastTime.isNumeric && lastTime >= .zero) ? CMTimeAdd(lastTime, frame) : .zero
-    let step = end - start.seconds <= Self.gridFillSeconds ? frame : CMTime(value: 1, timescale: 10)
+    let start = HoldFill.pictureStart(lastPicture: lastTime, frameRate: frameRate)
+    let step = HoldFill.pictureStep(from: start, until: end, frameRate: frameRate)
     lock.unlock()
 
     // The sound is filled whichever way the picture goes. The compositor usually carries the picture
@@ -1370,15 +1431,16 @@ public final class ProgramEncoder: @unchecked Sendable {
       lock.lock()
       let pictureEnd = lastTime.isNumeric && lastTime >= .zero ? CMTimeAdd(lastTime, frame).seconds : 0
       lock.unlock()
-      appendHoldSilence(until: CMTime(seconds: max(0, max(end, pictureEnd)), preferredTimescale: 600))
+      appendHoldSilence(until: CMTime(
+        seconds: HoldFill.soundEnd(requested: end, pictureEnd: pictureEnd),
+        preferredTimescale: 600
+      ))
     }
 
     guard end - start.seconds > 0.0005 else { return }
     guard let black = programBlackBuffer() else { return }
-    var cursor = start
-    while cursor.seconds + 0.0005 < end {
-      appendHoldFrame(black, at: cursor)
-      cursor = CMTimeAdd(cursor, step)
+    for time in HoldFill.pictureTimes(from: start, step: step, until: end) {
+      appendHoldFrame(black, at: time)
     }
   }
 
@@ -1422,10 +1484,10 @@ public final class ProgramEncoder: @unchecked Sendable {
     guard end.isNumeric, end > .zero else { return }
     let chunk = Self.silenceChunkSeconds
     lock.lock()
-    let gap = end.seconds - writtenAudioEnd
+    let gap = HoldFill.silenceSeconds(until: end.seconds, writtenSoundEnd: writtenAudioEnd)
     lock.unlock()
-    guard gap > chunk else { return }
-    if gap > Double(Self.maximumHoldSilence) * chunk {
+    guard gap > 0 else { return }
+    if HoldFill.exceedsSilenceCap(gap) {
       telemetry.recordError(
         String(format: "program sound tail asked for %.1f s of silence, capped at %.1f s",
                gap, Double(Self.maximumHoldSilence) * chunk)
@@ -1490,6 +1552,111 @@ public final class ProgramEncoder: @unchecked Sendable {
       parts.append(reason)
     }
     return parts.joined(separator: " — ")
+  }
+
+  // MARK: - Placement rules, pure
+
+  /// The grid slot a frame is written in, before the check that it is newer than `lastSlot`.
+  ///
+  /// A frame on the programme clock's grid takes the slot its number names; one that goes back (the
+  /// clock restarted for a new rate) is placed by real time, after the last. Any other frame takes
+  /// the slot its own time names unless that is more than `gridSlack` frames from real time's slot,
+  /// when real time's wins. A frame with no usable time is placed by real time.
+  static func gridSlot(
+    sourceSeconds: Double?,
+    rate: Double,
+    hostSlot: Int64,
+    lastSlot: Int64,
+    onClockGrid: Bool,
+    continuingAfterRecovery: Bool
+  ) -> Int64 {
+    var slot = sourceSeconds.map { Int64(($0 * rate).rounded()) } ?? hostSlot
+    if onClockGrid {
+      if slot <= lastSlot { slot = max(hostSlot, lastSlot + 1) }
+    } else if !continuingAfterRecovery, Double(abs(slot - hostSlot)) > gridSlack {
+      slot = hostSlot
+    }
+    return slot
+  }
+
+  static var gridSlackForTesting: Double { gridSlack }
+
+  /// How much of the take came before a resumed part: from the take's start to the part's first
+  /// picture, or to the resume while it has none. Never negative.
+  static func previousPartsSeconds(takeStart: Double, partOpensAt: Double) -> Double {
+    max(0, partOpensAt - takeStart)
+  }
+
+  /// The hold at Stop and after a writer recovery: black pictures from a frame after the last
+  /// picture, and silence from where the sound track ends, out to the take's length or the last
+  /// picture, whichever is later.
+  struct HoldFill: Equatable {
+    /// The longest fill written frame by frame on the programme's grid. A longer one is a programme
+    /// that had no picture at all, filled at 10 fps so it finishes inside the stop path's deadline.
+    static let gridFillSeconds: Double = 30
+    /// The most silence the tail will synthesise, in 21 ms chunks: about two minutes.
+    static let maximumSilenceChunks = 5_600
+
+    static func pictureStart(lastPicture: CMTime, frameRate: Int) -> CMTime {
+      let frame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
+      return (lastPicture.isNumeric && lastPicture >= .zero) ? CMTimeAdd(lastPicture, frame) : .zero
+    }
+
+    static func pictureStep(from start: CMTime, until end: Double, frameRate: Int) -> CMTime {
+      end - start.seconds <= gridFillSeconds
+        ? CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
+        : CMTime(value: 1, timescale: 10)
+    }
+
+    /// Every black picture's time, from `start` to just before `end`.
+    static func pictureTimes(from start: CMTime, step: CMTime, until end: Double) -> [CMTime] {
+      var times: [CMTime] = []
+      var cursor = start
+      while cursor.seconds + 0.0005 < end {
+        times.append(cursor)
+        cursor = CMTimeAdd(cursor, step)
+      }
+      return times
+    }
+
+    static func soundEnd(requested end: Double, pictureEnd: Double) -> Double {
+      max(0, max(end, pictureEnd))
+    }
+
+    /// The silence to synthesise: none for less than one chunk.
+    static func silenceSeconds(until end: Double, writtenSoundEnd: Double) -> Double {
+      let gap = end - writtenSoundEnd
+      return gap > ProgramEncoder.silenceChunkSeconds ? gap : 0
+    }
+
+    static func exceedsSilenceCap(_ seconds: Double) -> Bool {
+      seconds > Double(maximumSilenceChunks) * ProgramEncoder.silenceChunkSeconds
+    }
+
+    // One hold, worked through, for the fixtures the Kotlin port shares.
+    let pictureFrom: Double
+    let pictureStep: Double
+    let pictureCount: Int
+    let soundEnd: Double
+    let silenceSeconds: Double
+    let silenceCapped: Bool
+
+    init(requestedEnd end: Double, lastPicture: Double?, frameRate: Int, writtenSoundEnd: Double) {
+      let last = lastPicture.map { CMTime(seconds: $0, preferredTimescale: CMTimeScale(max(frameRate, 1))) }
+        ?? .negativeInfinity
+      let start = Self.pictureStart(lastPicture: last, frameRate: frameRate)
+      let step = Self.pictureStep(from: start, until: end, frameRate: frameRate)
+      let times = end - start.seconds > 0.0005 ? Self.pictureTimes(from: start, step: step, until: end) : []
+      let frame = 1 / Double(max(frameRate, 1))
+      let lastWritten = times.last.map(\.seconds) ?? (last.isNumeric ? last.seconds : nil)
+      let pictureEnd = lastWritten.map { $0 + frame } ?? 0
+      pictureFrom = start.seconds
+      pictureStep = step.seconds
+      pictureCount = times.count
+      soundEnd = Self.soundEnd(requested: end, pictureEnd: pictureEnd)
+      silenceSeconds = Self.silenceSeconds(until: soundEnd, writtenSoundEnd: writtenSoundEnd)
+      silenceCapped = Self.exceedsSilenceCap(silenceSeconds)
+    }
   }
 
   public enum ProgramEncoderError: Error, CustomStringConvertible {

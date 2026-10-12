@@ -2,6 +2,7 @@ import Foundation
 import Network
 import Testing
 
+@testable import DirectorMedia
 @testable import DirectorPipeline
 
 /// Replay is the one feature that cannot be checked without a network round trip: `AVPlayer` talks
