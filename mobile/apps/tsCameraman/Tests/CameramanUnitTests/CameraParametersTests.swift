@@ -178,6 +178,26 @@ struct CameraParametersTests {
     #expect(error.body.hasPrefix("ptz.zom\r\n"))
   }
 
+  @Test("control.version is read-only, answers alongside the identity, and is in the full set")
+  func controlVersion() throws {
+    let snapshot = Self.snapshot()
+    // What Director's probe asks: the identity first, then the version on its own.
+    let identity = try CameraParameters.respondToGet(body: "device.cname\r\ndevice.name\r\n", snapshot: snapshot).get()
+    #expect(identity.pairs.map(\.name) == [ "device.cname", "device.name" ])
+    let version = try CameraParameters.respondToGet(body: "control.version\r\n", snapshot: snapshot).get()
+    #expect(version["control.version"] == "params/1")
+    #expect(version["control.version"] == CameraParameters.controlVersion)
+
+    let everything = try CameraParameters.respondToGet(body: "*\n", snapshot: snapshot).get()
+    #expect(everything["control.version"] == "params/1")
+    #expect(CameraParameterName.isKnown(CameraParameterName.controlVersion))
+    #expect(CameraParameterName.fixed.contains(CameraParameterName.controlVersion))
+
+    let readOnly = failure("control.version: params/2\r\n")
+    #expect(readOnly?.statusCode == 458)
+    #expect(readOnly?.name == "control.version")
+  }
+
   @Test("A SET decodes CRLF or LF, trims, and refuses a repeated name")
   func setDecoding() throws {
     let write = try set("ptz.zoom: 3\n device.name :  Left Field \r\n")

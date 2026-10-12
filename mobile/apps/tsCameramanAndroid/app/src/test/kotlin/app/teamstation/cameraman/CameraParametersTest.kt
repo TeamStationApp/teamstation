@@ -179,6 +179,26 @@ class CameraParametersTest {
     }
 
     @Test
+    fun `control version is read-only, answers alongside the identity, and is in the full set`() {
+        val snapshot = snapshot()
+        // What Director's probe asks: the identity first, then the version on its own.
+        val identity = CameraParameters.respondToGet("device.cname\r\ndevice.name\r\n", snapshot).getOrNull()!!
+        assertEquals(listOf("device.cname", "device.name"), identity.names)
+        val version = CameraParameters.respondToGet("control.version\r\n", snapshot).getOrNull()!!
+        assertEquals("params/1", version["control.version"])
+        assertEquals(CameraParameters.controlVersion, version["control.version"])
+
+        val everything = CameraParameters.respondToGet("*\n", snapshot).getOrNull()!!
+        assertEquals("params/1", everything["control.version"])
+        assertTrue(CameraParameterName.isKnown(CameraParameterName.controlVersion))
+        assertTrue(CameraParameterName.fixed.contains(CameraParameterName.controlVersion))
+
+        val readOnly = failure("control.version: params/2\r\n")
+        assertEquals(458, readOnly?.statusCode)
+        assertEquals("control.version", readOnly?.name)
+    }
+
+    @Test
     fun `a SET decodes CRLF or LF, trims, and refuses a repeated name`() {
         val write = set("ptz.zoom: 3\n device.name :  Left Field \r\n")
         assertEquals(3.0, write.displayedZoom!!, 0.0)

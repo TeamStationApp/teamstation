@@ -163,6 +163,7 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `device.name` | rw string | the operator name; SDP `s=`, NSD instance, RTCP NAME |
 | `device.cname` | string | the UUID; same as SDP/RTCP CNAME |
 | `device.model` | string | `Build.MODEL`, e.g. `Pixel 10` |
+| `control.version` | string | `params/1`, the vocabulary this build speaks; a build that predates the name answers it `451` and speaks `params/1` |
 | `system.thermal` | string | `nominal` / `fair` / `serious` / `critical`, the same collapse dump-state prints |
 | `system.status` | string | `running`, `recording`, … |
 | `system.battery` | int | percent 0–100; empty when the handset cannot read it (an emulator) |
@@ -205,8 +206,11 @@ on the phone. Zoom, flip and name are live. Writes are serialised on the phone; 
 Director poll is never held behind a reconfigure.
 
 The NSD TXT record (both `_rtsp._tcp` and `_awx_service._tcp`) carries `control=params/1`, so a
-client knows before connecting that this build answers the verbs. From the Mac, with the iOS
-build's script and the Android port:
+client can know before connecting that this build answers the verbs. NSD is only a shortcut, and
+one that often never leaves the phone: TS Director decides by asking, on this port,
+`GET_PARAMETER device.cname device.name` and then `control.version` on its own, so a phone whose
+record never reaches it still gets its controls. A `200` with a `device.cname` is a phone it can
+drive. From the Mac, with the iOS build's script and the Android port:
 
 ```bash
 npm run params -- --host <phone>                      # everything

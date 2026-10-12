@@ -68,6 +68,10 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   /// advertises the same unique id or CNAME.
   public typealias RelocationRequest = @Sendable (SourceID) -> Void
 
+  /// Asks one confirmed camera who it is and whether it takes the parameter verbs
+  /// (`RTSPControlProbe`). Injectable so a test can script the answers without a network.
+  public typealias ControlProbe = @Sendable (CameraEndpoint) async -> CameraControlProbeOutcome
+
   public let kind = SourceKind.rtsp
 
   private let configuration: Configuration
@@ -90,6 +94,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   private let requestRelocation: RelocationRequest?
   private let coordinator: PlayoutCoordinator?
   private let advertisementBrowser: CameraAdvertisementBrowsing
+  /// Nil asks no camera anything, and control comes only from Bonjour; the app always passes one.
+  private let probeControl: ControlProbe?
 
   private let lock = NSLock()
   private var sources: [DiscoveredSource] = []
@@ -106,6 +112,12 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   private var relocationRequests: [SourceID: Date] = [:]
   /// Fallback keys when no identity layer is wired. Address is never part of the key.
   private var sessionIDs: [CameraEndpoint: SourceID] = [:]
+  /// What each confirmed camera said when asked directly. Authoritative over Bonjour for control
+  /// and, for a Cameraman nobody heard advertise, the source of its identity.
+  private var probes = CameraControlProbes()
+  /// The CNAME each confirmed endpoint presented at its sweep's `DESCRIBE`, so a camera that answers
+  /// no to the probe loses the control a Bonjour record under that UUID claimed.
+  private var probeClaims: [CameraEndpoint: StreamAdvertisement] = [:]
 
   public init(
     configuration: Configuration = Configuration(),
@@ -115,7 +127,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     coordinator: PlayoutCoordinator? = nil,
     advertisementBrowser: CameraAdvertisementBrowsing = StaticAdvertisementBrowser(),
     confirmHost: HostConfirmation? = nil,
-    scan: CameraSweeper.Scan? = nil
+    scan: CameraSweeper.Scan? = nil,
+    probeControl: ControlProbe? = nil
   ) {
     self.configuration = configuration
     self.clock = clock
@@ -123,6 +136,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     self.requestRelocation = requestRelocation
     self.coordinator = coordinator
     self.advertisementBrowser = advertisementBrowser
+    self.probeControl = probeControl
     let scanner = SubnetScanner(ports: configuration.sweepPorts)
     self.scan = scan ?? { await scanner.scan(priority: $0, portsNow: $1) }
 
@@ -161,8 +175,75 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     return endpoints
   }
 
+  /// Bonjour's records, corrected and completed by what each camera answered when asked. Read live,
+  /// so a TXT record that arrives before the probe is used at once and the probe's answer replaces
+  /// it the moment it lands.
   public var advertisements: [CameraAdvertisement] {
-    advertisementBrowser.advertisements
+    let heard = advertisementBrowser.advertisements
+    lock.lock()
+    let outcomes = probes.outcomes
+    let claims = probeClaims
+    lock.unlock()
+    return CameraControlProbes.merge(advertisements: heard, outcomes: outcomes, claims: claims)
+  }
+
+  /// What each endpoint answered when last asked.
+  public var controlProbeOutcomes: [CameraEndpoint: CameraControlProbeOutcome] {
+    lock.lock()
+    defer { lock.unlock() }
+    return probes.outcomes
+  }
+
+  /// Asks `endpoints` whichever of them are due (`CameraControlProbes.begin`), all at once, and keeps
+  /// the answers. Each is bounded by the probe's own timeout, so this returns within it.
+  private func probe(_ endpoints: [CameraEndpoint]) async {
+    guard let probeControl, !endpoints.isEmpty else { return }
+    let due = beginProbes(endpoints)
+    guard !due.isEmpty else { return }
+    await withTaskGroup(of: (CameraEndpoint, CameraControlProbeOutcome).self) { group in
+      for endpoint in due {
+        group.addTask { (endpoint, await probeControl(endpoint)) }
+      }
+      for await (endpoint, outcome) in group {
+        finishProbe(endpoint, outcome: outcome)
+      }
+    }
+  }
+
+  private func beginProbes(_ endpoints: [CameraEndpoint]) -> [CameraEndpoint] {
+    lock.lock()
+    defer { lock.unlock() }
+    return probes.begin(endpoints, now: clock.now.seconds)
+  }
+
+  private func finishProbe(_ endpoint: CameraEndpoint, outcome: CameraControlProbeOutcome) {
+    lock.lock()
+    probes.finish(endpoint, outcome: outcome, now: clock.now.seconds)
+    lock.unlock()
+  }
+
+  /// Asks one camera again, now: its stream has just reconnected, and whatever answers at that
+  /// address may have restarted as another build or be another phone.
+  public func reprobe(_ endpoint: CameraEndpoint) async {
+    forgetProbe(endpoint)
+    await probe([ endpoint ])
+  }
+
+  private func forgetProbe(_ endpoint: CameraEndpoint) {
+    lock.lock()
+    probes.forget(endpoint)
+    lock.unlock()
+  }
+
+  /// Keeps what this sweep confirmed: answers and claims for endpoints that stopped answering go, so
+  /// a camera that comes back is asked again.
+  private func retainProbes(confirmed: [CameraEndpoint], claims: [CameraEndpoint: StreamAdvertisement]) {
+    let live = Set(confirmed)
+    lock.lock()
+    probes.keepOnly(live)
+    probeClaims.merge(claims) { _, new in new }
+    probeClaims = probeClaims.filter { live.contains($0.key) }
+    lock.unlock()
   }
 
   public var diagnostic: String {
@@ -390,9 +471,16 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       }
     }
 
+    // Every camera is asked who it is, once per address, whether or not Bonjour already said: one
+    // whose record never reaches this network must still get its controls and its identity, and
+    // one whose record says more than it does must not. One socket per camera, not per address it
+    // was seen at.
+    await probe(CameraIdentityRules.deduplicate(endpoints: confirmed, advertisements: rawAds, claims: claims).endpoints)
+    retainProbes(confirmed: confirmed, claims: claims)
+
     let collapsed = CameraIdentityRules.deduplicate(
       endpoints: confirmed,
-      advertisements: rawAds,
+      advertisements: advertisements,
       claims: claims
     )
     confirmed = collapsed.endpoints
@@ -416,6 +504,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     let awxCount = ads.filter { $0.modelName != nil || $0.wlanMAC != nil }.count
     let rtspAds = ads.filter { $0.uuid != nil }
     let rtspHosts = rtspAds.map(\.host).joined(separator: ",")
+    let answers = controlProbeOutcomes.filter { confirmed.contains($0.key) }
     let diagnostic = [
       "scan=\(scan?.subnet ?? "off")",
       "probed=\(scan?.probedCount ?? 0)",
@@ -426,6 +515,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       "manual=\(configuration.manualHosts.count)",
       "awx=\(awxCount)",
       "rtsp=\(rtspAds.count)",
+      probeControl == nil ? nil : "asked=\(answers.count) control=\(answers.values.filter(\.isControllable).count)",
       rtspHosts.isEmpty ? nil : "rtsphost=\(rtspHosts)",
       "awxbrowse=\(advertisementBrowser.browseState)",
       "browsecnt=\(advertisementBrowser.browseResultCount)",
@@ -555,6 +645,9 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       coordinator: coordinator,
       onNeedsRelocation: { [weak self] sourceID in
         self?.relocate(sourceID)
+      },
+      onReconnected: { [weak self] in
+        Task { await self?.reprobe(endpoint) }
       }
     )
 

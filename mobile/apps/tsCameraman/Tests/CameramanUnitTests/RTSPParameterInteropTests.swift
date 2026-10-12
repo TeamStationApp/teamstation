@@ -1,6 +1,7 @@
 import CameramanCore
 import CameramanRTSP
 import DirectorRTSP
+import DirectorSources
 import Foundation
 import Testing
 
@@ -61,6 +62,28 @@ struct RTSPParameterInteropTests {
     let snapshot = try #require(CameraParameters.decodeSnapshot(set))
     #expect(snapshot.mapping.presetDisplayedZooms == [ 0.5, 1, 3, 9 ])
     #expect(snapshot.name == "Third Base")
+  }
+
+  @Test("Director's control probe reads the identity, then the control version")
+  func controlProbe() throws {
+    var responder = responder(CameraParametersTests.snapshot())
+    var builder = RTSPRequestBuilder()
+    let headers = [ (name: "Content-Type", value: CameraParameters.contentType) ]
+    let identity = try exchange(
+      builder.make(.getParameter, uri: uri, headers: headers, body: Data("device.cname\r\ndevice.name\r\n".utf8)),
+      through: &responder
+    )
+    #expect(identity.statusCode == 200)
+    let found = try #require(CameraControlProbe.identity(statusCode: identity.statusCode, body: identity.bodyText))
+    #expect(found.cname == CameraParametersTests.snapshot().cname)
+    #expect(found.name == "Third Base")
+
+    let version = try exchange(
+      builder.make(.getParameter, uri: uri, headers: headers, body: Data("control.version\r\n".utf8)),
+      through: &responder
+    )
+    #expect(version.statusCode == 200)
+    #expect(CameraControlProbe.controlVersion(statusCode: version.statusCode, body: version.bodyText) == "params/1")
   }
 
   @Test("Director writes a zoom and reads the clamped value back")

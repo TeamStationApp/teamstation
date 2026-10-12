@@ -1,6 +1,8 @@
 import Foundation
 
-/// What a camera published about itself on Bonjour.
+/// What a camera published about itself on Bonjour, or, for a TS Cameraman, what it answered when
+/// asked directly (`CameraControlProbes.merge`): the probe's answer outranks the TXT record and needs
+/// none, since Bonjour is only a discovery shortcut.
 ///
 /// NearStream (`_awx_service._tcp`) uses TXT `modelname` / `wlanmac` for identity; its SRV port is
 /// closed and media stays RTSP `:554`. TS Cameraman (`_rtsp._tcp`) puts the UUID in TXT `uuid` and
@@ -17,8 +19,9 @@ public struct CameraAdvertisement: Hashable, Sendable {
   public var path: String
   /// TS Cameraman TXT `uuid` — the same string as the SDP/RTCP CNAME.
   public var uuid: String?
-  /// TS Cameraman TXT `control`: `params/1` when the phone answers RTSP `GET_PARAMETER` /
-  /// `SET_PARAMETER` with the camera vocabulary. Absent on older builds and on NearStream.
+  /// TS Cameraman TXT `control`, replaced by the phone's own `control.version` answer once it is
+  /// probed: `params/1` when the phone answers RTSP `GET_PARAMETER` / `SET_PARAMETER` with the camera
+  /// vocabulary. Absent on NearStream and on anything that did not answer the probe.
   public var controlVersion: String?
 
   public init(

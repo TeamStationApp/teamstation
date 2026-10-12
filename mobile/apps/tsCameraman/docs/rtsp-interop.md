@@ -124,6 +124,7 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `device.name` | rw string | the operator name; SDP `s=`, Bonjour instance, RTCP NAME |
 | `device.cname` | string | the UUID; same as SDP/RTCP CNAME |
 | `device.model` | string | `iPhone14,2` |
+| `control.version` | string | `params/1`, the vocabulary this build speaks; a build that predates the name answers it `451` and speaks `params/1` |
 | `system.thermal` | string | `nominal` / `fair` / `serious` / `critical`, the same name dump-state prints |
 | `system.status` | string | `running`, `recording`, … |
 | `system.battery` | int | percent 0–100; empty when the phone cannot read it |
@@ -156,7 +157,10 @@ All video-encoder writes in one `SET_PARAMETER` are applied as one reconfigure, 
 on the phone. Zoom, flip and name are live.
 
 The Bonjour TXT record (both `_rtsp._tcp` and `_awx_service._tcp`) carries `control=params/1`, so
-a client knows before connecting that this build answers the verbs. From the Mac:
+a client can know before connecting that this build answers the verbs. Bonjour is only a shortcut:
+TS Director decides by asking, on this port, `GET_PARAMETER device.cname device.name` and then
+`control.version` on its own, so a phone whose record never reaches it still gets its controls. A
+`200` with a `device.cname` is a phone it can drive. From the Mac:
 
 ```bash
 node scripts/rtspParams.js --host <phone>                 # everything

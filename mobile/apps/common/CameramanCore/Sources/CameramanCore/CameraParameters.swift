@@ -147,6 +147,11 @@ public enum CameraParameterName {
   public static let deviceName = "device.name"
   public static let deviceCNAME = "device.cname"
   public static let deviceModel = "device.model"
+  /// The parameter vocabulary this phone speaks, `CameraParameters.controlVersion`. Read-only. A
+  /// client asks for it, with `device.cname`, to decide whether to offer controls, so the answer
+  /// does not depend on the Bonjour TXT `control` key ever reaching it. A phone that predates the
+  /// name answers it `451` and speaks `params/1`.
+  public static let controlVersion = "control.version"
   public static let systemThermal = "system.thermal"
   public static let systemStatus = "system.status"
   /// Percent 0…100, or empty when the phone cannot read its battery (a simulator).
@@ -213,7 +218,7 @@ public enum CameraParameterName {
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
   /// names are recognised by shape.
   public static let fixed: [String] = [
-    deviceName, deviceCNAME, deviceModel, systemThermal, systemStatus, systemBattery,
+    deviceName, deviceCNAME, deviceModel, controlVersion, systemThermal, systemStatus, systemBattery,
     systemBatteryCharging,
     sourcePosition, sourceDeviceType,
     zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
@@ -399,6 +404,7 @@ public enum CameraParameters {
     set.set(CameraParameterName.deviceName, snapshot.name)
     set.set(CameraParameterName.deviceCNAME, snapshot.cname)
     set.set(CameraParameterName.deviceModel, snapshot.model)
+    set.set(CameraParameterName.controlVersion, controlVersion)
     set.set(CameraParameterName.systemThermal, snapshot.thermalName)
     set.set(CameraParameterName.systemStatus, snapshot.status)
     set.set(CameraParameterName.systemBattery, snapshot.battery.map { String($0.percent) } ?? "")
